@@ -1239,6 +1239,50 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0041",
+		OperationID: "backup-listBackupFiles",
+		Method:      http.MethodGet,
+		Path:        "/backup.listBackupFiles",
+		Tag:         "backup",
+		// Second backup/* coverage entry, sibling of API-0040
+		// (backup-create), and the FIRST backup/* GET — so it seeds the
+		// query-only fixture shape that future backup/* GETs (API-0048
+		// `backup-one`, API-0041's listFiles peers) will mirror. The
+		// spec at `data/openapi.json > /backup.listBackupFiles > get`
+		// declares no request body and three query parameters:
+		// `destinationId` (string, REQUIRED — the backup destination
+		// whose object store should be enumerated), `search` (string,
+		// REQUIRED — a server-side filter prefix/glob the listing
+		// applies before returning), and `serverId` (string, OPTIONAL
+		// — scopes the lookup to a specific Dokploy worker server when
+		// the destination is replicated). The closest precedent in the
+		// roster for a "REQUIRED + REQUIRED + OPTIONAL" GET fixture is
+		// API-0082 (compose-loadServices, REQUIRED + OPTIONAL enum) and
+		// API-0081 (compose-loadMountsByService, REQUIRED + REQUIRED).
+		// We populate all three params — including the OPTIONAL
+		// `serverId` — so the success-leg `r.URL.Query()` re-read at
+		// runAPICoverageSuccess exercises end-to-end forwarding for
+		// every declared parameter in one fixture; the harness does not
+		// gate on `required`-ness, it forwards whatever SampleQuery
+		// carries (per the API-0077 `compose-getTags` precedent which
+		// also populated an OPTIONAL `baseUrl`). The slug convention
+		// `backup-cov-<slug>-<storyID>` follows the seed laid by
+		// API-0040 so cross-story grep continues to find every backup/*
+		// fixture.
+		SampleQuery: map[string][]string{
+			"destinationId": {"dst-cov-backup-list-backup-files-0041"},
+			"search":        {"yalla-cov-backup-list-backup-files-0041/"},
+			"serverId":      {"server-cov-backup-list-backup-files-0041"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the empty-success convention shared by every prior
+		// backup/* (API-0040), application/*, and compose/* peer.
+		// Empty-object body keeps the success-leg envelope assertion
+		// focused on `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0066",
 		OperationID: "compose-cancelDeployment",
 		Method:      http.MethodPost,

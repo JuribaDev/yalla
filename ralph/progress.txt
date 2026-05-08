@@ -4984,3 +4984,53 @@
     cross-story grep-ability — `compose-cov-refresh-token-0088` keeps the
     convention intact.
 ---
+
+## 2026-05-08 - API-0041
+- Implemented coverage for `backup-listBackupFiles` (GET
+  /backup.listBackupFiles) by appending a `coveredAPIOperations`
+  entry in `internal/cli/api_coverage_test.go`. The entry feeds the
+  shared `runAPICoverageSuccess`/`runAPICoverageFailure` harness so
+  the existing `TestAPICoverage_*` invariants exercise the operation
+  end-to-end via `yalla api call backup-listBackupFiles --input ...
+  --json`, the registry invariant suite, schema-get coverage, and
+  the manifest projection.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — added the API-0041 case
+    (slug `backup-cov-list-backup-files-0041`). It is the FIRST
+    backup/* GET so it seeds the query-only fixture shape for the
+    backup/* tag (the prior backup/* entry, API-0040 backup-create,
+    was a POST). SampleQuery populates ALL THREE declared params,
+    including the OPTIONAL `serverId`, so the success-leg
+    `r.URL.Query()` re-read at runAPICoverageSuccess exercises
+    end-to-end forwarding for every parameter in one fixture; the
+    pattern follows the API-0077 (compose-getTags) precedent of
+    populating optional params.
+  - `ralph/prd.json` — flipped `passes` to `true` for API-0041.
+- Verification (from repo root):
+  - `gofmt -w internal/cli/api_coverage_test.go` (clean).
+  - `goimports` not installed locally; `gofmt` covered the
+    formatting requirement on the touched file.
+  - `go mod tidy` (clean, no module-graph drift).
+  - `go vet ./...` (clean).
+  - `go test ./internal/cli/... -run TestAPICoverage` — pass
+    (covers registry invariants, schema-get coverage, success leg,
+    and the representative failure leg for every entry including
+    `backup-listBackupFiles`).
+  - `go test ./...` — all packages pass.
+  - `go test -race ./...` — all packages pass.
+- Remaining risks / follow-ups: 387 API-XXXX stories remain in the
+  failing pool (next: API-0042 `backup-manualBackupCompose`).
+- **Learnings for future iterations:**
+  - Second backup/* tag entry and FIRST backup/* GET. The slug
+    pattern `backup-cov-<slug>-<storyID>` follows the convention
+    seeded by API-0040, keeping cross-story grep across the backup/*
+    namespace stable.
+  - The "REQUIRED + REQUIRED + OPTIONAL" GET shape (3 query params,
+    one optional) is uncommon enough to call out — closest precedents
+    are API-0081 (compose-loadMountsByService, REQUIRED + REQUIRED),
+    API-0082 (compose-loadServices, REQUIRED + OPTIONAL enum), and
+    API-0077 (compose-getTags, OPTIONAL only). The harness does not
+    gate on `required`-ness, so populating all declared params keeps
+    the success-leg `r.URL.Query()` re-read exercising every
+    declared field in a single fixture.
+---
