@@ -8579,6 +8579,147 @@ var coveredAPIOperations = []apiCoverageCase{
 		// demonstrates why per-operation re-verification stays
 		// mandatory across every family transition.
 	},
+	{
+		StoryID:     "API-0370",
+		OperationID: "settings-getUpdateData",
+		Method:      http.MethodPost,
+		Path:        "/settings.getUpdateData",
+		Tag:         "settings",
+		// Twentieth entry on the settings/* coverage roster, inheriting
+		// the `set-cov-*` per-tag fixture-isolation namespace
+		// established by API-0351 `settings-assignDomainServer` and
+		// extended through API-0369 `settings-getTraefikPorts`
+		// (must not back-reference the closed `srv-cov-*`,
+		// `proj-cov-*`, `org-cov-*`, `compose-cov-*`, `app-cov-*`,
+		// `ai-cov-*`, or any other prior tag's namespace, per the
+		// per-tag isolation rule reasserted at API-0335..API-0369
+		// and originally established at API-0246
+		// `organization-active`).
+		//
+		// **Spec re-verified per the API-0345..API-0369
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json >
+		// /settings.getUpdateData > post`: a **POST** with **no
+		// `requestBody` field at all** (this is structurally
+		// identical to API-0354 `settings-cleanAllDeploymentQueue`,
+		// API-0357 `settings-cleanMonitoring`, API-0358
+		// `settings-cleanRedis`, and API-0359
+		// `settings-cleanSSHPrivateKey` — the spec declares no
+		// request body schema whatsoever, so the operation is a
+		// true no-input POST), **zero parameters** (no query, no
+		// path, no header). Responses 200/400/401/403/500 — note
+		// the **absence of 404**, matching the four no-body POST
+		// peers above and the API-0351 opener / API-0353 / API-0355
+		// / API-0356 / API-0360 / API-0361 / API-0362 optional-body
+		// POST peers, but **diverging from API-0363..API-0369's
+		// 404-bearing GET sub-roster**. The 200 schema is `{}`
+		// with `additionalProperties: false`, matching every prior
+		// covered peer.
+		//
+		// **Family pivot — first POST after a seven-entry GET
+		// sub-roster.** The settings/* roster opened with eleven
+		// POSTs (API-0351 `assignDomainServer` through API-0362
+		// `cleanUnusedVolumes`), then transitioned to seven GETs
+		// (API-0363 `getDokployCloudIps` through API-0369
+		// `getTraefikPorts`). API-0370 pivots the verb axis back
+		// to POST while keeping the `get*` slug prefix — a useful
+		// counter-example to the temptation to bind verb to slug
+		// prefix. Despite the `get*` prefix this operation is a
+		// POST in the OpenAPI spec, and the harness's POST branch
+		// (rather than the GET branch) drives the success leg.
+		// The slug-prefix-vs-verb decoupling is also visible in
+		// the prior `getReleaseTag` (GET, API-0368) vs
+		// `getUpdateData` (POST, this entry) pair: same `get*`
+		// family on the wire, different HTTP method, and the
+		// spec is the only authoritative source.
+		//
+		// **Forward-reference confirmation — verb axis flips back
+		// to POST as predicted.** API-0369's hand-off comment
+		// correctly forecast that API-0370 would pivot the family
+		// from GET back to POST and explicitly cautioned against
+		// inheriting the `SampleQuery` field from API-0369 (a GET
+		// has no analogous query semantics on a no-body POST, and
+		// the harness's POST branch with `len(SampleBody) == 0`
+		// still skips the `Content-Type` and body-round-trip
+		// assertions per the `if len(tc.SampleBody) > 0` guard
+		// inside `runAPICoverageSuccess`). Direct inspection of
+		// `internal/api/data/openapi.json >
+		// /settings.getUpdateData > post` confirms the prediction
+		// was correct: this is a no-body, no-parameter POST. The
+		// per-operation re-verification rule kept the contributor
+		// from accidentally promoting API-0369's optional-query
+		// shape onto an operation that has neither query nor body.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `set-cov-getUpdateData-0370` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared
+		//     across every per-tag roster and is unique (verified:
+		//     no collisions with API-0351..API-0369's `set-cov-*`
+		//     slugs, and orthogonal to every prior tag's
+		//     `srv-cov-*`, `proj-cov-*`, `org-cov-*`,
+		//     `compose-cov-*`, `app-cov-*`, `ai-cov-*`, etc.
+		//     namespaces). Even though no fixture-token literal
+		//     is materialised on the wire (the operation has no
+		//     body and no parameters), the slug is reserved for
+		//     this story to keep the per-tag cross-reference grep
+		//     useful for future contributors.
+		//   * **Neither `SampleBody`, `SampleQuery`, nor
+		//     `SamplePathParams` are populated** — the spec
+		//     declares no body and no parameters, and inventing a
+		//     fictional body would (a) violate the
+		//     re-verify-the-spec rule reasserted across
+		//     API-0345..API-0369, (b) cause `runAPICoverageSuccess`
+		//     to assert a body round-trip the CLI would never
+		//     send, and (c) waste the no-body branch coverage
+		//     this entry uniquely re-exercises after the seven-
+		//     entry GET sub-roster (API-0363..API-0369). The
+		//     harness still asserts the wire-level invariants
+		//     (method, path, Authorization header) — the no-body
+		//     POST cohort is not a coverage gap.
+		//
+		// **Failure-leg fields are intentionally omitted.** The
+		// spec does not declare 404 on this operation (the
+		// `getUpdateData` verb returns the Dokploy self-update
+		// availability metadata for the running instance, not a
+		// by-id resource lookup), so the per-tag opener convention
+		// reasserted at API-0335..API-0369 that reserves 404 →
+		// CodeNotFound for canonical `*-one` peers does not even
+		// apply here. Auth is the universal failure mode every
+		// Dokploy operation must re-prove, so 401 → CodeAuth via
+		// the harness default (`tc.FailureStatus == 0` → 401,
+		// `tc.FailureCode == ""` → CodeAuth) stays the most
+		// informative representative. 400 → CodeInvalidInput
+		// stays reserved for stories where payload validation is
+		// the operation's distinguishing failure mode; this
+		// entry uses the canonical 401.
+		//
+		// The next case in the settings/* roster per PRD ordering
+		// is API-0371 `settings-getWebServerSettings` (declared a
+		// **GET** in the PRD with responses 200/400/401/403/404/500).
+		// On shape it appears to revert to the parameter-free GET
+		// sub-roster shape established at API-0363..API-0368, but
+		// the next contributor must re-verify against
+		// `internal/api/data/openapi.json >
+		// /settings.getWebServerSettings > get` per the
+		// forward-reference lesson before assuming any field is
+		// identical to a prior GET entry — the verb-axis flip at
+		// this very entry (GET → POST → GET) demonstrates why
+		// slug-prefix-based pattern-matching is unreliable, and
+		// the parameter axis (whether the GET takes a query
+		// scoping it to a server, like API-0369, or no parameters
+		// at all, like API-0363..API-0368) must be re-verified
+		// per-operation. Do not assume the parameter list,
+		// request body, or response set carries over solely
+		// because the slug prefix `get*` matches.
+		//
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
