@@ -19804,3 +19804,57 @@ forward-reference lesson before assuming any field shape.
     Keep fixtures within this skeleton; the per-tag isolation rule
     enforces no back-reference to closed prior-tag namespaces.
 ---
+
+## 2026-05-08 - API-0146
+- Added the `gitlab-getGitlabBranches` apiCoverageCase entry between
+  API-0145 `gitlab-create` (the gitlab/* kickoff) and API-0160
+  `mariadb-changeStatus` (the priority-4 mariadb/* kickoff), preserving
+  the StoryID-sorted slice order. GET /gitlab.getGitlabBranches with
+  four query parameters: REQUIRED `owner` (string) and `repo` (string),
+  OPTIONAL `id` (number, populated as `"146"` per the
+  `map[string][]string` numeric-query convention) and OPTIONAL
+  `gitlabId` (string). Every-optional-populated rule applies — all four
+  query params are populated so the success leg proves the CLI
+  propagated the full query string verbatim. 200 response is `{}` with
+  `additionalProperties: false`, matching every prior empty-success
+  peer. Spec re-verified against `internal/api/data/openapi.json`
+  before authoring.
+- Family choice: harness-default 401 → CodeAuth retained. 404 is
+  declared in the spec, but the 404 → CodeNotFound representative-
+  failure slot is reserved for the canonical by-id `*-one` GET peer
+  (API-0149 `gitlab-one`) per the convention reasserted at API-0051
+  bitbucket/* design header, API-0142 `github-one`, and the
+  cross-tag list-style branch-enumeration GET precedents API-0132
+  `gitea-getGiteaBranches` and API-0139 `github-getGithubBranches`.
+- Files changed: `internal/cli/api_coverage_test.go`, `ralph/prd.json`
+  (`API-0146.passes` → true), `ralph/progress.txt` (this entry).
+- Verification: `gofmt -w .`, `go mod tidy`, `go vet ./...`,
+  `go test ./...`, `go test -race ./...` all pass.
+  `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, and
+  `goreleaser` not installed in this environment (documented in prior
+  iterations).
+- Remaining risks / follow-ups: none for this story; the next
+  PRD-ordered priority-5 case is API-0147
+  `gitlab-getGitlabRepositories`, continuing inside the
+  `gitlab-cov-*` fixture-isolation namespace opened by API-0145.
+- **Learnings for future iterations:**
+  - The `apiCoverageCase.SampleQuery` is `map[string][]string`,
+    mirroring `net/url.Values`, so numeric query parameters travel as
+    their canonical decimal-string serialization. Prior precedents:
+    `"limit": {"5"}` on API-0035 / API-0129 / API-0170 / API-0184
+    `*-search`, and `"dataPoints": {"50"}` on API-0340
+    `server-getServerMetrics`.
+  - For list-style GETs that gate on a tuple of selectors (e.g.
+    owner+repo+optional-provider-id) rather than a single canonical
+    resource id, the 404 → CodeNotFound representative-failure slot
+    is **not** activated even when the spec declares 404 — that slot
+    is reserved for the canonical by-id `*-one` GET peer of the tag.
+    The harness-default 401 → CodeAuth leg covers the
+    branch-enumeration GET. This matches the
+    `gitea-getGiteaBranches` / `github-getGithubBranches` precedents.
+  - Cross-tag analog map for the `*-getProviderBranches` shape:
+    API-0132 (gitea, `giteaId` only), API-0139 (github, `githubId`
+    only), API-0146 (gitlab, `gitlabId` + numeric `id`). The gitlab
+    variant is the only one exposing a secondary numeric `id`
+    selector in addition to the string-typed `<provider>Id` scalar.
+---

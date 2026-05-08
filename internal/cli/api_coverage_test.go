@@ -9616,6 +9616,133 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0146",
+		OperationID: "gitlab-getGitlabBranches",
+		Method:      http.MethodGet,
+		Path:        "/gitlab.getGitlabBranches",
+		Tag:         "gitlab",
+		// Second entry on the priority-5 gitlab/* coverage roster:
+		// continues inside the `gitlab-cov-*` per-tag fixture-isolation
+		// namespace opened by API-0145 `gitlab-create`. Sandwiched
+		// between API-0145 (the gitlab/* kickoff) and API-0160
+		// `mariadb-changeStatus` (the priority-4 mariadb/* tag kickoff)
+		// per the StoryID-sorted slice rule, and closes the forward
+		// reference embedded in API-0145 ("API-0146
+		// `gitlab-getGitlabBranches` ... will continue inside the
+		// `gitlab-cov-*` per-tag fixture-isolation namespace opened
+		// here"). This entry **must not** back-reference any closed
+		// prior-tag namespace (`environment-cov-*`, `domain-cov-*`,
+		// `proj-cov-*`, `mounts-cov-*`, `org-cov-*`, `port-cov-*`,
+		// `redirects-cov-*`, `security-cov-*`, `srv-cov-*`,
+		// `swarm-cov-*`, `gitea-cov-*`, `github-cov-*`, etc.) per the
+		// per-tag isolation rule reasserted at API-0335..API-0444 and
+		// originally established at API-0246 `organization-active`.
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json` >
+		// `/gitlab.getGitlabBranches` > `get`: method GET, tag gitlab,
+		// **no requestBody**, and **four query parameters**:
+		//   - OPTIONAL `id` (number) — secondary numeric selector
+		//     surfaced in addition to the string-typed `gitlabId`
+		//     scalar; this is the distinguishing structural feature
+		//     versus the cross-tag analogs API-0132
+		//     `gitea-getGiteaBranches` and API-0139
+		//     `github-getGithubBranches`, which expose only the
+		//     string-typed `<provider>Id` selector. The fixture below
+		//     supplies a deterministic-but-clearly-fake `"146"` so
+		//     `runAPICoverageSuccess` re-reads `r.URL.Query()` and
+		//     proves the CLI propagated the numeric query param
+		//     verbatim through the URL-encoded transport (the
+		//     harness's `SampleQuery` storage is `map[string][]string`,
+		//     mirroring `net/url.Values`, so all numeric params travel
+		//     as their canonical decimal-string serialization — see
+		//     the prior `"limit": {"5"}` precedent on API-0035
+		//     `app-search`, API-0129 `environment-byProjectId`,
+		//     API-0170 `mariadb-search`, API-0184 `mongo-search`, and
+		//     the `"dataPoints": {"50"}` precedent on API-0340
+		//     `server-getServerMetrics`).
+		//   - REQUIRED `owner` (string) — git provider organization /
+		//     user namespace.
+		//   - REQUIRED `repo` (string) — git provider repository slug.
+		//   - OPTIONAL `gitlabId` (string) — string-typed provider-id
+		//     selector, structurally identical to API-0132
+		//     `gitea-getGiteaBranches`'s `giteaId` and API-0139
+		//     `github-getGithubBranches`'s `githubId`.
+		// Responses 200/400/401/403/404/500. The 200 response is `{}`
+		// with `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort.
+		//
+		// **Every-optional-populated rule applies.** Both OPTIONAL
+		// query params (`id`, `gitlabId`) are populated alongside the
+		// two REQUIRED params (`owner`, `repo`) so the success leg
+		// proves the CLI propagated the full four-param query string
+		// verbatim. This mirrors API-0139 `github-getGithubBranches`'s
+		// every-optional-populated treatment (which populated the lone
+		// OPTIONAL `githubId` alongside the two REQUIRED scalars) and
+		// the API-0132 `gitea-getGiteaBranches` precedent (the same
+		// list-style branch-enumeration GET shape on the gitea/* tag).
+		//
+		// **Family choice — harness-default 401 → CodeAuth retained.**
+		// The spec declares 404 (unlike the `*-create` peers and
+		// imperative-action POSTs whose 404 is structurally absent),
+		// but per the convention reasserted at API-0051 (bitbucket/*
+		// design header), API-0142 `github-one`, and the
+		// `runAPICoverageFailure` harness contract, the 404 →
+		// CodeNotFound representative-failure slot is reserved for the
+		// canonical by-id `*-one` GET peer of each tag. For the
+		// gitlab/* roster, that slot is reserved for API-0149
+		// `gitlab-one`; this branch-enumeration GET — which gates on a
+		// (owner, repo, optional provider-id) tuple rather than a
+		// single canonical resource id — is **not** the canonical
+		// 404-bearer for the tag. 400 → CodeInvalidInput is
+		// *technically* available — a request that omits `owner` or
+		// `repo` would fail server-side validation — but the harness
+		// reserves 400 representatives for stories where payload
+		// validation is the operation's *uniquely distinguishing*
+		// failure mode. A conventional list-style GET collapses to
+		// type-checking, so the harness-default 401 → CodeAuth failure
+		// leg (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""`
+		// → CodeAuth) stays the most representative single failure
+		// mode every authenticated Dokploy operation must re-prove,
+		// consistent with the API-0132 `gitea-getGiteaBranches`,
+		// API-0133 `gitea-getGiteaRepositories`, API-0139
+		// `github-getGithubBranches`, and API-0140
+		// `github-getGithubRepositories` precedents.
+		//
+		// **Fixture token base** `gitlab-cov-getBranches-0146` follows
+		// the established `<tag>-cov-<slug>-<storyID>`
+		// deterministic-but-clearly-fake naming convention shared with
+		// every covered case and is verified non-colliding with
+		// API-0145's `gitlab-cov-create-0145-{authId,name,gitlabUrl}`
+		// literals. The cross-tag analogs `gitea-cov-getBranches-0132`
+		// and `github-cov-getBranches-0139` are intentionally similar
+		// in shape — same `<tag>-cov-getBranches-<storyID>-<field>`
+		// skeleton — but the `gitea` / `github` / `gitlab` tag prefix
+		// and the `0132` / `0139` / `0146` storyID suffix make every
+		// literal distinguishable.
+		//
+		// The next case in the PRD-ordered priority-5 backlog is
+		// API-0147 `gitlab-getGitlabRepositories` (declared a **GET**
+		// per the spec preview; the next contributor must re-verify
+		// the spec against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will continue inside the `gitlab-cov-*` per-tag
+		// fixture-isolation namespace opened by API-0145).
+		SampleQuery: map[string][]string{
+			"owner":    {"gitlab-cov-getBranches-0146-owner"},
+			"repo":     {"gitlab-cov-getBranches-0146-repo"},
+			"gitlabId": {"gitlab-cov-getBranches-0146-gitlabId"},
+			"id":       {"146"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0160",
 		OperationID: "mariadb-changeStatus",
 		Method:      http.MethodPost,
