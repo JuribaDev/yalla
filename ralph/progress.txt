@@ -4170,3 +4170,50 @@
     Future compose/* stories should still re-read the spec — sibling
     operations under the same tag continue to mix shapes.
 ---
+
+## 2026-05-08 - API-0074
+- Implemented per-operation contract coverage for compose-fetchSourceType
+  (POST /compose.fetchSourceType) — sixth compose/* entry in
+  coveredAPIOperations, sorted directly after API-0073.
+- Files changed:
+  - internal/cli/api_coverage_test.go (+30 lines, single appended
+    apiCoverageCase literal sorted after API-0073)
+  - ralph/prd.json (passes: false -> true for API-0074)
+  - ralph/progress.txt (this entry)
+- Implementation: another member of the minimal-composeId-only POST
+  family. Confirmed in internal/api/data/openapi.json that
+  /compose.fetchSourceType's required surface is exactly `composeId`
+  (string) and the 200 response is the canonical `{}` envelope with
+  `additionalProperties: false`. Comment block documents the
+  surface-level oddity (a `fetch*` verb modeled as a POST), so a future
+  reader doesn't try to "fix" the method to GET to match the
+  application/* GET-fetch peers.
+- Verification (repository root):
+  - `gofmt -w .` — clean
+  - `go mod tidy` — clean (no go.sum delta)
+  - `go vet ./...` — clean
+  - `go test ./...` — PASS
+  - `go test -race ./...` — PASS
+  - `golangci-lint`, `staticcheck`, `govulncheck` not installed locally
+    (same as prior iterations); CI's `security` job covers them.
+- Remaining risks / follow-ups: none specific to this story. 402 stories
+  remain failing. The next priority-2 compose/* story is API-0075
+  (compose-getConvertedCompose, GET /compose.getConvertedCompose) —
+  a GET, so the shape is likely to land in the GET-with-id branch
+  rather than this minimal-composeId-only POST family.
+- **Learnings for future iterations:**
+  - The Dokploy spec exposes a handful of `*-fetchSourceType`-style
+    operations as POSTs even when the verb is read-shaped. Don't be
+    tempted to "normalise" the method to GET — the wire shape is what
+    yalla forwards, and the registry/manifest invariants assert the
+    spec method verbatim. The comment in the case calls this out.
+  - The compose/* family is now 6 entries with these canonical shapes:
+      * minimal-composeId-only POST: API-0066/0067/0068/0073/0074.
+      * composeId + required deleteVolumes: API-0070.
+      * composeId + optional title/description: API-0071.
+      * composeId-free template envelope (environmentId + id required,
+        serverId/baseUrl optional): API-0072.
+      * full create envelope: API-0069.
+    Future compose/* stories should still re-read the spec — sibling
+    operations under the same tag continue to mix shapes.
+---

@@ -1403,6 +1403,35 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.method` / `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0074",
+		OperationID: "compose-fetchSourceType",
+		Method:      http.MethodPost,
+		Path:        "/compose.fetchSourceType",
+		Tag:         "compose",
+		// Mirrors the schema in `data/openapi.json` for
+		// /compose.fetchSourceType: the only required field is
+		// `composeId` (string), with no optional siblings. Sixth
+		// compose/* member of the minimal-composeId-only POST family —
+		// same shape as API-0066 (compose-cancelDeployment), API-0067
+		// (compose-cleanQueues), API-0068 (compose-clearDeployments),
+		// and API-0073 (compose-disconnectGitProvider). Despite the
+		// `fetch*` verb this is a POST in the Dokploy spec because the
+		// operation derives the source type for the referenced compose
+		// record (a side-effect-free read modeled as a mutation in the
+		// upstream tRPC bridge); we honour the wire shape verbatim and
+		// keep the fixture minimal-but-valid so a future schema
+		// validator wired into the harness still accepts it.
+		SampleBody: json.RawMessage(`{
+			"composeId": "compose-cov-fetch-source-type-0074"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the empty-success convention shared by every prior
+		// application/* and compose/* peer. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
