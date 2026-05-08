@@ -18538,3 +18538,79 @@ forward-reference lesson before assuming any field shape.
     401→CodeAuth failure leg as the kickoff representative for the
     new tag's auth invariant.
 ---
+
+## 2026-05-08 - API-0175 mongo-create
+
+- Second entry on the priority-4 mongo/* coverage roster: appended an
+  apiCoverageCase for `mongo-create` (POST /mongo.create) to
+  `internal/cli/api_coverage_test.go`, immediately after API-0174
+  `mongo-changeStatus` and before API-0188
+  `mounts-allNamedByApplicationId`. Continues inside the `mongo-cov-*`
+  per-tag fixture-isolation namespace opened at API-0174.
+- Spec re-verified against `internal/api/data/openapi.json` >
+  `/mongo.create` > `post`: tag mongo, no parameters, requestBody
+  REQUIRED with `application/json`, responses 200/400/401/403/500.
+  REQUIRED top-level scalars are `name`, `environmentId`,
+  `databaseUser`, `databasePassword` (4 fields) — one narrower than
+  the five-required-string-scalar mariadb-create precedent (API-0161),
+  because mongo's non-relational document model omits `databaseName`
+  (mongo creates databases lazily on first write). OPTIONAL
+  configuration tail (`appName`, `dockerImage` default `mongo:15`,
+  `description` anyOf string|null, `serverId` anyOf string|null,
+  `replicaSets` anyOf bool|null default false) deliberately omitted
+  per the API-0131/API-0161 minimal-required-only fixture rule
+  (load-bearing for credential-redaction safety).
+- Fixture token base `mongo-cov-create-0175` per the
+  `<tag>-cov-<slug>-<storyID>` convention; the credential-shaped slot
+  uses literal `mongo-cov-create-0175-databasePassword` for git-grep
+  traceability into `redaction_security_test.go`. Verified
+  non-colliding against API-0174's `mongo-cov-changeStatus-0174`
+  literals.
+- Failure leg: harness-default 401→CodeAuth (mongo/* roster
+  convention locked in at API-0174). 404 is structurally absent from
+  the spec on this `*-create` mutation (matching the precedent on
+  every prior covered `*-create` — domain-create, environment-create,
+  gitea-create, mariadb-create, redirects-create, security-create);
+  400→CodeInvalidInput is technically available but reserved for
+  uniquely-distinguishing payload-validation failure modes.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (+~140 lines, 1 entry)
+  - `ralph/prd.json` (passes: false -> true on API-0175)
+  - `ralph/progress.txt` (this entry)
+- Verification run: `gofmt -w .`, `go mod tidy`, `go vet ./...`,
+  `go test ./...`, `go test -race ./...` — all clean.
+  `TestAPICoverage_RegistryInvariants/API-0175/mongo-create`,
+  `TestAPICoverage_SchemaCommandWorks/API-0175/mongo-create`,
+  `TestAPICoverage_ManifestListsOperation/API-0175/mongo-create`,
+  `TestAPICoverage_SuccessRoundTrip/API-0175/mongo-create`, and
+  `TestAPICoverage_RepresentativeFailure/API-0175/mongo-create` all
+  PASS. Optional tooling not installed locally: goimports,
+  golangci-lint, staticcheck, govulncheck, goreleaser.
+- Remaining risks: none. The next case in the PRD-ordered priority-4
+  backlog is API-0176 `mongo-deploy` (POST per spec preview;
+  contributor must re-verify body shape per the forward-reference
+  lesson — the lifecycle-quartet observation from API-0172 predicts a
+  single-required-`mongoId`-string-scalar imperative-action body
+  identical to mariadb-deploy/start/stop/rebuild, but the spec must
+  be re-checked rather than assumed).
+- **Learnings for future iterations:**
+  - Database-engine `*-create` operations are NOT byte-for-byte
+    identical across the cluster. Relational engines (mariadb, mysql,
+    postgres) carry a REQUIRED `databaseName` scalar that mongo omits
+    because mongo creates databases lazily on first write. So the
+    five-required-scalar mariadb-create cardinality is a relational-
+    family default, NOT a database-tag default. Future contributors
+    covering mongo-create/-update should expect the four-required-
+    scalar shape; the equivalent mysql-create / postgres-create
+    stories will likely revert to the five-required-scalar mariadb
+    shape.
+  - The optional-tail surface diverges by engine (mongo's
+    `replicaSets` is mongo-specific; mariadb's `databaseRootPassword`
+    is relational-specific). Each engine's create story carries a
+    distinct optional surface and must re-verify the spec rather
+    than copy a sibling fixture verbatim.
+  - The minimal-required-only fixture rule (API-0131/API-0161) holds
+    cleanly here: omitting all optionals keeps a single credential-
+    shaped literal (`databasePassword`) in the fixture and protects
+    the credential-redaction audit surface from drift.
+---
