@@ -11812,3 +11812,108 @@ Learnings for future iterations:
     structurally indistinguishable from API-0389's
     wire shape.
 ---
+
+## 2026-05-08 - API-0391
+- **Implemented**: Coverage of Dokploy API operation
+  `settings-updateLogCleanup` (POST /settings.updateLogCleanup) under tag
+  `settings`. Forty-first entry on the settings/* coverage roster and the
+  second `update*` slug-prefix peer (after API-0390 `updateDockerCleanup`).
+  The harness drives the success leg (200 / `{}`) and the representative
+  failure leg (401 → CodeAuth via the harness default) through the existing
+  `coveredAPIOperations` table in `internal/cli/api_coverage_test.go`,
+  which exercises both `yalla api call settings-updateLogCleanup --input
+  <file> --json` and the schema/manifest projection for the same operationId.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended a single
+    `apiCoverageCase` entry for `API-0391 / settings-updateLogCleanup`.
+    `Method = http.MethodPost`, `Path = /settings.updateLogCleanup`,
+    `Tag = settings`. `SampleBody` carries the lone REQUIRED inner
+    property `cronExpression` (`anyOf: [{type:"string"},{type:"null"}]`)
+    as a non-null string of the form
+    `"0 3 * * * # set-cov-updateLogCleanup-0391"` — a syntactically
+    valid daily-at-3am cron expression with the per-case slug embedded
+    as a trailing comment fragment, preserving both the
+    fixture-isolation convention (`<tag>-cov-<slug>-<storyID>`) and
+    the field's plain-language semantics. `SuccessResponse` is `{}`
+    matching the spec's empty-object 200 schema. The case comment
+    re-verifies the spec against `internal/api/data/openapi.json >
+    /settings.updateLogCleanup > post`, documents the three axes
+    that pivot from API-0390 (inner-property-count 2→1,
+    inner-property-type mixed-boolean+string → nullable-string-only,
+    inner-property-name `enableDockerCleanup`/`serverId`→`cronExpression`)
+    and the four axes that carry over (slug-prefix `update*`, verb
+    POST, outer-body REQUIRED, inner-required-field present), notes
+    the **first appearance of the `anyOf`-flavoured nullable-string
+    sub-axis** on the settings/* roster, and forecasts the next case
+    `API-0392 settings-updateMiddlewareTraefikConfig`.
+  - `ralph/prd.json` — set US `API-0391.passes = true`.
+- **Verification run** (from repository root):
+  - `gofmt -w .` — clean (no files reformatted beyond the new entry).
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass; `internal/cli` runs the
+    expanded `TestAPICoverage_*` and manifest-coverage suites green
+    (~1.0s wall clock).
+  - `go test -race ./...` — all packages pass green under the race
+    detector (~2.7s wall clock for `internal/cli`).
+- **Tools NOT available locally** (documented per the verification policy):
+  `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+  `goreleaser`. The repo-level `scripts/verify.sh` reports each missing
+  optional tool with an install hint and never silently skips.
+- **Remaining risks or follow-ups**:
+  - 400 → CodeInvalidInput is technically reachable here (the inner
+    schema declares `required: ["cronExpression"]`), but the harness
+    reserves payload-validation failures for stories where 400 is the
+    operation's *distinguishing* failure mode. A future story can add
+    a focused 400-leg fixture for `updateLogCleanup` if a regression
+    surfaces in payload-shape validation specific to nullable-string
+    fields.
+  - The `null` branch of `cronExpression`'s `anyOf` is structurally
+    valid but not exercised here because the harness fixes one
+    SampleBody per case. A future story whose primary coverage
+    burden is nullable-string round-trip behaviour can add a
+    sibling fixture under a new StoryID.
+  - The trailing-comment cron-expression slug embedding
+    (`"0 3 * * * # set-cov-updateLogCleanup-0391"`) relies on the
+    Dokploy server tolerating cron-grammar comments (most
+    standard cron parsers do; the Go `robfig/cron` library
+    accepts `#`-prefixed comments). The harness only asserts
+    that the request reached the server and returned 200 — it
+    does not assert that the server semantically validated the
+    cron string.
+- **Learnings for future iterations:**
+  - **`anyOf: [{type: "X"}, {type: "null"}]` is JSON-Schema's
+    nullability idiom, not a polymorphic union.** When you encounter
+    this shape on a Dokploy property, treat it as "type X, but null
+    is also accepted" rather than "either an X or some other unknown
+    shape." Both `null` and any X-typed value are structurally
+    valid; the choice between them is a coverage decision, not a
+    structural one. Document the choice in the case comment so a
+    future contributor adding a sibling story knows which branch
+    is already exercised.
+  - **When the lone inner property is a domain-specific
+    semi-structured string (cron expression, IP address, URL,
+    regex), embedding the per-case slug as a raw bareword is
+    semantically misleading.** Prefer a syntactically valid value
+    of the field's grammar with the slug embedded as a comment or
+    trailing identifier (here: the `# slug` comment fragment on a
+    valid cron expression). This preserves both the
+    fixture-isolation convention and the field's semantics on the
+    wire.
+  - **Slug-prefix continuity does not imply axis continuity.**
+    API-0390 and API-0391 are both `update*` peers in the same
+    sub-roster, but three of their seven primary axes pivot
+    (inner-property-count, inner-property-type, inner-property-name).
+    The slug-prefix-is-not-shape rule reasserted at API-0371..API-0390
+    holds at API-0391: per-operation re-verification against
+    `internal/api/data/openapi.json` is mandatory before assuming
+    any field carries over from a slug-adjacent peer.
+  - **The `anyOf` nullability shape is *not* a 400-distinguishing
+    payload-validation case.** A 400-leg fixture remains reserved
+    for stories whose coverage burden hinges on multi-field
+    cross-validation, conditional `oneOf`/`anyOf` *between distinct
+    shapes* (not between a scalar and its null sentinel), or
+    length-bounded strings. A simple nullable-string field falls
+    under the routine settings/* coverage cohort where 401 →
+    CodeAuth is the canonical representative failure.
+---

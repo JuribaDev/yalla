@@ -12628,6 +12628,207 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0391",
+		OperationID: "settings-updateLogCleanup",
+		Method:      http.MethodPost,
+		Path:        "/settings.updateLogCleanup",
+		Tag:         "settings",
+		// Forty-first entry on the settings/* coverage roster, inheriting
+		// the `set-cov-*` per-tag fixture-isolation namespace
+		// established by API-0351 `settings-assignDomainServer` and
+		// extended through API-0390 `settings-updateDockerCleanup`
+		// (must not back-reference the closed `srv-cov-*`,
+		// `proj-cov-*`, `org-cov-*`, `compose-cov-*`, `app-cov-*`,
+		// `ai-cov-*`, or any other prior tag's namespace, per the
+		// per-tag isolation rule reasserted at API-0335..API-0390 and
+		// originally established at API-0246 `organization-active`).
+		//
+		// **Spec re-verified per the API-0345..API-0390
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json >
+		// /settings.updateLogCleanup > post`: a **POST** with a
+		// **REQUIRED** `requestBody` (`requestBody.required = true`)
+		// carrying a JSON object with **one** declared inner property
+		// — `cronExpression` (**nullable string**, expressed via
+		// `anyOf: [{type: "string"}, {type: "null"}]`, **REQUIRED**
+		// via `required: ["cronExpression"]`). **Zero parameters**
+		// (no query, no path, no header). Responses
+		// 200/400/401/403/500 — note the **absence of 404**, matching
+		// the canonical settings/* mutating-POST cohort and diverging
+		// from the by-id-flavoured 404-bearing response sets. The 200
+		// schema is `{}` with `additionalProperties: false`, matching
+		// every prior covered peer in the settings/* roster.
+		//
+		// **Forward-reference confirmation — three axes pivot from
+		// API-0390.** API-0390 `updateDockerCleanup`'s hand-off
+		// comment correctly forecast that this entry would re-verify
+		// per-operation rather than inherit from the prior `update*`
+		// peer. Direct inspection of the spec yields three pivots
+		// alongside four shared axes: (a) the inner-property-count
+		// axis pivots from two (API-0390) to **one** (this entry),
+		// (b) the inner-property-type axis pivots from mixed
+		// boolean+string (API-0390) to **nullable string only**
+		// (`anyOf: [{type: "string"}, {type: "null"}]`), opening the
+		// first **`anyOf`-flavoured nullable-string** sub-axis on
+		// the settings/* roster, and (c) the inner-property-name
+		// axis pivots from `enableDockerCleanup`/`serverId`
+		// (API-0390) to `cronExpression` (this entry). The shared
+		// axes are: the slug-prefix axis (`update*`), the verb axis
+		// (POST), the outer-body axis (REQUIRED), the
+		// inner-required-field axis (the lone inner property is
+		// REQUIRED), the parameter axis (zero parameters), and the
+		// response-set axis (200/400/401/403/500, no 404). The
+		// body-axis flip-flop across API-0383..API-0391 is now nine
+		// entries deep within the same tag (no-body / no-body /
+		// optional-body / required-body+inner-required /
+		// required-body+inner-optional-string-only / required-body+
+		// inner-optional-mixed-boolean+string / required-body+
+		// inner-required-boolean-only / required-body+inner-
+		// required-mixed-boolean+string / required-body+inner-
+		// required-nullable-string-only); per-operation
+		// re-verification stays mandatory across every family
+		// transition.
+		//
+		// **Family continuation — second `update*` slug-prefix peer
+		// in settings/*.** The `update*` slug sub-roster opened by
+		// API-0390 continues here. The PRD ordering forecasts the
+		// remaining contiguous run of `update*` peers
+		// (API-0392..API-0397: `updateMiddlewareTraefikConfig`,
+		// `updateServer`, `updateServerIp`, `updateTraefikConfig`,
+		// `updateTraefikFile`, `updateTraefikPorts`). Per the
+		// slug-prefix-is-not-shape rule reasserted at
+		// API-0371..API-0390, future `update*` peers must re-verify
+		// per-operation rather than inherit any axis from this
+		// entry — the next `update*` peer
+		// (`updateMiddlewareTraefikConfig`) may well declare a
+		// different inner-property-count, inner-property-type, or
+		// inner-required-field axis.
+		//
+		// **First `anyOf`-flavoured nullable-string axis on
+		// settings/*.** The inner `cronExpression` property is the
+		// first occurrence on the settings/* roster of the
+		// `anyOf: [{type: "string"}, {type: "null"}]` shape — a
+		// JSON-Schema idiom that signals an explicitly nullable
+		// scalar (distinct from a merely OPTIONAL field omitted from
+		// the inner `required` array). Future contributors must
+		// retain awareness that an `anyOf` with `type: "null"` is a
+		// nullability marker, not a polymorphic union — a literal
+		// `null` is an accepted value for `cronExpression`, and so
+		// is any string. The fixture chooses a **non-null string**
+		// to exercise the canonical "set a cron schedule" path; a
+		// future contributor wanting to exercise the null branch
+		// would need a separate fixture under a separate StoryID
+		// (the harness fixes one SampleBody per case).
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `set-cov-updateLogCleanup-0391` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared across
+		//     every per-tag roster and is unique (verified against
+		//     API-0351..API-0390's `set-cov-*` slugs and orthogonal
+		//     to every prior tag's `srv-cov-*`, `proj-cov-*`,
+		//     `org-cov-*`, `compose-cov-*`, `app-cov-*`, `ai-cov-*`,
+		//     etc. namespaces). Unlike API-0390 where the slug
+		//     piggy-backed on an OPTIONAL `serverId` string, this
+		//     entry has only one inner property — `cronExpression`
+		//     — and that property is a cron-expression-flavoured
+		//     string by name. Surfacing the per-case slug as a raw
+		//     bareword cron expression would be semantically
+		//     misleading (cron grammar is space-separated quintuple
+		//     `m h dom mon dow`, not a hyphen-delimited slug).
+		//     Instead, the slug is embedded as a **trailing
+		//     comment fragment** on a syntactically-valid
+		//     daily-at-3am cron expression
+		//     (`"0 3 * * * # set-cov-updateLogCleanup-0391"`),
+		//     which preserves both the per-case isolation
+		//     convention and the field's plain-language semantics.
+		//     The Dokploy server is free to either accept the
+		//     comment-bearing cron grammar (most cron parsers do)
+		//     or reject it — the harness only asserts that the
+		//     request reached the server and returned 200, not
+		//     that the server semantically accepted the cron
+		//     string.
+		//   * **Populating the only required field** is mandatory
+		//     here: leaving `cronExpression` out would produce a
+		//     structurally invalid request (the inner schema has
+		//     `required: ["cronExpression"]`). Re-asserts the
+		//     inner-required-field axis observed at API-0386
+		//     `settings-saveSSHPrivateKey` (`name`/`privateKey`
+		//     REQUIRED), API-0389 `settings-toggleRequests`
+		//     (`enable` REQUIRED), and API-0390
+		//     `settings-updateDockerCleanup`
+		//     (`enableDockerCleanup` REQUIRED) within the same
+		//     tag.
+		//   * **Choosing a non-null string** for `cronExpression`
+		//     is a deliberate coverage choice. The `anyOf`
+		//     nullability shape accepts both a literal `null` and
+		//     any string; carrying a string here exercises the
+		//     more semantically meaningful branch (a cron schedule
+		//     with content) and surfaces the per-case slug on the
+		//     wire. A literal `null` would be structurally valid
+		//     but would erase the slug-on-the-wire convention
+		//     reaffirmed across API-0386/API-0387/API-0388/
+		//     API-0390. The null branch is left to a future story
+		//     that needs to assert nullable-string round-trip
+		//     behaviour as its primary coverage burden.
+		//
+		// **Failure-leg fields are intentionally omitted.** The
+		// spec does not declare 404 on this operation (the
+		// `updateLogCleanup` verb mutates a controller-wide
+		// configuration flag rather than performing a by-id
+		// resource lookup), so the per-tag opener convention
+		// reasserted at API-0335..API-0390 that reserves 404 →
+		// CodeNotFound for canonical `*-one` peers does not apply
+		// here. Auth is the universal failure mode every Dokploy
+		// operation must re-prove, so 401 → CodeAuth via the
+		// harness default (`tc.FailureStatus == 0` → 401,
+		// `tc.FailureCode == ""` → CodeAuth) stays the most
+		// informative representative. 400 → CodeInvalidInput is
+		// *technically* available here (the inner schema's
+		// `required: ["cronExpression"]` array means a
+		// missing-`cronExpression` payload would fail server-side
+		// validation), but it remains reserved for stories where
+		// payload validation is the operation's *distinguishing*
+		// failure mode. Auth is shared with every operation in the
+		// catalogue and therefore the canonical representative
+		// failure for routine settings/* coverage entries; 400
+		// stays reserved for stories whose coverage burden
+		// uniquely hinges on payload-shape validation (e.g.
+		// multi-field cross-validation, conditional `oneOf`/
+		// `anyOf` *between distinct shapes* — not the
+		// nullability-flavoured `anyOf` here, which is a single
+		// scalar shape with a null sentinel — or length-bounded
+		// strings) — none of which apply to a single-field
+		// nullable-string update.
+		//
+		// The next case in the settings/* roster per PRD ordering
+		// is API-0392 `settings-updateMiddlewareTraefikConfig`
+		// (declared a **POST** in the PRD with
+		// `requestBody.required = true`). The next contributor
+		// must re-verify against `internal/api/data/openapi.json >
+		// /settings.updateMiddlewareTraefikConfig > post` per the
+		// forward-reference lesson before assuming any field is
+		// identical to this entry — per the
+		// slug-prefix-is-not-shape lesson reasserted at
+		// API-0371..API-0390, even sharing the `update*` slug
+		// prefix does not imply the inner-property-count,
+		// inner-property-type, or inner-required-field axes carry
+		// over. The verb axis (POST), the outer-body axis
+		// (REQUIRED), the parameter axis (zero parameters), and
+		// the response-set axis (200/400/401/403/500, no 404) are
+		// likely shared, but per-operation re-verification is
+		// mandatory.
+		SampleBody: json.RawMessage(`{
+			"cronExpression": "0 3 * * * # set-cov-updateLogCleanup-0391"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
