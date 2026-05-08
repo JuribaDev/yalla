@@ -7628,7 +7628,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mariadb",
         "operationId": "mariadb-changeStatus",

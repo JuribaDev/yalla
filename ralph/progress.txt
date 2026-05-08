@@ -17140,3 +17140,96 @@ Learnings for future iterations:
     forecasts priority-4 mariadb/* (API-0160) so the next iteration
     has a machine-readable starting point.
 ---
+
+## 2026-05-08 - API-0160 — Cover mariadb-changeStatus (POST /mariadb.changeStatus)
+- Added mariadb-changeStatus (priority-4) to the canonical
+  apiCoverageCase table at internal/cli/api_coverage_test.go,
+  opening the priority-4 backlog (mariadb/* tag) per the
+  forward-reference left by API-0425. Spec re-verified against
+  internal/api/data/openapi.json > /mariadb.changeStatus > post:
+  POST, no parameters, requestBody REQUIRED with two REQUIRED
+  top-level fields (`mariadbId` string, `applicationStatus` string
+  enum: idle|running|done|error), zero optional fields. Responses
+  200/400/401/403/500 (no 404) with 200 = {} +
+  additionalProperties:false.
+- Fixture token base `mariadb-cov-changeStatus-0160` follows the
+  `<tag>-cov-<slug>-<storyID>` convention; opens the brand-new
+  `mariadb-cov-*` per-tag fixture-isolation namespace orthogonal
+  to every prior tag's namespace. `applicationStatus: "idle"`
+  picked from the four spec-declared enum values as the safest
+  no-op status transition.
+- Failure leg uses harness defaults (FailureStatus=0 → 401,
+  FailureCode="" → CodeAuth) — 404 → CodeNotFound is not
+  available (no 404 in spec; status-mutations gate on body-
+  supplied id via 400/403, not 404); 400 → CodeInvalidInput
+  reserved for stories where payload validation is the uniquely
+  distinguishing failure mode, which a body-id-gated mutation is
+  not. Auth is the universal failure mode every authenticated
+  Dokploy operation must re-prove, and pinning it at the
+  kickoff entry locks the auth invariant for the entire
+  `mariadb-cov-*` namespace.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended apiCoverageCase
+    entry between API-0131 and API-0188 (StoryID-sorted insertion)
+  - `ralph/prd.json` — set `passes: true` for API-0160
+  - `ralph/progress.txt` — this entry
+- Verification run:
+  - `gofmt -w internal/cli/api_coverage_test.go` — clean
+  - `go mod tidy` — clean
+  - `go vet ./...` — clean
+  - `go test ./...` — all packages pass
+  - `go test -race ./...` — all packages pass; the new
+    `TestAPICoverage_*` family spawned the
+    `API-0160/mariadb-changeStatus` subtest across all five legs
+    (RegistryInvariants, SchemaCommandWorks, ManifestListsOperation,
+    SuccessRoundTrip, RepresentativeFailure) — all green
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — not installed locally, documented per project
+    convention
+- Remaining risks or follow-ups:
+  - Next case in the PRD-ordered priority-4 backlog is API-0161
+    `mariadb-create` (declared POST in the PRD; next contributor
+    must re-verify against `internal/api/data/openapi.json` per
+    the forward-reference lesson before assuming any field shape).
+    The `mariadb-cov-*` namespace stays open for the rest of the
+    mariadb/* roster (API-0160..API-0173, fourteen operations
+    per the PRD listing).
+- **Learnings for future iterations:**
+  - **Priority-bucket transition rule.** API-0425 closed the
+    priority-3 swarm/* roster and forecast the priority-4
+    mariadb/* opener (API-0160) as the next case. Following that
+    forecast saved a round of priority-bucket scanning. The
+    convention to encode in every priority-bucket-closing entry
+    is: forward-reference the next priority bucket's opener by
+    StoryID, OperationID, declared method, and tag — exactly as
+    API-0425 did and as this entry does for API-0161.
+  - **Zero-optional-field bodies are trivially-fixture-safe.**
+    Unlike API-0131 `gitea-create` (13 OPTIONAL fields including
+    OAuth credentials, where the minimal-required-only fixture
+    rule was load-bearing for credential-redaction safety),
+    `mariadb-changeStatus` has zero optional fields. The fixture
+    is necessarily exhaustive in REQUIRED scope and trivially
+    minimal in OPTIONAL scope. When opening a tag whose payloads
+    are zero-optional, this can be called out explicitly in the
+    case comment so a future credential-redaction audit reads the
+    coincidence as a property of the spec, not an unsafe shortcut.
+  - **404 absence on status-mutations.** Status-mutation
+    operations (`*-changeStatus` peers across the mariadb / mongo
+    / mysql / postgres / redis / etc. tags) gate on a body-
+    supplied resource id, but the Dokploy spec models the
+    "missing resource" failure through 400 (validation) and 403
+    (RBAC), never 404. So 404 → CodeNotFound coverage has no
+    canonical home in the `*-changeStatus` failure surface, and
+    the harness default 401 → CodeAuth is the most informative
+    representative for this shape of operation. Opt out of the
+    404 override at every entry in this cohort.
+  - **Enum-value picks must be members of the declared enum.**
+    `applicationStatus: "idle"` is one of four spec-declared enum
+    values (`idle`/`running`/`done`/`error`). The harness only
+    asserts byte-for-byte body propagation, so the choice is
+    orthogonal to the contract leg, but the value MUST remain a
+    member of the spec-declared enum so a future server-side
+    schema validator (parallel to the registry-side
+    `additionalProperties: false` invariant on the response) will
+    accept the fixture.
+---

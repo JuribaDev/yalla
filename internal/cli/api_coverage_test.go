@@ -7668,6 +7668,109 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0160",
+		OperationID: "mariadb-changeStatus",
+		Method:      http.MethodPost,
+		Path:        "/mariadb.changeStatus",
+		Tag:         "mariadb",
+		// Kickoff entry for the mariadb/* coverage roster — this is
+		// the first mariadb-tagged operation to ship contract
+		// coverage and opens a brand-new `mariadb-cov-*` per-tag
+		// fixture-isolation namespace. Per the per-tag isolation rule
+		// reasserted at API-0335..API-0444 and originally established
+		// at API-0246 `organization-active`, the `mariadb-cov-*`
+		// namespace stays orthogonal to every prior tag's namespace
+		// (`set-cov-*`, `srv-cov-*`, `proj-cov-*`, `org-cov-*`,
+		// `compose-cov-*`, `app-cov-*`, `ai-cov-*`, `admin-cov-*`,
+		// `backup-cov-*`, `bb-cov-*`, `cert-cov-*`, `clu-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `docker-cov-*`,
+		// `domain-cov-*`, `environment-cov-*`, `gitea-cov-*`,
+		// `mounts-cov-*`, `swarm-cov-*`, `usr-cov-*`, etc.).
+		//
+		// **First priority-4 case to land.** The priority-3 swarm/*
+		// roster closed at API-0425 `swarm-getNodes`; this entry
+		// kicks off the priority-4 backlog (mariadb/* tag) per the
+		// PRD-ordered next-bucket forward reference left by API-0425.
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json` > `/mariadb.changeStatus`
+		// > `post`: method POST, tag mariadb, **no parameters**,
+		// requestBody REQUIRED with `application/json`, responses
+		// 200/400/401/403/500. The 200 response is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort. **No 404** is declared —
+		// status-mutation operations gate on the *body-supplied*
+		// resource id (`mariadbId`) which the spec models through
+		// 400 (validation) and 403 (RBAC) rather than 404, so 404 →
+		// CodeNotFound coverage has no canonical home in the
+		// `mariadb-changeStatus` failure surface.
+		//
+		// **Request body schema (REQUIRED top-level fields):**
+		//   - REQUIRED `mariadbId` (string)
+		//   - REQUIRED `applicationStatus` (string, enum:
+		//     `idle` | `running` | `done` | `error`)
+		//   - **No optional fields.** Unlike API-0131 `gitea-create`'s
+		//     13-OPTIONAL-field body (which carried OAuth credential-
+		//     shaped fields and forced the minimal-required-only
+		//     fixture rule to be load-bearing), mariadb-changeStatus
+		//     has zero optional fields, so the rule is trivially
+		//     satisfied here. The fixture supplies exactly the two
+		//     REQUIRED fields and nothing else; the harness's
+		//     `len(tc.SampleBody) > 0` gate at
+		//     `runAPICoverageSuccess` activates the JSON content-type
+		//     and byte-for-byte body comparison legs.
+		//
+		// **Enum value pick.** `applicationStatus: "idle"` is one of
+		// the four spec-declared enum values and is the safest
+		// representative for a no-op status transition; the harness
+		// only asserts byte-for-byte body propagation, so the choice
+		// is orthogonal to the contract leg but must remain a member
+		// of the spec-declared enum so a future server-side schema
+		// validator (parallel to the registry-side
+		// `additionalProperties: false` invariant on the response)
+		// will accept the fixture.
+		//
+		// **Fixture token base** `mariadb-cov-changeStatus-0160`
+		// follows the established `<tag>-cov-<slug>-<storyID>`
+		// deterministic-but-clearly-fake naming convention. No prior
+		// mariadb/* fixture exists, so there are no same-tag
+		// collision constraints to avoid (the namespace opens here).
+		//
+		// **Failure leg:** harness defaults (`tc.FailureStatus == 0`
+		// → 401, `tc.FailureCode == ""` → CodeAuth). 404 →
+		// CodeNotFound is **not available** here at all (no 404 in
+		// the spec). 400 → CodeInvalidInput is reachable in principle
+		// (a malformed body would fail server-side validation) but
+		// the harness reserves 400 representatives for stories where
+		// payload validation is the operation's *uniquely
+		// distinguishing* failure mode; a status-mutation that
+		// gates on a body-supplied id collapses to type-checking,
+		// so the harness-default 401 → CodeAuth failure leg remains
+		// the most representative single failure mode every
+		// authenticated Dokploy operation must re-prove. Pinning
+		// the bearer-token check at the kickoff entry locks the
+		// auth invariant for the entire `mariadb-cov-*` namespace.
+		//
+		// The next case in the PRD-ordered priority-4 backlog is
+		// API-0161 `mariadb-create` (declared a **POST** per the
+		// spec preview; the next contributor must re-verify the
+		// spec against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will continue inside the `mariadb-cov-*` per-tag
+		// fixture-isolation namespace opened here).
+		SampleBody: json.RawMessage(`{
+			"mariadbId": "mariadb-cov-changeStatus-0160",
+			"applicationStatus": "idle"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0188",
 		OperationID: "mounts-allNamedByApplicationId",
 		Method:      http.MethodGet,
