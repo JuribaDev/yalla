@@ -14131,3 +14131,91 @@ Learnings for future iterations:
     consistent with the API-0429 hand-off precedent for membership-
     /resolution-probe operations within the same tag.
 ---
+
+## 2026-05-08 — API-0440 Cover user-haveRootAccess (GET /user.haveRootAccess)
+- Appended a single new struct literal to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go` for the parameter-free GET
+  `user-haveRootAccess`. Fourteenth user/* roster entry, slotted in
+  StoryID order after API-0439 `user-getUserByToken`.
+- Spec re-verified against
+  `internal/api/data/openapi.json > /user.haveRootAccess > get`:
+  GET, no `requestBody`, **zero** declared parameters
+  (no query, no path, no header). 200 schema is `{}` with
+  `additionalProperties: false`. Failure cohort 400/401/403/404/500.
+- Wire shape: parameter-free GET. Mirrors the same precedent as
+  API-0427 `user-all`, API-0433 `user-get`, API-0434 `user-getBackups`,
+  API-0436 `user-getInvitations`, API-0437 `user-getMetricsToken`,
+  API-0438 `user-getServerMetrics`. SampleBody/SampleQuery/
+  SamplePathParams all left zero so the success-leg subtest reduces to
+  the wire-level invariants — `runAPICoverageSuccess`'s
+  `len(tc.SampleBody) > 0` gate (and the SampleQuery/SamplePathParams
+  guards) short-circuit the body assertion when none of those three
+  is populated.
+- Failure-leg fields intentionally omitted:
+    * **404 → CodeNotFound is structurally inapplicable** — the
+      operation accepts no resource identifier, so no `--input`
+      payload can surface a missing resource.
+    * **400 → CodeInvalidInput is unavailable** — zero parameters and
+      no body means no payload can be syntactically invalid.
+    * 401 → CodeAuth via the harness defaults
+      (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""` →
+      `yerr.CodeAuth`) is the most informative representative for an
+      authenticated GET, matching every prior parameter-free user/*
+      peer.
+- Fixture token base `usr-cov-haveRootAccess-0440` follows the
+  `<tag>-cov-<slug>-<storyID>` convention and lives only in the
+  comment as the namespace anchor (no string field exists in the
+  operation to embed the slug into).
+- Files changed:
+    * internal/cli/api_coverage_test.go (+136 lines, one struct literal
+      appended)
+    * ralph/prd.json (single `passes: false` → `true` flip on API-0440)
+    * ralph/progress.txt (this entry)
+- Verification run from repo root:
+    * `gofmt -w .` — clean
+    * `go mod tidy` — no changes
+    * `go vet ./...` — clean
+    * `go test ./... -count=1` — all packages pass
+    * `go test -race ./... -count=1` — all packages pass
+    * `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+      `goreleaser` — not installed locally, documented per the global
+      pattern.
+- Remaining risks / follow-ups:
+    * Next priority-2 backlog entry per the in-comment hand-off forecast
+      is API-0441 `user-one` (GET `/user.one`). Per the
+      slug-prefix-is-not-shape and slug-stem-is-not-shape lessons
+      reasserted at API-0371..API-0439, the next contributor must
+      re-verify against `internal/api/data/openapi.json` rather than
+      assume any field carries over from API-0440.
+- **Learnings for future iterations:**
+    * The append-only `coveredAPIOperations` table is by now an
+      extremely well-documented per-operation fixture log: even
+      shape-twin entries (parameter-free GETs in this case) restate the
+      wire shape, the slug-on-the-wire status, the failure-leg
+      reasoning, and the next-entry hand-off forecast in full. This is
+      load-bearing for future contributors who land mid-roster and
+      need to reproduce a peer's reasoning without re-reading the
+      whole table.
+    * **Distinguish "structurally inapplicable" 404 from
+      "shape-secondary" 404.** Parameter-free GETs (API-0438,
+      API-0440) cannot surface 404 via any `--input` payload — the
+      operation takes no resource ID — so the 404 is a defensive
+      spec declaration, full stop. Single-required-query GETs like
+      API-0439 `user-getUserByToken` *can* surface 404 (an unknown
+      `token` is the natural trigger), but the 404 →
+      CodeNotFound representative is reserved for the canonical
+      `*-one` entry within the tag (API-0433 `user-get` per the
+      API-0427 hand-off forecast). Both reasons land at "401 →
+      CodeAuth via harness default" but for different structural
+      reasons; record which one applies in the comment so future
+      contributors don't re-litigate.
+    * **Re-verify the spec, do not extrapolate from the slug.**
+      `getServerMetrics` / `getMetricsToken` / `getContainerMetrics`
+      share the `Metrics` slug stem but carry orthogonal wire shapes
+      (no params / no params / four required query params). The same
+      caveat applied here: `haveRootAccess` shares no slug with prior
+      peers but must still be spec-verified rather than assumed to
+      carry over from API-0439 `user-getUserByToken` (which has
+      a single required query param) just because the previous
+      entry was the immediate predecessor in the user/* roster.
+---

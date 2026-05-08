@@ -17314,6 +17314,123 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0440",
+		OperationID: "user-haveRootAccess",
+		Method:      http.MethodGet,
+		Path:        "/user.haveRootAccess",
+		Tag:         "user",
+		// Fourteenth entry on the user/* coverage roster, slotted in
+		// StoryID order after API-0439 `user-getUserByToken`. The
+		// `usr-cov-*` per-tag fixture-isolation namespace was
+		// established at API-0427 `user-all` and reasserted at
+		// API-0428..API-0439. Per the per-tag isolation rule
+		// originally established at API-0246 `organization-active`,
+		// every user/* fixture token base remains orthogonal to
+		// every prior tag's namespace (`set-cov-*`, `srv-cov-*`,
+		// `proj-cov-*`, `org-cov-*`, `compose-cov-*`, `app-cov-*`,
+		// `ai-cov-*`, `admin-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		// `cert-cov-*`, `clu-cov-*`, `deployment-cov-*`,
+		// `dest-cov-*`, etc.).
+		//
+		// **Spec re-verified per the API-0345..API-0439
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /user.haveRootAccess > get`:
+		// a **GET** with **no request body** (the spec omits
+		// `requestBody` entirely on this operation) and **zero
+		// declared parameters** (no query, no path, no header).
+		// Responses 200/400/401/403/404/500 — the 200 schema is
+		// `{}` with `additionalProperties: false`, matching every
+		// prior covered peer in the empty-success cohort.
+		//
+		// **Shape positioning — parameter-free GET, the canonical
+		// "report a boolean authorisation capability scoped to the
+		// authenticated principal" wire shape.** Mirrors the
+		// parameter-free GET precedent established by API-0427
+		// `user-all` and re-asserted at API-0433 `user-get`,
+		// API-0434 `user-getBackups`, API-0436 `user-getInvitations`,
+		// API-0437 `user-getMetricsToken`, and API-0438
+		// `user-getServerMetrics` inside the same tag. (API-0429
+		// `user-checkUserOrganizations`, API-0435
+		// `user-getContainerMetrics`, and API-0439
+		// `user-getUserByToken`, although user/* and GETs, are
+		// structurally distinct because each ferries one or more
+		// required query parameters; the `haveRootAccess` shape
+		// reverts to the no-parameter precedent — note that despite
+		// the shared `Root` slug stem with no other prior peer,
+		// `haveRootAccess` carries the no-parameter shape per the
+		// slug-stem-is-not-shape lesson.) Cross-tag the
+		// parameter-free GET shape is also precedented at API-0006
+		// `ai-getAll`, API-0051 `bitbucket-bitbucketProviders`,
+		// API-0204 `git-getGitlab`, and API-0247
+		// `organization-all`. The harness's `len(tc.SampleBody) > 0`
+		// gate at `runAPICoverageSuccess` short-circuits the body
+		// assertion when neither `SampleBody`, `SampleQuery`, nor
+		// `SamplePathParams` is populated, so the success-leg
+		// subtest reduces to the wire-level invariants
+		// (method = GET, path = `/user.haveRootAccess`,
+		// `Authorization` header, empty query string) without
+		// forging synthetic wire payload the spec does not
+		// authorise.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `usr-cov-haveRootAccess-0440` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared with
+		//     every prior covered peer. The slug is the
+		//     operationId suffix (`haveRootAccess`) verbatim —
+		//     per the slug-stem-is-not-shape lesson the slug only
+		//     carries identifier semantics, not shape semantics.
+		//     The slug-on-the-wire convention does not apply here
+		//     because the operation declares no string fields the
+		//     fixture could embed the sentinel into; the slug
+		//     therefore lives only in this comment as the
+		//     namespace anchor for the API-0440 entry.
+		//   * **No `SampleBody` / `SampleQuery` / `SamplePathParams`
+		//     populated.** The canonical agent invocation is
+		//     `yalla api call user-haveRootAccess --input '{}' --json`
+		//     with an empty closed-shape `--input` document.
+		//
+		// **Failure-leg fields are intentionally omitted.** Although
+		// the spec declares 404 on this operation, the
+		// 404 → CodeNotFound representative is **structurally
+		// inapplicable** here: the operation accepts no resource
+		// identifier — the principal is derived from the
+		// `Authorization` bearer alone — so there is no `--input`
+		// payload the CLI can supply that would surface a missing
+		// resource. The 404 in the spec exists only as a defensive
+		// declaration. Likewise 400 → CodeInvalidInput is **not
+		// available** here at all — the operation has zero
+		// parameters and no request body, so no payload can be
+		// syntactically invalid; the 400 in the spec is similarly
+		// defensive and cannot be exercised through any input the
+		// CLI can supply. 401 → CodeAuth via the harness default
+		// (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""` →
+		// CodeAuth) stays the most informative representative for
+		// an authenticated GET, matching API-0427 `user-all`,
+		// API-0429 `user-checkUserOrganizations`, API-0433
+		// `user-get`, API-0434 `user-getBackups`, API-0436
+		// `user-getInvitations`, API-0437 `user-getMetricsToken`,
+		// API-0438 `user-getServerMetrics`, and API-0439
+		// `user-getUserByToken` inside the same tag.
+		//
+		// The next case in the PRD-ordered priority-2 backlog is
+		// API-0441 `user-one`; the next contributor must re-verify
+		// against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field
+		// carries over from this entry — per the
+		// slug-prefix-is-not-shape lesson reasserted at
+		// API-0371..API-0439, even the shared `user-`
+		// operation-stem does not imply a carried-over body or
+		// parameter shape.
+		//
+		// 200 response in the spec is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
