@@ -20692,6 +20692,129 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0287",
+		OperationID: "previewDeployment-delete",
+		Method:      http.MethodPost,
+		Path:        "/previewDeployment.delete",
+		Tag:         "previewDeployment",
+		// Second entry in the previewDeployment/* roster, immediately
+		// following API-0286 `previewDeployment-all` which opened the
+		// `preview-cov-*` per-tag fixture-isolation namespace. The
+		// API-0286 closing block forward-referenced this entry verbatim
+		// ("API-0287 `previewDeployment-delete` declared a POST per
+		// the spec preview; the next contributor must re-verify the
+		// spec against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will continue inside the `preview-cov-*` per-tag
+		// fixture-isolation namespace opened here"). Per the per-tag
+		// fixture rule reasserted at API-0290 `project-all` and
+		// originally established at API-0246 `organization-active`,
+		// this entry continues inside the `preview-cov-*` namespace
+		// opened by API-0286 and **must not** back-reference any
+		// closed prior-tag namespace (`admin-cov-*`, `ai-cov-*`,
+		// `app-cov-*`, `backup-cov-*`, `bb-cov-*`, `cert-cov-*`,
+		// `clu-cov-*`, `compose-cov-*`, `deployment-cov-*`,
+		// `dest-cov-*`, `docker-cov-*`, `domain-cov-*`,
+		// `environment-cov-*`, `gitea-cov-*`, `github-cov-*`,
+		// `gitlab-cov-*`, `mariadb-cov-*`, `mongo-cov-*`,
+		// `mounts-cov-*`, `mysql-cov-*`, `org-cov-*`,
+		// `postgres-cov-*`, `proj-cov-*`, `set-cov-*`, `srv-cov-*`,
+		// `swarm-cov-*`, `usr-cov-*`).
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against `internal/api/data/openapi.json` >
+		// `/previewDeployment.delete` > `post`: method POST, tag
+		// previewDeployment, **no parameters**, requestBody REQUIRED
+		// with `application/json` and **one REQUIRED top-level scalar**
+		// `previewDeploymentId` (plain string, no `anyOf` /
+		// `nullable` / enum constraints, no optional siblings).
+		// Responses 200/400/401/403/500 where the 200 schema is `{}`
+		// with `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort. **No 404**
+		// declared - mirroring the action-on-known-id POST precedent
+		// reasserted across every body-bearing imperative-action
+		// delete POST already covered: API-0003 `ai-delete`,
+		// API-0015 `application-delete`, API-0070 `compose-delete`,
+		// API-0119 `domain-delete`, API-0250 `organization-delete`,
+		// API-0269 `port-delete`, API-0299 `redirects-delete`, and
+		// API-0332 `security-delete`. The cross-tag `*-delete` family
+		// is therefore a stable cardinality-1 single-required-string
+		// invariant on Dokploy's tRPC surface.
+		//
+		// **Shape positioning - single-required-string-scalar POST
+		// imperative-action delete mutation, body REQUIRED.**
+		// Cardinality- and type-identical to the cross-tag `*-delete`
+		// family enumerated above (single REQUIRED `<tag>Id` plain
+		// string), and to the postgres/* lifecycle sextet
+		// (API-0274 `postgres-deploy`, API-0277 `postgres-rebuild`,
+		// API-0279 `postgres-remove`, API-0283 `postgres-start`,
+		// API-0284 `postgres-stop`, API-0285 `postgres-update`). The
+		// harness's `len(tc.SampleBody) > 0` gate at
+		// `runAPICoverageSuccess` activates the JSON content-type and
+		// byte-for-byte body comparison legs; this fixture supplies
+		// the single REQUIRED field so the success path verifies the
+		// CLI propagated the body verbatim.
+		//
+		// **Family choice - harness-default 401->CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so the
+		// 404->CodeNotFound override is structurally inapplicable.
+		// Even were it applicable, the per-tag opener convention
+		// reasserted at API-0290 `project-all` reserves
+		// 404->CodeNotFound *exclusively* for the canonical by-id
+		// `*-one` GET peer, which for the previewDeployment/* roster
+		// is the upcoming API-0288 `previewDeployment-one`. 401 ->
+		// CodeAuth therefore remains the most informative
+		// representative-failure leg here, mirroring every prior
+		// body-bearing imperative-action POST since API-0246.
+		//
+		// **Body composition:**
+		//   - **REQUIRED:** `previewDeploymentId` (plain string).
+		//     Identifies the preview deployment to delete. The fixture
+		//     below supplies a deterministic-but-clearly-fake
+		//     `preview-cov-delete-0287-previewDeploymentId` literal
+		//     carrying the `<tag>-cov-<slug>-<storyID>-<field>` suffix
+		//     for `git grep` traceability.
+		//   - **OPTIONAL fields N/A.** The schema declares zero
+		//     optional siblings - this is a pure single-required-
+		//     scalar delete mutation, distinct from the patch-style
+		//     `*-update` family (API-0173 / API-0187 / API-0207 /
+		//     API-0285) which carries a wide optional configuration
+		//     tail.
+		//
+		// **Fixture token base** `preview-cov-delete-0287` follows
+		// the established `<tag>-cov-<slug>-<storyID>` rule and is
+		// verified non-colliding with API-0286 `preview-cov-all-0286`
+		// literals and with every prior closed namespace listed in
+		// the cross-namespace block above. The `preview-` slug prefix
+		// is the same shortening of the `previewDeployment` tag used
+		// by API-0286 (consistent with `proj-` for `project`,
+		// `org-` for `organization`, `srv-` for `server`,
+		// `usr-` for `user`, `set-` for `settings`).
+		//
+		// The next case in the PRD-ordered priority-4 backlog is
+		// API-0288 `previewDeployment-one` (declared a **GET** per
+		// the spec preview; the next contributor must re-verify the
+		// spec against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will continue inside the `preview-cov-*` per-tag
+		// fixture-isolation namespace. Importantly, API-0288 is the
+		// canonical by-id `*-one` GET peer for the previewDeployment/*
+		// roster and therefore the structurally-correct activation
+		// site for the 404->CodeNotFound representative-failure
+		// override per the per-tag opener convention reasserted at
+		// API-0290 `project-all` and originally established at
+		// API-0246 `organization-active`).
+		SampleBody: json.RawMessage(`{
+			"previewDeploymentId": "preview-cov-delete-0287-previewDeploymentId"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0290",
 		OperationID: "project-all",
 		Method:      http.MethodGet,

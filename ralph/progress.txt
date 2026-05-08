@@ -22845,3 +22845,100 @@ forward-reference lesson before assuming any field shape.
     identical to the tag name". Document the choice in the comment
     block so the next per-tag peer inherits the slug literally.
 ---
+
+## 2026-05-09 - API-0287 - Cover previewDeployment-delete (POST /previewDeployment.delete)
+- What was implemented:
+  - Added a new `apiCoverageCase` entry for `previewDeployment-delete`
+    (POST /previewDeployment.delete, tag previewDeployment) in
+    `internal/cli/api_coverage_test.go`, immediately after API-0286
+    `previewDeployment-all` (the previewDeployment/* opener) and
+    before the API-0290 `project-all` boundary that opens the
+    project/* arc. Second entry on the previewDeployment/* coverage
+    roster, completing the forward reference embedded in API-0286's
+    closing block.
+  - **Spec re-verified** against
+    `internal/api/data/openapi.json` > `/previewDeployment.delete` >
+    `post`: method POST, tag previewDeployment, no parameters,
+    requestBody REQUIRED with `application/json` and **one REQUIRED
+    top-level field** (`previewDeploymentId` plain string, no
+    `anyOf` / `nullable` / enum constraints, no optional siblings).
+    Responses 200/400/401/403/500 with the 200 body `{}`
+    (`additionalProperties: false`). **No 404** declared - mirroring
+    the action-on-known-id POST precedent across every body-bearing
+    imperative-action delete POST already covered (API-0003
+    `ai-delete`, API-0015 `application-delete`, API-0070
+    `compose-delete`, API-0119 `domain-delete`, API-0250
+    `organization-delete`, API-0269 `port-delete`, API-0299
+    `redirects-delete`, API-0332 `security-delete`).
+  - **Shape - single-required-string-scalar POST imperative-action
+    delete mutation, body REQUIRED.** Cardinality- and type-identical
+    to the cross-tag `*-delete` family above and to the postgres/*
+    lifecycle sextet (API-0274 deploy, API-0277 rebuild, API-0279
+    remove, API-0283 start, API-0284 stop, API-0285 update).
+  - **Family choice - harness-default 401->CodeAuth retained.** Spec
+    omits 404, so the 404->CodeNotFound override is structurally
+    inapplicable; even were it applicable, the per-tag opener
+    convention reserves 404->CodeNotFound exclusively for the
+    canonical by-id `*-one` GET peer, which for previewDeployment/*
+    is the upcoming API-0288 `previewDeployment-one`.
+  - **Fixture token base** `preview-cov-delete-0287` follows the
+    `<tag>-cov-<slug>-<storyID>` rule and is verified non-colliding
+    with API-0286 `preview-cov-all-0286` literals and with every
+    prior closed namespace.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (added API-0287 case +
+    rationale comment block)
+  - `ralph/prd.json` (set `passes: true` for API-0287)
+  - `ralph/progress.txt` (this entry)
+- Verification run from repo root:
+  - `gofmt -w .` - clean
+  - `go mod tidy` - no diff
+  - `go vet ./...` - pass
+  - `go test ./internal/cli -run 'TestAPICoverage/API-0287' -v`
+    - all five legs PASS (RegistryInvariants, SchemaCommandWorks,
+    ManifestListsOperation, SuccessRoundTrip, RepresentativeFailure).
+  - `go test ./... -count=1` - all packages PASS (cli 2.531s)
+  - `go test -race ./... -count=1` - all packages PASS (cli 3.526s)
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, and
+    `goreleaser` are still not installed locally and remain
+    documented as missing per the Codebase Patterns note rather
+    than silently skipped.
+- Remaining risks / follow-ups: API-0288 `previewDeployment-one` is
+  the next priority-4 story and is the canonical by-id `*-one` GET
+  peer for the previewDeployment/* roster — therefore the
+  structurally-correct activation site for the 404->CodeNotFound
+  representative-failure override per the per-tag opener convention.
+  The next contributor MUST: (1) re-verify the spec against
+  `internal/api/data/openapi.json` per the forward-reference lesson
+  before assuming any field shape; (2) continue inside the
+  `preview-cov-*` per-tag fixture-isolation namespace opened at
+  API-0286; (3) consume the 404->CodeNotFound override slot at
+  API-0288 (do not save it for later previewDeployment/* peers).
+- **Learnings for future iterations:**
+  - The cross-tag `*-delete` family is now established on **nine**
+    tags (ai, application, compose, domain, organization, port,
+    redirects, security, previewDeployment) with byte-for-byte
+    identical single-required-string `<tag>Id` POST surfaces and no
+    declared 404. Future contributors covering the next `*-delete`
+    peer (API-0259 `patch-delete`, API-0323 `rollback-delete`,
+    API-0326 `schedule-delete`, API-0446 `volumeBackups-delete`)
+    can copy this entry's structure 1:1 and simply swap
+    tag/path/id-field-name. The shape invariant is: POST,
+    requestBody REQUIRED, single REQUIRED `<tag>Id` plain string,
+    responses 200/400/401/403/500 (no 404).
+  - The PRD story-ID for cross-tag `*-delete` peers (verified via
+    `python3 -c "import json; ..."` rather than pattern
+    extrapolation): API-0003 (ai), API-0015 (application), API-0070
+    (compose), API-0119 (domain), API-0250 (organization), API-0259
+    (patch, pending), API-0269 (port), API-0287 (previewDeployment),
+    API-0299 (redirects), API-0323 (rollback, pending), API-0326
+    (schedule, pending), API-0332 (security), API-0446
+    (volumeBackups, pending). Future entry comments should cite
+    only verified IDs.
+  - The previewDeployment/* roster's second entry (this one)
+    inherits the `preview-cov-*` namespace from API-0286 and stays
+    inside it, exactly as the per-tag fixture-isolation rule
+    requires. The naming convention `<tag>-cov-<slug>-<storyID>`
+    rolls forward unchanged — only the `<slug>` and `<storyID>`
+    segments change between sibling entries within the same tag.
+---
