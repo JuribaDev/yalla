@@ -21704,3 +21704,79 @@ forward-reference lesson before assuming any field shape.
   - The presence of 404 in the response set (vs. its absence on API-0154/API-0155) does NOT automatically translate into a `FailureStatus: 404, FailureCode: yerr.CodeNotFound` override. Per the AGENTS guidance and the API-0155 precedent for the licenseKey/* tag, 404 representatives are reserved for stories where a body- or query-supplied selector is the distinguishing failure surface. A singleton-settings GET fires 404 on global state, not on caller input, so the harness-default 401→CodeAuth remains the most representative failure.
   - No `licenseKey-cov-<slug>-0156` fixture token is needed because the operation has no slot for one. The per-tag namespace stays opened by API-0154 and is reasserted via comment-block reference only. Future licenseKey/* peers that DO carry inputs (e.g. API-0158 `licenseKey-updateEnterpriseSettings`) must continue minting `licenseKey-cov-<slug>-<storyID>` fixtures inside this namespace per the established `<tag>-cov-<slug>-<storyID>` convention.
 ---
+## 2026-05-09 - API-0274 - Cover postgres-deploy (POST /postgres.deploy)
+- What was implemented:
+  - Added a new `apiCoverageCase` entry for API-0274
+    `postgres-deploy` to `coveredAPIOperations` in
+    `internal/cli/api_coverage_test.go`, inserted in StoryID-sorted
+    order between API-0273 `postgres-create` and API-0290
+    `project-all`.
+  - Third entry on the postgres/* coverage roster, continuing the
+    `postgres-cov-*` per-tag fixture-isolation namespace opened by
+    API-0272 `postgres-changeStatus`. Closes the forward reference
+    embedded in the API-0273 `postgres-create` closing block.
+  - **Spec re-verified against `internal/api/data/openapi.json` >
+    `/postgres.deploy` > `post`:** method POST, tag postgres, no
+    parameters, requestBody REQUIRED with `application/json` and a
+    single REQUIRED top-level scalar `postgresId` (string), responses
+    200/400/401/403/500 with the 200 body `{}`
+    (`additionalProperties: false`). No 404 declared.
+  - **Shape — single-required-string-scalar POST imperative-action
+    mutation, body REQUIRED.** Structurally identical to API-0162
+    `mariadb-deploy` and API-0196 `mysql-deploy`. Fixture supplies
+    the lone REQUIRED `postgresId` as
+    `postgres-cov-deploy-0274-postgresId` so the success-leg's
+    byte-for-byte body-comparison gate exercises the body-forwarding
+    contract.
+  - **Family choice — harness-default 401→CodeAuth retained** because
+    no 404 is in the spec and 400 representative slots are reserved
+    for stories where payload validation is the operation's *uniquely
+    distinguishing* failure mode; consistent with the postgres/*
+    kickoff at API-0272 and the API-0273 follow-up.
+  - **Fixture token base** `postgres-cov-deploy-0274` is verified
+    non-colliding with API-0272's `postgres-cov-changeStatus-0272`
+    and API-0273's `postgres-cov-create-0273` literals under the
+    `<tag>-cov-<slug>-<storyID>` rule.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (added API-0274 case +
+    comment block)
+  - `ralph/prd.json` (set `passes: true` for API-0274)
+  - `ralph/progress.txt` (this entry)
+- Verification run from repo root:
+  - `gofmt -l .` — clean
+  - `go mod tidy` — clean
+  - `go vet ./...` — pass
+  - `go test ./...` — pass (cli 1.351s)
+  - `go test -race ./...` — pass (cli 3.168s)
+  - Targeted: `go test ./internal/cli -run 'TestAPICoverage' -v`
+    — all five API-0274/postgres-deploy subtests PASS (Registry,
+    Schema, Manifest, SuccessRoundTrip, RepresentativeFailure).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — not installed locally, deferred per
+    Codebase-Patterns guidance.
+- Remaining risks or follow-ups: none — coverage matches the
+  established `*-deploy` peer pattern. Next priority-4 backlog case
+  is API-0275 `postgres-move` (continues the `postgres-cov-*` per-tag
+  fixture-isolation namespace; spec must be re-verified before
+  assuming any field shape).
+- **Learnings for future iterations:**
+  - The mariadb-deploy / mysql-deploy peer-template is the canonical
+    reference for any priority-4 `*-deploy` POST: a single REQUIRED
+    `<tag>Id` string scalar, body REQUIRED, responses
+    200/400/401/403/500 (no 404), 200 body `{}`. Copy-paste the
+    comment-block scaffold from API-0162 `mariadb-deploy` rather
+    than re-deriving from the OpenAPI source per case — only the
+    tag-specific id-field name (`postgresId` → `redisId` →
+    `mongoId` → ...) and the `postgres-cov-…` fixture token base
+    change.
+  - Dokploy's `*-create` operations (5 required scalars) and
+    `*-deploy` operations (1 required scalar `<tag>Id`) are
+    structurally fixed across every database tag (mariadb, mysql,
+    mongo, postgres, redis…), so the per-tag arc can be planned in
+    advance: kickoff `*-changeStatus` → `*-create` → `*-deploy` →
+    `*-move` → `*-one` → `*-rebuild` → `*-reload` → `*-remove` →
+    `*-saveEnvironment` → `*-saveExternalPort` → `*-search` →
+    `*-start` → `*-stop` → `*-update`. Each is a single
+    `apiCoverageCase` insertion under the existing harness — no new
+    test scaffolding required.
+---
