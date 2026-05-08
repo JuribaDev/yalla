@@ -16321,6 +16321,151 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0203",
+		OperationID: "mysql-saveExternalPort",
+		Method:      http.MethodPost,
+		Path:        "/mysql.saveExternalPort",
+		Tag:         "mysql",
+		// Tenth entry on the mysql/* coverage roster, immediately
+		// following API-0202 `mysql-saveEnvironment` and completing
+		// the forward reference embedded in that entry's comment block
+		// ("The next case in the PRD-ordered priority-4 backlog is
+		// API-0203 `mysql-saveExternalPort`"). Continues inside the
+		// `mysql-cov-*` per-tag fixture-isolation namespace opened by
+		// API-0194 `mysql-changeStatus` and **must not** back-reference
+		// any closed prior-tag namespace (`mariadb-cov-*`, `mongo-cov-*`,
+		// `set-cov-*`, `srv-cov-*`, `proj-cov-*`, `org-cov-*`,
+		// `compose-cov-*`, `app-cov-*`, `ai-cov-*`, `admin-cov-*`,
+		// `backup-cov-*`, `bb-cov-*`, `cert-cov-*`, `clu-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `docker-cov-*`,
+		// `domain-cov-*`, `environment-cov-*`, `gitea-cov-*`,
+		// `mounts-cov-*`, `swarm-cov-*`, `usr-cov-*`, etc.) per the
+		// per-tag isolation rule reasserted at API-0335..API-0444 and
+		// originally established at API-0246 `organization-active`.
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json` > `/mysql.saveExternalPort` >
+		// `post`: method POST, tag mysql, **no parameters**,
+		// requestBody REQUIRED with `application/json` and **two
+		// REQUIRED top-level fields** — `mysqlId` (plain string) and
+		// `externalPort` (`anyOf:[number,null]`, i.e. nullable number).
+		// Responses 200/400/401/403/500. The 200 response is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort. **No 404** is declared on
+		// this operation, mirroring the action-on-known-id POST
+		// precedent reasserted across the mariadb/mongo/postgres/redis/
+		// mysql `*-saveExternalPort` family (API-0169
+		// `mariadb-saveExternalPort` and API-0183
+		// `mongo-saveExternalPort`) and across every body-bearing
+		// imperative-action mysql POST already covered (API-0194
+		// `mysql-changeStatus`, API-0196 `mysql-deploy`, API-0197
+		// `mysql-move`, API-0199 `mysql-rebuild`, API-0200
+		// `mysql-reload`, API-0201 `mysql-remove`, API-0202
+		// `mysql-saveEnvironment`) whose missing-target failure mode
+		// collapses into 400/validation under Dokploy's tRPC convention
+		// rather than a dedicated 404 leg. The 404 override therefore
+		// reverts to inapplicable here — its sole activation site for
+		// the mysql/* roster remains API-0198 `mysql-one`, the
+		// canonical by-id GET peer.
+		//
+		// **Request body schema (REQUIRED top-level fields):**
+		//   - REQUIRED `mysqlId` (string) — resource id scalar; the
+		//     fixture below supplies a deterministic-but-clearly-fake
+		//     `mysql-cov-save-external-port-0203-mysqlId` literal
+		//     carrying the `<tag>-cov-<slug>-<storyID>-<field>` suffix
+		//     for `git grep` traceability. Slug `save-external-port`
+		//     follows the kebab-case style established at API-0169
+		//     `mariadb-cov-save-external-port-0169` for the same
+		//     `*-saveExternalPort` family.
+		//   - REQUIRED `externalPort` (`anyOf:[number,null]`) — TCP
+		//     port scalar; the fixture supplies a non-null integer
+		//     literal `25203` so the success leg exercises the
+		//     populated branch of the `anyOf` rather than relying on
+		//     `null`. The value is a valid TCP port (1..65535) with
+		//     the storyID `0203` embedded in the low digits, mirroring
+		//     the API-0169 `mariadb-saveExternalPort` precedent which
+		//     established the integer-with-embedded-storyID convention
+		//     for `anyOf:[number,null]` slots across the
+		//     `*-saveExternalPort` family on other tags
+		//     (mongo/postgres/redis/mysql/etc.). A pure string-suffix
+		//     token is not applicable here because the slot's
+		//     populated branch is `type: number`, not `type: string`.
+		//
+		// **Shape positioning — two-required-scalar POST external-
+		// port-save mutation, body REQUIRED.** The first REQUIRED slot
+		// is a plain non-nullable `type: string` (no `anyOf` /
+		// `nullable` / enum constraints), structurally identical to
+		// the `mysqlId` slot on API-0194 `mysql-changeStatus`, API-0196
+		// `mysql-deploy`, API-0197 `mysql-move`, API-0199
+		// `mysql-rebuild`, API-0200 `mysql-reload`, API-0201
+		// `mysql-remove`, and API-0202 `mysql-saveEnvironment`. The
+		// second REQUIRED slot is `anyOf:[number,null]`, structurally
+		// identical to the `externalPort` slot on API-0169
+		// `mariadb-saveExternalPort` (the cross-tag shape ancestor)
+		// and API-0183 `mongo-saveExternalPort`. The harness's
+		// `len(tc.SampleBody) > 0` gate at `runAPICoverageSuccess`
+		// activates the JSON content-type and byte-for-byte body
+		// comparison legs; this fixture supplies both REQUIRED fields
+		// so the success path verifies the CLI propagated the body
+		// verbatim, including the unquoted JSON number `25203` (the
+		// raw-API path is type-agnostic at the CLI level — the body
+		// is forwarded as opaque bytes).
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so the
+		// 404→CodeNotFound override is structurally inapplicable and
+		// remains pinned to API-0198 `mysql-one` for the mysql/*
+		// roster. 400 (validation) is omitted from the response-code
+		// override map by design at the harness level — payload
+		// validation is not the uniquely-distinguishing failure mode
+		// for an authenticated mutation, so the harness-default
+		// 401→CodeAuth failure leg remains the most representative
+		// single failure mode every authenticated Dokploy operation
+		// must re-prove, and is consistent with the 401→CodeAuth
+		// choice locked in by the mysql/* kickoff at API-0194
+		// `mysql-changeStatus` and continued at API-0195 `mysql-create`,
+		// API-0196 `mysql-deploy`, API-0197 `mysql-move`, API-0199
+		// `mysql-rebuild`, API-0200 `mysql-reload`, API-0201
+		// `mysql-remove`, and API-0202 `mysql-saveEnvironment`.
+		//
+		// **Fixture token base** `mysql-cov-save-external-port-0203`
+		// follows the established `<tag>-cov-<slug>-<storyID>`
+		// deterministic-but-clearly-fake naming convention and is
+		// verified non-colliding with API-0194's
+		// `mysql-cov-changeStatus-0194`, API-0195's
+		// `mysql-cov-create-0195`, API-0196's
+		// `mysql-cov-deploy-0196-mysqlId`, API-0197's
+		// `mysql-cov-move-0197-mysqlId` /
+		// `mysql-cov-move-0197-targetEnvironmentId`, API-0198's
+		// `mysql-cov-one-0198-mysqlId-fixture`, API-0199's
+		// `mysql-cov-rebuild-0199-mysqlId`, API-0200's
+		// `mysql-cov-reload-0200-mysqlId` /
+		// `mysql-cov-reload-0200-appName`, API-0201's
+		// `mysql-cov-remove-0201-mysqlId`, and API-0202's
+		// `mysql-cov-save-environment-0202-mysqlId` /
+		// `mysql-cov-save-environment-0202-env` literals.
+		//
+		// The next case in the PRD-ordered priority-4 backlog is
+		// API-0204 `mysql-search` (declared a **GET** per the spec
+		// preview — the first GET on the mysql/* roster since
+		// API-0198 `mysql-one`; the next contributor must re-verify
+		// the spec against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will continue inside the `mysql-cov-*` per-tag
+		// fixture-isolation namespace opened by API-0194).
+		SampleBody: json.RawMessage(`{
+			"mysqlId": "mysql-cov-save-external-port-0203-mysqlId",
+			"externalPort": 25203
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,

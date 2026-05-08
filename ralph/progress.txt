@@ -20992,3 +20992,109 @@ forward-reference lesson before assuming any field shape.
     name the next backlog story (API-0203 `mysql-saveExternalPort`
     here).
 ---
+## 2026-05-08 22:12:34 UTC - API-0203
+- Story: Cover `mysql-saveExternalPort` (POST /mysql.saveExternalPort)
+  through the API coverage harness in `internal/cli/api_coverage_test.go`.
+  Operation already lives in the embedded OpenAPI spec at
+  `/mysql.saveExternalPort` > `post` (no parameters; requestBody REQUIRED
+  with two REQUIRED top-level fields `mysqlId: string` and
+  `externalPort: anyOf[number,null]`; responses 200/400/401/403/500;
+  empty-object 200 body); only the per-tag harness fixture entry was
+  missing. Forward reference at the tail of the API-0202
+  `mysql-saveEnvironment` entry already named API-0203 verbatim, which
+  pinned the insertion point unambiguously.
+- Implementation followed the API-0169 `mariadb-saveExternalPort` and
+  API-0183 `mongo-saveExternalPort` precedents (the cross-tag shape
+  ancestors for the `*-saveExternalPort` family with
+  `anyOf:[number,null]`), reusing the integer-with-embedded-storyID
+  convention for the `externalPort` slot (literal `25203`, a valid TCP
+  port with the storyID embedded in the low digits) and populating the
+  non-null branch of the `anyOf` so the success leg exercises the
+  realistic wire shape rather than `null`. SuccessResponse is `{}` per
+  spec. Defaults take SuccessStatus=200, FailureStatus=401, and
+  FailureCode=yerr.CodeAuth — the harness defaults locked in by API-0001
+  and reaffirmed across the entire mysql/* roster (API-0194..API-0202).
+- Files changed:
+  - internal/cli/api_coverage_test.go — appended one apiCoverageCase
+    literal (~150 lines including the comment block) registering the
+    `mysql-saveExternalPort` operation. SampleBody supplies both
+    REQUIRED scalars with deterministic-but-clearly-fake literals
+    `mysql-cov-save-external-port-0203-mysqlId` (string) and
+    `25203` (unquoted JSON number, exercising the populated branch
+    of the `anyOf:[number,null]` slot). Comment block re-verifies the
+    spec, names every prior mysql/* sibling fixture token to prove
+    non-collision, names every prior closed per-tag namespace to
+    prove non-back-reference, and forward-references the next backlog
+    story API-0204 `mysql-search` (a GET — the first GET on the
+    mysql/* roster since API-0198 `mysql-one`).
+  - ralph/prd.json — flipped API-0203.passes to true (counts now
+    462 / 325 pass / 137 fail).
+- Verification run from repo root:
+  - gofmt -w . — no diff (fixture matches existing tab/indent rules).
+  - go mod tidy — clean (no dependency churn; this story is
+    test-only).
+  - go vet ./... — clean.
+  - go test ./... — all packages PASS (internal/cli 1.210s).
+  - go test -race ./... — all packages PASS (internal/cli 3.078s
+    under -race).
+  - go test -run 'TestAPICoverage_(RegistryInvariants|SchemaCommandWorks|ManifestListsOperation|SuccessRoundTrip|RepresentativeFailure)/API-0203' -v ./internal/cli/ — five subtests all PASS:
+      * TestAPICoverage_RegistryInvariants/API-0203/mysql-saveExternalPort
+      * TestAPICoverage_SchemaCommandWorks/API-0203/mysql-saveExternalPort
+      * TestAPICoverage_ManifestListsOperation/API-0203/mysql-saveExternalPort
+      * TestAPICoverage_SuccessRoundTrip/API-0203/mysql-saveExternalPort
+      * TestAPICoverage_RepresentativeFailure/API-0203/mysql-saveExternalPort
+  - goimports / golangci-lint / staticcheck / govulncheck /
+    goreleaser — not invoked (test-only fixture append; no
+    runtime/build surface change). Pre-existing per Codebase Patterns
+    note: tools not installed locally.
+- Results: All eight acceptance criteria satisfied — registry
+  presence, raw `yalla api call mysql-saveExternalPort --input
+  request.json --json`, `yalla schema get mysql-saveExternalPort
+  --json`, `--no-input` no-prompt contract, `yalla.output.v1`
+  success envelope, `yalla.error.v1` failure envelope with stable
+  `E_AUTH` code and exit code 4 (CodeAuth.ExitCode), httptest
+  success + 401 failure legs, and manifest listing — all proven by
+  the harness loop in `internal/cli/api_coverage_test.go`.
+- Remaining risks / follow-ups: none for API-0203 itself. The next
+  PRD-ordered priority-4 story is API-0204 `mysql-search` — a GET
+  per the spec preview (the first GET on the mysql/* roster since
+  API-0198 `mysql-one`); the forward-reference comment at the bottom
+  of the API-0203 entry already cites it. The next contributor must
+  re-verify the spec against `internal/api/data/openapi.json` before
+  assuming any field shape (the API-0345..API-0444 forward-reference
+  lesson). The fixture-isolation namespace `mysql-cov-*` opened at
+  API-0194 stays open through API-0207 `mysql-update` (the final
+  mysql/* priority-4 story).
+- **Learnings for future iterations:**
+  - The `*-saveExternalPort` family across the Dokploy database tags
+    (mariadb / mongo / mysql / postgres / redis) shares the same
+    canonical `(<tag>Id: string, externalPort: anyOf[number,null])`
+    two-required-scalar wire shape with empty-object 200 response
+    and 200/400/401/403/500 response set (no 404). The cross-tag
+    shape ancestor inside the covered roster is API-0169
+    `mariadb-saveExternalPort`; the most recent same-shape
+    precedent is API-0183 `mongo-saveExternalPort`. New
+    `*-saveExternalPort` entries should model their fixture and
+    rationale block on API-0169 (and on API-0183 for any
+    cross-database peculiarities).
+  - For an `anyOf:[number,null]` REQUIRED slot, the convention
+    established at API-0169 is to populate the non-null branch with
+    a valid TCP port (1..65535) that embeds the storyID in the low
+    digits (e.g. `25169` for API-0169, `25203` for API-0203). This
+    keeps the success-leg `len(tc.SampleBody) > 0` gate active and
+    exercises the more realistic wire shape; the `null` branch is
+    exercised structurally by the schema test, not the round-trip
+    test. A pure string-suffix token like
+    `mysql-cov-save-external-port-0203-externalPort` is NOT
+    applicable because the populated branch is `type: number`, not
+    `type: string`.
+  - The forward-reference comment at the END of the immediately
+    prior entry remains the authoritative pointer to the next
+    story — API-0202's tail block named API-0203 verbatim, which
+    made the insertion location unambiguous. Always preserve and
+    update this forward pointer; the new entry's tail must in turn
+    name the next backlog story (API-0204 `mysql-search` here, a
+    GET — the first GET on the mysql/* roster since API-0198
+    `mysql-one`).
+---
+
