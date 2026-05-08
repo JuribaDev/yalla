@@ -5544,6 +5544,113 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0353",
+		OperationID: "settings-cleanAll",
+		Method:      http.MethodPost,
+		Path:        "/settings.cleanAll",
+		Tag:         "settings",
+		// Third entry on the settings/* coverage roster, inheriting
+		// the `set-cov-*` per-tag fixture-isolation namespace
+		// established by API-0351 `settings-assignDomainServer`
+		// (must not back-reference the closed `srv-cov-*`,
+		// `proj-cov-*`, `org-cov-*`, `compose-cov-*`, `app-cov-*`,
+		// `ai-cov-*`, or any other prior tag's namespace, per the
+		// per-tag isolation rule reasserted at API-0335..API-0352
+		// and originally established at API-0246
+		// `organization-active`).
+		//
+		// **Spec re-verified per the API-0345..API-0352
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /settings.cleanAll
+		// > post`: a single **OPTIONAL** `requestBody`
+		// (`requestBody.required = false`) carrying a JSON object
+		// with one optional string property `serverId` and no
+		// `required` array; **zero parameters** (no query, no
+		// path, no header). Responses 200/400/401/403/500 — note
+		// the **absence of 404**, mirroring the API-0351 opener's
+		// response set rather than API-0352's by-id-flavoured
+		// 404-bearing response set. The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer.
+		//
+		// **Forward-reference correction.** API-0352's comment
+		// correctly predicted this entry's POST-with-optional-body
+		// shape (the prediction is the canonical form: an optional
+		// body carrying an optional `serverId` field, vs API-0352's
+		// optional query parameter of the same name). The forward
+		// reference held this time, but per the
+		// API-0345/0347/0348/0349/0350 lesson the spec was still
+		// re-verified against the embedded openapi.json before the
+		// fixture was authored. Future settings/* peers (API-0354
+		// `settings-cleanAllDeploymentQueue`, API-0355
+		// `settings-cleanDockerBuilder`, etc.) should grep this
+		// entry first when encountering an optional-body POST and
+		// must always re-verify the spec — the optional/required
+		// distinction is per-operation and the wire payload is
+		// shaped by the body schema, not by the inheritance chain.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `set-cov-cleanAll-0353` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared
+		//     across every per-tag roster and is unique (verified:
+		//     no collisions with API-0351
+		//     `set-cov-assignDomainServer-0351` or API-0352
+		//     `set-cov-checkGPUStatus-0352` slugs, and orthogonal
+		//     to every prior tag's `srv-cov-*`, `proj-cov-*`,
+		//     `org-cov-*`, `compose-cov-*`, `app-cov-*`,
+		//     `ai-cov-*`, etc. namespaces).
+		//   * `serverId` carries the fixture-shaped literal
+		//     `set-cov-cleanAll-0353` rather than a real UUID so
+		//     the wire payload cannot be mistaken for a real
+		//     production server identifier. Even though the body
+		//     and the `serverId` field are both optional in the
+		//     spec, populating both exercises the JSON
+		//     serialiser's optional-body branch on the wire and
+		//     keeps the success-leg `Content-Type: application/json`
+		//     header assertion meaningful — leaving the body unset
+		//     would degrade this case to the parameter-free POST
+		//     cohort (which has no Content-Type assertion) and
+		//     lose the body-forwarding round-trip assertion that
+		//     distinguishes this shape from API-0352's
+		//     query-parameter shape.
+		//
+		// **Failure-leg fields are intentionally omitted.** The
+		// spec does not declare 404 on this operation (the
+		// `cleanAll` verb is a fleet-wide, optional-server-scoped
+		// operation, not a by-id resource lookup), so the per-tag
+		// opener convention reasserted at API-0335..API-0352 that
+		// reserves 404 → CodeNotFound for canonical `*-one` peers
+		// does not even apply here. Auth is the universal failure
+		// mode every Dokploy operation must re-prove, so 401 →
+		// CodeAuth via the harness default
+		// (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""`
+		// → CodeAuth) stays the most informative representative.
+		// 400 → CodeInvalidInput stays reserved for stories where
+		// payload validation is the operation's distinguishing
+		// failure mode; this entry uses the canonical 401.
+		//
+		// The next case in the settings/* roster, API-0354
+		// `settings-cleanAllDeploymentQueue`, is also a POST per
+		// the verb's `clean*` family pattern. Future contributors
+		// authoring API-0354 should grep this entry first for the
+		// `set-cov-*` namespace inheritance pattern, then
+		// re-verify the spec against
+		// `internal/api/data/openapi.json >
+		// /settings.cleanAllDeploymentQueue > post` per the
+		// forward-reference lesson — do **not** assume the body
+		// shape mirrors this entry's `{serverId}` schema.
+		SampleBody: json.RawMessage(`{
+			"serverId": "set-cov-cleanAll-0353"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

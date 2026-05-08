@@ -7952,3 +7952,89 @@
     `awk 'NR>=L1 && NR<=L2' FILE | od -c` to confirm raw bytes
     before authoring the Edit `old_string`.
 ---
+
+## 2026-05-08 - API-0353 — Cover settings-cleanAll (POST /settings.cleanAll)
+- **Implemented**: Added the canonical `apiCoverageCase` entry for
+  `settings-cleanAll` (POST /settings.cleanAll, tag `settings`) to
+  `internal/cli/api_coverage_test.go`. This is the **third** settings/*
+  story; it inherits the `set-cov-*` per-tag fixture-isolation namespace
+  established at API-0351 `settings-assignDomainServer` (must not
+  back-reference the closed `srv-cov-*`, `proj-cov-*`, `org-cov-*`,
+  `compose-cov-*`, `app-cov-*`, `ai-cov-*`, etc. namespaces). The shared
+  harness (`TestAPICoverage_RegistryInvariants`, `_SchemaCommandWorks`,
+  `_ManifestListsOperation`, `_SuccessRoundTrip`,
+  `_RepresentativeFailure`) drives registry, schema, manifest, success,
+  and 401 → CodeAuth failure assertions for this operation
+  automatically; all five subtests pass for `API-0353`.
+- Spec re-verified against
+  `internal/api/data/openapi.json > /settings.cleanAll > post` per the
+  API-0345..API-0352 forward-reference lesson:
+  * `requestBody.required = false` carrying a JSON object with a single
+    optional string property `serverId` and **no** `required` array.
+  * Zero parameters (no query, no path, no header).
+  * Responses 200/400/401/403/500 — note the **absence of 404**,
+    mirroring the API-0351 opener's response set rather than API-0352's
+    by-id-flavoured 404-bearing response set.
+  * 200 schema is `{}` with `additionalProperties: false`, matching
+    every prior covered peer.
+- Forward-reference correction: API-0352's comment correctly predicted
+  this entry's POST-with-optional-body shape (the optional-body /
+  optional-`serverId` schema vs. API-0352's optional-query-`serverId`
+  schema); the prediction held this time, but the spec was still
+  re-verified against the embedded openapi.json before the fixture was
+  authored. The harness's wire assertions confirm body forwarding,
+  Content-Type, and method/path round-trip.
+- Fixture choices:
+  * Per-case fixture token base `set-cov-cleanAll-0353` follows the
+    `<tag>-cov-<slug>-<storyID>` convention shared across every per-tag
+    roster; verified unique vs. API-0351 `set-cov-assignDomainServer-0351`
+    and API-0352 `set-cov-checkGPUStatus-0352`.
+  * `serverId` body field carries the deterministic-but-clearly-fake
+    literal `set-cov-cleanAll-0353` rather than a real UUID. Even
+    though both the body and the field are optional, populating both
+    keeps the wire round-trip distinguishable from the
+    parameter-free POST cohort and exercises the JSON serialiser's
+    optional-body branch on the wire.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended the API-0353 case
+    to `coveredAPIOperations`.
+  - `ralph/prd.json` — set `passes: true` for API-0353.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean (no dep changes).
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages `ok`.
+  - `go test -race ./...` — all packages `ok`.
+- **Tools NOT available locally** (unchanged from earlier stories):
+  `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+  `goreleaser`.
+- **Remaining risks / follow-ups**:
+  - The next case in the settings/* roster, API-0354
+    `settings-cleanAllDeploymentQueue`, is also a POST per the verb's
+    `clean*` family pattern. Authors must not assume the body shape
+    mirrors this entry's `{serverId}` schema — re-verify the spec
+    against
+    `internal/api/data/openapi.json > /settings.cleanAllDeploymentQueue > post`
+    per the forward-reference lesson.
+- **Learnings for future iterations**:
+  - When a POST declares `requestBody.required = false`, the canonical
+    fixture choice is to populate the body anyway. Leaving the body
+    unset would degrade the case to the parameter-free POST cohort
+    (no Content-Type assertion) and lose the body-forwarding round
+    trip that distinguishes this shape from query-only or path-only
+    siblings. Populating the body keeps the harness's success-leg
+    `Content-Type: application/json` and JSON-equality body
+    assertions meaningful.
+  - The fixture-token convention `<tag>-cov-<slug>-<storyID>` is
+    collision-safe across tags because the tag prefix is mandatory;
+    verify against neighbouring tag rosters (no `srv-cov-*`,
+    `proj-cov-*`, `org-cov-*`, `compose-cov-*`, `app-cov-*`,
+    `ai-cov-*` reuse) when adding the first few entries of a new tag,
+    then trust the prefix for subsequent peers in the same tag.
+  - Optional-body POSTs whose response set lacks 404 are common in
+    fleet-wide / scope-by-optional-id verbs (`cleanAll`,
+    `cleanAllDeploymentQueue`, `cleanDockerBuilder`, …). The per-tag
+    opener convention that reserves 404 → CodeNotFound for `*-one`
+    by-id peers does not even apply — falling through to the harness
+    default 401 → CodeAuth is the right call.
+---
