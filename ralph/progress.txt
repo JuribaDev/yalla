@@ -15226,3 +15226,47 @@ Learnings for future iterations:
     reserved for delete-by-id POST mutations where 404 is the
     headline failure mode.
 ---
+
+## 2026-05-08 - API-0122
+- **Implemented**: Coverage for `domain-update` (POST `/domain.update`).
+  Added a new entry to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go` between API-0121 and API-0246,
+  exercising the success leg (200 with `{}` body) and the harness-default
+  401→CodeAuth representative failure through the `runAPICoverageSuccess`
+  / `runAPICoverageRepresentativeFailure` table runner.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended the API-0122 case.
+  - `ralph/prd.json` — set API-0122 `passes: true`.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass.
+  - `go test -race ./...` — all packages pass.
+- **Tools NOT available locally**: `goimports`, `golangci-lint`,
+  `staticcheck`, `govulncheck`, `goreleaser` (unchanged from US-0001).
+- **Remaining risks / follow-ups**:
+  - Optional fields (`path`, `port`, `https`, `certificateType`,
+    `customCertResolver`, `serviceName`, `domainType`, `internalPath`,
+    `stripPath`) on `domain-update` are intentionally not covered by
+    this minimal positive case; future contributors can layer
+    optional-field coverage in a follow-up story.
+- **Learnings for future iterations**:
+  - `domain-update` is the first **two-required-field** POST mutation in
+    the domain/* roster: `host` AND `domainId` are both required. The
+    closed `{single-required-scalar}` body shape established by
+    API-0119 `domain-delete` does NOT apply here — agents must always
+    re-verify the spec field-by-field rather than assuming the prior
+    sibling's body shape carries over.
+  - The 200 schema is `{}` with `additionalProperties: false`, so the
+    `SuccessResponse: ` + ` empty-object literal continues to match the
+    domain/* tag's empty-success cohort (API-0115/0116/0117/0118/0119/
+    0120/0121 all share this shape). When a future domain/* operation
+    declares a non-empty 200 schema, the `SuccessResponse` fixture must
+    be expanded; the current pattern is shape-faithful, not a default.
+  - The spec omits 404 from the response set (Dokploy's tRPC convention
+    collapses missing-target into 400/validation on
+    `<tag>-update`/`<tag>-delete`/`<tag>-create` mutations), so the
+    404→CodeNotFound override stays unavailable; the harness-default
+    401→CodeAuth representative failure is the right call.
+---
