@@ -7158,3 +7158,116 @@
     prior parameter-free entry and remains true here. The
     parameterised tests pick up the new case automatically.
 ---
+
+## 2026-05-08 - API-0344
+- What was implemented: Coverage for `server-remove` (POST
+  /server.remove, tag `server`, zero parameters, required
+  application/json body whose schema declares a single REQUIRED
+  scalar `serverId` (string)). Added a single `apiCoverageCase`
+  struct literal to `internal/cli/api_coverage_test.go`
+  immediately after API-0343 `server-publicIp` (slice stays
+  sorted by StoryID). The five parameterised tests
+  (`TestAPICoverage_RegistryInvariants`,
+  `TestAPICoverage_SchemaCommandWorks`,
+  `TestAPICoverage_ManifestListsOperation`,
+  `TestAPICoverage_SuccessRoundTrip`,
+  `TestAPICoverage_RepresentativeFailure`) extend automatically.
+  This is the **second body-mutation peer** in the server/* tag
+  (after API-0338 `server-create`) and the **smallest possible
+  body** in the entire server/* roster — a single required
+  string scalar, no nullables/enums/nested shapes. Re-introduces
+  the body-mutation arc after the parameter-free GET re-anchor
+  at API-0343; the API-0343 forward-reference comment named the
+  `srv-cov-remove-0344` slug explicitly.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (one struct literal,
+    ~110 lines including design rationale and forward references
+    to API-0345/0346/0347/0348)
+  - `ralph/prd.json` (API-0344 `passes` → true)
+- Verification run:
+  * `gofmt -w .` → clean
+  * `goimports` → not installed (consistent with prior iterations)
+  * `go mod tidy` → no changes
+  * `go vet ./...` → exit 0
+  * `go test ./...` → all 9 packages PASS
+  * `go test -race ./...` → all 9 packages PASS
+  * `go test ./internal/cli -run TestAPICoverage -count=1` → PASS
+    (every parameterised subtest including
+    `TestAPICoverage_SuccessRoundTrip/API-0344/server-remove`
+    and `TestAPICoverage_RepresentativeFailure/API-0344/server-remove`)
+  * `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser` →
+    not installed (documented in prior progress entries; no
+    change this iteration)
+- Results: 118/462 PRD stories now passing; CI-equivalent local
+  checks all green.
+- Remaining risks or follow-ups: None specific to this story.
+  The next case in the server/* roster, API-0345
+  `server-security`, returns to the parameter-free GET shape (a
+  sixth member of that sub-cohort, after API-0335..API-0337,
+  API-0341, and API-0343) and should mirror API-0343 verbatim
+  — pure copy-and-rename, only StoryID / OperationID / Path
+  change. Subsequent server/* mutation peers (API-0346
+  `server-setup`, API-0347 `server-setupMonitoring`, API-0348
+  `server-update`) should grep this entry first for the minimal
+  body-mutation shape; the API-0344 entry's forward-reference
+  comment names them all explicitly.
+- **Learnings for future iterations:**
+  - **Minimal-body POST is the smallest mutation shape Dokploy
+    declares.** API-0338 `server-create` carried seven required
+    fields including a nullable `description` and an
+    enum-constrained `serverType`; API-0344 `server-remove`
+    carries exactly one — a required `serverId` string scalar.
+    This makes API-0344 the canonical reference for future
+    "single-id POST removal" mutations across other tags
+    (`*-remove`, `*-delete`, `*-archive` style endpoints), which
+    is a recurring Dokploy idiom. Future contributors picking
+    up a `*-remove` peer in any tag should grep this entry first
+    before deriving the SampleBody shape, and should keep the
+    SampleBody to the documented required field set rather than
+    speculatively adding optional metadata.
+  - **No-404-declared body mutations keep the harness default
+    even when semantically by-id.** `server-remove` semantically
+    operates on a serverId and could plausibly 404 on a missing
+    record at runtime, but the embedded spec does not enumerate
+    404 in its response set (200/400/401/403/500 only). The
+    "exercise the documented contract, not a speculative future
+    tightening" rule (reasserted at API-0337 `server-count`,
+    API-0341 `server-getServerTime`, and API-0343
+    `server-publicIp` for response *payload* shapes) applies
+    equally to *failure* leg shapes: the API-0342 `server-one`
+    404 → CodeNotFound override is reserved for endpoints that
+    actually declare 404 in their spec, and pre-emptively
+    overriding here would diverge from the embedded contract.
+    Future `*-remove` peers should grep this paragraph before
+    copying API-0342's failure-leg lines.
+  - **Cross-shape diff-friendliness via shared slug roots.**
+    The server/* roster now spans five shape families
+    (parameter-free GET, single-required-query GET,
+    multi-required-query GET, by-id GET with 404 override, and
+    body mutation in two body-size variants). All ten cases
+    share the `srv-cov-*` slug root with a per-case suffix
+    encoding the operation slug + StoryID
+    (`srv-cov-create-0338`, `srv-cov-getServerMetrics-0340`,
+    `srv-cov-one-0342`, `srv-cov-remove-0344`, etc.). This makes
+    a `git grep srv-cov-` instantly reveal the entire server/*
+    fixture inventory and any accidental cross-tag leaks.
+    Future tags should preserve this convention.
+  - **Forward-reference chain remains the navigation backbone.**
+    API-0343 named API-0344 as the "next body-mutation
+    re-introduction"; this entry now names API-0345 as the next
+    parameter-free GET re-anchor and API-0346/0347/0348 as the
+    upcoming server/* mutation peers. The chain continues to
+    make per-case design decisions a single `git grep "API-XXXX"`
+    rather than a re-derivation. Future iterations should
+    preserve this pattern — each new case should both
+    back-reference its predecessor's design rationale and
+    forward-reference at least one upcoming peer.
+  - **Adding a body-mutation coverage entry remains a pure-data
+    change** when the shape is documented in the embedded
+    OpenAPI spec — no production code, registry, schema, or
+    manifest edits are needed because the embedded OpenAPI
+    document already advertises the operation. The harness's
+    `runAPICoverageSuccess` reads `tc.SampleBody` and asserts
+    the wire-level body forwarding through the typed JSON
+    decoder; no per-case runner logic is needed.
+---
