@@ -7446,6 +7446,111 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0130",
+		OperationID: "environment-update",
+		Method:      http.MethodPost,
+		Path:        "/environment.update",
+		Tag:         "environment",
+		// Seventh and final priority-3 entry in the environment/* roster,
+		// immediately following API-0124 `environment-byProjectId`,
+		// API-0125 `environment-create`, API-0126
+		// `environment-duplicate`, API-0127 `environment-one`, API-0128
+		// `environment-remove`, and API-0129 `environment-search`. The
+		// API-0129 comment block's closing claim that "all six
+		// environment/* operations are now covered" overlooked this
+		// PRD-ordered seventh peer; the priority-3 environment/* roster
+		// actually closes here at API-0130 (seven entries:
+		// `*-byProjectId`, `*-create`, `*-duplicate`, `*-one`, `*-remove`,
+		// `*-search`, `*-update`). Continues inside the
+		// `environment-cov-*` per-tag fixture-isolation namespace opened
+		// by API-0124 and **must not** back-reference any closed
+		// `admin-cov-*`, `ai-cov-*`, `app-cov-*`, `backup-cov-*`,
+		// `bb-cov-*`, `cert-cov-*`, `clu-cov-*`, `compose-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `docker-cov-*`,
+		// `domain-cov-*`, `org-cov-*`, `proj-cov-*`, `set-cov-*`, or
+		// `srv-cov-*` namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0441
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /environment.update > post`:
+		// a **POST** with **no parameters** and a **REQUIRED request
+		// body** whose schema is the closed-shape
+		// single-required-string `{environmentId}` plus four OPTIONAL
+		// string fields (`name`, `description`, `projectId`, `env`).
+		// Responses 200/400/401/403/500 — note the spec does **not**
+		// declare 404 on this operation, matching the precedent on
+		// every prior environment/* mutation (API-0125 `*-create`,
+		// API-0126 `*-duplicate`, API-0128 `*-remove`) and on the
+		// cross-tag update-by-id mutation API-0122 `domain-update`
+		// (Dokploy's tRPC convention collapses missing-target into
+		// 400/validation rather than surfacing a 404 leg). The 200
+		// schema is `{}` with `additionalProperties: false`, matching
+		// every prior covered peer in the empty-success cohort.
+		//
+		// **Shape positioning — single-required-scalar POST mutation
+		// with optional extension fields, body REQUIRED.** Fourth
+		// request-body POST in the environment/* roster (after API-0125
+		// `environment-create`, API-0126 `environment-duplicate`, and
+		// API-0128 `environment-remove`). The closed-shape literal
+		// copies the cross-tag update-by-id mutation precedent set by
+		// API-0122 `domain-update` (the original
+		// single-required-scalar update mutation template) with the
+		// field name swapped from `domainId` → `environmentId`. The
+		// optional `name`, `description`, `projectId`, and `env` fields
+		// are intentionally omitted from the fixture to keep the
+		// minimal positive case shape-faithful, exactly as on API-0118
+		// `domain-create`, API-0122 `domain-update`, API-0125
+		// `environment-create`, and API-0126 `environment-duplicate`;
+		// future contributors adding optional-field coverage should do
+		// so in a follow-up story rather than expanding this minimal
+		// positive case. The harness's `len(tc.SampleBody) > 0` gate at
+		// `runAPICoverageSuccess` activates the JSON content-type and
+		// byte-for-byte body comparison legs; this fixture supplies the
+		// REQUIRED `environmentId` so the success path verifies the CLI
+		// propagated the body verbatim.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (update-by-id
+		// actions collapse missing-target into 400/validation per
+		// Dokploy's tRPC conventions, exactly as documented for
+		// API-0122 `domain-update` and the environment/* mutation peers
+		// API-0125, API-0126, and API-0128), so the 404→CodeNotFound
+		// override is structurally inapplicable here. Per the
+		// established precedent — fleet-wide mutation endpoints surface
+		// `E_AUTH` before any persistence runs when the bearer is
+		// missing/invalid — 401→CodeAuth remains the universal failure
+		// mode every authenticated Dokploy operation must re-prove.
+		// Per the established `<tag>-cov-<slug>-<storyID>`
+		// deterministic-but-clearly-fake naming convention, the fixture
+		// base `environment-cov-update-0130` keeps `git grep`
+		// traceable to this PRD story without colliding with API-0124
+		// (`environment-cov-by-project-id-0124`), API-0125
+		// (`environment-cov-create-0125`), API-0126
+		// (`environment-cov-duplicate-0126`), API-0127
+		// (`environment-cov-one-0127`), API-0128
+		// (`environment-cov-remove-0128`), or API-0129
+		// (`environment-cov-search-0129` /
+		// `environment-cov-search-project-0129`).
+		//
+		// API-0130 closes the priority-3 environment/* roster (all
+		// seven environment/* operations are now covered). The next
+		// pending PRD-ordered priority-3 backlog entry is API-0188
+		// `mounts-allNamedByApplicationId`, which opens a new tag
+		// fixture-isolation namespace `mounts-cov-*`; the next
+		// contributor must re-verify the spec against
+		// `internal/api/data/openapi.json` per the forward-reference
+		// lesson before assuming any field shape.
+		SampleBody: json.RawMessage(`{
+			"environmentId": "environment-cov-update-0130"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,

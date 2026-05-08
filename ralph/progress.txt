@@ -15719,3 +15719,60 @@ Learnings for future iterations:
   - The `apiCoverageCase` harness ignores empty `SampleQuery` / `SamplePathParams` maps and a `len(SampleBody) > 0` gate keeps content-type / body byte-comparison legs inert — so a single GET-with-query case never accidentally activates POST-shaped assertions.
   - PRD `apiOperation.parameters[].required` may diverge from the OpenAPI source on edge cases; always re-verify against `internal/api/data/openapi.json` directly rather than trusting the PRD preview, per the API-0345..API-0441 forward-reference lesson re-affirmed in API-0124..API-0128 inline comments.
 ---
+
+## 2026-05-08 - API-0130 Cover environment-update (POST /environment.update)
+- Added the seventh and final priority-3 environment/* roster entry to the
+  `coveredAPIOperations` table in `internal/cli/api_coverage_test.go`.
+- Reviewed the OpenAPI spec for `/environment.update` directly from
+  `internal/api/data/openapi.json`: POST, no params, request body REQUIRED with
+  one REQUIRED string field `environmentId` plus four OPTIONAL string fields
+  (`name`, `description`, `projectId`, `env`); responses 200/400/401/403/500
+  (no 404).
+- Fixture `environment-cov-update-0130` mirrors the cross-tag update-by-id
+  precedent set by API-0122 `domain-update` (single-required-scalar update
+  mutation, body REQUIRED) with the field swap `domainId` → `environmentId`.
+  Optional fields intentionally omitted to keep the minimal positive case
+  shape-faithful (matching API-0118, API-0122, API-0125, API-0126).
+- 401→CodeAuth failure leg retained per the established harness-default
+  precedent — spec omits 404 so the `*-NotFound` override is structurally
+  inapplicable.
+- The API-0129 comment block's closing claim that "all six environment/*
+  operations are now covered" was incorrect: the priority-3 environment/*
+  roster has SEVEN entries (`*-byProjectId`, `*-create`, `*-duplicate`,
+  `*-one`, `*-remove`, `*-search`, `*-update`). The new API-0130 comment
+  acknowledges the off-by-one and closes the roster correctly.
+- Files changed:
+  - internal/cli/api_coverage_test.go (one new struct literal appended after
+    the API-0129 entry, before API-0246 `organization-active`).
+  - ralph/prd.json (passes flag for API-0130 flipped to true).
+  - ralph/progress.txt (this entry).
+- Verification run:
+  - gofmt -w .
+  - go mod tidy
+  - go vet ./...
+  - go test ./...        → all packages PASS
+  - go test -race ./...  → all packages PASS
+  - goimports / golangci-lint / staticcheck / govulncheck / goreleaser:
+    not installed in this environment; skipped per the documented fallback.
+- Remaining risks / follow-ups:
+  - 219 priority-3+ stories still failing. Next PRD-ordered priority-3 entry
+    is API-0188 `mounts-allNamedByApplicationId`, which opens a fresh
+    `mounts-cov-*` per-tag fixture-isolation namespace.
+  - Optional-field coverage for `environment-update` (`name`, `description`,
+    `projectId`, `env`) remains a candidate for a dedicated follow-up story
+    if optional-extension coverage is later prioritised.
+- **Learnings for future iterations:**
+  - The `environment-update` operation was buried in PRD-numeric order between
+    `environment-search` (API-0129) and the start of the `organization/*`
+    block (API-0246). The API-0129 author closed the tag prematurely. **When
+    closing a per-tag roster, always re-grep `ralph/prd.json` for the full set
+    of `passes:false` entries on that tag — do not trust intra-comment
+    forecasts.**
+  - The append-only `coveredAPIOperations` slice in
+    `internal/cli/api_coverage_test.go` is the *only* surface that needs
+    touching for an API-XXXX story when the operation already lives in
+    `internal/api/data/openapi.json`. The registry is built at runtime from
+    the embedded spec, so no registry/manifest edits are required.
+  - Single-required-scalar update mutations follow the API-0122 `domain-update`
+    template byte-for-byte; only the field name and operation path change.
+---
