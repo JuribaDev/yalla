@@ -1904,3 +1904,59 @@
     so the contributor knows which story to revisit instead of
     decoding which row in a 446-element slice broke.
 ---
+
+## 2026-05-08 - API-0011
+- **Implemented**: Per-operation API coverage for
+  application-cancelDeployment (POST /application.cancelDeployment,
+  tag application). Single-line append to the API-0001 harness — no
+  new test logic, just a new `apiCoverageCase` literal.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended the API-0011 entry
+    to `coveredAPIOperations`, sorted-by-StoryID. SampleBody mirrors
+    the OpenAPI required shape verbatim (`applicationId` string only).
+    SuccessResponse is `{}` because the spec defines the 200 body as
+    an empty object with `additionalProperties: false`; the harness
+    asserts envelope `data.method` / `data.status` rather than any
+    payload projection, so an empty success body is the correct
+    fixture.
+  - `ralph/prd.json` — flipped `API-0011.passes` to `true`.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./internal/cli/ -run TestAPICoverage -count=1` — all
+    five `TestAPICoverage_*/API-0011/application-cancelDeployment`
+    subtests pass.
+  - `go test ./...` — all packages pass.
+  - `go test -race ./...` — clean.
+  - `bash scripts/verify.sh --quiet` — full local gate clean.
+- **Tools NOT available locally** (per project policy, reported by
+  verify.sh, not silently skipped): `goimports`, `govulncheck`,
+  `staticcheck`, `golangci-lint`, `goreleaser`. Same status as every
+  prior iteration.
+- **Remaining risks / follow-ups**:
+  - The default failure leg (401 → CodeAuth) is the right
+    representative path for `application-cancelDeployment`: the spec
+    declares 400/401/403/500 and 401 is the canonical authenticated
+    failure. No FailureStatus / FailureCode override needed.
+  - Body fixture is hand-rolled JSON; the future schema-validator
+    enhancement noted in API-0001's progress entry would have caught
+    a typo automatically, but for a single-string-field schema the
+    risk is negligible.
+- **Learnings for future iterations**:
+  - **The harness scales as designed**: a brand-new API story now
+    costs one struct literal (16 lines including comment) plus a PRD
+    flip. The ~440 remaining API stories follow the exact same diff
+    shape — keep coveredAPIOperations sorted by StoryID and the
+    diffs read as contiguous inserts.
+  - **Empty-object success responses are valid fixtures**: when the
+    OpenAPI 200 body is `{}` with `additionalProperties: false`, set
+    `SuccessResponse: "{}"`. The harness round-trips both sides
+    through json.Marshal before comparing, so an empty body still
+    produces a stable success envelope (`data.status: 200`,
+    `data.method: "POST"`).
+  - **Single-required-field operations need no special handling**:
+    the SampleBody must include the required field with a plausible
+    value; everything else (path-param plumbing, query plumbing) the
+    harness ignores when the corresponding map is empty.
+---
