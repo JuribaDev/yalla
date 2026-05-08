@@ -11481,3 +11481,105 @@ Learnings for future iterations:
     shape, but neither implies `cluster-getNodes`'s read-leg payload
     projection or `cluster-removeWorker`'s POST body shape.
 ---
+
+## 2026-05-08 - API-0387
+- What was implemented:
+  - Added a new entry to `coveredAPIOperations` in
+    `internal/cli/api_coverage_test.go` covering
+    `settings-setupGPU` (POST /settings.setupGPU, tag settings).
+  - Spec re-verified directly against
+    `internal/api/data/openapi.json > /settings.setupGPU > post`:
+    POST, zero parameters, `requestBody.required = true` with inner
+    schema `{type: object, properties: {serverId: string}}` and
+    NO inner `required` array (so `serverId` is OPTIONAL).
+    Responses 200/400/401/403/500 (no 404). 200 schema is `{}`
+    with `additionalProperties: false`.
+  - The forward-reference comment from API-0386 `saveSSHPrivateKey`
+    correctly forecast the inner-required-field axis pivot from
+    REQUIRED (API-0386) to OPTIONAL (this entry) while sharing the
+    outer `requestBody.required = true` axis. API-0387 opens the
+    `setup*` slug-prefix sub-roster within settings/* (the
+    preceding `save*` sub-roster was a single-peer family closed by
+    API-0386).
+  - SampleBody populates `serverId` with the per-case fixture
+    token `set-cov-setupGPU-0387`. Populating the optional axis
+    follows the API-0353 `cleanAll` / API-0385 `reloadTraefik`
+    precedent for settings/* operations whose only inner field is
+    an optional `serverId`; it exercises the JSON serialiser's
+    non-empty body branch and keeps the `Content-Type:
+    application/json` header assertion meaningful, distinguishing
+    the case on the wire from the no-body POST cohort
+    (API-0383/API-0384) and the optional-body POST cohort
+    (API-0385).
+  - SuccessResponse defaulted to `{}` (the spec's 200 schema).
+  - Failure leg defaults to 401 → CodeAuth (canonical settings/*
+    mutating-POST representative; spec declares no 404 on this
+    operation).
+
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (+~150 lines, new entry at
+    end of `coveredAPIOperations`)
+  - `ralph/prd.json` (`passes: false` → `true` for API-0387)
+  - `ralph/progress.txt` (this log entry)
+
+- Verification run (all from repo root):
+  - `gofmt -w .` — clean
+  - `go mod tidy` — clean
+  - `go vet ./...` — clean
+  - `go test ./...` — all packages pass
+  - `go test -race ./...` — all packages pass
+  - Targeted: `go test ./internal/cli -run TestAPICoverage -count=1`
+    confirms all five API-0387 subtests pass
+    (RegistryInvariants, SchemaCommandWorks, ManifestListsOperation,
+    SuccessRoundTrip, RepresentativeFailure).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` not installed locally; documented as missing per
+    project convention.
+
+- Remaining risks / follow-ups:
+  - None for this story. The new entry inherits the existing
+    `TestAPICoverage_RegistryInvariants`,
+    `TestAPICoverage_SchemaCommandWorks`,
+    `TestAPICoverage_SuccessRoundTrip`,
+    `TestAPICoverage_RepresentativeFailure`, and
+    `TestAPICoverage_ManifestListsAllCovered` subtests, all of
+    which pass.
+
+- Learnings for future iterations:
+  - The settings/* roster has now traversed five consecutive
+    body-axis configurations within five entries
+    (API-0383/API-0384 are no-body POSTs, API-0385 is optional-
+    body, API-0386 is required-body with REQUIRED inner field,
+    API-0387 is required-body with OPTIONAL inner field). The
+    request-body axis is now a two-dimensional axis: outer
+    `requestBody.required` × inner `required` array presence.
+    Both dimensions must be re-verified per operation; the slug-
+    prefix-is-not-shape rule reasserted at API-0371..API-0386
+    extends naturally to "outer-required-is-not-inner-required" —
+    a `requestBody.required = true` does NOT imply any inner
+    field is required.
+  - When the only inner field is an optional `serverId` (and the
+    outer body is required), populate it with a fixture token
+    rather than emitting `{}`. Emitting `{}` would (a) lose the
+    body-forwarding wire assertion, (b) collapse the case into the
+    optional-body-empty-payload cohort, and (c) fail to
+    distinguish the case from a degenerate no-body round-trip.
+    API-0353 `cleanAll` and API-0385 `reloadTraefik` are the
+    canonical precedents and the right grep targets when
+    authoring future settings/* operations whose only inner field
+    is an optional `serverId`.
+  - The next pending story is API-0388 `settings-toggleDashboard`
+    (POST, `requestBody.required = true`, inner properties
+    `enableDashboard` (**boolean**) and `serverId` (string), both
+    OPTIONAL — no inner `required` array). The next contributor
+    must re-verify against `internal/api/data/openapi.json >
+    /settings.toggleDashboard > post`. Three axes pivot:
+    inner-property-count (1 → 2), inner-property-type (string-only
+    → mixed boolean+string), and slug-prefix (`setup*` →
+    `toggle*`). Two axes are shared: outer-body REQUIRED and
+    inner-required-field absence (no inner `required` array).
+    The boolean inner field is the first non-string inner property
+    encountered in the recent settings/* arc; the SampleBody must
+    use a JSON `true`/`false` literal rather than a fixture-string
+    token for the boolean axis.
+---

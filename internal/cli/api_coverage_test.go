@@ -11967,6 +11967,158 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0387",
+		OperationID: "settings-setupGPU",
+		Method:      http.MethodPost,
+		Path:        "/settings.setupGPU",
+		Tag:         "settings",
+		// Thirty-seventh entry on the settings/* coverage roster,
+		// inheriting the `set-cov-*` per-tag fixture-isolation
+		// namespace established by API-0351
+		// `settings-assignDomainServer` and extended through
+		// API-0386 `settings-saveSSHPrivateKey` (must not
+		// back-reference the closed `srv-cov-*`, `proj-cov-*`,
+		// `org-cov-*`, `compose-cov-*`, `app-cov-*`, `ai-cov-*`,
+		// or any other prior tag's namespace, per the per-tag
+		// isolation rule reasserted at API-0335..API-0386 and
+		// originally established at API-0246
+		// `organization-active`).
+		//
+		// **Spec re-verified per the API-0345..API-0386
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /settings.setupGPU >
+		// post`: a **POST** with a **REQUIRED** `requestBody`
+		// (`requestBody.required = true`) carrying a JSON object
+		// with one **OPTIONAL** string property `serverId`
+		// (declared in the inner schema's `properties` map but
+		// **absent** from any `required` array — the inner schema
+		// has no `required` key at all). **Zero parameters** (no
+		// query, no path, no header). Responses 200/400/401/403/
+		// 500 — note the **absence of 404**, matching the
+		// canonical settings/* mutating-POST cohort and diverging
+		// from the by-id-flavoured 404-bearing response sets.
+		// The 200 schema is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// settings/* roster.
+		//
+		// **Forward-reference confirmation — inner-required-field
+		// axis pivot to OPTIONAL.** API-0386
+		// `saveSSHPrivateKey`'s hand-off comment correctly
+		// forecast that this entry would share the outer
+		// `requestBody.required = true` axis with API-0386 but
+		// pivot the **inner-required-field** axis from REQUIRED
+		// (API-0386 listed `sshPrivateKey` in the inner
+		// `required` array) to OPTIONAL (this entry's inner
+		// schema declares no `required` key, leaving `serverId`
+		// optional). Direct inspection of the spec confirms the
+		// prediction: the outer `requestBody.required` is `true`
+		// while the inner schema is shape `{type: object,
+		// properties: {serverId: string}}` with no inner
+		// `required` array. The body-axis flip-flop across
+		// API-0383..API-0387 is now five entries deep within the
+		// same tag (no-body / no-body / optional-body /
+		// required-body+inner-required / required-body+inner-
+		// optional); per-operation re-verification stays
+		// mandatory across every family transition.
+		//
+		// **Family opener — first `setup*` slug-prefix peer in
+		// settings/*.** API-0386 closed the `save*` slug-prefix
+		// sub-roster (only one peer in the PRD); this entry
+		// opens the `setup*` slug-prefix sub-roster within the
+		// settings/* tag. API-0387 preserves the verb axis
+		// (POST), the parameter axis (zero parameters), the
+		// outer-body axis (REQUIRED), and the response-set axis
+		// (200/400/401/403/500, no 404) shared with API-0386,
+		// but pivots the inner-required-field axis to OPTIONAL.
+		// Per the slug-prefix-is-not-shape rule reasserted at
+		// API-0371..API-0386, future settings/* peers in
+		// different slug families must re-verify per-operation
+		// rather than inherit any axis from this entry.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `set-cov-setupGPU-0387` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared
+		//     across every per-tag roster and is unique
+		//     (verified against API-0351..API-0386's `set-cov-*`
+		//     slugs and orthogonal to every prior tag's
+		//     `srv-cov-*`, `proj-cov-*`, `org-cov-*`,
+		//     `compose-cov-*`, `app-cov-*`, `ai-cov-*`, etc.
+		//     namespaces).
+		//   * `serverId` carries the fixture-shaped literal
+		//     `set-cov-setupGPU-0387` rather than a real UUID so
+		//     the wire payload is uniquely identifiable in test
+		//     output and cannot collide with any production
+		//     server identifier. The schema constrains the field
+		//     to `type: string` only (no `format` or `pattern`),
+		//     so a simple fixture token is structurally valid.
+		//   * **Populating the optional `serverId`** even though
+		//     it is OPTIONAL in the inner schema follows the
+		//     API-0353 `settings-cleanAll` and API-0385
+		//     `settings-reloadTraefik` precedent for populating
+		//     the optional axis on settings/* operations whose
+		//     only inner field is an optional `serverId`.
+		//     Populating it (a) exercises the JSON serialiser's
+		//     non-empty body branch, (b) keeps the
+		//     `Content-Type: application/json` header assertion
+		//     meaningful, and (c) distinguishes this case on the
+		//     wire from the no-body POST cohort
+		//     (API-0383/API-0384) and the optional-body POST
+		//     cohort (API-0385). Leaving the body as `{}` would
+		//     degrade this case to a degenerate empty-payload
+		//     round-trip and lose the body-forwarding assertion.
+		//
+		// **Failure-leg fields are intentionally omitted.** The
+		// spec does not declare 404 on this operation (the
+		// `setupGPU` verb mutates a server's GPU configuration
+		// rather than performing a by-id resource lookup), so
+		// the per-tag opener convention reasserted at
+		// API-0335..API-0386 that reserves 404 → CodeNotFound
+		// for canonical `*-one` peers does not apply here. Auth
+		// is the universal failure mode every Dokploy operation
+		// must re-prove, so 401 → CodeAuth via the harness
+		// default (`tc.FailureStatus == 0` → 401,
+		// `tc.FailureCode == ""` → CodeAuth) stays the most
+		// informative representative. 400 → CodeInvalidInput
+		// stays reserved for stories where payload validation
+		// is the operation's distinguishing failure mode; the
+		// inner schema here declares zero required fields, so
+		// the validator surface is degenerate (the empty-object
+		// `{}` payload would itself be a structurally valid
+		// request) — too narrow to make 400 the canonical
+		// failure representative.
+		//
+		// The next case in the settings/* roster per PRD
+		// ordering is API-0388 `settings-toggleDashboard`
+		// (declared a **POST** in the PRD with
+		// `requestBody.required = true` and inner properties
+		// `enableDashboard` (**boolean**) and `serverId`
+		// (string), both **OPTIONAL** — no `required` array on
+		// the inner schema). The next contributor must re-verify
+		// against `internal/api/data/openapi.json >
+		// /settings.toggleDashboard > post` per the
+		// forward-reference lesson before assuming any field is
+		// identical to this entry — the inner-property-count
+		// axis pivots from one (this entry) to two (API-0388),
+		// the inner-property-type axis pivots from string-only
+		// (this entry) to mixed boolean+string (API-0388), and
+		// the slug-prefix axis pivots from `setup*` (this entry)
+		// to `toggle*` (API-0388). The outer-body axis
+		// (REQUIRED) and the inner-required-field axis (no
+		// inner-required) are shared, but per the slug-prefix-
+		// is-not-shape lesson reasserted at API-0371..API-0386,
+		// do not assume any axis carries over from this entry.
+		SampleBody: json.RawMessage(`{
+			"serverId": "set-cov-setupGPU-0387"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
