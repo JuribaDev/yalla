@@ -19896,3 +19896,48 @@ forward-reference lesson before assuming any field shape.
     prefixes a tab-line-number that must be stripped for Edit
     matching. Always anchor edits on a verified byte-level snippet.
 ---
+
+## 2026-05-08 - API-0148
+- Implemented coverage for `gitlab-gitlabProviders` (GET /gitlab.gitlabProviders).
+- Files changed:
+  - `internal/cli/api_coverage_test.go`: added `apiCoverageCase` entry between
+    API-0147 (`gitlab-getGitlabRepositories`) and API-0160 (`mariadb-changeStatus`),
+    preserving the StoryID-sorted slice order. Zero-parameter GET, no request
+    body, `SuccessResponse: {}` matching the empty-success cohort. No
+    SampleQuery / SampleBody / SamplePathParams — `buildCoverageInputArgs`
+    short-circuits to `nil` so the harness invokes `--json api call
+    gitlab-gitlabProviders` without `--input`. Closes the API-0147 forward
+    reference and continues inside the `gitlab-cov-*` per-tag fixture-isolation
+    namespace opened by API-0145 `gitlab-create`. Hand-off comment forward-
+    references API-0149 `gitlab-one`.
+  - `ralph/prd.json`: flipped `passes` from `false` to `true` for API-0148.
+- Verification: gofmt -w ., go mod tidy, go vet ./..., go test ./...,
+  go test -race ./... — all pass. goimports / golangci-lint / staticcheck /
+  govulncheck / goreleaser are not installed in this environment (consistent
+  with prior iterations' note in this file).
+- Remaining risks / follow-ups: API-0149 `gitlab-one` is the next priority-5
+  gitlab/* peer; it is the canonical by-id `*-one` GET probe and is the
+  reserved 404 → CodeNotFound representative-failure slot for the gitlab/*
+  tag (per the API-0142 `github-one` precedent). The next contributor must
+  re-verify the spec at `internal/api/data/openapi.json > /gitlab.one > get`
+  before assuming the parameter list / response set, per the slug-prefix-is-
+  not-shape lesson reasserted at API-0371..API-0444.
+- **Learnings for future iterations:**
+  - Patterns discovered: parameter-free provider-listing GETs across the
+    bitbucket/gitea/github/gitlab cohort follow an identical fixture template
+    — no `SampleQuery`, no `SampleBody`, no `SamplePathParams`, no per-case
+    fixture token, just `SuccessResponse: \`{}\``. Cross-tag analogs are
+    API-0051 `bitbucket-bitbucketProviders`, API-0135 `gitea-giteaProviders`,
+    API-0141 `github-githubProviders`, and now API-0148 `gitlab-gitlabProviders`.
+  - Gotchas encountered: the StoryID-sorted slice rule means the new entry
+    must sit between API-0147 and API-0160 — there is no priority-4 mariadb
+    interruption between these gitlab/* cases. The 404 → CodeNotFound override
+    is **not** applicable to account-wide list-style GETs even when the spec
+    declares 404; it stays reserved for the per-tag canonical by-id `*-one`
+    peer.
+  - Useful context: when adding a parameter-free entry, only `StoryID`,
+    `OperationID`, `Method`, `Path`, `Tag`, and `SuccessResponse` need to be
+    populated on the `apiCoverageCase` literal; every other field defaults
+    correctly. `buildCoverageInputArgs` returns `nil` and the harness skips
+    `--input` injection automatically.
+---
