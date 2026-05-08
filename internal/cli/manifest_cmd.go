@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/JuribaDev/yalla/internal/api"
+	"github.com/JuribaDev/yalla/internal/curated"
 	yerr "github.com/JuribaDev/yalla/internal/errors"
 	"github.com/JuribaDev/yalla/internal/output"
 )
@@ -30,15 +31,17 @@ const ManifestSchema = "yalla.manifest.v1"
 // reads top-down (envelope → cli → spec → flags → commands → errors →
 // operations).
 type manifestDoc struct {
-	ManifestSchema      string             `json:"manifest_schema"`
-	OutputSchemaVersion string             `json:"output_schema_version"`
-	ErrorSchemaVersion  string             `json:"error_schema_version"`
-	CLI                 manifestCLI        `json:"cli"`
-	Spec                manifestSpec       `json:"spec"`
-	GlobalFlags         []manifestFlag     `json:"global_flags"`
-	Commands            []manifestCommand  `json:"commands"`
-	ErrorCodes          []yerr.CodeDoc     `json:"error_codes"`
-	Operations          manifestOperations `json:"operations"`
+	ManifestSchema      string                   `json:"manifest_schema"`
+	OutputSchemaVersion string                   `json:"output_schema_version"`
+	ErrorSchemaVersion  string                   `json:"error_schema_version"`
+	CLI                 manifestCLI              `json:"cli"`
+	Spec                manifestSpec             `json:"spec"`
+	GlobalFlags         []manifestFlag           `json:"global_flags"`
+	Commands            []manifestCommand        `json:"commands"`
+	ErrorCodes          []yerr.CodeDoc           `json:"error_codes"`
+	Operations          manifestOperations       `json:"operations"`
+	CuratedDomains      []string                 `json:"curated_domains"`
+	CuratedCommands     []manifestCuratedCommand `json:"curated_commands"`
 }
 
 type manifestCLI struct {
@@ -83,6 +86,25 @@ type manifestCommand struct {
 	Subcommands    []manifestCommand `json:"subcommands,omitempty"`
 }
 
+// manifestCuratedCommand projects one curated.Command into the manifest
+// payload. The shape is intentionally flat so an agent can join it to
+// the operations list by operation_id without traversing the cobra tree.
+//
+// `operation_ids` is the full set of OpenAPI operationIds this curated
+// command dispatches to. Curated commands never replace raw API
+// coverage — `yalla api call <operation_id>` and
+// `yalla schema get <operation_id>` remain available for every
+// operation, including those reachable through a curated entry point.
+type manifestCuratedCommand struct {
+	Path         string   `json:"path"`
+	Domain       string   `json:"domain"`
+	Verb         string   `json:"verb"`
+	Summary      string   `json:"summary,omitempty"`
+	OperationIDs []string `json:"operation_ids"`
+	HumanExample string   `json:"human_example,omitempty"`
+	JSONExample  string   `json:"json_example,omitempty"`
+}
+
 // manifestOperations summarises the embedded OpenAPI registry coverage.
 // The full operation catalogue is reachable through `yalla api operations`
 // and `yalla schema get`, but a flat ID list lives here so the manifest
@@ -122,7 +144,7 @@ can branch on the manifest shape independently of the envelope.`,
 			streams := IOStreamsFromContext(c.Context())
 			r := rendererFromContext(c, streams)
 			build := BuildInfoFromContext(c.Context())
-			return runManifest(c, r, build, api.Default())
+			return runManifest(c, r, build, api.Default(), curated.Default())
 		},
 	}
 	return cmd
@@ -131,7 +153,7 @@ can branch on the manifest shape independently of the envelope.`,
 // runManifest assembles the manifest from the live root command and
 // renders it through the supplied renderer. The cobra.Command argument
 // is used purely as a tree handle; runManifest never mutates it.
-func runManifest(c *cobra.Command, r *output.Renderer, build BuildInfo, reg *api.Registry) error {
+func runManifest(c *cobra.Command, r *output.Renderer, build BuildInfo, reg *api.Registry, cur *curated.Registry) error {
 	root := c.Root()
 
 	doc := manifestDoc{
@@ -157,6 +179,8 @@ func runManifest(c *cobra.Command, r *output.Renderer, build BuildInfo, reg *api
 			Tags:  reg.Tags(),
 			IDs:   reg.IDs(),
 		},
+		CuratedDomains:  curatedDomainNames(),
+		CuratedCommands: collectCuratedCommands(cur),
 	}
 
 	if r.JSON() {
@@ -169,10 +193,45 @@ func runManifest(c *cobra.Command, r *output.Renderer, build BuildInfo, reg *api
 	fmt.Fprintf(&sb, "operations: %d across %d tags\n", doc.Operations.Total, len(doc.Operations.Tags))
 	fmt.Fprintf(&sb, "error codes: %d\n", len(doc.ErrorCodes))
 	fmt.Fprintf(&sb, "global flags: %d\n", len(doc.GlobalFlags))
+	fmt.Fprintf(&sb, "curated commands: %d across %d domains\n", len(doc.CuratedCommands), len(doc.CuratedDomains))
 	sb.WriteString("commands:\n")
 	humanRenderCommandTree(&sb, doc.Commands, 1)
 	r.Human(strings.TrimRight(sb.String(), "\n"))
 	return nil
+}
+
+// curatedDomainNames returns the canonical curated domain set as a
+// slice of strings so the manifest payload stays JSON-friendly without
+// leaking the internal Domain type.
+func curatedDomainNames() []string {
+	domains := curated.Domains()
+	out := make([]string, len(domains))
+	for i, d := range domains {
+		out[i] = string(d)
+	}
+	return out
+}
+
+// collectCuratedCommands projects the curated registry into the
+// manifest payload. The slice is deterministic (curated.Registry sorts
+// by Path) and is never nil so JSON consumers can rely on the field
+// being a present `[]` even when no curated commands exist yet.
+func collectCuratedCommands(cur *curated.Registry) []manifestCuratedCommand {
+	src := cur.Commands()
+	out := make([]manifestCuratedCommand, 0, len(src))
+	for _, c := range src {
+		ops := append([]string(nil), c.OperationIDs...)
+		out = append(out, manifestCuratedCommand{
+			Path:         c.Path,
+			Domain:       string(c.Domain),
+			Verb:         c.Verb,
+			Summary:      c.Summary,
+			OperationIDs: ops,
+			HumanExample: c.HumanExample,
+			JSONExample:  c.JSONExample,
+		})
+	}
+	return out
 }
 
 // collectCommandTree walks every visible (and hidden) subcommand of cmd

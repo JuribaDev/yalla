@@ -371,7 +371,7 @@
       ],
       "type": "foundation",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Use clear names. Do not optimize for clever short aliases."
     },
     {

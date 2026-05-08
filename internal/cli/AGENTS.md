@@ -180,6 +180,14 @@ Conventions for the Cobra command tree.
   `manifest_cmd_test.go::TestManifest_JSONListsAllSubcommands`; the
   test is intentionally explicit so a forgotten registration trips the
   manifest contract before it ships.
+- Curated commands (US-0012) MUST be declared in
+  `internal/curated`'s `defaultCommands` slice with a non-empty
+  `OperationIDs` list before the Cobra command is wired here. The
+  manifest payload (`curated_commands`) reads from
+  `curated.Default()`; `runManifest` takes the registry as a parameter
+  so tests can drive a custom catalogue without touching the global.
+  Curated commands never replace raw API coverage — `yalla api call`
+  and `yalla schema get` stay available for every operation.
 
 ## Tests
 

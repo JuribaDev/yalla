@@ -380,6 +380,32 @@
   path. Adding a new visible writer in the command tree without
   exercising it here is a contract violation.
 
+- Curated command policy (US-0012): `internal/curated` is the foundation
+  layer that turns raw Dokploy operations into stable named commands.
+  `Domains()` is the closed seven-element set (`project`, `app`,
+  `compose`, `database`, `server`, `settings`, `provider`); adding one
+  is a public-API change. Every curated command is a `curated.Command`
+  with a `yalla <domain> <verb> [...]` Path, a Domain matching the
+  second segment, a verb that is NOT in `BannedVerbAliases`
+  (`ls`/`rm`/`new`/`show`/`info`/`edit`/`mod`/`push`/`up`/`down`/`tail`),
+  a non-empty `OperationIDs` list, and both `HumanExample` (no
+  `--json`) and `JSONExample` (with `--json`) so help text documents
+  both audiences. `curated.Default()` is the package-level static
+  registry (currently empty); future curated-command stories append to
+  `defaultCommands` and the manifest picks them up automatically.
+- Curated → manifest projection (US-0012): `runManifest` takes the
+  curated `*Registry` as a parameter so tests can drive a custom
+  catalogue. The manifest payload exposes two fields: `curated_domains`
+  (always the canonical seven) and `curated_commands` (always present,
+  possibly `[]`). The shape is documented in `docs/curated-commands.md`
+  and locked by `TestManifest_JSONListsCuratedDomains`,
+  `TestManifest_JSONIncludesCuratedCommands`, and
+  `TestManifest_DefaultCuratedRegistryMatchesAPISpec`.
+- Curated never replaces raw (US-0012): `yalla api call <opId>` and
+  `yalla schema get <opId>` remain available for every operation in
+  the OpenAPI spec, even when a curated command exists. The two
+  surfaces are independent by design and both are first class in the
+  manifest.
 
 ---
 
@@ -1691,4 +1717,111 @@
       principle, not a tooling quirk. The Ralph Loop iteration pattern
       depends on every gap being visible in `progress.txt` so future
       iterations can act on it.
+---
+
+## 2026-05-08 - US-0012
+- **Implemented**: Curated command policy and naming conventions
+  foundation. Locks the public contract that turns raw Dokploy OpenAPI
+  operations into stable, agent-friendly yalla commands without
+  sacrificing full coverage.
+- **Files changed**:
+  - `internal/curated/policy.go` (new) — `Domain` type + closed
+    seven-element set (`project`, `app`, `compose`, `database`,
+    `server`, `settings`, `provider`); `Domains()`/`IsDomain`;
+    `PreferredVerbs` and `BannedVerbAliases` (with hint mappings to
+    canonical replacements); kebab-case identifier regex; `Command`
+    descriptor (`Path`, `Domain`, `Verb`, `Summary`, `OperationIDs`,
+    `HumanExample`, `JSONExample`) and `Validate()` method that
+    enforces every rule including the human/JSON example contract;
+    `SortCommands` deterministic ordering helper.
+  - `internal/curated/registry.go` (new) — `OperationLookup` interface
+    (so tests do not need the full *api.Registry); `Registry` with
+    `NewRegistry` (validates each command, rejects duplicate paths,
+    sorts by Path), `Commands()` (defensive copy), `Len`, `ByDomain`,
+    `VerifyAgainstSpec`; package-level `Default()` over the static
+    `defaultCommands` slice (empty for now — future curated-command
+    stories append).
+  - `internal/curated/policy_test.go` (new) — covers happy path, every
+    Validate failure mode (16 sub-cases), banned-alias / preferred-verb
+    cross-check, and `SortCommands`.
+  - `internal/curated/registry_test.go` (new) — covers empty
+    construction, sorting, duplicate-path rejection, Validate
+    propagation, defensive copy on `Commands()`, `ByDomain`,
+    `VerifyAgainstSpec` happy/sad/nil paths, full nil-receiver safety,
+    and `TestDefaultRegistry_VerifiesAgainstSpec` which is the live
+    regression net against the embedded OpenAPI spec.
+  - `internal/curated/AGENTS.md` (new) — module conventions for future
+    contributors.
+  - `internal/cli/manifest_cmd.go` — added `curated` import; extended
+    `manifestDoc` with `CuratedDomains []string` and
+    `CuratedCommands []manifestCuratedCommand`; added the
+    `manifestCuratedCommand` JSON shape (`path`, `domain`, `verb`,
+    `summary`, `operation_ids`, `human_example`, `json_example`); made
+    `runManifest` accept a `*curated.Registry`; added
+    `curatedDomainNames` and `collectCuratedCommands` projection
+    helpers; updated the human-mode banner to surface curated counts.
+  - `internal/cli/manifest_cmd_test.go` — new tests:
+    `TestManifest_JSONListsCuratedDomains`,
+    `TestManifest_JSONIncludesCuratedCommands` (checks the JSON wire
+    shape directly so a missing field cannot be hidden by struct
+    decoding), `TestManifest_RendersCuratedCommandPayload` (end-to-end
+    projection with a custom registry, including the defensive-copy
+    invariant), `TestManifest_DefaultCuratedRegistryMatchesAPISpec`
+    (live spec regression mirror).
+  - `internal/cli/AGENTS.md` — new bullet documenting the curated →
+    manifest contract and the "never replace raw API coverage" rule.
+  - `docs/curated-commands.md` (new) — the human-facing policy
+    document. Covers domains, naming rules, recommended verb sets per
+    domain, the manifest contract (with sample JSON), and the
+    step-by-step add-a-curated-command workflow.
+  - `ralph/prd.json` — set US-0012 `passes: true`.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass (curated package included).
+  - `go test -race ./...` — all packages pass.
+  - `bash scripts/verify.sh --quiet` — full local gate clean; optional
+    tools (`govulncheck`, `staticcheck`, `golangci-lint`, `goreleaser`)
+    reported as not installed exactly as the project policy requires.
+  - Smoke: `go run ./cmd/yalla --json manifest | jq '.data |
+    {curated_domains, curated_commands}'` returns the canonical
+    seven-domain list and an empty `curated_commands` array.
+- **Tools NOT available locally** (per project policy): `goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`. Same
+  status as previous iterations; documented here so the gap stays
+  visible.
+- **Remaining risks / follow-ups**:
+  - The `defaultCommands` slice is empty by design — every subsequent
+    curated-command story (US-001x onward) MUST append its descriptor
+    there, with a non-empty `OperationIDs` list, before wiring the
+    Cobra command. The manifest, docs, and validation plumbing pick
+    them up automatically.
+  - The Cobra-command Examples for any curated command should mirror
+    `Command.HumanExample` / `Command.JSONExample` so the manifest,
+    `--help`, and `docs/curated-commands.md` stay in sync. A future
+    helper that returns a Cobra-style `Example` block from a
+    `curated.Command` would centralise that, but is out of scope
+    for the foundation story.
+- **Learnings for future iterations**:
+  - Foundation stories pay off when they bake in the contract test:
+    `TestDefaultRegistry_VerifiesAgainstSpec` (and its manifest mirror)
+    means a stale operationId fails CI before the binary ships.
+    Without it, curated commands could drift from the OpenAPI spec
+    silently.
+  - Decoding the manifest into a `map[string]json.RawMessage` (rather
+    than the typed struct) is the cleanest way to assert "this JSON
+    field exists on the wire". The struct decoder cheerfully
+    zero-fills missing fields, hiding regressions.
+  - Defensive-copy assertions belong on every projection that returns
+    a slice ("mutate the projected slice, re-read from the source,
+    expect no bleed"). Catching a shared backing array in test is much
+    cheaper than chasing the eventual consistency bug.
+  - Banning short aliases via a hint-bearing map (`{"ls": "list"}`)
+    gives validation errors that tell the developer the right answer
+    instead of just rejecting the wrong one. Worth replicating any
+    time the policy is "thou shalt not X" and there is a canonical Y.
+  - The `OperationLookup` interface kept the curated tests free of the
+    OpenAPI embed dance. The same pattern (a tiny adapter interface)
+    would help any future cross-package contract test.
 ---

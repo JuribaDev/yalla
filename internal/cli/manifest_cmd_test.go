@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/JuribaDev/yalla/internal/api"
+	"github.com/JuribaDev/yalla/internal/curated"
 	yerr "github.com/JuribaDev/yalla/internal/errors"
 	"github.com/JuribaDev/yalla/internal/output"
 )
@@ -223,4 +224,129 @@ func TestManifest_StableTopLevelOrder(t *testing.T) {
 				i, env.Data.Commands[i-1].Name, env.Data.Commands[i].Name)
 		}
 	}
+}
+
+// TestManifest_JSONListsCuratedDomains locks the curated-policy
+// foundation contract: every public curated domain (US-0012) is
+// emitted in the manifest, in canonical order. Adding or removing a
+// domain is a public-API change and must update both this test and
+// curated.Domains() together.
+func TestManifest_JSONListsCuratedDomains(t *testing.T) {
+	stdout, _, err := runRootArgs(t, "--json", "manifest")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	var env struct {
+		Data manifestDoc `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	want := []string{"app", "compose", "database", "project", "provider", "server", "settings"}
+	if strings.Join(env.Data.CuratedDomains, ",") != strings.Join(want, ",") {
+		t.Errorf("curated_domains = %v, want %v", env.Data.CuratedDomains, want)
+	}
+}
+
+// TestManifest_JSONIncludesCuratedCommands asserts that the curated
+// command surface is rendered through the manifest as an always-present
+// (possibly empty) array. The default registry is empty until the
+// first curated-command story lands; the assertion lives here so a
+// regression in the registry wiring trips the manifest contract.
+func TestManifest_JSONIncludesCuratedCommands(t *testing.T) {
+	stdout, _, err := runRootArgs(t, "--json", "manifest")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	// Decode into a generic map so the test asserts on the JSON wire
+	// shape (a `curated_commands` key that is always emitted) rather
+	// than on the typed struct (which can hide a missing field).
+	var env struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	raw, ok := env.Data["curated_commands"]
+	if !ok {
+		t.Fatalf("manifest payload missing curated_commands field")
+	}
+	if string(raw) != "[]" && raw[0] != '[' {
+		t.Fatalf("curated_commands must be a JSON array, got %s", string(raw))
+	}
+}
+
+// TestManifest_RendersCuratedCommandPayload exercises the curated →
+// manifest projection end to end with a custom registry. It bypasses
+// the cobra entrypoint to keep the test isolated from the global
+// curated.Default() and uses a representative real operationId so the
+// shape mirrors what an agent will see in production.
+func TestManifest_RendersCuratedCommandPayload(t *testing.T) {
+	cmd := curated.Command{
+		Path:         "yalla app deploy",
+		Domain:       curated.DomainApp,
+		Verb:         "deploy",
+		Summary:      "Deploy a Dokploy application",
+		OperationIDs: []string{"application-deploy"},
+		HumanExample: "yalla app deploy --id app_123",
+		JSONExample:  "yalla --json app deploy --id app_123",
+	}
+	reg, err := curated.NewRegistry(cmd)
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+
+	got := collectCuratedCommands(reg)
+	if len(got) != 1 {
+		t.Fatalf("collectCuratedCommands len = %d, want 1", len(got))
+	}
+	if got[0].Path != cmd.Path {
+		t.Errorf("path = %q, want %q", got[0].Path, cmd.Path)
+	}
+	if got[0].Domain != string(curated.DomainApp) {
+		t.Errorf("domain = %q, want %q", got[0].Domain, curated.DomainApp)
+	}
+	if got[0].Verb != cmd.Verb {
+		t.Errorf("verb = %q, want %q", got[0].Verb, cmd.Verb)
+	}
+	if got[0].Summary != cmd.Summary {
+		t.Errorf("summary = %q, want %q", got[0].Summary, cmd.Summary)
+	}
+	if len(got[0].OperationIDs) != 1 || got[0].OperationIDs[0] != "application-deploy" {
+		t.Errorf("operation_ids = %v, want [application-deploy]", got[0].OperationIDs)
+	}
+	if got[0].HumanExample != cmd.HumanExample {
+		t.Errorf("human_example = %q, want %q", got[0].HumanExample, cmd.HumanExample)
+	}
+	if got[0].JSONExample != cmd.JSONExample {
+		t.Errorf("json_example = %q, want %q", got[0].JSONExample, cmd.JSONExample)
+	}
+
+	// The projection must be a defensive copy — mutating the manifest
+	// slice cannot bleed back into the curated registry.
+	got[0].OperationIDs[0] = "mutated"
+	if reg.Commands()[0].OperationIDs[0] == "mutated" {
+		t.Errorf("manifest projection shares storage with curated registry")
+	}
+}
+
+// TestManifest_DefaultCuratedRegistryMatchesAPISpec is the live
+// regression net for the static curated registry: every operationId
+// referenced by a default curated command must resolve in the embedded
+// OpenAPI spec. The same check runs in internal/curated/registry_test.go;
+// duplicating it here keeps the manifest contract self-contained for
+// CI failure triage.
+func TestManifest_DefaultCuratedRegistryMatchesAPISpec(t *testing.T) {
+	if err := curated.Default().VerifyAgainstSpec(curatedSpecLookup{r: api.Default()}); err != nil {
+		t.Fatalf("default curated registry out of sync with embedded spec: %v", err)
+	}
+}
+
+// curatedSpecLookup adapts *api.Registry to curated.OperationLookup
+// without exporting the adapter from internal/api.
+type curatedSpecLookup struct{ r *api.Registry }
+
+func (a curatedSpecLookup) Has(id string) bool {
+	_, ok := a.r.Get(id)
+	return ok
 }
