@@ -1314,6 +1314,36 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.method` / `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0072",
+		OperationID: "compose-deployTemplate",
+		Method:      http.MethodPost,
+		Path:        "/compose.deployTemplate",
+		Tag:         "compose",
+		// Mirrors the schema in `data/openapi.json` for
+		// /compose.deployTemplate: required string fields are
+		// `environmentId` and `id`; `serverId` and `baseUrl` are
+		// optional strings. Unlike the sibling `compose-deploy`
+		// operation this one provisions from a template registry
+		// entry, so `id` references the template catalog rather than
+		// an existing composeId — the fixture spells that out so a
+		// future contributor doesn't accidentally swap in a composeId
+		// shape. All four fields are populated with deterministic-
+		// but-clearly-fake values to exercise the full envelope on
+		// the wire-payload assertion.
+		SampleBody: json.RawMessage(`{
+			"environmentId": "env-cov-deployTemplate-0072",
+			"id": "template-cov-deployTemplate-0072",
+			"serverId": "server-cov-deployTemplate-0072",
+			"baseUrl": "https://example.invalid/templates/0072"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the empty-success convention shared by every prior
+		// application/* and compose/* mutation peer. Empty-object body
+		// keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

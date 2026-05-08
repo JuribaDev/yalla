@@ -4055,3 +4055,32 @@
     priority). The next pending P2 batch after API-0071 is API-0072
     (compose-deployTemplate) through API-0093+ — all compose/* operations.
 ---
+
+## 2026-05-08 - API-0072
+- Added compose-deployTemplate (POST /compose.deployTemplate) coverage entry
+  to the api_coverage_test.go fixture table. Schema requires `environmentId`
+  and `id` (template catalog id, not composeId); `serverId` and `baseUrl`
+  are optional strings. SuccessResponse `{}` matches the spec's empty-object
+  200 envelope shared with every prior compose/* mutation peer.
+- Updated `ralph/prd.json` to set `passes: true` for API-0072.
+- Files changed:
+  - internal/cli/api_coverage_test.go
+  - ralph/prd.json
+- Verification (run from repo root):
+  - gofmt -w .                   ok
+  - go mod tidy                  ok
+  - go vet ./...                 ok
+  - go test ./...                ok
+  - go test -race ./...          ok
+- Remaining risks / follow-ups: none for this story; the next P2 compose
+  story is API-0073 (compose-disconnectGitProvider).
+- Learnings for future iterations:
+  - `compose-deployTemplate` is shape-distinct from `compose-deploy`: the
+    `id` field is a template catalog identifier, not a composeId. Coverage
+    fixtures should call this out so future contributors don't blindly
+    clone the *-deploy body and trip on the semantic mismatch.
+  - The `coveredAPIOperations` table-driven contract test (US-0033) is the
+    only file that needs touching for the vast majority of API-coverage
+    stories now: append a case, flip `passes: true` in `ralph/prd.json`,
+    and the registry/manifest/schema invariants pile-on automatically.
+---
