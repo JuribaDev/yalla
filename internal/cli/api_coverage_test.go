@@ -1283,6 +1283,41 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0042",
+		OperationID: "backup-manualBackupCompose",
+		Method:      http.MethodPost,
+		Path:        "/backup.manualBackupCompose",
+		Tag:         "backup",
+		// Third backup/* coverage entry and the FIRST member of the
+		// `backup-manualBackup*` family (six siblings: API-0042 compose,
+		// API-0043 mariadb, API-0044 mongo, API-0045 mySql, API-0046
+		// postgres, API-0047 webServer). The spec at
+		// `data/openapi.json > /backup.manualBackupCompose > post` is
+		// the canonical "single id-only POST" shape: the only required
+		// field is `backupId` (string), no optional siblings, no path
+		// or query parameters. Schema is byte-identical across all six
+		// `manualBackup*` peers, so this fixture seeds the
+		// `backup-cov-manual-<slug>-<storyID>` slug convention every
+		// sibling will mirror — keeping cross-story grep useful and
+		// each manualBackup story's diff a single contiguous insert.
+		// Closest precedents are the compose/* minimal-id POST family
+		// (API-0066 cancelDeployment, API-0067 cleanQueues, API-0068
+		// clearDeployments) and the application/* twins
+		// (API-0011/0012/0013/0015/0024/0036/0037). Keep the fixture
+		// minimal-but-valid so a future schema validator wired into
+		// the harness still accepts it.
+		SampleBody: json.RawMessage(`{
+			"backupId": "backup-cov-manual-compose-0042"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the empty-success convention shared by every prior
+		// backup/* (API-0040 backup-create, API-0041 backup-listBackupFiles),
+		// application/*, and compose/* peer. Empty-object body keeps
+		// the success-leg envelope assertion focused on `data.method`
+		// / `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0066",
 		OperationID: "compose-cancelDeployment",
 		Method:      http.MethodPost,

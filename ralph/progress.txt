@@ -5091,3 +5091,22 @@
     surface area of a coverage story — never touch the harness functions
     themselves unless the contract is changing for ALL stories.
 ---
+
+## 2026-05-08 - API-0042
+- Implemented coverage for `backup-manualBackupCompose` (POST /backup.manualBackupCompose).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended `apiCoverageCase` literal between API-0041 and API-0066. Single required `backupId` field, no optional siblings, no params. Body fixture: `{"backupId":"backup-cov-manual-compose-0042"}`. Empty-object 200 response.
+  - `ralph/prd.json` — flipped API-0042 `passes` to true.
+- Verification run (clean tree):
+  - `gofmt -w .` → no diff.
+  - `go mod tidy` → no diff.
+  - `go vet ./...` → ok.
+  - `go test ./... -count=1` → all packages ok.
+  - `go test -race ./... -count=1` → all packages ok.
+- Results: harness asserts the five invariants — registry presence, `yalla schema get`, `yalla manifest`, success round-trip, default 401→E_AUTH failure leg — automatically through `coveredAPIOperations`.
+- Remaining risks / follow-ups: none. The five `backup-manualBackup*` siblings (API-0043..API-0047) share an identical schema and now have a clear precedent to copy.
+- **Learnings for future iterations:**
+  - The `backup-manualBackup*` family (API-0042..API-0047) is byte-identical at the schema layer (single required `backupId`, no params, empty 200). API-0042 seeds the `backup-cov-manual-<slug>-<storyID>` slug convention; future siblings should mirror it so cross-story grep keeps finding every member of the family.
+  - For "single id-only POST" operations, the closest precedents (compose API-0066/0067/0068, application API-0011/0012/0013/0015/0024/0036/0037, plus API-0040/0041 backup peers) all reuse the same minimal `SampleBody` shape and `SuccessResponse: \`{}\`` — there is no need to override `FailureStatus`/`FailureCode` because every Dokploy op today gates on bearer auth (default 401 → E_AUTH).
+  - The harness in `internal/cli/api_coverage_test.go` is fully generic: appending a single `apiCoverageCase` is the entire deliverable for a per-operation API-XXXX story. Operation registry presence is automatic because `internal/api/data/openapi.json` already contains every Dokploy operation.
+---
