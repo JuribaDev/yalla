@@ -6488,3 +6488,63 @@
     populated convention as the template for layering optional
     update fields on top.
 ---
+
+## 2026-05-08 - API-0297 - Cover project-update (POST /project.update)
+- Closed the project/* mutation arc (API-0292 `*-create`, API-0293
+  `*-duplicate`, API-0295 `*-remove`, this `*-update`) and the
+  eight-peer project/* tag (filter peers API-0290 / API-0291 /
+  API-0294 / API-0296). The body shape is `{required projectId,
+  optional name, optional description (anyOf [string, null]),
+  optional createdAt, optional organizationId, optional env}` —
+  the largest scalar-only mutation body in the project/* roster.
+- Files changed:
+  - internal/cli/api_coverage_test.go (appended apiCoverageCase
+    entry for API-0297 with the every-optional-populated SampleBody
+    `{projectId, name, description, createdAt, organizationId,
+    env}`; inserted after the API-0296 project-search block to keep
+    StoryID-sorted order; design-rationale header documents the
+    project/* arc-closing convention, the nullable `description`
+    treatment matching API-0292 `project-create`, and the
+    RFC 3339 `createdAt` literal that survives a future tightening
+    of the schema to `format: date-time`.)
+  - ralph/prd.json (passes:true for API-0297)
+- Verification (repo root):
+  - gofmt -w .
+  - go mod tidy (no diff)
+  - go vet ./...
+  - go test ./... -count=1
+  - go test -race ./... -count=1
+- Results: all green (no diffs, no failures, no races).
+- Remaining risks or follow-ups: none — API-0297 closes the project/*
+  arc and is gated by the same five-part harness that gates the
+  prior 107 API-XXXX stories (registry presence, schema reachability,
+  manifest inclusion, httptest success leg, representative failure
+  leg).
+- **Learnings for future iterations:**
+  - The `*-update` shape across the Dokploy spec is consistently
+    `{required <resource>Id, optional mutable fields...}` — the
+    project/* peer is the canonical template for future tag arcs
+    when their `*-update` peer comes up. Future contributors should
+    grep this entry first for the required-discriminator-plus-
+    every-optional-populated pattern, then layer the per-tag mutable
+    fields on top.
+  - The nullable `description` (`anyOf [string, null]`) recurs
+    across project/* peers (`project-create`, `project-update`) but
+    NOT in `project-duplicate` (plain string). When populating, use
+    a deterministic-fake string rather than `null` — the populated-
+    string fixture exercises the wire-forwarding invariant more
+    strongly than `null` would, and a future schema validator that
+    rejects `null` (e.g. one that drops the `null` branch from the
+    `anyOf`) will still accept the fixture.
+  - `createdAt` is typed as a plain `string` in the spec but the
+    fixture uses an RFC 3339 UTC literal so the wire fixture
+    survives a future schema tightening to `format: date-time` and
+    stays human-readable. Same convention should apply to any
+    future timestamp-shaped scalar typed loosely as `string`.
+  - With the project/* arc closed, the next priority story is
+    API-0335 `server-all` (a P2 GET, opening the server/* tag).
+    Server-tag peers should grep this project/* arc for the per-tag
+    fixture-isolation rule (open with `srv-cov-*` or similar slug
+    namespace, never back-reference `proj-cov-*`).
+
+---

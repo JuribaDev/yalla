@@ -3660,6 +3660,115 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0297",
+		OperationID: "project-update",
+		Method:      http.MethodPost,
+		Path:        "/project.update",
+		Tag:         "project",
+		// Fourth and final mutation in the project/* roster — closes
+		// the project/* arc opened at API-0290 `project-all` and
+		// completes the eight-peer tag (API-0290 `*-all`, API-0291
+		// `*-allForPermissions`, API-0292 `*-create`, API-0293
+		// `*-duplicate`, API-0294 `*-one`, API-0295 `*-remove`,
+		// API-0296 `*-search`, and this entry). It is the project/*
+		// analogue of every prior `*-update` peer in earlier tag
+		// rosters (e.g. API-0255 `organization-updateMemberRole`),
+		// but the closest structural match is API-0292
+		// `project-create`'s flat scalar-only body extended with a
+		// required `projectId` discriminator — the canonical
+		// "patch a single resource by ID with optional mutable
+		// fields" shape.
+		// Per the per-tag fixture-isolation rule established at
+		// API-0290 `project-all`, this entry stays inside the
+		// project/* tag boundary and inherits the `proj-cov-*` slug
+		// namespace opened by API-0292's mutation block; it **must
+		// not** back-reference the organization/* `org-cov-*`
+		// literals even though API-0255 was a structurally similar
+		// update peer.
+		//
+		// Spec source `internal/api/data/openapi.json >
+		// /project.update > post`: zero parameters, required
+		// `application/json` request body whose schema declares
+		// six top-level fields:
+		//   - REQUIRED scalar: `projectId` (string).
+		//   - OPTIONAL scalars: `name` (string), `createdAt`
+		//     (string), `organizationId` (string), `env` (string).
+		//   - OPTIONAL nullable scalar: `description` (declared as
+		//     `anyOf [string, null]` — same shape as API-0292
+		//     `project-create`'s `description`, NOT the plain-string
+		//     shape API-0293 `project-duplicate` declared).
+		// This is the largest body in the project/* mutation arc
+		// so far: bigger than API-0292 `project-create`'s three-
+		// field flat body and structurally similar to (but flatter
+		// than) API-0293 `project-duplicate`'s seven-field nested-
+		// array body. There are no nested arrays or enum-constrained
+		// scalars, so the body shape stays inside the
+		// "scalar-only update" wire contract.
+		//
+		// Fixture conventions:
+		//   * Per the API-0010 / API-0014 / API-0249 / API-0292
+		//     every-optional-populated rule, all five optionals are
+		//     populated with deterministic-but-clearly-fake values
+		//     so the wire payload exercises the entire envelope —
+		//     not just the minimum-required `projectId`. The
+		//     nullable `description` is populated with a string
+		//     (the schema's `anyOf [string, null]` accepts either,
+		//     and a populated string proves the wire-forwarding
+		//     invariant more strongly than a `null` literal would —
+		//     same convention as API-0292 `project-create`).
+		//   * `createdAt` carries an RFC 3339 UTC literal even though
+		//     the spec types it as a plain `string` — the timestamp-
+		//     shaped fixture survives a future schema validator that
+		//     might tighten `createdAt` to `format: date-time`, and
+		//     it keeps the wire fixture readable.
+		//   * Per-case fixture token base `proj-cov-update-0297`
+		//     follows the `<tag>-cov-<slug>-<storyID>` convention
+		//     shared across the project/* roster and is unique
+		//     (verified: no collisions with API-0292
+		//     `proj-cov-create-0292`, API-0293
+		//     `proj-cov-duplicate-0293`, API-0294
+		//     `proj-cov-one-0294`, API-0295 `proj-cov-remove-0295`,
+		//     or API-0296 `proj-cov-search-0296`).
+		//
+		// Responses 200/400/401/403/500 mirror API-0292
+		// `project-create`, API-0293 `project-duplicate`, and
+		// API-0295 `project-remove` (404 is not declared on
+		// `/project.update`, matching the project/* mutation-peer
+		// convention — 404 in the project/* tag is reserved for the
+		// filter-shaped peers API-0294 `project-one` and API-0296
+		// `project-search`). The 200 schema is `{}` with
+		// `additionalProperties: false`, so the success-leg envelope
+		// assertion stays focused on `data.method` / `data.status`
+		// rather than payload projection. The representative-failure
+		// leg keeps the harness default (401 → CodeAuth) because
+		// auth is the universal failure mode every project/* peer
+		// must re-prove — the API-0290 design header reserved
+		// 404 → CodeNotFound for the filter-shaped peers (API-0294 /
+		// API-0296), not for this update mutation.
+		//
+		// This entry closes the project/* arc; future contributors
+		// opening a new tag should grep API-0290 `project-all` first
+		// for the per-tag fixture-isolation header and API-0292
+		// `project-create` for the every-optional-populated body
+		// pattern. Future `*-update` peers in other tags should grep
+		// this entry first for the required-`<resource>Id` plus
+		// every-optional-populated-mutable-field shape.
+		SampleBody: json.RawMessage(`{
+			"projectId": "proj-cov-update-0297",
+			"name": "yalla-coverage-proj-update-0297",
+			"description": "yalla coverage fixture for proj-cov-update-0297 — deterministic, fake, never deployed",
+			"createdAt": "2026-05-08T00:00:00Z",
+			"organizationId": "proj-cov-update-org-0297",
+			"env": "PROJ_COV_UPDATE_0297=fixture\nYALLA_COVERAGE_STORY=API-0297"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior project/* peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
