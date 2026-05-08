@@ -8474,3 +8474,15 @@
     leaves the file's whitespace exactly as upstream wrote it (no
     line-count delta).
 ---
+
+## 2026-05-08 — API-0356 (settings-cleanDockerPrune)
+- Added covered API operation entry for `settings-cleanDockerPrune` (POST /settings.cleanDockerPrune) at the end of `coveredAPIOperations` in internal/cli/api_coverage_test.go.
+- Spec re-verified directly against internal/api/data/openapi.json: optional requestBody, JSON object with one optional `serverId: string`, no `required` array, zero parameters, responses 200/400/401/403/500 (no 404). Byte-identical to API-0353 cleanAll and API-0355 cleanDockerBuilder.
+- Fixture token base `set-cov-cleanDockerPrune-0356` follows the established `<tag>-cov-<slug>-<storyID>` per-tag namespace; SuccessResponse is `{}` per spec; failure leg uses harness default 401 → CodeAuth.
+- Files changed: internal/cli/api_coverage_test.go, ralph/prd.json (passes: true), ralph/progress.txt.
+- Verification run: `gofmt -w .`, `go mod tidy`, `go vet ./...`, `go test ./...`, `go test -race ./...` — all green. (`goimports` not installed locally; documented as in prior iterations. `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser` not run — same status as preceding iterations.)
+- Remaining risks / follow-ups: API-0357 cleanMonitoring is the next settings/* peer; per direct spec inspection it carries **no** requestBody at all (no-body sub-cohort), so do NOT copy this entry's `{serverId}` SampleBody — author the no-body shape used by API-0354 cleanAllDeploymentQueue instead.
+- **Learnings for future iterations:**
+  - The `clean*` family in settings/* splits cleanly into two body-shape sub-cohorts: optional-body-with-optional-`serverId` (cleanAll, cleanDockerBuilder, cleanDockerPrune) and no-body (cleanAllDeploymentQueue, cleanMonitoring, cleanRedis, cleanSSHPrivateKey). Always re-verify against openapi.json — verb prefix is not authoritative.
+  - When the new entry's spec is byte-identical to its immediate predecessor, the cleanest comment pattern is to (a) cite the prior entry's forward-reference, (b) say "confirmation" rather than "correction", and (c) point the next entry at its own divergence (here: cleanMonitoring's no-body shape) so the chain keeps re-verifying rather than copy-pasting.
+---

@@ -6005,6 +6005,125 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0356",
+		OperationID: "settings-cleanDockerPrune",
+		Method:      http.MethodPost,
+		Path:        "/settings.cleanDockerPrune",
+		Tag:         "settings",
+		// Sixth entry on the settings/* coverage roster, inheriting
+		// the `set-cov-*` per-tag fixture-isolation namespace
+		// established by API-0351 `settings-assignDomainServer`
+		// (must not back-reference the closed `srv-cov-*`,
+		// `proj-cov-*`, `org-cov-*`, `compose-cov-*`, `app-cov-*`,
+		// `ai-cov-*`, or any other prior tag's namespace, per the
+		// per-tag isolation rule reasserted at API-0335..API-0355
+		// and originally established at API-0246
+		// `organization-active`).
+		//
+		// **Spec re-verified per the API-0345..API-0355
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json >
+		// /settings.cleanDockerPrune > post`: a single
+		// **OPTIONAL** `requestBody` (`requestBody.required =
+		// false`) carrying a JSON object with one optional string
+		// property `serverId` and no `required` array; **zero
+		// parameters** (no query, no path, no header). Responses
+		// 200/400/401/403/500 — note the **absence of 404**,
+		// mirroring the API-0351 opener / API-0353 / API-0354 /
+		// API-0355 response sets rather than API-0352's
+		// by-id-flavoured 404-bearing response set. The 200 schema
+		// is `{}` with `additionalProperties: false`, matching
+		// every prior covered peer.
+		//
+		// **Forward-reference confirmation.** API-0355's comment
+		// predicted this entry would carry the same optional-body
+		// shape as cleanDockerBuilder while still demanding
+		// per-spec re-verification. Direct inspection confirms the
+		// schemas are byte-identical: optional `requestBody` whose
+		// content is a JSON object with one optional `serverId:
+		// string` property and no `required` array. The `clean*`
+		// family in settings/* therefore continues to split into
+		// two sub-cohorts on the wire: (a) optional-body POSTs
+		// with an optional `serverId` (API-0353 cleanAll, API-0355
+		// cleanDockerBuilder, and now API-0356 cleanDockerPrune),
+		// and (b) no-body POSTs (API-0354 cleanAllDeploymentQueue,
+		// API-0357 cleanMonitoring, API-0358 cleanRedis, API-0359
+		// cleanSSHPrivateKey — verified directly against the
+		// embedded openapi.json `requestBody` absence). The
+		// optional/required distinction remains per-operation;
+		// future settings/* peers must always re-verify the spec
+		// before authoring the fixture, the `clean*` verb prefix
+		// alone is not authoritative.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `set-cov-cleanDockerPrune-0356` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared
+		//     across every per-tag roster and is unique (verified:
+		//     no collisions with API-0351
+		//     `set-cov-assignDomainServer-0351`, API-0352
+		//     `set-cov-checkGPUStatus-0352`, API-0353
+		//     `set-cov-cleanAll-0353`, API-0354
+		//     `set-cov-cleanAllDeploymentQueue-0354`, or API-0355
+		//     `set-cov-cleanDockerBuilder-0355` slugs, and
+		//     orthogonal to every prior tag's `srv-cov-*`,
+		//     `proj-cov-*`, `org-cov-*`, `compose-cov-*`,
+		//     `app-cov-*`, `ai-cov-*`, etc. namespaces).
+		//   * `serverId` carries the fixture-shaped literal
+		//     `set-cov-cleanDockerPrune-0356` rather than a real
+		//     UUID so the wire payload cannot be mistaken for a
+		//     real production server identifier. Even though the
+		//     body and the `serverId` field are both optional in
+		//     the spec, populating both exercises the JSON
+		//     serialiser's optional-body branch on the wire and
+		//     keeps the success-leg `Content-Type: application/json`
+		//     header assertion meaningful — leaving the body unset
+		//     would degrade this case to the parameter-free POST
+		//     cohort (which has no Content-Type assertion) and
+		//     lose the body-forwarding round-trip assertion that
+		//     distinguishes this shape from API-0354's no-body
+		//     shape.
+		//
+		// **Failure-leg fields are intentionally omitted.** The
+		// spec does not declare 404 on this operation (the
+		// `cleanDockerPrune` verb is a fleet-wide, optional-
+		// server-scoped Docker prune operation, not a by-id
+		// resource lookup), so the per-tag opener convention
+		// reasserted at API-0335..API-0355 that reserves 404 →
+		// CodeNotFound for canonical `*-one` peers does not even
+		// apply here. Auth is the universal failure mode every
+		// Dokploy operation must re-prove, so 401 → CodeAuth via
+		// the harness default (`tc.FailureStatus == 0` → 401,
+		// `tc.FailureCode == ""` → CodeAuth) stays the most
+		// informative representative. 400 → CodeInvalidInput
+		// stays reserved for stories where payload validation is
+		// the operation's distinguishing failure mode; this entry
+		// uses the canonical 401.
+		//
+		// The next case in the settings/* roster, API-0357
+		// `settings-cleanMonitoring`, is also a POST per the
+		// verb's `clean*` family pattern but per direct spec
+		// inspection carries **no** `requestBody` at all — the
+		// no-body sub-cohort referenced above. Future contributors
+		// authoring API-0357 should grep this entry first for the
+		// `set-cov-*` namespace inheritance pattern, then re-
+		// verify the spec against `internal/api/data/openapi.json
+		// > /settings.cleanMonitoring > post` per the forward-
+		// reference lesson — do **not** assume the body shape
+		// mirrors this entry's `{serverId}` schema solely because
+		// the verb prefix matches; API-0354 already established
+		// that two `clean*` siblings can diverge on the body axis.
+		SampleBody: json.RawMessage(`{
+			"serverId": "set-cov-cleanDockerPrune-0356"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
