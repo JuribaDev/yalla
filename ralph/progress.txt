@@ -13732,3 +13732,83 @@ Learnings for future iterations:
     `--input '{}'` is the canonical agent invocation here and 404 is
     not exercisable.
 ---
+
+
+## 2026-05-08 - API-0108 - Cover docker-getConfig (GET /docker.getConfig)
+- **Implemented**: First entry in the docker/* coverage roster. The destination/* tag
+  closed at API-0107 `destination-update`; this story opens the docker/* tag and the
+  fresh `docker-cov-*` per-tag fixture-isolation namespace. Spec source
+  `internal/api/data/openapi.json > /docker.getConfig > get` declares a parameter-only
+  GET with two query params: `containerId` (string, REQUIRED — the container whose
+  Docker low-level config blob is returned) and `serverId` (string, OPTIONAL —
+  scopes to a specific Dokploy worker server). No request body. Responses
+  200/400/401/403/404/500 with a `{}` (`additionalProperties:false`) success
+  schema. The harness's `runAPICoverageSuccess` re-reads `r.URL.Query()` to confirm
+  end-to-end forwarding for both populated params.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended the API-0108 entry between
+    API-0107 (`destination-update`, last destination/* peer) and API-0246
+    (`organization-active`). Per the established
+    `<tag>-cov-<slug>-<storyID>` deterministic-but-clearly-fake convention the
+    fixture token is `docker-cov-get-config-0108` and the optional `serverId`
+    reuses the cross-tag `server-cov-*` value-axis seen at API-0041
+    `backup-listBackupFiles`.
+  - `ralph/prd.json` — flipped `passes` to `true` for the API-0108 story.
+- **Verification run**:
+  - `gofmt -w .` → clean.
+  - `go mod tidy` → no diff.
+  - `go vet ./...` → no diagnostics.
+  - `go test ./...` → all packages pass (`internal/cli` 1.118s, others cached).
+  - `go test -race ./...` → all packages pass (`internal/cli` 2.849s, others cached).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser` are
+    not installed locally and were skipped per the existing project documentation.
+- **Results**: API-0108 covered. The CLI registry/manifest/schema/success/failure
+  invariants all run automatically through the existing `coveredAPIOperations`
+  harness — no additional code changes were required outside the struct-literal
+  append. Remaining failing stories: 251 (next highest priority is API-0109
+  `docker-getContainers`).
+- **Remaining risks or follow-ups**:
+  - None for this story. The next priority-3 docker/* peer is API-0109
+    `docker-getContainers` — per the slug-prefix-is-not-shape lesson the next
+    contributor must re-verify the spec at
+    `internal/api/data/openapi.json > /docker.getContainers > get` rather than
+    assume it inherits this entry's REQUIRED+OPTIONAL shape (per spec scan
+    API-0109 has only an optional `serverId` and no REQUIRED parameter, so it
+    represents a different sub-shape).
+- **Learnings for future iterations:**
+  - **Per-tag opener fixture-isolation namespace.** Every first entry in a new
+    tag opens a fresh `<tag>-cov-*` namespace. The destination/* tag closed at
+    API-0107; API-0108 opens `docker-cov-*`. The closed namespaces (now
+    explicitly enumerated in the entry's "must not back-reference" list) are
+    `admin-cov-*`, `ai-cov-*`, `app-cov-*`, `backup-cov-*`, `bb-cov-*`,
+    `cert-cov-*`, `clu-cov-*`, `compose-cov-*`, `deployment-cov-*`,
+    `dest-cov-*`, `org-cov-*`, `proj-cov-*`, `set-cov-*`, `srv-cov-*`. Future
+    docker/* peers (API-0109..API-0114) must stay inside `docker-cov-*` and
+    add no cross-tag value-axis literals other than the established
+    `server-cov-*` (optional `serverId`) and `dst-cov-*` (backup
+    `destinationId`) precedents.
+  - **REQUIRED + OPTIONAL GET shape precedent.** The closest cross-tag template
+    for `docker-getConfig` is API-0077 `compose-getTags` (REQUIRED + OPTIONAL,
+    two params) and API-0041 `backup-listBackupFiles` (REQUIRED + REQUIRED +
+    OPTIONAL, three params). Both populate the optional axis so the success-leg
+    `r.URL.Query()` re-read exercises every declared parameter — the harness
+    does not gate on `required`-ness and forwards whatever `SampleQuery`
+    carries. Future API-0109..API-0113 docker/* GETs that share this REQUIRED
+    + OPTIONAL pattern can copy the API-0108 docstring template verbatim and
+    swap the StoryID, slug, parameter names, and per-operation cross-references.
+  - **Per-tag opener default failure leg stays at 401 → CodeAuth.** Even though
+    `docker.getConfig` declares 404 in its response set (an unresolvable
+    `containerId`), the kickoff entry for a new tag exercises the universal
+    `E_AUTH` invariant — auth is the single failure mode every authenticated
+    Dokploy operation must re-prove before path/row resolution runs. The
+    404 → CodeNotFound representative is reserved for a later docker/* peer
+    where the spec re-verification confirms 404 is exercisable from a
+    legitimate `--input` document. This precedent now holds across every
+    per-tag opener (API-0006 ai, API-0021 application, API-0094 deployment,
+    API-0246 organization, API-0427 user, API-0108 docker).
+  - **Forward-reference comment for the next case is mandatory.** Every entry
+    closes with a reminder of the next per-tag PRD slug AND the slug-prefix-is-
+    not-shape lesson. API-0109 `docker-getContainers` is the natural next
+    docker/* coverage story; its spec lookup is a hard gate before any
+    contributor can copy this entry's shape.
+---
