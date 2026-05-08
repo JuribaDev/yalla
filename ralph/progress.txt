@@ -7626,3 +7626,72 @@
     story genuinely needs richer assertions than the harness offers
     (the harness comment at line ~5159 explicitly anticipates this).
 ---
+
+## 2026-05-08 - API-0349
+- Added apiCoverageCase entry for `server-validate` (GET /server.validate,
+  tag `server`) to `internal/cli/api_coverage_test.go`. The shared harness
+  (`TestAPICoverage_RegistryInvariants`, `_SchemaCommandWorks`,
+  `_ManifestListsOperation`, `_SuccessRoundTrip`,
+  `_RepresentativeFailure`) now drives registry, schema, manifest, success,
+  and 401 → CodeAuth failure assertions for this operation automatically.
+- Re-verified the embedded spec per the API-0345 / API-0347 / API-0348
+  forward-reference lesson against
+  `internal/api/data/openapi.json > /server.validate > get`. The GET shape
+  is **byte-identical** to `/server.security > get` — confirmed via
+  `diff <(jq -S '.paths["/server.security"].get | del(.operationId)' …)
+  <(jq -S '.paths["/server.validate"].get | del(.operationId)' …)`,
+  which produced an empty diff. Single REQUIRED query parameter
+  `serverId` (string), no path parameters, no request body, responses
+  200/400/401/403/404/500, 200 schema `{}` with
+  `additionalProperties: false`. The API-0345 forward-reference
+  prediction held: this is pure copy-and-rename — only StoryID,
+  OperationID, Path, and the per-case fixture slug change.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended one apiCoverageCase
+    entry (+91 lines including the comment block) before the closing
+    brace of `coveredAPIOperations`.
+  - `ralph/prd.json` — flipped `passes` to `true` for API-0349.
+  - `ralph/progress.txt` — this entry.
+- Verification run from repo root:
+  - `gofmt -l .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass.
+  - `go test -race ./...` — all packages pass (`internal/cli` 2.615s).
+- Tools NOT installed locally (per Codebase Patterns): `goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`. Skipped
+  silently per the existing convention.
+- Remaining risks / follow-ups: one server/* story still pending —
+  API-0350 `server-withSSHKey`, which will close out the server/*
+  tag. Per the API-0345 / API-0347 / API-0348 forward-reference
+  lesson, future contributors must re-verify
+  `internal/api/data/openapi.json > /server.withSSHKey` first rather
+  than blindly mirroring this entry — the comment block on the new
+  entry forward-references this requirement.
+- **Learnings for future iterations:**
+  - The forward-reference prediction at API-0345 (and re-asserted at
+    API-0348) was correct: `/server.validate` is byte-identical to
+    `/server.security` modulo `operationId`. The `jq -S … | del(.operationId)`
+    diff is the cheapest, most diff-friendly verification step and
+    should become standard practice for any "verbatim mirror"
+    family — running it before drafting the entry costs nothing
+    and prevents the API-0345 / API-0347 / API-0348-class mistakes.
+  - The single-required-query-param GET sub-cohort within the
+    server/* tag now has four members (API-0339, API-0342, API-0345,
+    API-0349) and one canonical reference (API-0345). The next
+    `*-validate`-style peer in any future tag should grep API-0345
+    first; cross-tag peers introducing a query-shaped GET should
+    fall back to API-0033 `application-readTraefikConfig`.
+  - `coveredAPIOperations` insertion order is operationId-ascending
+    inside each tag block. The new entry sits immediately after
+    `server-update` (API-0348) — which is alphabetically correct
+    because `server-update` < `server-validate` < `server-withSSHKey`.
+    The closing slice brace at line 5238 is the canonical insertion
+    point for the final server/* peer (API-0350).
+  - Forward-reference comments embedded in earlier entries continue
+    to be the cheapest "future me" guidance — the API-0345 entry's
+    explicit "API-0349 should mirror this verbatim" line saved
+    re-deriving the shape from scratch and was confirmed by the
+    spec diff above. Maintaining this discipline keeps the harness
+    truly append-only.
+---

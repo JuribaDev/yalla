@@ -5145,6 +5145,97 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0349",
+		OperationID: "server-validate",
+		Method:      http.MethodGet,
+		Path:        "/server.validate",
+		Tag:         "server",
+		// Fifteenth entry on the server/* coverage roster and the
+		// **fourth single-required-query-param GET** in the server/*
+		// tag (after API-0339 `server-getDefaultCommand`, API-0342
+		// `server-one`, and API-0345 `server-security`). It returns
+		// to the query-shaped GET cohort after the four-peer body-
+		// mutation run API-0344/0346/0347/0348. Inherits the
+		// `srv-cov-*` per-tag fixture-isolation namespace established
+		// at API-0335 (must not back-reference the cross-tag
+		// `proj-cov-*` / `org-cov-*` namespaces, per the per-tag
+		// isolation rule reasserted at API-0335..API-0348 and
+		// originally established at API-0246 `organization-active`).
+		//
+		// **Spec re-verified per the API-0345 / API-0347 / API-0348
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /server.validate > get`:
+		// zero request body, a single REQUIRED query parameter
+		// `serverId` (string), no path parameters. Responses
+		// 200/400/401/403/404/500 — byte-identical to
+		// `/server.security > get` (verified at story authoring time
+		// via `diff <(jq -S '.paths["/server.security"].get | del(.operationId)' …)
+		// <(jq -S '.paths["/server.validate"].get | del(.operationId)' …)`,
+		// which produced an empty diff). The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior server/*
+		// peer. The API-0345 forward-reference comment explicitly
+		// flagged this entry as a "verbatim mirror — only StoryID /
+		// OperationID / Path / fixture-slug change", and that
+		// prediction held: this is pure copy-and-rename.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base `srv-cov-validate-0349`
+		//     follows the `<tag>-cov-<slug>-<storyID>` convention
+		//     shared across the server/* roster and is unique
+		//     (verified: no collisions with API-0339
+		//     `server-getDefaultCommand`'s
+		//     `srv-cov-getDefaultCommand-0339`, API-0340
+		//     `server-getServerMetrics`'s
+		//     `srv-cov-getServerMetrics-0340`, API-0342 `server-one`'s
+		//     `srv-cov-one-0342`, API-0344 `server-remove`'s
+		//     `srv-cov-remove-0344`, API-0345 `server-security`'s
+		//     `srv-cov-security-0345`, API-0346 `server-setup`'s
+		//     `srv-cov-setup-0346`, API-0347
+		//     `server-setupMonitoring`'s
+		//     `srv-cov-setupMonitoring-0347`, or API-0348
+		//     `server-update`'s `srv-cov-update-0348`, and orthogonal
+		//     to the cross-tag `proj-cov-*` / `org-cov-*` namespaces
+		//     reserved for the project/* and organization/* rosters).
+		//   * `serverId` carries the fixture-shaped UUID-style
+		//     literal `srv-cov-validate-0349` rather than a real
+		//     UUID so the wire payload cannot be mistaken for a
+		//     real production server identifier; the server/* tag
+		//     already established the `srv-cov-*` slug shape at
+		//     API-0339, and re-using it here keeps the fixture
+		//     diff-friendly.
+		//
+		// **Failure-leg fields are intentionally omitted.** Even
+		// though the spec also declares 404 on this operation,
+		// the per-tag opener convention reasserted at
+		// API-0335..API-0348 reserves 404 → CodeNotFound for the
+		// canonical by-id `*-one` peer (API-0342 `server-one`),
+		// not for filter-by-serverId GETs like this one. Auth is
+		// the universal failure mode every Dokploy operation must
+		// re-prove, so 401 → CodeAuth via the harness default
+		// (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""`
+		// → CodeAuth) stays the most informative representative.
+		// **Do not** copy the FailureStatus / FailureCode lines
+		// from API-0342 — that was a one-time by-id-shaped GET
+		// override.
+		//
+		// The next case in the server/* roster, API-0350
+		// `server-withSSHKey`, closes out the server/* tag. Its
+		// shape is unknown until re-verified — future contributors
+		// should grep `internal/api/data/openapi.json >
+		// /server.withSSHKey` first and re-verify the spec rather
+		// than blindly mirroring this entry, per the API-0345 /
+		// API-0347 / API-0348 forward-reference lesson.
+		SampleQuery: map[string][]string{
+			"serverId": {"srv-cov-validate-0349"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior server/* peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
