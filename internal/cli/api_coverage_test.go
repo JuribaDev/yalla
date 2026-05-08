@@ -2905,6 +2905,126 @@ var coveredAPIOperations = []apiCoverageCase{
 		FailureCode:   yerr.CodeNotFound,
 	},
 	{
+		StoryID:     "API-0061",
+		OperationID: "certificates-remove",
+		Method:      http.MethodPost,
+		Path:        "/certificates.remove",
+		Tag:         "certificates",
+		// Fourth and final entry on the certificates/* coverage
+		// roster — the **mutating-by-id POST** that closes out the
+		// certificates/* tag arc opened by API-0058
+		// `certificates-all` (parameter-free list-style GET),
+		// continued by API-0059 `certificates-create` (the create
+		// mutation peer) and API-0060 `certificates-one` (the
+		// canonical by-id reader that consumed the 404 →
+		// CodeNotFound override slot reserved at API-0058's
+		// design-rationale header). Inherits the `cert-cov-*`
+		// per-tag fixture-isolation namespace opened by API-0058
+		// and previously consumed by `cert-cov-create-0059`
+		// (API-0059) and `cert-cov-one-0060` (API-0060). Per the
+		// per-tag isolation rule originally established at API-0246
+		// `organization-active`, reasserted at API-0290
+		// `project-all`, API-0335 `server-all`, API-0351
+		// `settings-assignDomainServer`, API-0051
+		// `bitbucket-bitbucketProviders`, and most recently at
+		// API-0058 `certificates-all`, this entry **must not**
+		// back-reference any closed `admin-cov-*`, `ai-cov-*`,
+		// `app-cov-*`, `backup-cov-*`, `bb-cov-*`, `compose-cov-*`,
+		// `deployment-cov-*`, `org-cov-*`, `proj-cov-*`,
+		// `srv-cov-*`, or `set-cov-*` namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0383
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /certificates.remove >
+		// post`: a **POST** with **zero parameters** (no path, no
+		// query, no header) and a **required JSON request body**.
+		// The body schema fields per the spec:
+		//   - REQUIRED scalar: `certificateId` (plain string, no
+		//     `anyOf` / `nullable` / enum constraints).
+		//   - **No optional siblings.** The wire shape is byte-for-
+		//     byte identical to API-0066 `compose-cancelDeployment`'s
+		//     single-required-string-body POST envelope (composeId →
+		//     certificateId rename), and to every other minimal-id
+		//     POST mutation already covered fleet-wide.
+		// Responses 200/400/401/403/500 — **no 404** is declared,
+		// matching the canonical mutation response set already
+		// exercised by every prior `*-remove` peer (e.g. API-0044
+		// `backup-remove`, API-0054 `bitbucket-remove`, API-0298
+		// `project-remove`, API-0344 `server-remove`). Per the
+		// forward-reference at API-0058's design-rationale header
+		// ("API-0061 `certificates-remove` is a mutating POST and
+		// is expected to revert to the harness default 401 →
+		// CodeAuth"), 404 → CodeNotFound stayed reserved for and
+		// was consumed by API-0060 `certificates-one`, the
+		// canonical by-id reader, not by this delete mutation. The
+		// 200 schema is `{}` with `additionalProperties: false`,
+		// matching every prior covered peer; the success-leg
+		// envelope assertion stays focused on `data.method` /
+		// `data.status` rather than payload projection.
+		//
+		// **Family choice — remove POST, harness-default failure
+		// leg.** Per the forward-reference at API-0058's
+		// design-rationale header (re-stated at API-0059's
+		// hand-off note: "API-0061 `certificates-remove` (POST) is
+		// then expected to follow the harness-default 401 →
+		// CodeAuth slot per the create/remove mutation cohort"),
+		// this entry consumes that reservation — 401 → CodeAuth
+		// via the harness default (`tc.FailureStatus == 0` → 401,
+		// `tc.FailureCode == ""` → CodeAuth) stays the most
+		// informative representative failure for a delete mutation
+		// whose own 4xx vocabulary (400 invalid input / 403
+		// forbidden) is too generic to claim a distinguishing
+		// failure shape, and whose spec does not declare 404 (so
+		// an "id not found" failure is not even a contract
+		// response on this operation). 400 → CodeInvalidInput
+		// stays reserved for stories where payload validation is
+		// the operation's distinguishing failure mode; this
+		// entry's single-required-string-body surface is too
+		// generic to claim that distinguishing shape.
+		//
+		// **Tag-arc closer.** With API-0061 the certificates/* tag
+		// is fully covered (4/4 entries: API-0058 list-all GET,
+		// API-0059 create POST, API-0060 by-id GET, API-0061
+		// by-id remove POST). The next priority-3 tag in the PRD
+		// roster (cluster/*) opens a fresh `clu-cov-*` namespace
+		// and **must not** back-reference the now-closed
+		// `cert-cov-*` namespace per the per-tag isolation rule.
+		//
+		// Fixture conventions:
+		//   * Single required scalar — no every-optional-populated
+		//     rule applies because the spec declares no optional
+		//     siblings. The minimum-required envelope IS the whole
+		//     envelope. Same shape as API-0066
+		//     `compose-cancelDeployment`'s single-required-string-
+		//     body POST (and every other minimal-id POST mutation).
+		//   * Per-case fixture token base `cert-cov-remove-0061`
+		//     follows the `<tag>-cov-<slug>-<storyID>` convention
+		//     shared across every per-tag roster and consumes a
+		//     fresh slug within the `cert-cov-*` namespace opened
+		//     at API-0058 (verified: no collisions with
+		//     `cert-cov-create-0059` (API-0059) or
+		//     `cert-cov-one-0060` (API-0060), and no
+		//     back-references into closed cross-tag `bb-cov-*` /
+		//     `proj-cov-*` / `srv-cov-*` / `set-cov-*` /
+		//     `org-cov-*` namespaces).
+		//   * Deterministic-but-clearly-fake value (`-fixture`
+		//     suffix on `certificateId`) keeps diffs readable and
+		//     lets any future schema validator's failure messages
+		//     point at the offending field — consistent with
+		//     API-0060 `certificates-one`'s sibling fixture style
+		//     and the API-0021..API-0023 query-shaped GET
+		//     precedent.
+		SampleBody: json.RawMessage(`{
+			"certificateId": "cert-cov-remove-0061-certificateId-fixture"
+		}`),
+		// 200 response in the spec is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0066",
 		OperationID: "compose-cancelDeployment",
 		Method:      http.MethodPost,

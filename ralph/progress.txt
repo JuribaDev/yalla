@@ -11134,3 +11134,79 @@ Learnings for future iterations:
     must not back-reference any closed cross-tag namespace
     (`bb-cov-*`, `srv-cov-*`, etc.).
 ---
+
+## 2026-05-08 - API-0061
+- **Implemented**: Per-operation contract coverage for `certificates-remove`
+  (POST `/certificates.remove`), the by-id mutating POST that closes out
+  the certificates/* tag arc opened by API-0058. Adds the fourth and
+  final certificates/* `apiCoverageCase` entry — a single required
+  `certificateId` (plain string) request body, empty-object 200 body,
+  and the harness-default 401 → CodeAuth failure leg (404 → CodeNotFound
+  was reserved for and consumed by API-0060 `certificates-one`, the
+  canonical by-id reader; the spec for `/certificates.remove` does not
+  declare 404 at all). All five subtests (registry invariants, schema
+  reachability, manifest inclusion, success round-trip, representative
+  failure) flow through the existing `runAPICoverage*` harness — no
+  harness changes required. With this entry the certificates/* tag is
+  fully covered (4/4: list-all GET, create POST, by-id GET, by-id
+  remove POST).
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended the API-0061 struct
+    literal between API-0060 and API-0066, sorted by StoryID.
+  - `ralph/prd.json` — flipped `API-0061.passes` to `true`.
+  - `ralph/progress.txt` — this entry.
+- **Verification run** (from repo root):
+  - `gofmt -w .` — clean.
+  - `goimports` — not installed (documented as missing per the
+    Codebase Patterns convention).
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — PASS (all 9 packages).
+  - `go test -race ./...` — PASS (all 9 packages).
+  - `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser` — not
+    installed; documented as missing per the Codebase Patterns
+    convention.
+- **Results**: All quality gates green. The certificates/* tag-arc
+  forecast laid out at API-0058's design-rationale header
+  (list-all → create → by-id GET (404 override) → by-id remove
+  (default 401)) is now fully realised in the test roster.
+- **Remaining risks / follow-ups**:
+  - None within this story. Future contributors picking up the next
+    priority-3 tag (per the PRD roster, cluster/* — API-0062
+    `cluster-addManager` is the highest unpassed entry) open a fresh
+    `clu-cov-*` namespace and **must not** back-reference the now-
+    closed `cert-cov-*` namespace per the per-tag isolation rule.
+- **Learnings for future iterations**:
+  - **Per-tag forecast pays off.** API-0058's design-rationale header
+    forecast all four certificates/* failure-leg slot assignments
+    (list-all → harness default; create → harness default; by-id GET
+    → 404 override; by-id remove → harness default). Each subsequent
+    entry (API-0059, API-0060, API-0061) consumed exactly the
+    pre-reserved slot with no re-litigation of the family choice.
+    When opening a new tag arc, future contributors should write the
+    same forecast at the opener so the per-operation re-verification
+    on later peers is just a spec sanity check, not a fresh design
+    debate.
+  - **Single-required-string-body POST is the cheapest mutation
+    shape.** `/certificates.remove` is byte-for-byte identical to
+    `/compose.cancelDeployment` (API-0066) modulo the field rename.
+    The contract test pattern for any minimal-id POST mutation —
+    SampleBody with a single string field, default failure leg, no
+    SamplePathParams or SampleQuery — is reusable verbatim.
+  - **404 absence in delete mutations.** Many Dokploy `*-remove`
+    POST operations (this one, API-0044 `backup-remove`, API-0054
+    `bitbucket-remove`, API-0298 `project-remove`, API-0344
+    `server-remove`) **do not declare 404** in their response set.
+    Even though "delete a thing that doesn't exist" feels like the
+    canonical 404 case, the API instead surfaces it as a generic
+    400/500 in practice. Per the contract-first rule, the test
+    asserts the harness default (401 → CodeAuth) rather than
+    inventing a 404 path the spec doesn't sanction. This is the
+    standing reminder that the per-tag failure-leg override cohort
+    is GET-by-id readers, not delete mutations.
+  - **Tag-arc closer hygiene.** When the final entry on a tag arc
+    lands, the progress.txt entry should call out the 4/4 (or N/N)
+    completion explicitly so the next iteration immediately sees the
+    namespace is closed and a fresh `<newtag>-cov-*` namespace must
+    be opened.
+---
