@@ -12452,6 +12452,182 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0390",
+		OperationID: "settings-updateDockerCleanup",
+		Method:      http.MethodPost,
+		Path:        "/settings.updateDockerCleanup",
+		Tag:         "settings",
+		// Fortieth entry on the settings/* coverage roster, inheriting
+		// the `set-cov-*` per-tag fixture-isolation namespace
+		// established by API-0351 `settings-assignDomainServer` and
+		// extended through API-0389 `settings-toggleRequests` (must
+		// not back-reference the closed `srv-cov-*`, `proj-cov-*`,
+		// `org-cov-*`, `compose-cov-*`, `app-cov-*`, `ai-cov-*`, or
+		// any other prior tag's namespace, per the per-tag isolation
+		// rule reasserted at API-0335..API-0389 and originally
+		// established at API-0246 `organization-active`).
+		//
+		// **Spec re-verified per the API-0345..API-0389
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json >
+		// /settings.updateDockerCleanup > post`: a **POST** with a
+		// **REQUIRED** `requestBody` (`requestBody.required = true`)
+		// carrying a JSON object with two declared inner properties —
+		// `enableDockerCleanup` (**boolean**, **REQUIRED** via
+		// `required: ["enableDockerCleanup"]`) and `serverId`
+		// (**string**, **OPTIONAL**, no entry in the inner `required`
+		// array). **Zero parameters** (no query, no path, no header).
+		// Responses 200/400/401/403/500 — note the **absence of
+		// 404**, matching the canonical settings/* mutating-POST
+		// cohort and diverging from the by-id-flavoured 404-bearing
+		// response sets. The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the settings/* roster.
+		//
+		// **Forward-reference confirmation — three axes pivot from
+		// API-0389.** API-0389 `toggleRequests`'s hand-off comment
+		// correctly forecast that this entry would (a) pivot the
+		// slug-prefix axis from `toggle*` to `update*`, opening a new
+		// slug sub-roster within settings/*, (b) pivot the
+		// inner-property-count axis from one back to two, (c) pivot
+		// the inner-property-type axis from boolean-only to mixed
+		// boolean+string, while sharing the verb axis (POST), the
+		// outer-body axis (REQUIRED), the inner-required-field axis
+		// (at-least-one inner required field), the parameter axis
+		// (zero parameters), and the response-set axis
+		// (200/400/401/403/500, no 404). Direct inspection of the
+		// spec confirms the prediction: the outer
+		// `requestBody.required` is `true`, the inner schema declares
+		// two properties (`enableDockerCleanup: boolean`, `serverId:
+		// string`) and an inner `required: ["enableDockerCleanup"]`
+		// array. The body-axis flip-flop across API-0383..API-0390 is
+		// now eight entries deep within the same tag (no-body /
+		// no-body / optional-body / required-body+inner-required /
+		// required-body+inner-optional-string-only / required-body+
+		// inner-optional-mixed-boolean+string / required-body+inner-
+		// required-boolean-only / required-body+inner-required-mixed-
+		// boolean+string); per-operation re-verification stays
+		// mandatory across every family transition.
+		//
+		// **Family opening — first `update*` slug-prefix peer in
+		// settings/*.** The `toggle*` slug sub-roster opened by
+		// API-0388 and continued through API-0389 closes here, and
+		// this entry opens the new `update*` slug sub-roster. The
+		// PRD ordering forecasts a contiguous run of `update*` peers
+		// (API-0390..API-0397: `updateDockerCleanup`,
+		// `updateLogCleanup`, `updateMiddlewareTraefikConfig`,
+		// `updateServer`, `updateServerIp`, `updateTraefikConfig`,
+		// `updateTraefikFile`, `updateTraefikPorts`). Per the
+		// slug-prefix-is-not-shape rule reasserted at
+		// API-0371..API-0389, future `update*` peers must re-verify
+		// per-operation rather than inherit any axis from this
+		// entry — the next `update*` peer (`updateLogCleanup`) may
+		// well declare a different inner-property-count,
+		// inner-property-type, or inner-required-field axis.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `set-cov-updateDockerCleanup-0390` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared across
+		//     every per-tag roster and is unique (verified against
+		//     API-0351..API-0389's `set-cov-*` slugs and orthogonal
+		//     to every prior tag's `srv-cov-*`, `proj-cov-*`,
+		//     `org-cov-*`, `compose-cov-*`, `app-cov-*`, `ai-cov-*`,
+		//     etc. namespaces). The slug is surfaced on the wire via
+		//     the OPTIONAL `serverId` string field rather than only
+		//     in this comment, mirroring the API-0386/API-0387/
+		//     API-0388 convention where a `serverId`-flavoured
+		//     string field carried the per-case slug into the
+		//     request payload — this entry restores that pattern
+		//     after API-0389 `toggleRequests` (which had no
+		//     string-typed inner property) was forced to omit it.
+		//   * `enableDockerCleanup` carries the literal boolean
+		//     `true` so the success-leg JSON serialiser exercises
+		//     the boolean branch. Either boolean would be
+		//     structurally valid; `true` is chosen to mirror the
+		//     operation's plain-language semantics (enable Docker
+		//     cleanup) and to keep this fixture distinguishable on
+		//     the wire from a default zero-valued false. Mirrors
+		//     the API-0388 `enableDashboard: true` and API-0389
+		//     `enable: true` choices for the same reason within
+		//     adjacent settings/* sub-rosters.
+		//   * **Populating the only required field** is mandatory
+		//     here: leaving `enableDockerCleanup` out would produce
+		//     a structurally invalid request (the inner schema has
+		//     `required: ["enableDockerCleanup"]`). Re-asserts the
+		//     inner-required-field axis observed at API-0386
+		//     `settings-saveSSHPrivateKey` (`name`/`privateKey`
+		//     REQUIRED) and API-0389 `settings-toggleRequests`
+		//     (`enable` REQUIRED) within the same tag.
+		//   * **Including the OPTIONAL `serverId`** is a deliberate
+		//     coverage choice rather than a structural necessity:
+		//     the inner schema's `required` array names only
+		//     `enableDockerCleanup`, so a payload with just that
+		//     boolean would be structurally valid. Carrying
+		//     `serverId` here exercises the mixed-type
+		//     boolean+string serialiser branch, surfaces the
+		//     per-case slug on the wire (per the fixture-isolation
+		//     convention above), and keeps this entry
+		//     distinguishable from a hypothetical degenerate
+		//     boolean-only payload that would otherwise be
+		//     structurally indistinguishable from API-0389's wire
+		//     shape.
+		//
+		// **Failure-leg fields are intentionally omitted.** The
+		// spec does not declare 404 on this operation (the
+		// `updateDockerCleanup` verb mutates a controller-wide
+		// configuration flag rather than performing a by-id
+		// resource lookup), so the per-tag opener convention
+		// reasserted at API-0335..API-0389 that reserves 404 →
+		// CodeNotFound for canonical `*-one` peers does not apply
+		// here. Auth is the universal failure mode every Dokploy
+		// operation must re-prove, so 401 → CodeAuth via the
+		// harness default (`tc.FailureStatus == 0` → 401,
+		// `tc.FailureCode == ""` → CodeAuth) stays the most
+		// informative representative. 400 → CodeInvalidInput is
+		// *technically* available here (the inner schema's
+		// `required: ["enableDockerCleanup"]` array means a
+		// missing-`enableDockerCleanup` payload would fail
+		// server-side validation), but it remains reserved for
+		// stories where payload validation is the operation's
+		// *distinguishing* failure mode. Auth is shared with every
+		// operation in the catalogue and therefore the canonical
+		// representative failure for routine settings/* coverage
+		// entries; 400 stays reserved for stories whose coverage
+		// burden uniquely hinges on payload-shape validation (e.g.
+		// multi-field cross-validation, conditional `oneOf`/
+		// `anyOf`, length-bounded strings) — none of which apply
+		// to a two-field boolean+string update.
+		//
+		// The next case in the settings/* roster per PRD ordering
+		// is API-0391 `settings-updateLogCleanup` (declared a
+		// **POST** in the PRD with `requestBody.required = true`).
+		// The next contributor must re-verify against
+		// `internal/api/data/openapi.json >
+		// /settings.updateLogCleanup > post` per the
+		// forward-reference lesson before assuming any field is
+		// identical to this entry — per the
+		// slug-prefix-is-not-shape lesson reasserted at
+		// API-0371..API-0389, even sharing the `update*` slug
+		// prefix does not imply the inner-property-count,
+		// inner-property-type, or inner-required-field axes carry
+		// over. The verb axis (POST), the outer-body axis
+		// (REQUIRED), the parameter axis (zero parameters), and
+		// the response-set axis (200/400/401/403/500, no 404) are
+		// likely shared, but per-operation re-verification is
+		// mandatory.
+		SampleBody: json.RawMessage(`{
+			"enableDockerCleanup": true,
+			"serverId": "set-cov-updateDockerCleanup-0390"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

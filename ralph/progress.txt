@@ -11718,3 +11718,97 @@ Learnings for future iterations:
     length-bounded strings). A single-required-boolean toggle
     stays on the canonical 401 → CodeAuth representative.
 ---
+
+## 2026-05-08 - API-0390
+- Implemented coverage for settings-updateDockerCleanup
+  (POST /settings.updateDockerCleanup) via the table-driven
+  apiCoverageCase entry pattern in
+  internal/cli/api_coverage_test.go. The harness exercises
+  registry invariants (method/path/tag), the raw `yalla api
+  call <op> --input <file> --json` success leg with an
+  httptest.Server fixture, the representative auth failure
+  leg (401 → CodeAuth via the harness default), the
+  `yalla schema get <op> --json` envelope, and the
+  manifest entry — satisfying every PRD acceptance
+  criterion (registry presence, api call, schema get,
+  --no-input safety, success envelope, failure envelope,
+  contract tests, manifest coverage) in one fixture.
+- Files changed:
+  - internal/cli/api_coverage_test.go (added the
+    fortieth settings/* entry; second entry in the
+    `update*` slug sub-roster opening immediately after
+    the closing `toggle*` peer at API-0389)
+  - ralph/prd.json (flipped passes:false → passes:true
+    for API-0390; the rest of the entry is untouched)
+  - ralph/progress.txt (this report)
+- Verification run from repo root:
+  - gofmt -w . — clean (no diff)
+  - go mod tidy — clean
+  - go vet ./... — pass
+  - go test ./... — pass (full suite green)
+  - go test -race ./... — pass (full suite green
+    under the race detector)
+  - goimports / golangci-lint / staticcheck /
+    govulncheck / goreleaser — not installed locally,
+    documented per Codebase Patterns.
+- Results: all four mandatory checks (gofmt, go test,
+  go test -race, go vet) pass. The new entry slots into
+  the existing apiCoverageCase array consumed by the
+  shared TestAPICoverage_RegistryInvariants /
+  TestAPICoverage_RawAPICall /
+  TestAPICoverage_SchemaGet / TestAPICoverage_Manifest
+  harnesses — no new test functions, no new fixtures
+  beyond the table entry.
+- Remaining risks or follow-ups: none specific to
+  API-0390. The next pending story is API-0391
+  `settings-updateLogCleanup`, the second `update*`
+  slug peer in settings/*. Per the slug-prefix-is-not-
+  shape lesson reasserted at API-0371..API-0389,
+  sharing the `update*` slug prefix does not imply the
+  inner-property-count, inner-property-type, or
+  inner-required-field axes carry over — the
+  contributor must re-verify against
+  `internal/api/data/openapi.json >
+  /settings.updateLogCleanup > post` before assuming
+  any field is identical to this entry. The verb axis
+  (POST), the outer-body axis (REQUIRED), the
+  parameter axis (zero parameters), and the
+  response-set axis (200/400/401/403/500, no 404)
+  are likely shared, but per-operation re-verification
+  remains mandatory.
+- **Learnings for future iterations:**
+  - The `update*` slug-prefix family within settings/*
+    starts at API-0390 and runs contiguously through
+    API-0397 per PRD ordering
+    (`updateDockerCleanup`, `updateLogCleanup`,
+    `updateMiddlewareTraefikConfig`, `updateServer`,
+    `updateServerIp`, `updateTraefikConfig`,
+    `updateTraefikFile`, `updateTraefikPorts`). Eight
+    consecutive `update*` peers gives ample
+    opportunity for axis pivots; do not assume any
+    one entry's shape carries over.
+  - When the inner schema declares a string-typed
+    property (e.g. `serverId` here), the per-case
+    fixture-isolation slug
+    (`set-cov-<slug>-<storyID>`) should be carried
+    on the wire via that property — restoring the
+    API-0386/API-0387/API-0388 convention that
+    API-0389 was forced to omit (its inner schema
+    had only a `boolean` property). This keeps
+    successive fixtures distinguishable on the wire
+    even when the structural shape (verb, outer-body
+    requirement, response set) is identical.
+  - When an OPTIONAL field is structurally
+    unnecessary (the inner `required` array does not
+    name it) but exercising it improves coverage,
+    populate it deliberately and document the
+    coverage rationale in the case comment. Here
+    `serverId` is OPTIONAL but populated to (a)
+    exercise the mixed-type boolean+string
+    serialiser branch, (b) surface the per-case slug
+    on the wire, and (c) keep the fixture
+    distinguishable from a hypothetical degenerate
+    boolean-only payload that would otherwise be
+    structurally indistinguishable from API-0389's
+    wire shape.
+---
