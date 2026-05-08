@@ -4410,3 +4410,52 @@
   - The OpenAPI spec lives at `internal/api/data/openapi.json` (NOT `data/openapi.json` from repo root, even though every prior progress entry's comment text refers to it as `data/openapi.json` because that is the embed-relative path). Use `find . -name openapi.json` if a `jq` invocation 404s.
   - `goimports` is intentionally optional on this host; gofmt alone has been sufficient for every API-XXXX coverage story to date because the new entries never introduce a new import (json, http, etc. are already in scope at api_coverage_test.go's file header).
 ---
+
+## 2026-05-08 - API-0080
+- Implemented coverage for compose-killBuild (POST /compose.killBuild).
+- Files changed:
+  - internal/cli/api_coverage_test.go — appended one apiCoverageCase
+    entry between API-0079 (compose-isolatedDeployment) and the closing
+    brace of coveredAPIOperations. Mirrors `data/openapi.json >
+    /compose.killBuild > post`: required body with single required
+    string field `composeId` and no optional siblings; 200 response is
+    `{}` with `additionalProperties: false`. Comment cross-links the
+    full minimal-composeId-only POST family roster
+    (API-0066/0067/0068/0073/0074) and explicitly contrasts with
+    API-0078 (two required fields) and API-0079 (required+optional
+    split) so the "why this fixture is so small" question is answered
+    inline.
+  - ralph/prd.json — flipped API-0080.passes from false to true.
+- Verification run (from repo root):
+  - gofmt -w . — clean.
+  - goimports -w . — NOT INSTALLED on this host (`goimports: command
+    not found`); gofmt covered formatting.
+  - go mod tidy — clean.
+  - go vet ./... — clean.
+  - go test ./... — all 9 packages PASS (internal/cli 1.601s including
+    the 5 new TestAPICoverage_* subtests for API-0080).
+  - go test -race ./... — all 9 packages PASS (internal/cli 2.558s).
+  - golangci-lint, staticcheck, govulncheck, goreleaser — not invoked
+    this iteration; no source changes outside the test file + PRD bump.
+- Results: API-0080 acceptance criteria all green via the existing
+  five-test harness (RegistryInvariants, SchemaCommandWorks,
+  ManifestListsOperation, SuccessRoundTrip, RepresentativeFailure).
+  396 user stories remain with passes=false.
+- Remaining risks or follow-ups:
+  - None new. The minimal-composeId-only POST family is now seven
+    members strong (API-0066/0067/0068/0073/0074/0080); future compose
+    POSTs that share the shape can land via the same near-verbatim
+    copy-with-slug-rotation pattern.
+- **Learnings for future iterations:**
+  - The `compose-killBuild` POST is structurally identical to the
+    cluster of compose/* mutations whose only required input is
+    `composeId`. When a new story falls into that family, no new
+    comment text is needed beyond enumerating the prior siblings — the
+    harness behaviour is identical and the fixture is a one-line slug
+    rotation.
+  - The PRD edit can be done safely with a small Python script that
+    round-trips through `json.dump(..., indent=2)` plus a trailing
+    newline; doing so keeps the diff to exactly the `passes` boolean
+    and avoids whitespace churn that would obscure the intent in
+    `git diff ralph/prd.json`.
+---

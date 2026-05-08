@@ -1590,6 +1590,36 @@ var coveredAPIOperations = []apiCoverageCase{
 		// payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0080",
+		OperationID: "compose-killBuild",
+		Method:      http.MethodPost,
+		Path:        "/compose.killBuild",
+		Tag:         "compose",
+		// Seventh compose/* member of the minimal-composeId-only POST
+		// family — same shape as API-0066 (compose-cancelDeployment),
+		// API-0067 (compose-cleanQueues), API-0068 (compose-clearDeployments),
+		// API-0073 (compose-disconnectGitProvider), and API-0074
+		// (compose-fetchSourceType). The spec at `data/openapi.json >
+		// /compose.killBuild > post` declares the request body is REQUIRED
+		// with one required string field `composeId` (the target record
+		// whose in-flight build should be killed) and no optional siblings,
+		// so this entry is a near-verbatim copy of the prior
+		// minimal-composeId-only fixtures with the slug rotated. Distinct
+		// from API-0078 (compose-import, two required fields) and API-0079
+		// (compose-isolatedDeployment, required+optional split). Keep the
+		// fixture minimal-but-valid so a future schema validator wired into
+		// the harness still accepts it.
+		SampleBody: json.RawMessage(`{
+			"composeId": "compose-cov-kill-build-0080"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the empty-success convention shared by every prior
+		// compose/* peer. Empty-object body keeps the success-leg envelope
+		// assertion focused on `data.method` / `data.status` rather than
+		// payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
