@@ -397,6 +397,28 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.method` / `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0020",
+		OperationID: "application-move",
+		Method:      http.MethodPost,
+		Path:        "/application.move",
+		Tag:         "application",
+		// Mirrors the schema in `data/openapi.json` for /application.move:
+		// TWO required string fields, `applicationId` and
+		// `targetEnvironmentId`. Unlike the single-field application/*
+		// peers (API-0013/0015/0017/0018/0019) this operation also moves
+		// across environments, so the fixture must populate both fields
+		// with deterministic-but-clearly-fake values.
+		SampleBody: json.RawMessage(`{
+			"applicationId": "app-cov-move-0020",
+			"targetEnvironmentId": "env-cov-move-0020"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the other application/* peers. We keep an empty-object
+		// body so the success-leg envelope assertion stays focused on
+		// `data.method` / `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

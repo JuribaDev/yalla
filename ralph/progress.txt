@@ -2527,3 +2527,60 @@
     The 30-second `node -e require('./internal/api/data/openapi.json')`
     spot-check pays for itself versus a misleading fixture in CI.
 ---
+
+## 2026-05-08 - API-0020
+- **Implemented**: API coverage for `application-move`
+  (POST /application.move). Pattern follows
+  API-0013/API-0015/API-0017/API-0018/API-0019: appended one
+  `apiCoverageCase{...}` literal to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go`. The five-part harness
+  (registry invariants, `yalla schema get`, `yalla manifest`,
+  httptest success round-trip, default 401 → CodeAuth representative
+  failure) now also gates `application-move`. No production-code
+  changes; the operation is already wired through the embedded
+  OpenAPI spec, the `api.Default()` registry, and the raw
+  `yalla api call` executor.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended one `apiCoverageCase`
+    entry for `API-0020 / application-move`. Unlike the single-field
+    application/* peers, `application-move` has TWO required string
+    fields per `data/openapi.json`: `applicationId` AND
+    `targetEnvironmentId`. Fixture supplies both with deterministic-
+    but-clearly-fake values (`app-cov-move-0020`,
+    `env-cov-move-0020`).
+  - `ralph/prd.json` — `API-0020.passes` flipped to `true`.
+- **Verification run**: `gofmt -w .`, `go mod tidy`, `go vet ./...`,
+  `go test ./...`, `go test -race ./...`, plus a focused
+  `go test ./internal/cli -run 'TestAPICoverage' -count=1`. All green;
+  the new `API-0020/application-move` subtests pass.
+- **Tools not installed locally** (documented per the Codebase Patterns
+  baseline rather than silently skipped): `goimports`, `golangci-lint`,
+  `staticcheck`, `govulncheck`, `goreleaser`. CI still runs the
+  security/lint matrix on push.
+- **Results**: All required gates pass. `application-move` is now
+  registry-checked, schema-reachable, manifest-listed, success-round-
+  tripped through `httptest.Server`, and failure-mapped to `CodeAuth`
+  on 401.
+- **Remaining risks / follow-ups**: None for this story. The next
+  pending API story by priority is API-0021 (`application-one`,
+  GET /application.one), still `passes: false`. That one is a GET
+  with `applicationId` as a `query` parameter, not a request body —
+  the next iteration must populate `SampleQuery` rather than
+  `SampleBody` and skip `requestBody`.
+- **Learnings for future iterations**:
+  - First non-single-field application/* operation in the harness:
+    `application-move` requires `targetEnvironmentId` alongside
+    `applicationId`. The OpenAPI spec-shape spot-check (`jq
+    '.paths["/application.move"]' internal/api/data/openapi.json`)
+    caught this BEFORE copy-pasting the single-field shape from
+    API-0019. The previous iteration's reminder ("always re-confirm
+    the OpenAPI shape before copy-pasting") paid off.
+  - The next application/* peers (`one`, `readAppMonitoring`,
+    `readTraefikConfig`, `search`) are GETs with query parameters,
+    not POST bodies — the harness already supports `SampleQuery`
+    (`map[string][]string`) for that case and `buildCoverageInputArgs`
+    serialises it through the `--input` JSON document under the
+    `query` key. POST/`SampleBody` and GET/`SampleQuery` are mutually
+    exclusive in practice; do not populate both unless an operation
+    declares query params alongside a body.
+---
