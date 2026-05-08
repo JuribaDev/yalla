@@ -4342,3 +4342,49 @@
     `cancel-deployment`). New compose/* entries should keep this
     convention so cross-story grep continues to find every fixture.
 ---
+
+## 2026-05-08 - API-0078
+- Implemented coverage for compose-import
+  (POST /compose.import).
+- Files changed:
+  - internal/cli/api_coverage_test.go: appended the API-0078 case to
+    `coveredAPIOperations` (immediately after API-0077). The append-only
+    registry-driven harness handles registry/schema/manifest/success/
+    failure assertions automatically. SampleBody carries both required
+    string fields (`base64`, `composeId`); the `base64` value decodes
+    to `version: "3"\n` so a future schema validator wired into the
+    harness still accepts it.
+  - ralph/prd.json: API-0078.passes = true.
+- Verification run from repo root:
+  - gofmt -l . — clean.
+  - go mod tidy — no diff.
+  - go vet ./... — clean.
+  - go test ./... — all packages pass (internal/cli 1.111s).
+  - go test -race ./... — all packages pass under the race detector
+    (internal/cli 2.862s).
+  - goimports / golangci-lint / staticcheck / govulncheck / goreleaser
+    not installed locally; documented as missing (same posture as every
+    prior API-00xx iteration).
+- Remaining risks / follow-ups:
+  - None for API-0078 itself. Next compose/* candidates are API-0079
+    (compose-isolatedDeployment, POST) and API-0080 (compose-killBuild,
+    POST). Both should follow the same SampleBody-with-required-fields
+    pattern established here, with API-0079 likely being the first
+    compose/* mutation to require a `serverId` or environment context
+    field — re-read the openapi.json spec before assuming the
+    minimal-composeId-only shape.
+- Learnings for future iterations:
+  - First compose/* POST whose request body carries a non-trivial
+    payload field (`base64`) alongside the canonical `composeId`. The
+    minimal-composeId-only family (API-0066/0067/0068/0073/0074) does
+    NOT generalise to every compose/* POST — always re-read
+    `internal/api/data/openapi.json` for the exact `requestBody`
+    schema before authoring SampleBody.
+  - The harness does not validate base64 contents, but using a
+    decode-able value (`version: "3"\n` -> `dmVyc2lvbjogIjMiCg==`)
+    keeps the fixture forward-compatible if a schema validator is
+    wired in later.
+  - As with every prior story, the registry-driven harness means no
+    registry/schema/manifest code change is required when the
+    operation already lives in the embedded spec.
+---

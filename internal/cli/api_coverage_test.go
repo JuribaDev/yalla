@@ -1522,6 +1522,38 @@ var coveredAPIOperations = []apiCoverageCase{
 		// payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0078",
+		OperationID: "compose-import",
+		Method:      http.MethodPost,
+		Path:        "/compose.import",
+		Tag:         "compose",
+		// First POST-with-non-trivial-body entry in the compose/* roster
+		// after the GET trio API-0075/0076/0077 (getConvertedCompose,
+		// getDefaultCommand, getTags). Mirrors the schema in
+		// `data/openapi.json` for /compose.import: the request body is
+		// REQUIRED and declares two required string fields — `base64`
+		// (the encoded docker-compose payload to import) and `composeId`
+		// (the target record). This breaks the minimal-composeId-only
+		// shape shared by API-0066/0067/0068/0073/0074 because `base64`
+		// is a non-empty payload-bearing field; we still keep the
+		// fixture deterministic-but-valid (decodes to `version: "3"\n`)
+		// so a future schema validator wired into the harness still
+		// accepts it. The harness forwards SampleBody via the `--input`
+		// JSON `body` field, and `runAPICoverageSuccess` re-reads the
+		// request body to confirm the CLI propagated the payload
+		// verbatim.
+		SampleBody: json.RawMessage(`{
+			"base64": "dmVyc2lvbjogIjMiCg==",
+			"composeId": "compose-cov-import-0078"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the empty-success convention shared by every prior
+		// compose/* peer. Empty-object body keeps the success-leg envelope
+		// assertion focused on `data.method` / `data.status` rather than
+		// payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
