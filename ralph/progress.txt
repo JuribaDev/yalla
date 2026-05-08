@@ -17888,3 +17888,53 @@ None specific to this story. Next PRD priority-4 entry is API-0166
     other mariadb POST omits 404 from its declared response set, matching
     the action-on-known-id POST precedent.
 ---
+
+## 2026-05-08 - API-0167 - Cover mariadb-remove (POST /mariadb.remove)
+
+### Files changed
+- internal/cli/api_coverage_test.go: appended new apiCoverageCase entry
+  for API-0167 mariadb-remove between API-0166 mariadb-reload and API-0188
+  mounts-allNamedByApplicationId, preserving the StoryID-sorted insertion
+  contract.
+- ralph/prd.json: set passes:true for API-0167.
+- ralph/progress.txt: this entry.
+
+### Verification run
+- gofmt -w internal/cli/api_coverage_test.go (clean)
+- go vet ./... (clean)
+- go test ./... (all packages pass)
+- go test -race ./... (all packages pass; cli pkg ~3.1s)
+
+### Remaining risks or follow-ups
+None specific to this story. Next PRD priority-4 entry is API-0168
+`mariadb-saveEnvironment` (POST per the spec preview; re-verify against
+`internal/api/data/openapi.json` before assuming any field shape).
+
+### Learnings for future iterations
+- The mariadb/* `mariadb-cov-*` per-tag fixture-isolation namespace continues
+  to grow story-by-story. Each new entry must NOT cross-reference any closed
+  prior-tag namespace; reference only existing mariadb-cov-* literals in the
+  non-collision audit list.
+- For body-bearing imperative-action POSTs (deploy/rebuild/remove/reload/move
+  etc.) on a known resource id, the spec consistently omits 404 from the
+  response set. The 404→CodeNotFound override therefore stays pinned to the
+  by-id GET peer (API-0164 mariadb-one for this tag) and the new POST entry
+  retains the harness-default 401→CodeAuth failure leg.
+- API-0167 mariadb-remove is byte-for-byte cardinality-identical to API-0165
+  mariadb-rebuild and API-0162 mariadb-deploy: a single REQUIRED `mariadbId`
+  string scalar with no optional fields. The fixture token base
+  `mariadb-cov-remove-0167-mariadbId` follows the established
+  `<tag>-cov-<slug>-<storyID>-<field>` suffix convention for git-grep
+  traceability.
+- StoryID-sorted insertion remains load-bearing: API-0167 slots between
+  API-0166 (mariadb-reload) and the next-existing entry API-0188
+  (mounts-allNamedByApplicationId), not at file end.
+- Indentation gotcha when editing api_coverage_test.go via Edit tool: the file
+  uses TAB indentation (1 tab for the case `{`, 2 tabs for fields, 3 tabs for
+  JSON contents inside json.RawMessage backtick-strings). Old_string anchors
+  must use exact tabs, not spaces.
+- The `len(tc.SampleBody) > 0` gate at `runAPICoverageSuccess` is what
+  activates the JSON content-type and byte-for-byte body comparison legs in
+  the harness. A POST with no body would skip those legs.
+
+---
