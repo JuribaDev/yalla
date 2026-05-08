@@ -9591,3 +9591,115 @@ Learnings for future iterations:
     `coveredAPIOperations` table. Adding a new story never requires
     touching the runner.
 ---
+
+## 2026-05-08 - API-0054 (bitbucket-getBitbucketRepositories)
+- Implemented contract coverage for GET
+  /bitbucket.getBitbucketRepositories — the fourth bitbucket/*
+  roster entry and the **first single-required-query-param GET**
+  in the bitbucket/* tag. Appended one struct literal to
+  `internal/cli/api_coverage_test.go`'s `coveredAPIOperations`
+  table; no registry/manifest/output code changes were required
+  because the case automatically inherits the registry, schema,
+  and manifest assertions from the same harness consumed by the
+  150 prior `apiCoverageCase` entries. Spec re-verified against
+  `internal/api/data/openapi.json >
+  /bitbucket.getBitbucketRepositories > get` per the
+  API-0345..API-0364 forward-reference lesson: GET, single
+  required query parameter `bitbucketId` (plain string), no
+  request body, responses 200/400/401/403/404/500, 200 schema
+  `{}` with `additionalProperties: false`. Fixture token base
+  `bb-cov-getRepos-0054` consumes the slot reserved by API-0052
+  and API-0053 design-rationale headers. Failure leg uses the
+  harness default (401 → CodeAuth); 404 → CodeNotFound stays
+  reserved for the canonical by-id peer API-0055
+  `bitbucket-one`, not for fleet-wide list-style getters keyed
+  by integration id. Focused
+  TestAPICoverage/API-0054/bitbucket-getBitbucketRepositories
+  exercises all five subtests (registry, schema, manifest,
+  success round-trip, representative failure) and all five
+  pass.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (+API-0054 entry,
+    StoryID-sorted between API-0053 `bitbucket-getBitbucketBranches`
+    and API-0066 `compose-cancelDeployment`).
+  - `ralph/prd.json` (`API-0054.passes` flipped to `true`).
+  - `ralph/progress.txt` (this entry).
+- Verification run from repo root:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean (no go.sum drift).
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass.
+  - `go test -race ./...` — all packages pass.
+  - Focused `go test -run "TestAPICoverage/API-0054" -v` —
+    all five subtests (registry, schema, manifest, success,
+    failure) pass.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    and `goreleaser` remain not installed locally; documented
+    as missing rather than silently skipped, matching the
+    convention reasserted on every preceding API-XXXX coverage
+    commit.
+- API coverage advances from 150 to 151 passing / 462 total.
+- Remaining risks / follow-ups:
+  - The next bitbucket/* roster entry is API-0055
+    `bitbucket-one` — the canonical by-id peer that finally
+    consumes the long-reserved 404 → CodeNotFound failure leg
+    that API-0051/0052/0053/0054 each deferred to it. Per the
+    PRD it's a single-required-query-param GET keyed by
+    `bitbucketId` (matching this entry's wire shape); the next
+    contributor MUST re-verify against
+    `internal/api/data/openapi.json > /bitbucket.one > get`
+    before assuming any field carries over from API-0054. The
+    eleven-flip body-axis history of the settings/* `clean*`
+    sub-roster (API-0353..API-0362) demonstrates why
+    per-operation re-verification stays mandatory across every
+    family transition. Slug `bb-cov-one-0055` is reserved per
+    the API-0052/0053 namespace plan, and crucially API-0055
+    will be the **first** bitbucket/* entry to set
+    `FailureStatus: 404` + `FailureCode: yerr.CodeNotFound`
+    (every prior bitbucket/* entry has used the harness default
+    401 → CodeAuth).
+- **Learnings for future iterations:**
+  - **Single-required-only query GET is the simplest cell.**
+    API-0054 establishes the simplest-possible query-bearing
+    GET shape in the bitbucket/* coverage matrix: one required
+    string scalar, no optional siblings, no request body. The
+    harness fixture is one map entry. This is a structural
+    counterpoint not just to API-0053's 3-param shape but to
+    the broader query-shape spectrum across the registry —
+    API-0035 `application-search` (11 optional, 0 required),
+    API-0053 `bitbucket-getBranches` (2 required + 1 optional),
+    API-0054 here (1 required + 0 optional). Future
+    single-required-only query GETs in any tag (API-0055
+    `bitbucket-one` is next in line) can grep this entry for
+    the canonical handling.
+  - **Every-optional-populated rule is a NO-OP when no optionals
+    exist.** API-0010 / API-0014 / API-0249 / API-0292 / API-0297
+    / API-0052 / API-0053 each populated optional fields
+    alongside required ones so the wire envelope was
+    exhaustive. API-0054 exercises a degenerate case of the
+    same rule: when the spec declares no optional siblings,
+    the minimum-required envelope IS the whole envelope. The
+    rule is preserved by virtue of the spec, not by additional
+    fixture work. This generalises the every-optional-populated
+    rule from "always populate optionals" to "always exercise
+    the full envelope per the spec".
+  - **`bb-cov-*` namespace expansion continues.** API-0051
+    reserved `bb-cov-providers-0051` (no fixture), API-0052
+    consumed `bb-cov-create-0052-*-fixture` for body fields,
+    API-0053 consumed `bb-cov-getBranches-0053-*` for query
+    values, and API-0054 now consumes `bb-cov-getRepos-0054-*`.
+    Forthcoming bitbucket/* peers (API-0055..API-0057) inherit
+    the `bb-cov-*` namespace per the per-tag fixture-isolation
+    rule established at API-0246 `organization-active`.
+    The reserved slugs `bb-cov-one-0055`, `bb-cov-testConn-0056`,
+    `bb-cov-update-0057` remain reserved with no collisions.
+  - **No new harness code needed.** Confirms the API-XXXX
+    coverage pattern: every Dokploy OpenAPI operation can be
+    covered by appending exactly one struct literal to
+    `coveredAPIOperations` — the registry, schema, manifest,
+    success round-trip, and representative-failure assertions
+    flow automatically through the shared harness. The OpenAPI
+    registry is the single source of truth; adding a coverage
+    case never requires touching the registry, manifest
+    emitter, or schema emitter.
+---
