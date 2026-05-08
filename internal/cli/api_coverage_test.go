@@ -8978,6 +8978,102 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0270",
+		OperationID: "port-one",
+		Method:      http.MethodGet,
+		Path:        "/port.one",
+		Tag:         "port",
+		// Third entry in the port/* roster, immediately following
+		// API-0269 `port-delete` and continuing inside the
+		// `port-cov-*` per-tag fixture-isolation namespace opened
+		// by API-0268 `port-create`. Per the per-tag fixture-
+		// isolation rule this entry **must not** back-reference any
+		// closed prior-tag namespace (`admin-cov-*`, `ai-cov-*`,
+		// `app-cov-*`, `backup-cov-*`, `bb-cov-*`, `cert-cov-*`,
+		// `clu-cov-*`, `compose-cov-*`, `deployment-cov-*`,
+		// `dest-cov-*`, `docker-cov-*`, `domain-cov-*`,
+		// `environment-cov-*`, `mounts-cov-*`, `org-cov-*`,
+		// `set-cov-*`, `srv-cov-*`, `usr-cov-*`, etc.); the future
+		// port/* peer (API-0271 `port-update`) should grep this
+		// block to inherit the `port-cov-*` slug namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /port.one > get`: a
+		// **GET** with a **single REQUIRED query parameter** —
+		// `portId` (string) — **no request body**, and responses
+		// 200/400/401/403/404/500. The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort.
+		//
+		// **Shape positioning — single-required-query GET, no body.**
+		// First GET in the port/* roster after the two POST
+		// mutations (API-0268 five-required-scalar create, API-0269
+		// single-required-string delete). Falls back into the
+		// well-trodden single-foreign-id GET cohort that spans
+		// every prior tag: API-0005 `ai-get`, API-0113
+		// `docker-getStackContainersByAppName`, API-0115
+		// `domain-byApplicationId`, API-0116 `domain-byComposeId`,
+		// API-0117 `domain-canGenerateTraefikMeDomains`, API-0121
+		// `domain-one`, API-0124 `environment-byProjectId`,
+		// API-0127 `environment-one`, API-0188
+		// `mounts-allNamedByApplicationId`, and API-0191
+		// `mounts-one` (the cross-tag direct shape peer most
+		// recently covered before this entry — also a
+		// single-required-string-query `mountId` GET landing on the
+		// `{}` empty-success response). The harness's `SampleQuery:
+		// map[string][]string` field renders the single key/value
+		// pair into the `--input` JSON `query` object verbatim, and
+		// the success-leg assertion at `runAPICoverageSuccess`
+		// re-reads `r.URL.Query()` to confirm the CLI propagated
+		// it. The `len(tc.SampleBody) > 0` gate stays inert so no
+		// content-type / body byte-comparison legs activate (no
+		// request body on a GET).
+		//
+		// **Family choice — 404→CodeNotFound representative
+		// available but harness-default 401→CodeAuth retained.**
+		// The spec declares 404 on this operation (an unknown
+		// `portId` is a structurally valid not-found case), so
+		// the 404→CodeNotFound override is *technically*
+		// applicable. We deliberately stick with the harness-default
+		// 401→CodeAuth failure leg, however, to mirror the
+		// API-0115/API-0116/API-0117/API-0121/API-0124/API-0127/
+		// API-0188/API-0190/API-0191 precedent (and through them
+		// API-0005 `ai-get` and API-0113
+		// `docker-getStackContainersByAppName`) — bearer-token
+		// enforcement runs before any port lookup, so the
+		// universal `E_AUTH` mode is the most representative single
+		// failure leg every authenticated Dokploy operation must
+		// re-prove, and additionally re-proves the auth invariant
+		// inside the `port-cov-*` namespace for the id-bearing GET
+		// shape. Per the established
+		// `<tag>-cov-<slug>-<storyID>` deterministic-but-clearly-
+		// fake naming convention, the fixture id base
+		// `port-cov-one-0270` keeps `git grep` traceable to this
+		// PRD story without colliding with API-0268
+		// (`port-cov-create-0268-app`), API-0269
+		// (`port-cov-delete-0269`), or the future API-0271
+		// (`port-cov-update-0271`-style slug).
+		//
+		// The next case in the PRD-ordered priority-3 backlog is
+		// API-0271 `port-update` (declared a **POST** with a
+		// request body per the spec preview; the next contributor
+		// must re-verify the spec against
+		// `internal/api/data/openapi.json` per the forward-
+		// reference lesson before assuming any field shape, and
+		// will continue inside the `port-cov-*` per-tag fixture-
+		// isolation namespace opened by API-0268).
+		SampleQuery: map[string][]string{
+			"portId": {"port-cov-one-0270"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0290",
 		OperationID: "project-all",
 		Method:      http.MethodGet,

@@ -16311,3 +16311,78 @@ Learnings for future iterations:
     boundary. `port-cov-*` opened at API-0268, continues here, closes when
     API-0271 ships.
 ---
+
+## 2026-05-08 - API-0270 (port-one)
+- Added api_coverage_test.go entry for `port-one` (GET /port.one) inside the
+  `port-cov-*` per-tag fixture-isolation namespace opened by API-0268
+  `port-create` and continued by API-0269 `port-delete`. This is the third
+  of four port/* roster entries; only API-0271 `port-update` remains.
+- Verified spec against `internal/api/data/openapi.json > /port.one > get`:
+  GET, single REQUIRED query parameter `portId` (string), no request body,
+  responses 200/400/401/403/404/500, 200 schema is `{}` with
+  `additionalProperties: false`. Direct cross-tag shape peer is API-0191
+  `mounts-one` (single-required-string-query GET landing on `{}`
+  empty-success). Falls into the well-trodden single-foreign-id GET cohort
+  spanning API-0005 `ai-get`, API-0113 `docker-getStackContainersByAppName`,
+  API-0115 `domain-byApplicationId`, API-0116 `domain-byComposeId`,
+  API-0117 `domain-canGenerateTraefikMeDomains`, API-0121 `domain-one`,
+  API-0124 `environment-byProjectId`, API-0127 `environment-one`, API-0188
+  `mounts-allNamedByApplicationId`, and API-0191 `mounts-one`.
+- Fixture id base `port-cov-one-0270` keeps `git grep` traceable to this
+  PRD story without colliding with API-0268 (`port-cov-create-0268-app`),
+  API-0269 (`port-cov-delete-0269`), or the future API-0271
+  (`port-cov-update-0271`-style slug). Harness-default 401→CodeAuth failure
+  leg retained per the API-0115/API-0116/API-0117/API-0121/API-0124/API-0127/
+  API-0188/API-0190/API-0191 cross-tag precedent — 404→CodeNotFound is
+  technically applicable on this op but bearer-token enforcement runs before
+  any port lookup, so `E_AUTH` is the most representative single failure
+  every authenticated Dokploy operation must re-prove.
+- Files changed:
+  - internal/cli/api_coverage_test.go  (added API-0270 case literal between
+    API-0269 `port-delete` and API-0290 `project-all`)
+  - ralph/prd.json                     (passes: false → true for API-0270)
+  - ralph/progress.txt                 (this entry)
+- Verification:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — no changes.
+  - `go vet ./...` — clean.
+  - `go test ./internal/cli/ -run 'TestAPICoverage/API-0270' -v` — all five
+    contract legs pass (RegistryInvariants, SchemaCommandWorks,
+    ManifestListsOperation, SuccessRoundTrip, RepresentativeFailure).
+  - `go test ./...` — all packages pass (cli 1.123s).
+  - `go test -race ./...` — all packages pass race-clean (cli 2.905s).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`
+    — not installed locally; documented as missing per the established
+    convention (no silent skip).
+- Remaining risks / follow-ups:
+  - The next pending priority-3 backlog entry is API-0271 `port-update`
+    (closes the port/* roster). It will inherit the `port-cov-*` namespace
+    established by API-0268 and continued by API-0269/API-0270; the next
+    contributor must re-verify the spec against
+    `internal/api/data/openapi.json` per the forward-reference lesson before
+    assuming any field shape (the spec preview suggests a POST with a
+    request body but the exact required/optional surface must be
+    re-confirmed at `/port.update > post`).
+- **Learnings for future iterations:**
+  - The single-required-string-query GET shape is now the most replicated
+    cross-tag fixture pattern in the harness (10+ peers from API-0005
+    through API-0270). When the next `*-one` entry lands, just grep
+    `mounts-cov-one-0191` or `port-cov-one-0270` to find the canonical
+    template — the diff is purely the operationId, path, query-param
+    name, and fixture slug.
+  - Per-tag fixture-isolation continues to scale: opening a new tag arc
+    with a five-required-scalar create POST (API-0268) and immediately
+    following with a single-required-string delete POST (API-0269) and a
+    single-required-string GET (API-0270) covers three of the four most
+    common Dokploy POST/GET shapes inside one tag namespace. The fourth
+    (an update POST with mixed required/optional body) lands at API-0271
+    and will exhaust the port/* roster's shape inventory.
+  - 404→CodeNotFound override is repeatedly available on `*-one` GETs
+    (the spec consistently declares 404 for unknown ids) but the
+    harness-default 401→CodeAuth is consistently retained — bearer-token
+    enforcement runs **before** any id lookup in the Dokploy stack, so
+    `E_AUTH` is the universally-reproducible failure leg every
+    authenticated peer must re-prove. Future `*-one` entries should
+    inherit this precedent unless they have a *uniquely distinguishing*
+    failure mode that 401 cannot represent.
+---
