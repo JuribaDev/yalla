@@ -17282,3 +17282,55 @@ Learnings for future iterations:
     asserts wire-string equality, not semantic equivalence.
 
 ---
+
+## 2026-05-08 - API-0133
+- Implemented contract coverage for `gitea-getGiteaRepositories`
+  (GET /gitea.getGiteaRepositories), the third entry on the gitea/*
+  roster and the first single-param GET in that tag.
+- Spec re-verified directly against
+  `internal/api/data/openapi.json > /gitea.getGiteaRepositories > get`:
+  GET, one REQUIRED query parameter `giteaId` (plain string), no
+  request body, responses 200/400/401/403/404/500. The 200 schema is
+  `{}` with `additionalProperties: false`, matching every prior
+  covered peer in the empty-success cohort.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended one
+    `apiCoverageCase` literal between API-0132 and API-0160 (sorted
+    by StoryID). Sets `Method: http.MethodGet`, `Path:
+    /gitea.getGiteaRepositories`, `Tag: gitea`, populates the lone
+    `SampleQuery` key `giteaId` with the
+    `gitea-cov-getRepos-0133-giteaId-fixture` literal, and leaves
+    failure-leg fields empty so the harness defaults to
+    401 → CodeAuth.
+  - `ralph/prd.json` — flipped `passes` to `true` for API-0133.
+- Verification: `gofmt -w`, `go vet ./...`, `go test ./...`, and
+  `go test -race ./...` — all green. `go mod tidy` left the module
+  state untouched. `goimports`, `golangci-lint`, `staticcheck`,
+  `govulncheck`, and `goreleaser` are not installed locally, per
+  project convention.
+- Remaining risks / follow-ups: none specific to this story; the
+  per-tag `gitea-cov-*` namespace continues to expand. The next
+  pending PRD-ordered priority-5 backlog entry is API-0134
+  `gitea-getGiteaUrl` (declared a **GET** per the spec preview;
+  the next contributor must re-verify the spec against
+  `internal/api/data/openapi.json` per the forward-reference lesson
+  before assuming any field shape).
+- **Learnings for future iterations:**
+  - The `getXxxRepositories` shape under provider tags
+    (bitbucket-getBitbucketRepositories, gitea-getGiteaRepositories,
+    github-getGithubRepositories, gitlab-getGitlabRepositories) is a
+    canonical single-param-by-upstream-id GET — one REQUIRED scalar
+    naming the upstream provider connection, no optional fields.
+    Reuse the same `<base>-<providerId>-fixture` literal convention
+    so cross-tag fixture diffs stay readable.
+  - When `Edit`-ing a Go test case literal: the `Read` tool prepends
+    a tab between the line number and the source content, so what
+    appears as 3 leading tabs in Read output is actually 2 tabs in
+    the file. Use `od -c` (not `cat -A`, which is unsupported on
+    macOS BSD cat) on a small line range to verify indentation
+    bytes before constructing the `old_string`.
+  - The harness's `runAPICoverageSuccess` round-trips populated
+    `SampleQuery` entries via `r.URL.Query()`. For single-param GETs
+    with zero optional fields, the every-optional-populated rule is
+    trivially satisfied and no extra wiring is needed.
+---
