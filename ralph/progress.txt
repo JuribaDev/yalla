@@ -14335,3 +14335,74 @@ Learnings for future iterations:
     multiple consecutive entries in the same tag to default to
     401→CodeAuth until the right peer with exercisable 404 surfaces.
 ---
+
+## 2026-05-08 17:50 UTC - API-0441
+- Implemented full coverage for Dokploy API operation `user-one`
+  (GET /user.one) — fifteenth entry on the user/* roster.
+- Added apiCoverageCase entry for API-0441 in
+  internal/cli/api_coverage_test.go directly after API-0440
+  `user-haveRootAccess`.
+- Shape: GET, single REQUIRED query parameter `userId` (string),
+  no request body, no path placeholders, no headers. SampleQuery
+  populated with the slug-on-the-wire sentinel
+  `usr-cov-one-0441` per the `<tag>-cov-<slug>-<storyID>`
+  convention shared with every prior covered peer.
+- Failure-leg override: 404 → CodeNotFound is the canonical
+  representative-failure assertion for `*-one` by-id resource
+  lookups, mirroring API-0055 `bitbucket-one` and API-0342
+  `server-one` cross-tag precedents. This is the user/* roster's
+  first 404-override entry — all earlier user/* peers
+  (API-0427..API-0440) routed through the harness default 401 →
+  CodeAuth because none was a canonical by-id retrieval.
+- Files changed:
+  - internal/cli/api_coverage_test.go — appended API-0441 case
+  - ralph/prd.json — flipped passes to true for API-0441
+- Verification run from repo root:
+  - gofmt -w .                     OK
+  - goimports -w .                 NOT INSTALLED (skipped, documented)
+  - go mod tidy                    OK (no changes)
+  - go vet ./...                   OK
+  - go test ./...                  OK (all packages pass)
+  - go test -race ./...            OK (all packages pass)
+  - golangci-lint, staticcheck, govulncheck, goreleaser:
+    NOT INSTALLED locally; documented as such.
+- Results: All registry / schema / manifest / success / failure
+  invariants for user-one pass under the existing apiCoverageCase
+  harness loop. No new test functions or runtime code paths were
+  added; the harness's existing five-part check (registry presence,
+  schema reachability, manifest inclusion, httptest-backed success,
+  representative failure) covers the new entry automatically.
+- Remaining risks / follow-ups:
+  - 240 user stories still have `passes: false`. Next priority-2
+    backlog entry is API-0442 `user-remove` (POST /user.remove) —
+    the next contributor must re-verify against
+    `internal/api/data/openapi.json` because the method axis is
+    expected to flip from GET to POST for the `remove` mutation,
+    and per the slug-prefix-is-not-shape lesson no axis from
+    API-0441 carries over.
+- **Learnings for future iterations:**
+  - The `*-one` slug is the canonical by-id resource lookup shape
+    across tags. When a tag's `*-one` operation lands on the
+    backlog and structurally accepts a resource identifier (query
+    or path), it is the most informative home for the tag's
+    404 → CodeNotFound representative-failure assertion. Earlier
+    user/* peers explicitly **forecast** that 404 → CodeNotFound
+    coverage was reserved for the canonical by-id entry
+    (originally pinned to `user-get` at API-0427's hand-off
+    forecast, then reassigned at API-0433 because `user-get`
+    derives the principal from the Authorization bearer rather
+    than a `userId` parameter, and finally honoured here at
+    API-0441 because `user-one` is the first user/* entry where
+    the by-id contract structurally applies).
+  - The `<tag>-cov-<slug>-<storyID>` slug-on-the-wire convention
+    continues to pay off: per-tag namespaces (`usr-cov-*`) keep
+    fixtures orthogonal to every prior tag's namespace, and the
+    sentinel doubles as a propagation probe that
+    `runAPICoverageSuccess` re-reads from `r.URL.Query()` to
+    verify the CLI forwarded the SampleQuery verbatim.
+  - Forward-reference comments in prior entries (e.g. the
+    "next case is API-0441 `user-one`" pointer at the bottom of
+    every API-04XX user/* entry) are load-bearing: they tell the
+    next contributor exactly which axis to re-verify against the
+    spec. Maintain this hand-off in the new entry too.
+---

@@ -17651,6 +17651,132 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0441",
+		OperationID: "user-one",
+		Method:      http.MethodGet,
+		Path:        "/user.one",
+		Tag:         "user",
+		// Fifteenth entry on the user/* coverage roster, slotted in
+		// StoryID order after API-0440 `user-haveRootAccess`. The
+		// `usr-cov-*` per-tag fixture-isolation namespace was
+		// established at API-0427 `user-all` and reasserted at
+		// API-0428..API-0440. Per the per-tag isolation rule
+		// originally established at API-0246 `organization-active`,
+		// every user/* fixture token base remains orthogonal to
+		// every prior tag's namespace (`set-cov-*`, `srv-cov-*`,
+		// `proj-cov-*`, `org-cov-*`, `compose-cov-*`, `app-cov-*`,
+		// `ai-cov-*`, `admin-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		// `cert-cov-*`, `clu-cov-*`, `deployment-cov-*`,
+		// `dest-cov-*`, etc.).
+		//
+		// **Spec re-verified per the API-0345..API-0440
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /user.one > get`:
+		// a **GET** with **no request body** (the spec omits
+		// `requestBody` entirely on this operation) and **exactly
+		// one declared parameter** — `userId` (string, query,
+		// REQUIRED). Responses 200/400/401/403/404/500 — the spec
+		// declares 404 on this operation, semantically matching a
+		// canonical by-id resource lookup (a `userId` that does not
+		// resolve to a Dokploy user is the natural 404 trigger).
+		// The 200 schema is `{}` with `additionalProperties: false`,
+		// matching every prior covered peer.
+		//
+		// **Canonical `*-one` by-id-lookup GET shape — single
+		// REQUIRED string query parameter, no body.** Cross-tag
+		// identical to the `*-one` precedents at API-0008 `ai-one`,
+		// API-0055 `bitbucket-one`, and API-0342 `server-one`
+		// (single-required-query-param GETs that retrieve a
+		// resource by its identifier). Inside the user/* roster,
+		// structurally identical to the prior single-required-
+		// query GET at API-0429 `user-checkUserOrganizations` and
+		// API-0439 `user-getUserByToken`. Per the slug-prefix-is-
+		// not-shape and slug-stem-is-not-shape lessons reasserted
+		// at API-0371..API-0440, no axis from API-0440
+		// `user-haveRootAccess` (parameter-free GET), API-0438
+		// `user-getServerMetrics` (parameter-free GET), API-0437
+		// `user-getMetricsToken` (parameter-free GET), API-0436
+		// `user-getInvitations` (parameter-free GET), API-0435
+		// `user-getContainerMetrics` (four-required-query GET), or
+		// any other prior user/* peer carries over — the shape
+		// signature here is a single REQUIRED string query
+		// parameter, no body, no path placeholders, no headers.
+		//
+		// **Parameter semantics (per OpenAPI schema):**
+		//   * `userId` — REQUIRED string, query parameter.
+		//     Identifies the Dokploy user being retrieved by id.
+		//     The spec imposes no length, pattern, or format
+		//     constraint, so the slug-on-the-wire sentinel
+		//     `usr-cov-one-0441` populates this field directly per
+		//     the convention reasserted at API-0351..API-0440 for
+		//     free-form string fields. The harness forwards
+		//     SampleQuery via the `--input` JSON `query` field, and
+		//     `runAPICoverageSuccess` re-reads `r.URL.Query()` to
+		//     confirm the CLI propagated the param verbatim from
+		//     the originating fixture.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base `usr-cov-one-0441`
+		//     follows the `<tag>-cov-<slug>-<storyID>` convention
+		//     shared with every prior covered peer. The slug is
+		//     the operationId suffix (`one`) verbatim — per the
+		//     slug-stem-is-not-shape lesson the slug only carries
+		//     identifier semantics, not shape semantics.
+		//   * `SampleBody` and `SamplePathParams` left zero.
+		//     `SampleQuery` populates the single REQUIRED `userId`
+		//     query parameter with the slug-on-the-wire sentinel.
+		//
+		// **Failure-leg override: 404 → CodeNotFound is the
+		// canonical representative-failure assertion for `*-one`
+		// by-id resource lookups.** Mirrors the cross-tag `*-one`
+		// 404-override precedent at API-0055 `bitbucket-one` and
+		// API-0342 `server-one`: a missing-resource by-id retrieval
+		// is the most informative failure to exercise here, and
+		// auth failures stay covered fleet-wide by the cross-tag
+		// default 401 → CodeAuth path. This is the user/* roster's
+		// first 404-override entry — earlier user/* peers
+		// (API-0427..API-0440) all routed through the harness
+		// default because none of them was a canonical by-id
+		// retrieval (`user-get` derives the principal from the
+		// Authorization bearer; `user-getUserByToken` is a token-
+		// resolution probe; `user-checkUserOrganizations` is a
+		// membership probe). API-0441 `user-one` is the first
+		// user/* entry where the by-id contract structurally
+		// applies, so the forward-reference forecast at API-0427's
+		// hand-off header is honoured here rather than at API-0433
+		// `user-get`.
+		//
+		// The next case in the PRD-ordered priority-2 backlog is
+		// API-0442 `user-remove`; the next contributor must
+		// re-verify against `internal/api/data/openapi.json` per
+		// the forward-reference lesson before assuming any field
+		// carries over from this entry — per the
+		// slug-prefix-is-not-shape lesson reasserted at
+		// API-0371..API-0440, even the shared `user-`
+		// operation-stem does not imply a carried-over body or
+		// parameter shape, and the method axis is expected to
+		// flip from GET to POST for the `remove` mutation.
+		SampleQuery: map[string][]string{
+			"userId": {"usr-cov-one-0441"},
+		},
+		// 200 response in the spec is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+		// Failure-leg override: this is the canonical home for the
+		// 404 → CodeNotFound representative-failure assertion for
+		// the user/* tag's by-id resource lookup. Mirrors the
+		// API-0055 `bitbucket-one` and API-0342 `server-one`
+		// 404-override precedent across tags. A missing-resource
+		// by-id retrieval is the most informative failure to
+		// exercise here; auth failures stay covered fleet-wide by
+		// the cross-tag default 401 → CodeAuth path.
+		FailureStatus: http.StatusNotFound,
+		FailureCode:   yerr.CodeNotFound,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
