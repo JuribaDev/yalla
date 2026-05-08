@@ -9832,3 +9832,41 @@ Learnings for future iterations:
   - **No-body POST cohort re-exercised after seven-entry GET sub-roster.** The harness's `if len(tc.SampleBody) > 0` guard inside `runAPICoverageSuccess` correctly handles a no-body POST: it skips the `Content-Type` and body-round-trip assertions while still asserting method, path, Authorization header, empty query string, schema_version, data.operation_id, data.method, and data.status. This entry restores no-body POST coverage that was previously exercised at API-0354 `cleanAllDeploymentQueue`, API-0357 `cleanMonitoring`, API-0358 `cleanRedis`, API-0359 `cleanSSHPrivateKey` — four prior settings/* entries — after a seven-entry GET interlude.
   - **The verb-flip GET → POST → GET around API-0369..API-0371 is a useful regression-test seed.** The PRD has settings/* alternating verbs across consecutive stories (API-0369 GET, API-0370 POST, API-0371 GET per spec). Future contributors authoring API-0371 should NOT assume any field carries over from API-0370 (no body) or from API-0369 (optional `serverId` query) — re-verify the spec for both verb and parameter shape independently.
 ---
+
+## 2026-05-08 - API-0056 (bitbucket-testConnection POST /bitbucket.testConnection)
+- What: Sixth bitbucket/* coverage entry. Second mutation in the bitbucket/* tag
+  (after API-0052 `bitbucket-create`). Connection-probe POST whose request body
+  carries a single required `bitbucketId` plus five optional siblings
+  (`bitbucketUsername`, `bitbucketEmail`, `workspaceName`, `apiToken`,
+  `appPassword`). No path or query parameters. Responses 200/400/401/403/500 —
+  **no 404**, so the failure leg reverts to the harness default 401 → CodeAuth
+  per the forward-reference reservation in API-0055's design-rationale header.
+- Files: internal/cli/api_coverage_test.go (append-only struct literal),
+  ralph/prd.json (passes:true), ralph/progress.txt (this entry).
+- Verification run: gofmt -w ., go mod tidy, go vet ./..., go test ./..., and
+  go test -race ./... — all green. Focused TestAPICoverage/API-0056 exercises
+  all five subtests (registry, schema, manifest, success round-trip,
+  representative failure).
+- Results: API coverage advances from 157 to 158 passing / 462 total.
+- Remaining risks: none from this story. API-0057 `bitbucket-update` is the
+  next bitbucket/* peer (POST mutation, expected to follow the same harness-
+  default 401 → CodeAuth failure leg, with its own per-operation re-verified
+  body shape).
+- **Learnings for future iterations:**
+  - Per-operation re-verification matters for sibling POSTs: the
+    `bitbucket-testConnection` body uses `workspaceName`, while the sibling
+    `bitbucket-create` (API-0052) uses `bitbucketWorkspaceName`. Don't copy
+    field names between siblings without re-verifying against
+    `internal/api/data/openapi.json`.
+  - The harness defaults (`tc.FailureStatus == 0` → 401,
+    `tc.FailureCode == ""` → CodeAuth) are the correct failure leg for
+    connection-probe mutations whose own 4xx vocabulary (400/403) is too
+    generic to claim a distinguishing failure shape.
+  - The every-optional-populated rule (API-0010 / API-0014 / API-0249 /
+    API-0292 / API-0297 / API-0052 / API-0053) applies even to connection
+    probes — populate every optional sibling alongside the required field so
+    the wire fixture exercises the full request payload.
+  - Credential-shaped fixture values (`apiToken`, `appPassword`) keep the
+    `-fixture` suffix so the redactor's defence-in-depth path stays exercised
+    even though the harness never wires real secrets.
+---

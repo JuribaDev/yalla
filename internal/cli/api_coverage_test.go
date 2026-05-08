@@ -2312,6 +2312,125 @@ var coveredAPIOperations = []apiCoverageCase{
 		FailureCode:   yerr.CodeNotFound,
 	},
 	{
+		StoryID:     "API-0056",
+		OperationID: "bitbucket-testConnection",
+		Method:      http.MethodPost,
+		Path:        "/bitbucket.testConnection",
+		Tag:         "bitbucket",
+		// Sixth entry on the bitbucket/* coverage roster and the
+		// **second mutation** in the bitbucket/* tag — succeeds the
+		// parameter-free GET kickoff at API-0051
+		// `bitbucket-bitbucketProviders`, the flat-scalar-only POST
+		// mutation at API-0052 `bitbucket-create`, the high-arity
+		// (3-param) GET at API-0053 `bitbucket-getBitbucketBranches`,
+		// the single-required-query GET at API-0054
+		// `bitbucket-getBitbucketRepositories`, and the canonical
+		// by-id GET at API-0055 `bitbucket-one`. Inherits the
+		// `bb-cov-*` per-tag fixture-isolation namespace opened by
+		// API-0051's design-rationale header and consumed by
+		// API-0052..API-0055. Per the per-tag isolation rule
+		// established at API-0246 `organization-active`, reasserted
+		// at API-0290 `project-all`, API-0335 `server-all`, API-0351
+		// `settings-assignDomainServer`, and re-asserted at
+		// API-0051's bitbucket/* kickoff: this entry **must not**
+		// back-reference the closed `admin-cov-*`, `ai-cov-*`,
+		// `app-cov-*`, `backup-cov-*`, `compose-cov-*`,
+		// `deployment-cov-*`, `org-cov-*`, `proj-cov-*`,
+		// `srv-cov-*`, or `set-cov-*` namespaces.
+		//
+		// **Spec re-verified per the API-0345..API-0364
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /bitbucket.testConnection
+		// > post`: a **POST** with **no path/query parameters** and a
+		// **required JSON request body**. The body schema fields per
+		// the spec:
+		//   - REQUIRED scalar: `bitbucketId` (plain string).
+		//   - OPTIONAL scalars: `bitbucketUsername`,
+		//     `bitbucketEmail`, `workspaceName`, `apiToken`,
+		//     `appPassword` — all plain strings with no `anyOf` /
+		//     `nullable` / enum constraints.
+		// Note the field name is `workspaceName` here, **not**
+		// `bitbucketWorkspaceName` as in API-0052 `bitbucket-create`
+		// — a per-operation re-verification catch consistent with
+		// the API-0353..API-0362 settings/* `clean*` body-axis
+		// reminder (API-0055's design-rationale header) that
+		// per-operation re-verification is mandatory and sibling
+		// peers do **not** share request-body shape. Responses
+		// 200/400/401/403/500 — **no 404** is declared because this
+		// is a connection-probe, not a by-id retrieval; the
+		// 404 → CodeNotFound representative-failure slot was
+		// consumed at API-0055 `bitbucket-one`. The 200 schema is
+		// `{}` with `additionalProperties: false`, matching every
+		// prior covered peer; the success-leg envelope assertion
+		// stays focused on `data.method` / `data.status` rather than
+		// payload projection.
+		//
+		// **Family choice — connection-probe POST, harness-default
+		// failure leg.** Per the forward-reference at API-0055's
+		// design-rationale header, future bitbucket/* peers
+		// (API-0056 `bitbucket-testConnection`, API-0057
+		// `bitbucket-update`) "are mutating POSTs that must each
+		// re-verify their own spec shapes per the API-0345..API-0364
+		// forward-reference lesson and revert to the harness default
+		// 401 → CodeAuth". This entry consumes that reservation —
+		// 401 → CodeAuth via the harness default
+		// (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""` →
+		// CodeAuth) stays the most informative representative
+		// failure for a connection-probe whose own 4xx vocabulary
+		// (400 invalid input / 403 forbidden) is too generic to
+		// claim a distinguishing failure shape. 400 →
+		// CodeInvalidInput stays reserved for stories where payload
+		// validation is the operation's distinguishing failure mode.
+		// Future bitbucket/* peer API-0057 `bitbucket-update` is
+		// expected to follow the same harness-default convention.
+		//
+		// Fixture conventions:
+		//   * Every-optional-populated rule (API-0010 / API-0014 /
+		//     API-0249 / API-0292 / API-0297 / API-0052 / API-0053):
+		//     populate every optional sibling alongside the required
+		//     `bitbucketId`. Same convention applied at API-0052
+		//     `bitbucket-create` for the bitbucket/* tag's prior
+		//     full-payload POST mutation.
+		//   * Per-case fixture token base `bb-cov-testConn-0056`
+		//     follows the `<tag>-cov-<slug>-<storyID>` convention
+		//     and consumes the slot reserved by API-0052's,
+		//     API-0053's, API-0054's, and API-0055's design-rationale
+		//     headers (verified: no collisions with API-0051's
+		//     `bb-cov-providers-0051` reservation, API-0052's
+		//     `bb-cov-create-0052-*` literals, API-0053's
+		//     `bb-cov-getBranches-0053-*` literals, API-0054's
+		//     `bb-cov-getRepos-0054-*` literals, API-0055's
+		//     `bb-cov-one-0055-*` literals, the forthcoming
+		//     `bb-cov-update-0057` slug reserved for the upcoming
+		//     bitbucket/* peer, and no collisions with the
+		//     cross-tag `proj-cov-*` / `srv-cov-*` / `set-cov-*` /
+		//     `org-cov-*` namespaces).
+		//   * Deterministic-but-clearly-fake values (`-fixture`
+		//     suffixes on the credential-shaped `apiToken` /
+		//     `appPassword` fields, `@example.test` literal on
+		//     `bitbucketEmail`) keep diffs readable, exercise the
+		//     output redactor's defence-in-depth path on
+		//     credential-shaped strings even though the harness
+		//     never wires real secrets, and let any future schema
+		//     validator's failure messages point at the offending
+		//     field — consistent with the API-0052
+		//     `bitbucket-create` precedent.
+		SampleBody: json.RawMessage(`{
+			"bitbucketId": "bb-cov-testConn-0056-bitbucketId",
+			"bitbucketUsername": "bb-cov-testConn-0056-username",
+			"bitbucketEmail": "bb-cov-testConn-0056@example.test",
+			"workspaceName": "bb-cov-testConn-0056-workspace",
+			"apiToken": "bb-cov-testConn-0056-apiToken-fixture",
+			"appPassword": "bb-cov-testConn-0056-appPassword-fixture"
+		}`),
+		// 200 response in the spec is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0066",
 		OperationID: "compose-cancelDeployment",
 		Method:      http.MethodPost,
