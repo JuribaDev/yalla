@@ -6516,7 +6516,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "gitea",
         "operationId": "gitea-giteaProviders",

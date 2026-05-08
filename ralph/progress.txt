@@ -17574,3 +17574,24 @@ Learnings for future iterations:
     failure leg as the canonical choice when 404 is structurally
     unavailable.
 ---
+
+## 2026-05-08 - API-0135
+- Added per-operation coverage entry for `gitea-giteaProviders` (GET /gitea.giteaProviders) to `internal/cli/api_coverage_test.go`. Fifth gitea/* roster entry; first **parameter-free GET** in the gitea/* tag — structurally a list-style getter returning the membership-scoped catalogue of Gitea providers visible to the bearer principal.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended `apiCoverageCase` for API-0135 between API-0134 and API-0160. Method GET, no SampleBody / SampleQuery / SamplePathParams, SuccessResponse `{}`, harness defaults for failure leg (401 → CodeAuth).
+  - `ralph/prd.json` — flipped `passes: true` on API-0135.
+- Verification run:
+  - `gofmt -w .` ✓
+  - `go mod tidy` ✓
+  - `go vet ./...` ✓
+  - `go test ./...` ✓
+  - `go test -race ./...` ✓
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser` not installed locally — documented as missing.
+- Results: All five harness legs pass for API-0135 (registry presence, schema get, manifest listing, httptest success round-trip with bare GET, representative 401 → CodeAuth failure).
+- Remaining risks or follow-ups: none specific to this story. The next priority-5 backlog entry is API-0136 `gitea-one` (GET /gitea.one); the API-0135 forward-reference comment reserves the `gitea-cov-one-0136` fixture slug for that story.
+- **Learnings for future iterations:**
+  - The `apiCoverageCase` harness handles parameter-free GETs natively: leaving SampleBody/SampleQuery/SamplePathParams unset causes `buildCoverageInputArgs` to return nil, so the CLI is invoked as `yalla api call <op> --json` with no `--input` flag. The harness's success-leg `r.URL.Query()` round-trip still runs and observes an empty query string per the spec.
+  - The 404 → CodeNotFound override is per-tag-opener-convention reserved for the canonical `<tag>-one` by-id peer (here API-0136). List-style getters like `*-giteaProviders`, `*-getGiteaRepositories`, `*-getGiteaUrl` keep the harness-default 401 → CodeAuth failure leg even when 404 is declared in the spec.
+  - Coverage entries are sorted by StoryID ascending (numeric within the API-XXXX namespace), so new stories slot into their numeric position rather than appending at the end. API-0135 was inserted between API-0134 and API-0160 (the next-existing entry) at line ~8069 of `api_coverage_test.go`.
+  - The fixture-slug reservation chain in prior entries' forward-reference comments (API-0133 reserved `gitea-cov-one-0136`, API-0134 reserved `gitea-cov-providers-0135`, etc.) is load-bearing — it lets each new entry verify non-collision with future peers without needing to know the eventual fixture content.
+---

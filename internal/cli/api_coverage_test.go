@@ -8067,6 +8067,139 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0135",
+		OperationID: "gitea-giteaProviders",
+		Method:      http.MethodGet,
+		Path:        "/gitea.giteaProviders",
+		Tag:         "gitea",
+		// Fifth entry on the gitea/* coverage roster and the **first
+		// parameter-free GET** in the gitea/* tag — completes the
+		// forward reference embedded in the API-0134 comment block
+		// ("The next case in the PRD-ordered priority-5 backlog is
+		// API-0135 `gitea-giteaProviders`"). Succeeds the
+		// single-param `getGiteaUrl` shape at API-0134, the
+		// single-param `getGiteaRepositories` shape at API-0133, the
+		// three-query-param `getGiteaBranches` shape at API-0132, and
+		// the flat-scalar-only POST kickoff at API-0131
+		// `gitea-create`. Continues inside the `gitea-cov-*` per-tag
+		// fixture-isolation namespace opened by API-0131's
+		// design-rationale header. Per the per-tag isolation rule
+		// established at API-0246 `organization-active`, reasserted
+		// at API-0290 `project-all`, API-0335 `server-all`, API-0351
+		// `settings-assignDomainServer`, API-0051's bitbucket/*
+		// kickoff, API-0131's gitea/* kickoff, and API-0160's
+		// mariadb/* kickoff: this entry **must not** back-reference
+		// the closed `admin-cov-*`, `ai-cov-*`, `app-cov-*`,
+		// `backup-cov-*`, `bb-cov-*`, `cert-cov-*`, `clu-cov-*`,
+		// `compose-cov-*`, `deployment-cov-*`, `dest-cov-*`,
+		// `docker-cov-*`, `domain-cov-*`, `environment-cov-*`,
+		// `mariadb-cov-*`, `mounts-cov-*`, `org-cov-*`, `port-cov-*`,
+		// `proj-cov-*`, `redirects-cov-*`, `security-cov-*`,
+		// `set-cov-*`, `srv-cov-*`, or `swarm-cov-*` namespaces.
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /gitea.giteaProviders >
+		// get`: a **GET** with **zero parameters** and **no request
+		// body** (GETs in this OpenAPI document never carry a
+		// `requestBody` field). Responses 200/400/401/403/404/500 —
+		// the **404 stays present** in the spec but the per-tag
+		// opener convention (see Family choice below) reserves 404 →
+		// CodeNotFound for the canonical `gitea-one` by-id peer at
+		// API-0136, not for fleet-wide list-style getters like
+		// `giteaProviders` (which returns the membership-scoped
+		// catalogue of Gitea provider records visible to the bearer
+		// principal, not a single resource keyed by id). The 200
+		// schema is `{}` with `additionalProperties: false`, matching
+		// every prior covered peer; the success-leg envelope
+		// assertion stays focused on `data.method` / `data.status`
+		// rather than payload projection.
+		//
+		// **Shape positioning — parameter-free list GET, no body.**
+		// Where API-0132 carries the highest-arity query envelope on
+		// the gitea/* roster (2 required + 1 optional string),
+		// API-0133 / API-0134 land the single-required-`giteaId`
+		// GET shape, and API-0135 lands the **simplest** GET shape
+		// available: zero parameters, zero body bytes. Structurally
+		// identical to the canonical membership-scoped list GETs at
+		// API-0246 `organization-active`, API-0247
+		// `organization-all`, API-0248 `organization-allInvitations`,
+		// and API-0290 `project-all` — the cross-tag
+		// parameter-free-list-GET precedent chain. The harness's
+		// `len(tc.SampleBody) > 0` gate at `runAPICoverageSuccess`
+		// stays inert so no content-type / body byte-comparison legs
+		// activate, and `buildCoverageInputArgs` returns nil so the
+		// CLI invocation is a bare `yalla api call
+		// gitea-giteaProviders --json` with no `--input` flag —
+		// exactly the agent-safe shape every parameter-free Dokploy
+		// GET supports. The harness's success-leg assertion still
+		// re-reads `r.URL.Query()` for completeness, observing an
+		// empty query string per the spec.
+		//
+		// **Family choice — harness-default 401 → CodeAuth retained
+		// even though 404 is declared.** The per-tag opener
+		// convention reasserted at API-0246 `organization-active`,
+		// API-0290 `project-all`, API-0335 `server-all`, API-0351
+		// `settings-assignDomainServer`, API-0131's gitea/* kickoff,
+		// API-0132's `getGiteaBranches` precedent, and most directly
+		// API-0133 `getGiteaRepositories` and API-0134
+		// `getGiteaUrl` (the prior gitea/* GETs that retained the
+		// harness default) assigns 404 → CodeNotFound to the
+		// canonical `gitea-one` by-id peer at API-0136, keeping the
+		// harness-default 401 → CodeAuth as the most informative
+		// representative for every other gitea/* GET. 400 →
+		// CodeInvalidInput is structurally inapplicable here (a
+		// parameter-free GET has no payload validation surface to
+		// fail), so the harness-default 401 → CodeAuth failure leg
+		// is the only canonical representative — bearer-token
+		// enforcement runs before any provider-list lookup, so the
+		// universal `E_AUTH` mode is the most representative single
+		// failure leg every authenticated Dokploy operation must
+		// re-prove.
+		//
+		// Fixture conventions:
+		//   * Per the API-0010 / API-0014 / API-0249 / API-0292 /
+		//     API-0297 / API-0052 / API-0053
+		//     every-optional-populated rule, this entry has **zero
+		//     parameters** so the rule is trivially satisfied — the
+		//     CLI invocation passes no `--input` flag and the
+		//     httptest server observes a bare GET request with no
+		//     query string and no body bytes.
+		//   * Per-case fixture token base
+		//     `gitea-cov-providers-0135` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention and is verified
+		//     non-colliding with API-0131's `gitea-cov-create-0131`,
+		//     API-0132's `gitea-cov-getBranches-0132`, API-0133's
+		//     `gitea-cov-getRepos-0133`, and API-0134's
+		//     `gitea-cov-getUrl-0134` literals, and the forthcoming
+		//     `gitea-cov-one-0136` / `gitea-cov-testConn-0137` /
+		//     `gitea-cov-update-0138` slugs reserved for upcoming
+		//     gitea/* peers, and non-colliding with the cross-tag
+		//     `bb-cov-*` / `mariadb-cov-*` / `proj-cov-*` /
+		//     `srv-cov-*` / `set-cov-*` / `org-cov-*` namespaces.
+		//     The base appears in **no fixture literal** because the
+		//     parameter-free shape carries no payload to embed it in;
+		//     the slug remains reserved for `git grep` traceability
+		//     so a future contributor pivoting this entry into a
+		//     payload-bearing shape (should the spec ever evolve to
+		//     add filter parameters) inherits the namespace cleanly.
+		//
+		// The next case in the PRD-ordered priority-5 backlog is
+		// API-0136 `gitea-one` (declared a **GET** per the spec
+		// preview; the next contributor must re-verify the spec
+		// against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will continue inside the `gitea-cov-*` per-tag
+		// fixture-isolation namespace).
+		//
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0160",
 		OperationID: "mariadb-changeStatus",
 		Method:      http.MethodPost,
