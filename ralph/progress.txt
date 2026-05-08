@@ -7337,3 +7337,55 @@
     operation could plausibly 404 on a missing `serverId` in production
     yet keeps the harness default 401/CodeAuth here for representativeness.
 ---
+
+## 2026-05-08 - API-0346
+- **Implemented**: Coverage of Dokploy operation `server-setup`
+  (POST /server.setup) via the data-driven `apiCoverageCase` harness in
+  `internal/cli/api_coverage_test.go`. Twelfth entry in the server/* roster
+  and the third body-mutation peer after API-0338 `server-create` and
+  API-0344 `server-remove`.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended API-0346 case at the
+    end of `coveredAPIOperations`. Single-required-field body
+    `{"serverId": "srv-cov-setup-0346"}`, identical shape to API-0344
+    `server-remove`. Empty-object 200 success, no failure-leg overrides
+    (harness default 401 → CodeAuth applies, since the spec declares
+    only 200/400/401/403/500).
+  - `ralph/prd.json` — set API-0346 `passes: true`.
+- **Verification run**:
+  - `gofmt -w .` — clean (no diff).
+  - `go mod tidy` — clean (no module changes).
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages `ok`.
+  - `go test -race ./...` — all packages `ok`.
+  - `go test ./internal/cli/ -run 'TestAPICoverage'` — five sub-tests
+    pass for API-0346/server-setup (RegistryInvariants, SchemaCommandWorks,
+    ManifestListsOperation, SuccessRoundTrip, RepresentativeFailure).
+- **Tools NOT available locally** (unchanged baseline): `goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`.
+- **Remaining risks / follow-ups**: None unique to this story. The next
+  server/* mutation peers (API-0347 `server-setupMonitoring`, API-0348
+  `server-update`) likely mirror this entry verbatim, but the
+  forward-reference comments in API-0345 demonstrated that the spec is
+  the only safe source — re-verify each new POST's body schema against
+  `internal/api/data/openapi.json` before copy-pasting.
+- **Learnings for future iterations**:
+  - The OpenAPI body shape for `server-setup` is **identical** to
+    `server-remove`: a single REQUIRED `serverId` (string). The
+    embedded spec at `internal/api/data/openapi.json > /server.setup
+    > post` was the source of truth, in line with the API-0345
+    forward-reference-correction lesson. Always re-verify, even when
+    the prior entry's forward-reference comment promises a verbatim
+    mirror.
+  - Response set 200/400/401/403/500 (no 404) keeps `server-setup`
+    aligned with the server/* mutation-peer convention reasserted at
+    API-0335..API-0345: 404 in this tag is reserved for the
+    by-id GET peer (API-0342 `server-one`) only. Even though
+    `server-setup` semantically operates on a serverId, the spec
+    does not enumerate 404, so the failure leg keeps the harness
+    default 401 → CodeAuth.
+  - Per-tag fixture-isolation namespace `srv-cov-*` continues from
+    API-0335. The fixture slug `srv-cov-setup-0346` is unique against
+    every prior server/* entry (verified by the existing harness's
+    `fixturesDoNotCollide` invariant).
+---

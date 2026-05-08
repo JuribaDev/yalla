@@ -4690,6 +4690,124 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0346",
+		OperationID: "server-setup",
+		Method:      http.MethodPost,
+		Path:        "/server.setup",
+		Tag:         "server",
+		// Twelfth entry on the server/* coverage roster and the
+		// **third body-mutation peer** in the server/* tag (after
+		// API-0338 `server-create` and API-0344 `server-remove`).
+		// It returns to the POST body shape after the API-0345
+		// `server-security` query-shaped GET. The API-0344
+		// `server-remove` and API-0345 `server-security` forward-
+		// reference comments both named API-0346 explicitly as the
+		// next body-mutation re-introduction; this entry's fixture
+		// slug `srv-cov-setup-0346` was reserved there.
+		//
+		// Inherits the `srv-cov-*` per-tag fixture-isolation
+		// namespace established at API-0335 (must not back-reference
+		// the `proj-cov-*` namespace from API-0290..API-0297, the
+		// `org-cov-*` namespace from API-0246..API-0289, or any
+		// prior `*-cov-*` slug, per the per-tag isolation rule
+		// reasserted at API-0335 / API-0342 / API-0343 / API-0344 /
+		// API-0345 and originally established at API-0246
+		// `organization-active`).
+		//
+		// Spec source `internal/api/data/openapi.json > /server.setup
+		// > post`: zero parameters, required `application/json`
+		// request body whose schema declares a single REQUIRED
+		// top-level scalar `serverId` (string) — **identical body
+		// shape to API-0344 `server-remove`** (the smallest possible
+		// body-mutation shape in the server/* tag, strictly smaller
+		// than API-0338 `server-create`'s seven-required-field body).
+		// No optionals, no nullables, no enums, no nested objects,
+		// no arrays. This entry is a near-verbatim mirror of API-0344
+		// — only StoryID / OperationID / Path / fixture-slug change.
+		//
+		// Responses 200/400/401/403/500 — note **no 404** is declared
+		// on `/server.setup`, matching `/server.create` at API-0338
+		// and `/server.remove` at API-0344, per the server/* mutation-
+		// peer convention reasserted at API-0335..API-0345: 404 in
+		// the server/* tag is reserved for the filter-shaped by-id
+		// GET peer (API-0342 `server-one`), not for this setup
+		// mutation. Even though `server-setup` semantically operates
+		// on a serverId and could plausibly 404 on a missing record,
+		// the embedded spec does not enumerate 404, so the failure
+		// leg keeps the harness default 401 → CodeAuth — auth is the
+		// universal failure mode every Dokploy operation must
+		// re-prove. Future contributors should NOT pre-emptively
+		// override to 404 here: exercise the documented contract,
+		// not a speculative future tightening (the rule already
+		// asserted for `*-publicIp` payloads at API-0343, for
+		// `*-count` / `*-getServerTime` at API-0337 / API-0341, and
+		// for `*-remove` at API-0344). The 200 schema is `{}` with
+		// `additionalProperties: false`, so the success-leg envelope
+		// assertion stays focused on `data.method` / `data.status`
+		// rather than payload projection — same shape as every prior
+		// server/* peer.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base `srv-cov-setup-0346`
+		//     follows the `<tag>-cov-<slug>-<storyID>` convention
+		//     shared across the server/* roster and is unique
+		//     (verified: no collisions with API-0338
+		//     `server-create`'s `srv-cov-create-0338` body fixture,
+		//     no collisions with API-0339 `server-getDefaultCommand`'s
+		//     `srv-cov-getDefaultCommand-0339` query fixture, no
+		//     collisions with API-0340 `server-getServerMetrics`'s
+		//     `srv-cov-getServerMetrics-0340` query fixtures, no
+		//     collisions with API-0342 `server-one`'s
+		//     `srv-cov-one-0342` query fixture, no collisions with
+		//     API-0344 `server-remove`'s `srv-cov-remove-0344` body
+		//     fixture, no collisions with API-0345 `server-security`'s
+		//     `srv-cov-security-0345` query fixture, and no
+		//     collisions with the cross-tag `proj-cov-*` namespace
+		//     reserved for the project/* roster).
+		//   * `serverId` carries the fixture-shaped UUID-style
+		//     literal `srv-cov-setup-0346` rather than a real UUID
+		//     so the wire payload cannot be mistaken for a real
+		//     production server identifier; the server/* tag
+		//     already established the `srv-cov-*` slug shape at
+		//     API-0339, and re-using it here keeps the fixture
+		//     diff-friendly.
+		//
+		// **Failure-leg fields are intentionally omitted.** The
+		// API-0342 `server-one` 404 → CodeNotFound override was a
+		// one-time, by-id-shaped GET assertion (per the per-tag
+		// opener reservation at API-0290 / API-0294 / API-0335 and
+		// the API-0342 design-rationale block, plus the API-0343 /
+		// API-0344 / API-0345 re-anchor commentary). API-0346 is a
+		// body mutation with no 404 declared in its response set,
+		// so the universal 401 → CodeAuth failure stays the most
+		// informative representative. The harness fall-through
+		// (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""`
+		// → CodeAuth) covers this case; **do not** copy the
+		// FailureStatus / FailureCode lines from API-0342.
+		//
+		// Future server/* mutation peers (API-0347
+		// `server-setupMonitoring`, API-0348 `server-update`)
+		// should mirror this entry verbatim — pure copy-and-rename,
+		// only StoryID / OperationID / Path / fixture-slug change,
+		// pending body-shape verification against the embedded
+		// spec (do NOT trust forward-reference comments without
+		// re-verifying against `internal/api/data/openapi.json`,
+		// per the lesson learned at API-0345 where a forward-
+		// reference incorrectly described the body shape).
+		// API-0349 `server-validate` is a single-required-query-
+		// param GET and should mirror API-0345 `server-security`
+		// instead.
+		SampleBody: json.RawMessage(`{
+			"serverId": "srv-cov-setup-0346"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior server/* peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
