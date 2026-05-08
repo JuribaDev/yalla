@@ -8486,3 +8486,28 @@
   - The `clean*` family in settings/* splits cleanly into two body-shape sub-cohorts: optional-body-with-optional-`serverId` (cleanAll, cleanDockerBuilder, cleanDockerPrune) and no-body (cleanAllDeploymentQueue, cleanMonitoring, cleanRedis, cleanSSHPrivateKey). Always re-verify against openapi.json — verb prefix is not authoritative.
   - When the new entry's spec is byte-identical to its immediate predecessor, the cleanest comment pattern is to (a) cite the prior entry's forward-reference, (b) say "confirmation" rather than "correction", and (c) point the next entry at its own divergence (here: cleanMonitoring's no-body shape) so the chain keeps re-verifying rather than copy-pasting.
 ---
+
+## 2026-05-08 — API-0048 (backup-one)
+- Added covered API operation entry for `backup-one` (GET /backup.one) between API-0047 and API-0066 in `internal/cli/api_coverage_test.go`'s `coveredAPIOperations` slice. Pivots the backup/* roster from the (now-closed) `manualBackup*` mutation cohort back to inspection.
+- Spec re-verified directly against `internal/api/data/openapi.json > /backup.one > get`: zero requestBody; one parameter `backupId` (in: query, type: string, required: true); responses 200/400/401/403/404/500. The 200 schema is `{}` with `additionalProperties: false`, matching every prior covered backup/* peer.
+- Fixture: single-key `SampleQuery` `{"backupId": ["backup-cov-one-0048"]}` following the `backup-cov-<slug>-<storyID>` per-tag convention seeded by API-0040 / refined by API-0041 (`backup-cov-list-files-0041`). Slug `one` mirrors the operationId tail. Distinct from the closed `backup-cov-manual-<slug>-<storyID>` sub-namespace (API-0042..API-0047). `SuccessResponse: "{}"` keeps the success-leg envelope assertion focused on `data.method` / `data.status`. `FailureStatus`/`FailureCode` left at harness defaults (401 → CodeAuth) per AGENTS.md guidance.
+- Closest precedents: API-0005 (ai-get) and API-0008 (ai-one) — both single-id-only GETs with `SampleQuery` carrying one required key. Materially simpler than backup/*'s only other GET (API-0041 listBackupFiles, three params).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended one `apiCoverageCase` literal between API-0047 and API-0066 entries.
+  - `ralph/prd.json` — flipped `passes: false` → `true` for API-0048 (PRD passing count 135 → 136 / 462).
+  - `ralph/progress.txt` — this entry.
+- Verification run (from repo root):
+  - `gofmt -l .` — no diff. `gofmt -w .` no-op.
+  - `go mod tidy` — no dep changes.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages `ok`.
+  - `go test -race ./...` — all packages `ok` (`internal/cli` 2.728s).
+  - `go test -run 'TestAPICoverage/API-0048' ./internal/cli/ -count=1 -v` — five subtests PASS (RegistryInvariants, SchemaCommandWorks, ManifestListsOperation, SuccessRoundTrip, RepresentativeFailure).
+- Tools NOT available locally (per Codebase Patterns): `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`. Skipped silently per existing convention.
+- Remaining risks / follow-ups: none specific to API-0048. Next pending backup/* story is API-0049 `backup-remove` (POST /backup.remove) — by-id mutation, expect a body-only fixture with a single `backupId` field. After API-0049, API-0050 `backup-update` is the last backup/* story; expect a `*-update` shape with `backupId` + the same optional siblings as API-0040 backup-create (anyOf [string, null] etc.).
+- **Learnings for future iterations:**
+  - The forward reference seeded by API-0041 (which explicitly named API-0048 as the next backup/* GET to mirror its query-only fixture shape) was honoured here — but the actual schemas diverged: API-0041 declared three params (REQUIRED + REQUIRED + OPTIONAL), while API-0048 declares only one. The lesson: forward references are pointers to a *category* (here: query-only GET with no body), not a guarantee of byte-identical fixtures. Always re-verify against `data/openapi.json` even when the previous story's comment confidently predicts the shape.
+  - The `backup/*` tag now hosts two parallel slug sub-namespaces: `backup-cov-<slug>-<storyID>` (the general convention used by API-0040 create, API-0041 list-files, API-0048 one) and the closed `backup-cov-manual-<slug>-<storyID>` (API-0042..API-0047, the manualBackup family). Future backup/* stories outside the manualBackup family should use the general namespace; the `manual` infix is reserved for that closed cohort.
+  - When adding a GET-with-single-required-query-param entry, the canonical templates are API-0005 (ai-get) and API-0008 (ai-one). The harness ignores empty `SampleBody` / `SamplePathParams` maps so query-only operations stay terse — only `SampleQuery` needs to be populated.
+  - The OpenAPI 200 schema being `{}` with `additionalProperties: false` is *not* the same as the runtime payload — Dokploy returns the populated record on 200; the spec just leaves the response surface empty. The coverage harness asserts forwarding and envelope shape, not payload semantics, so the empty-object `SuccessResponse` fixture is correct (and matches every prior covered peer's convention).
+---

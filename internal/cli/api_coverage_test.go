@@ -1487,6 +1487,51 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0048",
+		OperationID: "backup-one",
+		Method:      http.MethodGet,
+		Path:        "/backup.one",
+		Tag:         "backup",
+		// Ninth backup/* coverage entry and the SECOND backup/* GET
+		// (the first being API-0041 backup-listBackupFiles, which
+		// seeded the query-only fixture shape for the tag and
+		// explicitly forward-referenced API-0048 as the next backup/*
+		// GET to mirror it). With API-0047 the six-sibling
+		// `backup-manualBackup*` family closed; this entry pivots the
+		// roster from the manualBackup mutation cohort to the
+		// inspection cohort. The spec at `data/openapi.json >
+		// /backup.one > get` declares no request body and a single
+		// REQUIRED query parameter `backupId` (string), with no
+		// optional siblings — so the fixture is materially simpler
+		// than API-0041's three-param REQUIRED + REQUIRED + OPTIONAL
+		// shape and aligns instead with the canonical "single id-only
+		// GET" precedents API-0005 (ai-get) and API-0008 (ai-one).
+		// Slug convention `backup-cov-<slug>-<storyID>` follows the
+		// seed laid by API-0040 (`backup-cov-create-0040`) and the
+		// sibling tweak in API-0041 (`backup-cov-list-files-0041`),
+		// keeping the per-tag `backup-cov-*` namespace intact and
+		// distinct from the manualBackup family's `backup-cov-manual-
+		// <slug>-<storyID>` sub-namespace closed at API-0047.
+		SampleQuery: map[string][]string{
+			"backupId": {"backup-cov-one-0048"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the empty-success convention shared by every prior
+		// backup/* peer (API-0040 backup-create, API-0041
+		// backup-listBackupFiles, API-0042 backup-manualBackupCompose,
+		// API-0043 backup-manualBackupMariadb, API-0044
+		// backup-manualBackupMongo, API-0045 backup-manualBackupMySql,
+		// API-0046 backup-manualBackupPostgres, API-0047
+		// backup-manualBackupWebServer). Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection. (Yes, the
+		// real Dokploy server returns the populated backup record on
+		// 200 — the spec just leaves the response schema empty; the
+		// coverage harness asserts forwarding and envelope shape, not
+		// payload semantics, so the empty-object fixture is correct.)
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0066",
 		OperationID: "compose-cancelDeployment",
 		Method:      http.MethodPost,
