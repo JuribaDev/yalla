@@ -15164,6 +15164,162 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0428",
+		OperationID: "user-assignPermissions",
+		Method:      http.MethodPost,
+		Path:        "/user.assignPermissions",
+		Tag:         "user",
+		// Second entry on the user/* coverage roster, inheriting the
+		// `usr-cov-*` per-tag fixture-isolation namespace established
+		// at API-0427 `user-all`. Per the per-tag isolation rule
+		// reasserted at API-0335..API-0427 and originally established
+		// at API-0246 `organization-active`, every user/* fixture
+		// token base remains orthogonal to every prior tag's
+		// namespace (`set-cov-*`, `srv-cov-*`, `proj-cov-*`,
+		// `org-cov-*`, `compose-cov-*`, `app-cov-*`, `ai-cov-*`,
+		// `admin-cov-*`, `backup-cov-*`, `bb-cov-*`, `cert-cov-*`,
+		// `clu-cov-*`, `deployment-cov-*`, `dest-cov-*`, etc.).
+		//
+		// **Spec re-verified per the API-0345..API-0427
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /user.assignPermissions
+		// > post`: a **POST** with `requestBody.required = true`
+		// carrying a single `application/json` body schema and
+		// **zero declared parameters** (no query, no path, no
+		// header). Responses 200/400/401/403/500 — note the
+		// **absence of 404** in the spec: `assignPermissions` is a
+		// permission-mutation operation scoped by the body's `id`
+		// field rather than a path parameter, so the by-id resource
+		// lookup that would justify 404 is not part of the request
+		// shape. The 200 schema is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer.
+		//
+		// **Fifteen-property body shape — first non-trivial multi-
+		// field shape in the user/* roster.** Every field is
+		// REQUIRED: the outer schema's `required` array enumerates
+		// all fifteen properties (`id`, three array-of-strings
+		// access scopes, and eleven boolean permission flags). Per
+		// the slug-prefix-is-not-shape and slug-stem-is-not-shape
+		// lessons reasserted at API-0371..API-0427, no axis from any
+		// prior settings/* entry or from API-0427 `user-all` carries
+		// over — the user/* roster's first POST establishes its own
+		// shape signature: a fully-required mixed-type body
+		// (one plain string, three array-of-strings, eleven
+		// booleans) with no OPTIONAL outer fields.
+		//
+		// **Body field semantics (per OpenAPI schema):**
+		//   * `id` — REQUIRED plain string. Identifies the user the
+		//     permission set applies to. The spec imposes no length,
+		//     pattern, or format constraint, so the slug-on-the-wire
+		//     sentinel `usr-cov-assignPermissions-0428` populates
+		//     this field directly per the convention reasserted at
+		//     API-0351..API-0427 for free-form string fields.
+		//   * `accessedProjects` / `accessedEnvironments` /
+		//     `accessedServices` — REQUIRED arrays of strings. Each
+		//     scopes the user's reachable resources within the
+		//     respective domain. Empty arrays are valid per the
+		//     schema (no `minItems` constraint) but the fixture
+		//     populates each with a single slug-bearing element so
+		//     the success-leg body assertion exercises the
+		//     array-element-string-content axis as well as the
+		//     array-presence axis.
+		//   * Eleven boolean `can*` flags — REQUIRED booleans
+		//     gating the user's mutation/access privileges. The
+		//     fixture mixes `true` and `false` values so the
+		//     success-leg body assertion covers both branches of
+		//     each boolean axis rather than collapsing to a single
+		//     all-true or all-false signature; this is the first
+		//     fixture in the catalogue with eleven required booleans
+		//     and the mixed pattern keeps the JSON-encoded payload
+		//     non-trivially distinguishable from any reasonable
+		//     default.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `usr-cov-assignPermissions-0428` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared across
+		//     every per-tag roster and is unique by construction
+		//     (verified against API-0427's `usr-cov-all-0427` slug
+		//     and orthogonal to every prior tag's namespace).
+		//   * **Populating every REQUIRED outer field** is mandatory:
+		//     the schema's `required` array enumerates all fifteen
+		//     properties, so omitting any one would produce a
+		//     structurally invalid request that the harness's
+		//     httptest server would never see (the CLI's --input
+		//     decoder enforces `DisallowUnknownFields` but the
+		//     server-side `required` validation is what 400 reflects
+		//     in production).
+		//   * **Slug-on-the-wire across four string surfaces.** The
+		//     `id` field, plus one element each in
+		//     `accessedProjects` / `accessedEnvironments` /
+		//     `accessedServices`, all carry the same fixture token
+		//     so the success-leg body assertion can confirm the
+		//     bytes forwarded verbatim from the `--input` JSON file
+		//     to the httptest server matched the originating
+		//     fixture across both scalar-string and array-element-
+		//     string surfaces.
+		//
+		// **Failure-leg fields are intentionally omitted.** The spec
+		// does not declare 404 on this operation (the body's `id`
+		// field could *semantically* fail to resolve to a user, but
+		// the spec collapses that case into 400/403 rather than
+		// declaring 404), so the per-tag opener convention reasserted
+		// at API-0335..API-0427 that reserves 404 → CodeNotFound for
+		// canonical `*-one` peers does not apply here. Within the
+		// user/* roster the canonical `*-one` peer is API-0433
+		// `user-get` per the API-0427 hand-off forecast; 404 →
+		// CodeNotFound coverage is reserved for that entry. Auth is
+		// the universal failure mode every Dokploy operation must
+		// re-prove, so 401 → CodeAuth via the harness default
+		// (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""` →
+		// CodeAuth) stays the most informative representative. 400 →
+		// CodeInvalidInput is *technically* available here (a payload
+		// missing any of the fifteen REQUIRED fields, or carrying a
+		// type-mismatched value, would fail server-side validation),
+		// but it remains reserved for stories where payload
+		// validation is the operation's *uniquely distinguishing*
+		// failure mode (e.g. multi-field cross-validation, conditional
+		// `oneOf`/`anyOf` between distinct shapes, or length-bounded
+		// strings). A flat fifteen-required-field shape with no
+		// inter-field constraints is conventional REQUIRED-field
+		// validation, so auth remains the canonical representative.
+		//
+		// The next case in the PRD-ordered priority-2 backlog is
+		// API-0429 `user-checkUserOrganizations` (declared a **GET**
+		// in the PRD). The next contributor must re-verify against
+		// `internal/api/data/openapi.json > /user.checkUserOrganizations
+		// > get` per the forward-reference lesson before assuming
+		// any field carries over from this entry — per the
+		// slug-prefix-is-not-shape lesson reasserted at
+		// API-0371..API-0427, even the shared `user-` operation-stem
+		// does not pre-determine the next peer's shape (a GET with
+		// no body cannot inherit any axis from this POST's
+		// fifteen-required-field body shape).
+		SampleBody: json.RawMessage(`{
+			"id": "usr-cov-assignPermissions-0428",
+			"accessedProjects": ["usr-cov-assignPermissions-0428"],
+			"accessedEnvironments": ["usr-cov-assignPermissions-0428"],
+			"accessedServices": ["usr-cov-assignPermissions-0428"],
+			"canCreateProjects": true,
+			"canCreateServices": true,
+			"canDeleteProjects": false,
+			"canDeleteServices": false,
+			"canAccessToDocker": true,
+			"canAccessToTraefikFiles": false,
+			"canAccessToAPI": true,
+			"canAccessToSSHKeys": false,
+			"canAccessToGitProviders": true,
+			"canDeleteEnvironments": false,
+			"canCreateEnvironments": true
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
