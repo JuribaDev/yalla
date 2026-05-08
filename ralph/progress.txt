@@ -5147,3 +5147,23 @@
   - The `minimal-composeId-only POST` family in compose/* now has ten members (API-0066/0067/0068/0073/0074/0080/0088/0090/0091). For lifecycle ops (start/stop/restart/cancel/etc.), Dokploy reuses the exact same minimal-id POST shape — copy the precedent and rotate the slug.
   - Always confirm the OpenAPI body shape via `jq '.paths."/compose.X".post.requestBody' internal/api/data/openapi.json` before assuming a fixture is byte-identical to its predecessor — even sibling lifecycle ops can drift in future spec revisions.
 ---
+
+## 2026-05-08 - API-0092
+- Implemented coverage for `compose-templates` (GET /compose.templates).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended `apiCoverageCase` literal after API-0091. Single OPTIONAL `baseUrl` query param, no body, empty `{}` 200. Slug `compose-cov-templates-0092`. Byte-for-byte identical shape to API-0077 (compose-getTags); a near-verbatim slug-rotated twin inside the compose/* GET roster.
+  - `ralph/prd.json` — flipped API-0092 `passes` to true.
+- Verification (clean tree):
+  - `gofmt -w .` → no diff.
+  - `goimports` not installed locally; `gofmt` covered the formatting requirement.
+  - `go mod tidy` → no diff.
+  - `go vet ./...` → ok.
+  - `go test ./internal/cli -run 'TestAPICoverage' -count=1` → PASS (all five sub-phases — RegistryInvariants, SchemaCommandWorks, ManifestListsOperation, SuccessRoundTrip, RepresentativeFailure — fire for API-0092).
+  - `go test ./... -count=1` → all packages ok.
+  - `go test -race ./... -count=1` → all packages ok.
+- Results: harness asserts the five invariants — registry presence, `yalla schema get`, `yalla manifest`, success round-trip, default 401→E_AUTH failure leg — automatically through `coveredAPIOperations`.
+- Remaining risks / follow-ups: none specific. API-0092 is the eighth compose/* GET entry and the second member of the "single-OPTIONAL-baseUrl-only GET" shape inside compose/* (API-0077 is the precedent). API-0093 (compose-update, POST) is the next compose/* entry but has a richer multi-field body and is structurally distinct.
+- **Learnings for future iterations:**
+  - Two compose/* GETs (API-0077 getTags and API-0092 templates) share the exact same wire shape: single optional `baseUrl` (string) + empty `{}` 200. When a future compose/* GET shows up with the same shape, it can copy this fixture verbatim and just rotate the slug — the family-membership comment ledger should be updated to call out the third member at that point.
+  - Always verify byte-identical shape via `python3 -c "import json; ..."` against `internal/api/data/openapi.json` before assuming a sibling GET is a slug-rotated twin — even sibling compose/* operations can drift in future spec revisions.
+---

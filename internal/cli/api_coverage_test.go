@@ -2174,6 +2174,44 @@ var coveredAPIOperations = []apiCoverageCase{
 		// payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0092",
+		OperationID: "compose-templates",
+		Method:      http.MethodGet,
+		Path:        "/compose.templates",
+		Tag:         "compose",
+		// Fourth GET-shaped entry in the compose/* coverage roster, after
+		// API-0075 (compose-getConvertedCompose), API-0076
+		// (compose-getDefaultCommand), API-0077 (compose-getTags),
+		// API-0081 (compose-loadMountsByService), API-0082
+		// (compose-loadServices), API-0084 (compose-publicLoadServices),
+		// and API-0089 (compose-search). The spec at
+		// `data/openapi.json > /compose.templates > get` declares no
+		// request body and a SINGLE OPTIONAL query parameter `baseUrl`
+		// (string, no `required: true`). This is byte-for-byte identical
+		// to API-0077 (compose-getTags) — same single-optional-baseUrl
+		// shape, same empty `{}` 200 body — making this entry a near-
+		// verbatim slug-rotated twin of API-0077 inside the compose/*
+		// roster. Distinct from API-0089 (compose-search) which carries
+		// 8 optional params, and from API-0075/0076/0081/0082/0084 which
+		// all carry at least one REQUIRED query param. We populate
+		// SampleQuery so the harness exercises end-to-end query
+		// propagation; the harness does not gate on `required`-ness, it
+		// simply forwards what we hand it via the `--input` JSON `query`
+		// field, and `runAPICoverageSuccess` re-reads `r.URL.Query()` to
+		// confirm the CLI propagated the param verbatim. Slug convention
+		// `compose-cov-<slug>-<storyID>` continues the cross-story grep
+		// contract from every prior compose/* case.
+		SampleQuery: map[string][]string{
+			"baseUrl": {"https://compose-cov-templates-0092.example"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the empty-success convention shared by every prior
+		// compose/* peer. Empty-object body keeps the success-leg envelope
+		// assertion focused on `data.method` / `data.status` rather than
+		// payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
