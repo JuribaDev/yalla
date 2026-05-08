@@ -5402,3 +5402,67 @@
     string assertion, so omitting the field is *active* coverage of the
     "agent sends `--input '{}'`" canonical invocation — not just a no-op.
 ---
+
+## 2026-05-08 - API-0099
+- Covered Dokploy operation `deployment-killProcess` (POST
+  /deployment.killProcess) by extending the
+  `coveredAPIOperations` table in
+  `internal/cli/api_coverage_test.go` with a single new
+  `apiCoverageCase` entry. This is the FIRST POST-shaped entry
+  in the deployment/* tag — API-0094..0098 covered all five
+  GET-shaped peers — and it slots into the cross-tag
+  minimal-required-id POST family established by the compose/*
+  roster (API-0066/0067/0068/0073/0074/0080/0088/0090/0091).
+- Spec source `internal/api/data/openapi.json >
+  /deployment.killProcess > post`: REQUIRED body with exactly
+  one required string `deploymentId`, no parameters, 200
+  response is `{}` with `additionalProperties: false`. SampleBody
+  is the minimal-but-valid `{ "deploymentId":
+  "deployment-cov-killprocess-0099" }` so the harness's wire-level
+  body-equality assertion (`runAPICoverageSuccess`) confirms the
+  CLI propagates the required field verbatim through
+  `--input` JSON.
+- Files changed:
+  - internal/cli/api_coverage_test.go (added API-0099 case)
+  - ralph/prd.json (flipped passes:true for API-0099)
+  - ralph/progress.txt (this entry)
+- Verification run from repo root:
+  - gofmt -w . — clean
+  - go mod tidy — clean
+  - go vet ./... — clean
+  - go test ./... — all packages pass
+  - go test -race ./... — all packages pass
+- Optional tooling not invoked this iteration (golangci-lint,
+  staticcheck, govulncheck, goreleaser): not required for a
+  table-only addition that re-uses the existing harness.
+- Remaining risks / follow-ups: none for API-0099. Next
+  failing priority-2 deployment/* peers in line are API-0100
+  (`deployment-queueList`, GET) and API-0101
+  (`deployment-removeDeployment`, POST). API-0101 will be a
+  byte-for-byte slug-rotated twin of THIS entry — same
+  `deploymentId`-only body, same empty-`{}` 200 — so the
+  comment block here documents the family precedent it should
+  cite.
+- **Learnings for future iterations:**
+  - The deployment/* tag now has both shape variants represented:
+    GET parameter-discriminator (API-0094..0098) and POST
+    minimal-required-id (THIS, API-0099). Future deployment/*
+    POST stories with a single required `deploymentId` should
+    cite API-0099 as the in-tag precedent and the compose/*
+    minimal-id POST family as the cross-tag precedent.
+  - The `apiCoverageCase` table is the SINGLE editing surface
+    for these stories — operations are auto-loaded from the
+    embedded OpenAPI spec by `internal/api`, the Cobra command
+    surface (`yalla api call`, `yalla schema get`,
+    `yalla manifest`) is generic over operationId, and the
+    manifest-listing assertion lives inside the same test file
+    (`TestAPICoverage_ManifestListing`). No code outside the
+    table changed; do not introduce per-operation Go files
+    unless the acceptance criteria demand richer assertions
+    than `runAPICoverageSuccess` / `runAPICoverageFailure`
+    already provide.
+  - Slug convention: `deployment-cov-<slug>-<storyID>` for
+    deployment/* fixtures (mirrors `compose-cov-...`). Keeps
+    cross-story greps cohesive when debugging server fixture
+    output.
+---

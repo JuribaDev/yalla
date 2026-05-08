@@ -2428,6 +2428,49 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0099",
+		OperationID: "deployment-killProcess",
+		Method:      http.MethodPost,
+		Path:        "/deployment.killProcess",
+		Tag:         "deployment",
+		// First POST in the deployment/* coverage roster after the five
+		// GET-shaped entries API-0094..0098 (`deployment-all`,
+		// `*-allByCompose`, `*-allByServer`, `*-allByType`,
+		// `*-allCentralized`). Spec source: `data/openapi.json >
+		// /deployment.killProcess > post` declares no parameters and a
+		// REQUIRED request body with exactly one required string field
+		// `deploymentId` (the target in-flight deployment whose worker
+		// process should be terminated). This is byte-for-byte identical
+		// in shape to the minimal-required-id POST family established
+		// by the compose/* roster — API-0066 (compose-cancelDeployment),
+		// API-0067 (compose-cleanQueues), API-0068 (compose-clearDeployments),
+		// API-0073 (compose-disconnectGitProvider), API-0074
+		// (compose-fetchSourceType), API-0080 (compose-killBuild),
+		// API-0088 (compose-refreshToken), API-0090 (compose-start),
+		// and API-0091 (compose-stop) — only the discriminator field name
+		// rotates from `composeId` to `deploymentId`, mirroring the
+		// deployment/* tag's id grammar (the same `deploymentId` field
+		// the registry will use for future deployment lifecycle peers
+		// such as `removeDeployment` covered by API-0101). The fixture is
+		// deliberately minimal-but-valid: only the required field is
+		// populated so a future schema validator wired into the harness
+		// still accepts it, and the success leg's body-equality check
+		// inside `runAPICoverageSuccess` confirms the CLI propagated the
+		// single required field verbatim through the `--input` JSON
+		// `body` envelope. Slug convention `deployment-cov-<slug>-<storyID>`
+		// continues the cross-story grep contract opened by API-0094.
+		SampleBody: json.RawMessage(`{
+			"deploymentId": "deployment-cov-killprocess-0099"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// identical to API-0094..0098 and the wider empty-success
+		// convention shared by every minimal-id POST family member.
+		// Empty-object body keeps the success-leg envelope assertion
+		// focused on `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
