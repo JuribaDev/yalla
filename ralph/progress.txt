@@ -6548,3 +6548,46 @@
     namespace, never back-reference `proj-cov-*`).
 
 ---
+
+## 2026-05-08 - API-0335 (server-all)
+- Implemented coverage for `server-all` (GET /server.all) by appending one
+  `apiCoverageCase` entry to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go`. This is the kickoff entry for the
+  server/* tag and opens the `srv-cov-*` per-tag fixture-isolation namespace
+  for the upcoming API-0336..API-0350 server/* peers.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (one new struct literal, parameter-
+    free GET shape, `SuccessResponse: '{}'`, defaults inherit
+    401 -> CodeAuth failure leg).
+  - `ralph/prd.json` (`API-0335.passes: true`).
+- Verification run: `gofmt -w .`, `go mod tidy`, `go vet ./...`,
+  `go test ./...`, `go test -race ./...` — all green. (`goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser` still not
+  installed locally.)
+- Results: TestAPICoverage suite (registry invariants, schema command,
+  manifest inclusion, success leg, failure leg) passes for the new entry
+  alongside every prior covered operation.
+- Remaining risks or follow-ups: API-0336..API-0350 (the rest of the
+  server/* roster) still have `passes: false` and should follow the
+  fixture-isolation header established here.
+- **Learnings for future iterations:**
+  - The `coveredAPIOperations` slice in `internal/cli/api_coverage_test.go`
+    is indented with **one tab per entry** (`\t{ ... \t},`) and **two tabs
+    per field**. Field indentation does NOT match the visual indent the
+    Read tool surfaces when line-number prefixes are present — when adding
+    an entry, anchor on a unique inner line (e.g. `// projection.\n
+    \t\tSuccessResponse: \`{}\`,\n\t},\n}` for the slice tail) and confirm
+    raw bytes via `od -c` if Edit's "string not found" error fires.
+  - For parameter-free GETs whose 200 schema is `{}`, the entry is purely
+    `StoryID/OperationID/Method/Path/Tag/SuccessResponse: \`{}\`` — leaving
+    `SampleQuery`/`SamplePathParams`/`SampleBody` unset is the documented
+    "empty fixture" invariant inherited from API-0006 `ai-getAll` and
+    API-0246 `organization-active`. The default failure leg
+    (401 -> CodeAuth) is the universal auth re-prove and overrides the
+    spec's 404 declaration; per-tag-opener convention reserves
+    404 -> CodeNotFound for filter-shaped peers like the upcoming
+    `server-one` (API-0342).
+  - PRD edits with `python3 -c json.dump` are safe because the PRD file is
+    canonical UTF-8 JSON; the standard library preserves Unicode without
+    re-escaping (which would alter the file's public-API string content).
+---

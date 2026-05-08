@@ -3769,6 +3769,65 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0335",
+		OperationID: "server-all",
+		Method:      http.MethodGet,
+		Path:        "/server.all",
+		Tag:         "server",
+		// Kickoff entry for the server/* coverage roster - this is the
+		// first server-tagged operation to ship contract coverage and
+		// opens a fresh per-tag fixture-isolation namespace
+		// (`srv-cov-*`) that subsequent server/* peers (API-0336
+		// `*-buildServers`, API-0337 `*-count`, API-0338 `*-create`,
+		// API-0339 `*-getDefaultCommand`, API-0340 `*-getServerMetrics`,
+		// API-0341 `*-getServerTime`, API-0342 `*-one`, API-0343
+		// `*-publicIp`, API-0344 `*-remove`, API-0345 `*-security`,
+		// API-0346 `*-setup`, API-0347 `*-setupMonitoring`, API-0348
+		// `*-update`, API-0349 `*-validate`, API-0350 `*-withSSHKey`)
+		// must inherit, per the per-tag fixture-isolation rule
+		// established at API-0246 `organization-active` and API-0290
+		// `project-all`.
+		//
+		// Spec source `internal/api/data/openapi.json > /server.all >
+		// get`: zero parameters, no request body, responses
+		// 200/400/401/403/404/500 where the 200 schema is `{}` with
+		// `additionalProperties: false`. This is byte-for-byte the
+		// same wire shape as the parameter-free GET cohort opened by
+		// API-0006 `ai-getAll` and continued by API-0246
+		// `organization-active`, API-0247 `organization-all`, and
+		// API-0290 `project-all`, so the canonical agent invocation
+		// stays `yalla api call server-all --input '{}' --json`.
+		//
+		// Leaving SampleQuery / SamplePathParams / SampleBody unset is
+		// intentional: the harness still asserts the wire-level
+		// invariants (method, path, Authorization header, empty query
+		// string, empty body) at runAPICoverageSuccess. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection, matching every prior parameter-free GET peer.
+		//
+		// The representative-failure leg keeps the harness default
+		// (401 -> CodeAuth) because auth is the universal failure
+		// mode every Dokploy operation must re-prove. Even though
+		// the spec also declares 404, the per-tag-opener convention
+		// reserves 404 -> CodeNotFound for filter-shaped peers like
+		// the upcoming API-0342 `server-one` rather than this
+		// membership-scoped list endpoint.
+		//
+		// Future server/* peers should grep this entry first when
+		// extending the server/* parameter-free GET cohort (API-0336
+		// `server-buildServers`, API-0337 `server-count`, API-0341
+		// `server-getServerTime`, API-0343 `server-publicIp`,
+		// API-0345 `server-security`, API-0349 `server-validate`,
+		// API-0350 `server-withSSHKey`); peers that introduce a
+		// query/path parameter or a request body should fall back to
+		// the cross-tag precedents (API-0033
+		// `application-readTraefikConfig` for query-shaped GETs,
+		// API-0292 `project-create` for the every-optional-populated
+		// scalar-only mutation body).
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
