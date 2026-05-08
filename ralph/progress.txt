@@ -2953,3 +2953,56 @@
     fixture file — is the minimal, idiomatic way to ship a coverage story when
     the operation has no novel wire-shape requirements.
 ---
+
+## 2026-05-08 - API-0007 (ai-getModels)
+- Added per-operation contract coverage for the `ai-getModels` Dokploy
+  operation (`GET /ai.getModels`) by appending one `apiCoverageCase`
+  entry to `coveredAPIOperations` in `internal/cli/api_coverage_test.go`.
+  The harness (RegistryInvariants, SchemaCommandWorks,
+  ManifestListsOperation, SuccessRoundTrip, RepresentativeFailure)
+  picks up the new story automatically — no harness changes were
+  required.
+- Operation declares two required query parameters (`apiUrl`,
+  `apiKey`, both strings) and no request body. SampleQuery uses the
+  `fake-api-key-coverage-0007` placeholder secret to mirror the
+  `ai-create` (API-0002) precedent: deterministic-but-clearly-fake
+  values that live only inside per-test `t.TempDir()` JSON inputs and
+  never reach stdout/stderr or git history.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended one struct literal
+    between the API-0006 and API-0011 entries.
+  - `ralph/prd.json` — flipped `API-0007.passes` to `true`.
+  - `ralph/progress.txt` — this entry.
+- Verification run from repo root:
+  - `gofmt -w .` — clean
+  - `go mod tidy` — clean (no diff)
+  - `go vet ./...` — clean
+  - `go test ./... -count=1` — all packages PASS
+  - `go test -race ./... -count=1` — all packages PASS
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, and
+    `goreleaser` are still not installed locally; documented as
+    missing per the prior iterations' baseline.
+- Remaining risks / follow-ups:
+  - 425 API stories still pending (mostly application/* and
+    backup/*). The same one-line append pattern continues to apply.
+  - The `apiKey` placeholder is fixed-string per case; if a future
+    schema validator requires non-empty / shaped secrets we may need
+    to revisit, but today's harness only checks JSON parsability and
+    wire propagation.
+- **Learnings for future iterations:**
+  - The `coveredAPIOperations` table is genuinely append-only:
+    adding a story is one struct literal — registry invariants,
+    schema command, manifest inclusion, success round-trip, and
+    representative failure are all derived from the entry. No
+    per-operation `_test.go` files are needed unless the story
+    demands richer assertions than the default harness offers.
+  - Multi-query-parameter GETs follow API-0005's shape — list every
+    required param under SampleQuery; the harness re-reads
+    `r.URL.Query()` on the success leg so each is asserted
+    independently.
+  - When an operation name contains the word "api key" or "api url",
+    use a `fake-*-coverage-<storyID>` placeholder (matching
+    `ai-create`'s convention). The redactor still scrubs accidental
+    bleed-through, but the placeholder makes secret-shaped fixtures
+    visually obvious to a reviewer.
+---

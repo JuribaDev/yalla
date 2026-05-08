@@ -251,6 +251,36 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0007",
+		OperationID: "ai-getModels",
+		Method:      http.MethodGet,
+		Path:        "/ai.getModels",
+		Tag:         "ai",
+		// Second query-only GET in the ai/* coverage roster. Mirrors
+		// the schema in `data/openapi.json` for /ai.getModels: no
+		// request body, two required query parameters — `apiUrl` and
+		// `apiKey` (both strings). Unlike API-0005 (`ai-get`, single
+		// `aiId` param) this operation forwards an upstream provider
+		// secret on the wire, so the fixture supplies a deterministic-
+		// but-clearly-fake `apiKey` value (`fake-api-key-coverage-0007`)
+		// that lives only inside the per-test `t.TempDir()` JSON input
+		// — it never reaches stdout/stderr or git history. Mirrors the
+		// `ai-create` (API-0002) precedent for placeholder secret
+		// shaping. The harness forwards SampleQuery via the `--input`
+		// JSON `query` field, and `runAPICoverageSuccess` re-reads
+		// `r.URL.Query()` to confirm the CLI propagated both params
+		// verbatim.
+		SampleQuery: map[string][]string{
+			"apiUrl": {"https://example.test/v1"},
+			"apiKey": {"fake-api-key-coverage-0007"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching every prior ai/* peer. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0011",
 		OperationID: "application-cancelDeployment",
 		Method:      http.MethodPost,
