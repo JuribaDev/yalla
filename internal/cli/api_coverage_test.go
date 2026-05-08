@@ -6925,6 +6925,150 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0362",
+		OperationID: "settings-cleanUnusedVolumes",
+		Method:      http.MethodPost,
+		Path:        "/settings.cleanUnusedVolumes",
+		Tag:         "settings",
+		// Twelfth entry on the settings/* coverage roster, inheriting
+		// the `set-cov-*` per-tag fixture-isolation namespace
+		// established by API-0351 `settings-assignDomainServer`
+		// (must not back-reference the closed `srv-cov-*`,
+		// `proj-cov-*`, `org-cov-*`, `compose-cov-*`, `app-cov-*`,
+		// `ai-cov-*`, or any other prior tag's namespace, per the
+		// per-tag isolation rule reasserted at API-0335..API-0361
+		// and originally established at API-0246
+		// `organization-active`).
+		//
+		// **Spec re-verified per the API-0345..API-0361
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json >
+		// /settings.cleanUnusedVolumes > post`: a single
+		// **OPTIONAL** `requestBody` (`requestBody.required =
+		// false`) carrying a JSON object with one optional string
+		// property `serverId` and no `required` array; **zero
+		// parameters** (no query, no path, no header). Responses
+		// 200/400/401/403/500 — note the **absence of 404**,
+		// mirroring the API-0351 opener / API-0353 / API-0354 /
+		// API-0355 / API-0356 / API-0357 / API-0358 / API-0359 /
+		// API-0360 / API-0361 response sets rather than API-0352's
+		// by-id-flavoured 404-bearing response set. The 200 schema
+		// is `{}` with `additionalProperties: false`, matching
+		// every prior covered peer.
+		//
+		// **Forward-reference confirmation — body axis stays put.**
+		// API-0361's comment correctly warned that the `clean*`
+		// verb prefix alone is not authoritative on the body axis
+		// and that even an adjacent `cleanUnused*` pair is not
+		// guaranteed to share shape, directing the API-0362 author
+		// to re-verify the spec rather than mirror API-0361's
+		// optional-body schema. Direct inspection of
+		// `internal/api/data/openapi.json >
+		// /settings.cleanUnusedVolumes > post` confirms the warning
+		// was prudent but the wire shape happens to match: this
+		// entry carries an optional `requestBody` with the
+		// single-property `{serverId?: string}` shape,
+		// byte-identical to API-0353 `settings-cleanAll`, API-0355
+		// `settings-cleanDockerBuilder`, API-0356
+		// `settings-cleanDockerPrune`, API-0360
+		// `settings-cleanStoppedContainers`, and API-0361
+		// `settings-cleanUnusedImages`. The `clean*` family in
+		// settings/* therefore continues to split into two
+		// sub-cohorts on the wire: (a) optional-body POSTs with an
+		// optional `serverId` (API-0353 cleanAll, API-0355
+		// cleanDockerBuilder, API-0356 cleanDockerPrune, API-0360
+		// cleanStoppedContainers, API-0361 cleanUnusedImages, and
+		// now API-0362 cleanUnusedVolumes — six entries), and (b)
+		// no-body POSTs (API-0354 cleanAllDeploymentQueue, API-0357
+		// cleanMonitoring, API-0358 cleanRedis, API-0359
+		// cleanSSHPrivateKey — four entries). The optional/required
+		// distinction remains per-operation; the fact that the
+		// `cleanUnused*` pair (API-0361 → API-0362) happens to
+		// share shape does **not** generalise across the family,
+		// and the four prior body-axis flips
+		// (API-0353→API-0354, API-0354→API-0355, API-0356→API-0357,
+		// API-0359→API-0360) demonstrate why per-operation spec
+		// re-verification stays mandatory.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `set-cov-cleanUnusedVolumes-0362` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared
+		//     across every per-tag roster and is unique (verified:
+		//     no collisions with API-0351
+		//     `set-cov-assignDomainServer-0351`, API-0352
+		//     `set-cov-checkGPUStatus-0352`, API-0353
+		//     `set-cov-cleanAll-0353`, API-0354
+		//     `set-cov-cleanAllDeploymentQueue-0354`, API-0355
+		//     `set-cov-cleanDockerBuilder-0355`, API-0356
+		//     `set-cov-cleanDockerPrune-0356`, API-0357
+		//     `set-cov-cleanMonitoring-0357`, API-0358
+		//     `set-cov-cleanRedis-0358`, API-0359
+		//     `set-cov-cleanSSHPrivateKey-0359`, API-0360
+		//     `set-cov-cleanStoppedContainers-0360`, or API-0361
+		//     `set-cov-cleanUnusedImages-0361` slugs, and
+		//     orthogonal to every prior tag's `srv-cov-*`,
+		//     `proj-cov-*`, `org-cov-*`, `compose-cov-*`,
+		//     `app-cov-*`, `ai-cov-*`, etc. namespaces).
+		//   * `serverId` carries the fixture-shaped literal
+		//     `set-cov-cleanUnusedVolumes-0362` rather than a real
+		//     UUID so the wire payload cannot be mistaken for a
+		//     real production server identifier. Even though the
+		//     body and the `serverId` field are both optional in
+		//     the spec, populating both exercises the JSON
+		//     serialiser's optional-body branch on the wire and
+		//     keeps the success-leg `Content-Type:
+		//     application/json` header assertion meaningful —
+		//     leaving the body unset would degrade this case to
+		//     the parameter-free POST cohort (which has no
+		//     Content-Type assertion) and lose the body-forwarding
+		//     round-trip assertion that distinguishes this shape
+		//     from the no-body sub-cohort (API-0354, API-0357,
+		//     API-0358, API-0359).
+		//
+		// **Failure-leg fields are intentionally omitted.** The
+		// spec does not declare 404 on this operation (the
+		// `cleanUnusedVolumes` verb is a fleet-wide,
+		// optional-server-scoped Docker dangling/unused volume
+		// purge, not a by-id resource lookup), so the per-tag
+		// opener convention reasserted at API-0335..API-0361 that
+		// reserves 404 → CodeNotFound for canonical `*-one` peers
+		// does not even apply here. Auth is the universal failure
+		// mode every Dokploy operation must re-prove, so 401 →
+		// CodeAuth via the harness default (`tc.FailureStatus ==
+		// 0` → 401, `tc.FailureCode == ""` → CodeAuth) stays the
+		// most informative representative. 400 → CodeInvalidInput
+		// stays reserved for stories where payload validation is
+		// the operation's distinguishing failure mode; this entry
+		// uses the canonical 401.
+		//
+		// The next case in the settings/* roster, API-0363
+		// `settings-getDokployCloudIps`, is a **GET** rather than
+		// a POST — a hard family pivot away from the eleven-entry
+		// `clean*`/`assign*`/`checkGPUStatus` POST/GET-no-body
+		// cohort that has dominated settings/* since API-0351.
+		// Future contributors authoring API-0363 must **not**
+		// inherit this entry's `SampleBody` shape: a GET has no
+		// request body in OpenAPI, and the harness's GET branch
+		// asserts that no `Content-Type` request header is sent.
+		// Re-verify the spec against
+		// `internal/api/data/openapi.json >
+		// /settings.getDokployCloudIps > get` per the
+		// forward-reference lesson — the responses set is also
+		// expected to differ (404 may reappear on a getter slug,
+		// per the API-0352 `checkGPUStatus` precedent for the
+		// settings/* `get*`/`check*` GET sub-family).
+		SampleBody: json.RawMessage(`{
+			"serverId": "set-cov-cleanUnusedVolumes-0362"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

@@ -8939,3 +8939,62 @@ Learnings for future iterations:
     settings/* peers must continue to allocate within this namespace
     and avoid colliding with any of the eleven recorded slugs.
 ---
+
+## 2026-05-08 - API-0362 settings-cleanUnusedVolumes (POST /settings.cleanUnusedVolumes)
+- Implemented: added the API-0362 coverage case to
+  `internal/cli/api_coverage_test.go` as the twelfth entry on the
+  settings/* roster, using the `set-cov-cleanUnusedVolumes-0362`
+  fixture-token base. Spec re-verified against
+  `internal/api/data/openapi.json > /settings.cleanUnusedVolumes >
+  post`: optional `requestBody` (`required: false`) carrying a JSON
+  object with one optional string property `serverId`; zero
+  parameters; responses 200/400/401/403/500 (no 404). Wire shape is
+  byte-identical to API-0353/0355/0356/0360/0361 — the
+  optional-body sub-cohort of the settings/* `clean*` family. Case
+  exercises the optional-body POST harness branch via
+  `SampleBody = {"serverId": "set-cov-cleanUnusedVolumes-0362"}`
+  and the success leg via `SuccessResponse = "{}"`. Failure-leg
+  fields omitted to inherit the harness default (401 → CodeAuth).
+  Forward-reference comment block points to API-0363
+  `settings-getDokployCloudIps`, which is a **GET** — a hard
+  family pivot that future contributors must NOT mirror this
+  entry's `SampleBody` shape into.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended API-0362 case
+    to the `coveredAPIOperations` slice.
+  - `ralph/prd.json` — flipped API-0362 `passes` to `true`.
+  - `ralph/progress.txt` — this entry.
+- Verification run (from repo root):
+  - `gofmt -w .`                           → clean.
+  - `goimports -w .`                       → not installed (documented).
+  - `go mod tidy`                          → clean (no diff).
+  - `go vet ./...`                         → pass.
+  - `go test ./...`                        → pass (10 packages ok).
+  - `go test -race ./...`                  → pass (10 packages ok).
+- Results: all required quality gates green; manifest, registry,
+  and per-operation contract tests cover the new entry via the
+  existing harness.
+- Remaining risks or follow-ups: API-0363
+  `settings-getDokployCloudIps` (GET) is the next story and pivots
+  the settings/* roster off the `clean*` POST family onto the
+  `get*` GET sub-family. Future contributors must re-verify the
+  spec rather than mirror the optional-body POST shape.
+- **Learnings for future iterations:**
+  - The `cleanUnused*` adjacent-slug pair (cleanUnusedImages →
+    cleanUnusedVolumes) happens to share the optional-body
+    `{serverId?: string}` shape on the wire. This does **not**
+    generalise: API-0353→API-0354, API-0354→API-0355,
+    API-0356→API-0357, and API-0359→API-0360 are all `clean*`
+    siblings that flipped on the body axis. The
+    forward-reference lesson — re-verify the spec
+    per-operation — stays mandatory.
+  - Six entries in the settings/* `clean*` family now share the
+    optional-body `{serverId?: string}` POST shape (API-0353,
+    -0355, -0356, -0360, -0361, -0362); four share the no-body
+    POST shape (API-0354, -0357, -0358, -0359). The split is
+    spec-driven, not slug-driven.
+  - The next settings/* story API-0363 is a GET. The harness's
+    GET branch sends no `Content-Type` header and ignores
+    `SampleBody`; carrying a `SampleBody` into a GET case would
+    silently encode dead code. Pivot deliberately.
+---
