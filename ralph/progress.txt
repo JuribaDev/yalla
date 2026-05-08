@@ -8864,3 +8864,78 @@ Learnings for future iterations:
     `git diff` stays a one-line `passes: false → true` change rather
     than a noisy two-region diff.
 ---
+
+## 2026-05-08 - API-0361 - Cover settings-cleanUnusedImages (POST /settings.cleanUnusedImages)
+- Added the API-0361 case to `internal/cli/api_coverage_test.go`'s
+  `coveredAPIOperations` table. The new entry registers the operation under
+  the settings/* per-tag fixture-isolation namespace seeded by API-0351
+  `settings-assignDomainServer`, with operationId `settings-cleanUnusedImages`,
+  method `POST`, path `/settings.cleanUnusedImages`, tag `settings`.
+- **Spec re-verification per the API-0345..API-0360 forward-reference lesson.**
+  Direct inspection of `internal/api/data/openapi.json >
+  /settings.cleanUnusedImages > post` confirms an **OPTIONAL**
+  `requestBody` (`requestBody.required = false`) carrying a single optional
+  property `serverId: string` with no `required` array; **zero parameters**;
+  responses 200/400/401/403/500 (no 404). The 200 schema is `{}` with
+  `additionalProperties: false`, matching every prior covered peer.
+- Wire shape lands in the **optional-body POST sub-cohort** alongside
+  API-0353 `settings-cleanAll`, API-0355 `settings-cleanDockerBuilder`,
+  API-0356 `settings-cleanDockerPrune`, and API-0360
+  `settings-cleanStoppedContainers` — *not* the no-body sub-cohort
+  (API-0354, API-0357, API-0358, API-0359). API-0360 → API-0361 happens
+  to **stay** on the optional-body axis (no flip), but the per-operation
+  re-verification rule still stands; the spec was independently re-checked
+  rather than inferred from API-0360's shape.
+- Fixture token base `set-cov-cleanUnusedImages-0361` follows the
+  `<tag>-cov-<slug>-<storyID>` convention; verified unique against all ten
+  prior `set-cov-*` slugs (API-0351..API-0360) and orthogonal to every
+  closed prior-tag namespace (`srv-cov-*`, `proj-cov-*`, `org-cov-*`,
+  `compose-cov-*`, `app-cov-*`, `ai-cov-*`, …).
+- `serverId` populated with the fixture-shaped literal so the
+  body-forwarding round-trip and `Content-Type: application/json` header
+  assertions stay meaningful — leaving the body unset would degrade this
+  case to the parameter-free POST cohort and lose those assertions.
+- Failure-leg fields intentionally omitted: 404 is not declared on this
+  operation (fleet-wide image purge, not by-id), so the per-tag opener's
+  404 → CodeNotFound reservation does not apply. Harness defaults
+  (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""` → CodeAuth)
+  deliver the canonical failure-leg mapping.
+- `SuccessResponse` is the empty-object literal `{}`, matching the spec's
+  200 schema (`type: object`, `additionalProperties: false`, no properties).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — added API-0361 case (+~150 lines).
+  - `ralph/prd.json` — toggled `passes: false → true` for API-0361.
+  - `ralph/progress.txt` — this entry.
+- Verification (`gofmt -w .`, `go mod tidy`, `go vet ./...`, `go test ./...`,
+  `go test -race ./...`) all green. `goimports`, `golangci-lint`, `staticcheck`,
+  `govulncheck`, and `goreleaser` remain not installed locally and are
+  documented as missing rather than silently skipped — same status as
+  every prior settings/* coverage story.
+- No remaining risks. Coverage harness (`runAPICoverageSuccess` /
+  `runAPICoverageFailure`) and registry-invariant assertions
+  (`TestAPICoverage_RegistryInvariants`) execute the new entry as part of
+  the `t.Run(tc.StoryID + "/" + tc.OperationID, …)` per-case subtest set,
+  with no per-tag scaffolding required.
+- **Learnings for future iterations:**
+  - The settings/* `clean*` sub-roster has now flipped on the body axis
+    **four times** historically (cleanAll → cleanAllDeploymentQueue,
+    cleanDockerPrune → cleanMonitoring, cleanSSHPrivateKey →
+    cleanStoppedContainers, plus an earlier flip), but API-0360 →
+    API-0361 is a no-flip continuation (both optional-body). The
+    rule remains: **never infer the body axis from the verb prefix or
+    adjacent peer alone** — always grep
+    `internal/api/data/openapi.json > /<path> > post.requestBody`
+    before authoring the fixture.
+  - The `cleanUnused*` slug pair (cleanUnusedImages → cleanUnusedVolumes,
+    API-0361 → API-0362) sits adjacent in the roster. Future API-0362
+    contributors should still re-verify the spec rather than assume
+    the body shape mirrors API-0361's `{serverId?: string}` schema —
+    even adjacent `cleanUnused*` siblings are not guaranteed to share
+    shape, and the per-operation re-verification rule is reasserted
+    here.
+  - The settings/* coverage roster now spans eleven entries (API-0351
+    through API-0361). The `set-cov-*` per-tag namespace remains the
+    sole authoritative fixture-token prefix for the tag; future
+    settings/* peers must continue to allocate within this namespace
+    and avoid colliding with any of the eleven recorded slugs.
+---
