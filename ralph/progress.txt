@@ -4292,3 +4292,53 @@
     registry/schema/manifest code change is required when the
     operation already lives in the embedded spec.
 ---
+
+## 2026-05-08 - API-0077
+- Implemented coverage for compose-getTags
+  (GET /compose.getTags).
+- Files changed:
+  - internal/cli/api_coverage_test.go: appended the API-0077 case to
+    `coveredAPIOperations` (immediately after API-0076). The append-only
+    registry-driven harness handles registry/schema/manifest/success/
+    failure assertions automatically.
+  - ralph/prd.json: API-0077.passes = true.
+- Verification run from repo root:
+  - gofmt -w . — clean.
+  - go mod tidy — no diff.
+  - go vet ./... — clean.
+  - go test ./... — all packages pass (internal/cli 1.055s).
+  - go test -race ./... — all packages pass under the race detector
+    (internal/cli 2.494s).
+  - goimports / golangci-lint / staticcheck / govulncheck / goreleaser
+    not installed locally; documented as missing per project convention.
+- Remaining risks / follow-ups:
+  - 399 stories still report passes:false. Next compose/* story is
+    API-0078 (compose-import, POST). The compose/* GET roster is now
+    three entries strong (API-0075/0076/0077); subsequent compose/*
+    POSTs follow API-0066-style minimal-composeId fixtures unless the
+    spec dictates otherwise.
+- **Learnings for future iterations:**
+  - DO NOT assume sibling spec parity from the title alone.
+    `compose-getTags` reads superficially like API-0075/0076 (single
+    query param, GET, 200=`{}`), but its lone `baseUrl` query param is
+    declared OPTIONAL in `data/openapi.json` (no `required: true`),
+    whereas API-0075/0076 carry a REQUIRED `composeId`. The
+    `coveredAPIOperations` harness does not gate on `required`-ness —
+    it simply forwards `SampleQuery` and re-reads `r.URL.Query()` —
+    so the entry shape stays identical, but the comment block and
+    SampleQuery key/value must reflect the actual spec (here
+    `baseUrl: https://...` rather than another `composeId` UUID).
+    Always re-confirm via `paths['/compose.<verb>'].get.parameters`
+    before copy-pasting.
+  - When the natural data type for an optional query parameter is a
+    URL (as with `baseUrl`), use a `https://compose-cov-<slug>-<storyID>
+    .example` literal so the slug stays greppable while still being a
+    syntactically valid URL — test fixtures should still type-check
+    against any future request-validator that lands on the optional
+    path.
+  - The `compose-cov-<verb>-<storyID>` slug convention scales to
+    multi-word verbs by kebab-casing (`get-tags`, `get-default-command`,
+    `get-converted-compose`, `clean-queues`, `clear-deployments`,
+    `cancel-deployment`). New compose/* entries should keep this
+    convention so cross-story grep continues to find every fixture.
+---
