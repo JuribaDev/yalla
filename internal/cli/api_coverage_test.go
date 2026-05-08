@@ -589,6 +589,40 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0027",
+		OperationID: "application-saveBitbucketProvider",
+		Method:      http.MethodPost,
+		Path:        "/application.saveBitbucketProvider",
+		Tag:         "application",
+		// Mirrors the schema in `data/openapi.json` for
+		// /application.saveBitbucketProvider: seven required fields
+		// (`bitbucketBranch`, `bitbucketBuildPath`, `bitbucketOwner`,
+		// `bitbucketRepository`, `bitbucketRepositorySlug`,
+		// `bitbucketId`, `applicationId`) — six of which are nullable
+		// strings — plus optional `enableSubmodules` (bool) and
+		// `watchPaths` (string array, nullable). We populate the
+		// required nullable strings with the deterministic
+		// `app-cov-<slug>-0027` placeholder so the fixture stays
+		// schema-valid while remaining clearly-fake for any future
+		// validator. Optional fields are intentionally omitted to
+		// keep the failure leg's surface area small and to match the
+		// minimal-but-valid pattern of prior application/* peers.
+		SampleBody: json.RawMessage(`{
+			"bitbucketBranch": "app-cov-bitbucket-branch-0027",
+			"bitbucketBuildPath": "app-cov-bitbucket-build-path-0027",
+			"bitbucketOwner": "app-cov-bitbucket-owner-0027",
+			"bitbucketRepository": "app-cov-bitbucket-repo-0027",
+			"bitbucketRepositorySlug": "app-cov-bitbucket-slug-0027",
+			"bitbucketId": "app-cov-bitbucket-id-0027",
+			"applicationId": "app-cov-save-bitbucket-0027"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching every prior application/* peer. Empty-object body keeps
+		// the success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

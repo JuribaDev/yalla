@@ -2824,3 +2824,46 @@
     for diff-friendliness" — append new entries at the *end* (after the
     highest-numbered prior entry), not interleaved by topic.
 ---
+
+## 2026-05-08 - API-0027
+- **Implemented**: Per-operation contract coverage for
+  `application-saveBitbucketProvider` (POST `/application.saveBitbucketProvider`).
+  Extends the append-only `coveredAPIOperations` registry in
+  `internal/cli/api_coverage_test.go` so the existing harness exercises
+  registry presence, schema reachability, manifest inclusion, the
+  httptest-backed success exchange, and a representative 401 failure
+  path with no new boilerplate.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended the API-0027 case
+    after API-0026. Sample body populates the seven required fields
+    (six nullable strings + `applicationId`) using the deterministic
+    `app-cov-bitbucket-*-0027` placeholder so the fixture stays
+    schema-valid while remaining clearly fake. Optional
+    `enableSubmodules` and `watchPaths` are intentionally omitted to
+    match the minimal-but-valid pattern of prior application/* peers.
+  - `ralph/prd.json` — set API-0027 `passes: true`.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass.
+  - `go test -race ./...` — all packages pass.
+- **Tools NOT available locally**: `goimports`, `golangci-lint`,
+  `staticcheck`, `govulncheck`, `goreleaser` (per the verification policy
+  documented in the Codebase Patterns section).
+- **Remaining risks / follow-ups**: none specific to this story. The
+  next priority-2 backlog entry (API-0028, application-saveBuildType)
+  follows the same shape and is the natural next pickup.
+- **Learnings for future iterations**:
+  - When a Dokploy operation declares many `anyOf: [{type:string},
+    {type:null}]` required fields, populate each with a dedicated
+    `app-cov-<sub-slug>-<storyID>` placeholder rather than reusing the
+    same string. Distinct values make a future schema validator's
+    failure message point straight at the offending field, and they
+    keep the fixture readable in diffs.
+  - Optional fields (e.g. `enableSubmodules`, `watchPaths`) should be
+    omitted from the SampleBody unless the failure leg actually needs
+    them. The harness already proves request-body forwarding via the
+    required-only payload, so the smaller surface area lowers
+    maintenance whenever the spec evolves.
+---
