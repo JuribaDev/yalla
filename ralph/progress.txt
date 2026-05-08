@@ -18235,3 +18235,105 @@ any field shape).
   avoids burning the 404 leg on operations where it is not the
   uniquely-distinguishing failure shape.
 ---
+
+## 2026-05-08 - API-0138 Cover gitea-update (POST /gitea.update)
+
+### What was implemented
+Eighth and final entry on the gitea/* coverage roster — closes the
+priority-5 gitea/* tag (API-0131..API-0138 all green) and inserts an
+`apiCoverageCase` for `gitea-update` into
+`internal/cli/api_coverage_test.go` immediately after API-0137
+`gitea-testConnection`'s entry. The case carries
+`Method=POST`, `Path=/gitea.update`, `Tag=gitea`, a `SampleBody`
+populating exactly the four REQUIRED non-nullable string fields
+(`giteaId`, `giteaUrl`, `gitProviderId`, `name`) inside the
+`gitea-cov-update-0138` per-tag fixture-isolation namespace, and
+`SuccessResponse=`{}` (empty-success cohort). Failure leg defaults to
+401→CodeAuth (404 reserved for the canonical by-id peer at API-0136
+`gitea-one`).
+
+### Files changed
+- internal/cli/api_coverage_test.go    (+ ~150 lines: API-0138 entry)
+- ralph/prd.json                        (passes: false → true)
+- ralph/progress.txt                   (this entry)
+
+### Spec verification
+Re-verified against `internal/api/data/openapi.json` >
+`/gitea.update` > `post`: method POST, tag gitea, **no parameters**,
+requestBody REQUIRED with `application/json`. Body schema declares
+**four REQUIRED non-nullable string fields** (`giteaId`, `giteaUrl`,
+`gitProviderId`, `name`) plus eleven OPTIONAL fields —
+`giteaInternalUrl` (anyOf [string, null]), `redirectUri` (string),
+`clientId` (string), `clientSecret` (string), `accessToken` (string),
+`refreshToken` (string), `expiresAt` (number), `scopes` (string),
+`lastAuthenticatedAt` (number), `giteaUsername` (string),
+`organizationName` (string). Responses 200/400/401/403/500 — **no 404**
+declared, mirroring the precedent on every prior covered update-by-id
+mutation (API-0122 `domain-update`, API-0130 `environment-update`)
+where missing-target collapses into 400/validation under Dokploy's
+tRPC convention. The 200 schema is `{}` with `additionalProperties:
+false`, matching the empty-success cohort.
+
+### Verification run
+- gofmt -w .                                         OK
+- goimports                                          not installed
+- go mod tidy                                        OK (no changes)
+- go vet ./...                                       OK
+- go test ./...                                      all packages OK 1.431s
+- go test -race ./...                                all packages OK 3.082s
+- golangci-lint, staticcheck, govulncheck, goreleaser: not installed
+  (per baseline documented in Codebase Patterns).
+
+### Results
+All checks pass. 283/462 stories passing (61.3%). API-0138 closes the
+priority-5 gitea/* roster (all eight gitea/* operations now covered:
+API-0131 `gitea-create`, API-0132 `gitea-getGiteaBranches`, API-0133
+`gitea-getGiteaRepositories`, API-0134 `gitea-getGiteaUrl`, API-0135
+`gitea-giteaProviders`, API-0136 `gitea-one`, API-0137
+`gitea-testConnection`, API-0138 `gitea-update`).
+
+### Remaining risks or follow-ups
+None specific to this story. Next PRD priority-5 entry is API-0139
+`github-getGithubBranches`, which opens a brand-new `github-cov-*`
+per-tag fixture-isolation namespace; the next contributor must
+re-verify the spec against `internal/api/data/openapi.json` per the
+forward-reference lesson before assuming any field shape.
+
+### Learnings for future iterations
+- API-0138 establishes that the every-optional-populated rule
+  (API-0010 / API-0014 / API-0249 / API-0292 / API-0297 / API-0052 /
+  API-0053) is **conditionally overridden** when any optional field
+  is OAuth credential-shaped. The two cases on the same gitea/* tag
+  illustrate the rule cleanly:
+    * API-0137 `gitea-testConnection`: optionals are `giteaId` +
+      `organizationName` (no credential shape) → both populated per
+      the every-optional-populated rule.
+    * API-0138 `gitea-update`: optionals include `clientSecret` /
+      `accessToken` / `refreshToken` (OAuth credential shape) →
+      every optional omitted, fixture stays minimal-required-only.
+  Future contributors landing a POST whose body has a mixed
+  optional surface should default to the API-0131 `gitea-create`
+  precedent: minimal-required-only when *any* optional is
+  credential-shaped, even if the tag has prior every-optional-
+  populated peers.
+- The cross-tag update-by-id template is now triple-confirmed:
+  API-0122 `domain-update`, API-0130 `environment-update`, and
+  API-0138 `gitea-update` all share the spec shape "POST with no
+  parameters, REQUIRED body, single/multiple required scalars
+  identifying the resource, no 404 in the response set". When
+  future *-update peers land (e.g. API-0144 `github-update`,
+  API-0151 `gitlab-update`, API-0173 `mariadb-update`), the 404
+  override is structurally inapplicable by precedent — the
+  harness-default 401→CodeAuth failure leg is the right call.
+- The gitea/* roster's required-arity profile across its eight
+  operations: `gitea-create` (2 required), `gitea-getGiteaBranches`
+  (2 required + 1 optional query), `gitea-getGiteaRepositories`
+  (1 required + 1 optional query), `gitea-getGiteaUrl` (1 required
+  query), `gitea-giteaProviders` (0 required, list endpoint),
+  `gitea-one` (1 required query), `gitea-testConnection` (0
+  required body + 2 optional), `gitea-update` (4 required body +
+  11 optional). Closing the roster on the largest REQUIRED-arity
+  body is incidental but useful: it leaves the contract surface
+  fully exercised at every arity from 0..4.
+
+---

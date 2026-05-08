@@ -8486,6 +8486,170 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0138",
+		OperationID: "gitea-update",
+		Method:      http.MethodPost,
+		Path:        "/gitea.update",
+		Tag:         "gitea",
+		// Eighth and final entry on the gitea/* coverage roster — closes
+		// the priority-5 gitea/* tag opened by API-0131 `gitea-create`
+		// and extended by API-0132 `gitea-getGiteaBranches`, API-0133
+		// `gitea-getGiteaRepositories`, API-0134 `gitea-getGiteaUrl`,
+		// API-0135 `gitea-giteaProviders`, API-0136 `gitea-one`, and
+		// API-0137 `gitea-testConnection`. Completes the forward
+		// reference embedded in every prior gitea/* comment block from
+		// API-0131..API-0137 ("the forthcoming `gitea-cov-update-0138`
+		// slug reserved for the final gitea/* peer"). Continues inside
+		// the `gitea-cov-*` per-tag fixture-isolation namespace opened
+		// by API-0131's design-rationale header. Per the per-tag
+		// isolation rule reasserted at API-0246 `organization-active`,
+		// API-0290 `project-all`, API-0335 `server-all`, API-0351
+		// `settings-assignDomainServer`, API-0051's bitbucket/*
+		// kickoff, API-0131's gitea/* kickoff, and API-0160's
+		// mariadb/* kickoff: this entry **must not** back-reference
+		// the closed `admin-cov-*`, `ai-cov-*`, `app-cov-*`,
+		// `backup-cov-*`, `bb-cov-*`, `cert-cov-*`, `clu-cov-*`,
+		// `compose-cov-*`, `deployment-cov-*`, `dest-cov-*`,
+		// `docker-cov-*`, `domain-cov-*`, `environment-cov-*`,
+		// `mariadb-cov-*`, `mounts-cov-*`, `org-cov-*`, `port-cov-*`,
+		// `proj-cov-*`, `redirects-cov-*`, `security-cov-*`,
+		// `set-cov-*`, `srv-cov-*`, or `swarm-cov-*` namespaces.
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /gitea.update > post`: a
+		// **POST** with **no parameters** and a **REQUIRED** request
+		// body whose schema declares **four REQUIRED non-nullable
+		// string fields** (`giteaId`, `giteaUrl`, `gitProviderId`,
+		// `name`) plus a wide surface of OPTIONAL fields —
+		// `giteaInternalUrl` (anyOf [string, null]), `redirectUri`
+		// (string), `clientId` (string), `clientSecret` (string),
+		// `accessToken` (string), `refreshToken` (string),
+		// `expiresAt` (number), `scopes` (string),
+		// `lastAuthenticatedAt` (number), `giteaUsername` (string),
+		// `organizationName` (string). Responses 200/400/401/403/500
+		// — the spec does **not** declare 404 on this operation,
+		// mirroring the precedent on every prior covered
+		// update-by-id mutation (API-0122 `domain-update`, API-0130
+		// `environment-update`) where missing-target collapses into
+		// 400/validation under Dokploy's tRPC convention. The 200
+		// schema is `{}` with `additionalProperties: false`,
+		// matching every prior covered peer in the empty-success
+		// cohort.
+		//
+		// **Shape positioning — four-required-string-scalar POST
+		// update mutation with optional extension fields, body
+		// REQUIRED.** Closes the gitea/* roster on the largest
+		// REQUIRED-arity body in the tag (4 required scalars vs.
+		// API-0131 `gitea-create`'s 2 and API-0137
+		// `gitea-testConnection`'s 0); the OPTIONAL surface is a
+		// strict superset of API-0131's create-mutation surface (the
+		// spec re-uses the same `giteaInternalUrl` /`redirectUri` /
+		// `clientId` / `clientSecret` / `accessToken` /
+		// `refreshToken` / `expiresAt` / `scopes` /
+		// `lastAuthenticatedAt` / `giteaUsername` / `organizationName`
+		// lattice and adds nothing new — only the required-vs-optional
+		// split shifts because `giteaId` and `gitProviderId` move from
+		// optional on `*-create` to required on `*-update`, mirroring
+		// the cross-tag update-by-id template set by API-0122
+		// `domain-update` and API-0130 `environment-update`). The
+		// harness's `len(tc.SampleBody) > 0` gate at
+		// `runAPICoverageSuccess` activates the JSON content-type
+		// and byte-for-byte body comparison legs; this fixture
+		// supplies the four REQUIRED fields so the success path
+		// verifies the CLI propagated the body verbatim.
+		//
+		// **Minimal-required-only fixture (every-optional-populated
+		// rule overridden, identical to API-0131 `gitea-create`'s
+		// rationale).** The OPTIONAL surface includes OAuth
+		// credential-shaped fields (`clientSecret`, `accessToken`,
+		// `refreshToken`) which are intentionally omitted from the
+		// fixture so a future credential-redaction audit cannot
+		// regress on a fixture that hard-codes a secret-shaped
+		// value. The non-secret optionals (`giteaInternalUrl`,
+		// `redirectUri`, `clientId`, `expiresAt`, `scopes`,
+		// `lastAuthenticatedAt`, `giteaUsername`,
+		// `organizationName`) are also omitted to keep the fixture
+		// minimal and shape-faithful, matching API-0118
+		// `domain-create`, API-0122 `domain-update`, API-0125
+		// `environment-create`, API-0130 `environment-update`,
+		// API-0131 `gitea-create`, and API-0331 `security-create`.
+		// Future contributors adding optional-field coverage should
+		// do so in a follow-up story rather than expanding this
+		// minimal positive case. Note that this overrides the
+		// every-optional-populated rule applied at API-0137
+		// `gitea-testConnection`: when no optional field is OAuth
+		// credential-shaped (as on `*-testConnection`'s `giteaId` +
+		// `organizationName` pair), every-optional-populated wins;
+		// when any optional is OAuth credential-shaped (as on
+		// `*-create` and here on `*-update`), credential-redaction
+		// safety wins and the fixture stays minimal-required-only.
+		//
+		// **Family choice — harness-default 401 → CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so
+		// the 404 → CodeNotFound override is structurally
+		// inapplicable (matching every prior covered `*-update`
+		// mutation — API-0122 `domain-update`, API-0130
+		// `environment-update`). The per-tag opener convention
+		// reserved 404 → CodeNotFound for the canonical `gitea-one`
+		// by-id peer at API-0136 (already shipped), and the
+		// per-mutation 404-omission precedent reasserts here. 400
+		// → CodeInvalidInput is *technically* available — a
+		// payload that omits one of the four REQUIRED fields would
+		// fail server-side validation — but the harness reserves
+		// 400 representatives for stories where payload validation
+		// is the operation's *uniquely distinguishing* failure mode.
+		// A conventional `*-update` mutation collapses to
+		// type-checking, so the harness-default 401 → CodeAuth
+		// failure leg remains the most representative single
+		// failure mode every authenticated Dokploy operation must
+		// re-prove.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base `gitea-cov-update-0138`
+		//     follows the `<tag>-cov-<slug>-<storyID>` convention
+		//     shared across every prior gitea/* peer
+		//     (API-0131..API-0137) and is verified non-colliding
+		//     with API-0131's `gitea-cov-create-0131`, API-0132's
+		//     `gitea-cov-getBranches-0132`, API-0133's
+		//     `gitea-cov-getRepos-0133`, API-0134's
+		//     `gitea-cov-getUrl-0134`, API-0135's
+		//     `gitea-cov-providers-0135`, API-0136's
+		//     `gitea-cov-one-0136`, and API-0137's
+		//     `gitea-cov-testConn-0137` literals, and non-colliding
+		//     with the cross-tag `bb-cov-*` / `mariadb-cov-*` /
+		//     `proj-cov-*` / `srv-cov-*` / `set-cov-*` /
+		//     `org-cov-*` namespaces.
+		//   * Deterministic-but-clearly-fake `<base>-giteaId` and
+		//     `<base>-gitProviderId` literals plus a `https://...`
+		//     URL on `giteaUrl` mirror API-0131 `gitea-create`'s
+		//     `giteaUrl` literal style; the bare `<base>` literal on
+		//     `name` keeps diffs readable and lets any future schema
+		//     validator's failure messages point at the offending
+		//     field.
+		//
+		// API-0138 closes the priority-5 gitea/* roster (all eight
+		// gitea/* operations are now covered). The next pending
+		// PRD-ordered priority-5 backlog entry is API-0139
+		// `github-getGithubBranches`, which opens a brand-new
+		// `github-cov-*` per-tag fixture-isolation namespace; the
+		// next contributor must re-verify the spec against
+		// `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape.
+		SampleBody: json.RawMessage(`{
+			"giteaId": "gitea-cov-update-0138-giteaId",
+			"giteaUrl": "https://gitea-cov-update-0138.example",
+			"gitProviderId": "gitea-cov-update-0138-gitProviderId",
+			"name": "gitea-cov-update-0138"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0160",
 		OperationID: "mariadb-changeStatus",
 		Method:      http.MethodPost,
