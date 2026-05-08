@@ -10689,6 +10689,152 @@ var coveredAPIOperations = []apiCoverageCase{
 		// response set must each be re-verified per-operation.
 	},
 	{
+		StoryID:     "API-0153",
+		OperationID: "gitProvider-remove",
+		Method:      http.MethodPost,
+		Path:        "/gitProvider.remove",
+		Tag:         "gitProvider",
+		// Second entry on the priority-5 gitProvider/* coverage roster
+		// and the gitProvider/* tag closer (the tag has only two
+		// operations in `internal/api/data/openapi.json`:
+		// `gitProvider-getAll` at API-0152 and `gitProvider-remove`
+		// here). Continues inside the `gitProvider-cov-*` per-tag
+		// fixture-isolation namespace opened by API-0152
+		// `gitProvider-getAll`. Per the per-tag isolation rule
+		// established at API-0246 `organization-active` and reasserted
+		// at API-0290 `project-all`, API-0335 `server-all`, API-0351
+		// `settings-assignDomainServer`, API-0051's bitbucket/*
+		// kickoff, API-0131's gitea/* kickoff, API-0139's github/*
+		// kickoff, API-0145's gitlab/* kickoff, API-0152's
+		// gitProvider/* kickoff, API-0160's mariadb/* kickoff, and
+		// API-0174's mongo/* kickoff: this entry **must not**
+		// back-reference any closed prior-tag namespace
+		// (`set-cov-*`, `srv-cov-*`, `proj-cov-*`, `org-cov-*`,
+		// `compose-cov-*`, `app-cov-*`, `ai-cov-*`, `admin-cov-*`,
+		// `backup-cov-*`, `bb-cov-*`, `cert-cov-*`, `clu-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `docker-cov-*`,
+		// `domain-cov-*`, `environment-cov-*`, `gitea-cov-*`,
+		// `github-cov-*`, `gitlab-cov-*`, `mariadb-cov-*`,
+		// `mongo-cov-*`, `mounts-cov-*`, `swarm-cov-*`, `usr-cov-*`,
+		// etc.). Sandwiched between API-0152 `gitProvider-getAll` and
+		// API-0160 `mariadb-changeStatus` (the priority-4 mariadb/*
+		// tag kickoff) per the StoryID-sorted slice rule, and closes
+		// the forward reference embedded in API-0152's comment block
+		// ("API-0153 `gitProvider-remove` (declared a **POST** per
+		// the spec preview; the next contributor must re-verify the
+		// spec against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape").
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json` > `/gitProvider.remove` >
+		// `post`: a **POST** with **zero parameters** (no query, no
+		// path, no header) and a **REQUIRED** `application/json`
+		// request body. The body schema is a flat object with **one
+		// REQUIRED string field** (`gitProviderId`) and **zero
+		// optional fields**. Responses 200/400/401/403/500 — **no
+		// 404** declared, distinct from many cross-tag `*-remove`
+		// peers (e.g. service-level deletion mutations) where 404 is
+		// reachable. The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort.
+		//
+		// **Slug-prefix-is-not-shape vindicated again.** Per the
+		// lesson reasserted at API-0371..API-0375 and again at
+		// API-0143 `github-testConnection` and API-0150
+		// `gitlab-testConnection`, the `*-remove` slug shape is
+		// **not** transitive across tags. Cross-tag `*-remove` peers
+		// vary in their required-id field name (`bitbucketId`,
+		// `giteaId`, `githubId`, `gitlabId`, etc.) and in whether
+		// their spec declares 404. Each per-tag spec must be
+		// re-verified per-operation; the fixture must reflect the
+		// wire-valid Dokploy request shape for *this* operationId so
+		// future contributors inherit a faithful template. The
+		// gitProvider tag is the abstract `git-provider` aggregate
+		// (cross-cutting bitbucket/gitea/github/gitlab provider
+		// rows), so the required-id field is the abstract
+		// `gitProviderId` (not a concrete provider-tag id) — the
+		// removal target is a row in the cross-cutting git-provider
+		// table regardless of which underlying provider type it
+		// references.
+		//
+		// **Shape positioning — deletion-mutation POST with one
+		// required body scalar.** The harness's `len(tc.SampleBody) >
+		// 0` gate at `runAPICoverageSuccess` activates the JSON
+		// content-type and byte-for-byte body comparison legs because
+		// the requestBody envelope is required. The byte-for-byte
+		// body equality leg therefore observes the required
+		// `gitProviderId` end-to-end through the CLI -> API client ->
+		// httptest server path.
+		//
+		// **Every-optional-populated rule is structurally
+		// inapplicable.** The spec declares zero optional body
+		// fields, so the rule codified at API-0010 / API-0014 /
+		// API-0249 / API-0292 / API-0297 / API-0052 / API-0053 has
+		// nothing to populate here — the entire optional surface is
+		// empty. This is the same posture taken by API-0143
+		// `github-testConnection` (one required, zero optional) and
+		// is distinct from API-0150 `gitlab-testConnection` (one
+		// required + one optional, both populated).
+		//
+		// **Family choice — harness-default 401 → CodeAuth retained.**
+		// The spec declares no 404 on this operation, so the 404 →
+		// CodeNotFound override is structurally inapplicable. 400 →
+		// CodeInvalidInput is reachable in principle (a malformed
+		// body would fail server-side validation) but the harness
+		// reserves 400 representatives for stories where payload
+		// validation is the operation's *uniquely distinguishing*
+		// failure mode; a deletion mutation whose body is one
+		// required flat string has no distinguishing payload-shape
+		// failure surface to claim. The 401 → CodeAuth harness
+		// default mirrors the API-0152 `gitProvider-getAll` precedent
+		// — bearer-token enforcement runs before any git-provider
+		// lookup or removal, so the universal `E_AUTH` mode is the
+		// most representative single failure leg every authenticated
+		// Dokploy operation must re-prove, and pins the auth
+		// invariant for the gitProvider/* namespace at both the
+		// kickoff and closer entries.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `gitProvider-cov-remove-0153` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared across
+		//     every prior gitProvider/* peer (API-0152 carried no
+		//     fixture token because it was parameter-free) and is
+		//     verified non-colliding with the cross-tag `bb-cov-*` /
+		//     `gitea-cov-*` / `github-cov-*` / `gitlab-cov-*` /
+		//     `mariadb-cov-*` / `mongo-cov-*` / `proj-cov-*` /
+		//     `srv-cov-*` / `set-cov-*` / `org-cov-*` namespaces.
+		//   * Deterministic-but-clearly-fake `<base>-<field>`
+		//     literal keeps diffs readable and lets any future schema
+		//     validator's failure message point at the offending
+		//     field. The bare `<base>-<field>` form (no `-fixture`
+		//     suffix) matches the API-0137 `gitea-testConnection`,
+		//     API-0143 `github-testConnection`, and API-0150
+		//     `gitlab-testConnection` precedent for body-scalar
+		//     POSTs (distinct from the `-fixture`-suffixed form used
+		//     on canonical `*-one` by-id GETs).
+		//
+		// The gitProvider/* tag closes here. All future priority-5
+		// work moves to the next pending tag in the backlog
+		// (priority-5 licenseKey/* per `ralph/prd.json`'s
+		// passes-false ordering); the next contributor must
+		// re-verify the spec against
+		// `internal/api/data/openapi.json` per the forward-reference
+		// lesson before assuming any field shape, and will open a
+		// brand-new `licenseKey-cov-*` per-tag fixture-isolation
+		// namespace following the per-tag isolation rule.
+		SampleBody: json.RawMessage(`{
+			"gitProviderId": "gitProvider-cov-remove-0153-gitProviderId"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0160",
 		OperationID: "mariadb-changeStatus",
 		Method:      http.MethodPost,

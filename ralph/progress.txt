@@ -20685,3 +20685,45 @@ forward-reference lesson before assuming any field shape.
     will not apply to either entry — `*-remove` is a deletion mutation
     and historically uses 401→CodeAuth as well.
 ---
+
+## 2026-05-09 - API-0153 (gitProvider-remove)
+- Added new entry in `internal/cli/api_coverage_test.go` `coveredAPIOperations`
+  for `gitProvider-remove` (POST `/gitProvider.remove`, tag `gitProvider`),
+  inserted in StoryID order between API-0152 `gitProvider-getAll` and
+  API-0160 `mariadb-changeStatus`. Closes the gitProvider/* tag — only two
+  operations exist in the spec.
+- Spec re-verified per the forward-reference lesson: zero parameters, REQUIRED
+  `application/json` body with **one REQUIRED** string `gitProviderId`,
+  **zero optional** body fields, response set 200/400/401/403/500 (**no 404**
+  declared), 200 schema is `{}` with `additionalProperties: false`.
+- Fixture token base `gitProvider-cov-remove-0153` continues the
+  `gitProvider-cov-*` per-tag namespace opened by API-0152 (which carried no
+  fixture token because it was parameter-free). Bare `<base>-<field>` form
+  matches the API-0150 `gitlab-testConnection` precedent for body-scalar POSTs.
+- Family choice: harness-default 401 → CodeAuth retained — no 404 declared, and
+  a single-required-string deletion mutation has no distinguishing payload-shape
+  failure surface to claim a 400 representative.
+- Verification: `gofmt -w .`, `go vet ./...`, `go mod tidy`, `go test ./...`,
+  and `go test -race ./...` all pass. `goimports`, `golangci-lint`,
+  `staticcheck`, `govulncheck`, `goreleaser` not installed locally — same
+  state as prior iterations.
+- Files changed: `internal/cli/api_coverage_test.go`, `ralph/prd.json`,
+  `ralph/progress.txt`.
+- Updated PRD: API-0153 `passes: true`.
+- **Learnings for future iterations:**
+  - Two-operation tags close quickly: gitProvider/* had only `getAll` +
+    `remove`. The closer entry should announce the pivot to the next pending
+    tag (priority-5 licenseKey/* per current passes-false ordering).
+  - `*-remove` deletion mutations vary across tags in (a) the required-id
+    field name and (b) whether 404 is declared. gitProvider/*'s `*-remove`
+    declares **no 404** unlike many service/database deletion peers — the
+    abstract git-provider aggregate uses `gitProviderId` (not a concrete
+    provider-tag id) because it scopes to the cross-cutting git-provider
+    table row regardless of underlying provider type.
+  - When a tag's kickoff entry already commented "the *-remove slug
+    historically takes a single REQUIRED resource-id scalar (mirroring the
+    *-remove peers across tags)", the closer's spec re-verification confirmed
+    that — but the slug-prefix-is-not-shape lesson still mandated checking
+    field name and response set per-operation. Both held: one required
+    `gitProviderId`, no 404.
+---
