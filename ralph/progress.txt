@@ -10576,3 +10576,87 @@ Learnings for future iterations:
     any field is identical to this entry. The `read*` slug
     family continues to straddle every sub-axis.
 ---
+
+## 2026-05-08 - API-0382
+- **Implemented**: Per-operation contract coverage for the
+  `settings-readWebServerTraefikConfig` Dokploy API operation
+  (GET /settings.readWebServerTraefikConfig, tag settings).
+  Appended a single `apiCoverageCase` entry to
+  `coveredAPIOperations` so the registry-presence,
+  schema-reachability, manifest-inclusion, httptest success-leg,
+  and 401 -> CodeAuth failure-leg subtests fire automatically.
+  The operation declares **zero parameters** and **no request
+  body** -- it returns the Dokploy web-server's Traefik
+  configuration as a single platform-wide artifact (the
+  controller-owned global definitions axis, mirroring API-0378
+  `readMiddlewareTraefikConfig` and API-0379
+  `readTraefikConfig`). This is a **shape pivot back to
+  parameter-free** after API-0381 `readTraefikFile` introduced
+  the first REQUIRED query parameter (`path`) on the
+  settings/* GET roster.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` -- appended the API-0382
+    case literal to the `coveredAPIOperations` slice.
+  - `ralph/prd.json` -- set API-0382 `passes: true`.
+  - `ralph/progress.txt` -- this entry.
+- **Verification run**:
+  - `gofmt -w .` -- clean.
+  - `go mod tidy` -- clean.
+  - `go vet ./...` -- clean.
+  - `go test ./...` -- all packages pass; `internal/cli` runs
+    the new `API-0382/settings-readWebServerTraefikConfig`
+    registry, schema, manifest, success-leg, and failure-leg
+    subtests end-to-end through the production exit-code path.
+  - `go test -race ./...` -- all packages pass.
+- **Tools NOT available locally** (unchanged): `goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`,
+  `goreleaser`.
+- **Remaining risks / follow-ups**:
+  - 292 PRD stories still have `passes: false`; next in the
+    settings/* roster per PRD ordering is API-0383
+    `settings-reloadRedis` -- a **POST** verb pivot (the second
+    POST after API-0370 `getUpdateData` broke the GET streak).
+    The next contributor must re-verify against
+    `internal/api/data/openapi.json > /settings.reloadRedis >
+    post` per the forward-reference lesson; the parameter axis,
+    request-body axis, response-set axis, AND verb axis must each
+    be re-verified per-operation.
+- **Learnings for future iterations**:
+  - The semantic-shape correlation reasserted at API-0378/API-0379
+    held: controller-owned global Traefik definitions (the web-server
+    Traefik configuration) are platform-wide and parameter-free,
+    versus per-host probes (`readTraefikEnv`) that take `serverId`
+    and per-file readers (`readTraefikFile`) that take `path`.
+    The slug-prefix-is-not-shape rule still holds as the
+    overriding lesson -- always re-read the spec -- but the
+    semantic-shape correlation is a useful *prediction* signal
+    when triaging the next entry.
+  - The parameter-axis flip-flop across API-0371..API-0382 is now
+    eleven entries deep: parameter-free, parameter-bearing,
+    parameter-free x3, parameter-bearing, parameter-free x2,
+    parameter-bearing, parameter-bearing-with-required,
+    parameter-free. Adjacent entries continue to regularly sit on
+    opposite sides of the parameter axis. The REQUIRED-vs-OPTIONAL
+    sub-axis added by API-0381 stays a distinct dimension; future
+    parameter-bearing entries must not assume OPTIONAL just
+    because the immediately-prior parameter-bearing peer was
+    OPTIONAL, or REQUIRED just because the most-recent peer was
+    REQUIRED.
+  - The empty-body, parameter-free, GET-with-no-body shape
+    continues to require ZERO production code changes -- only the
+    `apiCoverageCase` literal is needed because the harness's
+    success leg defaults `SuccessResponse` to `{}` and the
+    failure leg defaults to 401 -> CodeAuth when
+    `FailureStatus == 0`. This matches the API-0378/API-0379
+    minimal-literal pattern.
+  - API-0383 `settings-reloadRedis` introduces a verb pivot
+    (GET -> POST) and is the second POST on the settings/* roster
+    after API-0370 `getUpdateData`. The `reload*` slug family
+    (`reloadRedis`, `reloadServer`, `reloadTraefik` per the
+    PRD priority list) is a mutating action family, so the
+    parameter and request-body axes are likely different from the
+    `read*` reader family. Direct spec inspection at
+    `/settings.reloadRedis > post` is mandatory -- the response
+    set, parameter list, and request body must each be confirmed
+    rather than inherited.
+---

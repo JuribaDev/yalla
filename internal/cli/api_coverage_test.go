@@ -10483,6 +10483,114 @@ var coveredAPIOperations = []apiCoverageCase{
 		// Per-operation re-verification stays mandatory across
 		// every family transition.
 	},
+	{
+		StoryID:     "API-0382",
+		OperationID: "settings-readWebServerTraefikConfig",
+		Method:      http.MethodGet,
+		Path:        "/settings.readWebServerTraefikConfig",
+		Tag:         "settings",
+		// Thirty-second entry on the settings/* coverage roster,
+		// inheriting the `set-cov-*` per-tag fixture-isolation
+		// namespace established by API-0351
+		// `settings-assignDomainServer` and extended through
+		// API-0381 `settings-readTraefikFile` (must not
+		// back-reference the closed `srv-cov-*`, `proj-cov-*`,
+		// `org-cov-*`, `compose-cov-*`, `app-cov-*`, `ai-cov-*`,
+		// or any other prior tag's namespace, per the per-tag
+		// isolation rule reasserted at API-0335..API-0381 and
+		// originally established at API-0246
+		// `organization-active`).
+		//
+		// **Spec re-verified per the API-0345..API-0381
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json >
+		// /settings.readWebServerTraefikConfig > get`: a **GET**
+		// with **zero parameters** and **no request body** (GETs
+		// in this OpenAPI document never carry a `requestBody`
+		// field). Responses 200/400/401/403/404/500 — the **404
+		// stays present**, matching the parameter-free GET
+		// precedents at API-0378 `settings-readMiddlewareTraefikConfig`
+		// and API-0379 `settings-readTraefikConfig`, and orthogonal
+		// to the parameter-bearing GET sub-roster (API-0369,
+		// API-0373, API-0377, API-0380, API-0381). The 200 schema
+		// is `{}` with `additionalProperties: false`, matching every
+		// prior covered peer in the settings/* GET cohort.
+		//
+		// **Shape pivot back to parameter-free.** API-0381
+		// `settings-readTraefikFile` was the first settings/* GET
+		// to declare a REQUIRED query parameter (`path`); API-0382
+		// drops the parameter axis entirely, mirroring the shape
+		// of API-0378/API-0379 which read controller-owned global
+		// Traefik configuration with no per-host or per-file
+		// scoping. The `readWebServerTraefikConfig` operation
+		// returns the Dokploy web-server's Traefik configuration —
+		// a single platform-wide artifact rather than a per-node
+		// or per-file probe — so the absence of `serverId` /
+		// `path` query parameters tracks the semantic-shape
+		// rule established at API-0378/API-0379 (controller-owned
+		// global definitions are platform-wide and parameter-free,
+		// versus per-host probes like `readTraefikEnv` and
+		// per-file readers like `readTraefikFile` which carry
+		// scoping parameters). Per the slug-prefix-is-not-shape
+		// rule reasserted at API-0371..API-0381, the `read*` slug
+		// prefix continues to straddle every sub-axis; direct
+		// inspection of the spec at
+		// `/settings.readWebServerTraefikConfig > get >
+		// parameters` confirmed the empty parameter array.
+		//
+		// Fixture conventions: no `SampleQuery`, `SamplePathParams`,
+		// or `SampleBody` literal is needed because the operation
+		// declares no parameters and no body. The `set-cov-*` per-tag
+		// fixture-isolation namespace is reserved for future
+		// parameter-bearing or body-bearing entries on the
+		// settings/* roster.
+		//
+		// 200 response in the spec is `{}` with
+		// `additionalProperties: false`, matching the canonical
+		// settings/* GET cohort. Leaving `SuccessResponse` unset
+		// lets the harness default to `{}` so the success leg
+		// stays terse.
+		//
+		// Failure leg: 401 → CodeAuth via the harness default
+		// (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""`
+		// → CodeAuth). 404 (CodeNotFound) is plausible — Dokploy
+		// returns it when the web-server Traefik configuration
+		// is missing on disk — but auth is the universal failure
+		// mode every Dokploy operation must re-prove, so the
+		// canonical 401 → CodeAuth representative stays for
+		// parity with every prior settings/* GET entry. Stories
+		// where 404 is the distinguishing failure mode continue
+		// to override `FailureStatus`/`FailureCode` explicitly.
+		//
+		// The next case in the settings/* roster per PRD
+		// ordering is API-0383 `settings-reloadRedis` (declared
+		// a **POST** in the PRD). The next contributor must
+		// re-verify against `internal/api/data/openapi.json >
+		// /settings.reloadRedis > post` per the forward-reference
+		// lesson before assuming any field is identical to this
+		// entry — the response-set axis (presence vs absence of
+		// 404), the parameter axis (zero vs one optional vs one
+		// required vs multiple), and the request-body axis (none
+		// vs JSON) must each be re-verified per-operation. The
+		// slug pivots from a `read*` reader to a `reload*`
+		// mutating verb, and the HTTP verb pivots from GET to
+		// POST; per the slug-prefix-is-not-shape lesson and the
+		// verb-axis lesson reasserted at API-0370 (the only
+		// prior settings/* POST that broke the GET streak), do
+		// not assume the parameter list, request body, or
+		// response set carries over from this entry. The
+		// parameter-axis flip-flop across API-0371..API-0382
+		// (parameter-free → parameter-bearing → parameter-free
+		// → parameter-free → parameter-free → parameter-bearing
+		// → parameter-free → parameter-free → parameter-bearing
+		// → parameter-bearing-with-required → parameter-free)
+		// demonstrates that adjacent entries regularly sit on
+		// opposite sides of the parameter axis AND that the
+		// REQUIRED-vs-OPTIONAL sub-axis can pivot too. The verb
+		// pivot at API-0383 adds a third dimension. Per-operation
+		// re-verification stays mandatory across every family
+		// transition.
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
