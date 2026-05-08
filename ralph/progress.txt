@@ -6644,3 +6644,64 @@
     declares the operation, and the registry-invariants subtest cross-
     checks method/path/tag against the spec at every test run.
 ---
+
+## 2026-05-08 - API-0337 (server-count)
+- Implemented coverage for `server-count` (GET /server.count) by appending
+  one `apiCoverageCase` entry to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go`. Third entry on the server/* tag
+  after API-0335 `server-all` and API-0336 `server-buildServers`; inherits
+  the `srv-cov-*` per-tag fixture-isolation namespace opened at API-0335.
+- Wire shape is byte-for-byte identical to API-0335 / API-0336:
+  parameter-free GET, no request body, responses 200/400/401/403/404/500
+  with `{}` / `additionalProperties: false` on the 200 schema. Same
+  canonical agent invocation pattern (`yalla api call server-count
+  --input '{}' --json`) and default 401 -> CodeAuth representative-failure
+  leg as the rest of the parameter-free GET cohort (API-0006 `ai-getAll`,
+  API-0246 `organization-active`, API-0247 `organization-all`, API-0290
+  `project-all`, API-0335 `server-all`, API-0336 `server-buildServers`).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (one new struct literal,
+    parameter-free GET shape, `SuccessResponse: '{}'`, defaults inherit
+    401 -> CodeAuth failure leg).
+  - `ralph/prd.json` (`API-0337.passes: true`).
+- Verification run: `gofmt -w .`, `go mod tidy`, `go vet ./...`,
+  `go test ./...`, `go test -race ./...` — all green. (`goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser` still not
+  installed locally.)
+- Results: TestAPICoverage suite (registry-invariants + per-operation
+  success/failure subtests) green; full repo test suite green under both
+  the default runner and `-race`.
+- Remaining risks/follow-ups: none for this story. Next server/* peers
+  (API-0338 `server-create` — first server/* mutation, will need a
+  POST sample body, grep API-0292 `project-create` for the every-
+  optional-populated scalar-only mutation template; API-0339
+  `server-getDefaultCommand` — likely query-shaped GET, grep API-0033
+  `application-readTraefikConfig`; API-0340 `server-getServerMetrics`,
+  API-0341 `server-getServerTime` likely mirror this entry; API-0342
+  `server-one` is the first server/* by-id filter and reserves
+  404 -> CodeNotFound).
+- **Learnings for future iterations:**
+  - The semantic shape of a `*-count` endpoint is conventionally a
+    scalar `{count: N}`, but the embedded Dokploy spec declares
+    `200: {}` with no exposed properties; the coverage entry
+    therefore exercises the documented contract rather than a
+    speculative future tightening. If a future spec revision adds
+    `count: integer` to the 200 schema, the registry-invariants
+    subtest will continue to pass (we don't assert payload shape),
+    and the entry can be upgraded incrementally to add a
+    `SuccessResponse: '{"count":0}'` projection — no schema-side
+    coupling forces a same-PR change.
+  - The list-of-future-peers comment in the API-0335 entry already
+    enumerates `API-0337 *-count`, so this entry is the documented
+    fall-through case; future server/* parameter-free GET peers
+    (API-0341 `server-getServerTime`, API-0343 `server-publicIp`,
+    API-0345 `server-security`, API-0349 `server-validate`,
+    API-0350 `server-withSSHKey`) should follow this same one-
+    literal-only pattern unless the spec introduces query/body
+    parameters.
+  - Server/* fixture isolation: even this parameter-free entry
+    documents the `srv-cov-*` namespace expectation in its body
+    comment so a contributor opening the file with grep finds the
+    rule alongside the third occurrence rather than only at API-0335
+    / API-0336.
+---
