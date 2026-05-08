@@ -21222,3 +21222,49 @@ forward-reference lesson before assuming any field shape.
     turn name the next backlog story (API-0205 `mysql-start`
     here, a POST per the spec preview).
 ---
+
+## 2026-05-09 - API-0205
+- Implemented coverage fixture for `mysql-start` (POST /mysql.start). The
+  spec re-verified against `internal/api/data/openapi.json` declares a
+  single REQUIRED `mysqlId` (string) request body, no parameters, and
+  responses 200/400/401/403/500 with the empty-success `{}` shape.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended the
+    `apiCoverageCase` entry between the API-0204 (`mysql-search`) and
+    API-0246 (`organization-active`) blocks. Fixture token base
+    `mysql-cov-start-0205`. SampleBody supplies the lone REQUIRED
+    `mysqlId` literal for byte-for-byte body assertion. Default
+    401→CodeAuth representative-failure leg retained per the
+    body-bearing imperative-action precedent (404 not declared).
+  - `ralph/prd.json` — flipped `userStories[id=API-0205].passes` to
+    `true` (1-line diff; passing flag flip only).
+- Verification (run from repo root):
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — no module changes.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass.
+  - `go test -race ./...` — all packages pass.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, and
+    `goreleaser` are not installed locally; documenting per the
+    standing convention rather than silently skipping.
+- Remaining risks / follow-ups:
+  - None for this story. The next PRD-ordered priority-4 mysql/* story
+    is API-0206 `mysql-stop`, which the spec preview shows as another
+    single-required-`mysqlId` POST identical in shape to this one.
+- **Learnings for future iterations:**
+  - The `mysql-cov-start-0205` token base preserves the
+    `<tag>-cov-<slug>-<storyID>` naming convention and is uniquely
+    distinguishable from the cross-tag analog `mariadb-cov-start-0171`
+    via tag prefix and storyID suffix — `git grep` traceability holds.
+  - Even though API-0199 / API-0201 share the exact single-required-
+    `mysqlId` body cardinality with this story, every distinguishing
+    assertion in the harness derives from `OperationID`, `Path`, and
+    `StoryID` scalars, so the fixture tag base is the only literal
+    that matters for collision-avoidance — the body shape itself can
+    legitimately repeat across peers.
+  - Forward-reference comments embedded at the *previous* fixture
+    (the API-0204 trailer pointing to API-0205) are how the next
+    contributor knows what to expect; preserving this hand-off in
+    the new fixture's trailer (now pointing to API-0206) keeps the
+    chain intact.
+---
