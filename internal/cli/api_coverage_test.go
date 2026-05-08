@@ -18013,6 +18013,131 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0443",
+		OperationID: "user-sendInvitation",
+		Method:      http.MethodPost,
+		Path:        "/user.sendInvitation",
+		Tag:         "user",
+		// Seventeenth entry on the user/* coverage roster, slotted in
+		// StoryID order after API-0442 `user-remove`. The `usr-cov-*`
+		// per-tag fixture-isolation namespace was established at
+		// API-0427 `user-all` and reasserted at API-0428..API-0442.
+		// Per the per-tag isolation rule originally established at
+		// API-0246 `organization-active`, every user/* fixture token
+		// base remains orthogonal to every prior tag's namespace
+		// (`set-cov-*`, `srv-cov-*`, `proj-cov-*`, `org-cov-*`,
+		// `compose-cov-*`, `app-cov-*`, `ai-cov-*`, `admin-cov-*`,
+		// `backup-cov-*`, `bb-cov-*`, `cert-cov-*`, `clu-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, etc.).
+		//
+		// **Spec re-verified per the API-0345..API-0442
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /user.sendInvitation >
+		// post`: a **POST** with `requestBody.required = true` carrying
+		// a single `application/json` body schema and **zero declared
+		// parameters** (no query, no path, no header). Responses
+		// 200/400/401/403/500 — note the **absence of 404** in the
+		// spec, mirroring API-0428 `user-assignPermissions` and
+		// API-0442 `user-remove`. Although `sendInvitation` is a
+		// by-id mutation whose body's `invitationId` and
+		// `notificationId` could *semantically* fail to resolve, the
+		// spec collapses those cases into 400/403 rather than
+		// declaring 404. The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer.
+		//
+		// **Two-REQUIRED-string body shape — first such shape on the
+		// user/* roster.** Body schema is
+		// `{invitationId: string, notificationId: string}` with
+		// `required: ["invitationId", "notificationId"]`. Distinct
+		// from every prior covered user/* peer:
+		//   * API-0427/0436/0437/0438/0440 — parameter-free GETs.
+		//   * API-0429/0439/0441 — single-required-query GETs.
+		//   * API-0428 — fifteen-REQUIRED-field mixed-type body POST.
+		//   * API-0442 — single-REQUIRED-string body POST (`userId`).
+		// Cross-tag, the two-required-string body shape recurs in
+		// peer rosters whenever a mutation needs to reference two
+		// orthogonal resources by id; the slug-prefix-is-not-shape
+		// and slug-stem-is-not-shape lessons reasserted at
+		// API-0371..API-0442 still apply — even within the user/* tag
+		// the two-string body here cannot inherit any axis from
+		// API-0442's single-string body. Both fields are free-form
+		// strings with no length, pattern, or format constraint
+		// declared in the spec, so the slug-on-the-wire convention
+		// reasserted at API-0351..API-0442 populates each field with
+		// a per-field sentinel.
+		//
+		// **Body field semantics (per OpenAPI schema):**
+		//   * `invitationId` — REQUIRED string. Identifies the
+		//     pending invitation row whose delivery is being
+		//     triggered. The spec imposes no length, pattern, or
+		//     format constraint, so the slug-on-the-wire sentinel
+		//     `usr-cov-sendInvitation-0443-inv` populates this field
+		//     directly.
+		//   * `notificationId` — REQUIRED string. Identifies the
+		//     notification channel/template the invitation is sent
+		//     through. The spec imposes no length, pattern, or
+		//     format constraint, so the slug-on-the-wire sentinel
+		//     `usr-cov-sendInvitation-0443-not` populates this field
+		//     directly. Per-field suffixes (`-inv`, `-not`) keep the
+		//     two REQUIRED strings independently traceable through
+		//     the success-path body assertion in
+		//     `runAPICoverageSuccess`, mirroring the per-field-suffix
+		//     convention established at multi-string body precedents
+		//     across earlier rosters.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base `usr-cov-sendInvitation-0443`
+		//     follows the `<tag>-cov-<slug>-<storyID>` convention
+		//     shared with every prior covered peer. The slug is the
+		//     operationId suffix (`sendInvitation`) verbatim — per the
+		//     slug-stem-is-not-shape lesson the slug only carries
+		//     identifier semantics, not shape semantics.
+		//   * `SampleQuery` and `SamplePathParams` left zero.
+		//     `SampleBody` populates both REQUIRED fields with
+		//     per-field slug-on-the-wire sentinels.
+		//
+		// **Failure-leg fields are intentionally omitted.** The spec
+		// does not declare 404 on this operation (per above), so the
+		// 404 → CodeNotFound override pattern established at API-0441
+		// `user-one` does not apply to a *mutation* whose by-id
+		// semantics the spec funnels into 400/403. Within the user/*
+		// roster the 404-override is reserved for canonical by-id
+		// retrievals (`*-one`, `*-get`); destructive/effectful
+		// mutations like `*-remove` and `*-sendInvitation` fall back
+		// to the harness default 401 → CodeAuth, mirroring the
+		// API-0442 precedent. 400 → CodeInvalidInput is *technically*
+		// available (a payload omitting either REQUIRED string would
+		// fail server-side validation), but it remains reserved for
+		// stories where payload validation is the operation's
+		// *uniquely distinguishing* failure mode; a multi-required-
+		// string shape collapses to conventional REQUIRED-field
+		// validation, so auth remains the canonical representative.
+		//
+		// The next case in the PRD-ordered priority-2 backlog is
+		// API-0444 `user-update` (declared a **POST** in the PRD).
+		// The next contributor must re-verify against
+		// `internal/api/data/openapi.json > /user.update > post` per
+		// the forward-reference lesson before assuming any field
+		// carries over from this entry — per the
+		// slug-prefix-is-not-shape lesson reasserted at
+		// API-0371..API-0442, even the shared `user-` operation-stem
+		// and shared POST method do not pre-determine the next
+		// peer's shape (an `*-update` mutation typically carries a
+		// many-field partial-update body shape distinct from this
+		// two-string body's signature).
+		SampleBody: json.RawMessage(`{
+			"invitationId": "usr-cov-sendInvitation-0443-inv",
+			"notificationId": "usr-cov-sendInvitation-0443-not"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

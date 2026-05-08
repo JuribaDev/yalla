@@ -14529,3 +14529,85 @@ Learnings for future iterations:
     harness-default 401→CodeAuth path. The docker/* roster is
     on track to be such a tag.
 ---
+
+## 2026-05-08 - API-0443
+- Implemented coverage for the Dokploy API operation `user-sendInvitation`
+  (POST /user.sendInvitation, tag `user`).
+- Spec re-verified per the forward-reference lesson against
+  `internal/api/data/openapi.json > /user.sendInvitation > post`:
+  POST, `requestBody.required = true`, **zero declared parameters**
+  (no query, no path, no header). Body schema is two REQUIRED strings —
+  `invitationId` and `notificationId` — with `required: ["invitationId",
+  "notificationId"]`. Responses 200/400/401/403/500 — note the
+  **absence of 404**, mirroring API-0428 `user-assignPermissions` and
+  API-0442 `user-remove`. 200 schema is `{}` with
+  `additionalProperties: false`, matching every prior covered peer.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended the API-0443 entry
+    to `coveredAPIOperations` directly after the API-0442 block. The
+    entry locks the registry invariant (POST /user.sendInvitation,
+    tag `user`), declares the success-path JSON body with both
+    REQUIRED strings populated by per-field slug-on-the-wire sentinels
+    (`usr-cov-sendInvitation-0443-inv` for `invitationId`,
+    `usr-cov-sendInvitation-0443-not` for `notificationId`), and
+    inherits the harness-default 401 → CodeAuth failure leg (the spec
+    does not declare 404 on this mutation, mirroring the API-0442
+    precedent for destructive/effectful user/* POSTs).
+  - `ralph/prd.json` — set `API-0443.passes = true`.
+  - `ralph/progress.txt` — this entry.
+- Verification run from repo root:
+  - `gofmt -w .`                 OK
+  - `goimports -w .`             NOT INSTALLED (skipped, documented)
+  - `go mod tidy`                OK (no changes)
+  - `go vet ./...`               OK
+  - `go test ./...`              OK (all packages pass)
+  - `go test -race ./...`        OK (all packages pass)
+  - `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`:
+    NOT INSTALLED locally; documented as such per established practice.
+- Remaining risks / follow-ups: none specific to this story. The next
+  PRD-ordered priority-2 entry is API-0444 `user-update`
+  (POST /user.update). Per the forward-reference lesson, the next
+  contributor must re-verify against
+  `internal/api/data/openapi.json > /user.update > post` before
+  assuming any axis carries over from this entry — `*-update`
+  mutations typically carry many-field partial-update body shapes
+  distinct from this two-string body's signature, so no axis
+  inheritance is implied even within the user/* tag.
+- **Learnings for future iterations:**
+  - **Two-REQUIRED-string body shape — first such on user/* roster.**
+    The user/* roster's seventeenth entry introduces a body shape
+    distinct from every prior covered peer: parameter-free GETs
+    (API-0427/0436/0437/0438/0440), single-required-query GETs
+    (API-0429/0439/0441), the fifteen-REQUIRED-field mixed-type
+    body POST (API-0428), and the single-REQUIRED-string body POST
+    (API-0442). This re-asserts the slug-prefix-is-not-shape and
+    slug-stem-is-not-shape lessons within a single tag — even with
+    a shared `user-` operation-stem and shared POST method, no axis
+    from API-0442's single-string body carries over.
+  - **Per-field slug-on-the-wire suffixes for multi-string bodies.**
+    When a body declares two or more REQUIRED free-form strings, each
+    field gets its own per-field suffix appended to the
+    `<tag>-cov-<slug>-<storyID>` base so the success-leg body
+    assertion in `runAPICoverageSuccess` can independently trace each
+    field's propagation through the `--input` JSON `body` field. The
+    suffix reuses the field name's first three letters (`-inv`,
+    `-not`) — mnemonic but compact, and orthogonal across fields
+    within one entry.
+  - **Cross-tag *-sendInvitation precedent reservation.** Within the
+    user/* tag, this is the canonical home for the two-required-
+    string mutation body shape; future cross-tag `*-sendInvitation`
+    or similar two-orthogonal-id mutations may legitimately reference
+    this entry as a shape precedent, but per the
+    forward-reference-is-hypothesis lesson reasserted at API-0113,
+    every such reference must be re-verified against the spec before
+    assuming axis inheritance.
+  - **404-override semantic continues to gate canonical by-id
+    retrievals.** Within the user/* roster API-0441 `user-one`
+    remains the only 404-override entry; API-0442 `user-remove` and
+    API-0443 `user-sendInvitation` both fall back to the harness
+    default 401 → CodeAuth because the spec funnels their by-id
+    resolution failures into 400/403. The 404-override is reserved
+    for canonical by-id retrievals (`*-one`, `*-get`), not for
+    destructive or effectful mutations whose body fields name the
+    target resource.
+---
