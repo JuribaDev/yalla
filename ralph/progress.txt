@@ -13866,3 +13866,63 @@ Learnings for future iterations:
     (upstream provider tokens passed as query params) should note
     this defence-in-depth gap.
 ---
+
+## 2026-05-08 - API-0109
+- Implemented coverage harness entry for `docker-getContainers` (GET
+  `/docker.getContainers`) — second entry in the docker/* roster after
+  API-0108 `docker-getConfig`. Spec re-verified per the
+  API-0345..API-0396 forward-reference lesson against
+  `internal/api/data/openapi.json > /docker.getContainers > get`:
+  declares **one OPTIONAL query parameter** `serverId` (string), no
+  REQUIRED parameters, no request body, 200 response is `{}` with
+  `additionalProperties: false`, and 200/400/401/403/404/500 are
+  declared.
+- Following the API-0041 / API-0077 precedent that the harness does
+  not gate on `required`-ness, populated the OPTIONAL `serverId`
+  with the per-tag fixture token `server-cov-docker-get-containers-0109`
+  so the success-leg `r.URL.Query()` re-read at
+  `runAPICoverageSuccess` exercises end-to-end forwarding for the
+  one declared parameter — an empty SampleQuery would skip the
+  forwarding assertion. Reused the cross-tag `server-cov-*` value
+  shape from the optional-serverId axis (API-0041 origin).
+- Failure leg stays at the harness-default 401→CodeAuth: this is a
+  list endpoint with no id-bearing parameter, so a missing/invalid
+  token surfaces `E_AUTH` before any server lookup runs. The
+  docker/* 404→CodeNotFound representative is reserved for a future
+  id-bearing GET (API-0110..API-0113) where spec re-verification
+  confirms 404 exercisability.
+- Files changed: `internal/cli/api_coverage_test.go`,
+  `ralph/prd.json`, `ralph/progress.txt`.
+- Verification run: `gofmt -w .`, `go mod tidy`, `go vet ./...`,
+  `go test ./...`, `go test -race ./...` — all pass.
+  `goimports`/`golangci-lint`/`staticcheck`/`govulncheck`/`goreleaser`
+  not installed locally; skipped per the project-wide convention
+  documented in the Codebase Patterns section.
+- Remaining risks / follow-ups: None for this story. The next
+  docker/* peer (API-0110 `docker-getContainersByAppLabel`) must
+  re-verify its spec independently — slug-prefix-is-not-shape
+  applies even within the docker/* roster (API-0108 is REQUIRED +
+  OPTIONAL, this entry is OPTIONAL-only, the next has a different
+  shape again).
+- **Learnings for future iterations:**
+  - The "single OPTIONAL query parameter" GET sub-shape inside an
+    otherwise parameter-free tag still benefits from populating the
+    optional param: the harness forwards SampleQuery via the
+    `--input` JSON `query` field, and `runAPICoverageSuccess`
+    re-reads `r.URL.Query()`. Leaving SampleQuery nil would still
+    pass but would skip the forwarding assertion for the one
+    parameter the operation declares — weaker coverage for no
+    benefit.
+  - The docker/* tag's per-tag namespace `docker-cov-*` is now
+    seeded by API-0108 (`docker-cov-get-config-0108`) and extended
+    by API-0109 (`docker-cov-get-containers-0109`). Future docker/*
+    peers should keep extending this namespace and **must not**
+    back-reference any closed namespace.
+  - Per-tag opener convention reaffirmed: when the opener (API-0108)
+    keeps the harness-default 401→CodeAuth failure leg, the
+    immediate-next entry can do the same when its operation shape
+    (here, a list endpoint with no id-bearing parameter) makes
+    401→CodeAuth the most representative failure. The
+    404→CodeNotFound representative is reserved for an id-bearing
+    peer where the spec re-verification confirms 404 exercisability.
+---
