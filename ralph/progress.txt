@@ -16138,3 +16138,63 @@ Learnings for future iterations:
     No registry, schema, or manifest edits required (built at
     runtime from the embedded spec).
 ---
+
+## 2026-05-08 - API-0193
+- Added per-operation contract coverage for `mounts-update` (POST /mounts.update),
+  closing the priority-3 mounts/* roster (sixth and final entry; the prior five
+  were API-0188..API-0192).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended one `apiCoverageCase` literal
+    in StoryID-sorted position between API-0192 (`mounts-remove`) and API-0246
+    (`organization-active`). The literal mirrors the cross-tag update-by-id
+    precedent (API-0122 `domain-update`, API-0130 `environment-update`):
+    closed-shape `{"mountId": "mounts-cov-update-0193"}` body, harness-default
+    401→CodeAuth failure leg, empty `{}` success response. The 14 OPTIONAL
+    fields (11 nullable strings + 3 non-nullable enum/scalar) are deliberately
+    omitted to keep the minimal positive case shape-faithful, matching the
+    documented update-mutation precedent.
+  - `ralph/prd.json` — `passes: true` for API-0193.
+  - `ralph/progress.txt` — this entry.
+- Verification:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — no changes.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass.
+  - `go test -race ./...` — all packages pass (race-clean, 2.877s on the cli
+    package).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`
+    — not installed locally; documented as missing per the established
+    convention (no silent skip).
+- Remaining risks / follow-ups:
+  - The next pending priority-3 backlog entry is API-0268 `port-create`, which
+    will open the `port-cov-*` per-tag fixture-isolation namespace. The next
+    contributor must re-verify the spec against
+    `internal/api/data/openapi.json` before assuming any field shape (per the
+    forward-reference lesson re-stated on every recent mounts/* entry).
+- **Learnings for future iterations:**
+  - The `coveredAPIOperations` slice is "sorted by StoryID for diff-friendliness"
+    but the PRD is consumed in `sort_by(.priority, .id)` order, so the slice has
+    visible gaps (e.g. API-0130 → API-0188 → API-0193 → API-0246). Insert the
+    new case literal at its StoryID-sorted position even when that splits an
+    existing range — the harness loops the slice in declaration order, not by
+    StoryID.
+  - `jq '[.userStories[] | select(.passes == false)] | sort_by(.priority, .id)
+    | .[0]'` is the canonical query for "next failing story". Picking by
+    `.id` alone (or the first `passes == false` in document order) can
+    silently jump priority tiers — that's how this iteration first nearly
+    picked API-0131 (priority 5) when API-0193 (priority 3) was still open.
+  - Update-by-id mutations (`*-update`) in Dokploy follow a stable two-axis
+    template: closed-shape `{<entity>Id}` body + 401→CodeAuth failure leg +
+    empty `{}` success. API-0122 `domain-update`, API-0130 `environment-update`,
+    and API-0193 `mounts-update` are the canonical exemplars; future `*-update`
+    stories should copy this shape and only deviate when the spec demands.
+  - Optional-field enumeration in the spec mixes `anyOf [string, null]`
+    (nullable string) with non-nullable enums and plain strings; *all* are
+    optional unless listed in the schema's `required` array. Don't treat a
+    non-nullable enum as required just because it has no `null` branch — the
+    `required` array is the only source of truth.
+  - Verification baseline confirmed unchanged: `gofmt -w .`, `go mod tidy`,
+    `go vet ./...`, `go test ./...`, `go test -race ./...` all pass on this
+    iteration without any source-file change outside the appended case
+    literal. The harness genuinely scales to one struct literal per story.
+---

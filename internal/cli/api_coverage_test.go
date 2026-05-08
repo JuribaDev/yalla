@@ -8057,6 +8057,118 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0193",
+		OperationID: "mounts-update",
+		Method:      http.MethodPost,
+		Path:        "/mounts.update",
+		Tag:         "mounts",
+		// Sixth and final entry in the mounts/* roster, immediately
+		// following API-0188 `mounts-allNamedByApplicationId`,
+		// API-0189 `mounts-create`, API-0190 `mounts-listByServiceId`,
+		// API-0191 `mounts-one`, and API-0192 `mounts-remove`.
+		// Continues inside the `mounts-cov-*` per-tag fixture-isolation
+		// namespace opened by API-0188 and **must not** back-reference
+		// any closed `admin-cov-*`, `ai-cov-*`, `app-cov-*`,
+		// `backup-cov-*`, `bb-cov-*`, `cert-cov-*`, `clu-cov-*`,
+		// `compose-cov-*`, `deployment-cov-*`, `dest-cov-*`,
+		// `docker-cov-*`, `domain-cov-*`, `environment-cov-*`,
+		// `org-cov-*`, `proj-cov-*`, `set-cov-*`, `srv-cov-*`,
+		// `usr-cov-*`, etc. namespaces.
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /mounts.update > post`:
+		// a **POST** with **no parameters** and a **REQUIRED request
+		// body** whose schema declares a single REQUIRED string
+		// `{mountId}` plus fourteen OPTIONAL fields — two
+		// non-nullable string-with-enum scalars (`type` ∈
+		// {`bind`, `volume`, `file`}, `serviceType` ∈ {`application`,
+		// `postgres`, `mysql`, `mariadb`, `mongo`, `redis`, `compose`}),
+		// one non-nullable plain string (`mountPath`), and eleven
+		// nullable strings (`hostPath`, `volumeName`, `filePath`,
+		// `content`, `applicationId`, `postgresId`, `mariadbId`,
+		// `mongoId`, `mysqlId`, `redisId`, `composeId`). Responses
+		// 200/400/401/403/500 — note the spec does **not** declare
+		// 404 on this operation, matching the cross-tag update-by-id
+		// mutation precedent on API-0122 `domain-update` and
+		// API-0130 `environment-update` (Dokploy's tRPC convention
+		// collapses missing-target into 400/validation rather than
+		// surfacing a 404 leg). The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort.
+		//
+		// **Shape positioning — single-required-scalar POST mutation
+		// with optional extension fields, body REQUIRED.** Sixth
+		// request-body POST in the mounts/* roster (after API-0189
+		// `mounts-create` and API-0192 `mounts-remove`) and second
+		// `*-update` mutation across all covered tags. The closed-
+		// shape literal copies the cross-tag update-by-id mutation
+		// precedent set by API-0122 `domain-update` (the original
+		// single-required-scalar update mutation template) and
+		// API-0130 `environment-update`, with the field name swapped
+		// from `domainId`/`environmentId` → `mountId`. The fourteen
+		// optional fields (eleven nullable strings plus three
+		// non-nullable scalars whose absence is permitted because
+		// they are not in the spec's `required` array) are
+		// intentionally omitted from the fixture to keep the minimal
+		// positive case shape-faithful, mirroring the API-0122 and
+		// API-0130 update precedent; future contributors adding
+		// optional-field coverage should do so in a follow-up story
+		// rather than expanding this minimal positive case. The
+		// harness's `len(tc.SampleBody) > 0` gate at
+		// `runAPICoverageSuccess` activates the JSON content-type and
+		// byte-for-byte body comparison legs; this fixture supplies
+		// the single REQUIRED `mountId` field so the success path
+		// verifies the CLI propagated the body verbatim.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (update-by-id
+		// actions collapse missing-target into 400/validation per
+		// Dokploy's tRPC conventions, exactly as documented for
+		// API-0122 `domain-update` and API-0130 `environment-update`),
+		// so the 404→CodeNotFound override is structurally
+		// inapplicable here. 400→CodeInvalidInput is *technically*
+		// available — a payload that omits the REQUIRED `mountId`
+		// field, or supplies an out-of-enum `type`/`serviceType`
+		// value, would fail server-side validation — but the harness
+		// reserves 400 representatives for stories where payload
+		// validation is the operation's *uniquely distinguishing*
+		// failure mode. A conventional `*-update` mutation collapses
+		// to type-checking, so the harness-default 401→CodeAuth
+		// failure leg remains the most representative single failure
+		// mode every authenticated Dokploy operation must re-prove,
+		// and additionally re-proves the auth invariant inside the
+		// `mounts-cov-*` namespace for the single-required-scalar
+		// POST update-by-id mutation shape. Per the established
+		// `<tag>-cov-<slug>-<storyID>` deterministic-but-clearly-fake
+		// naming convention, the fixture id base
+		// `mounts-cov-update-0193` keeps `git grep` traceable to this
+		// PRD story without colliding with API-0188
+		// (`mounts-cov-all-named-by-application-id-0188`), API-0189
+		// (`mounts-cov-create-0189`), API-0190
+		// (`mounts-cov-list-by-service-id-0190`), API-0191
+		// (`mounts-cov-one-0191`), or API-0192
+		// (`mounts-cov-remove-0192`).
+		//
+		// API-0193 closes the priority-3 mounts/* roster (all six
+		// mounts/* operations are now covered). The next pending
+		// PRD-ordered priority-3 backlog entry is API-0268
+		// `port-create`, which opens a new tag fixture-isolation
+		// namespace `port-cov-*`; the next contributor must
+		// re-verify the spec against `internal/api/data/openapi.json`
+		// per the forward-reference lesson before assuming any
+		// field shape.
+		SampleBody: json.RawMessage(`{
+			"mountId": "mounts-cov-update-0193"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,
