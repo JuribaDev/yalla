@@ -6396,3 +6396,44 @@
     plus `r.URL.Query()` re-read in `runAPICoverageSuccess` is the
     only assertion needed; no extra body or path-params plumbing.
 ---
+
+## 2026-05-08 - API-0295 - Cover project-remove (POST /project.remove)
+- Added the third mutation in the project/* roster, the project/* analogue
+  of the single-required-id delete pattern API-0003 `ai-delete` exercises.
+  This is the simplest body shape in the project/* arc so far: exactly one
+  required field `projectId` (string), no optional surface, closed schema.
+- Files changed:
+  - internal/cli/api_coverage_test.go (appended apiCoverageCase entry
+    for API-0295 with SampleBody {projectId: "proj-cov-remove-0295"};
+    inserted after the API-0294 project-one block to keep StoryID-sorted
+    order; design-rationale header documents the project/* mutation-peer
+    convention vs filter-shaped peers and reserves the `proj-cov-*` slug
+    for the future `*-search` / `*-update` arc)
+  - ralph/prd.json (passes:true for API-0295)
+- Verification (repo root):
+  - gofmt -w .
+  - go mod tidy (no changes)
+  - go vet ./...
+  - go test ./... -count=1
+  - go test -race ./... -count=1
+- Results: all green.
+- Remaining risks or follow-ups: none beyond the existing project/* arc;
+  API-0296 `*-search` (the second filter-shaped peer in the tag and the
+  designated home for a 404 → CodeNotFound representative-failure leg)
+  and API-0297 `*-update` close out the tag.
+- Learnings for future iterations:
+  - Single-required-scalar-body POSTs (`{projectId}`-style deletes) are
+    structurally identical across tags at the wire level — the harness
+    SampleBody + r.Body re-read in runAPICoverageSuccess is the only
+    assertion needed; no extra query or path-params plumbing.
+  - 404 on `/project.remove` is **not** declared in the spec, matching
+    every project/* mutation peer (project-create / project-duplicate)
+    and confirming the project/* tag's design rule: 404 lives on
+    filter-shaped peers (project-one, project-search) only. The
+    representative-failure leg therefore stays at the harness default
+    401 → CodeAuth without per-case override.
+  - The `proj-cov-remove-0295` slug closes the third quadrant of the
+    `proj-cov-<slug>-<storyID>` namespace; verified no collisions with
+    the four sibling project/* fixtures (create/duplicate/one) or the
+    two upcoming ones (search/update).
+---

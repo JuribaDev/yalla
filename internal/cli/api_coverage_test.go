@@ -3490,6 +3490,84 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0295",
+		OperationID: "project-remove",
+		Method:      http.MethodPost,
+		Path:        "/project.remove",
+		Tag:         "project",
+		// Third mutation in the project/* roster — sequels API-0292
+		// `project-create` and API-0293 `project-duplicate` and is the
+		// project/* analogue of every prior `*-remove` peer in the
+		// tag rosters that came before (e.g. API-0003 `ai-delete`,
+		// API-0257 `organization-removeMember` is conceptually
+		// adjacent but uses a different shape — the closest
+		// structural match is the single-required-id mutation
+		// pattern API-0003 `ai-delete` exercises with `aiId`).
+		// Per the per-tag fixture-isolation rule established at
+		// API-0290 `project-all`, this entry stays inside the
+		// project/* tag boundary and inherits the `proj-cov-*` slug
+		// namespace opened by API-0292's mutation block; it **must
+		// not** back-reference the ai/* `ai-cov-*` literals even
+		// though the wire shape (single required scalar in body) is
+		// byte-for-byte identical.
+		//
+		// Spec source `internal/api/data/openapi.json >
+		// /project.remove > post`: zero parameters, required
+		// `application/json` request body whose schema declares
+		// exactly one required field — `projectId` (string) — and
+		// no optional surface (closed shape, `additionalProperties`
+		// not set, but the schema lists no other properties so the
+		// fixture is the entire envelope). That is the canonical
+		// "delete a single resource by ID" mutation shape, simpler
+		// than API-0292 `project-create`'s three-field body and
+		// API-0293 `project-duplicate`'s seven-field nested-array
+		// body. The harness forwards SampleBody verbatim through
+		// the `--input` JSON `body` field, and `runAPICoverageSuccess`
+		// re-reads `r.Body` to confirm byte-level forwarding.
+		//
+		// Per-case fixture token `proj-cov-remove-0295` follows the
+		// `<tag>-cov-<slug>-<storyID>` convention shared across the
+		// project/* roster and is unique (verified: no collisions
+		// with API-0292 `proj-cov-create-0292`, API-0293
+		// `proj-cov-duplicate-0293`, API-0294 `proj-cov-one-0294`,
+		// the future API-0296 `proj-cov-search-0296` filter peer,
+		// or the API-0297 `proj-cov-update-0297` mutation peer).
+		//
+		// Responses 200/400/401/403/500 mirror API-0292
+		// `project-create` and API-0293 `project-duplicate`
+		// (404 is not declared on `/project.remove`, matching the
+		// project/* mutation-peer convention — 404 in the project/*
+		// tag is reserved for the filter-shaped peers API-0294
+		// `project-one` and the upcoming API-0296 `project-search`).
+		// The 200 schema is `{}` with `additionalProperties: false`,
+		// so the success-leg envelope assertion stays focused on
+		// `data.method` / `data.status` rather than payload
+		// projection. The representative-failure leg keeps the
+		// harness default (401 → CodeAuth) because auth is the
+		// universal failure mode every project/* peer must re-prove
+		// — the API-0290 design header reserved 404 → CodeNotFound
+		// for the filter-shaped peers (API-0294 / API-0296), not
+		// for this delete-by-ID mutation.
+		//
+		// Future contributors picking up the next mutation in the
+		// arc (API-0297 `project-update`, expected to follow the
+		// same body-shape pattern with `projectId` plus mutable
+		// fields like `name` / `description`) should grep this
+		// entry first when shaping the required-`projectId` portion
+		// of their `SampleBody`, then layer the optional-update
+		// fields on top using the API-0292 `project-create`
+		// every-optional-populated convention as the template.
+		SampleBody: json.RawMessage(`{
+			"projectId": "proj-cov-remove-0295"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior project/* peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
