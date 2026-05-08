@@ -9732,3 +9732,18 @@ Learnings for future iterations:
   - `goimports` is not on the local PATH; the codebase is already organised with stable import groups so `gofmt -w .` alone has produced clean diffs on every iteration. No need to install goimports just for fixture-only changes.
   - The PRD edit pattern `jq '(.userStories[] | select(.id == "X") | .passes) = true' prd.json > tmp && mv tmp prd.json` is reliable and preserves the rest of the file byte-for-byte (jq's default formatting matches the existing 2-space indentation).
 ---
+
+## 2026-05-08 - API-0368
+- Added api_coverage_test.go fixture for `settings-getReleaseTag` (GET /settings.getReleaseTag). 18th entry on settings/* roster, 6th in parameter-free GET sub-family. Spec-verified against `internal/api/data/openapi.json > /settings.getReleaseTag > get`: zero parameters, no request body, responses 200/400/401/403/404/500, 200 schema is canonical empty `{}` with `additionalProperties: false`. Reservation slot: `set-cov-getReleaseTag-0368`.
+- Files changed:
+  - internal/cli/api_coverage_test.go (added API-0368 fixture entry; updated forward-reference comment to point at API-0369 settings-getTraefikPorts).
+  - ralph/prd.json (set passes=true for API-0368).
+  - ralph/progress.txt (this entry).
+- Verification: `gofmt -w .`, `go mod tidy`, `go vet ./...`, `go test ./...`, `go test -race ./...` — all green. Focused `go test -run "TestAPICoverage/API-0368" -v ./internal/cli/...` — all five subtests (registry, schema, manifest, success, failure) pass. `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser` not installed locally; documented as missing per the existing baseline.
+- API coverage advances from 153 to 154 passing / 462 total.
+- Remaining risks / follow-ups: API-0369 `settings-getTraefikPorts` is the natural next case; the forward-reference comment flags that the contributor must still re-verify the spec at `/settings.getTraefikPorts > get` before assuming wire shape carries over (Traefik ports payload is typically a list of integers, so the 200 schema there *may* diverge from the canonical `{}`).
+- **Learnings for future iterations:**
+  - When the prior iteration's hand-off comment hedges on "schema may diverge" (as API-0367 did about getReleaseTag returning a string), the spec verification still has to be done — but Dokploy keeps the canonical empty-object schema even where the wire payload is non-trivial. This is now the second consecutive entry (after API-0367) where the hedge proved unnecessary; document the verification result explicitly so future readers see the hedge was checked, not skipped.
+  - The parameter-free GET settings/* sub-roster pattern is now stable across six consecutive entries (API-0363, API-0364, API-0365, API-0366, API-0367, API-0368). Diff against the prior entry is purely the StoryID, OperationID, Path, slug-named reservation, sub-roster ordinal, and the design-rationale comments naming the right preceding peers and the right next operation.
+  - The `coveredAPIOperations` slice's closing `}` followed by `// TestAPICoverage_RegistryInvariants` continues to be the canonical insertion point. The `Edit` tool with the prior entry's forward-reference comment as the `old_string` anchor reliably preserves the surrounding fixture intact.
+---
