@@ -5234,6 +5234,154 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0107",
+		OperationID: "destination-update",
+		Method:      http.MethodPost,
+		Path:        "/destination.update",
+		Tag:         "destination",
+		// **Sixth entry in the destination/* roster** and the
+		// canonical "mutate-existing-by-id" mutation for the tag —
+		// succeeds the parameter-free list-style GET kickoff at
+		// API-0102 `destination-all`, the multi-required-field
+		// POST create at API-0103 `destination-create`, the by-id
+		// GET fetch at API-0104 `destination-one`, the
+		// single-required-field POST delete at API-0105
+		// `destination-remove`, and the credential-validation
+		// POST dry-run at API-0106 `destination-testConnection`.
+		// Stays inside the still-open `dest-cov-*` per-tag
+		// fixture-isolation namespace opened at API-0102 and
+		// **must not** back-reference any closed `admin-cov-*`,
+		// `ai-cov-*`, `app-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		// `cert-cov-*`, `clu-cov-*`, `compose-cov-*`,
+		// `deployment-cov-*`, `org-cov-*`, `proj-cov-*`,
+		// `set-cov-*`, or `srv-cov-*` namespace. The `dst-cov-*`
+		// fixture-token literal seen inside backup/* `destinationId`
+		// payloads (API-0040, API-0041, API-0050) is a *value*
+		// shape from the backup tag's namespace and is orthogonal
+		// to this destination/* tag namespace — the two must not
+		// be confused.
+		//
+		// **Spec re-verified per the API-0345..API-0396
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /destination.update >
+		// post`: a **POST** with a **required JSON body** whose
+		// required fields are `name`, `accessKey`, `bucket`,
+		// `region`, `endpoint`, `secretAccessKey`, `destinationId`,
+		// and `provider` (`anyOf [string, null]`); `serverId` is
+		// the lone optional field. Responses 200/400/401/403/500
+		// — **structurally identical to the API-0103
+		// `destination-create` and API-0106
+		// `destination-testConnection` peers at the wire level**
+		// (same S3-credential field set, same
+		// `additionalProperties:false` empty-object 200 schema,
+		// same no-404 mutation profile) **plus** the by-id
+		// `destinationId` field that selects the row to mutate —
+		// the slug-prefix-is-not-shape lesson is honoured: this
+		// re-verification is a per-operation OpenAPI lookup, not
+		// a copy of the API-0103 / API-0106 shape on the basis of
+		// shared tag prefix. The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort.
+		//
+		// **Shape positioning — multi-required-field POST,
+		// the canonical "mutate-existing-row-by-id" wire shape
+		// for the destination/* tag.** Reuses the API-0103 /
+		// API-0106 fixture conventions verbatim plus the
+		// `destinationId` selector:
+		//   * `name` carries the `yalla-coverage-<slug>-<storyID>`
+		//     fixture pattern so a `git grep` on the literal
+		//     traces straight back to this PRD story.
+		//   * `destinationId` carries the per-case fixture token
+		//     base verbatim so the wire assertion confirms the
+		//     CLI propagates the row selector unchanged. Per the
+		//     by-id mutation precedent established by API-0105
+		//     `destination-remove`, the selector value is a
+		//     deterministic `<tag>-cov-<slug>-<storyID>` literal
+		//     rather than a UUID so a missing-id 404 cannot be
+		//     mis-attributed to malformed UUID validation.
+		//   * The S3-shaped credential fields (`accessKey`,
+		//     `secretAccessKey`, `region`, `endpoint`, `bucket`)
+		//     carry deterministic fixture literals derived from
+		//     the token base rather than realistic AWS values so
+		//     the wire payload cannot be mistaken for a real
+		//     production credential and the redactor's
+		//     test-time invariants stay observable. The bearer
+		//     token added by the runtime auth layer is the only
+		//     credential that ever reaches the httptest server
+		//     and remains subject to the redaction rule covered
+		//     by US-0002 — these fixture values are *body* data
+		//     and intentionally non-secret.
+		//   * `provider` uses the string variant of its
+		//     `anyOf [string, null]` schema; we send the string
+		//     branch so the fixture remains valid against either
+		//     branch once a future schema validator is wired
+		//     into the harness, mirroring the API-0103
+		//     `destination-create`, API-0106
+		//     `destination-testConnection`, and API-0069
+		//     `compose-create` anyOf-string convention.
+		//   * `serverId` is optional in the spec but populated
+		//     here to keep the wire assertion meaningful across
+		//     the full required+optional axis, matching the
+		//     API-0103 / API-0106 precedent of populating optional
+		//     axes when the field semantics are non-trivial.
+		// The harness forwards SampleBody verbatim via the
+		// `--input` JSON `body` field, the request reaches the
+		// httptest server as a POST with `Content-Type:
+		// application/json`, and `runAPICoverageSuccess`
+		// re-reads the body to confirm the CLI propagated every
+		// required field unchanged.
+		//
+		// **Family choice — harness-default 401 → CodeAuth failure
+		// leg.** The spec declares no 404 for this operation, so
+		// the API-0104 `destination-one` 404 → CodeNotFound override
+		// does not apply here even though `destinationId` selects
+		// a row — Dokploy returns 401/403 before resource
+		// resolution. Auth-failure on a POST mutation is the most
+		// informative representative-failure assertion to exercise
+		// — a missing/invalid token must surface `E_AUTH` before
+		// any payload validation or row lookup runs. Mirrors the
+		// API-0103 `destination-create`, API-0105
+		// `destination-remove`, and API-0106
+		// `destination-testConnection` peers inside the same tag
+		// and the cross-tag mutation default established by
+		// API-0002 `ai-create`, API-0003 `ai-delete`, and API-0014
+		// `application-create`. Per the established
+		// `<tag>-cov-<slug>-<storyID>` deterministic-but-clearly-
+		// fake naming convention, the fixture token base
+		// `dest-cov-update-0107` keeps `git grep` traceable to this
+		// PRD story without colliding with API-0102, API-0103
+		// (`dest-cov-create-0103-*`), API-0104
+		// (`dest-cov-one-0104`), API-0105
+		// (`dest-cov-remove-0105`), or API-0106
+		// (`dest-cov-test-0106`) fixtures.
+		//
+		// The next case in the destination/* roster per PRD
+		// ordering is API-0108 `docker-getConfig` (declared a
+		// **GET** under a different tag — the destination/* tag
+		// roster closes at this entry; the next destination-tag
+		// case must re-verify the spec from
+		// `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field
+		// shape is identical to this entry).
+		SampleBody: json.RawMessage(`{
+			"name": "yalla-coverage-destination-update-0107",
+			"provider": "s3",
+			"accessKey": "dest-cov-update-0107-access",
+			"bucket": "dest-cov-update-0107-bucket",
+			"region": "dest-cov-update-0107-region",
+			"endpoint": "https://dest-cov-update-0107.example.invalid",
+			"secretAccessKey": "dest-cov-update-0107-secret",
+			"destinationId": "dest-cov-update-0107",
+			"serverId": "dest-cov-update-0107-server"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer. Empty-object body
+		// keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,

@@ -13627,3 +13627,47 @@ Learnings for future iterations:
   - The coveredAPIOperations slice closer sits directly above // TestAPICoverage_RegistryInvariants. Insertions go between the last entry's '},' and the slice-closing brace. Anchoring an Edit on the prior entry's final comment + SuccessResponse line + the slice closer is reliable because mid-slice separators use '},\n\t{' while the slice closer is '},\n}' -- the two never collide.
   - For user/* the canonical agent invocation for parameter-free operations stays `yalla api call <op> --input '{}' --json` per the API-0432 precedent -- empty closed-shape --input document, never an absent flag.
 ---
+
+## 2026-05-08 - API-0107
+- Implemented Cover destination-update (POST /destination.update).
+- Added an `apiCoverageCase` entry for API-0107 in
+  `internal/cli/api_coverage_test.go` immediately after the API-0106
+  `destination-testConnection` block, preserving the destination/* roster
+  ordering and the `dest-cov-*` per-tag fixture-isolation namespace.
+- Re-verified shape against `internal/api/data/openapi.json >
+  /destination.update > post`: required body fields are `name`, `accessKey`,
+  `bucket`, `region`, `endpoint`, `secretAccessKey`, `destinationId`, and
+  `provider` (`anyOf [string, null]`); `serverId` is optional. Responses
+  200/400/401/403/500. Spec is structurally identical to API-0103
+  `destination-create` and API-0106 `destination-testConnection` plus the
+  `destinationId` row selector — the slug-prefix-is-not-shape lesson is
+  honoured by re-verifying per-operation, not by inheriting on tag prefix.
+- Fixture token base `dest-cov-update-0107` keeps the `<tag>-cov-<slug>-<storyID>`
+  convention; `name` carries `yalla-coverage-destination-update-0107` so a
+  `git grep` traces back to this story; `provider` uses the string variant of
+  its `anyOf` schema; `serverId` is populated to keep the optional-axis
+  assertion meaningful (mirrors API-0103 / API-0106).
+- Failure leg: harness-default 401 → CodeAuth — the spec declares no 404 for
+  this operation, so the API-0104 `destination-one` 404 → CodeNotFound override
+  does not apply here even though `destinationId` selects a row. Mirrors the
+  cross-tag mutation default established by API-0002 / API-0003 / API-0014.
+- Files changed: `internal/cli/api_coverage_test.go`, `ralph/prd.json`,
+  `ralph/progress.txt`.
+- Verification: `gofmt -w .`, `go mod tidy`, `go vet ./...`,
+  `go test ./... -count=1`, `go test -race ./... -count=1` — all pass.
+  `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, and `goreleaser`
+  are not installed locally and were skipped (documented baseline).
+- **Learnings for future iterations:**
+  - `destination-update` is the by-id mutation peer of `destination-create` /
+    `destination-testConnection`: identical S3-credential field set plus a
+    required `destinationId` selector; the `additionalProperties:false`
+    empty-object 200 schema is preserved across the destination/* mutation
+    cohort. Future mutate-by-id stories should follow this peer pattern
+    (deterministic `<tag>-cov-<slug>-<storyID>` selector, not a UUID, so a
+    missing-id 404 cannot be mis-attributed to malformed UUID validation).
+  - The destination/* tag roster closes at API-0107 in the contiguous PRD
+    block; API-0108 onward jumps to the docker/* tag, so the next
+    destination-tag case must re-verify the spec from
+    `internal/api/data/openapi.json` per the forward-reference lesson before
+    assuming any field shape is identical to this entry.
+---
