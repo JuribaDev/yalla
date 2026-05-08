@@ -3822,3 +3822,58 @@
     backup/* + bitbucket/* range will need to be inserted ABOVE the
     compose/* entries when those stories land.
 ---
+
+## 2026-05-08 - API-0068 (compose-clearDeployments)
+- Implemented per-operation contract coverage for compose-clearDeployments
+  (POST /compose.clearDeployments) — third compose/* entry in
+  coveredAPIOperations, sorted directly after API-0067.
+- Files changed:
+  - internal/cli/api_coverage_test.go (+25 lines, single appended
+    apiCoverageCase literal sorted after API-0067)
+  - ralph/prd.json (passes: false -> true for API-0068)
+  - ralph/progress.txt (this entry)
+- Implementation: identical shape to API-0066 / API-0067, the
+  minimal-composeId-only POST family member. The shared harness in
+  internal/cli/api_coverage_test.go derives all five contract assertions
+  (registry / schema get / manifest inclusion / httptest success / 401
+  -> E_AUTH failure) from the entry alone, so no production-code change
+  is required. Confirmed in internal/api/data/openapi.json that
+  /compose.clearDeployments required surface is exactly
+  {"composeId": string} and the 200 response is {} with
+  additionalProperties: false. The application/* precedent is
+  application-clearDeployments at API-0013.
+- Verification (from /Users/juribadev/projects/poc/yalla-claude):
+  - gofmt -w .   (clean)
+  - go mod tidy  (no module changes)
+  - go vet ./... (PASS)
+  - go test ./... (PASS — internal/cli 1.036s)
+  - go test -race ./... (PASS — internal/cli 2.453s)
+  - goimports / golangci-lint / staticcheck / govulncheck / goreleaser:
+    not installed locally; documented in the existing baseline note from
+    earlier iterations.
+- Remaining risks / follow-ups: none specific to this story. 410 stories
+  remain failing. The next priority-2 compose/* story is API-0069
+  (compose-create), which per the spec has a much larger required
+  surface (application-create-style envelope), so expect a
+  multi-field SampleBody similar to API-0014 / API-0019 rather than a
+  pure copy-paste.
+- **Learnings for future iterations:**
+  - The compose/* minimal-composeId POST family is now a three-member
+    set (API-0066 cancelDeployment, API-0067 cleanQueues,
+    API-0068 clearDeployments). Subsequent compose/* stories diverge:
+    API-0069 (compose-create) has a multi-field body, API-0070
+    (compose-delete) is back to a minimal composeId, etc. ALWAYS read
+    internal/api/data/openapi.json for the exact required surface
+    before assuming the family pattern holds.
+  - When picking the next story, use story.priority — the PRD treats
+    priority 1 as highest (already complete), with priority 2 as the
+    current pending tier. Priority 5 stories appear early by ID
+    (API-0007/0008/0009/0010 are priority 5) but should NOT be picked
+    over the priority 2 tail (API-0066+). The Ralph instruction
+    "highest priority user story where passes: false" means lowest
+    priority NUMBER among pending, not lowest story ID.
+  - Fixture slug convention "compose-cov-<verb>-<storyID>" continues
+    to mirror the application/* "app-cov-<verb>-<storyID>" naming.
+    Multi-word verbs are kebab-cased (clear-deployments, clean-queues,
+    cancel-deployment) to keep the slug grep-friendly.
+---
