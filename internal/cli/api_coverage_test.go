@@ -4808,6 +4808,152 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0347",
+		OperationID: "server-setupMonitoring",
+		Method:      http.MethodPost,
+		Path:        "/server.setupMonitoring",
+		Tag:         "server",
+		// Thirteenth entry on the server/* coverage roster and the
+		// **fourth body-mutation peer** in the server/* tag (after
+		// API-0338 `server-create`, API-0344 `server-remove`, and
+		// API-0346 `server-setup`). Returns to a body shape after
+		// the API-0345 `server-security` query GET, and follows
+		// API-0346's mutation re-introduction.
+		//
+		// Inherits the `srv-cov-*` per-tag fixture-isolation
+		// namespace established at API-0335 (must not back-reference
+		// the cross-tag `proj-cov-*` namespace from API-0290..API-0297,
+		// the `org-cov-*` namespace from API-0246..API-0289, or any
+		// prior `*-cov-*` slug, per the per-tag isolation rule
+		// reasserted at API-0335 / API-0342 / API-0343 / API-0344 /
+		// API-0345 / API-0346 and originally established at API-0246
+		// `organization-active`).
+		//
+		// **Forward-reference correction.** The API-0346 `server-setup`
+		// design block predicted that API-0347 should be a "pure
+		// copy-and-rename" mirror of API-0346's single-required-
+		// `serverId` body shape. Verifying the embedded spec
+		// (`internal/api/data/openapi.json > /server.setupMonitoring
+		// > post`) showed this prediction is **wrong**: the request
+		// body declares TWO top-level required fields, `serverId`
+		// (string) and `metricsConfig` (object), where `metricsConfig`
+		// is a deeply nested schema with its own required children
+		// (`server` and `containers`), and `metricsConfig.server`
+		// declares seven required scalars (`refreshRate`, `port`,
+		// `token`, `urlCallback`, `retentionDays`, `cronJob`,
+		// `thresholds`) plus a required nested `thresholds` object
+		// with required `cpu`/`memory` numbers; `metricsConfig.
+		// containers` declares two required fields (`refreshRate`,
+		// `services`). This is by far the largest body shape on the
+		// server/* mutation roster — strictly larger than API-0338
+		// `server-create`'s seven-flat-required-field body. The
+		// fixture below populates **every** required leaf so the
+		// payload satisfies the declared schema verbatim, even
+		// though the harness today forwards bytes without server-
+		// side validation. Re-anchors the rule from API-0345 that
+		// `internal/api/data/openapi.json` is the single source of
+		// truth and forward-reference comments must always be re-
+		// verified before copying.
+		//
+		// Responses 200/400/401/403/500 — note **no 404** is declared
+		// on `/server.setupMonitoring`, matching `/server.create`
+		// (API-0338), `/server.remove` (API-0344), and `/server.setup`
+		// (API-0346), per the server/* mutation-peer convention
+		// reasserted at API-0335..API-0346: 404 in the server/* tag
+		// is reserved for the filter-shaped by-id GET peer (API-0342
+		// `server-one`), not for this monitoring-setup mutation.
+		// Even though `server-setupMonitoring` semantically operates
+		// on a serverId and could plausibly 404 on a missing record,
+		// the embedded spec does not enumerate 404, so the failure
+		// leg keeps the harness default 401 → CodeAuth — auth is
+		// the universal failure mode every Dokploy operation must
+		// re-prove. Future contributors should NOT pre-emptively
+		// override to 404 here.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `srv-cov-setupMonitoring-0347` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared across
+		//     the server/* roster and is unique (verified: no
+		//     collisions with API-0338 `server-create`'s
+		//     `srv-cov-create-0338`, API-0339
+		//     `server-getDefaultCommand`'s
+		//     `srv-cov-getDefaultCommand-0339`, API-0340
+		//     `server-getServerMetrics`'s
+		//     `srv-cov-getServerMetrics-0340`, API-0342 `server-one`'s
+		//     `srv-cov-one-0342`, API-0344 `server-remove`'s
+		//     `srv-cov-remove-0344`, API-0345 `server-security`'s
+		//     `srv-cov-security-0345`, or API-0346 `server-setup`'s
+		//     `srv-cov-setup-0346`, and orthogonal to the cross-tag
+		//     `proj-cov-*` / `org-cov-*` namespaces).
+		//   * `metricsConfig.server.token` carries the fixture
+		//     literal `fixture-token-srv-cov-setupMonitoring-0347`
+		//     so the wire payload cannot be confused with the test
+		//     harness's resolved `--token` value (`test-token-value`,
+		//     redacted by `output.NewRedactor`); the literal also
+		//     does not match any `Authorization:` / `X-API-Key:` /
+		//     query-param secret pattern the redactor scrubs, so
+		//     the fixture round-trips cleanly through the success-
+		//     leg body assertion.
+		//   * `urlCallback` uses the IANA-reserved `example.invalid`
+		//     domain so the literal cannot be mistaken for a real
+		//     callback endpoint if it ever leaks into a log.
+		//   * Numeric leaves use small, recognizable values (port
+		//     9100 = node_exporter default; refreshRate/retentionDays
+		//     = 30/7 days; cpu/memory thresholds = 80%) so the
+		//     fixture documents the schema's intent at a glance.
+		//
+		// **Failure-leg fields are intentionally omitted.** The
+		// API-0342 `server-one` 404 → CodeNotFound override was a
+		// one-time, by-id-shaped GET assertion; API-0347 is a body
+		// mutation with no 404 declared in its response set, so the
+		// universal 401 → CodeAuth failure stays the most informative
+		// representative. The harness fall-through (`tc.FailureStatus
+		// == 0` → 401, `tc.FailureCode == ""` → CodeAuth) covers
+		// this case; **do not** copy the FailureStatus / FailureCode
+		// lines from API-0342.
+		//
+		// Future server/* mutation peers (API-0348 `server-update`)
+		// should NOT blindly mirror this entry — re-verify the body
+		// shape against `internal/api/data/openapi.json` before
+		// copying, per the API-0345 / API-0347 forward-reference
+		// lesson. API-0349 `server-validate` is a single-required-
+		// query-param GET and should mirror API-0345 `server-security`
+		// instead. API-0350 `server-withSSHKey` is the next pending
+		// server/* entry after that and its shape is unknown until
+		// re-verified.
+		SampleBody: json.RawMessage(`{
+			"serverId": "srv-cov-setupMonitoring-0347",
+			"metricsConfig": {
+				"server": {
+					"refreshRate": 30,
+					"port": 9100,
+					"token": "fixture-token-srv-cov-setupMonitoring-0347",
+					"urlCallback": "https://example.invalid/yalla-cov-setupMonitoring-0347",
+					"retentionDays": 7,
+					"cronJob": "*/5 * * * *",
+					"thresholds": {
+						"cpu": 80,
+						"memory": 80
+					}
+				},
+				"containers": {
+					"refreshRate": 60,
+					"services": {
+						"include": [],
+						"exclude": []
+					}
+				}
+			}
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior server/* peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

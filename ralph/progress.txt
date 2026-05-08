@@ -7389,3 +7389,80 @@
     every prior server/* entry (verified by the existing harness's
     `fixturesDoNotCollide` invariant).
 ---
+
+## 2026-05-08 - API-0347 — Cover server-setupMonitoring (POST /server.setupMonitoring)
+- **Implemented**: Coverage of Dokploy operation `server-setupMonitoring`
+  via the data-driven `apiCoverageCase` harness in
+  `internal/cli/api_coverage_test.go`. Thirteenth entry in the server/*
+  roster and the **fourth body-mutation peer** (after API-0338
+  `server-create`, API-0344 `server-remove`, API-0346 `server-setup`).
+- **Forward-reference correction**: API-0346's design block predicted
+  this entry would be a "pure copy-and-rename" mirror of its single-
+  required-`serverId` body. The embedded spec
+  (`internal/api/data/openapi.json > /server.setupMonitoring > post`)
+  proved that wrong: the body declares TWO required top-level fields,
+  `serverId` (string) and `metricsConfig` (deeply nested object). The
+  required leaves are: `metricsConfig.server.{refreshRate, port,
+  token, urlCallback, retentionDays, cronJob, thresholds}` and
+  `metricsConfig.server.thresholds.{cpu, memory}` and
+  `metricsConfig.containers.{refreshRate, services}`. This is the
+  **largest body shape on the server/* mutation roster** — strictly
+  larger than API-0338's seven flat required fields. Re-anchors the
+  API-0345 lesson that `internal/api/data/openapi.json` is the single
+  source of truth.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended API-0347 case at the
+    end of `coveredAPIOperations`. Body fixture populates every required
+    leaf per the spec.
+  - `ralph/prd.json` — set API-0347 `passes: true` (note: stories live
+    under top-level `userStories`, NOT a separate `apiStories` array).
+- **Verification run**:
+  - `gofmt -l .` — clean (no diff).
+  - `go mod tidy` — clean.
+  - `go vet ./...` — pass.
+  - `go test ./...` — all packages `ok`.
+  - `go test -race ./...` — all packages `ok`.
+  - `go test ./internal/cli/ -run 'TestAPICoverage' -count=1` — pass.
+- **Tools NOT available locally** (unchanged baseline): `goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`.
+- **Remaining risks / follow-ups**: API-0348 `server-update` is the
+  next pending server/* mutation; do NOT blindly mirror API-0347 — its
+  `update`-shaped schemas typically declare many optional + a few
+  required fields, so re-verify against the embedded spec first.
+  API-0349 `server-validate` is a single-required-`serverId` query GET
+  and should mirror API-0345 `server-security`. API-0350
+  `server-withSSHKey` is unknown until verified.
+- **Learnings for future iterations**:
+  - **Forward-reference comments lie when the spec disagrees.** The
+    API-0345 lesson held: API-0346 promised API-0347 would be "pure
+    copy-and-rename"; it turned out to be the largest body in the tag.
+    Always re-verify against `internal/api/data/openapi.json` first.
+  - **PRD shape gotcha**: all stories (user + API) live under a single
+    top-level `userStories` array in `ralph/prd.json`. There is no
+    separate `apiStories` array, even though the agent prompt and PRD
+    summary text talk about API stories as a category. A naive
+    `for s in d['apiStories']` loop will silently no-op and write the
+    file unchanged. Use `for s in d['userStories']` and filter by
+    `id` prefix or `type == 'api-operation'` if needed.
+  - **Body-fixture token literals**: when an OpenAPI body declares a
+    `token` field (e.g. `metricsConfig.server.token` here), pick a
+    fixture literal that does NOT match the test harness's resolved
+    `--token` value (`test-token-value`) and does NOT match any
+    `Authorization:` / `X-API-Key:` / `?token=` / `?api_key=`
+    redactor pattern, so the round-trip body-equality assertion in
+    `runAPICoverageSuccess` is not corrupted by `output.NewRedactor`.
+    A `fixture-token-<slug>-<storyID>` shape is safe.
+  - **Use IANA-reserved domains for fixture URLs** (`example.invalid`,
+    not a real-looking domain) so the literal can never be confused
+    with a production callback if it leaks into a log.
+  - **Numeric leaves should encode schema intent** (e.g. port 9100 =
+    node_exporter default, 80% CPU/memory thresholds, 7-day retention)
+    so the fixture documents the field's purpose at a glance for the
+    next reviewer.
+  - **No 404 on server/* mutations stays load-bearing**: the per-tag
+    convention reasserted at API-0335..API-0346 holds again here. Body
+    mutations on the server/* tag enumerate 200/400/401/403/500 only;
+    404 stays reserved for the by-id GET peer (API-0342 `server-one`).
+    Failure-leg fields stay omitted; harness defaults (401 → CodeAuth)
+    apply.
+---
