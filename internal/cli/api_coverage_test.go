@@ -3125,6 +3125,51 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.method` / `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0290",
+		OperationID: "project-all",
+		Method:      http.MethodGet,
+		Path:        "/project.all",
+		Tag:         "project",
+		// First entry in the project/* roster, opening a fresh tag arc
+		// after API-0255 closed organization/*. Per the per-tag fixture
+		// rule the closing organization/* block flagged ("future
+		// contributors inheriting that next-tag arc should not back-
+		// reference the organization/* literals here for body-shape
+		// templates"), this entry deliberately stands alone and any
+		// project/* peers that follow (API-0291 `*-allForPermissions`,
+		// API-0292 `*-create`, API-0293 `*-duplicate`, API-0294
+		// `*-one`, API-0295 `*-remove`, API-0296 `*-search`, API-0297
+		// `*-update`) should grep this block first to inherit the
+		// project/* slug namespace rather than copying organization/*
+		// fixtures across the tag boundary.
+		//
+		// Spec source `data/openapi.json > /project.all > get`: zero
+		// `parameters`, no request body, responses
+		// 200/400/401/403/404/500 where the 200 schema is `{}` with
+		// `additionalProperties: false`. That places this operation
+		// in the same parameter-free GET cohort as API-0246
+		// `organization-active` and API-0247 `organization-all`: the
+		// canonical agent invocation is `yalla api call project-all
+		// --json` with no `--input`, so SampleQuery /
+		// SamplePathParams / SampleBody all stay unset. The
+		// representative-failure leg keeps the harness default
+		// (401 → CodeAuth) because auth is the universal failure
+		// every project/* peer must re-prove; 404 in the spec is
+		// reserved for filter-shaped peers like the upcoming
+		// API-0294 `project-one`, not this membership-scoped list.
+		//
+		// Naming convention rolls forward unchanged from the
+		// organization/* roster: future project/* mutation fixtures
+		// must use the `<tag>-cov-<slug>-<storyID>` pattern with the
+		// `proj-` slug prefix (e.g. `proj-cov-create-0292`,
+		// `proj-cov-one-0294`) so `git grep` stays per-story
+		// traceable and never collides with the organization/*
+		// `org-cov-*` namespace established by API-0249→API-0255.
+		// This entry has no fixture token because it carries no
+		// SampleBody / SampleQuery / SamplePathParams.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

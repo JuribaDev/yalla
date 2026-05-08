@@ -6113,3 +6113,48 @@
     and does not need to be re-asserted on every minimum-required-body
     POST in the roster.
 ---
+
+## 2026-05-08 - API-0290
+- Implemented coverage entry for `project-all` (GET /project.all),
+  the first story in the project/* tag arc following the closure
+  of organization/* in API-0255.
+- Files changed:
+  - internal/cli/api_coverage_test.go (added apiCoverageCase
+    literal — parameter-free GET, empty body, harness defaults
+    for failure leg).
+  - ralph/prd.json (set passes=true for API-0290).
+  - ralph/progress.txt (this entry).
+- Verification (repo root):
+  - gofmt -w .
+  - go mod tidy (no changes)
+  - go vet ./...
+  - go test ./... -count=1
+  - go test -race ./... -count=1
+  All pass; goimports / golangci-lint / staticcheck / govulncheck /
+  goreleaser remain not installed locally and are documented as
+  missing rather than skipped silently.
+- Results: every API coverage subtest including
+  API-0290/project-all passes for the registry, schema, manifest,
+  success round-trip, and representative-failure legs.
+- Remaining risks / follow-ups:
+  - The project/* roster has seven more stories (API-0291 →
+    API-0297). API-0291 `project-allForPermissions` is the natural
+    next entry; per the design header in this commit, future
+    project/* peers should grep this entry first to inherit the
+    `proj-cov-*` slug namespace and never back-reference the
+    organization/* `org-cov-*` literals.
+- **Learnings for future iterations:**
+  - When a tag arc closes (e.g. organization/* at API-0255), the
+    next story opens a *new* tag and must write a fresh design
+    rationale; the closing story's "do not back-reference"
+    warning is a hard rule, not advisory.
+  - Parameter-free GETs need only `SuccessResponse: \`{}\`` and a
+    rationale comment — no SampleBody / SampleQuery /
+    SamplePathParams. The harness defaults (200 success,
+    401 → CodeAuth failure) cover all five acceptance-criteria
+    legs (registry, schema, manifest, success round-trip,
+    representative failure).
+  - The `<tag>-cov-<slug>-<storyID>` slug namespace is strictly
+    per-tag; `proj-cov-*` is reserved for project/* stories and
+    must never collide with `org-cov-*`.
+---
