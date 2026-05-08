@@ -4687,3 +4687,75 @@
     new compose/* GET story lands, classify it against this taxonomy
     first; only spec-novel shapes need new commentary in the entry.
 ---
+## 2026-05-08 - API-0085
+- Implemented coverage for compose-processTemplate (POST
+  /compose.processTemplate) by appending a new `apiCoverageCase` entry
+  to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go`. Third POST-with-two-required-
+  body-fields entry in the compose/* roster after API-0078 (compose-
+  import) and API-0083 (compose-move).
+- Files changed:
+  - internal/cli/api_coverage_test.go (+39 lines, single appended
+    apiCoverageCase literal sorted after API-0084)
+  - ralph/prd.json (passes: false -> true for API-0085)
+  - ralph/progress.txt (this entry)
+- Implementation: per `internal/api/data/openapi.json >
+  /compose.processTemplate > post` the request body is REQUIRED and
+  carries TWO required string fields — `base64` (encoded template
+  payload) and `composeId` (target compose record). No optional
+  siblings, no enum restrictions, no nested objects. The 200 response
+  is `{}` with `additionalProperties: false`, matching the empty-
+  success convention shared by every prior compose/* peer. Fixture
+  populates BOTH required fields with deterministic
+  `compose-cov-process-template-0085*` placeholders so the success leg
+  exercises full propagation through the harness's `--input` JSON
+  `body` envelope, while a future schema validator wired into the
+  harness can still accept the fixture (placeholders rather than
+  genuine base64 payload).
+- Verification run from repo root:
+  - gofmt -w .                 (no diff)
+  - go mod tidy                (clean)
+  - go vet ./...               (clean)
+  - go test ./...              (PASS — internal/cli 1.035s)
+  - go test -race ./...        (PASS — internal/cli 2.480s)
+  - goimports / golangci-lint / staticcheck / govulncheck / goreleaser:
+    not installed locally; documented in the existing baseline note.
+- Remaining risks / follow-ups: none specific to this story. 391 user
+  stories remain with passes=false. Next priority-2 compose/* candidate
+  is API-0086 (compose-randomizeCompose, POST) per `(priority, id)`
+  sort order.
+- **Learnings for future iterations:**
+  - compose-processTemplate is the third POST in the compose/* roster
+    sharing the two-required-string-body-fields shape — joining
+    API-0078 (compose-import: base64+composeId) and API-0083
+    (compose-move: composeId+targetEnvironmentId). Of those three,
+    API-0085 is the closer structural twin to API-0078 since BOTH
+    pair `base64` with `composeId`; the only operational difference
+    is that compose-import creates a compose from a template payload
+    while compose-processTemplate processes a template against an
+    existing compose. The fixture mirrors that closeness — same field
+    names, just a slug swap — keeping the cross-story grep contract
+    intact.
+  - When the sample fixture would otherwise be a "real" base64 string
+    that's expensive to keep in sync, a deterministic placeholder
+    (`compose-cov-process-template-0085-payload`) is preferable. It
+    keeps the cross-story grep prefix consistent and makes the
+    intent visible to anyone reading the file. The harness performs
+    no schema validation of the body content — only that the CLI
+    forwards it verbatim — so the placeholder convention is wire-
+    safe today. A future schema validator might reject non-base64
+    in this field; that should be addressed at the harness layer
+    (an optional per-case "validateBody" hook) rather than by
+    leaking real-looking payloads into fixtures.
+  - The compose/* tag now has 17 covered entries spanning the canonical
+    shape templates: minimal-composeId-only POST (API-0066/0067/0068/
+    0073/0074/0080), full create envelope (API-0069), composeId+
+    deleteVolumes (API-0070), composeId+optional-title/description
+    POST (API-0071), template envelope (API-0072), single-required-
+    query GET (API-0075/0076/0077/0084), POST with two required body
+    fields (API-0078/0083/0085 — new), POST with required+optional
+    split (API-0079), multi-required-query GET (API-0081), and
+    required+optional-enum GET (API-0082). Eight compose/* operations
+    remain (processTemplate done; randomizeCompose, redeploy,
+    refreshToken, search, start, stop, templates, update).
+---

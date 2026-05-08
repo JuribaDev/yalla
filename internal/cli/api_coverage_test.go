@@ -1759,6 +1759,43 @@ var coveredAPIOperations = []apiCoverageCase{
 		// payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0085",
+		OperationID: "compose-processTemplate",
+		Method:      http.MethodPost,
+		Path:        "/compose.processTemplate",
+		Tag:         "compose",
+		// Third POST-with-two-required-body-fields entry in the compose/*
+		// roster after API-0078 (compose-import) and API-0083 (compose-move).
+		// The spec at `data/openapi.json > /compose.processTemplate > post`
+		// declares the request body is REQUIRED and carries two required
+		// string fields — `base64` (the encoded template payload) and
+		// `composeId` (the target compose record). No optional siblings, no
+		// enum restrictions, no nested objects — making this a near-verbatim
+		// structural twin of API-0078 (which also pairs a `base64` field
+		// with `composeId`) rather than API-0083 which swaps the second
+		// field for an environment FK. Distinct from the minimal-composeId-
+		// only POST family (API-0066/0067/0068/0073/0074/0080) which carries
+		// a single required field, and from API-0079 (compose-
+		// isolatedDeployment) which uses a required+optional split. Slug
+		// convention `compose-cov-<slug>-<storyID>` continues the cross-
+		// story grep contract from every prior compose/* case — the
+		// `base64` value is a deterministic placeholder rather than a
+		// genuine base64 string so a future schema validator wired into
+		// the harness can still accept the fixture while the success leg
+		// confirms the CLI propagates BOTH required fields verbatim
+		// through the `--input` JSON `body` envelope.
+		SampleBody: json.RawMessage(`{
+			"base64": "compose-cov-process-template-0085-payload",
+			"composeId": "compose-cov-process-template-0085"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the empty-success convention shared by every prior
+		// compose/* peer. Empty-object body keeps the success-leg envelope
+		// assertion focused on `data.method` / `data.status` rather than
+		// payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
