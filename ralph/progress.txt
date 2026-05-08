@@ -18417,3 +18417,69 @@ forward-reference lesson before assuming any field shape.
     is now planted in API-0172's comment block for API-0173
     mariadb-update.
 ---
+
+## 2026-05-08 - API-0173 mariadb-update
+
+- Closed the priority-4 mariadb/* coverage roster (API-0160..API-0173 all
+  green) by appending an `apiCoverageCase` entry for `mariadb-update` to
+  `internal/cli/api_coverage_test.go`, immediately after API-0172
+  `mariadb-stop` and before API-0188 `mounts-allNamedByApplicationId`.
+- Spec re-verified against `internal/api/data/openapi.json` >
+  `/mariadb.update` > `post`: tag mariadb, no parameters, requestBody
+  REQUIRED with `application/json`, responses 200/400/401/403/500.
+  REQUIRED top-level scalar is the lone `mariadbId` (string); the rest of
+  the schema is a wide OPTIONAL configuration tail (identity,
+  database credentials, runtime image/command, resource limits,
+  networking, applicationStatus enum, swarm-orchestration cluster,
+  replicas, createdAt, environmentId).
+- Body fixture supplies only the REQUIRED `mariadbId` inside the new
+  `mariadb-cov-update-0173` namespace (token base
+  `mariadb-cov-update-0173-mariadbId`), byte-for-byte cardinality-
+  identical to the start/stop/deploy/rebuild/changeStatus single-
+  required-string-scalar peers (API-0160, API-0162, API-0165, API-0171,
+  API-0172). Optional fields intentionally omitted — the harness
+  verifies request-body forwarding via byte-for-byte comparison and the
+  optional tail is exhaustively covered through the create/save-* siblings
+  (API-0161, API-0168, API-0169).
+- Defaults retained: 200 → empty `{}` success body matching the
+  empty-success cohort; 401 → CodeAuth failure leg per the mariadb/*
+  family choice locked in at API-0160 and continued at API-0161..API-0172.
+- Files changed: `internal/cli/api_coverage_test.go`, `ralph/prd.json`,
+  `ralph/progress.txt`.
+- Verification: `gofmt -w .`, `go vet ./...`, `go mod tidy`,
+  `go test ./...`, `go test -race ./...` — all green.
+  `TestAPICoverage_RegistryInvariants/API-0173/mariadb-update`,
+  `TestAPICoverage_Schemas/API-0173/mariadb-update`,
+  `TestAPICoverage_Manifest/API-0173/mariadb-update`,
+  `TestAPICoverage_SuccessExchange/API-0173/mariadb-update`, and
+  `TestAPICoverage_FailureExchange/API-0173/mariadb-update` all PASS.
+- Remaining risks / follow-ups: none specific to this story. The next
+  case in the PRD-ordered priority-4 backlog is API-0174
+  `mongo-changeStatus`, which opens the **new mongo tag** and therefore
+  a brand-new `mongo-cov-*` per-tag fixture-isolation namespace; the
+  next contributor must NOT back-reference any `mariadb-cov-*` token
+  bases per the per-tag isolation rule, and must re-verify the spec
+  per the forward-reference lesson.
+- **Learnings for future iterations:**
+  - The mariadb tag's canonical single-required-string-scalar
+    imperative-action POST family (start/stop/deploy/rebuild/
+    changeStatus/update) all share a byte-for-byte identical request
+    body shape. When a new operation falls into this family, the
+    fixture is a one-line `mariadbId` payload — adding optional fields
+    dilutes the focused harness assertions without exercising new CLI
+    code paths.
+  - Patch-style POST `update` operations with one REQUIRED key plus a
+    wide OPTIONAL tail still resolve to the harness-default 401→CodeAuth
+    failure-leg family. 400→CodeInvalidInput is reserved for stories
+    where payload validation is the operation's *uniquely
+    distinguishing* failure mode (i.e., the operation has unusual
+    cross-field constraints, not a single REQUIRED scalar).
+  - Closing the final entry in a per-tag roster: explicitly note the
+    namespace closure in the comment block and forward-reference the
+    next tag's brand-new `<tag>-cov-*` namespace, repeating the
+    per-tag isolation rule. The next contributor should not have to
+    re-derive that they cannot reuse `mariadb-cov-*` tokens.
+  - When editing `ralph/prd.json` via Python `json.dump`, restore the
+    trailing newline manually — the round-trip strips it and a clean
+    diff matters for review.
+---
