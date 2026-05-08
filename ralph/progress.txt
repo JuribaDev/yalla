@@ -11430,3 +11430,54 @@ Learnings for future iterations:
     entry) to OPTIONAL (API-0387) even though the outer
     `requestBody.required = true` axis is shared.
 ---
+
+## 2026-05-08 - API-0063
+- **Implemented**: Per-operation contract coverage for `cluster-addWorker`
+  (GET /cluster.addWorker). Second cluster/* entry — peers the opener
+  (API-0062 `cluster-addManager`) inside the same `clu-cov-*` per-tag
+  fixture-isolation namespace. Same query-only-GET-with-optional-`serverId`
+  shape as API-0062; uses harness default 401 → CodeAuth on the failure
+  leg, leaving 404 → CodeNotFound reserved for API-0064 `cluster-getNodes`
+  (the most read-shaped cluster/* peer per the API-0062 forward-reference
+  design-rationale header).
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended the API-0063
+    `apiCoverageCase` literal between API-0062 and API-0066, fixture
+    token `clu-cov-addWorker-0063` on the optional `serverId` query.
+    The harness drives registry presence, schema reachability, manifest
+    inclusion, an httptest success exchange, and a representative
+    failure leg for free.
+  - `ralph/prd.json` — flipped `API-0063.passes` from `false` to `true`.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — every package green (including
+    `internal/cli` which hosts the coverage harness).
+  - `go test -race ./...` — every package green.
+- **Tools NOT available locally**: `goimports`, `golangci-lint`,
+  `staticcheck`, `govulncheck`, `goreleaser` (same as prior iterations).
+- **Remaining risks / follow-ups**: none. Per the API-0062 hand-off
+  note, the next cluster/* peer (API-0064 `cluster-getNodes`) is
+  expected to claim the canonical 404 → CodeNotFound failure slot
+  reserved across the `clu-cov-*` namespace; API-0065
+  `cluster-removeWorker` then closes the cluster/* tag arc with a
+  POST + required body shape (no 404 declared in the spec).
+- **Learnings for future iterations**:
+  - The harness-default failure leg (401 → CodeAuth) is the right
+    choice for any peer entry in a per-tag arc that does NOT have the
+    canonical not-found shape. Reserving 404 → CodeNotFound for the
+    most read-shaped peer (typically a `*-one`/`*-getNodes`-style
+    GET) and 400 → CodeInvalidInput for stories whose distinguishing
+    failure mode is payload validation keeps the coverage cohort
+    diverse without forcing each entry to claim a unique failure
+    code. Two consecutive entries sharing the harness default
+    (API-0062 + API-0063) is consistent with the certificates/*
+    precedent (API-0058 + API-0059 both used the default; API-0060
+    `certificates-one` claimed the 404 slot).
+  - Re-verify the OpenAPI spec per-operation rather than inheriting
+    any axis from a slug-prefix sibling. `cluster-addManager` and
+    `cluster-addWorker` happen to share the GET + optional-`serverId`
+    shape, but neither implies `cluster-getNodes`'s read-leg payload
+    projection or `cluster-removeWorker`'s POST body shape.
+---
