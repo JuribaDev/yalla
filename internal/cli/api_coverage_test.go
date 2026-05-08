@@ -13637,6 +13637,234 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0395",
+		OperationID: "settings-updateTraefikConfig",
+		Method:      http.MethodPost,
+		Path:        "/settings.updateTraefikConfig",
+		Tag:         "settings",
+		// Forty-fifth entry on the settings/* coverage roster,
+		// inheriting the `set-cov-*` per-tag fixture-isolation
+		// namespace established by API-0351
+		// `settings-assignDomainServer` and extended through API-0394
+		// `settings-updateServerIp` (must not back-reference the
+		// closed `srv-cov-*`, `proj-cov-*`, `org-cov-*`,
+		// `compose-cov-*`, `app-cov-*`, `ai-cov-*`, or any other
+		// prior tag's namespace, per the per-tag isolation rule
+		// reasserted at API-0335..API-0394 and originally established
+		// at API-0246 `organization-active`).
+		//
+		// **Spec re-verified per the API-0345..API-0394
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json >
+		// /settings.updateTraefikConfig > post`: a **POST** with a
+		// **REQUIRED** `requestBody` (`requestBody.required = true`)
+		// carrying a JSON object with **one** declared inner property
+		// — `traefikConfig` (**plain string**, declared via `type:
+		// "string"` with NO `anyOf` wrapper and NO `null` sentinel,
+		// **REQUIRED** via `required: ["traefikConfig"]`). **Zero
+		// parameters** (no query, no path, no header). Responses
+		// 200/400/401/403/500 — note the **absence of 404**, matching
+		// the canonical settings/* mutating-POST cohort and diverging
+		// from the by-id-flavoured 404-bearing response sets. The 200
+		// schema is `{}` with `additionalProperties: false`, matching
+		// every prior covered peer in the settings/* roster.
+		//
+		// **Forward-reference confirmation — zero pivots from
+		// API-0394 *and* zero pivots from API-0392.** API-0394
+		// `updateServerIp`'s hand-off comment correctly forecast that
+		// this entry would re-verify per-operation rather than inherit
+		// from any prior `update*` peer, and warned that even the
+		// closer `Traefik` slug-stem shared with API-0392
+		// `updateMiddlewareTraefikConfig` could not pre-determine the
+		// inner-property-count, inner-property-type, or
+		// inner-required-field axes. Direct inspection of the spec
+		// nevertheless yields **zero pivots** versus API-0394 on the
+		// eight shape-defining axes *and* an additional **zero
+		// pivots** versus API-0392 on the inner-property-name axis:
+		// (a) the verb axis is **POST** (matches both), (b) the
+		// outer-body axis is **REQUIRED** (matches both), (c) the
+		// inner-property-count axis is **one** (matches both), (d)
+		// the inner-property-type axis is **plain string** (matches
+		// both), (e) the inner-required-field axis is **REQUIRED**
+		// (matches both), (f) the parameter axis is **zero** (matches
+		// both), (g) the response-set axis is
+		// **200/400/401/403/500, no 404** (matches both), and (h) the
+		// 200-response-shape axis is `{}` with
+		// `additionalProperties: false` (matches both). The lone
+		// surface pivot from API-0394 is the inner-property-name axis
+		// (`serverIp` → `traefikConfig`) — and that pivot reverts to
+		// API-0392's name, making this entry a **complete structural
+		// triplet** with API-0392 and API-0394 (separated only by the
+		// API-0393 `updateServer` ABSENT-body intermezzo). The
+		// settings/* `update*` slug-stem sub-roster therefore
+		// exhibits a stable single-required-string shape across four
+		// of its first five entries (API-0390..API-0395 less
+		// API-0393), demonstrating that the Dokploy controller's
+		// `update<Resource>` mutation pattern overwhelmingly favours
+		// the simplest possible single-string-payload contract.
+		//
+		// **Body-axis flip-flop continues.** The body-axis flip-flop
+		// across API-0383..API-0395 is now thirteen entries deep
+		// within the same tag (no-body / no-body / optional-body /
+		// required-body+inner-required / required-body+
+		// inner-optional-string-only / required-body+
+		// inner-optional-mixed-boolean+string / required-body+
+		// inner-required-boolean-only / required-body+
+		// inner-required-mixed-boolean+string / required-body+
+		// inner-required-nullable-string-only / required-body+
+		// inner-required-plain-string-only / no-body-at-all /
+		// required-body+inner-required-plain-string-only /
+		// required-body+inner-required-plain-string-only);
+		// per-operation re-verification stays mandatory across every
+		// family transition.
+		//
+		// **Family continuation — sixth `update*` slug-prefix peer
+		// in settings/*.** The `update*` slug sub-roster opened by
+		// API-0390 continues here. The PRD ordering forecasts the
+		// remaining contiguous run of `update*` peers
+		// (API-0396..API-0398: `updateTraefikFile`,
+		// `updateTraefikPorts`, `updateWebServerTraefikConfig`,
+		// API-0399: `writeTraefikEnv`). Per the
+		// slug-prefix-is-not-shape rule reasserted at
+		// API-0371..API-0394, future `update*` peers must re-verify
+		// per-operation rather than inherit any axis from this entry
+		// — the next `update*` peer (`updateTraefikFile`) shares the
+		// `Traefik` slug-stem with this entry but the
+		// slug-stem-is-not-shape lesson reasserted at
+		// API-0371..API-0394 means even that closer slug match cannot
+		// pre-determine the inner-property-count, inner-property-type,
+		// or inner-required-field axes — `updateTraefikFile` may well
+		// declare a multi-field shape (e.g. `path` + `content`)
+		// rather than the single-string shape declared here.
+		//
+		// **Third plain-string single-required-property axis on
+		// settings/*.** The inner `traefikConfig` property is the
+		// third occurrence on the settings/* roster of an inner
+		// schema with **exactly one** REQUIRED property whose type is
+		// a **plain string** (no `anyOf` nullability, no boolean
+		// neighbour), after API-0392 `updateMiddlewareTraefikConfig`'s
+		// `traefikConfig` (same field name; reaffirms the Dokploy
+		// convention that all Traefik-configuration mutations on
+		// settings/* use the same wire-level field name irrespective
+		// of which Traefik configuration scope — middleware-level vs
+		// global — they target) and API-0394 `updateServerIp`'s
+		// `serverIp`. This is the cleanest possible "single REQUIRED
+		// string" shape — the simplest non-empty body shape the JSON
+		// serialiser branch exercises within settings/*.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `set-cov-updateTraefikConfig-0395` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared across
+		//     every per-tag roster and is unique (verified against
+		//     API-0351..API-0394's `set-cov-*` slugs and orthogonal
+		//     to every prior tag's `srv-cov-*`, `proj-cov-*`,
+		//     `org-cov-*`, `compose-cov-*`, `app-cov-*`, `ai-cov-*`,
+		//     etc. namespaces). Like API-0392 where the slug had to
+		//     be embedded as a YAML/TOML comment fragment on a
+		//     Traefik-config-flavoured string (no constrained dialect
+		//     but the field is conventionally a config blob), this
+		//     entry's `traefikConfig` shares the same field name and
+		//     conventional payload shape — Traefik's global static
+		//     configuration grammar is YAML/TOML-flavoured. The spec
+		//     does not constrain the string to any particular dialect
+		//     (no `format`, no `pattern`, no `examples`), so any
+		//     non-empty string is structurally valid; the harness
+		//     only asserts that the request reached the server and
+		//     returned 200, not that the server semantically accepted
+		//     the Traefik configuration. The fixture therefore embeds
+		//     the slug as a **trailing YAML/TOML comment** on a
+		//     syntactically-minimal global Traefik-config stub
+		//     (`"# set-cov-updateTraefikConfig-0395\n"`), preserving
+		//     both the per-case isolation convention and the field's
+		//     plain-string semantics. Most YAML/TOML parsers treat a
+		//     comment-only document as empty-but-valid.
+		//   * **Populating the only required field** is mandatory
+		//     here: leaving `traefikConfig` out would produce a
+		//     structurally invalid request (the inner schema has
+		//     `required: ["traefikConfig"]`). Re-asserts the
+		//     inner-required-field axis observed at API-0386
+		//     `settings-saveSSHPrivateKey` (`name`/`privateKey`
+		//     REQUIRED), API-0389 `settings-toggleRequests`
+		//     (`enable` REQUIRED), API-0390
+		//     `settings-updateDockerCleanup`
+		//     (`enableDockerCleanup` REQUIRED), API-0391
+		//     `settings-updateLogCleanup` (`cronExpression`
+		//     REQUIRED), API-0392
+		//     `settings-updateMiddlewareTraefikConfig`
+		//     (`traefikConfig` REQUIRED), and API-0394
+		//     `settings-updateServerIp` (`serverIp` REQUIRED) within
+		//     the same tag.
+		//   * **Choosing a comment-bearing minimal stub** for
+		//     `traefikConfig` is a deliberate coverage choice. The
+		//     plain-string shape accepts any string content; carrying
+		//     a syntactically-valid empty Traefik configuration (a
+		//     YAML/TOML comment) preserves the slug-on-the-wire
+		//     convention reaffirmed across API-0386/API-0387/
+		//     API-0388/API-0390/API-0391/API-0392/API-0394 while
+		//     keeping the payload semantically meaningful for a
+		//     global Traefik configuration update operation. An empty
+		//     string `""` would be structurally valid but would erase
+		//     the slug-on-the-wire convention.
+		//
+		// **Failure-leg fields are intentionally omitted.** The spec
+		// does not declare 404 on this operation (the
+		// `updateTraefikConfig` verb mutates the running Dokploy
+		// instance's own global Traefik configuration string rather
+		// than performing a by-id resource lookup), so the per-tag
+		// opener convention reasserted at API-0335..API-0394 that
+		// reserves 404 → CodeNotFound for canonical `*-one` peers
+		// does not apply here. Auth is the universal failure mode
+		// every Dokploy operation must re-prove, so 401 → CodeAuth
+		// via the harness default (`tc.FailureStatus == 0` → 401,
+		// `tc.FailureCode == ""` → CodeAuth) stays the most
+		// informative representative. 400 → CodeInvalidInput is
+		// *technically* available here (the inner schema's
+		// `required: ["traefikConfig"]` array means a
+		// missing-`traefikConfig` payload would fail server-side
+		// validation), but it remains reserved for stories where
+		// payload validation is the operation's *distinguishing*
+		// failure mode. Auth is shared with every operation in the
+		// catalogue and therefore the canonical representative
+		// failure for routine settings/* coverage entries; 400 stays
+		// reserved for stories whose coverage burden uniquely hinges
+		// on payload-shape validation (e.g. multi-field
+		// cross-validation, conditional `oneOf`/`anyOf` between
+		// distinct shapes, or length-bounded strings) — none of which
+		// apply to a single-field plain-string update.
+		//
+		// The next case in the settings/* roster per PRD ordering is
+		// API-0396 `settings-updateTraefikFile` (declared a **POST**
+		// in the PRD with `requestBody.required = true`). The next
+		// contributor must re-verify against
+		// `internal/api/data/openapi.json >
+		// /settings.updateTraefikFile > post` per the
+		// forward-reference lesson before assuming any field is
+		// identical to this entry — per the slug-prefix-is-not-shape
+		// lesson reasserted at API-0371..API-0394, even sharing the
+		// `update*` slug prefix and the `Traefik` slug-stem (the
+		// closest possible match short of the operation's own
+		// operationId) does not imply the inner-property-count,
+		// inner-property-type, or inner-required-field axes carry
+		// over. `updateTraefikFile` may well declare a multi-field
+		// shape (e.g. `path` + `content`) where the `File` slug-stem
+		// implies a path-addressable file mutation, in contrast to
+		// this entry's controller-wide configuration mutation. The
+		// verb axis (POST), the outer-body axis (REQUIRED), the
+		// parameter axis (zero parameters), and the response-set axis
+		// (200/400/401/403/500, no 404) are likely shared, but
+		// per-operation re-verification is mandatory.
+		SampleBody: json.RawMessage(`{
+			"traefikConfig": "# set-cov-updateTraefikConfig-0395\n"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

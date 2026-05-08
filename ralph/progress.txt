@@ -12482,3 +12482,86 @@ Learnings for future iterations:
     the now-closed namespace. This entry's hand-off names
     destination/* via API-0102 `destination-all`.
 ---
+
+## 2026-05-08 - API-0395
+- Implemented coverage for `settings-updateTraefikConfig`
+  (POST /settings.updateTraefikConfig) via the table-driven
+  `apiCoverageCase` entry pattern in
+  `internal/cli/api_coverage_test.go`. The harness exercises
+  registry invariants (method/path/tag), the raw
+  `yalla api call settings-updateTraefikConfig --input <file> --json`
+  success leg with an httptest.Server fixture, the representative
+  auth failure leg (401 → CodeAuth via the harness default), the
+  `yalla schema get settings-updateTraefikConfig --json` envelope,
+  and the manifest entry — satisfying every PRD acceptance criterion
+  (registry presence, api call, schema get, --no-input safety,
+  success envelope, failure envelope, contract tests, manifest
+  coverage) in one fixture.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended a single
+    `apiCoverageCase` entry for `API-0395 /
+    settings-updateTraefikConfig`. `Method = http.MethodPost`,
+    `Path = /settings.updateTraefikConfig`, `Tag = settings`.
+    `SampleBody` carries the minimal REQUIRED inner shape
+    `{"traefikConfig": "# set-cov-updateTraefikConfig-0395\n"}`,
+    embedding the per-case slug as a YAML/TOML comment to preserve
+    the slug-on-the-wire convention while keeping the payload
+    semantically meaningful for a global Traefik configuration
+    update operation. `SuccessResponse: \`{}\`` matches the spec's
+    `additionalProperties: false` empty-object 200 schema.
+    Failure-leg fields are intentionally omitted so the harness
+    default (401 → CodeAuth) supplies the representative failure
+    leg.
+  - `ralph/prd.json` — flipped `API-0395.passes` from `false` to
+    `true`. 270 stories remain failing.
+- **Verification run** (from repository root):
+  - `gofmt -w .` — clean.
+  - `goimports -w .` — not installed in this environment; gofmt
+    handled formatting; documented in the run log.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — PASS (internal/cli 1.312s, all other
+    packages cached PASS).
+  - `go test -race ./...` — PASS (internal/cli 2.757s, all other
+    packages cached PASS).
+- **Results**: All required quality gates green; the new entry
+  exercises the same fixture pipeline as the API-0392/API-0394
+  predecessors with zero pivots on every shape-defining axis,
+  so success/failure-leg drift is impossible by construction —
+  the harness reads the body, reflects the fixture token, and the
+  registry/schema/manifest sub-tests assert spec-conformant
+  metadata.
+- **Remaining risks / follow-ups**: None for API-0395 itself.
+  The next contributor on API-0396 `settings-updateTraefikFile`
+  must re-verify the spec per the forward-reference lesson —
+  even the `Traefik` slug-stem shared with this entry and the
+  `update*` slug-prefix shared with API-0390..API-0395 cannot
+  pre-determine the inner-property-count, inner-property-type, or
+  inner-required-field axes, and the `File` slug-stem may imply a
+  multi-field `path`+`content` shape rather than the single-string
+  shape declared here.
+- **Learnings for future iterations**:
+  - The settings/* `update*` slug-stem sub-roster has now produced
+    three structurally identical "single REQUIRED plain string"
+    entries (API-0392 `traefikConfig`, API-0394 `serverIp`,
+    API-0395 `traefikConfig`), separated only by the API-0393
+    `updateServer` ABSENT-body intermezzo. When the spec confirms
+    the same shape, it is appropriate to record a "zero pivots"
+    forward-reference confirmation rather than synthesise pivots
+    that do not exist — the documentation stays honest about what
+    the spec actually declares.
+  - Two operations on settings/* (API-0392
+    `updateMiddlewareTraefikConfig` and API-0395
+    `updateTraefikConfig`) share the exact same wire-level field
+    name `traefikConfig`, reaffirming the Dokploy convention that
+    Traefik-configuration mutations on settings/* use the same
+    field name irrespective of which Traefik configuration scope
+    (middleware-level vs global) they target. This is a
+    cross-operation convention worth documenting on subsequent
+    `Traefik`-stem peers.
+  - The body-axis flip-flop within settings/* is now thirteen
+    entries deep (API-0383..API-0395). Per-operation
+    re-verification remains mandatory across every family
+    transition — the PRD ordering does not constrain the spec's
+    declared shape.
+---
