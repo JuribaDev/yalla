@@ -16677,3 +16677,17 @@ Learnings for future iterations:
     expect zero plumbing churn and only need the per-case fixture entry +
     PRD/progress updates.
 ---
+
+## 2026-05-08 - API-0331 (security-create)
+- Added per-operation contract coverage entry for `security-create` (POST /security.create) to `internal/cli/api_coverage_test.go`, opening the `security-cov-*` per-tag fixture-isolation namespace after API-0301 closed the redirects/* arc.
+- Spec re-verified against `internal/api/data/openapi.json > /security.create > post`: REQUIRED body, three REQUIRED non-nullable plain string fields (`applicationId`, `username`, `password`), zero optionals, responses 200/400/401/403/500 (no 404), 200 schema `{}` with `additionalProperties: false`.
+- `SampleBody` supplies the closed-shape three-required-string-scalar surface with deterministic-but-clearly-fake tokens (`security-cov-create-0331-app|user|pass`). Fixture tokens deliberately do not collide with future `*-delete-0332` / `*-one-0333` / `*-update-0334` slugs.
+- Family choice: harness-default 401→CodeAuth retained — 404 is structurally inapplicable on a create-mutation, and 400 is reserved for stories whose distinguishing failure mode is payload validation.
+- Files changed: `internal/cli/api_coverage_test.go`, `ralph/prd.json`, `ralph/progress.txt`.
+- Verification run: `gofmt -w .`, `go mod tidy`, `go vet ./...`, `go test ./...`, `go test -race ./...` — all green. `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser` not installed locally; documented here.
+- Remaining risks: none specific to this story; `security-cov-*` namespace is now open and downstream API-0332..0334 should grep this block first to inherit the slug namespace.
+- **Learnings for future iterations:**
+  - First three-required-string-scalar create-POST shape covered. No exact peer in any prior covered tag — port-create has 5 mixed required fields, mounts-create has its own shape, project-create is 1+2-optional, redirects-create is 4 required (3 strings + 1 boolean). Future create-mutations that match the same shape can directly cite this entry as the precedent.
+  - Security/* operations gate credential management; the harness's renderer-layer secret redaction is covered by separate dedicated stories, so plain-text `password` literals in the per-operation `SampleBody` fixture are intentional and clearly-fake to remain obvious false positives in any future grep for real credentials.
+  - When opening a fresh per-tag namespace, the prior-tag-closing entry's docstring usually pre-announces which namespace is next (API-0301's docstring named `security-cov-*` here); cross-checking the predecessor's closing comment is a fast way to confirm namespace boundaries before grepping.
+---

@@ -10291,6 +10291,127 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0331",
+		OperationID: "security-create",
+		Method:      http.MethodPost,
+		Path:        "/security.create",
+		Tag:         "security",
+		// Kickoff entry for the security/* coverage roster — opens a
+		// fresh `security-cov-*` per-tag fixture-isolation namespace
+		// after API-0301 `redirects-update` closed the priority-3
+		// redirects/* arc. Per the per-tag fixture-isolation rule
+		// established at API-0188 `mounts-allNamedByApplicationId`,
+		// API-0246 `organization-active`, API-0268 `port-create`,
+		// API-0290 `project-all`, and API-0298 `redirects-create`,
+		// this entry deliberately stands alone and **must not** back-
+		// reference any closed prior-tag namespace (`port-cov-*`,
+		// `proj-cov-*`, `mounts-cov-*`, `org-cov-*`, `redirects-cov-*`,
+		// etc.). Subsequent security/* peers (API-0332 `security-
+		// delete`, API-0333 `security-one`, API-0334 `security-update`)
+		// should grep this block first to inherit the security/* slug
+		// namespace rather than copying any other prior-tag fixtures
+		// across the tag boundary.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json > /security.create > post`:
+		// a **POST** with **no parameters** and a **REQUIRED request
+		// body** whose schema declares **three REQUIRED non-nullable
+		// plain string fields** (`applicationId`, `username`,
+		// `password`). The schema declares zero optional fields, so
+		// the closed-shape body is exactly the three-required-string-
+		// scalar surface — no every-optional-populated expansion
+		// applies here, mirroring the closed-shape precedent on
+		// API-0119 `domain-delete`, API-0192 `mounts-remove`,
+		// API-0269 `port-delete`, and API-0299 `redirects-delete`,
+		// and contrasting with API-0292 `project-create`'s one-
+		// required + two-optional shape and API-0298 `redirects-
+		// create`'s mixed-string-and-boolean shape. Responses
+		// 200/400/401/403/500 — the spec does **not** declare 404 on
+		// this operation, matching the cross-tag create-mutation
+		// precedent on API-0189 `mounts-create`, API-0268 `port-
+		// create`, API-0292 `project-create`, and API-0298
+		// `redirects-create` (Dokploy create POSTs do not surface
+		// missing-target legs because there is no target-by-id to
+		// miss). The 200 schema is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the empty-
+		// success cohort.
+		//
+		// **Shape positioning — three-required-string-scalar POST
+		// create-mutation, body REQUIRED, all fields required, no
+		// optional surface, all plain string wire types.** First
+		// request-body POST in the security/* roster and a fresh
+		// shape with no exact peer in any prior tag: API-0268
+		// `port-create` declares five required fields mixing
+		// numbers + enum strings + a plain string, API-0189
+		// `mounts-create` declares a different required-set shape,
+		// API-0292 `project-create` has one required + two optional
+		// scalars, and API-0298 `redirects-create` has four required
+		// fields (three strings + one typed boolean). No prior covered
+		// create POST has the exact three-plain-string-scalar shape
+		// that security-create declares. The fixture supplies all
+		// three required fields with deterministic-but-clearly-fake
+		// values: `applicationId` uses the per-case fixture token
+		// `security-cov-create-0331-app` per the established
+		// `<tag>-cov-<slug>-<storyID>[-<sub>]` deterministic-but-
+		// clearly-fake naming convention; `username` carries
+		// `security-cov-create-0331-user` so the wire fixture readably
+		// models a basic-auth-style credential pair while still being
+		// obviously synthetic; `password` carries
+		// `security-cov-create-0331-pass` (the harness's secret-
+		// redaction layer is not in play on the per-operation
+		// httptest fixture surface — the renderer-layer redaction is
+		// covered by separate dedicated stories — and a clearly-fake
+		// literal here keeps any future grep for real-looking
+		// passwords an obvious false positive). The tokens are unique
+		// across the security/* roster (verified: no collisions with
+		// future `*-delete-0332` / `*-one-0333` / `*-update-0334`
+		// slugs) and across all prior `*-cov-*` namespaces.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (create-mutations
+		// have no by-id target to miss, exactly as documented for
+		// API-0189 `mounts-create`, API-0268 `port-create`, API-0292
+		// `project-create`, and API-0298 `redirects-create`), so the
+		// 404→CodeNotFound override is structurally inapplicable.
+		// 400→CodeInvalidInput is *technically* available — a payload
+		// that omits any of the three REQUIRED fields, or supplies a
+		// non-string value for `applicationId`/`username`/`password`,
+		// would fail server-side validation — but the harness
+		// reserves 400 representatives for stories where payload
+		// validation is the operation's *uniquely distinguishing*
+		// failure mode. A conventional create POST collapses to
+		// type-checking, so the harness-default 401→CodeAuth failure
+		// leg remains the most representative single failure mode
+		// every authenticated Dokploy operation must re-prove, and
+		// additionally re-proves the auth invariant inside the
+		// freshly opened `security-cov-*` namespace for the three-
+		// required-string-scalar create-mutation shape — particularly
+		// load-bearing on a security/* operation whose entire purpose
+		// is gating credential management.
+		//
+		// API-0331 opens the priority-3 security/* roster; the next
+		// pending PRD-ordered priority-3 backlog entries are
+		// API-0332 `security-delete`, API-0333 `security-one`, and
+		// API-0334 `security-update`, all of which inherit the
+		// `security-cov-*` namespace established here and should
+		// grep this block first when shaping their `SampleBody`
+		// fixtures. The next contributor must re-verify the spec
+		// against `internal/api/data/openapi.json` per the forward-
+		// reference lesson before assuming any field shape.
+		SampleBody: json.RawMessage(`{
+			"applicationId": "security-cov-create-0331-app",
+			"username": "security-cov-create-0331-user",
+			"password": "security-cov-create-0331-pass"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0335",
 		OperationID: "server-all",
 		Method:      http.MethodGet,
