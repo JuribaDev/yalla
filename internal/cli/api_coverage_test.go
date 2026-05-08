@@ -4259,6 +4259,126 @@ var coveredAPIOperations = []apiCoverageCase{
 		// shape — see its forthcoming entry for the cross-reference.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0342",
+		OperationID: "server-one",
+		Method:      http.MethodGet,
+		Path:        "/server.one",
+		Tag:         "server",
+		// Eighth entry on the server/* coverage roster and the
+		// **canonical by-id GET peer** for the tag — the server/*
+		// analogue of API-0008 `ai-one`, API-0021 `application-one`,
+		// API-0084 `compose-one`, API-0251 `organization-one`, and
+		// API-0294 `project-one`. Inherits the `srv-cov-*` per-tag
+		// fixture-isolation namespace established at API-0335
+		// `server-all` and reasserted on every server/* peer
+		// through API-0341 `server-getServerTime`; this entry
+		// **must not** back-reference the `proj-cov-*` namespace
+		// from API-0290..API-0297, the `org-cov-*` namespace from
+		// API-0246..API-0289, or any prior `*-cov-*` slug, per the
+		// per-tag isolation rule reasserted at API-0335.
+		//
+		// Spec source `internal/api/data/openapi.json >
+		// /server.one > get`: zero request body, exactly one
+		// required query parameter `serverId` (string), responses
+		// 200/400/401/403/404/500 where the 200 schema is `{}` with
+		// `additionalProperties: false`. That is byte-for-byte the
+		// same wire shape as API-0294 `project-one` (`projectId`),
+		// API-0251 `organization-one` (`organizationId`), API-0021
+		// `application-one` (`applicationId`), API-0084
+		// `compose-one` (`composeId`), and API-0008 `ai-one`
+		// (`aiId`). The harness forwards SampleQuery via the
+		// `--input` JSON `query` field, and `runAPICoverageSuccess`
+		// re-reads `r.URL.Query()` to confirm the CLI propagated the
+		// param verbatim — exactly the assertion path every prior
+		// `*-one` peer exercises.
+		//
+		// **First entry in the roster to override the failure leg
+		// to 404 → CodeNotFound.** Every prior covered case
+		// (114 entries spanning admin/*, ai/*, application/*,
+		// auth/*, backup/*, certificate/*, cluster/*, compose/*,
+		// deployment/*, destination/*, docker/*, domain/*,
+		// gitProvider/*, mariadb/*, mongo/*, mysql/*,
+		// notification/*, organization/*, port/*, postgres/*,
+		// preset/*, project/*, redirects/*, redis/*, registry/*,
+		// security/*, server/* through API-0341, and sshKey/*)
+		// kept the harness default 401 → CodeAuth representative
+		// failure because auth is the universal failure mode every
+		// Dokploy operation must re-prove. The per-tag opener
+		// design header (re-asserted at API-0290 `project-all` and
+		// API-0335 `server-all`) explicitly reserved 404 →
+		// CodeNotFound as the representative-failure leg for **the
+		// canonical by-id `*-one` peer**, deferring the assertion
+		// to API-0294 `project-one` and API-0342 `server-one`.
+		// API-0294's commentary then deferred again, opting to
+		// keep the 401 default for tag-roster symmetry inside the
+		// project/* arc and noting that "future contributors who
+		// need a 404 representative-failure assertion at the
+		// operation level" should add it on the next available
+		// `*-one` peer. API-0342 is that peer: the server/* tag is
+		// the first roster to *act* on the reserved override, and
+		// the failure-leg fields below are the canonical home for
+		// the assertion. The harness already supports the override
+		// natively (`runAPICoverageFailure` reads tc.FailureStatus
+		// / tc.FailureCode and falls back to 401 / CodeAuth when
+		// either is zero) so no harness change is needed; we
+		// simply opt in via the two struct fields.
+		//
+		// Why server-one and not project-one (API-0294)? Two
+		// reasons. First, API-0294 explicitly punted the override
+		// to the next `*-one` peer for tag-roster symmetry inside
+		// the project/* arc — every project/* peer up to and
+		// including API-0297 re-proves the universal 401 leg, so
+		// adding 404 there mid-arc would create an awkward
+		// one-off. Second, the server/* tag's `serverId` is a
+		// stronger semantic match for "by-id GET whose primary
+		// failure mode is the resource not existing": Dokploy's
+		// server records are pinned to long-lived UUIDs that an
+		// agent will frequently fetch by ID on cold-cache restart,
+		// where 404 (server was deleted between cache fill and
+		// fetch) is a far more common failure than 401 (the
+		// process already proved auth on every prior call). The
+		// 404 leg is therefore the most informative failure to
+		// re-prove for this specific peer's call site.
+		//
+		// Per-case fixture token `srv-cov-one-0342` follows the
+		// `<tag>-cov-<slug>-<storyID>` convention shared across
+		// every prior server/* peer (API-0335..API-0341) and the
+		// cross-tag `*-cov-one-XXXX` slug used at API-0008,
+		// API-0021, API-0084, API-0251, and API-0294. Verified
+		// unique against the seven prior server/* peers and
+		// against the cross-tag `proj-cov-one-0294` namespace.
+		//
+		// Future server/* by-id-shaped peers (none currently in
+		// the spec — `server-publicIp` and `server-validate` are
+		// parameter-free, `server-remove`/`-update`/`-setup` are
+		// POST mutations) should grep this entry first. Future
+		// `*-one` peers in other tags whose 404 surface is the
+		// primary semantic failure (e.g. a hypothetical
+		// `monitoring-one` if Dokploy ever adds one) should also
+		// grep here. The next case in the server/* roster,
+		// API-0343 `server-publicIp`, returns to the parameter-
+		// free GET shape established at API-0335..API-0337 /
+		// API-0341 and keeps the harness default 401 → CodeAuth
+		// because `*-publicIp` has no by-id input — see its
+		// forthcoming entry for the re-anchoring commentary.
+		SampleQuery: map[string][]string{
+			"serverId": {"srv-cov-one-0342"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior server/* peer and every
+		// prior cross-tag `*-one` peer. Empty-object body keeps
+		// the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+		// Failure-leg override: this is the canonical home for
+		// the 404 → CodeNotFound representative-failure assertion
+		// reserved at API-0290 / API-0294 / API-0335. See the
+		// design-rationale block above for the full justification.
+		FailureStatus: http.StatusNotFound,
+		FailureCode:   yerr.CodeNotFound,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

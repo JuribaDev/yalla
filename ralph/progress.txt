@@ -6991,3 +6991,91 @@
     parameterised test) extend automatically. This was true for
     every prior parameter-free entry and remains true here.
 ---
+
+## 2026-05-08 - API-0342
+- What was implemented: Coverage for `server-one` (GET /server.one,
+  tag `server`, single required query parameter `serverId` of type
+  string). Added a single `apiCoverageCase` struct literal to
+  `internal/cli/api_coverage_test.go` immediately after the API-0341
+  `server-getServerTime` case. **First entry in the entire 116-case
+  roster to override the failure leg to 404 → CodeNotFound** — the
+  reservation that the API-0290 `project-all` design header opened
+  and that API-0294 `project-one` deferred to the next available
+  `*-one` peer. The harness already supports the override natively
+  (`runAPICoverageFailure` reads `tc.FailureStatus` / `tc.FailureCode`
+  with sensible defaults), so no harness change was needed.
+- Files changed:
+  * `internal/cli/api_coverage_test.go` (one new struct literal,
+    ~120 lines including design rationale; sets `FailureStatus:
+    http.StatusNotFound` and `FailureCode: yerr.CodeNotFound`)
+  * `ralph/prd.json` (flipped `API-0342.passes` to `true`)
+  * `ralph/progress.txt` (this entry)
+- Verification run:
+  * `gofmt -w .` → clean
+  * `goimports` → not installed (consistent with prior iterations)
+  * `go mod tidy` → no changes
+  * `go vet ./...` → exit 0
+  * `go test ./...` → all 9 packages PASS
+  * `go test -race ./...` → all 9 packages PASS
+  * `go test ./internal/cli -run TestAPICoverage -count=1 -v` →
+    every subtest PASS, including the new
+    `TestAPICoverage_RepresentativeFailure/API-0342/server-one`
+    which exercises the 404 → CodeNotFound override end-to-end
+  * `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser` →
+    not installed (documented in prior progress entries; no change
+    this iteration)
+- Results: 116/462 PRD stories now passing; CI-equivalent local
+  checks all green.
+- Remaining risks or follow-ups: None specific to this story. The
+  next server/* peer (API-0343 `server-publicIp`) returns to the
+  parameter-free GET shape established at API-0335..API-0337 /
+  API-0341 and should keep the harness default 401 → CodeAuth.
+- **Learnings for future iterations:**
+  - **Activating a reserved harness override is a pure-data
+    change.** API-0290's design header reserved 404 → CodeNotFound
+    for the canonical `*-one` peer; API-0294 `project-one` chose
+    not to act on it for tag-roster symmetry. API-0342
+    `server-one` is the first peer to *act*, simply by setting
+    `FailureStatus: http.StatusNotFound, FailureCode:
+    yerr.CodeNotFound` in the struct literal — no harness or
+    runner edit required. The two zero-default fields exist
+    precisely for this kind of opt-in.
+  - **`tc.FailureCode` must use the typed `yerr.Code` constant**
+    (e.g. `yerr.CodeNotFound`), NOT a string literal. The struct
+    field is `yerr.Code` (a defined string type) and the comparison
+    in `runAPICoverageFailure` does `string(failCode)` for the
+    stderr substring match. Using `"E_NOT_FOUND"` would compile
+    (Go allows untyped string→named-string conversion in struct
+    literals) but breaks the contract — always import via the
+    `yerr "github.com/JuribaDev/yalla/internal/errors"` alias
+    already in scope and reference the constant.
+  - **The 404 override semantically belongs on the by-id peer of
+    the tag whose call site most often encounters cold-cache
+    fetches**, not necessarily the *first* `*-one` peer in the
+    roster. project-one (API-0294) would have been the alphabetic
+    first opportunity, but the project/* arc punted to keep its
+    arc symmetric. server-one is a stronger fit because Dokploy
+    server records are pinned to UUIDs an agent will frequently
+    refetch on cold-cache restart, where 404 (record deleted
+    between cache fill and fetch) is a more common runtime
+    failure than 401 (process already proved auth). Future
+    contributors picking the next "primary failure mode is
+    not-found" peer should grep this entry's design rationale
+    block first.
+  - **Cross-tag `*-one` shape is now extensively documented.**
+    By the time API-0342 lands, the by-id GET shape has been
+    exercised at API-0008 `ai-one`, API-0021 `application-one`,
+    API-0084 `compose-one`, API-0251 `organization-one`, and
+    API-0294 `project-one`. Each shares the byte-for-byte wire
+    contract (single required scalar query param, empty-object
+    200 response, 401/404 in the failure surface). Future tags'
+    `*-one` peers are pure copy-and-rename — only the ID field
+    name and the per-tag fixture slug change.
+  - **Forward-reference comments paid off here.** API-0335's
+    opener block, plus API-0336/0337/0341's commentary, all
+    explicitly named API-0342 `server-one` as the canonical home
+    for the 404 override, which made the design decision a
+    single grep instead of a re-derivation. The chain continues:
+    this entry now names API-0343 `server-publicIp` for the
+    parameter-free re-anchoring.
+---
