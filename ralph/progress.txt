@@ -5167,3 +5167,71 @@
   - Two compose/* GETs (API-0077 getTags and API-0092 templates) share the exact same wire shape: single optional `baseUrl` (string) + empty `{}` 200. When a future compose/* GET shows up with the same shape, it can copy this fixture verbatim and just rotate the slug — the family-membership comment ledger should be updated to call out the third member at that point.
   - Always verify byte-identical shape via `python3 -c "import json; ..."` against `internal/api/data/openapi.json` before assuming a sibling GET is a slug-rotated twin — even sibling compose/* operations can drift in future spec revisions.
 ---
+
+## 2026-05-08 - API-0093
+- Implemented coverage for `compose-update` (POST /compose.update) by appending
+  one `apiCoverageCase` literal to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go`. This closes out the compose/* tag —
+  every compose/* operation declared in `data/openapi.json` is now covered.
+- This is the LARGEST request-body schema in the compose/* tag (single
+  required `composeId` + 40+ optional siblings spanning every git provider
+  knob, build settings, runtime metadata, and refresh-token rotation). The
+  closest cross-tag precedent is API-0038 (application-update), the sole
+  prior `*-update` entry in the roster, which also ships only the required
+  id even though its OpenAPI body declares 30+ optional siblings. Per the
+  AGENTS.md "Per-operation API coverage" rule the SampleBody mirrors the
+  required-field shape; the bytes go on the wire verbatim, the success
+  leg's body-equality check enforces deterministic forwarding, and a
+  single-field document is the minimal-but-valid fixture.
+- Distinct from the minimal-composeId-only POST family
+  (API-0066/0067/0068/0073/0074/0080/0088/0090/0091) — same shape on the
+  wire (one required field, empty `{}` 200), but the optional surface in
+  the spec is incomparably richer, so naming this entry as the dedicated
+  `*-update` twin (rather than collapsing it into the minimal family)
+  keeps cross-story grep clean for any future compose/update field
+  rotation.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended one `apiCoverageCase`
+    literal at the StoryID-sorted tail (slug
+    `compose-cov-update-0093`).
+  - `ralph/prd.json` — flipped `passes: true` for API-0093 only.
+  - `ralph/progress.txt` — this entry.
+- Verification (run from repo root):
+  - `gofmt -w .`            → no diff
+  - `goimports -w .`        → not installed locally; gofmt sufficient
+                              (no imports touched)
+  - `go mod tidy`           → no diff
+  - `go vet ./...`          → clean
+  - `go test ./... -count=1`        → all 9 packages pass
+  - `go test -race ./... -count=1`  → all 9 packages pass
+  - Targeted: `go test ./internal/cli -run TestAPICoverage -count=1 -v`
+    confirms all 5 sub-phases (RegistryInvariants, SchemaCommandWorks,
+    ManifestListsOperation, SuccessRoundTrip, RepresentativeFailure)
+    PASS for `API-0093/compose-update`.
+- Remaining risks / follow-ups: none. With API-0093 the compose/* tag
+  is fully covered (API-0066..API-0093, 28 operations). Next priority-2
+  story is API-0094 (deployment-all, GET /deployment.all), the first
+  entry in the deployment/* tag.
+- **Learnings for future iterations:**
+  - `*-update` operations consistently mirror the `*-create` body
+    schema in field count but downgrade everything except the primary
+    id to optional. Across the roster only `composeId`/`applicationId`
+    is required. The minimal-but-valid fixture is a single-field
+    document, NOT a populated maximum, because the AGENTS.md "Per-
+    operation API coverage" rule limits SampleBody to the required-
+    shape mirror; populated fixtures are the `*-create` convention
+    (API-0014, API-0040, API-0069), not `*-update`.
+  - Inside the compose/* tag, distinguish a `*-update` POST from the
+    minimal-composeId-only POST family by the optional-surface size,
+    not by the wire shape. They serialise identically (`{"composeId":
+    "..."}` → `{}` 200) but the spec's optional surface diverges by
+    an order of magnitude, and naming the entry as the dedicated
+    `*-update` twin keeps the grep map honest.
+  - Compose/* tag is now closed (28 operations). The next pending
+    priority-2 batch is the deployment/* tag (API-0094..API-0099 in
+    the immediate next slice). The deployment/* tag is read-mostly
+    (5 GETs, 1 POST in the next slice), so the next API-XXXX iteration
+    will likely seed the first deployment/* GET fixture — review
+    API-0035 (application-search) and API-0089 (compose-search) for
+    the all-optional query-param precedent if applicable.
+---

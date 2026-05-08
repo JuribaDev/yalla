@@ -2212,6 +2212,54 @@ var coveredAPIOperations = []apiCoverageCase{
 		// payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0093",
+		OperationID: "compose-update",
+		Method:      http.MethodPost,
+		Path:        "/compose.update",
+		Tag:         "compose",
+		// Final compose/* roster member. The spec at
+		// `data/openapi.json > /compose.update > post` declares the
+		// LARGEST request body in the compose/* tag — a single
+		// REQUIRED string `composeId` plus 40+ optional siblings
+		// covering every git provider knob (`repository`/`owner`/
+		// `branch` for the native git/github/gitlab/bitbucket/gitea
+		// surfaces), build-time settings (`composeFile`,
+		// `composeType` enum, `composePath`, `command`,
+		// `enableSubmodules`), runtime metadata (`name`, `appName`,
+		// `description`, `env`, `suffix`, `randomize`,
+		// `isolatedDeployment*`, `triggerType` enum,
+		// `composeStatus` enum, `environmentId`, `createdAt`,
+		// `watchPaths` array, `*Id` provider-record refs) and an
+		// optional `refreshToken` rotate field. Only `composeId` is
+		// required, mirroring the cross-tag precedent set by
+		// API-0038 (application-update) — the sole prior `*-update`
+		// entry in the roster — which also ships only the required
+		// id even though its OpenAPI body declares 30+ optional
+		// siblings. Per the AGENTS.md "Per-operation API coverage"
+		// rule the SampleBody must mirror the required-field shape;
+		// the bytes go on the wire verbatim and the success leg's
+		// body-equality check enforces deterministic forwarding, so
+		// a single-field document is the minimal-but-valid fixture.
+		// Distinct from the minimal-composeId-only POST family
+		// (API-0066/0067/0068/0073/0074/0080/0088/0090/0091)
+		// because the request body's optional surface is incomparably
+		// richer — naming this entry as the dedicated `*-update`
+		// twin keeps cross-story grep clean. Slug convention
+		// `compose-cov-<slug>-<storyID>` continues the cross-story
+		// grep contract from every prior compose/* case.
+		SampleBody: json.RawMessage(`{
+			"composeId": "compose-cov-update-0093"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the empty-success convention shared by every prior
+		// compose/* peer (start, stop, redeploy, deploy, …) and by the
+		// cross-tag `*-update` precedent API-0038 (application-update).
+		// Empty-object body keeps the success-leg envelope assertion
+		// focused on `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
