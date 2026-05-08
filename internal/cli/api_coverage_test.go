@@ -805,6 +805,45 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0031",
+		OperationID: "application-saveGiteaProvider",
+		Method:      http.MethodPost,
+		Path:        "/application.saveGiteaProvider",
+		Tag:         "application",
+		// Mirrors the schema in `data/openapi.json` for
+		// /application.saveGiteaProvider: six required fields —
+		// `applicationId` (plain string) plus `giteaBranch`,
+		// `giteaBuildPath`, `giteaOwner`, `giteaRepository`, and
+		// `giteaId` (each `anyOf:[string,null]`). Optional
+		// `enableSubmodules` (boolean) and `watchPaths`
+		// (`anyOf:[array<string>,null]`) are intentionally omitted to
+		// keep the fixture minimal-but-valid, matching the
+		// API-0027 (saveBitbucketProvider) precedent for
+		// many-required-nullable-string `save*Provider` bodies. We
+		// populate every required field with a dedicated
+		// `app-cov-gitea-<slug>-0031` placeholder so distinct values
+		// keep diffs readable and let any future schema validator's
+		// failure messages point at the offending field. This is the
+		// first of the four remaining `save*Provider` family entries
+		// (API-0031..0034); subsequent gitea/github/gitlab/git stories
+		// should pattern-match against this literal rather than against
+		// API-0029 (whose body is uniform across five fields with no
+		// non-nullable `applicationId` peer).
+		SampleBody: json.RawMessage(`{
+			"applicationId": "app-cov-gitea-application-id-0031",
+			"giteaBranch": "app-cov-gitea-branch-0031",
+			"giteaBuildPath": "app-cov-gitea-build-path-0031",
+			"giteaOwner": "app-cov-gitea-owner-0031",
+			"giteaRepository": "app-cov-gitea-repository-0031",
+			"giteaId": "app-cov-gitea-id-0031"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching every prior application/* peer. Empty-object body keeps
+		// the success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

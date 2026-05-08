@@ -3167,3 +3167,71 @@
     field secrets (`buildSecrets` here, `password` in API-0029) as
     fixture data rather than real credentials.
 ---
+
+## 2026-05-08 - API-0031 - Cover application-saveGiteaProvider (POST /application.saveGiteaProvider)
+- Implemented per-operation contract coverage for
+  `application-saveGiteaProvider` by appending a single
+  `apiCoverageCase` literal (StoryID `API-0031`) to
+  `internal/cli/api_coverage_test.go`'s `coveredAPIOperations`
+  slice. The append-only harness automatically asserts all five
+  invariants: registry id/method/path/tag, `yalla schema get`,
+  `yalla manifest`, httptest success round-trip with body
+  forwarding, and a representative 401 → `E_AUTH` failure path.
+- The saveGiteaProvider body has six required fields:
+  `applicationId` (plain string) plus five `anyOf:[string,null]`
+  fields (`giteaBranch`, `giteaBuildPath`, `giteaOwner`,
+  `giteaRepository`, `giteaId`). Optional `enableSubmodules`
+  (boolean) and `watchPaths` (`anyOf:[array<string>,null]`) are
+  intentionally omitted to keep the fixture minimal-but-valid,
+  matching the API-0027 (saveBitbucketProvider) precedent for
+  many-required-nullable-string `save*Provider` bodies. Distinct
+  `app-cov-gitea-<slug>-0031` placeholders keep diffs readable
+  and make any future schema-validator failure unambiguously point
+  at the offending field.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended the API-0031
+    case after API-0030 (one contiguous block; no other touches).
+  - `ralph/prd.json` — flipped `passes: false` → `passes: true`
+    for `API-0031`.
+  - `ralph/progress.txt` — this entry.
+- Verification run from repo root:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — no module changes.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass; `internal/cli` 1.138s.
+  - `go test -race ./...` — all packages pass; `internal/cli` 2.420s.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — not installed locally, intentionally skipped per
+    Codebase Patterns guidance.
+- Remaining risks or follow-ups: none for this story. The next
+  application/* coverage gaps are API-0032 through API-0034 (the
+  remaining `save*Provider` family — github/gitlab/git). The spec
+  shows API-0032 (github) adds a closed `triggerType` enum
+  ("push"/"tag") on top of the gitea shape; API-0033 (gitlab) adds
+  `gitlabProjectId` (nullable number) and `gitlabPathNamespace`
+  (nullable string) — the first numeric-typed required field in
+  any application/* coverage entry. API-0034 (custom git) is the
+  outlier: its required set includes `watchPaths`
+  (nullable array) rather than an `*Id` field, so its fixture
+  must populate `watchPaths` with at minimum an empty array.
+- **Learnings for future iterations:**
+  - `application-saveGiteaProvider` is the canonical literal for
+    the `save*Provider` family pattern: one plain-string
+    `applicationId` + N nullable-string vendor fields. API-0032
+    (github) should pattern-match against this entry and add only
+    the closed-enum `triggerType` placeholder. The contiguous,
+    story-id-sorted ordering of `coveredAPIOperations` keeps the
+    family readable as one block.
+  - Optional schema fields (here: `enableSubmodules`,
+    `watchPaths`) stay out of the SampleBody when the harness
+    only exercises the happy-path required surface — the success-
+    leg envelope assertion focuses on `data.method` /
+    `data.status` and the wire payload only needs to round-trip
+    intact. This keeps fixtures minimal-but-valid and matches every
+    prior application/* peer.
+  - The `app-cov-<vendor>-<slug>-<storyID>` placeholder convention
+    continues to scale: `app-cov-gitea-*` here parallels
+    `app-cov-docker-*` (API-0029) and `app-cov-env-*` (API-0030),
+    so a grep for `app-cov-` cleanly indexes every fixture-as-
+    test-data marker across the suite.
+---
