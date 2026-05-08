@@ -16493,3 +16493,58 @@ Learnings for future iterations:
     API-0298 because all priority-3 prior entries (API-0246..API-0297)
     were already covered.
 ---
+
+## 2026-05-08T17:35Z - API-0299 (redirects-delete)
+- Cover redirects-delete (POST /redirects.delete). Second entry on the
+  priority-3 redirects/* roster, continuing inside the `redirects-cov-*`
+  per-tag fixture-isolation namespace opened by API-0298.
+- Files changed:
+  - internal/cli/api_coverage_test.go (new struct entry, sorted insert
+    after API-0298 redirects-create, before API-0335 server-all)
+  - ralph/prd.json (passes=true for API-0299)
+  - ralph/progress.txt (this entry)
+- Verification:
+  - gofmt -w . (clean)
+  - go vet ./... (clean)
+  - go mod tidy (no diff)
+  - go test ./internal/cli/ -run 'TestAPICoverage/API-0299' -v
+    (all five legs pass: RegistryInvariants, SchemaCommandWorks,
+     ManifestListsOperation, SuccessRoundTrip, RepresentativeFailure)
+  - go test ./... (all packages pass, cli 1.123s)
+  - go test -race ./... (all packages pass race-clean, cli 2.899s)
+  - goimports, golangci-lint, staticcheck, govulncheck, goreleaser
+    not installed locally; documented as missing per the established
+    convention.
+- Results: PRD progress 255/462 stories passing.
+- Remaining risks/follow-ups: next pending priority-3 backlog entries are
+  API-0300 `redirects-one` (declared GET per spec preview) and API-0301
+  `redirects-update`, both inheriting the `redirects-cov-*` namespace.
+  Future contributors must re-verify each spec against
+  `internal/api/data/openapi.json` per the forward-reference lesson and
+  must NOT back-reference the closed `port-cov-*` or any other prior-tag
+  namespace.
+- **Learnings for future iterations:**
+  - `/redirects.delete` is a textbook single-required-string-scalar POST
+    delete-mutation: closed-shape `{redirectId}` body with zero optionals,
+    responses 200/400/401/403/500 (no 404 declared). This makes it a direct
+    cross-tag shape peer of API-0119 `domain-delete`, API-0192
+    `mounts-remove`, and API-0269 `port-delete`. The fixture template
+    (single REQUIRED string slug `redirects-cov-delete-0299`) is identical
+    to those three precedents — only the field name and namespace slug
+    differ.
+  - The redirects/* roster's first two stories (API-0298 create, API-0299
+    delete) intentionally cover two distinct shape categories inside the
+    same fresh tag namespace: a four-required-scalar mixed-type create POST
+    and a single-required-string delete POST. This mirrors the API-0268/
+    API-0269 port/* opening pattern: a richer create followed by a minimal
+    delete keeps the per-tag namespace exercising both the multi-field
+    body-comparison leg and the closed-shape single-field leg from the
+    start.
+  - When inheriting a per-tag fixture-isolation namespace from an immediately
+    preceding entry (API-0298 → API-0299), the comment block should
+    explicitly cite the *opener* (here API-0298 `redirects-create`) rather
+    than re-establishing the namespace, keeping the cross-reference graph
+    traceable. The closed-shape POST delete cohort cross-references
+    (API-0119, API-0192, API-0269) live in the shape-positioning paragraph,
+    not the namespace paragraph.
+---
