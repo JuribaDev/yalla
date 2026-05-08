@@ -10683,3 +10683,116 @@ Learnings for future iterations:
   - **Harness-default 401 → CodeAuth pre-reservation pattern.** API-0056's design-rationale header explicitly forward-referenced API-0057 ("expected to follow the same harness-default convention"). That reservation was honored verbatim — the entry sets neither `FailureStatus` nor `FailureCode`, falling through to the harness default. Future contributors writing forward-references should make them as concrete as API-0056 did (specific operation ID + specific failure-code expectation), not vague hints, so the next iteration can consume the slot without re-derivation.
   - **Per-tag namespace exhaustion.** The bitbucket/* `bb-cov-*` namespace is now closed (slugs: `bb-cov-providers-0051`, `bb-cov-create-0052-*`, `bb-cov-getBranches-0053-*`, `bb-cov-getRepos-0054-*`, `bb-cov-one-0055-*`, `bb-cov-testConn-0056-*`, `bb-cov-update-0057-*`). No future story may write into `bb-cov-*` per the per-tag isolation rule established at API-0246 and reasserted by the API-0051 bitbucket/* kickoff header.
 ---
+
+## 2026-05-08 - API-0383
+- **Implemented**: Per-operation contract coverage for the
+  `settings-reloadRedis` Dokploy API operation
+  (POST /settings.reloadRedis, tag settings). Appended a single
+  `apiCoverageCase` entry to `coveredAPIOperations` so the
+  registry-presence, schema-reachability, manifest-inclusion,
+  httptest success-leg, and 401 -> CodeAuth failure-leg
+  subtests fire automatically. The operation declares **no
+  `requestBody` field at all**, **zero parameters**, and a
+  200/400/401/403/500 response set (no 404), matching the
+  five prior no-body settings/* POST peers (API-0354, API-0357,
+  API-0358, API-0359, API-0370). This is a verb-axis pivot
+  (GET -> POST) after the twelve-entry GET sub-roster
+  API-0371..API-0382, and a slug-prefix pivot from `read*`
+  passive readers to `reload*` mutating actions. It is the
+  second POST on the settings/* roster after API-0370
+  `getUpdateData` broke the eleven-entry POST opener -> GET
+  streak.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` -- appended the
+    API-0383 case literal to the `coveredAPIOperations` slice.
+  - `ralph/prd.json` -- set API-0383 `passes: true`.
+  - `ralph/progress.txt` -- this entry.
+- **Verification run**:
+  - `gofmt -w .` -- clean.
+  - `go mod tidy` -- clean.
+  - `go vet ./...` -- clean.
+  - `go test ./...` -- all packages pass; `internal/cli` runs
+    the new `API-0383/settings-reloadRedis` registry, schema,
+    manifest, success-leg, and failure-leg subtests
+    end-to-end through the production exit-code path
+    (1.118s).
+  - `go test -race ./...` -- all packages pass (2.730s).
+- **Tools NOT available locally** (unchanged): `goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`.
+- **Remaining risks / follow-ups**:
+  - 291 PRD stories still have `passes: false`; next in the
+    settings/* roster per PRD ordering is API-0384
+    `settings-reloadServer` -- a sibling `reload*` POST that
+    direct spec inspection confirms is structurally identical
+    to API-0383 (no `requestBody`, zero parameters,
+    200/400/401/403/500). The next contributor must still
+    re-verify against `internal/api/data/openapi.json >
+    /settings.reloadServer > post` per the forward-reference
+    lesson; the parameter, request-body, response-set, and
+    verb axes must each be re-verified per-operation rather
+    than inherited from this entry.
+  - API-0385 `settings-reloadTraefik` is the third `reload*`
+    peer and is already known from preliminary spec inspection
+    to declare an OPTIONAL `requestBody` with an OPTIONAL
+    `serverId` field -- the first `reload*` peer to break the
+    no-body shape. The forward-reference in API-0383's
+    in-source design-rationale flags this so the API-0384/0385
+    contributor does not blindly inherit from this entry.
+- **Learnings for future iterations**:
+  - **No-body POST shape is now the dominant settings/*
+    mutating-action shape.** Six of the settings/* POSTs
+    covered so far (API-0354 `cleanAllDeploymentQueue`,
+    API-0357 `cleanMonitoring`, API-0358 `cleanRedis`,
+    API-0359 `cleanSSHPrivateKey`, API-0370 `getUpdateData`,
+    and now API-0383 `reloadRedis`) declare no `requestBody`
+    field at all. This is structurally distinct from the
+    optional-body POSTs (API-0351 `assignDomainServer`,
+    API-0353 `cancelQueues`, API-0355 `cleanGitProvider`,
+    API-0356 `cleanLogs`, API-0360 `cleanSwarm`, API-0361
+    `cleanTemporaryLogs`, API-0362 `cleanUnusedVolumes`).
+    Both shapes share the same 200/400/401/403/500 response
+    set (no 404); only the request-body axis differs.
+    Future settings/* POST contributors should expect roughly
+    half of the roster to be no-body and the other half to be
+    optional-body, per the spec.
+  - **`reload*` slug prefix is a semantic-family hint, not a
+    contract guarantee.** API-0383 `reloadRedis` and
+    (predicted) API-0384 `reloadServer` are no-body POSTs;
+    API-0385 `reloadTraefik` is an optional-body POST with
+    an optional `serverId` field. The same `reload*` family
+    therefore straddles the request-body axis. The
+    slug-prefix-is-not-shape rule reasserted at
+    API-0371..API-0382 still holds; `reload*` is no exception.
+  - **The verb-axis flip-flop after a long GET cohort is now
+    a recurring pattern.** API-0370 broke an eleven-entry POST
+    opener (API-0351..API-0362) -> seven-entry GET cohort
+    (API-0363..API-0369) with a single POST, then the GET
+    cohort resumed (API-0371..API-0382, twelve entries),
+    then API-0383 broke it again with a POST. The
+    settings/* roster therefore has at least three verb
+    pivots so far. Per-operation re-verification stays the
+    only safe way to determine the next entry's verb; do not
+    assume verb continuity even within a same-prefix slug
+    family.
+  - **`reload*` actions are platform-wide, not per-resource.**
+    Like the `clean*` family, the `reload*` family operates
+    on a controller-owned global service (Redis, the Dokploy
+    server itself, Traefik) rather than a per-tenant resource;
+    this is why 404 is absent from the response set
+    (there is no per-resource lookup that could miss). The
+    optional `serverId` on `reloadTraefik` (API-0385)
+    optionally scopes the reload to a remote node but does
+    not make the operation per-resource in the
+    has-an-id-and-can-404 sense. Future `reload*` contributors
+    should not introduce 404 -> CodeNotFound coverage for
+    this family.
+  - **The empty-body, parameter-free, no-`requestBody` POST
+    shape requires ZERO production code changes -- only the
+    `apiCoverageCase` literal is needed, exactly mirroring
+    the API-0370 minimal-literal pattern. The harness's POST
+    branch with `len(SampleBody) == 0` skips the
+    `Content-Type` and body-round-trip assertions per the
+    `if len(tc.SampleBody) > 0` guard inside
+    `runAPICoverageSuccess`, and the failure leg defaults to
+    401 -> CodeAuth when `FailureStatus == 0`.
+---

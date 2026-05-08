@@ -10728,6 +10728,158 @@ var coveredAPIOperations = []apiCoverageCase{
 		// re-verification stays mandatory across every family
 		// transition.
 	},
+	{
+		StoryID:     "API-0383",
+		OperationID: "settings-reloadRedis",
+		Method:      http.MethodPost,
+		Path:        "/settings.reloadRedis",
+		Tag:         "settings",
+		// Thirty-third entry on the settings/* coverage roster,
+		// inheriting the `set-cov-*` per-tag fixture-isolation
+		// namespace established by API-0351
+		// `settings-assignDomainServer` and extended through
+		// API-0382 `settings-readWebServerTraefikConfig` (must
+		// not back-reference the closed `srv-cov-*`,
+		// `proj-cov-*`, `org-cov-*`, `compose-cov-*`,
+		// `app-cov-*`, `ai-cov-*`, or any other prior tag's
+		// namespace, per the per-tag isolation rule reasserted
+		// at API-0335..API-0382 and originally established at
+		// API-0246 `organization-active`).
+		//
+		// **Spec re-verified per the API-0345..API-0382
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json >
+		// /settings.reloadRedis > post`: a **POST** with **no
+		// `requestBody` field at all** (structurally identical
+		// to API-0354 `cleanAllDeploymentQueue`, API-0357
+		// `cleanMonitoring`, API-0358 `cleanRedis`, API-0359
+		// `cleanSSHPrivateKey`, and API-0370 `getUpdateData` —
+		// the spec declares no request body schema whatsoever,
+		// so the operation is a true no-input POST), **zero
+		// parameters** (no query, no path, no header). Responses
+		// 200/400/401/403/500 — note the **absence of 404**,
+		// matching the five no-body POST peers above and
+		// **diverging from API-0378..API-0382's 404-bearing GET
+		// sub-roster** that immediately preceded this entry. The
+		// 200 schema is `{}` with `additionalProperties: false`,
+		// matching every prior covered peer in the settings/*
+		// roster.
+		//
+		// **Family pivot — verb axis flips back to POST after
+		// a twelve-entry GET sub-roster.** The settings/* roster
+		// opened with eleven POSTs (API-0351 through API-0362),
+		// pivoted to seven GETs (API-0363..API-0369), pivoted
+		// back to a single POST at API-0370 `getUpdateData`,
+		// then ran a twelve-entry GET cohort (API-0371
+		// `getServerMetrics` through API-0382
+		// `readWebServerTraefikConfig`). API-0383
+		// `reloadRedis` pivots the verb axis back to POST — the
+		// second POST after the API-0370 break — and pivots the
+		// slug prefix from `read*` (passive readers returning
+		// configuration) to `reload*` (mutating actions that
+		// trigger an in-process reload of a managed Dokploy
+		// service). The slug-prefix-is-not-shape rule reasserted
+		// at API-0371..API-0382 still holds: `reload*` is a
+		// semantic family hint, not a contract guarantee, so the
+		// parameter, request-body, and response-set axes were
+		// each re-verified per-operation against the spec rather
+		// than inherited from API-0370 or any earlier POST peer.
+		//
+		// **Forward-reference confirmation — verb pivot
+		// predicted.** API-0382's hand-off comment correctly
+		// forecast the GET → POST verb pivot at API-0383 and
+		// explicitly cautioned that the parameter, request-body,
+		// and response-set axes had to be re-verified rather
+		// than inherited from API-0382 (the immediately-prior
+		// parameter-free GET) or API-0370 (the only prior
+		// settings/* POST). Direct inspection of
+		// `internal/api/data/openapi.json >
+		// /settings.reloadRedis > post` confirms the prediction
+		// was correct on the verb axis: this is a no-body,
+		// no-parameter POST. The response-set axis matches
+		// API-0370 (no 404), the parameter axis matches API-0370
+		// (zero parameters), and the request-body axis matches
+		// API-0370 (no `requestBody` field). The per-operation
+		// re-verification rule kept the contributor from
+		// accidentally promoting API-0382's `read*`-style
+		// 404-bearing response set onto a `reload*` mutating
+		// action — Dokploy mutating actions in this OpenAPI
+		// document consistently omit 404 because there is no
+		// per-resource lookup that could miss; the operation
+		// either succeeds in triggering the reload, fails
+		// authorization, or fails internally on the controller.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `set-cov-reloadRedis-0383` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared
+		//     across every per-tag roster and is unique
+		//     (verified: no collisions with API-0351..API-0382's
+		//     `set-cov-*` slugs, and orthogonal to every prior
+		//     tag's `srv-cov-*`, `proj-cov-*`, `org-cov-*`,
+		//     `compose-cov-*`, `app-cov-*`, `ai-cov-*`, etc.
+		//     namespaces). Even though no fixture-token literal
+		//     is materialised on the wire (the operation has no
+		//     body and no parameters), the slug is reserved for
+		//     any future schema-validator harness that walks the
+		//     `coveredAPIOperations` registry by `OperationID`.
+		//   * No `SampleQuery`, `SamplePathParams`, or
+		//     `SampleBody` literal is needed because the
+		//     operation declares no parameters and no body. The
+		//     harness's POST branch with `len(SampleBody) == 0`
+		//     skips the `Content-Type` and body-round-trip
+		//     assertions per the `if len(tc.SampleBody) > 0`
+		//     guard inside `runAPICoverageSuccess`, matching the
+		//     API-0370 precedent for no-body POSTs.
+		//
+		// 200 response in the spec is `{}` with
+		// `additionalProperties: false`, matching the canonical
+		// settings/* mutating-POST cohort. Leaving
+		// `SuccessResponse` unset lets the harness default to
+		// `{}` so the success leg stays terse.
+		//
+		// Failure leg: 401 → CodeAuth via the harness default
+		// (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""`
+		// → CodeAuth). 400 (CodeInvalidInput), 403, and 500 are
+		// also documented in the spec, but auth is the universal
+		// failure mode every Dokploy operation must re-prove, so
+		// the canonical 401 → CodeAuth representative stays for
+		// parity with every prior settings/* entry. 400 is not
+		// the distinguishing failure mode for a no-body POST
+		// (there is no payload to validate), so the harness
+		// default is the correct representative here.
+		//
+		// The next case in the settings/* roster per PRD
+		// ordering is API-0384 `settings-reloadServer` (declared
+		// a **POST** in the PRD, sharing the `reload*` mutating
+		// slug prefix with this entry). The next contributor
+		// must re-verify against `internal/api/data/openapi.json
+		// > /settings.reloadServer > post` per the
+		// forward-reference lesson before assuming any field is
+		// identical to this entry — the response-set axis
+		// (presence vs absence of 404), the parameter axis
+		// (zero vs one optional query — Dokploy reload actions
+		// occasionally take a `serverId` query to scope the
+		// reload to a remote node), and the request-body axis
+		// (none vs JSON) must each be re-verified per-operation.
+		// The same `reload*` slug prefix is no guarantee of
+		// identical shape: API-0385 `reloadTraefik` (the third
+		// `reload*` peer in PRD order) is already known from
+		// preliminary spec inspection to declare an OPTIONAL
+		// `requestBody` with an OPTIONAL `serverId` field — the
+		// first `reload*` peer to break the no-body shape — so
+		// adjacent `reload*` entries can and do sit on opposite
+		// sides of the request-body axis. Per the
+		// slug-prefix-is-not-shape lesson reasserted at
+		// API-0371..API-0382 and the verb-axis lesson reasserted
+		// at API-0370/API-0383, do not assume the parameter
+		// list, request body, or response set carries over from
+		// this entry to API-0384. The parameter-axis flip-flop
+		// across API-0371..API-0383 is now twelve entries deep
+		// and crosses the verb axis at API-0383; per-operation
+		// re-verification stays mandatory across every family
+		// transition.
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
