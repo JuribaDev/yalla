@@ -21780,3 +21780,93 @@ forward-reference lesson before assuming any field shape.
     `apiCoverageCase` insertion under the existing harness — no new
     test scaffolding required.
 ---
+## 2026-05-09 - API-0275 - Cover postgres-move (POST /postgres.move)
+- What was implemented:
+  - Added a new `apiCoverageCase` entry for API-0275 `postgres-move`
+    to `coveredAPIOperations` in
+    `internal/cli/api_coverage_test.go`, inserted in StoryID-sorted
+    order between API-0274 `postgres-deploy` and API-0290
+    `project-all`.
+  - This story is the **fourth entry on the postgres/* coverage
+    roster** and continues inside the `postgres-cov-*` per-tag
+    fixture-isolation namespace opened by API-0272 at the kickoff
+    case. Completes the forward reference embedded in the API-0274
+    closing block ("The next case in the PRD-ordered priority-4
+    backlog is API-0275 `postgres-move`").
+  - Spec re-verified per the API-0345..API-0444 forward-reference
+    lesson against `internal/api/data/openapi.json` >
+    `/postgres.move` > `post`: method POST, tag postgres, **no
+    parameters**, requestBody REQUIRED with `application/json` and
+    **two** REQUIRED top-level scalars `postgresId` (string) and
+    `targetEnvironmentId` (string), responses 200/400/401/403/500
+    (no 404). The 200 response is `{}` with `additionalProperties:
+    false`, matching every prior covered peer in the empty-success
+    cohort.
+  - Shape positioning: **two-required-string-scalar POST imperative-
+    action move-mutation, body REQUIRED.** This is a *new* shape
+    inside the postgres/* roster — prior entries were single-id
+    POST (API-0272, API-0274) or five-required-scalar create
+    (API-0273). Matches the resource-relocation signature shared
+    with `application-move`, `compose-move`, `mariadb-move`,
+    `mongo-move`, and `mysql-move`.
+  - Family choice: **harness-default 401→CodeAuth retained.** No 404
+    in the spec → 404→CodeNotFound override is structurally
+    inapplicable. 400→CodeInvalidInput is technically available but
+    the harness reserves 400 representatives for stories where
+    payload validation is the operation's uniquely distinguishing
+    failure mode. Move-mutations that gate on body-supplied ids
+    collapse to type-checking, so 401→CodeAuth stays the
+    representative single failure mode (consistent with the
+    postgres/* kickoff at API-0272 and continued at API-0273 /
+    API-0274).
+  - Fixture token base `postgres-cov-move-0275` follows the
+    established `<tag>-cov-<slug>-<storyID>` naming convention and
+    is verified non-colliding with API-0272's
+    `postgres-cov-changeStatus-0272`, API-0273's
+    `postgres-cov-create-0273`, and API-0274's
+    `postgres-cov-deploy-0274` literals.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (new case entry + comment block)
+  - `ralph/prd.json` (set `passes: true` for API-0275)
+  - `ralph/progress.txt` (this entry)
+- Verification run from repo root:
+  - `gofmt -l .` — clean
+  - `go mod tidy` — clean
+  - `go vet ./...` — pass
+  - `go test ./...` — pass (cli 1.554s)
+  - `go test -race ./...` — pass (cli 5.224s)
+  - Targeted: `go test ./internal/cli -run 'TestAPICoverage/API-0275' -v`
+    — all five API-0275/postgres-move subtests PASS (Registry,
+    Schema, Manifest, SuccessRoundTrip, RepresentativeFailure).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — not installed locally, deferred per
+    Codebase-Patterns guidance.
+- Remaining risks or follow-ups: none — coverage matches the
+  established `*-move` peer pattern (mariadb-move / mongo-move /
+  mysql-move). Next priority-4 backlog case is API-0276
+  `postgres-one` (continues the `postgres-cov-*` per-tag fixture-
+  isolation namespace; spec must be re-verified before assuming any
+  field shape).
+- **Learnings for future iterations:**
+  - **Two-required-string-scalar `*-move` peer template is now
+    re-asserted for postgres/*.** The mysql-move case at API-0197
+    (`internal/cli/api_coverage_test.go:15869`) is the canonical
+    template for any future `*-move` peer: two REQUIRED top-level
+    string scalars (`<tag>Id`, `targetEnvironmentId`), no optional
+    fields, no 404, harness-default 401→CodeAuth representative
+    failure. Future `redis-move` (API-0305), `mariadb-move`
+    (already at API-0163), and other tag `*-move` peers should
+    grep `OperationID: "mysql-move"` first.
+  - **PRD priority semantics confirmed: lower number = higher
+    priority.** Priority 1 is most urgent, priority 5 least.
+    Open story queue is sorted by priority asc then StoryID asc.
+    Current open backlog is priority 4 (43 stories) then priority
+    5 (84 stories) — 127 open out of 462 total.
+  - **postgres/* roster forward-reference chain still intact.** The
+    API-0274 closing block correctly forward-referenced API-0275
+    `postgres-move`, and the API-0275 closing block now forward-
+    references API-0276 `postgres-one` (declared GET per spec
+    preview; must be re-verified). The `postgres-cov-*` namespace
+    remains open and is owned by API-0272→API-0285 (all eleven
+    postgres/* peers).
+---

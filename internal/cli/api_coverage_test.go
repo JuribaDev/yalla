@@ -18956,6 +18956,122 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0275",
+		OperationID: "postgres-move",
+		Method:      http.MethodPost,
+		Path:        "/postgres.move",
+		Tag:         "postgres",
+		// Fourth entry on the postgres/* coverage roster, immediately
+		// following API-0274 `postgres-deploy` and completing the
+		// forward reference embedded in that entry's comment block
+		// ("The next case in the PRD-ordered priority-4 backlog is
+		// API-0275 `postgres-move`"). Continues inside the
+		// `postgres-cov-*` per-tag fixture-isolation namespace opened
+		// by API-0272 `postgres-changeStatus` and **must not**
+		// back-reference any closed prior-tag namespace (`admin-cov-*`,
+		// `ai-cov-*`, `app-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		// `cert-cov-*`, `clu-cov-*`, `compose-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `docker-cov-*`,
+		// `domain-cov-*`, `environment-cov-*`, `gitea-cov-*`,
+		// `github-cov-*`, `gitlab-cov-*`, `mariadb-cov-*`,
+		// `mongo-cov-*`, `mounts-cov-*`, `mysql-cov-*`, `org-cov-*`,
+		// `port-cov-*`, `proj-cov-*`, `set-cov-*`, `srv-cov-*`,
+		// `swarm-cov-*`, `usr-cov-*`, etc.) per the per-tag isolation
+		// rule reasserted at API-0335..API-0444 and originally
+		// established at API-0246 `organization-active`.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-reference
+		// lesson** against `internal/api/data/openapi.json` >
+		// `/postgres.move` > `post`: method POST, tag postgres, **no
+		// parameters**, requestBody REQUIRED with `application/json`
+		// and **two** REQUIRED top-level scalars `postgresId` (string)
+		// and `targetEnvironmentId` (string), responses
+		// 200/400/401/403/500. The 200 response is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort. **No 404** is declared on
+		// this operation, mirroring the action-on-known-id POST
+		// precedent reasserted at API-0162 `mariadb-deploy`, API-0163
+		// `mariadb-move`, API-0176 `mongo-deploy`, API-0177
+		// `mongo-move`, API-0196 `mysql-deploy`, API-0197
+		// `mysql-move`, and API-0274 `postgres-deploy` (a body-bearing
+		// imperative-action POST whose missing-target failure mode
+		// collapses into 400/validation under Dokploy's tRPC convention
+		// rather than a dedicated 404 leg).
+		//
+		// **Request body schema (REQUIRED top-level fields):**
+		//   - REQUIRED `postgresId` (string) — opaque, non-nullable,
+		//     non-enum scalar identifying the source postgres resource
+		//     to move.
+		//   - REQUIRED `targetEnvironmentId` (string) — opaque,
+		//     non-nullable, non-enum scalar identifying the destination
+		//     environment to move the resource into.
+		//   - **No optional fields.** postgres-move has zero optional
+		//     fields, so the API-0131 `gitea-create` minimal-required-
+		//     only fixture rule is trivially satisfied. The fixture
+		//     supplies exactly the two REQUIRED fields and nothing
+		//     else; the harness's `len(tc.SampleBody) > 0` gate at
+		//     `runAPICoverageSuccess` activates the JSON content-type
+		//     and byte-for-byte body comparison legs.
+		//
+		// **Shape positioning — two-required-string-scalar POST
+		// imperative-action move-mutation, body REQUIRED.** Both
+		// REQUIRED slots are plain non-nullable `type: string` (no
+		// `anyOf` / `nullable` / enum constraints). This is a *new*
+		// shape inside the postgres/* roster — the prior postgres/*
+		// entries carried either a single-id POST (API-0272
+		// `postgres-changeStatus`, API-0274 `postgres-deploy`) or a
+		// five-required-scalar create POST (API-0273 `postgres-create`).
+		// The two-required-string-scalar move shape is the resource-
+		// relocation signature shared with `application-move`,
+		// `compose-move`, `mariadb-move`, `mongo-move`, and
+		// `mysql-move`; the harness assertions stay shape-agnostic so
+		// the 401→CodeAuth failure leg remains the representative
+		// single failure mode regardless.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so the
+		// 404→CodeNotFound override is structurally inapplicable.
+		// 400→CodeInvalidInput is *technically* available — a payload
+		// that omits either `postgresId` or `targetEnvironmentId`
+		// would fail server-side validation — but the harness reserves
+		// 400 representatives for stories where payload validation is
+		// the operation's *uniquely distinguishing* failure mode. A
+		// move-mutation that gates on body-supplied ids collapses to
+		// type-checking, so the harness-default 401→CodeAuth failure
+		// leg remains the most representative single failure mode
+		// every authenticated Dokploy operation must re-prove, and is
+		// consistent with the 401→CodeAuth choice locked in by the
+		// postgres/* kickoff at API-0272 `postgres-changeStatus` and
+		// continued at API-0273 `postgres-create` and API-0274
+		// `postgres-deploy`.
+		//
+		// **Fixture token base** `postgres-cov-move-0275` follows the
+		// established `<tag>-cov-<slug>-<storyID>` deterministic-but-
+		// clearly-fake naming convention and is verified non-colliding
+		// with API-0272's `postgres-cov-changeStatus-0272`, API-0273's
+		// `postgres-cov-create-0273`, and API-0274's
+		// `postgres-cov-deploy-0274` literals (different slug + storyID
+		// → unique under the `<tag>-cov-<slug>-<storyID>` rule).
+		//
+		// The next case in the PRD-ordered priority-4 backlog is
+		// API-0276 `postgres-one` (declared a **GET** per the spec
+		// preview; the next contributor must re-verify the spec
+		// against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will continue inside the `postgres-cov-*` per-tag
+		// fixture-isolation namespace opened by API-0272).
+		SampleBody: json.RawMessage(`{
+			"postgresId": "postgres-cov-move-0275-postgresId",
+			"targetEnvironmentId": "postgres-cov-move-0275-targetEnvironmentId"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the empty-success
+		// cohort. Empty-object body keeps the success-leg envelope
+		// assertion focused on `data.method` / `data.status` rather than
+		// payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0290",
 		OperationID: "project-all",
 		Method:      http.MethodGet,
