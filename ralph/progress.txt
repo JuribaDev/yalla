@@ -14219,3 +14219,58 @@ Learnings for future iterations:
       a single required query param) just because the previous
       entry was the immediate predecessor in the user/* roster.
 ---
+
+## 2026-05-08 - API-0111 - Cover docker-getContainersByAppNameMatch
+- Implemented coverage for Dokploy operation `docker-getContainersByAppNameMatch`
+  (GET /docker.getContainersByAppNameMatch) by appending a new
+  `apiCoverageCase` entry inside `internal/cli/api_coverage_test.go`
+  immediately after API-0110. The harness pipeline at
+  `runAPICoverageSuccess` / `runAPICoverageFailure` produces the
+  per-story success+failure assertions automatically once the case is
+  declared, so no command-layer or registry code changes were needed.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (new case block for API-0111)
+  - `ralph/prd.json` (passes flipped to true for API-0111)
+  - `ralph/progress.txt` (this entry)
+- Verification run:
+  - `gofmt -w .` -> clean
+  - `goimports -w .` -> not installed locally (documented; CI continues
+    to enforce). `go mod tidy` -> no module changes.
+  - `go vet ./...` -> clean
+  - `go test ./...` -> PASS (all packages)
+  - `go test -race ./...` -> PASS (cli pkg ran live; rest cached)
+- Results: green across the board. The new case exercises the success
+  leg by re-reading `r.URL.Query()` for `appType=docker-compose`,
+  `appName=docker-cov-get-containers-by-app-name-match-0111`, and
+  `serverId=server-cov-docker-get-containers-by-app-name-match-0111`,
+  and the failure leg by re-affirming the docker/* per-tag opener
+  invariant 401 -> CodeAuth -> exit code 4.
+- Remaining risks or follow-ups: none for API-0111. The next docker/*
+  story is API-0112 `docker-getServiceContainersByAppName` and remains
+  the natural home for the docker/* roster's 404 -> CodeNotFound
+  representative when the spec re-verification confirms 404
+  exercisability from a legitimate `--input` document.
+- **Learnings for future iterations:**
+  - The Edit tool requires a *unique* anchor; the closing
+    `SuccessResponse: `{}`,` plus the `API-0246` opener was reused
+    elsewhere, so anchoring on the API-0110 fixture token literals
+    immediately above made the substitution unambiguous. Future docker/*
+    inserts can follow the same pattern: anchor on the **previous**
+    case's `SampleQuery` literals plus its trailing `SuccessResponse`
+    plus the next case's `StoryID` line.
+  - The harness reads SampleQuery via the `--input` JSON `query` field
+    and re-checks `r.URL.Query()` at the success leg, so seeding
+    spec-legal enum values (`appType=docker-compose`, drawn from the
+    spec's `["stack","docker-compose"]` enum) keeps the fixture honest
+    even though the harness does not validate enum membership
+    client-side.
+  - Per-tag fixture-token namespacing must use the
+    `<tag>-cov-<slug>-<storyID>` pattern with the operation slug
+    (e.g. `docker-cov-get-containers-by-app-name-match-0111`); avoid
+    back-referencing closed namespaces from prior tags.
+  - Spec re-verification per the API-0345..API-0396 forward-reference
+    lesson is mandatory: even within a single tag, sub-shapes (REQUIRED
+    counts, enum constraints, parameter ordering) can differ, so always
+    open `internal/api/data/openapi.json` and look up the operation
+    before copying a peer's structure.
+---

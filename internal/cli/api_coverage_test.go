@@ -5703,6 +5703,117 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0111",
+		OperationID: "docker-getContainersByAppNameMatch",
+		Method:      http.MethodGet,
+		Path:        "/docker.getContainersByAppNameMatch",
+		Tag:         "docker",
+		// **Fourth entry in the docker/* roster** following API-0108
+		// `docker-getConfig`, API-0109 `docker-getContainers`, and
+		// API-0110 `docker-getContainersByAppLabel`. Stays inside the
+		// `docker-cov-*` per-tag fixture-isolation namespace opened
+		// at API-0108 and **must not** back-reference any closed
+		// `admin-cov-*`, `ai-cov-*`, `app-cov-*`, `backup-cov-*`,
+		// `bb-cov-*`, `cert-cov-*`, `clu-cov-*`, `compose-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `org-cov-*`, `proj-cov-*`,
+		// `set-cov-*`, or `srv-cov-*` namespace. The `server-cov-*`
+		// fixture-token literal seen inside backup/* `serverId`
+		// payloads (API-0041) is a *value* shape from the cross-tag
+		// optional-serverId axis and is reused here verbatim for the
+		// optional `serverId` query parameter — that cross-tag
+		// convention is orthogonal to the per-tag namespace and is
+		// honoured by every operation that exposes an optional
+		// `serverId`.
+		//
+		// **Spec re-verified per the API-0345..API-0396
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json >
+		// /docker.getContainersByAppNameMatch > get`: a **GET** with
+		// **three query parameters** — `appType` (string enum
+		// OPTIONAL — accepts `"stack"` or `"docker-compose"`,
+		// scoping the lookup to a Docker Swarm stack or a
+		// docker-compose deployment), `appName` (string, REQUIRED —
+		// the application name prefix used for the substring match
+		// against running containers), and `serverId` (string,
+		// OPTIONAL — scopes the lookup to a specific Dokploy worker
+		// server when the deployment is replicated). No request
+		// body. Responses 200/400/401/403/404/500. The 200 schema
+		// is `{}` with `additionalProperties: false`, matching every
+		// prior covered peer in the empty-success cohort. The
+		// slug-prefix-is-not-shape lesson is honoured: this
+		// re-verification is a per-operation OpenAPI lookup, not an
+		// inheritance from API-0108 `docker-getConfig` (REQUIRED +
+		// OPTIONAL, two params), API-0109 `docker-getContainers`
+		// (OPTIONAL-only, one param), or API-0110
+		// `docker-getContainersByAppLabel` (REQUIRED + REQUIRED +
+		// OPTIONAL, three params). This entry is REQUIRED +
+		// OPTIONAL + OPTIONAL (three params with the REQUIRED/
+		// OPTIONAL split inverted relative to API-0110), a fourth
+		// distinct sub-shape inside the docker/* roster.
+		//
+		// **Shape positioning — REQUIRED + OPTIONAL + OPTIONAL GET,
+		// three query parameters with one enum-constrained
+		// OPTIONAL.** The harness does not gate on `required`-ness —
+		// every declared parameter is forwarded via `--input` JSON
+		// `query` and the success-leg `r.URL.Query()` re-read at
+		// `runAPICoverageSuccess` exercises end-to-end forwarding
+		// for all three. The enum-constrained OPTIONAL parameter
+		// (`appType`) gets a fixture value drawn from the spec's
+		// enum (`"docker-compose"`) — the harness does not validate
+		// enum membership client-side, but seeding a spec-legal
+		// value keeps the fixture honest and surfaces any future
+		// server-side enum coercion regression. The harness forwards
+		// SampleQuery via the `--input` JSON `query` field, and
+		// `runAPICoverageSuccess` re-reads `r.URL.Query()` to confirm
+		// the CLI propagated all params verbatim.
+		//
+		// **Family choice — harness-default 401 → CodeAuth failure
+		// leg.** The spec declares 404 for this operation (the
+		// `appName` substring may not match any running container),
+		// but per the per-tag opener convention re-affirmed at
+		// API-0108..API-0110, the docker/* 404→CodeNotFound
+		// representative is reserved for a peer where the spec
+		// re-verification confirms 404 is exercisable from a
+		// legitimate `--input` document AND the operation's failure
+		// semantics make the missing-row case the most
+		// representative leg. `appName`-keyed list endpoints surface
+		// `E_AUTH` before any application lookup runs when the
+		// bearer is missing/invalid, so 401→CodeAuth remains the
+		// universal failure mode every authenticated Dokploy
+		// operation must re-prove. A future docker/* id-bearing GET
+		// (API-0112 `docker-getServiceContainersByAppName`,
+		// API-0113 `docker-getStackContainersByAppName`) is the
+		// natural home for the docker/* roster's 404→CodeNotFound
+		// representative when the spec re-verification at that
+		// story confirms 404 exercisability. Per the established
+		// `<tag>-cov-<slug>-<storyID>` deterministic-but-clearly-
+		// fake naming convention, the fixture token base
+		// `docker-cov-get-containers-by-app-name-match-0111` keeps
+		// `git grep` traceable to this PRD story without colliding
+		// with API-0108 (`docker-cov-get-config-0108`), API-0109
+		// (`docker-cov-get-containers-0109`), or API-0110
+		// (`docker-cov-get-containers-by-app-label-0110`).
+		//
+		// The next case in the docker/* roster per PRD ordering is
+		// API-0112 `docker-getServiceContainersByAppName` (declared
+		// a **GET** per the spec preview; the next contributor must
+		// re-verify the spec against `internal/api/data/openapi.json`
+		// per the forward-reference lesson before assuming any field
+		// shape is identical to this entry — slug-prefix-is-not-shape
+		// applies even within the docker/* roster).
+		SampleQuery: map[string][]string{
+			"appType":  {"docker-compose"},
+			"appName":  {"docker-cov-get-containers-by-app-name-match-0111"},
+			"serverId": {"server-cov-docker-get-containers-by-app-name-match-0111"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,
