@@ -14931,3 +14931,63 @@ Learnings for future iterations:
     over across method boundaries — only spec-derived shape
     inheritance breaks.
 ---
+
+## 2026-05-08 - API-0118 - Cover domain-create (POST /domain.create)
+- Added a fourth `domain/*` entry to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go`, exercising `domain-create`
+  (POST /domain.create). The case carries the REQUIRED `host` field
+  in `SampleBody` (the only required property per the
+  `internal/api/data/openapi.json` request-body schema) and a 200
+  `{}` `SuccessResponse`, matching the empty-success cohort
+  precedent set by every prior covered peer. Continues the
+  `domain-cov-*` per-tag fixture-isolation namespace opened at
+  API-0115 with token base `domain-cov-create-0118`.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (single new case appended
+    after API-0117 `domain-canGenerateTraefikMeDomains`).
+  - `ralph/prd.json` (`API-0118.passes` flipped `false` → `true`).
+  - `ralph/progress.txt` (this entry).
+- Verification run: `gofmt -w internal/cli/api_coverage_test.go`,
+  `go vet ./...`, `go test ./...`, `go test -race ./...`.
+- Results: gofmt clean, vet clean, all packages pass under both
+  the standard and race-enabled test runs (`internal/cli` 1.317s
+  / 2.857s respectively). `goimports`, `golangci-lint`,
+  `staticcheck`, `govulncheck`, and `goreleaser` remain not
+  installed locally and stay documented as missing rather than
+  silently skipped (per the API-0001..API-0117 precedent).
+- Remaining risks or follow-ups: optional request-body fields
+  (`path`, `port`, `https`, `applicationId`, `certificateType`,
+  `customCertResolver`, `composeId`, `serviceName`, `domainType`,
+  `previewDeploymentId`, `internalPath`, `stripPath`) are
+  intentionally omitted from the fixture; future contributors who
+  want optional-field coverage should add a follow-up story rather
+  than expanding this minimal positive case. The next case in the
+  PRD-ordered priority-3 backlog is API-0119 `domain-delete`
+  (declared a POST per the spec preview; re-verify against
+  `internal/api/data/openapi.json` per the forward-reference
+  lesson before assuming any field shape, and continue inside the
+  `domain-cov-*` per-tag fixture-isolation namespace).
+- **Learnings for future iterations:**
+  - The `coveredAPIOperations` table-driven harness already
+    handles request-body forwarding, query forwarding, path-param
+    substitution, success-leg envelope assertion, and the
+    universal 401→CodeAuth failure leg; adding a new operation is
+    almost always **a single new struct literal** appended in
+    PRD-id order — no new helpers, no new harness paths.
+  - When the spec omits 404 from the response set (typical for
+    creation/mutation endpoints), do NOT reach for the
+    404→CodeNotFound override. Stick with the harness-default
+    401→CodeAuth failure leg, which mirrors the API-0114
+    `docker-restartContainer` precedent and the broader
+    `<tag>-create` mutation cohort.
+  - For POST cases with a required body, supply ONLY the
+    REQUIRED schema properties in `SampleBody`. The harness
+    asserts byte-for-byte body propagation, so optional fields
+    add fixture noise without strengthening the assertion. Use
+    the `<tag>-cov-<slug>-<storyID>` token convention so `git
+    grep` can trace any fixture string back to its PRD story.
+  - The `runAPICoverageSuccess` helper round-trips both `got` and
+    `want` through `json.Unmarshal`/`Marshal` before comparing,
+    so multi-line backtick-quoted JSON in `SampleBody` is safe;
+    no need to minify the fixture string by hand.
+---

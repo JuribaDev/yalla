@@ -6355,6 +6355,99 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0118",
+		OperationID: "domain-create",
+		Method:      http.MethodPost,
+		Path:        "/domain.create",
+		Tag:         "domain",
+		// Fourth entry in the domain/* roster, immediately following
+		// API-0115 `domain-byApplicationId`, API-0116
+		// `domain-byComposeId`, and API-0117
+		// `domain-canGenerateTraefikMeDomains`. Stays inside the
+		// `domain-cov-*` per-tag fixture-isolation namespace opened
+		// by API-0115 and **must not** back-reference any closed
+		// `admin-cov-*`, `ai-cov-*`, `app-cov-*`, `backup-cov-*`,
+		// `bb-cov-*`, `cert-cov-*`, `clu-cov-*`, `compose-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `docker-cov-*`,
+		// `org-cov-*`, `proj-cov-*`, `set-cov-*`, or `srv-cov-*`
+		// namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0441
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /domain.create > post`:
+		// a **POST** with **no parameters**, a **REQUIRED request
+		// body** whose only REQUIRED property is `host` (string).
+		// Optional properties cover the full Dokploy domain shape
+		// (`path`, `port`, `https`, `applicationId`,
+		// `certificateType`, `customCertResolver`, `composeId`,
+		// `serviceName`, `domainType`, `previewDeploymentId`,
+		// `internalPath`, `stripPath`) but only `host` is required
+		// to satisfy the schema. Responses 200/400/401/403/500 —
+		// note the spec does **not** declare 404 on this operation,
+		// so the canonical 404→CodeNotFound override is *not*
+		// available even though sibling domain/* operations like
+		// API-0115/API-0116/API-0117 declare 404 on their by-id
+		// reads. The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort. The wire shape
+		// resets from the parameter-bearing GET cohort that
+		// dominated API-0115..API-0117 to a request-body POST,
+		// mirroring the cross-tag mutation-POST precedent set by
+		// API-0114 `docker-restartContainer` (POST with REQUIRED
+		// `containerId` body) and the broader `<tag>-create`
+		// mutation cohort closed by prior tags.
+		//
+		// **Shape positioning — single-required-field POST
+		// mutation, body REQUIRED.** First domain/* roster entry
+		// that exercises the request-body forwarding path
+		// (API-0115..API-0117 are all GETs); the harness's
+		// `len(tc.SampleBody) > 0` gate at `runAPICoverageSuccess`
+		// activates the JSON content-type and byte-for-byte body
+		// comparison legs. The fixture supplies the REQUIRED
+		// `host` so the success path verifies the CLI propagated
+		// the body verbatim. Optional properties are intentionally
+		// omitted to keep the fixture minimal and shape-faithful;
+		// future contributors adding optional-field coverage
+		// should do so in a follow-up story rather than expanding
+		// this minimal positive case.
+		//
+		// **Family choice — harness-default 401 → CodeAuth failure
+		// leg.** The spec omits 404 from the response set
+		// (creation has no by-id lookup to miss), so the
+		// 404→CodeNotFound override is structurally inapplicable
+		// here. Per the API-0114 `docker-restartContainer`
+		// precedent and the broader bitbucket/* and `<tag>-create`
+		// mutation precedent — fleet-wide mutation endpoints
+		// surface `E_AUTH` before any persistence runs when the
+		// bearer is missing/invalid, so 401→CodeAuth remains the
+		// universal failure mode every authenticated Dokploy
+		// operation must re-prove. Per the established
+		// `<tag>-cov-<slug>-<storyID>` deterministic-but-clearly-
+		// fake naming convention, the fixture token base
+		// `domain-cov-create-0118` keeps `git grep` traceable to
+		// this PRD story without colliding with API-0115
+		// (`domain-cov-by-application-id-0115`), API-0116
+		// (`domain-cov-by-compose-id-0116`), or API-0117
+		// (`domain-cov-can-generate-traefik-me-domains-0117`).
+		//
+		// The next case in the PRD-ordered priority-3 backlog is
+		// API-0119 `domain-delete` (declared a **POST** per the
+		// spec preview; the next contributor must re-verify the
+		// spec against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field
+		// shape, and will continue inside the `domain-cov-*`
+		// per-tag fixture-isolation namespace).
+		SampleBody: json.RawMessage(`{
+			"host": "domain-cov-create-0118.example.com"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,
