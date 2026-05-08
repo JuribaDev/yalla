@@ -3466,3 +3466,62 @@
     contiguous five-entry block of application/save*Provider coverage
     that future readers can pattern-match in a single screenful.
 ---
+
+## 2026-05-08 - API-0035
+- **Implemented**: Coverage entry for the GET `/application.search` Dokploy
+  operation (`application-search`). Appends a single `apiCoverageCase` to
+  `coveredAPIOperations` so the existing harness automatically proves
+  registry presence, schema reachability, manifest inclusion, an httptest-
+  backed success leg with verbatim query-param round-trip, and a 401 →
+  `E_AUTH` failure leg — all without new helper code.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — append API-0035 entry. Method
+    `GET`, path `/application.search`, tag `application`, no body.
+    `SampleQuery` populates a representative subset (`q`, `owner`,
+    `limit`, `offset`) of the spec's 11 all-optional parameters; numeric
+    values (`limit`/`offset`) travel as decimal strings to match the
+    untyped wire grammar of HTTP query strings. `SuccessResponse: "{}"`
+    mirrors the spec's `additionalProperties:false` empty 200 body.
+  - `ralph/prd.json` — set API-0035 `passes: true`.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — `ok github.com/JuribaDev/yalla/internal/cli` (full
+    coverage harness incl. registry/schema/manifest/success/failure
+    legs).
+  - `go test -race ./...` — clean.
+- **Tools NOT available locally** (per the verification policy):
+  `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`.
+- **Remaining risks / follow-ups**:
+  - The fixture only exercises 4 of 11 query parameters. That is
+    intentional (representative coverage of free-text + scoped filter +
+    numeric pagination) but a future schema-validator wiring may want
+    to extend the case to all 11 to lock the full param surface.
+  - `application-search` is the FIRST application/* coverage entry with
+    fully-optional query params. If a future Dokploy revision tightens
+    `required: true` on any of these fields, the registry-invariant
+    test will still pass but agents would silently get 4xx — only the
+    spec digest pinning (`sourceApi.sha256` in `ralph/prd.json` and
+    `EmbeddedSpecSHA256`) catches that drift.
+- **Learnings for future iterations**:
+  - All-optional query parameters are wire-valid empty: the harness
+    handles a fully-empty `SampleQuery` (see API-0006 `ai-getAll`) but
+    when params *do* exist the verbatim-comparator at
+    `runAPICoverageSuccess` insists they survive the
+    `--input.query` → request-URL round-trip exactly, including
+    multi-valued slices and ordering.
+  - Numeric-typed query params (`limit`/`offset`, both spec-typed as
+    `number`) are sent over the wire as their decimal-string form
+    inside `--input`'s `query: map[string][]string`. There is no
+    separate "numeric" query input shape; HTTP query strings are
+    untyped.
+  - When extending the coverage table with a new entry, prefer to
+    populate a *representative* subset of optional fields (free-text +
+    scoped + numeric) rather than the full surface. The
+    success-leg comparator is precise about whatever you put in; the
+    bigger the fixture, the larger the diff blast-radius if Dokploy
+    renames a param. Subset coverage hits the contract bits that
+    matter (verbatim CLI propagation + numeric grammar) without
+    over-specifying.
+---

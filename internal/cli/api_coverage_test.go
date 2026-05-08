@@ -984,6 +984,49 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0035",
+		OperationID: "application-search",
+		Method:      http.MethodGet,
+		Path:        "/application.search",
+		Tag:         "application",
+		// Fourth GET-shaped application/* entry, and a STRUCTURAL FIRST
+		// for the application/* roster: every query parameter on
+		// /application.search is OPTIONAL (`required: false`). Prior
+		// application/* GETs (API-0021 / API-0022 / API-0023) all gated
+		// on at least one required string param, so this is the first
+		// case where a fully-empty query is wire-valid. The fixture
+		// nevertheless populates a representative subset so
+		// `runAPICoverageSuccess` can re-read `r.URL.Query()` and prove
+		// the CLI propagated every param verbatim — including the two
+		// numeric-typed params (`limit` / `offset`, both `number` per
+		// the spec) which travel through the `--input` JSON `query`
+		// field as strings (HTTP query strings are untyped on the
+		// wire). The PRD declares 11 parameters total: free-text `q`,
+		// the seven name/identity filters (`name`, `appName`,
+		// `description`, `repository`, `owner`, `dockerImage`),
+		// scoped-resource filters (`projectId`, `environmentId`), and
+		// the pagination pair (`limit`, `offset`). We exercise three
+		// representative slices so the harness covers (a) free-text
+		// search, (b) a scoped filter, and (c) numeric pagination —
+		// without bloating the fixture into a noisy 11-key map. Same
+		// `app-cov-<slug>-<storyID>` naming convention as API-0021/
+		// 0022/0023; deterministic-but-clearly-fake values keep diffs
+		// readable. Numeric values use the canonical decimal grammar
+		// (`"5"` / `"0"`) so a future schema validator that
+		// re-coerces query strings to numbers still accepts them.
+		SampleQuery: map[string][]string{
+			"q":      {"app-cov-search-q-0035"},
+			"owner":  {"app-cov-search-owner-0035"},
+			"limit":  {"5"},
+			"offset": {"0"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching every prior application/* peer. Empty-object body keeps
+		// the success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
