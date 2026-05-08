@@ -4257,3 +4257,38 @@
     the embedded spec and `coveredAPIOperations` is the only append point.
 
 ---
+
+## 2026-05-08 - API-0076
+- Implemented coverage for compose-getDefaultCommand
+  (GET /compose.getDefaultCommand).
+- Files changed:
+  - internal/cli/api_coverage_test.go: appended API-0076 case to
+    `coveredAPIOperations`. The op is structurally identical to
+    API-0075 (compose-getConvertedCompose): GET, single required
+    `composeId` query param, 200 body of `{}` with
+    additionalProperties:false. Re-used the slug convention
+    `compose-cov-<slug>-<storyID>`. The append-only registry-driven
+    harness handles registry/schema/manifest/success/failure assertions.
+  - ralph/prd.json: API-0076.passes = true.
+- Verification run from repo root:
+  - gofmt -w . — clean (no diffs).
+  - go mod tidy — no diff.
+  - go vet ./... — clean.
+  - go test ./... — all packages pass.
+  - go test -race ./... — all packages pass under the race detector.
+  - goimports / golangci-lint / staticcheck / govulncheck / goreleaser
+    not installed locally; documented as missing per project convention.
+- Remaining risks / follow-ups:
+  - 400 stories still pending. Next compose/* GET roster member is
+    API-0077 (compose-getTags); once API-0080 (compose-killBuild) and
+    other POSTs land, the GET-vs-POST split will rebalance again.
+- **Learnings for future iterations:**
+  - When a sibling story (API-0075) already implemented an identical
+    spec shape, the new entry is a near-verbatim copy of the prior
+    fixture with the slug rotated. Re-confirmed by re-reading
+    `data/openapi.json > /compose.getDefaultCommand > get` rather than
+    assuming based on title text.
+  - The `coveredAPIOperations` slice is the single append point — no
+    registry/schema/manifest code change is required when the
+    operation already lives in the embedded spec.
+---

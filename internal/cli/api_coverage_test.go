@@ -1464,6 +1464,34 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0076",
+		OperationID: "compose-getDefaultCommand",
+		Method:      http.MethodGet,
+		Path:        "/compose.getDefaultCommand",
+		Tag:         "compose",
+		// Second GET-shaped entry in the compose/* coverage roster, sibling
+		// of API-0075 (compose-getConvertedCompose). The spec at
+		// `data/openapi.json > /compose.getDefaultCommand > get` declares no
+		// request body, a single required query parameter `composeId`
+		// (string), and a 200 body of `{}` with `additionalProperties:
+		// false` — i.e. structurally identical to API-0075. We mirror that
+		// fixture verbatim, only swapping the slug to keep the
+		// `compose-cov-<slug>-<storyID>` convention every prior compose/*
+		// case has used (API-0066/0067/0068/0070/0073/0074/0075). The
+		// harness forwards SampleQuery via the `--input` JSON `query` field,
+		// and runAPICoverageSuccess re-reads `r.URL.Query()` to confirm the
+		// CLI propagated the param verbatim.
+		SampleQuery: map[string][]string{
+			"composeId": {"compose-cov-get-default-command-0076"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the empty-success convention shared by every prior
+		// application/* and compose/* peer. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
