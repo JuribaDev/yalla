@@ -1432,6 +1432,38 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0075",
+		OperationID: "compose-getConvertedCompose",
+		Method:      http.MethodGet,
+		Path:        "/compose.getConvertedCompose",
+		Tag:         "compose",
+		// First GET-shaped entry in the compose/* coverage roster — every
+		// prior compose/* story (API-0066..API-0074) was a POST, so this
+		// is a STRUCTURAL FIRST for the tag. Mirrors the schema in
+		// `data/openapi.json` for /compose.getConvertedCompose: no
+		// request body, a single required query parameter `composeId`
+		// (string). The application/* roster's analogous "single
+		// composeId/applicationId GET" precedents are API-0021
+		// (application-one) and API-0023 (application-readTraefikConfig);
+		// we follow their fixture shape verbatim, just swapping the
+		// `app-cov-<slug>-<storyID>` slug for the `compose-cov-<slug>-
+		// <storyID>` convention every prior compose/* POST has used
+		// (API-0066/0067/0068/0070/0073/0074). The harness forwards
+		// SampleQuery via the `--input` JSON `query` field, and the
+		// success-leg assertion at runAPICoverageSuccess re-reads
+		// `r.URL.Query()` to confirm the CLI propagated the param
+		// verbatim.
+		SampleQuery: map[string][]string{
+			"composeId": {"compose-cov-get-converted-compose-0075"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the empty-success convention shared by every prior
+		// application/* and compose/* peer. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

@@ -4217,3 +4217,43 @@
     Future compose/* stories should still re-read the spec — sibling
     operations under the same tag continue to mix shapes.
 ---
+
+## 2026-05-08 - API-0075
+- Implemented coverage for compose-getConvertedCompose
+  (GET /compose.getConvertedCompose).
+- Files changed:
+  - internal/cli/api_coverage_test.go: appended API-0075 case to
+    `coveredAPIOperations` (the append-only registry-driven harness
+    handles registry/schema/manifest/success/failure assertions).
+  - ralph/prd.json: API-0075.passes = true.
+- Verification run from repo root:
+  - gofmt -w . — clean.
+  - go mod tidy — no diff.
+  - go vet ./... — clean.
+  - go test ./... — all packages pass.
+  - go test -race ./... — all packages pass under the race detector.
+  - goimports / golangci-lint / staticcheck / govulncheck / goreleaser
+    not installed locally; documented as missing per project convention.
+- Remaining risks / follow-ups:
+  - 401 stories still report passes:false. Next compose/* GET stories
+    (API-0076 compose-getDefaultCommand, API-0077 compose-getTags) can
+    reuse this entry's structure verbatim — same single-required-string-
+    query-param shape (`composeId`).
+- Learnings for future iterations:
+  - This is the FIRST GET-shaped entry in the compose/* coverage roster
+    (API-0066..API-0074 were all POST). The append-only harness in
+    `coveredAPIOperations` is so well-factored that adding the first GET
+    in a tag is still a one-struct-literal change — `SampleQuery` carries
+    the wire params and the harness's `runAPICoverageSuccess` re-reads
+    `r.URL.Query()` to assert verbatim propagation.
+  - The application/* roster's analogous "single-id GET" precedents are
+    API-0021 (application-one) and API-0023 (application-readTraefikConfig).
+    The naming convention `<tag>-cov-<slug>-<storyID>` keeps fixture
+    values deterministic-but-clearly-fake while remaining trivially
+    greppable across compose/application/ai tag families.
+  - No registry, schema, or manifest code change is required when adding
+    coverage for an operation that already lives in
+    `internal/api/data/openapi.json` — the registry is auto-derived from
+    the embedded spec and `coveredAPIOperations` is the only append point.
+
+---
