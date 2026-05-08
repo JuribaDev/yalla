@@ -3582,3 +3582,50 @@
     mirrors the existing convention (cancel-deploy, clean-queues,
     clear-deploys, delete, redeploy).
 ---
+
+## 2026-05-08T04:34Z - API-0037
+- Added the apiCoverageCase entry for `application-stop` (POST /application.stop)
+  to `internal/cli/api_coverage_test.go`, mirroring the API-0036
+  (`application-start`) shape because the OpenAPI schema for `application.stop`
+  is byte-equivalent: required `applicationId: string`, no optional siblings,
+  `200 → {}` with `additionalProperties: false`.
+- The harness (TestAPICoverage_*) automatically derives registry / schema /
+  manifest / httptest success / 401-failure assertions from each entry, so
+  no additional production code or per-story test was required.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (+22 lines)
+  - `ralph/prd.json` (passes flip on API-0037)
+  - `ralph/progress.txt` (this entry)
+- Verification run:
+  - `gofmt -w .` ✓
+  - `go mod tidy` ✓ (no diff)
+  - `go vet ./...` ✓
+  - `go test ./...` ✓
+  - `go test -race ./...` ✓
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`
+    not installed locally — documented and skipped consistently with prior
+    iterations.
+- Remaining risks: none specific to this story. The shared coverage harness
+  scales as long as future POST /application.* endpoints stay
+  `{applicationId}`-only; richer schemas (e.g. update / saveEnvironment) need
+  fuller `SampleBody` fixtures already established in earlier stories.
+- **Learnings for future iterations:**
+  - Verify the OpenAPI schema before assuming "same as the previous one":
+    a 30-second `paths['/application.<verb>'].post.requestBody.content[
+    'application/json'].schema` check via ctx_execute_file confirms the body
+    shape and saves a debugging round-trip if it diverges.
+  - The minimal-applicationId POST family inside `/application.*` (cancelDeployment,
+    cleanQueues, clearDeployments, delete, redeploy, start, stop) is now seven
+    operations strong; the pattern is to reuse the same comment block citing
+    the family so future spelunkers can grep `applicationId POST family` and
+    land on any sibling story.
+  - The PRD JSON edit can be done safely with `json.load`/`json.dump` at
+    indent=2 — that matches the existing file convention exactly and avoids
+    whitespace churn that would balloon the diff. A regex flip is unnecessary.
+  - `go test ./...` runs in <1s after the registry hits its embedded-spec
+    cache; the race build is the one that takes the bulk of the wall time
+    (~2.5s for `internal/cli`). Don't worry about cache-bust flags for
+    coverage-only stories — `-count=1` is sufficient if you suspect cache
+    skew, but plain `go test ./...` is enough when you've just edited a
+    test file.
+---
