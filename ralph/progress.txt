@@ -9089,3 +9089,101 @@ Learnings for future iterations:
     to be documented as missing rather than silently skipped —
     same status as every prior settings/* coverage story.
 ---
+
+## 2026-05-08 - API-0051 - Cover bitbucket-bitbucketProviders (GET /bitbucket.bitbucketProviders)
+- Implemented contract coverage for the FIRST bitbucket-tagged
+  operation: `bitbucket-bitbucketProviders`. This is a tag-opener
+  story (the bitbucket/* roster previously had zero coverage),
+  joining the precedent set by API-0001 `admin-setupMonitoring`,
+  API-0002 `ai-create`, API-0011 `application-cancelDeployment`,
+  API-0040 `backup-create`, API-0066 `compose-cancelDeployment`,
+  API-0094 `deployment-all`, API-0246 `organization-active`,
+  API-0290 `project-all`, API-0335 `server-all`, and API-0351
+  `settings-assignDomainServer`.
+- The operation is a parameter-free GET with response set
+  200/400/401/403/404/500 — same wire shape as the
+  parameter-free GET cohort opened by API-0006 `ai-getAll` and
+  re-asserted at API-0335 `server-all`, API-0350
+  `server-withSSHKey`, API-0352 `settings-checkGPUStatus`, and
+  API-0363 `settings-getDokployCloudIps`.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended a 138-line
+    apiCoverageCase struct literal (entry #134, sorted by
+    StoryID between API-0050 backup-update and API-0066
+    compose-cancelDeployment per the diff-friendliness rule).
+    No SampleBody, SampleQuery, or SamplePathParams; failure-leg
+    defaults exercise the canonical 401 → CodeAuth mapping. The
+    comment establishes the new per-tag fixture-isolation
+    namespace `bb-cov-*` for the bitbucket/* roster (per the
+    rule established at API-0246) and pre-reserves the slot
+    `bb-cov-providers-0051` for any future regression test.
+  - `ralph/prd.json` — flipped `passes: true` for API-0051.
+  - `ralph/progress.txt` — this entry.
+- Verification: `gofmt -w .`, `go mod tidy`, `go vet ./...`,
+  `go test ./...`, `go test -race ./...` all green.
+- Results: API coverage advances from 145 → 146 passing /
+  462 total (316 remaining). The bitbucket/* tag now has its
+  first covered operation; six bitbucket/* peers remain
+  uncovered (`bitbucket-create`, `bitbucket-one`,
+  `bitbucket-getBitbucketRepositories`,
+  `bitbucket-getBitbucketBranches`,
+  `bitbucket-testConnection`, `bitbucket-update`).
+- Remaining risks / follow-ups:
+  - Future bitbucket/* peers must each re-verify their own
+    spec shapes per the API-0345..API-0363 forward-reference
+    lesson. Three peers carry `*Id` query parameters
+    (`bitbucket-one` 1 param, `*-getBitbucketRepositories` 1
+    param, `*-getBitbucketBranches` 3 params) — those peers
+    should consult API-0033 `application-readTraefikConfig`
+    (query-shaped GET precedent), not this entry.
+  - Three bitbucket/* peers are POST mutations
+    (`bitbucket-create`, `bitbucket-testConnection`,
+    `bitbucket-update`) with response set 200/400/401/403/500
+    (the canonical mutation set, **without 404**). They should
+    consult the cross-tag `*-create` / `*-update` precedents
+    (API-0292 `project-create`, API-0297 `project-update`,
+    API-0338 `server-create`) and re-derive each required
+    field from `internal/api/data/openapi.json` rather than
+    cargo-culting from sibling slugs.
+- **Learnings for future iterations:**
+  - **Tag-opener entries are the most expensive to author** —
+    they need to enumerate every prior namespace
+    (`admin-cov-*`, `ai-cov-*`, `app-cov-*`, `backup-cov-*`,
+    `compose-cov-*`, `deployment-cov-*`, `org-cov-*`,
+    `proj-cov-*`, `srv-cov-*`, `set-cov-*` so far) and
+    explicitly call out which namespace the new tag inherits
+    from, plus enumerate every forthcoming peer the new tag
+    will spawn so future contributors know where to grep.
+    Subsequent peers in the same tag are cheaper because they
+    can back-reference their tag-opener.
+  - **Compact tag prefix selection:** when picking a
+    `<prefix>-cov-*` token base for a new tag, prefer the
+    shortest unambiguous abbreviation (matching `ai`, `app`,
+    `srv`, `org`, `proj`, `set`). For `bitbucket`, the
+    two-letter `bb-` is unambiguous against every prior
+    namespace — `bit-` would collide with `bitbucket` itself
+    if a future feature needs a sub-namespace, and the full
+    `bitbucket-cov-*` would violate the compact-prefix
+    convention. Future tag-openers should similarly pick the
+    shortest unambiguous abbreviation.
+  - **Bitbucket-specific spec verification observation:** the
+    `bitbucket` tag has seven operations split 3 GET / 4 POST.
+    The three GETs all carry 404 in their response set; the
+    four POSTs do not (canonical mutation 200/400/401/403/500
+    set). This split is per-operation, not per-tag, and
+    matches the cross-tag pattern observed at every prior
+    roster — verify each operation's response set
+    individually rather than assuming a tag-wide rule.
+  - **Forward-reference lesson re-applied:** the next story
+    in the bitbucket/* roster, API-0052 `bitbucket-create`,
+    pivots onto a POST with a request body — do **not** assume
+    the body shape mirrors any other tag's `*-create` solely
+    because the slug matches; consult API-0292 / API-0338 for
+    the flat scalar-only mutation precedent, then re-derive
+    each required field from
+    `internal/api/data/openapi.json > /bitbucket.create > post`.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    and `goreleaser` remain not installed locally and continue
+    to be documented as missing rather than silently skipped —
+    same status as every prior tag-opener story.
+---
