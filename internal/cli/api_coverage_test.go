@@ -1770,6 +1770,155 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0052",
+		OperationID: "bitbucket-create",
+		Method:      http.MethodPost,
+		Path:        "/bitbucket.create",
+		Tag:         "bitbucket",
+		// Second entry on the bitbucket/* coverage roster and the
+		// **first mutation** in the bitbucket/* tag — opens the
+		// bitbucket/* mutation arc that succeeds the parameter-free
+		// GET kickoff at API-0051 `bitbucket-bitbucketProviders`.
+		// This entry is also the first bitbucket/* peer to populate
+		// `SampleBody` and therefore *opens the `bb-cov-*` slug
+		// namespace* reserved by API-0051's design-rationale header.
+		// Per the per-tag fixture-isolation rule established at
+		// API-0246 `organization-active`, reasserted at API-0290
+		// `project-all`, API-0335 `server-all`, API-0351
+		// `settings-assignDomainServer`, and re-asserted by
+		// API-0051's bitbucket/* kickoff: every subsequent
+		// bitbucket/* peer (API-0053..API-0057) inherits this
+		// `bb-cov-*` namespace and **must not** back-reference the
+		// `proj-cov-*` (API-0290..API-0297), `srv-cov-*`
+		// (API-0335..API-0350), `set-cov-*` (API-0351..API-0363),
+		// or any other prior tag's literals — even though the
+		// nearest cross-tag flat-scalar-only mutation precedents
+		// are API-0292 `project-create` and API-0338
+		// `server-create`.
+		//
+		// Spec source `internal/api/data/openapi.json >
+		// /bitbucket.create > post`: zero parameters, required
+		// `application/json` request body whose schema declares
+		// nine top-level scalar fields with **two required** and
+		// **seven optional** — no nested objects, no arrays, no
+		// enums, no `anyOf [string, null]` nullables:
+		//   - REQUIRED scalars: `authId` (string), `name` (string).
+		//   - OPTIONAL scalars (all plain string): `bitbucketId`,
+		//     `bitbucketUsername`, `bitbucketEmail`, `appPassword`,
+		//     `apiToken`, `bitbucketWorkspaceName`, `gitProviderId`.
+		// This is the **flattest mutation body in the cross-tag
+		// roster so far** — strictly stringly-typed with no number
+		// fields (unlike API-0338 `server-create` which carried
+		// `port: number`), no enum-pinned scalars (unlike API-0338
+		// which pinned `serverType: "deploy"`), and no
+		// `anyOf [string, null]` nullables (unlike API-0292
+		// `project-create`'s `description` and API-0338's
+		// `description` / `sshKeyId`). Future bitbucket/* peers
+		// must each re-verify their own spec shapes per the
+		// API-0345..API-0363 forward-reference lesson; this
+		// entry's flat-string-only shape **must not be cargo-
+		// culted** to the upcoming bitbucket/* mutation peers
+		// (API-0056 `bitbucket-testConnection`, API-0057
+		// `bitbucket-update`) without re-derivation from the
+		// embedded spec.
+		//
+		// Fixture conventions:
+		//   * Per the API-0010 / API-0014 / API-0249 / API-0292 /
+		//     API-0297 every-optional-populated rule, all seven
+		//     optionals are populated with deterministic-but-
+		//     clearly-fake values so the wire payload exercises
+		//     the entire envelope — not just the minimum-required
+		//     `authId` + `name` pair. The harness's success-leg
+		//     JSON round-trip body assertion observes this
+		//     end-to-end through the CLI → API client → httptest
+		//     server path.
+		//   * Per-case fixture token base `bb-cov-create-0052`
+		//     follows the `<tag>-cov-<slug>-<storyID>` convention
+		//     and stays unique across the bitbucket/* roster
+		//     (verified: no collisions with the future
+		//     `bb-cov-getBranches-0053`, `bb-cov-getRepos-0054`,
+		//     `bb-cov-one-0055`, `bb-cov-testConn-0056`,
+		//     `bb-cov-update-0057` slugs reserved for forthcoming
+		//     bitbucket/* peers, no collision with the reservation
+		//     slot `bb-cov-providers-0051` opened by API-0051's
+		//     design-rationale header, and no collisions with the
+		//     cross-tag `proj-cov-*` / `srv-cov-*` / `set-cov-*`
+		//     / `org-cov-*` namespaces).
+		//   * The two field names that *look* secret-like —
+		//     `appPassword` and `apiToken` — carry obviously-fake
+		//     `bb-cov-create-0052-*-fixture` literals so a casual
+		//     reader (or a future automated secret scanner) can
+		//     immediately tell these are coverage fixtures, not
+		//     real Bitbucket credentials. The harness's
+		//     `output.NewRedactor(flags.Token)` only scrubs the
+		//     explicit `--token` value (the harness sets
+		//     `Bearer test-token-value`) plus the well-known
+		//     transport patterns (`Authorization:`,
+		//     `X-Auth-Token:`, `?token=`); it does NOT match
+		//     embedded JSON keys named `appPassword` /
+		//     `apiToken`, so these literals round-trip through
+		//     the wire body without redactor interference. The
+		//     stdout-data-only / stderr-empty assertions on the
+		//     success leg therefore stay tight.
+		//   * `bitbucketEmail` carries a `@example.test` literal
+		//     per RFC 6761 reserved-for-documentation conventions
+		//     so the fixture cannot be mistaken for a real
+		//     mailbox.
+		//
+		// Responses 200/400/401/403/500 — note **no 404** is
+		// declared on `/bitbucket.create`, matching the canonical
+		// mutation response set already exercised by every prior
+		// `*-create` peer (API-0002 `ai-create`, API-0040
+		// `backup-create`, API-0292 `project-create`, API-0338
+		// `server-create`) and the broader cross-tag mutation
+		// cohort. Per the per-tag opener convention reasserted
+		// at API-0051's bitbucket/* design header, 404 →
+		// CodeNotFound stays reserved for the canonical by-id
+		// peer API-0055 `bitbucket-one`, not for this create
+		// mutation. The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer; the success-leg envelope assertion stays
+		// focused on `data.method` / `data.status` rather than
+		// payload projection.
+		//
+		// The representative-failure leg keeps the harness
+		// default (401 → CodeAuth) because auth is the universal
+		// failure every bitbucket/* peer must re-prove. 400 →
+		// CodeInvalidInput stays reserved for stories where
+		// payload validation is the operation's distinguishing
+		// failure mode (this entry's required-pair `authId` +
+		// `name` is too generic to claim that distinguishing
+		// shape); this entry uses the canonical 401, same as
+		// API-0051's kickoff.
+		//
+		// Future contributors picking up the next bitbucket/*
+		// peer (API-0053 `bitbucket-getBitbucketBranches`,
+		// expected to be a 3-query-parameter GET per the PRD)
+		// should grep API-0033 `application-readTraefikConfig`
+		// for the query-shaped GET precedent — **not this
+		// entry**, which is a flat-scalar-only POST mutation.
+		// Future `*-create` peers in other tags should grep this
+		// entry (or API-0292 / API-0338) for the every-optional-
+		// populated mutation pattern.
+		SampleBody: json.RawMessage(`{
+			"authId": "bb-cov-create-0052-authId",
+			"name": "yalla-coverage-bb-create-0052",
+			"bitbucketId": "bb-cov-create-0052-bitbucketId",
+			"bitbucketUsername": "bb-cov-create-0052-username",
+			"bitbucketEmail": "bb-cov-create-0052@example.test",
+			"appPassword": "bb-cov-create-0052-appPassword-fixture",
+			"apiToken": "bb-cov-create-0052-apiToken-fixture",
+			"bitbucketWorkspaceName": "bb-cov-create-0052-workspace",
+			"gitProviderId": "bb-cov-create-0052-gitProviderId"
+		}`),
+		// 200 response in the spec is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0066",
 		OperationID: "compose-cancelDeployment",
 		Method:      http.MethodPost,

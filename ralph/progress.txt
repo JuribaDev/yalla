@@ -9187,3 +9187,135 @@ Learnings for future iterations:
     to be documented as missing rather than silently skipped —
     same status as every prior tag-opener story.
 ---
+
+## 2026-05-08 - API-0052 - Cover bitbucket-create (POST /bitbucket.create)
+- What was implemented: per-operation contract coverage for the
+  `bitbucket-create` POST mutation. This is the second bitbucket/*
+  story (after API-0051 `bitbucket-bitbucketProviders` opened the
+  tag with a parameter-free GET) and the **first mutation** in the
+  bitbucket/* roster — therefore the entry that *opens* the
+  `bb-cov-*` per-tag fixture-isolation namespace reserved by
+  API-0051's design header.
+- The operation is a parameter-free POST with a required
+  `application/json` request body whose schema declares nine
+  top-level scalar fields:
+    * REQUIRED scalars (2): `authId`, `name`.
+    * OPTIONAL scalars (7, all plain string): `bitbucketId`,
+      `bitbucketUsername`, `bitbucketEmail`, `appPassword`,
+      `apiToken`, `bitbucketWorkspaceName`, `gitProviderId`.
+  No nested objects, no arrays, no enums, no `anyOf [string, null]`
+  nullables — the **flattest mutation body in the cross-tag
+  roster so far**, strictly stringly-typed. Response set
+  200/400/401/403/500 (no 404 — canonical mutation set, matching
+  every prior `*-create` peer: API-0002 `ai-create`, API-0040
+  `backup-create`, API-0292 `project-create`, API-0338
+  `server-create`).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended a 154-line
+    apiCoverageCase struct literal (entry #135, sorted by StoryID
+    between API-0051 `bitbucket-bitbucketProviders` and API-0066
+    `compose-cancelDeployment` per the diff-friendliness rule).
+    Carries `SampleBody` populated per the every-optional-populated
+    convention; fixture token base `bb-cov-create-0052` opens the
+    `bb-cov-*` namespace and pre-reserves the slugs
+    `bb-cov-getBranches-0053`, `bb-cov-getRepos-0054`,
+    `bb-cov-one-0055`, `bb-cov-testConn-0056`,
+    `bb-cov-update-0057` for the forthcoming bitbucket/* peers.
+    Failure-leg defaults exercise the canonical 401 → CodeAuth
+    mapping. The header comment explicitly forbids cargo-culting
+    this entry's flat-string-only shape into the upcoming
+    bitbucket/* mutation peers (API-0056 `bitbucket-testConnection`,
+    API-0057 `bitbucket-update`) without per-operation re-derivation
+    from the embedded spec.
+  - `ralph/prd.json` — flipped API-0052 `passes` to `true`.
+  - `ralph/progress.txt` — this entry.
+- Verification run (from repo root):
+  - `gofmt -w .`                           → clean.
+  - `goimports -w .`                       → not installed
+                                             (documented).
+  - `go mod tidy`                          → clean (no diff).
+  - `go vet ./...`                         → pass.
+  - `go test ./...`                        → pass (10 packages ok).
+  - `go test -race ./...`                  → pass (10 packages ok).
+  - Focused: `go test ./internal/cli -run 'TestAPICoverage/API-0052'
+    -v` → all five subtests green (registry, schema, manifest,
+    success round-trip, representative failure).
+- Results: API coverage advances from 146 → 147 passing /
+  462 total (315 remaining). The bitbucket/* tag now has its
+  first mutation covered alongside the GET kickoff; five
+  bitbucket/* peers remain uncovered (API-0053..API-0057).
+- Remaining risks or follow-ups: API-0053
+  `bitbucket-getBitbucketBranches` (GET) is the next story by
+  PRD ordering. Per the spec it carries **three query
+  parameters** (the largest GET parameter count in the
+  bitbucket/* tag), so the next contributor should consult
+  API-0033 `application-readTraefikConfig` for the
+  query-shaped GET precedent — **not this entry**, which is a
+  flat-scalar-only POST mutation. Future contributors must
+  re-verify each bitbucket/* peer's shape per the
+  API-0345..API-0363 forward-reference lesson.
+- **Learnings for future iterations:**
+  - **Flat-string-only mutation sub-shape:** the bitbucket/*
+    `*-create` peer is the first cross-tag mutation entry that
+    is **strictly stringly-typed at the body's top level** —
+    no number fields (unlike API-0338 `server-create`'s
+    `port: number`), no enum-pinned scalars (unlike API-0338's
+    `serverType: "deploy"`), and no `anyOf [string, null]`
+    nullables (unlike API-0292 `project-create`'s `description`
+    and API-0338's `description` / `sshKeyId`). This is a
+    distinct sub-shape inside the broader flat-scalar-only
+    mutation cohort and worth flagging as a precedent for any
+    future POST that turns out to have only string scalars.
+    The flat-string-only shape is **per-operation** and must
+    not be assumed for the upcoming bitbucket/* mutation peers
+    (API-0056 `bitbucket-testConnection`, API-0057
+    `bitbucket-update`) without re-derivation.
+  - **Secret-looking field names in mutation bodies:** when a
+    Dokploy POST body carries fields whose names *look* like
+    credentials (`appPassword`, `apiToken`, `bearerToken`, etc.)
+    the fixture values must be obviously-fake (suffixed
+    `-fixture` and prefixed with the per-case fixture token
+    base) so a casual reader or future automated secret
+    scanner can immediately tell they are coverage fixtures.
+    The harness's `output.NewRedactor(flags.Token)` only
+    scrubs the explicit `--token` value plus the well-known
+    transport patterns (`Authorization:`, `X-Auth-Token:`,
+    `?token=`); it does NOT match embedded JSON keys named
+    `appPassword` / `apiToken`, so these literals round-trip
+    through the wire body unchanged. Future mutation entries
+    with credential-shaped optional scalars should follow the
+    same `<token>-<fieldname>-fixture` literal convention.
+  - **`@example.test` mailbox literal:** for body fields typed
+    as email-shaped strings, RFC 6761 reserves
+    `*.example.test` for documentation; `bitbucketEmail`
+    carries `bb-cov-create-0052@example.test` so the fixture
+    cannot be mistaken for a real mailbox. Future mutation
+    entries with email-shaped scalars should follow the same
+    `<token>@example.test` convention rather than a freeform
+    string.
+  - **Tag-mutation-opener entries:** authoring the first
+    mutation in a tag is the second-most-expensive entry shape
+    after the tag opener itself — it must (a) inherit the
+    `<prefix>-cov-*` namespace from the tag opener, (b) enumerate
+    every cross-tag flat-scalar-only mutation precedent
+    (API-0292 / API-0338 in this case), (c) explicitly forbid
+    cargo-culting from sibling tag namespaces, (d) re-derive
+    every body field from the embedded spec rather than
+    mirroring the cross-tag precedent's body shape, and
+    (e) pre-reserve fixture-token slugs for every forthcoming
+    peer in the same tag so the namespace stays diff-traceable.
+    Subsequent mutations in the same tag are cheaper because
+    they back-reference this entry.
+  - **No 404 on `/bitbucket.create`** — canonical mutation
+    response set, matching every prior `*-create` peer
+    (API-0002 `ai-create`, API-0040 `backup-create`, API-0292
+    `project-create`, API-0338 `server-create`). Per the
+    per-tag opener convention reasserted at API-0051's
+    bitbucket/* design header, 404 → CodeNotFound stays
+    reserved for the canonical by-id peer API-0055
+    `bitbucket-one`.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    and `goreleaser` remain not installed locally and continue
+    to be documented as missing rather than silently skipped —
+    same status as every prior coverage story.
+---
