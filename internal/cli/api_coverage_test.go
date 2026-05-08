@@ -3042,6 +3042,89 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.method` / `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0255",
+		OperationID: "organization-updateMemberRole",
+		Method:      http.MethodPost,
+		Path:        "/organization.updateMemberRole",
+		Tag:         "organization",
+		// Sixth and final mutation in the organization/* roster, closing
+		// the tag the API-0246 → API-0254 arc opened. Per the spec
+		// source `data/openapi.json > /organization.updateMemberRole >
+		// post`, the request body declares zero parameters and a
+		// required `application/json` payload with two required string
+		// fields and zero optionals: `memberId` (free-form string) and
+		// `role` (enum-constrained to `"admin"` | `"member"`). That
+		// shape lands squarely in the `{required-scalar,
+		// required-scalar}` family the API-0254 future-contributors
+		// block forecast — strictly closed, no optional drift to
+		// project — and the literal below copies the API-0254
+		// `organization-update` body verbatim with the field names
+		// swapped, exactly as the arc design rationale (API-0249)
+		// promised future contributors they could.
+		//
+		// The `role` value is pinned to `"admin"` so the wire payload
+		// exercises the enum-constrained branch (rather than the
+		// `"member"` peer) and a future schema-aware validator wired
+		// into the harness still accepts the fixture without
+		// per-case overrides. Per the established
+		// `<tag>-cov-<slug>-<storyID>` deterministic-but-clearly-fake
+		// naming convention, the `memberId` token
+		// `yalla-coverage-org-updateMemberRole-0255-member` keeps
+		// `git grep` traceable to this PRD story without colliding
+		// with the API-0249 (`yalla-coverage-org-create-0249`),
+		// API-0250 (`yalla-coverage-org-delete-0250`), API-0252
+		// (`yalla-coverage-org-removeInvitation-0252`), API-0253
+		// (`yalla-coverage-org-setDefault-0253`), or API-0254
+		// (`yalla-coverage-org-update-0254-id` /
+		// `yalla-coverage-org-update-0254-name`) mutation fixtures —
+		// the `-member` suffix disambiguates this entry from its
+		// sibling `role` enum scalar without losing the story-ID
+		// trail. The enum-pinned `role` literal does not need the
+		// `<tag>-cov-<slug>-<storyID>` token because OpenAPI's
+		// closed-set enum already collapses the value space to two
+		// reserved keywords; injecting a unique-but-invalid token
+		// would defeat the schema-validator coverage this fixture is
+		// designed to support.
+		//
+		// Responses 200/400/401/403/500 mirror every other
+		// organization/* mutation peer — the 200 schema is `{}` with
+		// `additionalProperties: false`, identical to API-0246/0247/
+		// 0248/0249/0250/0251/0252/0253/0254 above; like every other
+		// state-mutation peer (and unlike API-0251 `organization-one`,
+		// the lookup-shape GET) the 404 response code is absent
+		// because `updateMemberRole` is a state-mutation action whose
+		// missing-target failure path collapses into 400 (validation)
+		// rather than 404 (not found) per Dokploy's tRPC conventions.
+		// The representative-failure leg therefore keeps the harness
+		// default (401 → CodeAuth) because auth is the universal
+		// failure mode every organization/* peer must re-prove —
+		// 400 (validation) is exercised once at the package level by
+		// the API-0001 entry rather than re-asserted on every
+		// minimum-required-body POST in the roster.
+		//
+		// This entry closes the organization/* tag. The next API
+		// story (API-0256+) opens a new tag whose first entry will
+		// re-establish a fresh design-rationale header analogous to
+		// API-0249's role for organization/*; future contributors
+		// inheriting that next-tag arc should not back-reference the
+		// organization/* literals here for body-shape templates,
+		// because tag-spanning fixture sharing has historically
+		// produced false-positive `git grep` collisions when the new
+		// tag's slug overlaps with the closing tag's slug
+		// (`org-update*` vs e.g. a future `*-update*` peer in another
+		// tag). Treat the `<tag>-cov-<slug>-<storyID>` namespace as
+		// strictly per-tag.
+		SampleBody: json.RawMessage(`{
+			"memberId": "yalla-coverage-org-updateMemberRole-0255-member",
+			"role": "admin"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior organization/* peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

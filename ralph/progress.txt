@@ -6059,3 +6059,57 @@
     back to the PRD story.
 
 ---
+
+## 2026-05-08 - API-0255
+- Added `coveredAPIOperations` entry for `organization-updateMemberRole`
+  (POST /organization.updateMemberRole, tag `organization`) — the sixth
+  and final mutation in the organization/* roster, closing the tag arc
+  opened by API-0246.
+- Used the `{required-scalar, required-scalar}` body shape forecast by
+  the API-0254 future-contributors block: required `memberId` (free-form
+  string) and required `role` (enum-pinned to `"admin"` so the
+  enum-constrained branch is exercised; the alternate `"member"` value
+  is intentionally not duplicated). No optional fields exist in the
+  spec, keeping the closed-shape contract strict.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended API-0255 case
+  - `ralph/prd.json` — flipped API-0255 `passes` to `true`
+  - `ralph/progress.txt` — this entry
+- Verification run from repo root:
+  - `gofmt -w .` ✓
+  - `go mod tidy` ✓ (no changes)
+  - `go vet ./...` ✓
+  - `go test ./... -count=1` ✓ all packages pass
+  - `go test -race ./... -count=1` ✓ all packages pass
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, and
+    `goreleaser` not installed locally; documented in earlier entries
+    as the verification-tools baseline gap.
+- Remaining risks / follow-ups:
+  - Per the API-0249 design-rationale header, this entry **closes the
+    organization/* tag**. The next tag in the priority-2 roster
+    (project/*, API-0290 onward) opens a fresh arc — a future
+    contributor picking up that arc should re-establish a new
+    design-rationale header rather than back-reference the
+    organization/* literals here, because the
+    `<tag>-cov-<slug>-<storyID>` namespace is strictly per-tag and
+    cross-tag template sharing has historically produced false-positive
+    `git grep` collisions when slug names overlap (e.g. a future
+    `*-update*` peer in another tag).
+- **Learnings for future iterations:**
+  - The two-required-scalars body shape (`{required-scalar,
+    required-scalar}` with zero optionals) is now established as a
+    sibling pattern to the `{single-required-scalar}` arc. Future
+    POSTs with two-or-more required scalars and zero optionals can
+    copy the API-0255 literal verbatim with field names swapped.
+  - Enum-constrained scalars (here: `role` ∈ `{admin, member}`) should
+    be pinned to a fixed enum value rather than receiving the
+    `<tag>-cov-<slug>-<storyID>` token, because injecting a unique-
+    but-invalid string would defeat the schema-validator coverage
+    the fixture is designed to support. Other free-form scalars in
+    the same body still get the deterministic-but-clearly-fake token.
+  - The harness "default failure leg = 401 → CodeAuth" remains the
+    right reductionist posture for state-mutation peers; 400
+    (validation) is exercised once at the package level by API-0001
+    and does not need to be re-asserted on every minimum-required-body
+    POST in the roster.
+---
