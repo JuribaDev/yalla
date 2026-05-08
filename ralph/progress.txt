@@ -17334,3 +17334,105 @@ Learnings for future iterations:
     with zero optional fields, the every-optional-populated rule is
     trivially satisfied and no extra wiring is needed.
 ---
+
+## 2026-05-08 - API-0161 — Cover mariadb-create (POST /mariadb.create)
+- Added mariadb-create (priority-4) to the canonical apiCoverageCase
+  table at `internal/cli/api_coverage_test.go`, completing the
+  forward-reference left by API-0160 and continuing inside the
+  `mariadb-cov-*` per-tag fixture-isolation namespace opened by that
+  kickoff entry.
+- Spec re-verified directly against
+  `internal/api/data/openapi.json > /mariadb.create > post`:
+  POST, no parameters, requestBody REQUIRED with five REQUIRED
+  top-level string fields (`name`, `environmentId`, `databaseName`,
+  `databaseUser`, `databasePassword`) and five OPTIONAL fields
+  (`appName` (string), `dockerImage` (string, default `mariadb:6`),
+  `databaseRootPassword` (string), `description` (anyOf [string, null]),
+  `serverId` (anyOf [string, null])). Responses 200/400/401/403/500
+  (no 404, mirroring every prior covered `*-create` mutation —
+  API-0118 `domain-create`, API-0125 `environment-create`, API-0131
+  `gitea-create`, API-0298 `redirects-create`, API-0331
+  `security-create`). 200 = `{}` + `additionalProperties: false`.
+- Fixture supplies exactly the five REQUIRED fields and nothing else.
+  Per the API-0131 minimal-required-only credential-safety rule, the
+  OPTIONAL `databaseRootPassword` is intentionally omitted so a future
+  credential-redaction audit cannot regress on a fixture that hard-
+  codes a second secret-shaped value beyond the REQUIRED
+  `databasePassword` slot. The REQUIRED `databasePassword` literal
+  carries the deterministic-but-clearly-fake
+  `mariadb-cov-create-0161-databasePassword` token suffix for `git
+  grep` traceability and unmistakable fixture-token shape.
+- Failure leg: harness defaults (401 → CodeAuth). 404 →
+  CodeNotFound is structurally unavailable (no 404 in spec); 400 →
+  CodeInvalidInput reserved for stories where payload validation is
+  the uniquely distinguishing failure mode, which a five-required-
+  scalar create-mutation is not. 401 → CodeAuth pins the bearer-
+  token invariant consistent with the mariadb/* kickoff at API-0160.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended apiCoverageCase
+    entry between API-0160 and API-0188 (StoryID-sorted insertion)
+  - `ralph/prd.json` — set `passes: true` for API-0161
+  - `ralph/progress.txt` — this entry
+- Verification run:
+  - `gofmt -w internal/cli/api_coverage_test.go` — clean
+  - `go mod tidy` — clean
+  - `go vet ./...` — clean
+  - `go test ./...` — all packages pass (internal/cli 1.359s)
+  - `go test -race ./...` — all packages pass (internal/cli 2.909s);
+    the new `TestAPICoverage_*` family spawned the
+    `API-0161/mariadb-create` subtest across all five legs
+    (RegistryInvariants, SchemaCommandWorks, ManifestListsOperation,
+    SuccessRoundTrip, RepresentativeFailure) — all green
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — not installed locally, documented per project
+    convention
+- Remaining risks or follow-ups:
+  - Next case in the PRD-ordered priority-4 backlog is API-0162
+    `mariadb-deploy` (declared POST in the PRD; next contributor
+    must re-verify against `internal/api/data/openapi.json` per
+    the forward-reference lesson before assuming any field shape).
+    The `mariadb-cov-*` namespace stays open for the rest of the
+    mariadb/* roster (API-0160..API-0173, fourteen operations
+    per the PRD listing).
+- **Learnings for future iterations:**
+  - **Five-required-scalar `*-create` body is the largest REQUIRED-
+    only create-mutation fixture covered to date.** API-0118
+    `domain-create`, API-0122 `domain-update`, API-0125
+    `environment-create`, and API-0131 `gitea-create` each topped
+    out at two REQUIRED string scalars; `mariadb-create` raises
+    that ceiling to five and stresses the body-forwarding leg's
+    tolerance for multi-field payloads in a way the smaller
+    precedents do not. No harness change was needed — the
+    `len(tc.SampleBody) > 0` gate at `runAPICoverageSuccess`
+    handles arbitrary-shape bodies — but the precedent should be
+    cited for any future create-mutation whose REQUIRED-field
+    count exceeds five.
+  - **Two credential-shaped slots in one schema, one REQUIRED + one
+    OPTIONAL.** mariadb-create is the first covered operation where
+    the schema declares two distinct password fields
+    (`databasePassword` REQUIRED, `databaseRootPassword` OPTIONAL).
+    The minimal-required-only fixture rule cleanly resolves the
+    tension: the REQUIRED slot carries a deterministic-but-clearly-
+    fake fixture token (still safe under the redactor because it
+    is shaped `<tag>-cov-<slug>-<storyID>-<field>`), and the
+    OPTIONAL slot is omitted entirely so no second secret-shaped
+    value enters the test surface. Future stories whose schemas
+    declare both REQUIRED and OPTIONAL credential fields should
+    follow the same split.
+  - **`*-create` mutations remain the canonical 401→CodeAuth-only
+    failure-leg shape.** Every `*-create` operation covered to
+    date (API-0118 `domain-create`, API-0125 `environment-create`,
+    API-0131 `gitea-create`, API-0298 `redirects-create`, API-0331
+    `security-create`, and now API-0161 `mariadb-create`) declares
+    200/400/401/403/500 with **no 404** — the by-id read leg does
+    not exist on a constructor — and the harness-default 401 →
+    CodeAuth representative remains the most informative single
+    failure mode. This pattern can now be cited as a one-line
+    rationale in future `*-create` cases rather than re-justified
+    from first principles.
+  - **Forward-reference convention extended into the priority-4
+    bucket.** API-0160's forecast of API-0161 saved a round of
+    spec-discovery scanning, exactly as API-0425's forecast saved
+    work for API-0160. This entry forecasts API-0162
+    `mariadb-deploy` to keep the chain unbroken.
+---
