@@ -80,6 +80,41 @@ Conventions for the Cobra command tree.
   re-serialize through `interface{}` — that breaks the canonical key order
   and silently reflows numeric precision.
 
+## Raw API executor (US-0005)
+
+- `yalla api call <operationId>` is the universal escape hatch and the
+  ONLY place that performs a live Dokploy HTTP transaction inside the
+  `cli` package. The executor lives in `api_call_cmd.go` and is the sole
+  consumer of `apiCallClientFactory`.
+- The `--input` file is decoded via `json.Decoder.DisallowUnknownFields`
+  so `{"bdoy": ...}` fails fast as `E_INVALID_INPUT` instead of silently
+  dropping the body. The schema is closed and public:
+  `path_params`, `query`, `headers`, `body`. Adding a top-level key is a
+  public-API change.
+- `apiCallClientFactory` is the test seam for swapping the HTTP client.
+  Tests override it to inject a stub `http.RoundTripper` (for the
+  CodeNetwork path) or a tighter `Timeout` (for the CodeTimeout path)
+  without touching env vars. Always restore the original via
+  `t.Cleanup`.
+- Retries default to **zero** in the factory because Dokploy's POST
+  surface is mutating. Only GET/HEAD are flagged `Idempotent: true` on
+  the `api.Request`; non-idempotent verbs are never retried even on a
+  network timeout.
+- HTTP status mapping flows through `api.Result.AsError()` (canonical
+  table: 400/422→`InvalidInput`, 401→`Auth`, 403→`Forbidden`,
+  404→`NotFound`, 409/412→`Conflict`, 429→`RateLimited`,
+  5xx→`Server`). Do **not** translate status codes inside the cli
+  package — the `internal/api` package owns the table.
+- `--dry-run` resolves the request without sending it. The
+  `Authorization` header is rewritten to `Bearer [REDACTED]` (the
+  output package's `Sentinel`) so the dry-run envelope is safe to log
+  or paste into a ticket.
+- Pre-flight checks: missing base URL surfaces `E_CONFIG`; missing
+  token on an auth-required op surfaces `E_AUTH` — both BEFORE
+  constructing the HTTP client so `--no-input` workflows fail
+  deterministically without a wire call. Both checks are skipped in
+  `--dry-run` so an agent can validate request construction offline.
+
 ## Tests
 
 - `TestMain` in `main_test.go` unsets every `YALLA_*` env var and pins

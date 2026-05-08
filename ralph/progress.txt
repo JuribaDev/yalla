@@ -155,6 +155,42 @@
   point a test at a live host. Set `RetryBase: 0` so the retry loop
   runs without sleeping. `t.Context()` (Go 1.24) is the canonical
   request-scoped context for these tests.
+- Raw API executor (US-0005): `yalla api call <operationId>` lives in
+  `internal/cli/api_call_cmd.go` and is the **only** cli-side caller
+  of a live HTTP transaction. The HTTP client is built through
+  `apiCallClientFactory(apiCallClientArgs)` — a package var that tests
+  override to inject stub `http.RoundTripper`s or per-attempt timeouts.
+  Restore the original via `t.Cleanup`.
+- `--input` schema (US-0005): closed JSON shape `{path_params, query,
+  headers, body}` decoded with `json.Decoder.DisallowUnknownFields()`.
+  A misspelled key fails fast as `E_INVALID_INPUT`. `query` and
+  `headers` are `map[string][]string` so repeats work without a custom
+  grammar. `body` is `json.RawMessage` so number precision and key
+  order survive the round-trip. `--input -` reads from `streams.In`
+  (NOT a prompt — explicit stdin is part of the requested data source,
+  so `--no-input` does not block it).
+- HTTP idempotency policy (US-0005): only `GET` and `HEAD` are flagged
+  `Idempotent: true` on the `api.Request`. POST/PUT/DELETE/PATCH are
+  never retried automatically because Dokploy's POST surface is
+  mutating. Retries default to **zero** in the executor's factory —
+  agents that want them must opt in explicitly via a future flag.
+- HTTP status mapping (US-0005): every non-2xx response goes through
+  `result.AsError()` so the canonical table (400/422→InvalidInput,
+  401→Auth, 403→Forbidden, 404→NotFound, 409/412→Conflict,
+  429→RateLimited, 5xx→Server) lives in **one** place
+  (`internal/api/client.go::classifyStatus`). Do not re-translate
+  status codes inside cli commands.
+- Pre-flight guards (US-0005): missing base URL → `E_CONFIG`,
+  missing token on an auth-required op → `E_AUTH`, both BEFORE
+  constructing the HTTP client so `--no-input` workflows fail
+  deterministically without a wire round-trip. Both checks are
+  skipped in `--dry-run` so an agent can validate request
+  construction offline.
+- Dry-run rendering (US-0005): the `Authorization` header is
+  rewritten to `Bearer [REDACTED]` (the `output.Sentinel`) before
+  emission so a dry-run envelope is safe to log or paste. The
+  output redactor still scrubs the literal token value as a
+  defence-in-depth.
 
 ---
 
@@ -721,4 +757,141 @@
     a single retry. Document the distinction in the AGENTS.md so US-0005
     inherits it.
 
+---
+
+## 2026-05-08 - US-0005
+- **Implemented**: Raw API executor for full Dokploy coverage. New
+  `yalla api call <operationId>` subcommand wires the inspection
+  registry (US-0004) to the typed HTTP client (US-0006) and is the
+  universal escape hatch every Dokploy operation can be invoked
+  through. Stable JSON envelopes for both success and dry-run, full
+  HTTP-status-to-Yalla-error-code mapping, idempotent retry policy,
+  and pre-flight base-URL/auth checks that fail before a wire call.
+- **Files changed**:
+  - `internal/cli/api_call_cmd.go` (new) — `apiCallInput` (closed
+    schema decoded with `DisallowUnknownFields`), `apiCallSuccessDoc`
+    (envelope on stdout), `apiCallDryRunDoc` (envelope for
+    `--dry-run`), `apiCallClientFactory` (test seam for swapping the
+    HTTP client), `runAPICall` extracted from `RunE` for unit tests,
+    helpers: `loadAPICallInput`, `substitutePathParams`,
+    `resolveRequestBody`, `joinAPIURL`, `isIdempotentMethod`,
+    `emitAPICallSuccess`, `emitAPICallDryRun`, `errAsTyped`,
+    `isJSONContentType`. Flags: `--input <path|->`, `--dry-run`,
+    `--timeout <duration>`.
+  - `internal/cli/api_cmd.go` — registers `newAPICallCommand()` on
+    the `yalla api` subtree; updated `Long` text to advertise the
+    executor as a sibling of `operations`.
+  - `internal/cli/api_call_cmd_test.go` (new) — covers the full
+    PRD acceptance matrix: success JSON envelope (verifies method,
+    path, Authorization header, request_id, attempts, body
+    forwarding); `--dry-run` resolved-request shape (URL, method,
+    redacted Authorization, body); token never echoed in dry-run
+    output; 400 → `E_INVALID_INPUT`; 401 → `E_AUTH`; 500 →
+    `E_SERVER`; 50ms timeout via factory override → `E_TIMEOUT`;
+    stub `RoundTripper` returning a non-timeout net error →
+    `E_NETWORK` (and verifies POST is not retried); unknown
+    operationId → `E_NOT_FOUND`; `--no-input` + blockingReader
+    completes cleanly; unknown top-level input field → `E_INVALID_INPUT`;
+    `--input -` reads body from stdin; query params forwarded to
+    server; missing base URL → `E_CONFIG`; missing token on
+    auth-required op → `E_AUTH`; required body missing →
+    `E_INVALID_INPUT`; unit tests for `substitutePathParams`,
+    `isJSONContentType`, `isIdempotentMethod`. Local
+    `roundTripperFunc` and `fakeNetError` helpers mirror the
+    `internal/api` test fixtures (the cli tests cannot reach across
+    package boundaries).
+  - `internal/cli/AGENTS.md` — added "Raw API executor (US-0005)"
+    section documenting the closed `--input` schema, the factory
+    test seam, the zero-default retry policy, the canonical
+    HTTP-status mapping, and the dry-run redaction contract.
+  - `ralph/progress.txt` — Codebase Patterns gained the executor's
+    rules; this dated entry appended.
+  - `ralph/prd.json` — set US-0005 `passes: true`.
+- **Verification run**:
+  - `gofmt -w .` — clean (no diff after the write).
+  - `go mod tidy` — clean (no new deps; everything is stdlib + the
+    existing internal packages).
+  - `go vet ./...` — clean.
+  - `go test ./... -count=1` — `ok` for api, cli, config, errors,
+    output. The cli package now runs ~25 test functions (16 new
+    `TestAPICall_*` cases + 3 unit tests + the existing US-0001…
+    US-0004 suite).
+  - `go test -race ./... -count=1` — `ok` across all packages.
+  - Smoke (binary): `go run ./cmd/yalla --json api call project-all
+    --dry-run --base-url https://example.com --token testtoken`
+    returns the canonical envelope with `dry_run: true`,
+    `url: https://example.com/project.all`, and a redacted
+    `Authorization: Bearer [REDACTED]` header.
+- **Tools NOT available locally** (per the verification policy,
+  unchanged from US-0001…US-0006): `goimports`, `golangci-lint`,
+  `staticcheck`, `govulncheck`, `goreleaser`.
+- **Remaining risks / follow-ups**:
+  - Retries default to zero. The PRD acceptance criteria do not
+    require a `--retries` flag, but agents that genuinely want
+    idempotent retries on a GET will need one (or to override
+    `apiCallClientFactory` from a wrapper). Land a `--retries` flag
+    when the first concrete need appears.
+  - The success envelope's `body` field embeds JSON verbatim only
+    when the upstream `Content-Type` is JSON-shaped AND the bytes
+    parse as valid JSON. Truncated or malformed JSON falls through
+    to `body_text` so an agent gets the bytes anyway. This is the
+    documented behaviour; future stories may add `--output-body
+    <file>` for binary downloads.
+  - Path-param substitution is implemented but Dokploy never uses
+    `{...}` placeholders today (`grep '"in": "path"' openapi.json`
+    returns 0). The unit test exercises the substitution against a
+    synthetic path so a future spec drop with path params lights up
+    end-to-end without a code change.
+  - The pre-flight auth check uses the `RequiresAuth` boolean from
+    the registry (which mirrors the OpenAPI per-operation security
+    block). If a future spec marks an operation as unauthenticated
+    while the deployment still requires a token, agents will get
+    the live 401 instead of the pre-flight `E_AUTH` — that is the
+    correct behaviour because the spec is the public contract.
+  - Non-idempotent transport errors return the error from the
+    single attempt. There is no observability for the "should we
+    have retried this?" question; the success envelope's `attempts`
+    field doubles as the hint.
+- **Learnings for future iterations**:
+  - `json.Decoder.DisallowUnknownFields()` is the right default for
+    a closed input schema. The decoder rejects `{"bdoy":"oops"}`
+    with a precise field-name error that maps cleanly to a typed
+    `E_INVALID_INPUT` with a useful hint. Use it for any future
+    file-driven flag (`--config`, `--input`, `--manifest`).
+  - The factory pattern (`apiCallClientFactory` as a package var)
+    is a cheap, race-free test seam when the alternative would be
+    threading a client constructor through a half-dozen
+    function signatures. Restore the original via `t.Cleanup` so a
+    parallel test in the same package never sees a leaked
+    override; this suite is sequential because of `t.Setenv`, but
+    the cleanup is still good hygiene.
+  - `httptest.NewServer` returns a `*Server` whose `URL` field is a
+    full `http://127.0.0.1:NNNN` address. Pointing
+    `YALLA_BASE_URL` at it via `t.Setenv` is the cleanest way to
+    drive the executor end-to-end without overriding the factory —
+    the loader, error renderer, and HTTP client all see the same
+    URL the production binary would.
+  - For the network-timeout test, sleep the **server** longer than
+    the client's per-attempt timeout rather than configuring a tiny
+    deadline on the request context. The api package's
+    `transportToTypedError` reads `net.Error.Timeout()` from the
+    underlying transport error, which only fires for an actual
+    deadline expiry — using a stub RoundTripper returning a fake
+    net.Error is fine for `CodeNetwork` but does not exercise the
+    timeout path.
+  - `apiCallDryRunDoc.Headers` is `map[string][]string` rather than
+    `http.Header` because the latter does not survive a Go ↔ JSON
+    round-trip with deterministic key casing. The map preserves
+    whatever case the caller supplied; the serializer emits a
+    stable shape.
+  - Pre-flight auth/base-URL checks mean an `E_CONFIG`/`E_AUTH`
+    failure costs zero wire bytes. This matters for `--no-input`
+    workflows in CI: a misconfigured agent pinpoints the gap
+    immediately instead of waiting out a 30-second connect timeout.
+  - Cobra's flag binding interacts with positional args: `yalla
+    --json api call <opID> --input file.json --dry-run` works
+    because the persistent `--json` is on the root and the
+    subcommand-local `--input`/`--dry-run` are bound after the
+    positional arg. Tests that stitch the args slice manually must
+    keep the positional first.
 ---

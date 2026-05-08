@@ -256,7 +256,7 @@
       ],
       "type": "foundation",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "This is the universal safety net for all Dokploy APIs."
     },
     {

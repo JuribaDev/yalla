@@ -12,18 +12,20 @@ import (
 	"github.com/JuribaDev/yalla/internal/output"
 )
 
-// newAPICommand builds the `yalla api` subtree. Today it hosts only
-// `operations` (the manifest-style listing); US-0005 adds `call` for the
-// raw executor.
+// newAPICommand builds the `yalla api` subtree. It hosts the read-only
+// `operations` listing (US-0004) and the raw `call` executor (US-0005).
+// Curated commands (US-0012) live under their own top-level subtree; this
+// tree is the universal escape hatch that guarantees every Dokploy API
+// operation can be invoked.
 func newAPICommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "api",
-		Short: "Inspect the Dokploy OpenAPI surface yalla covers",
-		Long: `Inspect the Dokploy OpenAPI operation registry yalla ships with.
+		Short: "Inspect the Dokploy OpenAPI surface yalla covers and invoke any operation",
+		Long: `Inspect or invoke the Dokploy OpenAPI operation registry yalla ships with.
 
 Yalla embeds the Dokploy OpenAPI 3.1 document at build time and exposes a
 stable view of every operation through these subcommands. The registry is
-the source of truth for ` + "`yalla api call`" + ` (US-0005),
+the source of truth for ` + "`yalla api call`" + ` (the raw executor),
 ` + "`yalla schema`" + `, and ` + "`yalla manifest`" + ` (US-0007).`,
 		SilenceErrors: true,
 		SilenceUsage:  true,
@@ -33,6 +35,7 @@ the source of truth for ` + "`yalla api call`" + ` (US-0005),
 		},
 	}
 	cmd.AddCommand(newAPIOperationsCommand())
+	cmd.AddCommand(newAPICallCommand())
 	return cmd
 }
 
