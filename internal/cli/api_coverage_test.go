@@ -12285,6 +12285,173 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0389",
+		OperationID: "settings-toggleRequests",
+		Method:      http.MethodPost,
+		Path:        "/settings.toggleRequests",
+		Tag:         "settings",
+		// Thirty-ninth entry on the settings/* coverage roster,
+		// inheriting the `set-cov-*` per-tag fixture-isolation
+		// namespace established by API-0351
+		// `settings-assignDomainServer` and extended through
+		// API-0388 `settings-toggleDashboard` (must not back-reference
+		// the closed `srv-cov-*`, `proj-cov-*`, `org-cov-*`,
+		// `compose-cov-*`, `app-cov-*`, `ai-cov-*`, or any other
+		// prior tag's namespace, per the per-tag isolation rule
+		// reasserted at API-0335..API-0388 and originally
+		// established at API-0246 `organization-active`).
+		//
+		// **Spec re-verified per the API-0345..API-0388
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /settings.toggleRequests
+		// > post`: a **POST** with a **REQUIRED** `requestBody`
+		// (`requestBody.required = true`) carrying a JSON object
+		// with a **single REQUIRED** property — `enable`
+		// (**boolean**) — declared in both the inner schema's
+		// `properties` map AND its `required` array (`required:
+		// ["enable"]`). **Zero parameters** (no query, no path, no
+		// header). Responses 200/400/401/403/500 — note the
+		// **absence of 404**, matching the canonical settings/*
+		// mutating-POST cohort and diverging from the
+		// by-id-flavoured 404-bearing response sets. The 200 schema
+		// is `{}` with `additionalProperties: false`, matching every
+		// prior covered peer in the settings/* roster.
+		//
+		// **Forward-reference confirmation — three axes pivot from
+		// API-0388.** API-0388 `toggleDashboard`'s hand-off comment
+		// correctly forecast that this entry would (a) pivot the
+		// inner-property-count axis from two back to one, (b) pivot
+		// the inner-property-type axis from mixed boolean+string to
+		// boolean-only, (c) pivot the inner-required-field axis from
+		// no-inner-required back to REQUIRED, while sharing the
+		// slug-prefix axis (`toggle*`), the verb axis (POST), the
+		// outer-body axis (REQUIRED), the parameter axis (zero
+		// parameters), and the response-set axis
+		// (200/400/401/403/500, no 404). Direct inspection of the
+		// spec confirms the prediction: the outer
+		// `requestBody.required` is `true`, the inner schema has a
+		// single `properties.enable: boolean` and an inner
+		// `required: ["enable"]` array. The body-axis flip-flop
+		// across API-0383..API-0389 is now seven entries deep within
+		// the same tag (no-body / no-body / optional-body /
+		// required-body+inner-required / required-body+inner-
+		// optional-string-only / required-body+inner-optional-
+		// mixed-boolean+string / required-body+inner-required-
+		// boolean-only); per-operation re-verification stays
+		// mandatory across every family transition.
+		//
+		// **Family continuation — second `toggle*` slug-prefix peer
+		// in settings/*.** API-0388 opened the `toggle*` slug-prefix
+		// sub-roster within the settings/* tag; this entry continues
+		// it. API-0389 preserves the slug-prefix axis (`toggle*`),
+		// the verb axis (POST), the parameter axis (zero
+		// parameters), the outer-body axis (REQUIRED), and the
+		// response-set axis (200/400/401/403/500, no 404) shared
+		// with API-0388, but pivots the inner-property-count axis
+		// (2 → 1), the inner-property-type axis (mixed
+		// boolean+string → boolean-only), and the
+		// inner-required-field axis (no-inner-required → REQUIRED).
+		// Per the slug-prefix-is-not-shape rule reasserted at
+		// API-0371..API-0388, future settings/* peers in different
+		// slug families must re-verify per-operation rather than
+		// inherit any axis from this entry.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `set-cov-toggleRequests-0389` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared
+		//     across every per-tag roster and is unique (verified
+		//     against API-0351..API-0388's `set-cov-*` slugs and
+		//     orthogonal to every prior tag's `srv-cov-*`,
+		//     `proj-cov-*`, `org-cov-*`, `compose-cov-*`,
+		//     `app-cov-*`, `ai-cov-*`, etc. namespaces). The
+		//     slug appears only in the closing forward-reference
+		//     comment because the inner schema declares no
+		//     string-typed property to carry it on the wire — a
+		//     deliberate divergence from API-0386/API-0387/API-0388
+		//     where a `serverId` (or analogous) string field
+		//     surfaced the per-case slug in the request payload.
+		//   * `enable` carries the literal boolean `true` so the
+		//     success-leg JSON serialiser exercises the boolean
+		//     branch. Either boolean would be structurally valid;
+		//     `true` is chosen to mirror the operation's
+		//     plain-language semantics (the verb is "toggle on")
+		//     and to keep this fixture distinguishable on the wire
+		//     from a default zero-valued false. Mirrors the
+		//     API-0388 `enableDashboard: true` choice for the same
+		//     reason within the same `toggle*` slug family.
+		//   * **Populating the only required field** is mandatory
+		//     here: leaving `enable` out would produce a
+		//     structurally invalid request (the inner schema has
+		//     `required: ["enable"]`). This pivots from API-0388
+		//     where both inner properties were OPTIONAL — there a
+		//     degenerate `{}` payload would have been valid; here
+		//     the empty-object payload would fail spec validation,
+		//     so the fixture *must* carry the boolean. Re-asserts
+		//     the inner-required-field axis observed at
+		//     API-0386 `settings-saveSSHPrivateKey`
+		//     (`name`/`privateKey` REQUIRED) before the API-0387
+		//     and API-0388 detour through inner-optional schemas.
+		//
+		// **Failure-leg fields are intentionally omitted.** The
+		// spec does not declare 404 on this operation (the
+		// `toggleRequests` verb mutates a controller-wide feature
+		// flag rather than performing a by-id resource lookup),
+		// so the per-tag opener convention reasserted at
+		// API-0335..API-0388 that reserves 404 → CodeNotFound for
+		// canonical `*-one` peers does not apply here. Auth is the
+		// universal failure mode every Dokploy operation must
+		// re-prove, so 401 → CodeAuth via the harness default
+		// (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""` →
+		// CodeAuth) stays the most informative representative.
+		// 400 → CodeInvalidInput is *technically* available here
+		// (the inner schema's `required: ["enable"]` array means a
+		// missing-`enable` payload would fail server-side
+		// validation), but it remains reserved for stories where
+		// payload validation is the operation's *distinguishing*
+		// failure mode. Auth is shared with every operation in the
+		// catalogue and therefore the canonical representative
+		// failure for routine settings/* coverage entries; 400
+		// stays reserved for stories whose coverage burden uniquely
+		// hinges on payload-shape validation (e.g. multi-field
+		// cross-validation, conditional `oneOf`/`anyOf`,
+		// length-bounded strings) — none of which apply to a
+		// single-boolean toggle.
+		//
+		// The next case in the settings/* roster per PRD ordering
+		// is API-0390 `settings-updateDockerCleanup` (declared a
+		// **POST** in the PRD with `requestBody.required = true`
+		// and inner properties `enableDockerCleanup` (**boolean**,
+		// **REQUIRED** via `required: ["enableDockerCleanup"]`)
+		// and `serverId` (**string**, **OPTIONAL**)). The next
+		// contributor must re-verify against
+		// `internal/api/data/openapi.json >
+		// /settings.updateDockerCleanup > post` per the
+		// forward-reference lesson before assuming any field is
+		// identical to this entry — the slug-prefix axis pivots
+		// from `toggle*` (this entry) to `update*` (API-0390),
+		// the inner-property-count axis pivots from one (this
+		// entry) to two (API-0390), and the inner-property-type
+		// axis pivots from boolean-only (this entry) to mixed
+		// boolean+string (API-0390). The verb axis (POST), the
+		// outer-body axis (REQUIRED), the inner-required-field
+		// axis (at-least-one inner required field), the parameter
+		// axis (zero parameters), and the response-set axis
+		// (200/400/401/403/500, no 404) are shared, but per the
+		// slug-prefix-is-not-shape lesson reasserted at
+		// API-0371..API-0388, do not assume any axis carries over
+		// from this entry.
+		SampleBody: json.RawMessage(`{
+			"enable": true
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

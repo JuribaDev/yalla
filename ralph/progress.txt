@@ -11652,3 +11652,69 @@ Learnings for future iterations:
     re-verification stays mandatory; never assume the next entry
     inherits axes from the prior one.
 ---
+
+## 2026-05-08 - API-0389 settings-toggleRequests
+- Added the API-0389 entry to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go` so the registry, schema,
+  manifest, success-round-trip, and representative-failure
+  contracts all assert against `settings-toggleRequests`.
+- Spec re-verified against
+  `internal/api/data/openapi.json > /settings.toggleRequests > post`
+  (POST, `requestBody.required = true`, single REQUIRED inner
+  property `enable: boolean`, zero parameters, responses
+  200/400/401/403/500 with no 404). The hand-off comment from
+  API-0388 `toggleDashboard` correctly forecast all three pivots:
+  inner-property-count (2 → 1), inner-property-type (mixed
+  boolean+string → boolean-only), inner-required-field
+  (no-inner-required → REQUIRED).
+- Fixture body carries `{"enable": true}` because the inner schema
+  has `required: ["enable"]` — leaving the field out would
+  produce a structurally invalid request, unlike API-0388 where
+  the `{}` payload would have been spec-valid.
+- Failure-leg uses harness defaults (401 → CodeAuth). 404 is
+  unavailable per spec (no by-id semantics on a controller-wide
+  feature toggle), and 400 stays reserved for stories whose
+  coverage burden uniquely hinges on payload-shape validation.
+- Forward-reference to API-0390 `settings-updateDockerCleanup`
+  flags three pivots for the next contributor: slug-prefix
+  `toggle*` → `update*`, inner-property-count 1 → 2, and
+  inner-property-type boolean-only → mixed boolean+string.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (new coverage case)
+  - `ralph/prd.json` (passes flipped to true)
+  - `ralph/progress.txt` (this entry)
+- Verification run from repo root:
+  - `gofmt -w .` — clean
+  - `go mod tidy` — clean
+  - `go vet ./...` — clean
+  - `go test ./...` — all packages pass
+  - `go test -race ./...` — all packages pass
+- Remaining risks or follow-ups: none — API-0389 is the second
+  `toggle*` peer in settings/* and the hand-off forecast for
+  API-0390 was double-checked against the embedded OpenAPI doc.
+- **Learnings for future iterations:**
+  - When the inner schema declares a `required: ["..."]` array,
+    the success-leg fixture *must* populate every required
+    field. Compare API-0388 (no inner-required → `{}` would have
+    been valid) vs API-0389 (`enable` is required → `{}` would
+    fail spec validation). The harness only checks a JSON
+    round-trip on the wire, but a future stricter validator
+    (or a Dokploy-side reject) would punish a missing required
+    field.
+  - The `<tag>-cov-<slug>-<storyID>` fixture-token base remains
+    the namespace contract even when the inner schema has no
+    string field to carry the slug onto the wire. In that case
+    (like API-0389) the slug only appears in the closing
+    forward-reference comment; the wire payload is just the
+    minimal required shape. This matches the precedent set by
+    API-0353/API-0383/API-0384 where the body axis was
+    no-body / optional-only / minimal.
+  - 400 → CodeInvalidInput is *technically* available for any
+    operation whose inner schema declares a `required` array
+    (a missing required field would 400), but the catalogue
+    convention reserves 400 for stories whose coverage burden
+    uniquely hinges on payload-shape validation
+    (multi-field cross-validation, conditional `oneOf`/`anyOf`,
+    length-bounded strings). A single-required-boolean toggle
+    stays on the canonical 401 → CodeAuth representative.
+---
