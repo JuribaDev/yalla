@@ -2202,6 +2202,116 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0055",
+		OperationID: "bitbucket-one",
+		Method:      http.MethodGet,
+		Path:        "/bitbucket.one",
+		Tag:         "bitbucket",
+		// Fifth entry on the bitbucket/* coverage roster and the
+		// **canonical by-id GET** in the bitbucket/* tag — succeeds
+		// the parameter-free GET kickoff at API-0051
+		// `bitbucket-bitbucketProviders`, the flat-scalar-only POST
+		// mutation at API-0052 `bitbucket-create`, the high-arity
+		// (3-param) GET at API-0053 `bitbucket-getBitbucketBranches`,
+		// and the single-required-query GET at API-0054
+		// `bitbucket-getBitbucketRepositories`. Inherits the
+		// `bb-cov-*` per-tag fixture-isolation namespace opened by
+		// API-0051's design-rationale header and consumed by
+		// API-0052..API-0054. Per the per-tag isolation rule
+		// established at API-0246 `organization-active`, reasserted
+		// at API-0290 `project-all`, API-0335 `server-all`, API-0351
+		// `settings-assignDomainServer`, and re-asserted at
+		// API-0051's bitbucket/* kickoff: this entry **must not**
+		// back-reference the closed `admin-cov-*`, `ai-cov-*`,
+		// `app-cov-*`, `backup-cov-*`, `compose-cov-*`,
+		// `deployment-cov-*`, `org-cov-*`, `proj-cov-*`,
+		// `srv-cov-*`, or `set-cov-*` namespaces.
+		//
+		// **Spec re-verified per the API-0345..API-0364
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /bitbucket.one > get`:
+		// a **GET** with **one query parameter** and **no request
+		// body** (GETs in this OpenAPI document never carry a
+		// `requestBody` field). The single parameter per the spec:
+		//   - REQUIRED scalar: `bitbucketId` (plain string).
+		// Typed `string` with no `anyOf` / `nullable` / enum
+		// constraints. **No optional siblings** — wire shape is
+		// byte-for-byte identical to API-0054
+		// `bitbucket-getBitbucketRepositories`'s
+		// 1-required-string-query envelope. Responses
+		// 200/400/401/403/404/500 — the **404 stays present** and
+		// is the canonical semantic failure mode for a by-id
+		// retrieval. The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer; the success-leg envelope assertion stays
+		// focused on `data.method` / `data.status` rather than
+		// payload projection.
+		//
+		// **Family choice — canonical by-id GET, the 404 override
+		// home in bitbucket/*.** API-0054's design-rationale
+		// header explicitly reserved 404 → CodeNotFound for "the
+		// canonical by-id peer (here API-0055 `bitbucket-one`),
+		// not for fleet-wide list-style getters keyed by
+		// integration id". This entry consumes that reservation —
+		// the override mirrors the precedent set at API-0342
+		// `server-one` (and reserved earlier at API-0290 /
+		// API-0294 / API-0335 for the `*-one` shape across tags).
+		// Future bitbucket/* peers (API-0056 `bitbucket-testConnection`,
+		// API-0057 `bitbucket-update`) are mutating POSTs that
+		// must each re-verify their own spec shapes per the
+		// API-0345..API-0364 forward-reference lesson and revert
+		// to the harness default 401 → CodeAuth (the eleven-flip
+		// body-axis history of the settings/* `clean*` sub-roster
+		// at API-0353..API-0362 is the standing reminder that
+		// per-operation re-verification is mandatory).
+		//
+		// Fixture conventions:
+		//   * Single required scalar — no every-optional-populated
+		//     rule applies because the spec declares no optional
+		//     siblings. The minimum-required envelope IS the whole
+		//     envelope. Same shape as API-0054
+		//     `bitbucket-getBitbucketRepositories`'s wire query
+		//     string (each exhaustive by virtue of the spec).
+		//   * Per-case fixture token base `bb-cov-one-0055` follows
+		//     the `<tag>-cov-<slug>-<storyID>` convention and
+		//     consumes the slot reserved by API-0052's, API-0053's,
+		//     and API-0054's design-rationale headers (verified:
+		//     no collisions with API-0051's `bb-cov-providers-0051`
+		//     reservation, API-0052's `bb-cov-create-0052-*`
+		//     literals, API-0053's `bb-cov-getBranches-0053-*`
+		//     literals, API-0054's `bb-cov-getRepos-0054-*`
+		//     literals, the forthcoming `bb-cov-testConn-0056` /
+		//     `bb-cov-update-0057` slugs reserved for upcoming
+		//     bitbucket/* peers, and no collisions with the
+		//     cross-tag `proj-cov-*` / `srv-cov-*` / `set-cov-*` /
+		//     `org-cov-*` namespaces).
+		//   * Deterministic-but-clearly-fake value (`-fixture`
+		//     suffix on `bitbucketId`) keeps diffs readable and
+		//     lets any future schema validator's failure messages
+		//     point at the offending field — consistent with the
+		//     API-0021..API-0023 query-shaped GET precedent and
+		//     API-0054's single-required-query literal.
+		SampleQuery: map[string][]string{
+			"bitbucketId": {"bb-cov-one-0055-bitbucketId-fixture"},
+		},
+		// 200 response in the spec is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+		// Failure-leg override: this is the canonical home for the
+		// 404 → CodeNotFound representative-failure assertion
+		// reserved at API-0054's design-rationale header for the
+		// bitbucket/* by-id peer. Mirrors the API-0342
+		// `server-one` 404-override precedent across tags. A
+		// missing-resource by-id retrieval is the most informative
+		// failure to exercise here; auth failures stay covered
+		// fleet-wide by the cross-tag default 401 → CodeAuth path.
+		FailureStatus: http.StatusNotFound,
+		FailureCode:   yerr.CodeNotFound,
+	},
+	{
 		StoryID:     "API-0066",
 		OperationID: "compose-cancelDeployment",
 		Method:      http.MethodPost,

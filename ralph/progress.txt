@@ -9762,3 +9762,58 @@ Learnings for future iterations:
   - The settings/* parameter-free GET sub-roster (API-0363..API-0368) ends here. API-0369 is the first **parameter-bearing** GET in the settings/* family, anchored on the cross-tag precedents API-0041 `backup-listBackupFiles` (OPTIONAL `serverId`) and API-0339/API-0342/API-0345 server/* GETs (REQUIRED `serverId`). The fixture template diff against the prior parameter-free entries is: add a `SampleQuery` block under the `set-cov-*` namespace, plus design-rationale commentary explaining the family pivot.
   - When pivoting a sub-roster from parameter-free to parameter-bearing, the design-rationale block needs to (a) cite the closest cross-tag precedents for the parameter shape and (b) reassert the harness contract that `SampleQuery` is forwarded regardless of `required`-ness. Both citations and the reassertion are necessary because future contributors reading the entry in isolation need to understand why an OPTIONAL parameter was populated end-to-end rather than left empty.
 ---
+
+## 2026-05-08 - API-0055
+- **Implemented**: Per-operation contract coverage for `bitbucket-one`
+  (GET `/bitbucket.one`), the canonical by-id GET in the bitbucket/* tag.
+  Adds the fifth bitbucket/* `apiCoverageCase` entry — a single-required
+  query (`bitbucketId` plain string), empty-object 200 body, and the
+  reserved 404 → CodeNotFound failure-leg override (the slot was
+  forward-reserved by API-0054's design-rationale header for the by-id
+  peer). All five subtests (registry invariants, schema reachability,
+  manifest inclusion, success round-trip, representative failure) flow
+  through the existing `runAPICoverage*` harness — no harness changes
+  required.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended the API-0055 struct
+    literal between API-0054 and API-0066, sorted by StoryID.
+  - `ralph/prd.json` — flipped `API-0055.passes` to `true`.
+  - `ralph/progress.txt` — this entry.
+- **Verification run** (from repo root):
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages PASS (`internal/cli` 1.034s).
+  - `go test -race ./...` — all packages PASS (`internal/cli` 2.655s).
+  - Focused: `go test ./internal/cli/ -run 'TestAPICoverage/API-0055' -v`
+    — all 5 subtests PASS (registry, schema, manifest, success
+    round-trip, representative failure with 404 → CodeNotFound).
+- **Tools NOT available locally** (per the documented policy):
+  `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+  `goreleaser`. Same baseline as every prior story.
+- **Remaining risks / follow-ups**:
+  - Future bitbucket/* peers (API-0056 `bitbucket-testConnection`,
+    API-0057 `bitbucket-update`) are mutating POSTs and must each
+    re-verify their own spec shapes per the API-0345..API-0364
+    forward-reference lesson. They should revert to the harness
+    default 401 → CodeAuth — the 404 override is a one-time slot
+    reserved for the by-id GET and now consumed.
+- **Learnings for future iterations**:
+  - The bitbucket/* tag's 404 → CodeNotFound override slot, reserved
+    forward at API-0054's design header, is now consumed by API-0055.
+    The override mirrors the precedent set at API-0342 `server-one`
+    (and reserved earlier at API-0290 / API-0294 / API-0335 across
+    other tags) — the `*-one` shape is the canonical home for
+    representative 404 assertions in each per-tag opener cohort.
+  - Wire shape parity with API-0054 (`bitbucket-getBitbucketRepositories`):
+    both are 1-required-string-query GETs with no optional siblings.
+    The structural difference is purely semantic (catalogue list vs
+    by-id retrieval) — a useful illustration that the per-tag isolation
+    rule and per-case fixture-token slug are sufficient to disambiguate
+    operations that share an identical wire shape.
+  - The `<tag>-cov-<slug>-<storyID>` per-case fixture-token convention
+    (`bb-cov-one-0055-bitbucketId-fixture` here) keeps inter-test diffs
+    grep-friendly and lets any future schema validator's failure
+    messages point precisely at the offending operation/story without
+    string-match ambiguity against neighbouring API-005x entries.
+---
