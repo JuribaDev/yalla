@@ -4084,3 +4084,43 @@
     stories now: append a case, flip `passes: true` in `ralph/prd.json`,
     and the registry/manifest/schema invariants pile-on automatically.
 ---
+
+## 2026-05-08 - API-0010 (ai-update)
+- Added an `apiCoverageCase` for `ai-update` (POST /ai.update) to
+  `internal/cli/api_coverage_test.go`, inserted between API-0009 and
+  API-0011 to keep StoryID-sorted order.
+- Schema in `internal/api/data/openapi.json` declares `aiId` as the only
+  required field; the case fills the optional surface
+  (`name`, `apiUrl`, `apiKey`, `model`, `isEnabled`, `createdAt`) with the
+  deterministic `*-cov-update-0010` token, mirroring the
+  API-0002/API-0009 convention. Success body is `{}` per the
+  `additionalProperties: false` 200 envelope every ai/* peer uses.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (new case)
+  - `ralph/prd.json` (`passes: true` for API-0010)
+  - `ralph/progress.txt` (this entry)
+- Verification (repository root):
+  - `gofmt -w .` — clean
+  - `go mod tidy` — clean
+  - `go vet ./...` — clean
+  - `go test ./...` — all packages pass
+  - `go test -race ./...` — all packages pass
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — not installed locally; documented per the existing
+    baseline.
+- Remaining risks / follow-ups: none — coverage harness automatically
+  asserts the new case via the shared envelope test.
+- Learnings for future iterations:
+  - The ai/* group consistently uses an empty `{}` success body so the
+    success-leg envelope assertion stays focused on `data.method` /
+    `data.status`. New ai/* cases should keep that to avoid unrelated
+    payload-shape coupling.
+  - For optional-heavy schemas, follow API-0002/API-0009 and supply
+    every optional with a deterministic-but-clearly-fake value so the
+    wire payload exercises the full update envelope, not just the
+    minimum-required pair. The `*-cov-<verb>-<NNNN>` token convention
+    keeps `git grep` traceable to the PRD story.
+  - `createdAt` is typed `string` in the spec (no format), but using a
+    valid RFC3339 timestamp future-proofs the fixture against a stricter
+    schema validator landing on the harness later.
+---

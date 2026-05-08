@@ -329,6 +329,38 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0010",
+		OperationID: "ai-update",
+		Method:      http.MethodPost,
+		Path:        "/ai.update",
+		Tag:         "ai",
+		// Mirrors the schema in `data/openapi.json` for /ai.update:
+		// the only required field is `aiId` (string); every other
+		// field (`name`, `apiUrl`, `apiKey`, `model`, `isEnabled`,
+		// `createdAt`) is optional. Per the API-0002/API-0009
+		// convention we supply the full optional surface with
+		// deterministic-but-clearly-fake values so the wire payload
+		// exercises the entire update envelope, not just the
+		// minimum-required pair. The placeholder `apiKey` only ever
+		// lives inside a per-test `t.TempDir()`, mirroring ai-create.
+		// Per-case fixture token `*-cov-update-0010` keeps `git grep`
+		// traceable to this PRD story.
+		SampleBody: json.RawMessage(`{
+			"aiId": "ai-cov-update-0010",
+			"name": "yalla-coverage-ai-update-0010",
+			"apiUrl": "https://example.test/v1",
+			"apiKey": "fake-api-key-coverage-0010",
+			"model": "gpt-test-update",
+			"isEnabled": true,
+			"createdAt": "2026-01-01T00:00:00.000Z"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching every prior ai/* peer. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0011",
 		OperationID: "application-cancelDeployment",
 		Method:      http.MethodPost,
