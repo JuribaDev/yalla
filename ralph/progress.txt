@@ -12755,3 +12755,25 @@ Learnings for future iterations:
     the embedded openapi.json, not against the coverage test). No
     registry pin needs bumping for an API-XXXX coverage story.
 ---
+
+## 2026-05-08 - API-0103
+- Implemented per-operation coverage for `destination-create` (POST /destination.create).
+- Files changed:
+  - internal/cli/api_coverage_test.go — appended an `apiCoverageCase` literal for API-0103 with a multi-field S3-shaped `SampleBody` and harness-default 401→CodeAuth failure leg.
+  - ralph/prd.json — flipped API-0103 `passes` to true.
+- Verification run:
+  - gofmt -w . (clean)
+  - go mod tidy (no changes)
+  - go vet ./... (clean)
+  - go test ./... (all packages pass)
+  - go test -race ./... (all packages pass)
+  - goimports not installed locally; gofmt is sufficient since imports were not modified.
+- Results: registry, schema, manifest, success-leg, and representative-failure assertions all green for `destination-create` via the existing `TestAPICoverage_*` harness.
+- Remaining risks or follow-ups:
+  - The `destination/*` roster continues at API-0104 `destination-one` (GET with required `destinationId` query and 404 response — opens the canonical `*-one` 404→CodeNotFound slot for the `dest-cov-*` namespace).
+- Learnings for future iterations:
+  - The `coveredAPIOperations` registry is append-only and ordered by PRD priority/tag. New entries slot in directly before the next-priority opener (e.g. before API-0246 `organization-active` the priority-3 destination/* group was opened).
+  - Multi-field create POSTs in this codebase reliably reuse the `application-create` (API-0014) and `compose-create` (API-0069) precedent: a string-branch fixture for `anyOf [string, null]` fields plus deterministic `<tag>-cov-<slug>-<storyID>` literal token bases. No realistic-looking S3 secrets in fixtures — keeps redactor invariants observable and avoids accidental credential leaks via the snapshot test corpus.
+  - The `dst-cov-*` token shape inside backup/* `destinationId` payloads is a *value* from the backup tag namespace; the destination/* tag namespace itself uses `dest-cov-*`. These prefixes look similar but the per-tag isolation rule keeps them strictly orthogonal.
+  - 404 cannot be claimed for the failure leg here — it is not declared in the spec for `destination-create`. The harness contract requires the failure status to be a declared response, so 401 → CodeAuth (default) is the only safe representative until a richer-payload destination/* story (e.g. API-0107 `destination-update` or API-0106 `destination-testConnection`) takes the canonical 400 → CodeInvalidInput slot.
+---

@@ -4789,6 +4789,145 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0103",
+		OperationID: "destination-create",
+		Method:      http.MethodPost,
+		Path:        "/destination.create",
+		Tag:         "destination",
+		// **Second entry in the destination/* roster.** The
+		// `dest-cov-*` per-tag fixture-isolation namespace was
+		// opened at API-0102 `destination-all`; this entry stays
+		// inside that still-open namespace and **must not** back-
+		// reference any closed `admin-cov-*`, `ai-cov-*`,
+		// `app-cov-*`, `backup-cov-*`, `bb-cov-*`, `cert-cov-*`,
+		// `clu-cov-*`, `compose-cov-*`, `deployment-cov-*`,
+		// `org-cov-*`, `proj-cov-*`, `set-cov-*`, or `srv-cov-*`
+		// namespace. The `dst-cov-*` fixture-token literal seen
+		// inside backup/* `destinationId` payloads (API-0040,
+		// API-0041, API-0050) is a *value* shape from the backup
+		// tag's namespace and is orthogonal to this destination/*
+		// tag namespace — the two must not be confused.
+		//
+		// **Spec re-verified per the API-0345..API-0396
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /destination.create
+		// > post`: a **POST** with **a required JSON body** of
+		// shape `{name: string, provider: string|null, accessKey:
+		// string, bucket: string, region: string, endpoint:
+		// string, secretAccessKey: string, serverId?: string}`
+		// (seven required fields plus one optional `serverId`).
+		// No path or query parameters. Responses 200/400/401/403/
+		// 500 — **structurally distinct from the destination/*
+		// `*-all` opener (API-0102) which declared 404; this
+		// entry does NOT declare 404.** Per the slug-prefix-is-
+		// not-shape lesson reasserted across API-0371..API-0396,
+		// the spec was re-verified per-operation rather than
+		// inheriting the destination/* `*-all` opener's response
+		// set. The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort.
+		//
+		// **Shape positioning — POST with required body, the
+		// first mutating destination/* operation.** Stands apart
+		// from API-0102 `destination-all` (parameter-free GET).
+		// Slug prefix `destination-*` is shared but the wire
+		// shape is different: the harness forwards `SampleBody`
+		// via the `--input` JSON `body` field, the request
+		// reaches the httptest server as a POST with
+		// `Content-Type: application/json`, and
+		// `runAPICoverageSuccess` re-reads the body to confirm
+		// the CLI propagated all required fields verbatim.
+		// Mirrors the multi-field create precedent established
+		// by API-0014 `application-create` and API-0069
+		// `compose-create` (both create-shaped POSTs with rich
+		// required payloads inside their respective tag
+		// namespaces).
+		//
+		// **Family choice — harness-default failure leg.** 404 →
+		// CodeNotFound is reserved for the canonical `*-one`
+		// slot (API-0104 `destination-one`) per the per-tag
+		// opener convention reasserted at API-0335..API-0396 and
+		// **cannot be claimed here regardless** because 404 is
+		// not declared in the spec for this operation — claiming
+		// a non-declared status would break the contract
+		// assertion at the harness level. 400 → CodeInvalidInput
+		// stays reserved for stories where payload validation is
+		// the operation's distinguishing failure mode; while
+		// this POST does have a rich required body (seven
+		// required fields), the canonical 400 consumer for the
+		// destination/* tag will be a future story whose
+		// validator surface is the *distinguishing* feature
+		// (API-0107 `destination-update` or API-0106
+		// `destination-testConnection` are the more natural 400
+		// candidates given testConnection's purpose is precisely
+		// to validate the credentials payload). Auth is the
+		// universal failure mode every Dokploy operation must
+		// re-prove, so 401 → CodeAuth via the harness default
+		// (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""`
+		// → CodeAuth) stays the most informative representative
+		// for this entry, mirroring the API-0102
+		// `destination-all` opener's failure leg and the
+		// API-0014 `application-create` create-shaped POST
+		// precedent.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `dest-cov-create-0103` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared
+		//     across every per-tag roster and is unique within
+		//     the `dest-cov-*` namespace opened by API-0102.
+		//   * S3-shaped credential fields (`accessKey`,
+		//     `secretAccessKey`, `region`, `endpoint`, `bucket`)
+		//     carry deterministic fixture literals derived from
+		//     the token base rather than realistic AWS values so
+		//     the wire payload cannot be mistaken for a real
+		//     production credential and the redactor's
+		//     test-time invariants stay observable. The bearer
+		//     token added by the runtime auth layer is the only
+		//     credential that ever reaches the httptest server
+		//     and remains subject to the redaction rule covered
+		//     by US-0002 — these fixture values are *body* data
+		//     and intentionally non-secret.
+		//   * `provider` uses the string variant of its
+		//     `anyOf [string, null]` schema; we send the string
+		//     branch so the fixture remains valid against either
+		//     branch once a future schema validator is wired
+		//     into the harness, mirroring API-0069
+		//     `compose-create`'s anyOf-string convention.
+		//   * `serverId` is optional in the spec but populated
+		//     here to keep the wire assertion meaningful across
+		//     the full required+optional axis, matching the
+		//     API-0014/0065/0069 precedent of populating
+		//     optional axes when the field semantics are
+		//     non-trivial.
+		SampleBody: json.RawMessage(`{
+			"name": "yalla-coverage-destination-create-0103",
+			"provider": "s3",
+			"accessKey": "dest-cov-create-0103-access",
+			"bucket": "dest-cov-create-0103-bucket",
+			"region": "dest-cov-create-0103-region",
+			"endpoint": "https://dest-cov-create-0103.example.invalid",
+			"secretAccessKey": "dest-cov-create-0103-secret",
+			"serverId": "dest-cov-create-0103-server"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer. Empty-object body
+		// keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		//
+		// The next case in the destination/* roster per PRD ordering
+		// is API-0104 `destination-one` (declared a **GET** with a
+		// required `destinationId` query parameter and a 404 response
+		// that opens the canonical `*-one` 404→CodeNotFound slot for
+		// destination/*). Per the slug-prefix-is-not-shape lesson
+		// reasserted across API-0371..API-0396, the next contributor
+		// must re-verify against `internal/api/data/openapi.json >
+		// /destination.one > get` per the forward-reference lesson
+		// before assuming any field shape is identical to this entry.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,
