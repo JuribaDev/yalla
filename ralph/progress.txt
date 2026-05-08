@@ -4759,3 +4759,79 @@
     remain (processTemplate done; randomizeCompose, redeploy,
     refreshToken, search, start, stop, templates, update).
 ---
+## 2026-05-08 - API-0086
+- Implemented coverage for compose-randomizeCompose (POST
+  /compose.randomizeCompose) by appending a new `apiCoverageCase` entry
+  to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go`. Second compose/* member of the
+  required+optional-split POST family after API-0079 (compose-
+  isolatedDeployment).
+- Files changed:
+  - internal/cli/api_coverage_test.go (+44 lines, single appended
+    apiCoverageCase literal sorted after API-0085)
+  - ralph/prd.json (passes: false -> true for API-0086)
+  - ralph/progress.txt (this entry)
+- Implementation: per `internal/api/data/openapi.json >
+  /compose.randomizeCompose > post` the request body is REQUIRED and
+  carries one required string field — `composeId` (target compose
+  record) — plus a single OPTIONAL sibling `suffix` (string, appended
+  to randomized service names so caller can run multiple randomized
+  copies side-by-side without collision). The schema is byte-for-byte
+  identical to API-0079 (compose-isolatedDeployment); same property
+  names, same `required` projection. Slug `compose-cov-randomize-
+  compose-0086` continues the cross-story grep contract; `suffix`
+  populated deterministically as `cov-0086` so the harness round-trips
+  both fields verbatim. The 200 response is `{}` with
+  `additionalProperties: false`, matching the empty-success convention
+  shared by every prior compose/* peer.
+- Verification run from repo root:
+  - `gofmt -w .` — clean
+  - `goimports -w .` — not installed locally, documented as such
+  - `go mod tidy` — no changes
+  - `go vet ./...` — clean
+  - `go test ./...` — PASS (all packages, internal/cli 1.165s)
+  - `go test -race ./...` — PASS (all packages, internal/cli 2.499s)
+  - `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser` — not
+    installed locally, documented as such
+- Results: 72 stories now passing (392 -> 391 failing). 391 stories
+  remain with passes=false. Next priority-2 compose/* candidate is
+  API-0087 (compose-redeploy, POST) per `(priority, id)` sort order.
+- **Learnings for future iterations:**
+  - compose-randomizeCompose is the second POST in the compose/*
+    roster carrying the required+optional-split body shape, joining
+    API-0079 (compose-isolatedDeployment). The two operations share
+    BYTE-FOR-BYTE identical schemas — same `composeId` required
+    field, same `suffix` optional field, same empty 200 response —
+    making API-0086 a near-verbatim slug-rotated copy of API-0079
+    rather than a brand new shape. Operationally compose-
+    isolatedDeployment runs an isolated deployment with a name
+    suffix, while compose-randomizeCompose randomizes service names
+    with an optional suffix; the wire shape is identical because the
+    "appendable name suffix" idiom is shared across both.
+  - When two operations share an identical request schema, the
+    fixture entry should call out the structural twin in the comment
+    block (so future readers can immediately see why the entry is
+    short and the slug is the only meaningful change). The cross-
+    story grep contract relies on every prior peer being grep-able
+    by both operationId and slug; new peers in the same shape family
+    should NOT introduce a new comment template — they should cite
+    the canonical analogue (API-0079 here) and only document
+    differences.
+  - The compose/* tag now has 18 covered entries spanning the
+    canonical shape templates: minimal-composeId-only POST (API-0066/
+    0067/0068/0073/0074/0080), full create envelope (API-0069),
+    composeId+deleteVolumes (API-0070), composeId+optional-title/
+    description POST (API-0071), template envelope (API-0072),
+    single-required-query GET (API-0075/0076/0077/0084), POST with
+    two required body fields (API-0078/0083/0085), POST with
+    required+optional split (API-0079/0086 — new), multi-required-
+    query GET (API-0081), and required+optional-enum GET (API-0082).
+    Seven compose/* operations remain (randomizeCompose done;
+    redeploy, refreshToken, search, start, stop, templates, update).
+  - The required+optional-split family is now a recognized shape in
+    the compose/* taxonomy (API-0079/0086). When a future compose/*
+    POST story declares one required + one or more optional string
+    fields, classify it against this peer pair first; only spec-
+    novel optionals (e.g. enum-restricted, nullable, or nested)
+    warrant new commentary in the entry.
+---

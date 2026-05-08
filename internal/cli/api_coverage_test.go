@@ -1796,6 +1796,49 @@ var coveredAPIOperations = []apiCoverageCase{
 		// payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0086",
+		OperationID: "compose-randomizeCompose",
+		Method:      http.MethodPost,
+		Path:        "/compose.randomizeCompose",
+		Tag:         "compose",
+		// Second compose/* entry exercising the required+optional split
+		// shape after API-0079 (compose-isolatedDeployment). The spec at
+		// `data/openapi.json > /compose.randomizeCompose > post` declares
+		// the request body is REQUIRED with one required string field
+		// `composeId` (the target record) plus a single OPTIONAL sibling
+		// `suffix` (string, appended to the randomized service names so
+		// the caller can run the randomization in distinguishable
+		// scopes). That schema is byte-for-byte identical to API-0079 —
+		// same property names, same `required` projection — so this
+		// entry is a near-verbatim slug-rotated twin of the
+		// compose-isolatedDeployment fixture rather than a brand new
+		// shape. Distinct from the minimal-composeId-only POST family
+		// (API-0066/0067/0068/0073/0074/0080) which omits the optional
+		// sibling, from the two-required-body-fields family
+		// (API-0078/0083/0085) which makes the second field required,
+		// and from API-0071 (compose-deployTemplate) whose optional
+		// siblings are `title`+`description` rather than `suffix`. We
+		// populate `suffix` deterministically so the harness round-trips
+		// both fields verbatim and a future schema validator wired into
+		// the harness still accepts the fixture (`suffix` is well-typed
+		// and the only required field is satisfied). The harness
+		// forwards SampleBody via the `--input` JSON `body` field, and
+		// `runAPICoverageSuccess` re-reads the request body to confirm
+		// the CLI propagated the payload verbatim. Slug convention
+		// `compose-cov-<slug>-<storyID>` continues the cross-story grep
+		// contract from every prior compose/* case.
+		SampleBody: json.RawMessage(`{
+			"composeId": "compose-cov-randomize-compose-0086",
+			"suffix": "cov-0086"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the empty-success convention shared by every prior
+		// compose/* peer. Empty-object body keeps the success-leg envelope
+		// assertion focused on `data.method` / `data.status` rather than
+		// payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
