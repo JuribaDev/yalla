@@ -11270,3 +11270,78 @@ Learnings for future iterations:
     `internal/api/data/openapi.json > /settings.saveSSHPrivateKey > post`
     before authoring.
 ---
+
+## 2026-05-08 - API-0062
+- **Implemented**: Per-operation contract coverage for Dokploy API
+  operation `cluster-addManager` (GET /cluster.addManager). Appended one
+  `apiCoverageCase` literal at story-id-sorted position between API-0061
+  and API-0066 in `internal/cli/api_coverage_test.go`. Opens the
+  `clu-cov-*` per-tag fixture-isolation namespace for the cluster/* tag
+  arc per the per-tag isolation rule reasserted at API-0061
+  `certificates-remove`'s hand-off note.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — single new `apiCoverageCase`
+    entry. GET-shaped, single optional query parameter `serverId`
+    populated with deterministic-but-clearly-fake fixture token
+    `clu-cov-addManager-0062`, no request body, success response `{}`,
+    failure leg via the harness default 401 → CodeAuth (404 →
+    CodeNotFound stays reserved for a later cluster/* peer).
+  - `ralph/prd.json` — set API-0062 `passes: true`.
+- **Verification run**:
+  - `gofmt -l .` — clean.
+  - `go mod tidy` — clean (no dep changes).
+  - `go vet ./...` — clean.
+  - `go test ./... -count=1` — all 9 packages green.
+  - `go test -race ./... -count=1` — all 9 packages green.
+- **Tools NOT available locally** (unchanged from US-0001 onward):
+  `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+  `goreleaser`.
+- **Remaining risks / follow-ups**:
+  - The remaining cluster/* roster (API-0063 `addWorker`,
+    API-0064 `getNodes`, API-0065 `removeWorker`) is still uncovered.
+    Per the design rationale embedded in this entry, API-0064
+    `getNodes` is the natural consumer of the 404 → CodeNotFound
+    failure-leg slot reserved here (most read-shaped peer); API-0065
+    `removeWorker`'s spec does **not** declare 404 (mutation cohort)
+    so the harness default 401 → CodeAuth applies there. Per the
+    slug-prefix-is-not-shape lesson reasserted across
+    API-0371..API-0385, the next contributor must re-verify each
+    operation's request-body axis, parameter axis, and response set
+    against `internal/api/data/openapi.json` rather than inheriting
+    any axis from this entry.
+- **Learnings for future iterations**:
+  - **First covered GET with an OPTIONAL query parameter.** Prior
+    GET-shaped entries (API-0005 `ai-get`, API-0007 `ai-getModels`,
+    API-0008 `ai-one`) all carried REQUIRED query params, and
+    API-0006 `ai-getAll` was the parameter-free baseline. The
+    optional-axis branch is now exercised on the wire — populating
+    the optional param is the right call (mirrors API-0385
+    `settings-reloadTraefik`'s "populate the optional axis"
+    precedent for optional-body POSTs) because leaving it unset
+    would degrade this case to the parameter-free GET cohort and
+    lose the query-forwarding round-trip assertion that the harness
+    would otherwise prove.
+  - **Tag-arc opener convention reasserted.** The cluster/* arc
+    opens with this entry following the same shape as every prior
+    tag opener: harness default 401 → CodeAuth on the failure leg,
+    `<tag>-cov-*` namespace declared, 404 → CodeNotFound reserved
+    for the by-id reader peer (canonical `*-one` slot, or
+    `*-getNodes` here since the cluster/* roster has no `*-one`
+    peer). The next-tag-opener forward-reference comment from
+    API-0061 was followed verbatim — no namespace collision, no
+    cross-tag back-reference.
+  - **Per-tag fixture isolation is mechanical when followed.** The
+    `clu-cov-addManager-0062` token slots cleanly into the
+    `<tag>-cov-<slug>-<storyID>` schema; verifying orthogonality
+    against every prior `*-cov-*` namespace is a `git grep
+    "clu-cov-"` away (must return zero pre-existing matches before
+    the entry is added).
+  - **Spec re-verification stays mandatory.** Even though the PRD
+    `apiOperation` block declared the same response set
+    (200/400/401/403/404/500) and the same parameter list
+    (one optional `serverId`), I still re-verified directly
+    against `internal/api/data/openapi.json > /cluster.addManager
+    > get` per the API-0345..API-0385 forward-reference lesson —
+    the PRD is a planning artifact, not the source of truth for
+    fixture shaping.
+---

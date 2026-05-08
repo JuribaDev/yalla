@@ -3025,6 +3025,117 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0062",
+		OperationID: "cluster-addManager",
+		Method:      http.MethodGet,
+		Path:        "/cluster.addManager",
+		Tag:         "cluster",
+		// **Tag-arc opener for cluster/***. Opens a fresh
+		// `clu-cov-*` per-tag fixture-isolation namespace per the
+		// per-tag isolation rule originally established at
+		// API-0246 `organization-active`, reasserted at API-0290
+		// `project-all`, API-0335 `server-all`, API-0351
+		// `settings-assignDomainServer`, API-0051
+		// `bitbucket-bitbucketProviders`, and most recently at
+		// API-0058 `certificates-all` (and closed at API-0061
+		// `certificates-remove`'s hand-off note: "The next
+		// priority-3 tag in the PRD roster (cluster/*) opens a
+		// fresh `clu-cov-*` namespace and **must not** back-
+		// reference the now-closed `cert-cov-*` namespace per the
+		// per-tag isolation rule"). This entry consumes that
+		// reservation and **must not** back-reference any closed
+		// `admin-cov-*`, `ai-cov-*`, `app-cov-*`, `backup-cov-*`,
+		// `bb-cov-*`, `cert-cov-*`, `compose-cov-*`,
+		// `deployment-cov-*`, `org-cov-*`, `proj-cov-*`,
+		// `srv-cov-*`, or `set-cov-*` namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0385
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /cluster.addManager >
+		// get`: a **GET** with **one optional query parameter**
+		// `serverId` (plain string, no `required` flag) and **no
+		// request body**. Responses 200/400/401/403/404/500 — note
+		// the **presence of 404**, structurally distinct from the
+		// no-404 mutation cohort exercised by the certificates/*
+		// closer at API-0061. The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort.
+		//
+		// **Shape positioning — query-only GET with optional
+		// param.** Structurally adjacent to API-0007
+		// `ai-getModels` (query-only GET with required params)
+		// and API-0005/0008 `ai-get`/`ai-one` (single-required-
+		// query GETs), but uniquely **the first covered GET with
+		// an OPTIONAL query parameter** rather than a required
+		// one. The harness still forwards `SampleQuery` via the
+		// `--input` JSON `query` field, and
+		// `runAPICoverageSuccess` re-reads `r.URL.Query()` to
+		// confirm the CLI propagated the `serverId` value
+		// verbatim. Populating the optional param exercises the
+		// query-forwarding branch on the wire — leaving it unset
+		// would degrade this case to the parameter-free GET
+		// cohort (API-0006 `ai-getAll` shape) and lose the
+		// query-forwarding round-trip assertion that
+		// distinguishes this shape from a no-input GET. Mirrors
+		// the API-0385 `settings-reloadTraefik` precedent for
+		// optional-input operations: populate the optional axis
+		// to keep the wire assertion meaningful.
+		//
+		// **Family choice — tag-opener, harness-default failure
+		// leg.** Per the per-tag opener convention (e.g.
+		// API-0058 `certificates-all` opened certificates/* with
+		// the harness default 401 → CodeAuth and reserved 404 →
+		// CodeNotFound for its by-id `*-one` peer), this entry
+		// uses the harness default 401 → CodeAuth
+		// (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""`
+		// → CodeAuth) and **reserves 404 → CodeNotFound** for a
+		// later cluster/* peer where the not-found shape is more
+		// canonical. The remaining cluster/* roster per the PRD
+		// is API-0063 `cluster-addWorker` (GET, optional serverId,
+		// 404 declared), API-0064 `cluster-getNodes` (GET,
+		// optional serverId, 404 declared — the most read-shaped
+		// peer and natural 404 → CodeNotFound consumer), and
+		// API-0065 `cluster-removeWorker` (POST, required body,
+		// **no 404** declared). Per the slug-prefix-is-not-shape
+		// lesson reasserted across API-0371..API-0385, the next
+		// contributor must re-verify per-operation rather than
+		// inherit any axis from this entry — both `addManager`
+		// and `addWorker` are GETs that share the parameter axis,
+		// but neither implies `removeWorker`'s POST body shape or
+		// `getNodes`'s read-leg payload projection. 400 →
+		// CodeInvalidInput stays reserved for stories where
+		// payload validation is the operation's distinguishing
+		// failure mode; an optional-only query GET has too narrow
+		// a validator surface to claim that shape.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `clu-cov-addManager-0062` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared
+		//     across every per-tag roster and is unique within
+		//     the freshly-opened `clu-cov-*` namespace (verified
+		//     orthogonal to every prior tag's `cert-cov-*`,
+		//     `srv-cov-*`, `proj-cov-*`, `org-cov-*`,
+		//     `compose-cov-*`, `app-cov-*`, `ai-cov-*`,
+		//     `bb-cov-*`, `set-cov-*`, `admin-cov-*`,
+		//     `backup-cov-*`, `deployment-cov-*` namespaces).
+		//   * `serverId` carries the fixture-shaped literal
+		//     `clu-cov-addManager-0062` rather than a real UUID
+		//     so the wire payload cannot be mistaken for a real
+		//     production server identifier and any future schema
+		//     validator's failure messages point at the offending
+		//     field.
+		SampleQuery: map[string][]string{
+			"serverId": {"clu-cov-addManager-0062"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0066",
 		OperationID: "compose-cancelDeployment",
 		Method:      http.MethodPost,
