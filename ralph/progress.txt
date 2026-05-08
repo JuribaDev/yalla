@@ -15145,3 +15145,84 @@ Learnings for future iterations:
     and avoids collisions across stories. For multi-word
     `operationId`s like `generateDomain`, the slug is `generate-domain`.
 ---
+
+## 2026-05-08 - API-0121 (domain-one)
+- Added covered-operation fixture for `domain-one` to
+  `internal/cli/api_coverage_test.go > coveredAPIOperations`.
+  Seventh entry in the domain/* roster after API-0115..API-0120;
+  stays inside the `domain-cov-*` per-tag fixture-isolation namespace.
+- Spec re-verified directly against
+  `internal/api/data/openapi.json > /domain.one > get`: GET, one
+  REQUIRED query parameter `domainId` (string), no request body,
+  responses 200/400/401/403/404/500. 200 schema is `{}` with
+  `additionalProperties: false` — empty-success cohort, structurally
+  identical to API-0115 `domain-byApplicationId`, API-0116
+  `domain-byComposeId`, and API-0117
+  `domain-canGenerateTraefikMeDomains`. Only the parameter name
+  changes (`domainId` vs. `applicationId`/`composeId`/`serverId`).
+- Wire shape: single-required-query GET, no body. Harness forwards
+  `SampleQuery` via the `--input` JSON `query` field; the success
+  leg re-reads `r.URL.Query()` for byte-equal `domainId` propagation.
+  The `len(tc.SampleBody) > 0` gate stays inert so no content-type
+  or body byte-comparison legs activate, matching prior id-bearing
+  GET peers.
+- Failure leg: harness-default 401→CodeAuth retained even though
+  the spec declares 404. Mirrors the API-0115/0116/0117 precedent
+  (and through them API-0005 `ai-get` and API-0113
+  `docker-getStackContainersByAppName`) — bearer-token enforcement
+  runs before any domain lookup, so the universal `E_AUTH` mode is
+  the most representative single failure leg for id-bearing GETs in
+  this cohort.
+- Per-case fixture token base `domain-cov-one-0121` keeps
+  `git grep` traceable to this PRD story without colliding with
+  API-0115 (`domain-cov-by-application-id-0115`), API-0116
+  (`domain-cov-by-compose-id-0116`), API-0117
+  (`domain-cov-can-generate-traefik-me-domains-0117`), API-0118
+  (`domain-cov-create-0118`), API-0119
+  (`domain-cov-delete-0119`), or API-0120
+  (`domain-cov-generate-domain-0120`).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — new `coveredAPIOperations`
+    entry for `domain-one` appended after API-0120
+    `domain-generateDomain`.
+  - `ralph/prd.json` — flipped `API-0121.passes` from `false` →
+    `true`.
+  - `ralph/progress.txt` — this entry.
+- Verification:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — no diff.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all 10 packages PASS (`internal/cli` 1.315s).
+  - `go test -race ./...` — all 10 packages PASS (`internal/cli`
+    2.888s).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — still not installed locally; documented missing
+    rather than silently skipped (per Codebase Patterns).
+- Remaining risks / follow-ups:
+  - None for this story. The next domain/* coverage gap in the
+    PRD-ordered priority-3 backlog is API-0122 `domain-update`,
+    declared a **POST** per the spec preview. The next contributor
+    MUST re-verify the spec directly against
+    `internal/api/data/openapi.json` per the forward-reference
+    lesson and continue inside the `domain-cov-*` per-tag
+    fixture-isolation namespace.
+- Learnings for future iterations:
+  - The id-bearing GET cohort in domain/* now has four proven
+    siblings (API-0115/0116/0117/0121). All four share the exact
+    same wire shape (`GET`, single REQUIRED string query, empty
+    `{}` 200 body, full 200/400/401/403/404/500 response set) and
+    differ only by query-parameter name. When wiring future
+    similar GETs, copy API-0117 verbatim and swap the parameter
+    name + fixture token; no harness changes needed.
+  - The intervening POST mutations (API-0118/0119/0120) do not
+    interrupt the GET sibling chain. After a body-bearing POST,
+    the next id-bearing GET still inherits its precedent from the
+    previous *GET* peer (API-0117 here), not from the immediate
+    PRD-ordered neighbour (API-0120).
+  - For id-bearing GETs that *do* declare 404, the
+    404→CodeNotFound override is technically applicable but the
+    harness-default 401→CodeAuth leg is preferred, matching
+    every prior id-bearing GET in the project. The override stays
+    reserved for delete-by-id POST mutations where 404 is the
+    headline failure mode.
+---
