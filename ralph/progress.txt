@@ -18372,3 +18372,48 @@ forward-reference lesson before assuming any field shape.
     suffix (e.g. `save-environment`, `save-external-port`); single-word
     ops keep the literal suffix (`start`, `stop`, `deploy`).
 ---
+
+## 2026-05-08 - API-0172
+- Added apiCoverageCase entry for `mariadb-stop` (POST /mariadb.stop)
+  immediately after API-0171 `mariadb-start` in
+  `internal/cli/api_coverage_test.go`. Continues the mariadb/* per-tag
+  fixture-isolation namespace `mariadb-cov-*` (opened at API-0160).
+- Spec re-verified against `internal/api/data/openapi.json` >
+  `/mariadb.stop` > `post`: tag mariadb, no parameters, requestBody
+  REQUIRED with `application/json` and a single REQUIRED top-level
+  scalar `mariadbId` (string), responses 200/400/401/403/500. The 200
+  response is `{}` with `additionalProperties: false`. Body shape is
+  byte-for-byte identical to API-0171 mariadb-start, API-0162
+  mariadb-deploy, and API-0165 mariadb-rebuild — start/stop/deploy/
+  rebuild are the canonical lifecycle quartet.
+- Fixture token base: `mariadb-cov-stop-0172-mariadbId` per the
+  `<tag>-cov-<slug>-<storyID>-<field>` traceability convention.
+  Verified non-colliding against all eleven prior mariadb/* token bases.
+- Failure leg: harness-default 401→CodeAuth (mariadb/* roster
+  convention). 404 is structurally absent from the spec on this
+  imperative-action mutation, so 404→CodeNotFound stays pinned to
+  API-0164 mariadb-one.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (+131 lines, 1 entry)
+  - `ralph/prd.json` (passes: false -> true)
+  - `ralph/progress.txt` (this entry)
+- Verification run: `gofmt -w .`, `go mod tidy`, `go vet ./...`,
+  `go test ./...`, `go test -race ./...` — all clean.
+- Remaining risks: none. The next case in the PRD-ordered priority-4
+  backlog is API-0173 `mariadb-update` (POST per spec preview;
+  contributor must re-verify body shape — likely a wider update payload
+  rather than a single-scalar imperative action).
+- **Learnings for future iterations:**
+  - The lifecycle-quartet observation (start/stop/deploy/rebuild all
+    sharing the single-required-string-scalar shape) holds for the
+    mariadb tag and likely repeats across the database-tag cluster
+    (mongo/mysql/postgres/redis) since Dokploy reuses its
+    per-engine routers. Future contributors covering those tags can
+    expect the same single-`<engine>Id` body for the start/stop/deploy/
+    rebuild/reload imperative actions.
+  - The forward reference embedded in API-0171's comment block ("The
+    next case ... is API-0172 mariadb-stop") landed correctly — the
+    spec preview matched the actual schema. The same forward reference
+    is now planted in API-0172's comment block for API-0173
+    mariadb-update.
+---
