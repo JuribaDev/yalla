@@ -9718,3 +9718,17 @@ Learnings for future iterations:
   - Failure-leg defaults: when `tc.FailureStatus == 0` the harness uses 401, when `tc.FailureCode == ""` it expects `CodeAuth`. For parameter-free getters, leave both unset and the canonical auth-failure path fires.
   - Always re-verify the openapi.json shape before duplicating a previous entry — the body-axis flips in API-0353..API-0362 are the canonical reminder.
 ---
+
+## 2026-05-08 - API-0367
+- Added api_coverage_test.go fixture for `settings-getOpenApiDocument` (GET /settings.getOpenApiDocument). 17th entry on settings/* roster, 5th in parameter-free GET sub-family. Spec-verified: zero parameters, no request body, responses 200/400/401/403/404/500, 200 schema is canonical empty `{}` with `additionalProperties: false`. Reservation slot: `set-cov-getOpenApiDocument-0367`.
+- Files changed:
+  - internal/cli/api_coverage_test.go (added API-0367 fixture entry; updated forward-reference comment to point at API-0368 settings-getReleaseTag).
+  - ralph/prd.json (set passes=true for API-0367).
+  - ralph/progress.txt (this entry).
+- Verification: `gofmt -w .`, `go mod tidy`, `go vet ./...`, `go test ./...`, `go test -race ./...` — all green. `goimports` is not installed locally (documented prior; same status). `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser` not installed locally (same status as previous iterations; CI runs them).
+- Remaining risks / follow-ups: API-0368 `settings-getReleaseTag` is the natural next case; the forward-reference comment flags that the contributor must still re-verify the spec at `/settings.getReleaseTag > get` before assuming wire shape carries over (release tags are typically a string, so the 200 schema there *may* diverge from the canonical `{}`).
+- **Learnings for future iterations:**
+  - When the prior iteration's hand-off comment hedges on "schema may diverge" (as API-0366 did about getOpenApiDocument), the spec verification still has to be done — but in this case the Dokploy spec actually keeps the canonical empty-object schema even where the wire payload is non-trivial. Document the verification result explicitly so future readers see that the hedge was checked, not skipped.
+  - `goimports` is not on the local PATH; the codebase is already organised with stable import groups so `gofmt -w .` alone has produced clean diffs on every iteration. No need to install goimports just for fixture-only changes.
+  - The PRD edit pattern `jq '(.userStories[] | select(.id == "X") | .passes) = true' prd.json > tmp && mv tmp prd.json` is reliable and preserves the rest of the file byte-for-byte (jq's default formatting matches the existing 2-space indentation).
+---

@@ -8073,6 +8073,137 @@ var coveredAPIOperations = []apiCoverageCase{
 		// every family transition.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0367",
+		OperationID: "settings-getOpenApiDocument",
+		Method:      http.MethodGet,
+		Path:        "/settings.getOpenApiDocument",
+		Tag:         "settings",
+		// Seventeenth entry on the settings/* coverage roster, inheriting
+		// the `set-cov-*` per-tag fixture-isolation namespace
+		// established by API-0351 `settings-assignDomainServer` and
+		// extended through API-0366 `settings-getLogCleanupStatus`
+		// (must not back-reference the closed `srv-cov-*`,
+		// `proj-cov-*`, `org-cov-*`, `compose-cov-*`, `app-cov-*`,
+		// `ai-cov-*`, or any other prior tag's namespace, per the
+		// per-tag isolation rule reasserted at API-0335..API-0366
+		// and originally established at API-0246
+		// `organization-active`).
+		//
+		// **Spec re-verified per the API-0345..API-0366
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json >
+		// /settings.getOpenApiDocument > get`: a **GET** with
+		// **zero parameters** (no query, no path, no header) and
+		// **no request body** (GETs in this OpenAPI document never
+		// carry a `requestBody` field). Responses
+		// 200/400/401/403/404/500 — the **404 stays present**,
+		// matching the immediately preceding peers API-0363
+		// `settings-getDokployCloudIps`, API-0364
+		// `settings-getDokployVersion`, API-0365 `settings-getIp`,
+		// and API-0366 `settings-getLogCleanupStatus`, and
+		// continuing the `404-bearing` response set first seen on
+		// this roster at API-0352 `settings-checkGPUStatus`.
+		//
+		// **Forward-reference lesson re-confirmed.** Despite the
+		// API-0366 hand-off comment flagging that an "OpenAPI
+		// document is non-trivially shaped" and that the 200 body
+		// schema **might** diverge here, the spec at
+		// `/settings.getOpenApiDocument > get > responses > 200`
+		// declares the canonical empty-object schema
+		// (`{ "type": "object", "properties": {}, "additionalProperties": false }`),
+		// matching every prior covered peer in the parameter-free
+		// GET cohort (API-0006 `ai-getAll`, API-0350
+		// `server-withSSHKey`, API-0363
+		// `settings-getDokployCloudIps`, API-0364
+		// `settings-getDokployVersion`, API-0365 `settings-getIp`,
+		// API-0366 `settings-getLogCleanupStatus`). The Dokploy
+		// spec leaves the actual OpenAPI document shape abstract
+		// at the wire-contract layer; the harness therefore
+		// continues to ship `{}` as the canonical success body and
+		// preserves the parameter-free GET sub-roster's wire
+		// shape. The contributor still re-verified the spec rather
+		// than assuming, per the per-operation re-verification
+		// rule.
+		//
+		// **Family continuation — fifth entry of the parameter-free
+		// GET sub-roster within settings/*.** API-0363 opened the
+		// settings/* parameter-free GET sub-family by pivoting off
+		// the eleven-entry POST cohort (API-0353..API-0362);
+		// API-0364 confirmed the sub-family shape under the
+		// `getDokploy*` slug prefix; API-0365 generalised the
+		// sub-family beyond that prefix; API-0366 demonstrated the
+		// shape carries again under a fresh non-`getDokploy*` slug
+		// (`getLogCleanupStatus`); API-0367 extends the sub-roster
+		// once more under another non-`getDokploy*` slug
+		// (`getOpenApiDocument`) while keeping the wire shape
+		// identical (parameter-free GET, no body, 200 → `{}`,
+		// 200/400/401/403/404/500 response set). `SampleBody`,
+		// `SampleQuery`, and `SamplePathParams` are therefore
+		// deliberately omitted: the harness's GET branch asserts
+		// that **no `Content-Type` request header is sent** and
+		// ignores `SampleBody` entirely, so carrying one would
+		// silently encode dead code on the wire. The harness still
+		// asserts the wire-level invariants (method, path,
+		// `Authorization` header, empty query string, empty request
+		// body) at `runAPICoverageSuccess`, and the canonical
+		// no-input invocation
+		// `yalla api call settings-getOpenApiDocument --input '{}'
+		// --json` is what the agent contract guarantees.
+		//
+		// Fixture conventions:
+		//   * No per-case fixture token base is needed because
+		//     this case populates neither `SampleBody`,
+		//     `SampleQuery`, nor `SamplePathParams` — the
+		//     parameter-free GET cohort precedent (API-0006
+		//     `ai-getAll`, API-0350 `server-withSSHKey`, API-0363
+		//     `settings-getDokployCloudIps`, API-0364
+		//     `settings-getDokployVersion`, API-0365
+		//     `settings-getIp`, API-0366
+		//     `settings-getLogCleanupStatus`) applies. A
+		//     reservation slot `set-cov-getOpenApiDocument-0367`
+		//     is left open under the settings/* `set-cov-*`
+		//     namespace for any future regression test that needs
+		//     a unique literal tied to this story; the reservation
+		//     is unique against API-0351..API-0366's `set-cov-*`
+		//     slugs and orthogonal to every prior tag's
+		//     `srv-cov-*`, `proj-cov-*`, `org-cov-*`,
+		//     `compose-cov-*`, `app-cov-*`, `ai-cov-*`, etc.
+		//     namespaces.
+		//
+		// **Failure-leg fields are intentionally omitted.** Even
+		// though the spec declares 404 on this operation, the
+		// per-tag opener convention reasserted at
+		// API-0335..API-0366 reserves 404 → CodeNotFound for the
+		// canonical by-id `*-one` peer, not for parameter-free
+		// platform-info getters like `getOpenApiDocument` (which
+		// returns the Dokploy OpenAPI document itself, not a
+		// single resource keyed by id). Auth is the universal
+		// failure mode every Dokploy operation must re-prove, so
+		// 401 → CodeAuth via the harness default
+		// (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""` →
+		// CodeAuth) stays the most informative representative.
+		// 400 → CodeInvalidInput stays reserved for stories where
+		// payload validation is the operation's distinguishing
+		// failure mode; this entry uses the canonical 401.
+		//
+		// The next case in the settings/* roster per PRD ordering
+		// is API-0368 `settings-getReleaseTag` (also declared a
+		// GET in the PRD with responses 200/400/401/403/404/500).
+		// On shape it appears to extend this parameter-free GET
+		// sub-roster, but the next contributor must re-verify
+		// against `internal/api/data/openapi.json >
+		// /settings.getReleaseTag > get` per the
+		// forward-reference lesson before assuming any field is
+		// identical to this entry. Do not assume the parameter
+		// list, request body, or response set carries over solely
+		// because the verb prefix and adjacent slug match; the
+		// eleven-flip body-axis history of the preceding `clean*`
+		// sub-roster (API-0353..API-0362) demonstrates why
+		// per-operation re-verification stays mandatory across
+		// every family transition.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
