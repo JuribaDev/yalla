@@ -7348,6 +7348,104 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0129",
+		OperationID: "environment-search",
+		Method:      http.MethodGet,
+		Path:        "/environment.search",
+		Tag:         "environment",
+		// Sixth and final priority-3 entry in the environment/* roster,
+		// immediately following API-0124 `environment-byProjectId`,
+		// API-0125 `environment-create`, API-0126
+		// `environment-duplicate`, API-0127 `environment-one`, and
+		// API-0128 `environment-remove`. Continues inside the
+		// `environment-cov-*` per-tag fixture-isolation namespace
+		// opened by API-0124 and **must not** back-reference any
+		// closed `admin-cov-*`, `ai-cov-*`, `app-cov-*`,
+		// `backup-cov-*`, `bb-cov-*`, `cert-cov-*`, `clu-cov-*`,
+		// `compose-cov-*`, `deployment-cov-*`, `dest-cov-*`,
+		// `docker-cov-*`, `domain-cov-*`, `org-cov-*`, `proj-cov-*`,
+		// `set-cov-*`, or `srv-cov-*` namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0441
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /environment.search > get`:
+		// a **GET** with **six OPTIONAL query parameters** (`q`,
+		// `name`, `description`, `projectId` all `string`; `limit`
+		// and `offset` both `number` with defaults `20` / `0`), **no
+		// request body**, and responses 200/400/401/403/404/500. The
+		// 200 schema is `{}` with `additionalProperties: false`,
+		// matching every prior covered peer in the empty-success
+		// cohort.
+		//
+		// **Shape positioning — STRUCTURAL FIRST for the environment/*
+		// roster: every query parameter is OPTIONAL.** Prior
+		// environment/* GETs (API-0124 `environment-byProjectId`,
+		// API-0127 `environment-one`) gated on a single REQUIRED
+		// string param, so this is the first case in the tag where a
+		// fully-empty query is wire-valid. The wire shape mirrors the
+		// cross-tag all-optional `*-search` GET precedent set by
+		// API-0035 `application-search`, API-0072 `compose-search`,
+		// and API-0265 `project-search`. Per that precedent, the
+		// fixture nevertheless populates a representative subset so
+		// `runAPICoverageSuccess` can re-read `r.URL.Query()` and
+		// prove the CLI propagated every param verbatim — including
+		// the two numeric-typed params (`limit` / `offset`, both
+		// `number` per the spec) which travel through the `--input`
+		// JSON `query` field as strings (HTTP query strings are
+		// untyped on the wire). We exercise (a) free-text search
+		// (`q`), (b) a scoped filter (`projectId`), and (c) numeric
+		// pagination (`limit` / `offset`) — without bloating the
+		// fixture into a noisy 6-key map. Numeric values use the
+		// canonical decimal grammar (`"5"` / `"0"`) so a future
+		// schema validator that re-coerces query strings to numbers
+		// still accepts them. The harness's `len(tc.SampleBody) > 0`
+		// gate stays inert so no content-type / body byte-comparison
+		// legs activate, exactly as on prior id-bearing GET peers.
+		//
+		// **Family choice — 404→CodeNotFound representative
+		// available but harness-default 401→CodeAuth retained.**
+		// The spec declares 404 on this operation, so the
+		// 404→CodeNotFound override is *technically* applicable. We
+		// deliberately stick with the harness-default
+		// 401→CodeAuth failure leg, however, to mirror the
+		// API-0035 / API-0072 / API-0265 cross-tag `*-search`
+		// precedent (and through them the broader id-bearing GET
+		// precedent chain) — bearer-token enforcement runs before
+		// any environment search executes, so the universal
+		// `E_AUTH` mode is the most representative single failure
+		// leg every authenticated Dokploy operation must re-prove.
+		// Per the established `<tag>-cov-<slug>-<storyID>`
+		// deterministic-but-clearly-fake naming convention, the
+		// fixture id base `environment-cov-search-0129` keeps `git
+		// grep` traceable to this PRD story without colliding with
+		// API-0124 (`environment-cov-by-project-id-0124`), API-0125
+		// (`environment-cov-create-0125`), API-0126
+		// (`environment-cov-duplicate-0126`), API-0127
+		// (`environment-cov-one-0127`), or API-0128
+		// (`environment-cov-remove-0128`).
+		//
+		// API-0129 closes the priority-3 environment/* roster (all
+		// six environment/* operations are now covered). The next
+		// pending PRD-ordered backlog entry is API-0131
+		// `gitea-create` (priority 5), which opens a new tag
+		// fixture-isolation namespace `gitea-cov-*`; the next
+		// contributor must re-verify the spec against
+		// `internal/api/data/openapi.json` per the forward-reference
+		// lesson before assuming any field shape.
+		SampleQuery: map[string][]string{
+			"q":         {"environment-cov-search-0129"},
+			"projectId": {"environment-cov-search-project-0129"},
+			"limit":     {"5"},
+			"offset":    {"0"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,

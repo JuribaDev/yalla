@@ -15691,3 +15691,31 @@ Learnings for future iterations:
     file edit is needed for raw API coverage — the harness entry alone
     provides the success/failure contract test.
 ---
+
+## 2026-05-08 18:58 UTC - API-0129
+- Covered Dokploy operation `environment-search` (GET /environment.search) — sixth and final entry in the priority-3 environment/* roster.
+- Spec re-verified per the API-0345..API-0441 forward-reference lesson against `internal/api/data/openapi.json > /environment.search > get`: GET, six OPTIONAL query parameters (`q`, `name`, `description`, `projectId` strings; `limit` / `offset` numbers with defaults 20/0), no request body, responses 200/400/401/403/404/500. The 200 schema is `{}` with `additionalProperties: false`.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended one `apiCoverageCase` literal (StoryID API-0129) under the existing `coveredAPIOperations` registry. The harness automatically derives registry presence, schema reachability, manifest inclusion, success-leg httptest exchange, and a representative 401→CodeAuth failure leg from this single struct.
+  - `ralph/prd.json` — flipped `API-0129.passes` from `false` to `true`.
+- Decisions recorded in inline comments:
+  - **Shape positioning**: STRUCTURAL FIRST for the environment/* roster — every query parameter on `environment-search` is OPTIONAL, unlike the prior environment/* GETs (API-0124 `environment-byProjectId`, API-0127 `environment-one`) which gated on a single REQUIRED string param. Mirrored the cross-tag all-optional `*-search` GET precedent set by API-0035 `application-search`, API-0072 `compose-search`, and API-0265 `project-search`. Fixture populates a representative subset (`q`, `projectId`, `limit`, `offset`) so the success leg proves wire-verbatim propagation including numeric-typed params (`number` per the spec, untyped on the wire).
+  - **Failure family**: 404→CodeNotFound override is technically applicable (spec declares 404) but harness-default 401→CodeAuth retained to mirror the API-0035 / API-0072 / API-0265 cross-tag `*-search` precedent — bearer-token enforcement runs before any environment search executes, so `E_AUTH` is the universal failure leg every authenticated Dokploy operation must re-prove.
+  - **Fixture namespace**: `environment-cov-search-0129` continues the `environment-cov-*` per-tag fixture-isolation namespace opened by API-0124, with the established `<tag>-cov-<slug>-<storyID>` naming convention. Cross-checked against `environment-cov-by-project-id-0124`, `environment-cov-create-0125`, `environment-cov-duplicate-0126`, `environment-cov-one-0127`, and `environment-cov-remove-0128` — no collisions.
+- Verification run from repo root:
+  - `gofmt -w .` — no diffs after format.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — pass.
+  - `go test ./...` — all packages green (api, cli, config, curated, errors, output, release, testutil, upgrade).
+  - `go test -race ./...` — all packages green.
+  - Optional tools `golangci-lint`, `staticcheck`, `govulncheck`, and `goreleaser` not run this iteration; those are best-effort per the iteration runbook and were not installed when previous environment/* stories shipped either.
+- Remaining risks / follow-ups:
+  - Priority-3 environment/* roster is now fully covered (API-0124..API-0129). The next pending PRD-ordered backlog entry is API-0131 `gitea-create` (priority 5), which opens a brand-new tag fixture-isolation namespace `gitea-cov-*`. The next contributor must re-verify the spec against `internal/api/data/openapi.json` per the forward-reference lesson before assuming any field shape on that operation.
+  - 220 stories remain pending out of 462 (one closed this iteration).
+- **Learnings for future iterations:**
+  - When covering `*-search` operations across tags, the canonical pattern is the cross-tag all-optional `*-search` GET precedent (API-0035 `application-search`, API-0072 `compose-search`, API-0265 `project-search`): populate a representative subset (`q`, one scoped filter, `limit`, `offset`) rather than every spec parameter — this proves wire propagation without bloating the fixture.
+  - Numeric-typed query parameters (`number` schema) travel through the `--input` JSON `query` field as **strings** (HTTP query strings are untyped on the wire). Use canonical decimal grammar (`"5"` / `"0"`) so a future schema validator that re-coerces query strings to numbers still accepts them.
+  - For all-optional GETs where the spec declares 404, the established cross-tag precedent is to **retain** the harness-default 401→CodeAuth failure leg (not override to 404→CodeNotFound) because bearer-token enforcement always runs first, making `E_AUTH` the most representative single failure mode every authenticated Dokploy operation must re-prove.
+  - The `apiCoverageCase` harness ignores empty `SampleQuery` / `SamplePathParams` maps and a `len(SampleBody) > 0` gate keeps content-type / body byte-comparison legs inert — so a single GET-with-query case never accidentally activates POST-shaped assertions.
+  - PRD `apiOperation.parameters[].required` may diverge from the OpenAPI source on edge cases; always re-verify against `internal/api/data/openapi.json` directly rather than trusting the PRD preview, per the API-0345..API-0441 forward-reference lesson re-affirmed in API-0124..API-0128 inline comments.
+---
