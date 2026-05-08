@@ -22577,3 +22577,80 @@ forward-reference lesson before assuming any field shape.
     inserting between API-0283..API-0290 should preserve this so
     `gofmt` stays a no-op on the inserted block.
 ---
+
+## 2026-05-09 - API-0284 - Cover postgres-stop (POST /postgres.stop)
+- What was implemented:
+  - Added a new `apiCoverageCase` entry for `postgres-stop`
+    (POST /postgres.stop, tag postgres) in
+    `internal/cli/api_coverage_test.go`, immediately after API-0283
+    `postgres-start` and before the API-0290 `project-all` boundary
+    that opens the next-tag arc. Thirteenth entry on the postgres/*
+    coverage roster, completing the forward reference embedded in
+    API-0283's closing block.
+  - **Spec re-verified** against
+    `internal/api/data/openapi.json` > `/postgres.stop` > `post`:
+    method POST, tag postgres, no parameters, requestBody REQUIRED
+    with `application/json` and **one REQUIRED top-level field**
+    (`postgresId` plain string, no `anyOf` / `nullable` / enum
+    constraints, no optional siblings). Responses 200/400/401/403/500
+    with the 200 body `{}` (`additionalProperties: false`). **No 404**
+    declared - mirroring the action-on-known-id POST precedent across
+    every prior body-bearing imperative-action postgres POST and the
+    cross-tag `*-stop` family (API-0174 `mariadb-stop`, API-0188
+    `mongo-stop`, API-0208 `mysql-stop`).
+  - **Shape - single-required-string POST imperative-action lifecycle
+    mutation, body REQUIRED.** Cardinality- and type-identical to
+    API-0274 `postgres-deploy`, API-0277 `postgres-rebuild`,
+    API-0279 `postgres-remove`, and API-0283 `postgres-start` (single
+    REQUIRED `postgresId` plain string). Direct cross-tag analog of
+    API-0174 `mariadb-stop`, API-0188 `mongo-stop`, API-0208
+    `mysql-stop`.
+  - **Family choice - harness-default 401->CodeAuth retained.** Spec
+    omits 404, so the 404->CodeNotFound override is structurally
+    inapplicable; the override slot for the postgres/* roster was
+    already consumed by API-0276 `postgres-one`.
+  - **Fixture token base** `postgres-cov-stop-0284` follows the
+    `<tag>-cov-<slug>-<storyID>` rule and is verified non-colliding
+    with API-0272..API-0283 literals and with cross-tag
+    `mariadb-cov-stop-0174` / `mongo-cov-stop-0188` /
+    `mysql-cov-stop-0208` namespaces.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (added API-0284 case +
+    rationale comment block)
+  - `ralph/prd.json` (set `passes: true` for API-0284)
+  - `ralph/progress.txt` (this entry)
+- Verification run from repo root:
+  - `gofmt -w .` - clean
+  - `go mod tidy` - clean (no diff)
+  - `go vet ./...` - pass
+  - `go test ./... -count=1` - pass (cli 1.410s; all packages PASS)
+  - `go test -race ./... -count=1` - pass (cli 3.170s; all packages PASS)
+  - Targeted: `go test ./internal/cli -run 'TestAPICoverage/API-0284' -v`
+    - all five legs PASS (RegistryInvariants, SchemaCommandWorks,
+    ManifestListsOperation, SuccessRoundTrip, RepresentativeFailure).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, and
+    `goreleaser` are still not installed locally and remain documented
+    as missing per the Codebase Patterns note rather than silently
+    skipped.
+- Remaining risks / follow-ups: API-0285 `postgres-update` is the
+  next priority-4 story on the postgres/* arc - the closing entry
+  before the API-0286 `previewDeployment-all` boundary opens the
+  next-tag arc. The next contributor must re-verify against
+  `internal/api/data/openapi.json > /postgres.update` per the
+  forward-reference lesson before assuming any field shape, and
+  will continue inside the `postgres-cov-*` per-tag fixture-isolation
+  namespace opened by API-0272.
+- **Learnings for future iterations:**
+  - The `*-stop` lifecycle-action POST shape is now established on
+    **four** tags (`mariadb-stop`, `mongo-stop`, `mysql-stop`,
+    `postgres-stop`) with byte-for-byte identical single-required-
+    `<tag>Id`-string surfaces, perfectly mirroring the `*-start`
+    family established at API-0283. Future contributors covering
+    the next `*-stop` peer can copy this entry's structure 1:1
+    and simply swap tag/path/id-field-name.
+  - The `api_coverage_test.go` table uses **two-tab** indentation
+    for struct entries (not three). When inserting new entries via
+    Edit, dump the actual line bytes first (e.g. via awk with
+    explicit `\t` rendering) to avoid wasted Edit attempts on
+    indentation mismatches.
+---
