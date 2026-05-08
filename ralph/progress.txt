@@ -37,6 +37,32 @@
   `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, and `goreleaser`
   are not yet installed locally and should be documented as missing rather
   than silently skipped.
+- Typed-error contract (US-0002): every user-visible failure is a
+  `*errors.Error` from `internal/errors` with a stable `Code` (e.g.
+  `E_NOT_FOUND`, `E_AUTH`, `E_NETWORK`, `E_USAGE`, `E_NO_INPUT_REQUIRED`).
+  `Code.ExitCode()` is the public exit-code map; do not return a plain
+  `fmt.Errorf` from a subcommand's `RunE` — it falls through to
+  `E_INTERNAL` (exit 1).
+- Output contract (US-0002): all command output flows through
+  `internal/output.Renderer`, constructed once per invocation. Success JSON
+  uses schema_version `yalla.output.v1`; error JSON uses
+  `yalla.error.v1`. `Renderer.Human` is auto-suppressed in `--json` mode so
+  stdout stays single-document JSON. `Renderer.Logf` always goes to stderr.
+- Secret redaction (US-0002): `output.NewRedactor(flags.Token)` is the
+  defence-in-depth scrubber applied to every visible string. It also matches
+  `Authorization: ...`, `X-API-Key: ...`, and `?token=`/`?api_key=` query
+  params even when the literal secret is unknown. Sentinel is `[REDACTED]`
+  and is part of the public contract.
+- Top-level error rendering: `internal/cli/error_render.go::renderTerminalError`
+  is the **only** place a top-level cobra failure is printed. It calls
+  `errors.From(err)` to map cobra parse errors (`unknown command`,
+  `unknown flag`, `required flag`, …) to `CodeUsage` (exit 2). The renderer
+  reads `flags.JSON` and `flags.Token` directly from the bound `*GlobalFlags`
+  pointer returned by `buildRoot`, so JSON envelopes and redaction work even
+  when cobra fails before `PersistentPreRunE` runs.
+- `cli.Execute` is now a one-liner over `executeWith(streams, build)`. Tests
+  drive `executeWith` via `runExecuteWith(t, sub, args...)` to assert exit
+  codes, JSON envelopes, and stdout silence on failure.
 
 ---
 
@@ -109,3 +135,113 @@
   - `cobra.NoArgs` on the root catches `yalla bogus` early; otherwise Cobra
     silently runs root with a positional arg.
 ---
+
+## 2026-05-08 - US-0002
+- **Implemented**: Agent-first output, error, and exit-code contracts. Three
+  new packages plus the wiring that makes every top-level cobra failure a
+  typed error rendered as either a `yalla.error.v1` JSON envelope (when
+  `--json` is set) or a stable `Error [CODE]: msg` / `  hint: …` line on
+  stderr. Stdout stays data-only on every error path; secret redaction is
+  applied to every visible string.
+- **Files changed**:
+  - `internal/errors/errors.go` (new) — `Error`, `Code` constants
+    (`E_USAGE`/`E_INVALID_INPUT`/`E_CONFIG`/`E_AUTH`/`E_FORBIDDEN`/
+    `E_NOT_FOUND`/`E_CONFLICT`/`E_RATE_LIMITED`/`E_SERVER`/`E_NETWORK`/
+    `E_TIMEOUT`/`E_CANCELED`/`E_NO_INPUT_REQUIRED`/`E_UNSUPPORTED`/
+    `E_INTERNAL`/`E_UNKNOWN`), the public `Code.ExitCode()` map (0/1/2/3/
+    4/5/6/7/8/9/10/130), constructors (`New`/`Newf`), modifiers
+    (`WithHint`/`WithHintf`/`Wrap`), `From(err)` shim that maps Cobra parse
+    errors to `CodeUsage`, and `SchemaVersion = "yalla.error.v1"`.
+  - `internal/errors/errors_test.go` (new) — covers exit-code stability,
+    nil-receiver safety, hint copy-on-write, `errors.Is`/`As` traversal
+    through `fmt.Errorf` wrapping, and Cobra phrase matching.
+  - `internal/errors/AGENTS.md` (new).
+  - `internal/output/output.go` (new) — `Renderer` with `Data` (JSON
+    envelope, no-op in human mode), `Human` (text, no-op in JSON mode),
+    `Logf` (always stderr, redacted), `Error` (typed error → JSON envelope
+    or human banner), `Raw` (passthrough), and accessors.
+  - `internal/output/envelope.go` (new) — `successEnvelope`, `errorEnvelope`,
+    `errorPayload` with `hint,omitempty`. `SuccessSchema =
+    "yalla.output.v1"`.
+  - `internal/output/redact.go` (new) — `Redactor` with `Sentinel =
+    "[REDACTED]"`, `NewRedactor(secrets...)` (drops empty / <4-char /
+    duplicate entries), `Redact(s)` (literal + regex for
+    `Authorization`/`X-API-Key`/`X-Auth-Token` headers and `?token=` /
+    `?api_key=` / `?access_token=` / `?x-auth-token=` query params).
+  - `internal/output/table.go` (new) — minimal deterministic two-space
+    padded table writer used by future curated commands.
+  - `internal/output/{output,redact,table}_test.go` (new) — cover JSON
+    envelopes, JSON-mode suppression of `Human`, redaction of explicit
+    secrets and well-known transport patterns, idempotency, table
+    alignment, unicode rune-count widths, header-only rendering.
+  - `internal/output/AGENTS.md` (new).
+  - `internal/cli/root.go` — extracted `buildRoot(streams, build)` returning
+    `(*cobra.Command, *GlobalFlags)`; `NewRootCommand` is now a thin
+    wrapper that discards the flags pointer to keep the existing test
+    surface intact. `Execute` delegates to a new `executeWith` testable
+    seam.
+  - `internal/cli/error_render.go` (new) — `renderTerminalError(streams,
+    flags, err)` is the sole top-level error printing point. It calls
+    `errors.From(err)`, builds an `output.Renderer` with a redactor seeded
+    from `flags.Token`, emits via `Renderer.Error`, and returns
+    `e.ExitCode()`.
+  - `internal/cli/error_render_test.go` (new) — exit-code mapping for
+    typed errors, plain errors, unknown commands, unknown flags;
+    JSON-envelope schema_version + code + message; stdout silence on
+    every error path; token redaction in both human and JSON error
+    output.
+  - `internal/cli/AGENTS.md` — updated with the typed-error and
+    `Renderer`-only output rules.
+  - `ralph/prd.json` — set US-0002 `passes: true`.
+- **Verification run**:
+  - `gofmt -w .` — clean (`gofmt -l .` reports no diff).
+  - `go mod tidy` — clean (no new deps).
+  - `go vet ./...` — clean.
+  - `go test ./...` — `ok internal/cli`, `ok internal/errors`, `ok
+    internal/output`.
+  - `go test -race ./...` — same packages, all `ok`.
+  - `go build ./...` — clean.
+- **Tools NOT available locally** (unchanged from US-0001): `goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`.
+- **Remaining risks / follow-ups**:
+  - `errors.From` matches Cobra phrases by substring. If a future Cobra
+    release rewords those messages, `CodeUsage` mapping silently regresses
+    to `CodeInternal`. Pin Cobra in `go.mod` (already done at `1.10.2`)
+    and treat the regression test in `errors_test.go` as the canary.
+  - `Renderer` carries no slog-style context yet. Curated commands that
+    want structured logs should land that in their own story; the
+    `Logf`-only contract is sufficient for US-0003+ to bootstrap.
+  - The bound `*GlobalFlags` pointer used by the renderer reflects partial
+    state when cobra fails mid-parse. `--json` is parsed positionally, so
+    `--json --bogus-flag` still emits a JSON error envelope; the inverse
+    order (`--bogus-flag --json`) emits a human-format error because parse
+    aborts before `--json` is bound. That is the natural cobra behaviour
+    and matches every other CLI in the agent ecosystem.
+- **Learnings for future iterations**:
+  - `json.Encoder.SetEscapeHTML(false)` is required so URLs in `data` /
+    error messages do not turn into `<` etc. Default Encoder behaviour
+    is HTML-safe escaping which silently mangles values.
+  - `regexp.ReplaceAllStringFunc` is the cleanest way to redact a header
+    value while preserving the header name and the `: ` separator.
+    `ReplaceAllString("$1: "+Sentinel)` would also work but loses
+    flexibility once the regex grows.
+  - Cobra parses persistent flags in order before `PersistentPreRunE`, so
+    the `*GlobalFlags` pointer in `buildRoot` already has `JSON` and
+    `Token` populated at the time `cmd.Execute()` returns its error.
+    There is no need to attempt context lookup from the failed command —
+    the captured pointer is enough.
+  - Returning `*Error` (pointer) from `errors.New` keeps `errors.As` happy
+    without forcing callers to deal with value vs pointer semantics. The
+    package's nil-receiver methods make the type ergonomic on the success
+    path too (`var e *Error; e.ExitCode()` returns 0).
+  - Tests that decode the JSON envelope must declare a local payload
+    struct rather than importing `successEnvelope` / `errorEnvelope` from
+    the package, because those types are unexported on purpose. The
+    schema_version, code, message, and hint fields are the actual public
+    contract.
+  - When a flag has a one-letter shorthand (e.g. `--verbose`/`-v`), Cobra
+    parses `-v --json` and `--verbose --json` identically, but `-vjson`
+    (no space) is a parse error mapped to `CodeUsage` here. Worth noting
+    when documenting agent-friendly invocation patterns.
+---
+

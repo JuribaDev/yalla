@@ -206,7 +206,7 @@
       ],
       "type": "foundation",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "This is the most important agent-first contract."
     },
     {

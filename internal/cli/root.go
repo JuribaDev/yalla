@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -116,7 +115,21 @@ func BuildInfoFromContext(ctx context.Context) BuildInfo {
 // NewRootCommand constructs the top-level yalla command with all global flags
 // wired and IO streams routed for the agent contract. Streams and build info
 // are injected so tests and alternate entrypoints can drive the command tree.
+//
+// The bound *GlobalFlags pointer is intentionally not returned: tests read
+// the parsed values via GlobalFlagsFromContext, and the binary's Execute
+// helper uses buildRoot to obtain the pointer it needs for terminal error
+// rendering.
 func NewRootCommand(streams IOStreams, build BuildInfo) *cobra.Command {
+	cmd, _ := buildRoot(streams, build)
+	return cmd
+}
+
+// buildRoot is the internal constructor that returns both the root command
+// and the *GlobalFlags pointer cobra writes parsed values into. The CLI
+// layer needs the pointer so the terminal error renderer can read --json
+// (and the secrets that must be redacted) when cmd.Execute returns an error.
+func buildRoot(streams IOStreams, build BuildInfo) (*cobra.Command, *GlobalFlags) {
 	flags := &GlobalFlags{}
 
 	cmd := &cobra.Command{
@@ -173,21 +186,28 @@ while logs, prompts, warnings, and errors are written to stderr.`,
 	pf.StringVar(&flags.Token, "token", "", "Dokploy API token; redacted in all logs and output")
 	pf.BoolVarP(&flags.Verbose, "verbose", "v", false, "enable verbose diagnostic logging on stderr")
 
-	return cmd
+	return cmd, flags
 }
 
 // Execute runs the root command using the process's default IO streams and
 // returns the exit code the binary should exit with. Centralising this
 // indirection keeps cmd/yalla/main.go tiny and gives tests a reusable hook.
+//
+// Cobra's SilenceErrors/SilenceUsage are set on the root command, so this
+// function is the sole place where a top-level error becomes visible to the
+// user. The renderer applies --json formatting, secret redaction, and the
+// stable code-to-exit-code mapping in one place.
 func Execute(build BuildInfo) int {
-	streams := DefaultIOStreams()
-	cmd := NewRootCommand(streams, build)
+	return executeWith(DefaultIOStreams(), build)
+}
+
+// executeWith is the testable seam behind Execute. Tests construct in-memory
+// streams, invoke this directly, and assert on the captured stdout/stderr
+// plus the returned exit code.
+func executeWith(streams IOStreams, build BuildInfo) int {
+	cmd, flags := buildRoot(streams, build)
 	if err := cmd.Execute(); err != nil {
-		// Surface the failure on stderr in a stable shape. Typed error
-		// envelopes and JSON-aware error rendering arrive in US-0002; for
-		// now we keep the message terse and stripped of any colourisation.
-		fmt.Fprintln(streams.ErrOut, "yalla:", strings.TrimSpace(err.Error()))
-		return 1
+		return renderTerminalError(streams, flags, err)
 	}
 	return 0
 }
