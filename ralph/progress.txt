@@ -12692,3 +12692,66 @@ Learnings for future iterations:
     should adopt the same default unless the OPTIONAL field is
     the operation's *distinguishing* coverage axis.
 ---
+
+## 2026-05-08 - API-0102
+- Implemented coverage entry for `destination-all` (GET /destination.all),
+  the kickoff of the destination/* per-tag roster.
+- Added one struct literal to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go` between API-0101 and API-0246,
+  preserving numeric story-id order across the priority-3 boundary.
+- The case opens the `dest-cov-*` per-tag fixture-isolation namespace
+  (forecast by API-0065 `cluster-removeWorker`'s hand-off comment) and
+  reasserts the per-tag isolation rule against every prior tag's
+  closed namespace.
+- Spec re-verified against `internal/api/data/openapi.json >
+  /destination.all > get`: GET, zero parameters, no request body,
+  responses 200/400/401/403/404/500, 200 schema `{}` with
+  `additionalProperties: false`. Mirrors the parameter-free GET tag-
+  opener cohort (API-0006 `ai-getAll`, API-0098
+  `deployment-allCentralized`, API-0100 `deployment-queueList`,
+  API-0246 `organization-active`).
+- Failure leg uses the harness default 401 → CodeAuth. 404 is reserved
+  for the canonical `*-one` slot (API-0104 `destination-one`); 400
+  stays reserved for payload-validation-distinguishing stories.
+- Files changed:
+    - internal/cli/api_coverage_test.go (new struct literal appended)
+    - ralph/prd.json (passes flag for API-0102 → true)
+    - ralph/progress.txt (this entry)
+- Verification run from repo root:
+    - `gofmt -w .` → clean
+    - `go mod tidy` → clean
+    - `go vet ./...` → pass
+    - `go test ./...` → pass (all 9 packages)
+    - `go test -race ./...` → pass (all 9 packages, internal/cli 2.774s)
+    - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+      `goreleaser` remain not installed locally (documented earlier).
+- Remaining risks / follow-ups: none specific to API-0102.
+  Forward-references the next destination/* peer (API-0103
+  `destination-create`, POST with required body) and reminds the
+  next contributor to re-verify the spec per-operation rather than
+  inheriting any axis from this opener.
+- **Learnings for future iterations:**
+  - The `coveredAPIOperations` slice is numeric-story-id ordered with
+    contiguous priority-3 blocks separated by jumps where higher-
+    priority work was prioritised earlier (API-0101 → API-0246, etc.).
+    New entries belong between the bracketing IDs, not appended.
+  - Tag-opener entries are deliberately concise (~30-90 lines) versus
+    the heavier mid-roster entries; the bulk of the comment is
+    namespace-isolation enumeration plus a forward-reference to the
+    next peer in the tag's PRD ordering.
+  - The `dst-cov-*` literal that already appears inside backup/*
+    `destinationId` payloads is a *value* in another namespace and
+    must NOT be confused with the destination/* tag's own
+    `dest-cov-*` fixture-isolation namespace. Future destination/*
+    entries should reuse `dest-cov-*` exclusively.
+  - For parameter-free GET operations, leaving SampleQuery,
+    SamplePathParams, and SampleBody unset is the correct shape;
+    `runAPICoverageSuccess` still asserts wire-level invariants
+    (method, path, Authorization header, empty query string) and
+    `buildCoverageInputArgs` returns no extra args so the harness
+    invocation degrades to `--input` defaults.
+  - `expectedOperationCount = 450` in `internal/api/registry_test.go`
+    already includes destination-all (the count is locked against
+    the embedded openapi.json, not against the coverage test). No
+    registry pin needs bumping for an API-XXXX coverage story.
+---

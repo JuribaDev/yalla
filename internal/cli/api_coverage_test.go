@@ -4699,6 +4699,96 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0102",
+		OperationID: "destination-all",
+		Method:      http.MethodGet,
+		Path:        "/destination.all",
+		Tag:         "destination",
+		// **First entry in the destination/* roster** and the kickoff
+		// for the `dest-cov-*` per-tag fixture-isolation namespace
+		// forecast by the cluster/* closer (API-0065
+		// `cluster-removeWorker`'s hand-off comment block, which
+		// explicitly named `dest-cov-*` as the next priority-3
+		// namespace to open). Per the per-tag isolation rule
+		// originally established at API-0246 `organization-active`
+		// and reasserted across every subsequent tag opener
+		// (API-0290 `project-*`, API-0335 `settings-*`, etc.), this
+		// entry **must not** back-reference any closed `admin-cov-*`,
+		// `ai-cov-*`, `app-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		// `cert-cov-*`, `clu-cov-*`, `compose-cov-*`,
+		// `deployment-cov-*`, `org-cov-*`, `proj-cov-*`,
+		// `set-cov-*`, or `srv-cov-*` namespace. The next
+		// priority-3 tag in the PRD roster after destination/* is
+		// docker/* via API-0108 `docker-getConfig`, which will open
+		// its own fresh namespace and must not back-reference
+		// `dest-cov-*`. The fixture-token literal `dst-cov-*` seen
+		// inside backup/* `destinationId` payloads (API-0040,
+		// API-0041, API-0050) is a *value* shape from the backup
+		// tag's namespace and is orthogonal to this destination/*
+		// tag namespace — the two must not be confused.
+		//
+		// **Spec re-verified per the API-0345..API-0396
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /destination.all > get`:
+		// a **GET** with **zero parameters** (no query, no path, no
+		// header) and **no request body**. Responses
+		// 200/400/401/403/404/500. The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort.
+		//
+		// **Shape positioning — parameter-free GET tag opener.**
+		// Mirrors the cross-tag parameter-free GET opener precedent
+		// established by API-0006 `ai-getAll`, API-0098
+		// `deployment-allCentralized`, API-0100
+		// `deployment-queueList`, and API-0246
+		// `organization-active`. The endpoint enumerates the
+		// destinations visible to the caller's bearer token, so the
+		// operation has nothing to vary on the wire — leaving
+		// SampleQuery/SamplePathParams/SampleBody unset is therefore
+		// intentional. The harness still asserts the wire-level
+		// invariants (method, path, Authorization header, empty
+		// query string) at runAPICoverageSuccess, and the canonical
+		// agent invocation is `yalla api call destination-all
+		// --input '{}' --json`.
+		//
+		// **Family choice — harness-default failure leg.** 404 →
+		// CodeNotFound is declared in the spec but is reserved for
+		// the canonical `*-one` slot (API-0104 `destination-one`)
+		// per the per-tag opener convention reasserted at
+		// API-0335..API-0396 (mirroring API-0060
+		// `certificates-one` for certificates/*, API-0064
+		// `cluster-getNodes` for cluster/*, API-0251
+		// `organization-one` for organization/*, and API-0342
+		// `server-one` for server/*). 400 → CodeInvalidInput is
+		// *technically* available but stays reserved for stories
+		// where payload validation is the operation's distinguishing
+		// failure mode; a parameter-free GET has no validator
+		// surface to claim that shape. Auth is the universal failure
+		// mode every Dokploy operation must re-prove, so 401 →
+		// CodeAuth via the harness default
+		// (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""` →
+		// CodeAuth) stays the most informative representative for
+		// the destination/* opener.
+		//
+		// The next case in the destination/* roster per PRD ordering
+		// is API-0103 `destination-create` (declared a **POST** in
+		// the PRD with `requestBody.required = true`). Per the
+		// slug-prefix-is-not-shape lesson reasserted across
+		// API-0371..API-0396, the next contributor must re-verify
+		// against `internal/api/data/openapi.json >
+		// /destination.create > post` per the forward-reference
+		// lesson before assuming any field is identical to this
+		// entry — even sharing the `destination-*` slug prefix does
+		// not pre-determine the inner-property-count,
+		// inner-property-type, or inner-required-field axes.
+		// 200 response in the spec is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,
