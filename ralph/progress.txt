@@ -19431,3 +19431,93 @@ forward-reference lesson before assuming any field shape.
   - Cross-tag fixture-namespace verification matters: `app-cov-gitlab-*` literals (from API-0033 application deploy) live in a structurally different coverage slot than this story's new `gitlab-cov-*` namespace. The two are non-colliding but a future contributor scanning `git grep gitlab-cov` should expect both.
   - The github/* tag has no `github-create` operation in the spec — github OAuth registration happens via `github-update` + `github-githubProviders`, distinct from the gitea/* and gitlab/* git-provider cohorts which both expose explicit `*-create` operations.
 ---
+
+## 2026-05-08 - API-0182 - Cover mongo-saveEnvironment (POST /mongo.saveEnvironment)
+- Added apiCoverageCases entry for mongo-saveEnvironment in
+  internal/cli/api_coverage_test.go between API-0181 mongo-remove and
+  API-0188 mounts-allNamedByApplicationId per the StoryID-sorted slice
+  rule (the mongo/* tag's ninth entry).
+- Spec re-verified against internal/api/data/openapi.json >
+  /mongo.saveEnvironment > post:
+  * Method POST, tag `mongo`
+  * Zero parameters
+  * REQUIRED `application/json` request body with TWO REQUIRED
+    top-level fields: `mongoId` (plain `type: string`) and `env`
+    (`anyOf: [{type: string}, {type: null}]` — nullable string). NO
+    OPTIONAL fields.
+  * Responses 200/400/401/403/500 (no 404, consistent with every
+    body-bearing imperative-action mongo POST except `mongo-one`).
+  * 200 schema is `{}` with `additionalProperties: false`.
+- Fixture token base `mongo-cov-saveEnvironment-0182` follows the
+  established `<tag>-cov-<slug>-<storyID>` deterministic-but-clearly-
+  fake naming convention and is verified non-colliding with every
+  prior mongo-cov-* literal (changeStatus-0174, create-0175,
+  deploy-0176, move-0177, one-0178, rebuild-0179, reload-0180,
+  remove-0181). Fixture supplies non-null string values for both
+  REQUIRED fields so the success-leg byte-for-byte body comparison
+  exercises a populated string for the nullable `env` slot rather than
+  the structurally-legal-but-less-rigorous `null` branch.
+- Failure leg: harness-default 401→CodeAuth retained. The spec omits
+  404 (override structurally inapplicable, consistent with every prior
+  body-bearing mongo POST). 400→CodeInvalidInput remains technically
+  available but reserved for stories where payload validation is the
+  uniquely distinguishing failure mode; conventional imperative-action
+  POSTs collapse to type-checking, so 401 is the most representative
+  single failure mode for an authenticated Dokploy operation.
+- Forward reference embedded in the entry's tail comment block reserves
+  `mongo-cov-saveExternalPort-0183` for the next pending mongo/* peer
+  (API-0183 `mongo-saveExternalPort`); the next contributor must
+  re-verify the spec per-operation per the slug-prefix-is-not-shape
+  lesson before assuming any field shape.
+- Files changed:
+  * internal/cli/api_coverage_test.go — added API-0182 entry
+  * ralph/prd.json — flipped API-0182 `passes` to true
+  * ralph/progress.txt — this entry
+- Verification (all from repo root):
+  * `gofmt -l .` -> clean
+  * `go mod tidy` -> no diff
+  * `go vet ./...` -> clean
+  * `go test ./...` -> all packages PASS
+  * `go test -race ./...` -> all packages PASS
+  * Targeted `go test -run TestAPICoverage ./internal/cli/...`
+    confirms all five contract subtests (RegistryInvariants,
+    SchemaCommandWorks, ManifestListsOperation, SuccessRoundTrip,
+    RepresentativeFailure) PASS for API-0182/mongo-saveEnvironment.
+- Tools NOT available locally (per documented policy): `goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`.
+- Remaining risks / follow-ups: API-0183 `mongo-saveExternalPort` is
+  the next pending priority-4 mongo/* peer; the forward-reference
+  comment in this entry reserves the `mongo-cov-saveExternalPort-0183`
+  slug for it. Re-verify the spec per-operation.
+- **Learnings for future iterations:**
+  - **First nullable scalar on the mongo/* coverage roster.** The
+    `env` field's `anyOf: [{type: string}, {type: null}]` shape is the
+    first nullable REQUIRED scalar reached on the mongo cohort and is
+    structurally distinct from every prior covered mongo peer. The
+    slug-prefix-is-not-shape rule continues to hold: `*-saveEnvironment`
+    is NOT shape-equivalent to `*-saveExternalPort` despite the shared
+    `save*` slug prefix — re-verify per-operation.
+  - **Nullable-scalar fixture choice — prefer the non-null branch.**
+    For `anyOf: [string, null]` fields the harness's success-leg
+    byte-for-byte body comparison still passes with either branch, but
+    a populated string exercises more of the JSON-encoding pipeline
+    (key serialisation, content-type detection, body length) than a
+    `null` literal. Future entries with nullable scalars should follow
+    this precedent unless the operation specifically distinguishes the
+    null branch.
+  - **Two-required-field POSTs across mongo/* are NOT shape-stable.**
+    `mongo-reload` (mongoId, appName), `mongo-changeStatus` (mongoId,
+    applicationStatus enum), `mongo-move` (mongoId,
+    targetEnvironmentId), and now `mongo-saveEnvironment` (mongoId, env
+    nullable) all carry two REQUIRED fields, but each second slot has a
+    structurally distinct shape (plain string vs. enum-constrained
+    string vs. plain string vs. nullable string). Future
+    two-field-mongo entries cannot transitively reuse fixtures across
+    these peers.
+  - **The mongo/* 404 override remains exclusive to API-0178
+    `mongo-one`.** Every other roster member (changeStatus, create,
+    deploy, move, rebuild, reload, remove, saveEnvironment) declares
+    only 200/400/401/403/500 — missing-target collapses to validation-
+    leg 400 under tRPC, so 401 -> CodeAuth stays the most representative
+    failure mode.
+---

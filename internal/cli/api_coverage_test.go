@@ -12356,6 +12356,151 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0182",
+		OperationID: "mongo-saveEnvironment",
+		Method:      http.MethodPost,
+		Path:        "/mongo.saveEnvironment",
+		Tag:         "mongo",
+		// Ninth entry on the priority-4 mongo/* coverage roster,
+		// immediately following API-0181 `mongo-remove` and completing
+		// the forward reference embedded in that entry's comment block
+		// ("The next case in the PRD-ordered priority-4 backlog is
+		// API-0182 `mongo-saveEnvironment`"). Continues inside the
+		// `mongo-cov-*` per-tag fixture-isolation namespace opened at
+		// API-0174 `mongo-changeStatus` and **must not** back-reference
+		// any closed prior-tag namespace (`set-cov-*`, `srv-cov-*`,
+		// `proj-cov-*`, `org-cov-*`, `compose-cov-*`, `app-cov-*`,
+		// `ai-cov-*`, `admin-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		// `cert-cov-*`, `clu-cov-*`, `deployment-cov-*`, `dest-cov-*`,
+		// `docker-cov-*`, `domain-cov-*`, `environment-cov-*`,
+		// `gitea-cov-*`, `github-cov-*`, `mariadb-cov-*`,
+		// `mounts-cov-*`, `swarm-cov-*`, `usr-cov-*`, etc.) per the
+		// per-tag isolation rule reasserted at API-0335..API-0444 and
+		// originally established at API-0246 `organization-active`.
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json` > `/mongo.saveEnvironment` >
+		// `post`: method POST, tag mongo, **no parameters**, requestBody
+		// REQUIRED with `application/json` and **two REQUIRED top-level
+		// fields** (`mongoId`: plain `type: string`; `env`: `anyOf:
+		// [{type: string}, {type: null}]` — nullable string), **no
+		// optional fields**, responses 200/400/401/403/500. The 200
+		// response is `{}` with `additionalProperties: false`, matching
+		// every prior covered peer in the empty-success cohort. **No
+		// 404** is declared on this operation, mirroring the
+		// action-on-known-id POST precedent reasserted at API-0162
+		// `mariadb-deploy`, API-0174 `mongo-changeStatus`, API-0176
+		// `mongo-deploy`, API-0179 `mongo-rebuild`, API-0180
+		// `mongo-reload`, and API-0181 `mongo-remove` (a body-bearing
+		// imperative-action POST whose missing-target failure mode
+		// collapses into 400/validation under Dokploy's tRPC convention
+		// rather than a dedicated 404 leg). 404 remains exclusive to the
+		// canonical by-id `*-one` GET peer covered at API-0178
+		// `mongo-one` for this tag.
+		//
+		// **Request body schema (REQUIRED top-level fields):**
+		//   - REQUIRED `mongoId` (string) — resource id scalar; the
+		//     fixture below supplies a deterministic-but-clearly-fake
+		//     `mongo-cov-saveEnvironment-0182-mongoId` literal carrying
+		//     the `<tag>-cov-<slug>-<storyID>-<field>` suffix for `git
+		//     grep` traceability.
+		//   - REQUIRED `env` (`anyOf: [string, null]`) — nullable
+		//     environment-block payload scalar; the fixture supplies a
+		//     non-null string `mongo-cov-saveEnvironment-0182-env` under
+		//     the same suffix convention so the harness's byte-for-byte
+		//     body-comparison leg activates against a concrete value.
+		//     The null branch is structurally legal but is intentionally
+		//     **not** the fixture's representative — the success leg
+		//     verifies the CLI forwards a populated string verbatim,
+		//     which is the more rigorous propagation check (a `null`
+		//     fixture would still pass byte-comparison but exercise less
+		//     of the JSON-encoding pipeline).
+		//   - **No OPTIONAL fields declared.** The schema is a strict
+		//     two-required-field request, structurally **distinct** from
+		//     every prior mongo/* peer: API-0179 `mongo-rebuild` and
+		//     API-0181 `mongo-remove` are single-`mongoId` strict
+		//     scalars; API-0180 `mongo-reload` is two plain strings
+		//     (`mongoId`, `appName`) without any `anyOf`/`nullable`
+		//     branch; API-0174 `mongo-changeStatus` is two plain strings
+		//     with the second slot constrained by an enum
+		//     (`applicationStatus`); API-0177 `mongo-move` is two plain
+		//     strings (`mongoId`, `targetEnvironmentId`); API-0175
+		//     `mongo-create` is a four-required-scalar create. The
+		//     `env` field's `anyOf: [string, null]` shape is the **first
+		//     nullable scalar reached on the mongo/* coverage roster**
+		//     and the slug-prefix-is-not-shape rule continues to dictate
+		//     re-verification per-operation rather than transitive shape
+		//     inheritance from any of the prior mongo peers.
+		//
+		// **Shape positioning — two-required-field POST imperative-
+		// action mutation, body REQUIRED, with one nullable scalar.**
+		// The `mongoId` REQUIRED slot is a plain non-nullable `type:
+		// string` (no `anyOf` / `nullable` / enum constraints); the
+		// `env` REQUIRED slot is `anyOf: [{type: string}, {type:
+		// null}]`. The harness's `len(tc.SampleBody) > 0` gate at
+		// `runAPICoverageSuccess` activates the JSON content-type and
+		// byte-for-byte body comparison legs; this fixture supplies both
+		// REQUIRED fields (with `env` populated as a non-null string,
+		// per the rationale above) so the success path verifies the CLI
+		// propagated the body verbatim including key ordering.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so the
+		// 404→CodeNotFound override is structurally inapplicable
+		// (matching API-0162 `mariadb-deploy`, API-0174
+		// `mongo-changeStatus`, API-0176 `mongo-deploy`, API-0179
+		// `mongo-rebuild`, API-0180 `mongo-reload`, and API-0181
+		// `mongo-remove`). 400→CodeInvalidInput is *technically*
+		// available — a payload that omits a REQUIRED field, or supplies
+		// a non-string non-null value for `env`, would fail server-side
+		// validation — but the harness reserves 400 representatives for
+		// stories where payload validation is the operation's *uniquely
+		// distinguishing* failure mode. A conventional imperative-
+		// action POST collapses to type-checking, so the harness-default
+		// 401→CodeAuth failure leg remains the most representative
+		// single failure mode every authenticated Dokploy operation must
+		// re-prove, and is consistent with the 401→CodeAuth choice
+		// locked in by the mongo/* kickoff at API-0174
+		// `mongo-changeStatus` and continued at API-0175 `mongo-create`,
+		// API-0176 `mongo-deploy`, API-0177 `mongo-move`, API-0179
+		// `mongo-rebuild`, API-0180 `mongo-reload`, and API-0181
+		// `mongo-remove` (API-0178 `mongo-one` was the lone roster-
+		// level override to 404, which was structurally restricted to
+		// the by-id GET peer).
+		//
+		// **Fixture token base** `mongo-cov-saveEnvironment-0182`
+		// follows the established `<tag>-cov-<slug>-<storyID>`
+		// deterministic-but-clearly-fake naming convention and is
+		// verified non-colliding with API-0174's
+		// `mongo-cov-changeStatus-0174`, API-0175's
+		// `mongo-cov-create-0175`, API-0176's
+		// `mongo-cov-deploy-0176-mongoId`, API-0177's
+		// `mongo-cov-move-0177-{mongoId,targetEnvironmentId}`,
+		// API-0178's `mongo-cov-one-0178-mongoId-fixture`, API-0179's
+		// `mongo-cov-rebuild-0179-mongoId`, API-0180's
+		// `mongo-cov-reload-0180-{mongoId,appName}`, and API-0181's
+		// `mongo-cov-remove-0181-mongoId` literals.
+		//
+		// The next case in the PRD-ordered priority-4 backlog is
+		// API-0183 `mongo-saveExternalPort` (declared a **POST** per
+		// the spec preview; the next contributor must re-verify the
+		// spec against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will continue inside the `mongo-cov-*` per-tag
+		// fixture-isolation namespace opened by API-0174).
+		SampleBody: json.RawMessage(`{
+			"mongoId": "mongo-cov-saveEnvironment-0182-mongoId",
+			"env": "mongo-cov-saveEnvironment-0182-env"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` / `data.status`
+		// rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0188",
 		OperationID: "mounts-allNamedByApplicationId",
 		Method:      http.MethodGet,
