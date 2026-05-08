@@ -14991,3 +14991,96 @@ Learnings for future iterations:
     so multi-line backtick-quoted JSON in `SampleBody` is safe;
     no need to minify the fixture string by hand.
 ---
+
+## 2026-05-08 17:30 UTC - API-0119 (domain-delete)
+- What was implemented:
+  - Added a registry-driven coverage case for the Dokploy
+    OpenAPI operation `domain-delete` (POST /domain.delete) inside
+    `internal/cli/api_coverage_test.go > coveredAPIOperations`.
+    The case wires the harness `runAPICoverageSuccess` /
+    `runAPICoverageFailure` legs end-to-end so the operation is
+    exercised through `yalla api call domain-delete` and
+    `yalla schema get domain-delete` against an httptest fixture.
+  - Spec re-verified per the API-0345..API-0441 forward-reference
+    lesson against `internal/api/data/openapi.json >
+    /domain.delete > post`: a **POST** with **no parameters** and
+    a **REQUIRED request body** whose schema is the closed-shape
+    single-string-scalar `{domainId}` (required, no optionals).
+    Responses 200/400/401/403/500 — the spec does **not** declare
+    404 on this operation (delete-by-id actions collapse missing-
+    target into 400/validation per Dokploy's tRPC conventions),
+    so the canonical 404→CodeNotFound override is structurally
+    inapplicable. The 200 schema is `{}` with
+    `additionalProperties: false`, matching every prior covered
+    peer in the empty-success cohort.
+  - Shape positioning: second request-body POST in the domain/*
+    roster after API-0118 `domain-create` and the **first** to use
+    the strict `{single-required-scalar}` body shape. The
+    closed-shape literal copies the cross-tag mutation precedent
+    set by API-0250 `organization-delete` (which itself copied
+    API-0114 `docker-restartContainer`'s `{containerId}` body)
+    verbatim with the field name swapped from `organizationId` →
+    `domainId`. The harness's `len(tc.SampleBody) > 0` gate at
+    `runAPICoverageSuccess` activates the JSON content-type and
+    byte-for-byte body comparison legs; the fixture supplies the
+    REQUIRED `domainId` so the success path verifies the CLI
+    propagated the body verbatim.
+  - Per-case fixture token base `domain-cov-delete-0119` keeps
+    `git grep` traceable to this PRD story without colliding with
+    API-0115 (`domain-cov-by-application-id-0115`), API-0116
+    (`domain-cov-by-compose-id-0116`), API-0117
+    (`domain-cov-can-generate-traefik-me-domains-0117`), or
+    API-0118 (`domain-cov-create-0118`).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (single new case appended
+    after API-0118 `domain-create`).
+  - `ralph/prd.json` (`API-0119.passes` flipped `false` → `true`).
+  - `ralph/progress.txt` (this entry).
+- Verification run: `gofmt -w internal/cli/api_coverage_test.go`,
+  `go mod tidy`, `go vet ./...`, `go test ./...`,
+  `go test -race ./...`.
+- Results: gofmt clean, mod tidy is no-op, vet clean, all packages
+  pass under both the standard and race-enabled test runs
+  (`internal/cli` 1.444s / 2.869s respectively). `goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, and `goreleaser`
+  remain not installed locally and stay documented as missing
+  rather than silently skipped (per the API-0001..API-0118
+  precedent).
+- Remaining risks or follow-ups: none specific to this story —
+  the registry-driven harness exercises the success and 401
+  failure legs uniformly, and the closed-shape `{domainId}` body
+  has no optional drift to project. The next case in the
+  PRD-ordered priority-3 backlog is API-0120 `domain-generateDomain`
+  (declared a **POST** per the spec preview); the next contributor
+  must re-verify the spec against `internal/api/data/openapi.json`
+  per the forward-reference lesson before assuming any field
+  shape, and will continue inside the `domain-cov-*` per-tag
+  fixture-isolation namespace.
+- **Learnings for future iterations:**
+  - The `{single-required-scalar}` POST mutation pattern is now
+    re-affirmed inside the domain/* tag (this story) on top of the
+    cross-tag precedent set by API-0114
+    `docker-restartContainer`'s `{containerId}` body and API-0250
+    `organization-delete`'s `{organizationId}` body. Future
+    "delete-by-id" operations across other tags can copy this
+    closed-shape literal verbatim with the field name swapped —
+    no harness changes, no new fixture-isolation namespace, just
+    a per-story `<tag>-cov-<slug>-<storyID>` token.
+  - Dokploy's tRPC backend treats delete-by-id with an unknown
+    target as a `400` (validation) rather than a `404`
+    (not-found). When grading whether the 404→CodeNotFound failure
+    leg override is applicable for a POST mutation, check the
+    spec's response-code set — if `404` is absent (as on
+    `/domain.delete`, `/organization.delete`,
+    `/organization.removeInvitation`), keep the harness-default
+    401→CodeAuth representative leg.
+  - The `coveredAPIOperations` slice in
+    `internal/cli/api_coverage_test.go` is the *only* file that
+    needs editing to land a domain/* coverage story today — the
+    OpenAPI spec already lists `domain-delete` and the registry
+    hydrates it automatically, so per-operation registry edits
+    are not required for this tag. Confirmed by
+    `grep -n 'domain-delete' internal/api/data/openapi.json` and
+    the green `go test ./...` run that ran the registry-driven
+    invariants test against the new case without further wiring.
+---

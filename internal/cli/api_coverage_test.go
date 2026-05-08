@@ -6448,6 +6448,92 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0119",
+		OperationID: "domain-delete",
+		Method:      http.MethodPost,
+		Path:        "/domain.delete",
+		Tag:         "domain",
+		// Fifth entry in the domain/* roster, immediately following
+		// API-0115 `domain-byApplicationId`, API-0116
+		// `domain-byComposeId`, API-0117
+		// `domain-canGenerateTraefikMeDomains`, and API-0118
+		// `domain-create`. Stays inside the `domain-cov-*` per-tag
+		// fixture-isolation namespace opened by API-0115 and **must
+		// not** back-reference any closed `admin-cov-*`, `ai-cov-*`,
+		// `app-cov-*`, `backup-cov-*`, `bb-cov-*`, `cert-cov-*`,
+		// `clu-cov-*`, `compose-cov-*`, `deployment-cov-*`,
+		// `dest-cov-*`, `docker-cov-*`, `org-cov-*`, `proj-cov-*`,
+		// `set-cov-*`, or `srv-cov-*` namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0441
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /domain.delete > post`:
+		// a **POST** with **no parameters** and a **REQUIRED
+		// request body** whose schema is the closed-shape
+		// single-string-scalar `{domainId}` (required, no
+		// optionals). Responses 200/400/401/403/500 — note the
+		// spec does **not** declare 404 on this operation, so the
+		// canonical 404→CodeNotFound override is *not* available
+		// here even though sibling domain/* operations like
+		// API-0115/0116/0117 declare 404 on their by-id reads.
+		// The 200 schema is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort.
+		//
+		// **Shape positioning — single-required-scalar POST
+		// mutation, body REQUIRED.** Second request-body POST in
+		// the domain/* roster (after API-0118 `domain-create`) and
+		// the first to use the strict `{single-required-scalar}`
+		// body shape. The closed-shape literal copies the cross-tag
+		// mutation precedent set by API-0250 `organization-delete`
+		// (which itself copied API-0114 `docker-restartContainer`'s
+		// `{containerId}` body) verbatim with the field name
+		// swapped from `organizationId` → `domainId`. The harness's
+		// `len(tc.SampleBody) > 0` gate at `runAPICoverageSuccess`
+		// activates the JSON content-type and byte-for-byte body
+		// comparison legs; this fixture supplies the REQUIRED
+		// `domainId` so the success path verifies the CLI
+		// propagated the body verbatim.
+		//
+		// **Family choice — harness-default 401 → CodeAuth failure
+		// leg.** The spec omits 404 from the response set
+		// (delete-by-id actions collapse missing-target into 400 /
+		// validation per Dokploy's tRPC conventions, exactly as
+		// documented for API-0250 `organization-delete` and
+		// API-0252 `organization-removeInvitation`), so the
+		// 404→CodeNotFound override is structurally inapplicable
+		// here. Per the established precedent — fleet-wide mutation
+		// endpoints surface `E_AUTH` before any persistence runs
+		// when the bearer is missing/invalid — 401→CodeAuth remains
+		// the universal failure mode every authenticated Dokploy
+		// operation must re-prove. Per the established
+		// `<tag>-cov-<slug>-<storyID>` deterministic-but-clearly-
+		// fake naming convention, the fixture token base
+		// `domain-cov-delete-0119` keeps `git grep` traceable to
+		// this PRD story without colliding with API-0115
+		// (`domain-cov-by-application-id-0115`), API-0116
+		// (`domain-cov-by-compose-id-0116`), API-0117
+		// (`domain-cov-can-generate-traefik-me-domains-0117`), or
+		// API-0118 (`domain-cov-create-0118`).
+		//
+		// The next case in the PRD-ordered priority-3 backlog is
+		// API-0120 `domain-generateDomain` (declared a **POST** per
+		// the spec preview; the next contributor must re-verify
+		// the spec against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will continue inside the `domain-cov-*` per-tag
+		// fixture-isolation namespace).
+		SampleBody: json.RawMessage(`{
+			"domainId": "domain-cov-delete-0119"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,
