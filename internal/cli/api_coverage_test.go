@@ -4037,6 +4037,81 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0339",
+		OperationID: "server-getDefaultCommand",
+		Method:      http.MethodGet,
+		Path:        "/server.getDefaultCommand",
+		Tag:         "server",
+		// Fifth entry on the server/* coverage roster and the **first
+		// query-shaped GET** in the server/* tag — succeeds the
+		// parameter-free GET cohort opened by API-0335 `server-all`,
+		// API-0336 `server-buildServers`, API-0337 `server-count`, and
+		// the API-0338 `server-create` mutation. Inherits the
+		// `srv-cov-*` per-tag fixture-isolation namespace established
+		// at API-0335 (must not back-reference the `proj-cov-*`
+		// namespace from API-0290..API-0297, per the rule reasserted
+		// at API-0335 `server-all` and originally established at
+		// API-0246 `organization-active`).
+		//
+		// Spec source `internal/api/data/openapi.json >
+		// /server.getDefaultCommand > get`: zero request body, a
+		// single REQUIRED query parameter `serverId` (string), no path
+		// parameters. Responses 200/400/401/403/404/500. The 200 schema
+		// is `{}` with `additionalProperties: false`, matching every
+		// prior server/* peer.
+		//
+		// This is the **canonical filter-by-serverId GET shape** that
+		// later server/* by-id peers (e.g. API-0340
+		// `server-getServerMetrics` with three query params,
+		// API-0342 `server-one` with the by-id 404 → CodeNotFound
+		// failure leg, etc.) will inherit. Wire-shape twin to the
+		// `ai-get` pattern (API-0005) — single required query
+		// parameter, no body, empty success object — re-anchored
+		// inside the server/* tag rather than ai/*.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base `srv-cov-getDefaultCommand-0339`
+		//     follows the `<tag>-cov-<slug>-<storyID>` convention
+		//     shared across the server/* roster and is unique
+		//     (verified: no collisions with the parameter-free GET
+		//     peers API-0335/0336/0337 which carry no SampleQuery,
+		//     no collisions with API-0338 `server-create`'s
+		//     `srv-cov-create-0338` body fixture, and no collisions
+		//     with the cross-tag `proj-cov-*` namespace reserved for
+		//     project/*).
+		//   * The harness forwards SampleQuery via the `--input` JSON
+		//     `query` field, and `runAPICoverageSuccess` re-reads
+		//     `r.URL.Query()` to confirm the CLI propagated the param
+		//     verbatim — same pattern as API-0005 `ai-get` and every
+		//     subsequent query-shaped GET.
+		//
+		// Failure leg: keeps the harness default (401 → CodeAuth).
+		// Although the spec also declares 404, the per-tag opener
+		// convention reasserted at API-0335..API-0338 reserves
+		// 404 → CodeNotFound for the canonical by-id `*-one` peer
+		// (API-0342 `server-one`), not for filter-by-serverId GETs
+		// like this one. The same convention is observed in the ai/*
+		// roster: API-0005 `ai-get` (single `aiId` query param) keeps
+		// the 401 default while API-0008 `ai-one` would carry the 404
+		// override. Auth is the universal failure mode every
+		// Dokploy operation must re-prove, so 401 stays representative.
+		//
+		// Future server/* by-id GET peers should grep this entry
+		// first for the single-required-query-param shape; future
+		// `*-getDefaultCommand`-style peers in other tags should
+		// grep this entry first for the `srv-cov-getDefaultCommand-0339`
+		// fixture-token namespace pattern.
+		SampleQuery: map[string][]string{
+			"serverId": {"srv-cov-getDefaultCommand-0339"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior server/* peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

@@ -6779,3 +6779,61 @@
     create/update mutations — those keep the harness default 401 →
     CodeAuth because auth is the universal failure mode.
 ---
+
+## 2026-05-08 10:46 - API-0339
+- Added server-getDefaultCommand coverage entry to coveredAPIOperations in
+  internal/cli/api_coverage_test.go.
+- This is the **fifth** server/* tag entry (after API-0335 server-all,
+  API-0336 server-buildServers, API-0337 server-count, API-0338
+  server-create) and the **first query-shaped GET** in the server/* tag
+  (the prior three GETs were parameter-free; API-0338 was a body
+  mutation).
+- Spec source `internal/api/data/openapi.json > /server.getDefaultCommand
+  > get`: zero request body, one REQUIRED query parameter `serverId`
+  (string), no path parameters. Responses 200/400/401/403/404/500. The
+  200 schema is `{}` with `additionalProperties: false`.
+- Fixture: `srv-cov-getDefaultCommand-0339` (per-tag namespace inherited
+  from API-0335; verified unique against the four prior server/* peers
+  and against the cross-tag `proj-cov-*` namespace).
+- Failure leg: harness default 401 → CodeAuth. Although the spec also
+  declares 404, the per-tag opener convention reasserted at
+  API-0335..API-0338 reserves 404 → CodeNotFound for the canonical
+  by-id `*-one` peer (API-0342 server-one). Same convention as ai/*
+  where API-0005 ai-get (single `aiId` query param) keeps 401 and the
+  404 override would land on the canonical `ai-one` peer.
+- Files changed:
+  - internal/cli/api_coverage_test.go (one new struct entry; ~78 lines
+    of code+commentary added)
+  - ralph/prd.json (passes: false → true for API-0339)
+  - ralph/progress.txt (this entry)
+- Verification run:
+  - go test ./internal/cli/ -run TestAPICoverage -count=1 → ok
+  - go test ./... → all green (cached for unchanged packages)
+  - go test -race ./... → all green
+  - go vet ./... → clean
+  - gofmt -w . → no diff
+- Results: All four TestAPICoverage subtests
+  (RegistryInvariants, SchemaCommandWorks, ManifestListsOperation,
+  SuccessRoundTrip, RepresentativeFailure) now include the
+  API-0339/server-getDefaultCommand subtest and pass.
+- Remaining risks or follow-ups: none specific to this story. Next
+  highest-priority server/* failing entry is API-0340
+  server-getServerMetrics (three required query params, including a
+  `token` param that needs careful redaction-aware fixture choice).
+- **Learnings for future iterations:**
+  - The single-required-query-param GET shape is identical across tags;
+    API-0339 is the canonical re-anchoring of the API-0005 `ai-get`
+    pattern inside the server/* tag. Future server/* by-id GET peers
+    (`server-one`, `server-publicIp`, etc.) should grep the API-0339
+    entry first, then layer their tag/peer-specific overrides
+    (e.g. 404 → CodeNotFound for `server-one`).
+  - The "per-tag opener reserves 404 → CodeNotFound for the canonical
+    `*-one` peer" rule is now reasserted by five consecutive server/*
+    entries (API-0335..API-0339). It is reliable enough that future
+    tag openers should bake it in from entry #1 rather than re-deriving
+    it on each peer.
+  - Adding a coverage entry is a pure-data change: no production code
+    or registry edits are needed because the embedded OpenAPI document
+    already advertises the operation. The four parameterised tests in
+    `api_coverage_test.go` extend automatically.
+---
