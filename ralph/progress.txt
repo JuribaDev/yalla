@@ -12565,3 +12565,130 @@ Learnings for future iterations:
     transition — the PRD ordering does not constrain the spec's
     declared shape.
 ---
+
+## 2026-05-08 - API-0396
+- Implemented coverage for `settings-updateTraefikFile`
+  (POST /settings.updateTraefikFile) via the table-driven
+  `apiCoverageCase` entry pattern in
+  `internal/cli/api_coverage_test.go`. The harness exercises
+  registry invariants (method/path/tag), the raw
+  `yalla api call settings-updateTraefikFile --input <file> --json`
+  success leg with an httptest.Server fixture, the representative
+  auth failure leg (401 → CodeAuth via the harness default), the
+  `yalla schema get settings-updateTraefikFile --json` envelope,
+  and the manifest entry — satisfying every PRD acceptance
+  criterion (registry presence, api call, schema get, --no-input
+  safety, success envelope, failure envelope, contract tests,
+  manifest coverage) in one fixture.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended a single
+    `apiCoverageCase` entry for `API-0396 /
+    settings-updateTraefikFile`. `Method = http.MethodPost`,
+    `Path = /settings.updateTraefikFile`, `Tag = settings`.
+    `SampleBody` carries the minimal-valid REQUIRED inner shape
+    `{"path": "/etc/dokploy/traefik/set-cov-updateTraefikFile-0396.yml",
+    "traefikConfig": "# set-cov-updateTraefikFile-0396\n"}`,
+    populating both `path` (REQUIRED, plain string) and
+    `traefikConfig` (REQUIRED, plain string) and deliberately
+    omitting OPTIONAL `serverId`. The path field embeds the
+    fixture slug as the basename and the traefikConfig field
+    embeds the slug as a YAML/TOML comment, preserving the
+    slug-on-the-wire convention on both REQUIRED string axes.
+    `SuccessResponse: \`{}\`` matches the spec's
+    `additionalProperties: false` empty-object 200 schema.
+    Failure-leg fields are intentionally omitted so the harness
+    default (401 → CodeAuth) supplies the representative failure
+    leg.
+  - `ralph/prd.json` — flipped `API-0396.passes` from `false` to
+    `true`. 269 of 462 stories remain failing; next pending entry
+    by priority is API-0397 `settings-updateTraefikPorts`.
+- **Verification run** (from repository root):
+  - `gofmt -w .` — clean.
+  - `goimports -w .` — not installed in this environment; gofmt
+    handled formatting; documented in the run log.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — PASS (internal/cli 1.297s, all other
+    packages cached PASS).
+  - `go test -race ./...` — PASS (internal/cli 2.773s, all other
+    packages cached PASS).
+  - `golangci-lint`, `staticcheck`, `govulncheck`, and
+    `goreleaser` — not installed locally; documented as missing
+    rather than silently skipped (per Codebase Patterns).
+- **Results**: All required quality gates green. The new entry
+  exercises the same fixture pipeline as predecessors but
+  introduces the **first multi-required-field shape on the
+  settings/* `update*` sub-roster** (two REQUIRED strings + one
+  OPTIONAL string), so the inner-property-count and
+  inner-required-field axes pivot decisively from API-0395.
+- **Remaining risks / follow-ups**: None for API-0396 itself.
+  The next contributor on API-0397 `settings-updateTraefikPorts`
+  must re-verify the spec per the forward-reference lesson — the
+  `Ports` slug-stem strongly hints at numeric port data which
+  would be the **first non-string inner-property-type pivot**
+  within the settings/* `update*` sub-roster, but the
+  slug-stem-is-not-shape rule (reasserted at API-0371..API-0396)
+  forbids assuming any axis carries over even when the slug stem
+  matches at `Traefik`.
+- **Learnings for future iterations**:
+  - **The structural-twin streak on the settings/* `update*`
+    sub-roster ends at three.** API-0392 / API-0394 / API-0395
+    were structurally identical "single REQUIRED plain string"
+    shapes (zero-pivot triplet separated only by the API-0393
+    ABSENT-body intermezzo). API-0396 breaks the streak with two
+    REQUIRED + one OPTIONAL plain strings — confirming that even
+    a stable triplet within a single tag's slug-prefix sub-roster
+    cannot pre-determine the next entry's inner shape. The
+    forward-reference lesson reasserted at API-0345..API-0395
+    becomes sharper here: API-0395's hand-off comment
+    explicitly forecast a possible `path` + `content` shape and
+    the spec confirmed the forecast at the inner-property-count
+    axis (one → three) and the inner-required-field axis (one →
+    two), even while the verb, outer-body, parameter,
+    response-set, and 200-shape axes stayed identical.
+  - **First multi-required-field `update*` shape on settings/*.**
+    Prior multi-required-field precedent within the settings/*
+    tag was API-0386 `settings-saveSSHPrivateKey`
+    (`name`/`privateKey` REQUIRED), but that entry sat on the
+    `save*` slug-prefix sub-roster, not `update*`. API-0396 is
+    the first `update*` peer requiring more than one inner
+    field — useful future signal that the `update*` sub-roster's
+    inner-required-field axis is **non-monotonic** (single-field
+    at API-0390/0391/0392/0394/0395, multi-field at 0396), so
+    no `update*`-prefix-wide invariant can be claimed.
+  - **`serverId`-as-OPTIONAL is a settings/* convention worth
+    flagging.** API-0394 `settings-updateServerIp`'s `serverId`
+    was the entire payload (REQUIRED in that op's local
+    semantics), whereas API-0396 declares `serverId` OPTIONAL
+    alongside two REQUIRED file-mutation fields. The Dokploy
+    convention surfacing here: when `serverId` accompanies
+    OTHER REQUIRED fields, it scopes the operation to a remote
+    Dokploy worker server (and absent → local Dokploy server);
+    when `serverId` IS the operation (e.g. `updateServerIp`),
+    its presence/required-status flips. Future settings/*
+    entries with multi-field shapes carrying `serverId` should
+    inherit this convention check.
+  - **Path-shaped string fixture choice.** The spec declares
+    `path` as a plain string with no `format`, `pattern`, or
+    `examples`, so any non-empty string is structurally valid.
+    Embedding the slug as the **basename** of an absolute
+    filesystem path (e.g.
+    `/etc/dokploy/traefik/set-cov-updateTraefikFile-0396.yml`)
+    rather than as a comment fragment preserves the
+    slug-on-the-wire convention without contaminating the field's
+    conventional semantics. Mirrors the API-0394 `serverIp`
+    fixture choice (slug-as-whole-string) where the field's
+    conventional shape did not admit an in-band comment syntax.
+  - **OPTIONAL-field omission as deliberate coverage choice.**
+    This is the first entry on the settings/* roster where the
+    inner schema has both REQUIRED and OPTIONAL plain-string
+    fields. The fixture deliberately omits the OPTIONAL
+    `serverId` so the success-leg exercise stays focused on the
+    structurally-minimal valid payload (REQUIRED fields populated,
+    OPTIONAL fields absent). Populating the OPTIONAL field would
+    have shifted the fixture toward an orthogonal "scoped to
+    remote worker" code path which is not part of this story's
+    acceptance criteria. Future stories with OPTIONAL fields
+    should adopt the same default unless the OPTIONAL field is
+    the operation's *distinguishing* coverage axis.
+---
