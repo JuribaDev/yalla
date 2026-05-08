@@ -2359,6 +2359,45 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0097",
+		OperationID: "deployment-allByType",
+		Method:      http.MethodGet,
+		Path:        "/deployment.allByType",
+		Tag:         "deployment",
+		// Fourth deployment/* roster member and the first shape variant
+		// in the sub-family that declares TWO required query
+		// parameters instead of one. API-0094..0096 each carry a single
+		// discriminator (`applicationId` / `composeId` / `serverId`);
+		// here the spec pairs a polymorphic `id` with a `type`
+		// discriminator whose enum lists the seven owner kinds Dokploy
+		// recognises (`application`, `compose`, `server`, `schedule`,
+		// `previewDeployment`, `backup`, `volumeBackup`). Spec source:
+		// `data/openapi.json > /deployment.allByType > get` declares
+		// `parameters[0]` as `{ in: "query", name: "id", required:
+		// true, schema: { type: "string" } }` and `parameters[1]` as
+		// `{ in: "query", name: "type", required: true, schema: {
+		// type: "string", enum: [...] } }`. Sending both keys exercises
+		// the harness's multi-key URL-query forwarding leg (the same
+		// `r.URL.Query()` re-read used by API-0094..0096) and proves
+		// the enum value survives `--input` JSON marshalling end-to-end.
+		// `application` is chosen as the canonical enum member because
+		// it matches the predominant tag in the broader registry and
+		// keeps grep cohesion with the application/* peers. Slug
+		// continues the `deployment-cov-<slug>-<storyID>` convention
+		// opened by API-0094.
+		SampleQuery: map[string][]string{
+			"id":   {"deployment-cov-allbytype-0097"},
+			"type": {"application"},
+		},
+		// 200 response in the spec is `{}` with
+		// `additionalProperties: false`, identical to API-0094..0096
+		// and the cross-tag GET-list precedent API-0033
+		// (application-readTraefikConfig). Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

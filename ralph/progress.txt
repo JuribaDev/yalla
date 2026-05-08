@@ -5342,3 +5342,24 @@
     PRD flip + progress note. Keep that minimalism — do not add per-story
     bespoke tests when the harness already covers the contract.
 ---
+
+## 2026-05-08 - API-0097 (deployment-allByType)
+- Added coverage-test entry for `deployment-allByType` (GET /deployment.allByType, tag=deployment) to `internal/cli/api_coverage_test.go` `coveredAPIOperations` slice.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (append-only entry, +43 lines).
+  - `ralph/prd.json` (flipped story `passes: false → true`).
+- Verification:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — pass.
+  - `go test -race ./...` — pass.
+  - `go test -run 'TestAPICoverage' ./internal/cli/...` — pass.
+- Result: All five harness legs (registry / schema / manifest / success / failure) now gate API-0097.
+- Remaining risks/follow-ups:
+  - None for this story; the `deployment.*` sub-family still has API-0098..0101 to cover (`*-allCentralized`, `*-killProcess`, `*-queueList`, `*-removeDeployment`).
+- **Learnings for future iterations:**
+  - The `coveredAPIOperations` harness already supports multi-key `SampleQuery` via `map[string][]string`; `/deployment.allByType` is the first deployment/* peer to use TWO required query params (`id`, `type`).
+  - When a parameter declares an `enum`, pick a canonical member (`application` here) — the harness forwards the value verbatim and the httptest server only re-reads the key, so any enum member would pass; staying canonical keeps cross-story greps clean.
+  - The coverage-test entry pattern is now a byte-for-byte recipe: copy the previous deployment/* entry, swap `OperationID`/`Path`/`SampleQuery`, regenerate the comment block to cite the spec source and call out shape deltas, and re-flip the PRD `passes` field. No registry / schema / manifest / curated edits are needed because the embedded OpenAPI spec already lists every `deployment.*` operation.
+---
