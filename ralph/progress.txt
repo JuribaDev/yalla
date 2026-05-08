@@ -12354,3 +12354,64 @@ Learnings for future iterations:
     `set-cov-<slug>-<storyID>` and is unique within
     the tag.
 ---
+
+## 2026-05-08 - API-0064
+- **Implemented**: Per-operation contract coverage for `cluster-getNodes`
+  (GET /cluster.getNodes). Third cluster/* entry — peer to API-0062
+  `cluster-addManager` and API-0063 `cluster-addWorker` inside the same
+  `clu-cov-*` per-tag fixture-isolation namespace. Same query-only-GET-
+  with-optional-`serverId` shape as API-0062/0063. Per the API-0062 and
+  API-0063 forward-reference design-rationale headers, this entry claims
+  the canonical cluster/* 404 → CodeNotFound failure-leg slot (most read-
+  shaped cluster/* peer; missing-resource read on optional-`serverId` GET
+  is the most informative failure to exercise here). Mirrors the
+  certificates/* (API-0060 `certificates-one`), bitbucket/* (API-0055
+  `bitbucket-one`), and server/* (API-0342 `server-one`) 404-override
+  precedent across tags.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended the API-0064
+    `apiCoverageCase` literal between API-0063 and API-0066, fixture
+    token `clu-cov-getNodes-0064` on the optional `serverId` query.
+    Failure-leg overridden to `http.StatusNotFound` →
+    `yerr.CodeNotFound` per the reserved canonical slot. The harness
+    drives registry presence, schema reachability, manifest inclusion,
+    an httptest success exchange, and the 404 → CodeNotFound failure
+    leg for free.
+  - `ralph/prd.json` — flipped `API-0064.passes` from `false` to `true`.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — PASS (internal/cli 1.329s, all packages green).
+  - `go test -race ./...` — PASS (internal/cli 2.825s, all packages
+    green).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, and
+    `goreleaser` are not installed locally; documented as missing
+    rather than silently skipped (per Codebase Patterns).
+- **Remaining risks / follow-ups**: None for API-0064 itself. The
+  remaining cluster/* peer (API-0065 `cluster-removeWorker`) is a POST
+  with a required body and stands apart from this read-leg shape — per
+  the slug-prefix-is-not-shape lesson reasserted across API-0371..
+  API-0385, the next contributor must re-verify per-operation rather
+  than inherit any axis from this entry. The harness default 401 →
+  CodeAuth stays covered fleet-wide by API-0062/0063, and 400 →
+  CodeInvalidInput remains reserved for payload-validation stories.
+- **Learnings for future iterations:**
+  - When a forward-reference header reserves a failure-leg slot for a
+    later story (here, API-0062/0063 reserved 404 → CodeNotFound for
+    API-0064 as the "most read-shaped cluster/* peer"), honor it.
+    Skipping the reservation would force a future contributor to either
+    relocate the canonical 404 slot or duplicate the harness-default
+    leg, both of which break the forward-reference design contract.
+  - The `clu-cov-*` per-tag namespace was opened by API-0062 and is
+    held open across all subsequent cluster/* entries; only the
+    *opener* opens a namespace, peers reuse it. Closer entries (last
+    operation in tag) sometimes write a hand-off note for the next
+    tag, mirroring the API-0061 `certificates-remove` precedent.
+  - Optional-query GETs with a single `serverId` parameter form a tight
+    shape cohort (API-0062/0063/0064). The empty-success body (`{}`
+    with `additionalProperties: false`) is shared across all three —
+    `SuccessResponse: \`{}\`` keeps the success-leg envelope assertion
+    focused on `data.method` / `data.status` rather than payload
+    projection.
+---

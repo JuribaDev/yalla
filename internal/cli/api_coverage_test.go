@@ -3244,6 +3244,122 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0064",
+		OperationID: "cluster-getNodes",
+		Method:      http.MethodGet,
+		Path:        "/cluster.getNodes",
+		Tag:         "cluster",
+		// **Third cluster/* entry.** The `clu-cov-*` per-tag
+		// fixture-isolation namespace was opened at API-0062
+		// `cluster-addManager` and continued through API-0063
+		// `cluster-addWorker`. This entry stays inside that
+		// already-opened `clu-cov-*` namespace (no new namespace
+		// is opened by a peer entry) and **must not**
+		// back-reference any closed `admin-cov-*`, `ai-cov-*`,
+		// `app-cov-*`, `backup-cov-*`, `bb-cov-*`, `cert-cov-*`,
+		// `compose-cov-*`, `deployment-cov-*`, `org-cov-*`,
+		// `proj-cov-*`, `srv-cov-*`, or `set-cov-*` namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0385
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /cluster.getNodes >
+		// get`: a **GET** with **one optional query parameter**
+		// `serverId` (plain string, no `required` flag) and **no
+		// request body**. Responses 200/400/401/403/404/500 —
+		// byte-identical declared response cohort to API-0062
+		// `cluster-addManager` and API-0063 `cluster-addWorker`
+		// (the prior cluster/* entries). The 200 schema is `{}`
+		// with `additionalProperties: false`, matching every
+		// prior covered peer in the empty-success cohort.
+		//
+		// **Shape positioning — third query-only GET with
+		// optional param.** Structurally identical to API-0062
+		// `cluster-addManager` and API-0063 `cluster-addWorker`
+		// on the wire (GET, optional `serverId` query, empty
+		// success body) — they share the optional-`serverId`
+		// parameter axis. The harness still forwards
+		// `SampleQuery` via the `--input` JSON `query` field,
+		// and `runAPICoverageSuccess` re-reads `r.URL.Query()` to
+		// confirm the CLI propagated the `serverId` value
+		// verbatim. Populating the optional param exercises the
+		// query-forwarding branch on the wire — leaving it unset
+		// would degrade this case to the parameter-free GET
+		// cohort (API-0006 `ai-getAll` shape) and lose the
+		// query-forwarding round-trip assertion that
+		// distinguishes this shape from a no-input GET. Mirrors
+		// the API-0062 / API-0063 / API-0385
+		// `settings-reloadTraefik` precedent for optional-input
+		// operations: populate the optional axis to keep the
+		// wire assertion meaningful.
+		//
+		// **Family choice — canonical 404 → CodeNotFound slot
+		// for cluster/*.** Per the API-0062 / API-0063
+		// forward-reference design-rationale headers,
+		// 404 → CodeNotFound was explicitly reserved for this
+		// entry as the most read-shaped cluster/* peer and
+		// natural canonical not-found consumer. The operation's
+		// semantic — listing nodes attached to an optional
+		// `serverId` — is read-leg in nature: a missing
+		// `serverId` is the most informative failure to exercise
+		// here. This entry therefore claims the canonical 404
+		// slot for cluster/* (the same slot API-0060
+		// `certificates-one` claimed for certificates/*, API-0055
+		// `bitbucket-one` for bitbucket/*, and API-0342
+		// `server-one` for server/*), leaving the harness default
+		// 401 → CodeAuth covered fleet-wide via API-0062 and
+		// API-0063 and 400 → CodeInvalidInput reserved for
+		// payload-validation stories. The remaining cluster/*
+		// peer (API-0065 `cluster-removeWorker`) is a POST with
+		// a required body and stands apart from this read-leg
+		// shape — per the slug-prefix-is-not-shape lesson
+		// reasserted across API-0371..API-0385, the next
+		// contributor must re-verify per-operation rather than
+		// inherit any axis from this entry.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `clu-cov-getNodes-0064` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared
+		//     across every per-tag roster and is unique within
+		//     the `clu-cov-*` namespace opened by API-0062
+		//     (verified orthogonal to `clu-cov-addManager-0062`,
+		//     `clu-cov-addWorker-0063`, and to every prior tag's
+		//     `cert-cov-*`, `srv-cov-*`, `proj-cov-*`,
+		//     `org-cov-*`, `compose-cov-*`, `app-cov-*`,
+		//     `ai-cov-*`, `bb-cov-*`, `set-cov-*`,
+		//     `admin-cov-*`, `backup-cov-*`, `deployment-cov-*`
+		//     namespaces).
+		//   * `serverId` carries the fixture-shaped literal
+		//     `clu-cov-getNodes-0064` rather than a real UUID
+		//     so the wire payload cannot be mistaken for a real
+		//     production server identifier and any future schema
+		//     validator's failure messages point at the
+		//     offending field.
+		SampleQuery: map[string][]string{
+			"serverId": {"clu-cov-getNodes-0064"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+		// Failure-leg override: this is the canonical home for
+		// the 404 → CodeNotFound representative-failure
+		// assertion reserved at the API-0062 and API-0063
+		// design-rationale headers for the cluster/* read-shaped
+		// peer. Mirrors the API-0060 `certificates-one`,
+		// API-0055 `bitbucket-one`, and API-0342 `server-one`
+		// 404-override precedent across tags. A
+		// missing-resource read on an optional-`serverId` GET is
+		// the most informative failure to exercise here; auth
+		// failures stay covered fleet-wide by the cross-tag
+		// default 401 → CodeAuth path consumed by API-0062 and
+		// API-0063.
+		FailureStatus: http.StatusNotFound,
+		FailureCode:   yerr.CodeNotFound,
+	},
+	{
 		StoryID:     "API-0066",
 		OperationID: "compose-cancelDeployment",
 		Method:      http.MethodPost,
