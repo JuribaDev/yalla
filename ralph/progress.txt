@@ -11210,3 +11210,63 @@ Learnings for future iterations:
     namespace is closed and a fresh `<newtag>-cov-*` namespace must
     be opened.
 ---
+
+## 2026-05-08 - API-0385 settings-reloadTraefik
+
+- Implemented:
+  - Added API-0385 case to `coveredAPIOperations` in `internal/cli/api_coverage_test.go`,
+    covering `settings-reloadTraefik` (POST /settings.reloadTraefik, tag settings).
+  - Modeled after API-0353 `settings-cleanAll` because the spec declares an
+    OPTIONAL `requestBody` with a single OPTIONAL `serverId` string property —
+    the canonical optional-body POST shape in the settings/* roster, distinct
+    from the immediately-prior API-0383/API-0384 no-body `reload*` shape.
+  - SampleBody populates `serverId` with the per-case fixture token
+    `set-cov-reloadTraefik-0385` so the success-leg `Content-Type:
+    application/json` and body-round-trip assertions stay meaningful.
+  - SuccessResponse defaulted to `{}` (the spec's 200 schema).
+  - Failure leg defaults to 401 → CodeAuth (canonical settings/* mutating-POST
+    representative; spec declares no 404 on this operation).
+
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (+~135 lines, new entry at end of
+    `coveredAPIOperations`)
+  - `ralph/prd.json` (`passes: false` → `true` for API-0385)
+  - `ralph/progress.txt` (this log entry)
+
+- Verification run (all from repo root):
+  - `gofmt -w .` — clean
+  - `go mod tidy` — clean
+  - `go vet ./...` — clean
+  - `go test ./...` — all packages pass
+  - `go test -race ./...` — all packages pass
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`
+    not installed locally; documented as missing per project convention.
+
+- Remaining risks / follow-ups:
+  - None for this story. The new entry inherits the existing
+    `TestAPICoverage_RegistryInvariants`, `TestAPICoverage_SchemaCommandWorks`,
+    `TestAPICoverage_SuccessRoundTrip`, `TestAPICoverage_RepresentativeFailure`,
+    and `TestAPICoverage_ManifestListsAllCovered` subtests, all of which pass.
+
+- Learnings for future iterations:
+  - The `reload*` slug-prefix sub-roster in settings/* now spans three peers
+    (API-0383 reloadRedis, API-0384 reloadServer, API-0385 reloadTraefik) and
+    splits across the request-body axis: API-0383/0384 are no-body POSTs,
+    API-0385 is the first `reload*` peer with an OPTIONAL body carrying an
+    OPTIONAL `serverId`. Adjacent slug-prefix peers cannot be assumed to share
+    a wire shape — re-verify against `internal/api/data/openapi.json` per
+    operation.
+  - For an optional-body POST with a single optional `serverId` field, prefer
+    populating the body in `SampleBody` (vs leaving it empty). Populating it
+    exercises the JSON serialiser's optional-body branch, keeps the
+    `Content-Type: application/json` header assertion meaningful, and
+    distinguishes the case from the parameter-free POST cohort that shares
+    the same response set. API-0353 `settings-cleanAll` is the canonical
+    precedent and the right grep target when authoring the next optional-body
+    POST in any tag.
+  - The next pending story (API-0386 `settings-saveSSHPrivateKey`) declares
+    `requestBody.required = true` — pivots the request-body axis from
+    OPTIONAL (this entry) to REQUIRED. Re-verify against
+    `internal/api/data/openapi.json > /settings.saveSSHPrivateKey > post`
+    before authoring.
+---
