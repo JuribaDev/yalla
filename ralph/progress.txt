@@ -2231,3 +2231,48 @@
     `*-cov-app-create-0014`) keeps a single grep pointing back to the
     PRD story even when the operationId namespace gets crowded.
 ---
+
+## 2026-05-08 - API-0015
+- **Implemented**: Per-operation coverage for `application-delete` (POST
+  /application.delete). No production changes — the operation already ships
+  through the embedded OpenAPI spec, the `api.Default()` registry, and the
+  raw `yalla api call` executor. We just append one `apiCoverageCase{...}`
+  literal to `coveredAPIOperations` in `internal/cli/api_coverage_test.go`
+  so the existing five-part API coverage harness (registry invariants,
+  `yalla schema get`, `yalla manifest`, httptest success round-trip,
+  default 401 → `CodeAuth` representative failure) gates this story too.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — append API-0015 case for
+    `application-delete`. Body fixture supplies the only required field
+    (`applicationId`) with a deterministic-but-clearly-fake value
+    (`"app-cov-delete-0015"`) so the fixture stays valid against the spec
+    and the wire payload assertion exercises real body forwarding. 200
+    response is `{}` to match the other application/* peers.
+  - `ralph/prd.json` — set API-0015 `passes: true`.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages `ok`, including
+    `internal/cli` 1.106s (covers the new subtests under
+    `TestAPICoverage_*`).
+  - `go test -race ./...` — all packages `ok`,
+    `internal/cli` 2.357s.
+- **Tools NOT available locally** (unchanged from prior stories):
+  `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`.
+- **Remaining risks / follow-ups**:
+  - None specific to this story. The fixture is symmetric with API-0011/
+    0012/0013 (the `applicationId`-only delete-style ops) so any future
+    schema-validator wiring will land all four uniformly.
+- **Learnings for future iterations**:
+  - The `applicationId`-only pattern recurs across many application/*
+    operations (cancelDeployment, cleanQueues, clearDeployments, delete).
+    Each new story is a one-line struct literal with a unique
+    `app-cov-<verb>-<storyNumber>` placeholder so a leaked fixture is
+    instantly traceable to its PRD entry.
+  - `application-delete` is destructive in real Dokploy, but at the
+    coverage layer it is identical to a read-by-id: a single string body
+    field returning `{}`. Resist the urge to invent extra response shape;
+    the spec is `additionalProperties: false` and `{}` keeps the
+    success-leg assertion focused on envelope/method/status invariants.
+---
