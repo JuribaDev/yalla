@@ -8235,3 +8235,68 @@
     body-only operations terse — no need to populate `SampleQuery` or
     `SamplePathParams` when the spec declares no parameters.
 ---
+
+## 2026-05-08 - API-0046 — Cover backup-manualBackupPostgres (POST /backup.manualBackupPostgres)
+- **Implemented**: Added the canonical `apiCoverageCase` entry for
+  `backup-manualBackupPostgres` (POST /backup.manualBackupPostgres, tag
+  `backup`) to `internal/cli/api_coverage_test.go`. This is the **seventh**
+  backup/* story and the **fifth** member of the `backup-manualBackup*`
+  family seeded by API-0042 (six siblings: API-0042 compose, API-0043
+  mariadb, API-0044 mongo, API-0045 mySql, API-0046 postgres, API-0047
+  webServer). The shared harness (`TestAPICoverage_RegistryInvariants`,
+  `_SchemaCommandWorks`, `_ManifestListsOperation`, `_SuccessRoundTrip`,
+  `_RepresentativeFailure`) drives registry, schema, manifest, success,
+  and 401 → CodeAuth failure assertions for this operation
+  automatically; all five subtests pass for `API-0046`.
+- Spec re-verified against `internal/api/data/openapi.json >
+  /backup.manualBackupPostgres > post`:
+  * `requestBody.required = true`, single field `backupId` (string),
+    listed under `required` — byte-identical to API-0042 compose,
+    API-0043 mariadb, API-0044 mongo, and API-0045 mySql siblings.
+  * Zero parameters (no query, no path, no header).
+  * Responses 200/400/401/403/500 — same set as every prior backup
+    `manualBackup*` peer; no 404 (the operation is not by-id-flavoured
+    in the resource-not-found sense — `backupId` is in the body).
+  * 200 schema is `{}` with `additionalProperties: false`, matching
+    every prior covered peer.
+- **Forward-reference confirmation**: API-0045's progress entry predicted
+  this would be a near-verbatim mirror — confirmed: the only diff vs
+  API-0045 is the slug, story id, and path/operationId. Empty-success
+  envelope keeps the assertion focused on `data.method` / `data.status`
+  rather than payload projection (canonical empty-success convention).
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended one
+    `apiCoverageCase` literal between API-0045 and API-0066 entries.
+  - `ralph/prd.json` — flipped `passes: false` → `true` for API-0046.
+  - `ralph/progress.txt` — this entry.
+- **Verification run** (from repo root):
+  - `gofmt -w .` — no diff.
+  - `go mod tidy` — no dep changes.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages `ok`.
+  - `go test -race ./...` — all packages `ok` (`internal/cli` 2.647s).
+  - `go test -run TestAPICoverage ./internal/cli/ -count=1 -v` — all
+    five `API-0046/backup-manualBackupPostgres` subtests PASS (Registry,
+    Schema, Manifest, Success, RepresentativeFailure).
+- **Tools NOT available locally** (per Codebase Patterns): `goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`. Skipped
+  silently per the existing convention.
+- **Remaining risks / follow-ups**: none specific to API-0046. The next
+  pending backup/* story is API-0047 `backup-manualBackupWebServer`,
+  which closes out the six-sibling `manualBackup*` family. Per the
+  shared spec the only diff will be the slug/story id/path; same
+  empty-success convention applies.
+- **Learnings for future iterations**:
+  - The `manualBackup*` family is now 5/6 covered (compose, mariadb,
+    mongo, mySql, postgres). The pattern is fully crystallized; the
+    next sibling is a near-verbatim copy with only the slug, id, and
+    path/operationId rewritten.
+  - `slug` for the grep token (`backup-cov-manual-<slug>-<storyID>`) is
+    the lowercased operation token — `Postgres` → `postgres`. So
+    `backup-cov-manual-postgres-0046` is the canonical sample id.
+  - The PRD flip uses a targeted regex within the story's segment
+    (between `"id": "API-0046"` and the next `"id":`). This avoids
+    accidental matches on other stories' `"passes": false` lines and
+    leaves the file's whitespace exactly as upstream wrote it (no
+    line-count delta).
+---

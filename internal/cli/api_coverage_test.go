@@ -1418,6 +1418,40 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0046",
+		OperationID: "backup-manualBackupPostgres",
+		Method:      http.MethodPost,
+		Path:        "/backup.manualBackupPostgres",
+		Tag:         "backup",
+		// Seventh backup/* coverage entry and the FIFTH member of the
+		// `backup-manualBackup*` family seeded by API-0042 (six siblings:
+		// API-0042 compose, API-0043 mariadb, API-0044 mongo, API-0045
+		// mySql, API-0046 postgres, API-0047 webServer). The spec at
+		// `data/openapi.json > /backup.manualBackupPostgres > post` is
+		// byte-identical to its compose / mariadb / mongo / mySql
+		// siblings — single required `backupId` (string), no optional
+		// siblings, no path or query parameters — so this entry is a
+		// near-verbatim mirror of API-0045 with only the slug, story id,
+		// and path/operationId rewritten. Following the convention seeded
+		// by API-0042 keeps cross-story grep useful
+		// (`backup-cov-manual-<slug>-<storyID>`) and each manualBackup
+		// story's diff a single contiguous insert. The last family sibling
+		// (webServer) will land here in the same shape.
+		SampleBody: json.RawMessage(`{
+			"backupId": "backup-cov-manual-postgres-0046"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the empty-success convention shared by every prior
+		// backup/* peer (API-0040 backup-create, API-0041
+		// backup-listBackupFiles, API-0042 backup-manualBackupCompose,
+		// API-0043 backup-manualBackupMariadb, API-0044
+		// backup-manualBackupMongo, API-0045 backup-manualBackupMySql),
+		// application/*, and compose/* peer. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0066",
 		OperationID: "compose-cancelDeployment",
 		Method:      http.MethodPost,
