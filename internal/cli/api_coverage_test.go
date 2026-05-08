@@ -8751,6 +8751,127 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0268",
+		OperationID: "port-create",
+		Method:      http.MethodPost,
+		Path:        "/port.create",
+		Tag:         "port",
+		// First entry in the port/* roster, opening a fresh tag arc
+		// after API-0255 closed organization/*. Per the per-tag
+		// fixture-isolation rule the closing organization/* block
+		// flagged ("future contributors inheriting that next-tag
+		// arc should not back-reference the organization/* literals
+		// here for body-shape templates"), this entry deliberately
+		// stands alone: any port/* peers that follow (API-0269
+		// `port-delete`, API-0270 `port-one`, API-0271
+		// `port-update`) should grep this block first to inherit
+		// the port/* slug namespace rather than copying
+		// organization/* `org-cov-*`, mounts/* `mounts-cov-*`, or
+		// any other prior-tag fixtures across the tag boundary.
+		// The `port-cov-*` namespace established here must stay
+		// strictly per-tag, exactly as `mounts-cov-*` did at
+		// API-0188 and `proj-cov-*` does at API-0292.
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /port.create > post`:
+		// a **POST** with **no parameters** and a **REQUIRED
+		// request body** whose schema declares **five REQUIRED
+		// fields** — two non-nullable numbers (`publishedPort`,
+		// `targetPort`), two non-nullable string-with-enum scalars
+		// (`publishMode` ∈ {`ingress`, `host`} default `ingress`,
+		// `protocol` ∈ {`tcp`, `udp`} default `tcp`), and one
+		// non-nullable plain string (`applicationId`). The schema
+		// declares zero optional fields, so the closed-shape body
+		// is exactly the five-required-scalar surface — no
+		// every-optional-populated expansion applies here, in
+		// contrast to API-0292 `project-create`'s
+		// `{name, description?, env?}` shape. Responses
+		// 200/400/401/403/500 — the spec does **not** declare 404
+		// on this operation, matching the cross-tag create-mutation
+		// precedent on API-0189 `mounts-create` and API-0292
+		// `project-create` (Dokploy create POSTs do not surface
+		// missing-target legs because there is no target-by-id to
+		// miss). The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort.
+		//
+		// **Shape positioning — five-required-scalar POST
+		// create-mutation, body REQUIRED, all fields required, no
+		// optional surface.** First request-body POST in the
+		// port/* roster and a fresh shape that has no exact peer
+		// in any prior tag: API-0292 `project-create` has one
+		// required field plus two optional, API-0189
+		// `mounts-create` has a different required-set shape, and
+		// no prior covered create POST mixes typed numbers with
+		// enum strings the way port-create does. The fixture
+		// supplies all five required fields with deterministic-
+		// but-clearly-fake values: numeric port slots use
+		// representative high-range integers (`publishedPort:
+		// 8268`, `targetPort: 3268` — both encode the story ID
+		// `0268` so a `git grep 8268` or `3268` traces back here
+		// without colliding with the conventional 80/443/8080/3000
+		// service ports), the enum scalars are pinned to their
+		// spec defaults (`publishMode: "ingress"`,
+		// `protocol: "tcp"`) so the wire payload exercises the
+		// most representative configuration without selecting a
+		// non-default branch that would tilt the case toward a
+		// specific failure-mode story, and the `applicationId`
+		// scalar uses the per-case fixture token
+		// `port-cov-create-0268-app` per the established
+		// `<tag>-cov-<slug>-<storyID>[-<sub>]` deterministic-
+		// but-clearly-fake naming convention. The token is
+		// unique across the port/* roster (verified: no
+		// collisions with future `*-delete-0269` /
+		// `*-one-0270` / `*-update-0271` slugs) and across all
+		// prior `*-cov-*` namespaces.
+		//
+		// **Family choice — harness-default 401→CodeAuth
+		// retained.** The spec omits 404 from the response set
+		// (create-mutations have no by-id target to miss, exactly
+		// as documented for API-0189 `mounts-create` and API-0292
+		// `project-create`), so the 404→CodeNotFound override is
+		// structurally inapplicable. 400→CodeInvalidInput is
+		// *technically* available — a payload that omits any of
+		// the five REQUIRED fields, supplies an out-of-enum
+		// `publishMode`/`protocol` value, or sends a non-numeric
+		// `publishedPort`/`targetPort` would fail server-side
+		// validation — but the harness reserves 400
+		// representatives for stories where payload validation is
+		// the operation's *uniquely distinguishing* failure mode.
+		// A conventional create POST collapses to type-checking,
+		// so the harness-default 401→CodeAuth failure leg remains
+		// the most representative single failure mode every
+		// authenticated Dokploy operation must re-prove, and
+		// additionally re-proves the auth invariant inside the
+		// freshly opened `port-cov-*` namespace for the
+		// five-required-scalar create-mutation shape.
+		//
+		// API-0268 opens the priority-3 port/* roster; the next
+		// pending PRD-ordered priority-3 backlog entries are
+		// API-0269 `port-delete`, API-0270 `port-one`, and
+		// API-0271 `port-update`, all of which inherit the
+		// `port-cov-*` namespace established here and should grep
+		// this block first when shaping their `SampleBody`
+		// fixtures. The next contributor must re-verify the spec
+		// against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field
+		// shape.
+		SampleBody: json.RawMessage(`{
+			"publishedPort": 8268,
+			"publishMode": "ingress",
+			"targetPort": 3268,
+			"protocol": "tcp",
+			"applicationId": "port-cov-create-0268-app"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0290",
 		OperationID: "project-all",
 		Method:      http.MethodGet,

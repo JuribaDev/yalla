@@ -16198,3 +16198,75 @@ Learnings for future iterations:
     iteration without any source-file change outside the appended case
     literal. The harness genuinely scales to one struct literal per story.
 ---
+
+## 2026-05-08 - API-0268
+- Added per-operation contract coverage for `port-create` (POST /port.create),
+  opening the priority-3 port/* roster (first of four — API-0269 `port-delete`,
+  API-0270 `port-one`, API-0271 `port-update` will follow and inherit the
+  `port-cov-*` namespace).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended one `apiCoverageCase` literal
+    in StoryID-sorted position between API-0255 (`organization-updateMemberRole`,
+    closing the organization/* tag) and API-0290 (`project-all`, opening
+    project/*). The literal opens a fresh `port-cov-*` per-tag fixture-isolation
+    namespace and supplies a closed-shape body with all five REQUIRED fields:
+    two numeric ports (`publishedPort: 8268`, `targetPort: 3268` — both encode
+    the story ID 0268 to keep `git grep` traceable and avoid colliding with
+    conventional 80/443/8080/3000 service ports), the two enum scalars pinned
+    to their spec defaults (`publishMode: "ingress"`, `protocol: "tcp"`), and a
+    fixture-token `applicationId: "port-cov-create-0268-app"`. Harness-default
+    401→CodeAuth failure leg, empty `{}` success response.
+  - `ralph/prd.json` — `passes: true` for API-0268.
+  - `ralph/progress.txt` — this entry.
+- Verification:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — no changes.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass (cli package 1.420s).
+  - `go test -race ./...` — all packages pass (race-clean, cli package 2.909s).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`
+    — not installed locally; documented as missing per the established
+    convention (no silent skip).
+- Remaining risks / follow-ups:
+  - The next pending priority-3 backlog entries are API-0269 `port-delete`,
+    API-0270 `port-one`, and API-0271 `port-update` — all four port/*
+    operations are priority-3 and none collide with future backlogs. Each
+    will inherit the `port-cov-*` namespace established here, but the next
+    contributor must re-verify the spec against
+    `internal/api/data/openapi.json` before assuming any field shape (per
+    the forward-reference lesson re-stated on every recent mounts/* and
+    organization/* entry).
+- **Learnings for future iterations:**
+  - The five-required-scalar create-mutation shape (two numbers + two enum
+    strings + one plain string, **all** required, **zero** optional) is a
+    fresh shape with no exact peer in any prior tag: API-0292
+    `project-create` has a one-required + two-optional shape, API-0189
+    `mounts-create` has a different required-set shape, and no prior
+    covered create POST mixes typed numbers with enum strings the way
+    port-create does. Future `port/*` peers (API-0269..API-0271) should
+    grep this block first when shaping their `SampleBody` rather than
+    back-referencing project/* or organization/* literals — the `port-cov-*`
+    namespace must stay strictly per-tag, exactly as `mounts-cov-*` did
+    at API-0188 and `proj-cov-*` does at API-0292.
+  - Encoding the story ID (0268) inside numeric fixture values
+    (`publishedPort: 8268`, `targetPort: 3268`) keeps `git grep` traceable
+    to this PRD story without colliding with conventional service ports
+    (80/443/8080/3000) the way arbitrary picks like 8080 would. Future
+    numeric-field create POSTs in the port/* roster (API-0271
+    `port-update` if it exposes the same fields) should follow this
+    convention — pick numbers that *encode* the story ID rather than
+    plausible production ports.
+  - Pinning enum scalars to their spec defaults (`publishMode: "ingress"`,
+    `protocol: "tcp"`) keeps the wire payload exercising the most
+    representative configuration without selecting a non-default branch
+    that would tilt the case toward a specific failure-mode story. Per
+    the harness default-401 convention, the success leg should never
+    pre-emptively select a branch that the spec marks non-default
+    unless the story explicitly requires it.
+  - `jq '[.userStories[] | select(.passes == false)] | sort_by(.priority,
+    .id) | .[0]'` is still the canonical query for "next failing story".
+    The picker correctly skipped over priority-5 entries (API-0131..API-0159
+    gitea/github/gitlab/gitProvider/licenseKey) and priority-4 entries
+    (API-0160 `mariadb-changeStatus`) to land on API-0268 because all
+    priority-3 prior entries (API-0246..API-0297) were already covered.
+---
