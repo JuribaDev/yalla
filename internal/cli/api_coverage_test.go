@@ -5019,6 +5019,132 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0348",
+		OperationID: "server-update",
+		Method:      http.MethodPost,
+		Path:        "/server.update",
+		Tag:         "server",
+		// Fourteenth entry on the server/* coverage roster and the
+		// **fifth body-mutation peer** in the server/* tag (after
+		// API-0338 `server-create`, API-0344 `server-remove`,
+		// API-0346 `server-setup`, and API-0347
+		// `server-setupMonitoring`). Inherits the `srv-cov-*` per-tag
+		// fixture-isolation namespace established at API-0335 (must
+		// not back-reference the cross-tag `proj-cov-*` / `org-cov-*`
+		// namespaces, per the per-tag isolation rule reasserted at
+		// API-0335..API-0347 and originally established at API-0246
+		// `organization-active`).
+		//
+		// **Spec re-verified per the API-0345 / API-0347 forward-
+		// reference lesson** against `internal/api/data/openapi.json
+		// > /server.update > post`: zero parameters, required
+		// `application/json` request body. The body shape is
+		// effectively API-0338 `server-create`'s body **plus a new
+		// required `serverId` (string) field** identifying the record
+		// being updated, **plus an optional `command` (string)** that
+		// is *not* in the `required` array. Every API-0338 required
+		// field carries forward unchanged, including the
+		// `description` / `sshKeyId` `anyOf [string, null]` nullables
+		// and the `serverType` `["deploy", "build"]` enum.
+		//   - REQUIRED scalars: `name` (string), `serverId` (string),
+		//     `ipAddress` (string), `port` (number), `username`
+		//     (string).
+		//   - REQUIRED nullable scalars: `description`, `sshKeyId`
+		//     (both `anyOf [string, null]`). Populated with strings
+		//     (not `null` literals) per the API-0292 / API-0297 /
+		//     API-0338 populated-string convention because a populated
+		//     value proves the wire-forwarding invariant more strongly
+		//     than a `null` would.
+		//   - REQUIRED enum-constrained scalar: `serverType`. Pinned
+		//     to `"deploy"` to match API-0338 `server-create`'s
+		//     diff-friendly literal choice flagged forward at
+		//     `internal/cli/api_coverage_test.go` lines 4031-4034.
+		//   - OPTIONAL scalar: `command` (string). Populated per the
+		//     API-0297 `project-update` "every-optional-populated"
+		//     rule for `*-update` peers — populating optionals on an
+		//     update mutation proves the schema's forward-compat
+		//     branch end-to-end without making the fixture brittle.
+		//
+		// Body has no nested objects or arrays, so the wire shape
+		// stays inside the "flat scalar-only mutation" contract
+		// shared with API-0292 `project-create`, API-0297
+		// `project-update`, and API-0338 `server-create` — strictly
+		// smaller than API-0347 `server-setupMonitoring`'s deeply
+		// nested `metricsConfig` body.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base `srv-cov-update-0348`
+		//     follows the `<tag>-cov-<slug>-<storyID>` convention and
+		//     is unique (verified: no collisions with API-0338
+		//     `server-create`'s `srv-cov-create-0338`, API-0339
+		//     `server-getDefaultCommand`'s
+		//     `srv-cov-getDefaultCommand-0339`, API-0340
+		//     `server-getServerMetrics`'s
+		//     `srv-cov-getServerMetrics-0340`, API-0342 `server-one`'s
+		//     `srv-cov-one-0342`, API-0344 `server-remove`'s
+		//     `srv-cov-remove-0344`, API-0345 `server-security`'s
+		//     `srv-cov-security-0345`, API-0346 `server-setup`'s
+		//     `srv-cov-setup-0346`, or API-0347
+		//     `server-setupMonitoring`'s
+		//     `srv-cov-setupMonitoring-0347`, and orthogonal to the
+		//     cross-tag `proj-cov-*` / `org-cov-*` namespaces).
+		//   * `ipAddress` carries an RFC 5737 documentation-only IP
+		//     literal (`192.0.2.20`) distinct from API-0338
+		//     `server-create`'s `192.0.2.10` so the fixture cannot be
+		//     confused with the create-peer's wire payload during a
+		//     diff review.
+		//   * `port` carries the canonical Dokploy SSH port (22)
+		//     mirroring API-0338 since the spec types it as a plain
+		//     `number` with no range constraints.
+		//   * The nullable `description` and `sshKeyId` are populated
+		//     with `srv-cov-*` strings, not `null`, per the
+		//     populated-string convention.
+		//   * `command` carries a recognisable, non-destructive shell
+		//     literal (`echo yalla-cov-update-0348`) so the fixture
+		//     documents the schema's intent at a glance and could not
+		//     be mistaken for a real production deploy command if it
+		//     ever leaked into a log.
+		//
+		// Responses 200/400/401/403/500 — note **no 404** is declared
+		// on `/server.update`, matching every server/* mutation peer
+		// (API-0338, API-0344, API-0346, API-0347), per the server/*
+		// mutation-peer convention reasserted at API-0335..API-0347:
+		// 404 in the server/* tag is reserved for the filter-shaped
+		// by-id GET peer (API-0342 `server-one`), not for this update
+		// mutation. Even though `server-update` semantically operates
+		// on a serverId and could plausibly 404 on a missing record,
+		// the embedded spec does not enumerate 404, so the failure
+		// leg keeps the harness default 401 → CodeAuth — auth is the
+		// universal failure mode every Dokploy operation must re-
+		// prove. **Do not** override to 404 here without re-verifying
+		// the embedded spec.
+		//
+		// Future server/* peers (API-0349 `server-validate` is a
+		// single-required-query-param GET that should mirror API-0345
+		// `server-security`; API-0350 `server-withSSHKey`'s shape is
+		// unknown until re-verified) should NOT blindly mirror this
+		// entry — re-verify against `internal/api/data/openapi.json`
+		// before copying, per the API-0345 / API-0347 forward-
+		// reference lesson.
+		SampleBody: json.RawMessage(`{
+			"name": "yalla-coverage-srv-update-0348",
+			"description": "yalla coverage fixture for srv-cov-update-0348 — deterministic, fake, never deployed",
+			"serverId": "srv-cov-update-0348",
+			"ipAddress": "192.0.2.20",
+			"port": 22,
+			"username": "yalla-coverage",
+			"sshKeyId": "srv-cov-update-sshkey-0348",
+			"serverType": "deploy",
+			"command": "echo yalla-cov-update-0348"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior server/* peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

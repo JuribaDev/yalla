@@ -7562,3 +7562,67 @@
     `backup-manualBackupMariadb` and before the `compose-*` block.
     Future backup/* inserts should keep that order.
 ---
+
+## 2026-05-08 - API-0348
+- Added apiCoverageCase entry for `server-update` (POST /server.update, tag
+  `server`) to `internal/cli/api_coverage_test.go`. The shared harness
+  (`TestAPICoverage_RegistryInvariants`, `_SchemaCommandWorks`,
+  `_ManifestListsOperation`, `_SuccessRoundTrip`,
+  `_RepresentativeFailure`) now drives registry, schema, manifest, success,
+  and 401 → CodeAuth failure assertions for this operation automatically.
+- Re-verified the request body shape against
+  `internal/api/data/openapi.json > /server.update > post` (per the API-0345
+  / API-0347 forward-reference lesson). Body is API-0338 `server-create`'s
+  body **plus a new required `serverId`**, **plus an optional `command`**.
+  Required: `name`, `description` (anyOf string|null), `serverId`,
+  `ipAddress`, `port`, `username`, `sshKeyId` (anyOf string|null),
+  `serverType` (enum `["deploy", "build"]`). Optional: `command` (string).
+  Response 200 is `{}` with `additionalProperties: false`. No 404 declared.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended one apiCoverageCase
+    entry (~115 lines including comment block) before the closing brace of
+    `coveredAPIOperations`.
+  - `ralph/prd.json` — flipped `passes` to `true` for API-0348.
+  - `ralph/progress.txt` — this entry.
+- Verification run from repo root:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass.
+  - `go test -race ./...` — all packages pass (`internal/cli` 2.630s).
+- Tools NOT installed locally (per Codebase Patterns): `goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`. Skipped
+  silently per the existing convention; the file already documents this.
+- Remaining risks / follow-ups: none specific to API-0348. The next
+  pending server/* story is API-0349 `server-validate` — per the
+  forward-reference comment in the new entry it should mirror API-0345
+  `server-security`'s single-required-query-param GET shape, but the spec
+  must still be re-verified before copying. API-0350 `server-withSSHKey`'s
+  shape is unknown until re-verified.
+- **Learnings for future iterations:**
+  - The `*-update` body shape for a tag is reliably "the tag's `*-create`
+    body **plus** a new required record-id field" — useful template
+    intuition, but the API-0345 / API-0347 forward-reference rule still
+    requires re-verifying against `internal/api/data/openapi.json` because
+    optional fields and nullables can drift between create and update peers
+    (here, `command` is added on update only).
+  - The API-0297 "every-optional-populated" rule for `*-update` peers
+    composes cleanly with the API-0292 / API-0297 / API-0338
+    "populated-string for anyOf [string, null]" rule — populating both
+    optionals AND nullables maximises wire-forwarding coverage in a single
+    fixture.
+  - When picking a documentation IP for a new server/* mutation peer,
+    increment within RFC 5737 (`192.0.2.0/24`) so each peer's wire payload
+    stays diff-distinguishable from prior peers (API-0338 used
+    `192.0.2.10`; this story used `192.0.2.20`).
+  - `enum` literal choice for shared scalars (`serverType` `["deploy",
+    "build"]`) should match the prior peer's literal — API-0338 pinned
+    `"deploy"` and explicitly forward-referenced `server-update`, so this
+    story matches verbatim.
+  - The repo's apiCoverageCase harness is the canonical add-an-API
+    extension point: a single entry append covers registry, schema,
+    manifest, success, and failure contract assertions with no per-story
+    test file required. Resist the urge to add bespoke tests unless a
+    story genuinely needs richer assertions than the harness offers
+    (the harness comment at line ~5159 explicitly anticipates this).
+---
