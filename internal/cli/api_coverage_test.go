@@ -4181,6 +4181,84 @@ var coveredAPIOperations = []apiCoverageCase{
 		// fixture stays minimal.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0341",
+		OperationID: "server-getServerTime",
+		Method:      http.MethodGet,
+		Path:        "/server.getServerTime",
+		Tag:         "server",
+		// Seventh entry on the server/* coverage roster and the
+		// **fourth member of the server/* parameter-free GET
+		// sub-cohort** (after API-0335 `server-all`, API-0336
+		// `server-buildServers`, and API-0337 `server-count`). It
+		// follows the API-0338 `server-create` body mutation,
+		// API-0339 `server-getDefaultCommand` single-required-query
+		// GET, and API-0340 `server-getServerMetrics`
+		// three-required-query GET. Inherits the `srv-cov-*`
+		// per-tag fixture-isolation namespace established at
+		// API-0335 (no fixture data is required for this
+		// parameter-free GET, but any future peers that *do* need
+		// fixtures must keep the `srv-cov-*` namespace and never
+		// back-reference the `proj-cov-*` namespace from
+		// API-0290..API-0297, per the rule established at API-0246
+		// `organization-active`).
+		//
+		// Spec source `internal/api/data/openapi.json >
+		// /server.getServerTime > get`: zero parameters, no
+		// request body, responses 200/400/401/403/404/500 where
+		// the 200 schema is `{}` with `additionalProperties:
+		// false`. This is byte-for-byte the same wire shape as the
+		// parameter-free GET cohort opened by API-0006 `ai-getAll`,
+		// continued by API-0246 `organization-active`, API-0247
+		// `organization-all`, API-0290 `project-all`, and the
+		// immediately preceding server/* peers API-0335
+		// `server-all`, API-0336 `server-buildServers`, and
+		// API-0337 `server-count`. The canonical agent invocation
+		// stays `yalla api call server-getServerTime --input '{}'
+		// --json`. Note this is the **first parameter-free server/*
+		// peer to follow query-shaped peers** (API-0339, API-0340)
+		// — a regression that accidentally inherited their
+		// SampleQuery would surface immediately at the harness's
+		// per-key `seenQuery[%q]` re-assertion, but more visibly
+		// the `r.URL.RawQuery == ""` assertion would fail with the
+		// leftover keys.
+		//
+		// Leaving SampleQuery / SamplePathParams / SampleBody
+		// unset is intentional: the harness asserts the wire-level
+		// invariants (method, path, Authorization header, empty
+		// query string, empty body) at runAPICoverageSuccess.
+		// Empty-object body keeps the success-leg envelope
+		// assertion focused on `data.method` / `data.status`
+		// rather than payload projection, matching every prior
+		// parameter-free GET peer. (Semantically a `*-getServerTime`
+		// endpoint would conventionally return a scalar timestamp
+		// in production, but the embedded spec declares `{}` with
+		// no exposed properties; we therefore exercise the
+		// documented contract rather than a speculative future
+		// tightening, as already documented at API-0337
+		// `server-count` for the analogous `*-count` shape.)
+		//
+		// The representative-failure leg keeps the harness default
+		// (401 → CodeAuth) because auth is the universal failure
+		// mode every Dokploy operation must re-prove. The spec
+		// also declares 404, but per the per-tag opener convention
+		// reasserted at API-0335..API-0340, 404 → CodeNotFound is
+		// reserved for filter-shaped peers like the upcoming
+		// API-0342 `server-one`; this `*-getServerTime` endpoint
+		// is a server-time probe with no filter or by-id input, so
+		// 401 remains the correct representative.
+		//
+		// Future server/* parameter-free GET peers (API-0343
+		// `server-publicIp`, API-0345 `server-security`, API-0349
+		// `server-validate`, API-0350 `server-withSSHKey`) should
+		// grep this entry first; future `*-getServerTime`-style
+		// peers in other tags (none currently in spec) should
+		// also grep here. The next case in the server/* roster,
+		// API-0342 `server-one`, will introduce the 404 →
+		// CodeNotFound failure-leg override and the by-id filter
+		// shape — see its forthcoming entry for the cross-reference.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

@@ -6912,3 +6912,82 @@
     forward-reference convention so each new case both grounds
     itself in priors and seeds the next one.
 ---
+
+## 2026-05-08 - API-0341
+- What was implemented: Coverage for `server-getServerTime` (GET
+  /server.getServerTime, tag `server`, zero parameters, no request
+  body). Added a single `apiCoverageCase` struct literal to
+  `internal/cli/api_coverage_test.go` immediately after the API-0340
+  `server-getServerMetrics` case; the existing harness derives
+  registry invariants, schema reachability, manifest inclusion, the
+  httptest-backed success exchange (including the
+  `r.URL.RawQuery == ""` empty-query assertion that any leftover
+  SampleQuery would trip), and the default 401 → CodeAuth failure
+  leg from that single literal.
+- Files changed:
+  * `internal/cli/api_coverage_test.go` (new struct literal)
+  * `ralph/prd.json` (flipped `API-0341.passes` to `true`)
+  * `ralph/progress.txt` (this entry)
+- Verification run:
+  * `gofmt -w .` → clean
+  * `goimports` → not installed (consistent with prior iterations)
+  * `go mod tidy` → no changes
+  * `go vet ./...` → exit 0
+  * `go test ./...` → all 9 packages PASS
+  * `go test -race ./...` → all 9 packages PASS
+  * `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser` →
+    not installed (documented in prior progress entries; no change
+    this iteration)
+- Results: 115/462 PRD stories now passing; CI-equivalent local
+  checks all green.
+- Remaining risks or follow-ups: None specific to this story. The
+  next server/* peer (API-0342 `server-one`) introduces the by-id
+  query shape AND the 404 → CodeNotFound failure-leg override; the
+  API-0341 entry's forward-reference comment should orient that
+  iteration. Other parameter-free server/* peers in the queue
+  (API-0343 `server-publicIp`, API-0345 `server-security`,
+  API-0349 `server-validate`, API-0350 `server-withSSHKey`) should
+  mirror this entry verbatim.
+- **Learnings for future iterations:**
+  - **First parameter-free server/* GET to follow query-shaped
+    peers.** API-0335/0336/0337 were a contiguous parameter-free
+    GET cohort; API-0338 then introduced a body, API-0339 a
+    single query param, and API-0340 three query params. API-0341
+    re-enters the parameter-free shape *after* the SampleQuery
+    block, so the per-case literal must explicitly re-omit
+    SampleQuery / SamplePathParams / SampleBody. The harness's
+    `r.URL.RawQuery == ""` assertion in `runAPICoverageSuccess`
+    catches any accidental copy-paste that leaks the API-0340
+    query keys (the `seenQuery` map is per-test, not slice-wide,
+    so this risk is purely a literal-typo class — but worth
+    naming explicitly because the test would still pass on
+    everything *except* the one fresh case).
+  - **Empty-object `{}` 200 schema is a Dokploy-wide convention,
+    not a parameter-free quirk.** Even semantically rich
+    operations like `*-getServerTime` (which would conventionally
+    return a scalar timestamp) and `*-count` (which would
+    conventionally return a scalar count) declare `{}` with
+    `additionalProperties: false`. The pattern of "exercise the
+    documented contract, not a speculative future tightening" was
+    first noted at API-0337 `server-count` and now reasserted
+    here; future `*-getX`-style endpoints should grep both
+    entries for the rationale.
+  - **Forward-reference comments earn their keep at this point.**
+    API-0335's comment block already named API-0341
+    `server-getServerTime` in its forward-peer list, which made
+    discovery a single grep. Continuing to seed forward
+    references (this entry now names API-0342 `server-one` for
+    its 404 → CodeNotFound override and API-0343/0345/0349/0350
+    for parameter-free GET peers) keeps the chain navigable from
+    either direction. Future iterations should preserve this.
+  - **Adding a parameter-free coverage entry remains a pure-data
+    change** — no production code, registry, schema, or manifest
+    edits are needed because the embedded OpenAPI document
+    already advertises the operation. The four parameterised
+    tests (`TestAPICoverage_RegistryInvariants`,
+    `TestAPICoverage_SchemaCommandWorks`,
+    `TestAPICoverage_ManifestIncludes…`,
+    `TestAPICoverage_SuccessExchange` plus the failure-leg
+    parameterised test) extend automatically. This was true for
+    every prior parameter-free entry and remains true here.
+---
