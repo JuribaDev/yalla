@@ -11345,3 +11345,88 @@ Learnings for future iterations:
     the PRD is a planning artifact, not the source of truth for
     fixture shaping.
 ---
+
+## 2026-05-08 - API-0386
+- What was implemented:
+  - Added a new entry to `coveredAPIOperations` in
+    `internal/cli/api_coverage_test.go` covering
+    `settings-saveSSHPrivateKey` (POST /settings.saveSSHPrivateKey,
+    tag settings).
+  - Spec re-verified directly against
+    `internal/api/data/openapi.json > /settings.saveSSHPrivateKey >
+    post`: POST, zero parameters, `requestBody.required = true` with
+    inner schema `{type: object, properties: {sshPrivateKey: string},
+    required: [sshPrivateKey]}`, responses 200/400/401/403/500 (no
+    404). 200 schema is `{}` with `additionalProperties: false`.
+  - The forward-reference comment from API-0385 `reloadTraefik`
+    correctly forecast the body-axis pivot from OPTIONAL (API-0385)
+    to REQUIRED (this entry). API-0386 opens the `save*` slug-prefix
+    sub-roster in settings/* (only one `save*` entry in the PRD).
+  - SampleBody populates `sshPrivateKey` with the per-case fixture
+    token `set-cov-saveSSHPrivateKey-0386` (a plain string — the
+    schema imposes only `type: string`, no format/pattern, so a
+    real-shaped OpenSSH key is unnecessary and would risk shadowing
+    the `[REDACTED]` sentinel if the renderer ever heuristically
+    redacts SSH-shaped strings).
+  - SuccessResponse defaulted to `{}` (the spec's 200 schema).
+  - Failure leg defaults to 401 → CodeAuth (canonical settings/*
+    mutating-POST representative; spec declares no 404 on this
+    operation).
+
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (+~140 lines, new entry at
+    end of `coveredAPIOperations`)
+  - `ralph/prd.json` (`passes: false` → `true` for API-0386)
+  - `ralph/progress.txt` (this log entry)
+
+- Verification run (all from repo root):
+  - `gofmt -w .` — clean
+  - `go mod tidy` — clean
+  - `go vet ./...` — clean
+  - `go test ./...` — all packages pass
+  - `go test -race ./...` — all packages pass
+  - Targeted: `go test ./internal/cli -run TestAPICoverage -count=1`
+    confirms all five API-0386 subtests pass
+    (RegistryInvariants, SchemaCommandWorks, ManifestListsOperation,
+    SuccessRoundTrip, RepresentativeFailure).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` not installed locally; documented as missing per
+    project convention.
+
+- Remaining risks / follow-ups:
+  - None for this story. The new entry inherits the existing
+    `TestAPICoverage_RegistryInvariants`,
+    `TestAPICoverage_SchemaCommandWorks`,
+    `TestAPICoverage_SuccessRoundTrip`,
+    `TestAPICoverage_RepresentativeFailure`, and
+    `TestAPICoverage_ManifestListsAllCovered` subtests, all of
+    which pass.
+
+- Learnings for future iterations:
+  - The settings/* roster has now traversed the full
+    request-body axis within four consecutive entries:
+    API-0383/0384 are no-body POSTs (slug `reload*`), API-0385 is
+    optional-body (slug `reload*`), API-0386 is required-body with
+    a REQUIRED inner field (slug `save*`). The body axis flipped
+    twice in four entries, reaffirming the slug-prefix-is-not-
+    shape lesson reasserted at API-0371..API-0385.
+  - When a payload field is named after a secret type
+    (`sshPrivateKey`, `apiKey`, `token`, `password`), prefer a
+    plain fixture-token literal over a real-shaped value. The
+    schema's only constraint here is `type: string`, so a real
+    OpenSSH-format key would (a) be wasted bytes and (b) risk
+    accidental shadowing if the secret-redactor surface is ever
+    extended heuristically. The deterministic fixture token
+    keeps the wire-round-trip assertion uniquely identifiable
+    without producing payloads that look like production
+    secrets.
+  - The next case in the settings/* roster per PRD ordering is
+    API-0387 `settings-setupGPU` (POST, `requestBody.required =
+    true`, but the inner `serverId` property is OPTIONAL — no
+    `required` array). The next contributor must re-verify
+    against `internal/api/data/openapi.json > /settings.setupGPU
+    > post` per the API-0345..API-0386 forward-reference lesson —
+    the inner-required-field axis pivots from REQUIRED (this
+    entry) to OPTIONAL (API-0387) even though the outer
+    `requestBody.required = true` axis is shared.
+---

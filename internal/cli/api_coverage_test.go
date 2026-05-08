@@ -11726,6 +11726,139 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0386",
+		OperationID: "settings-saveSSHPrivateKey",
+		Method:      http.MethodPost,
+		Path:        "/settings.saveSSHPrivateKey",
+		Tag:         "settings",
+		// Thirty-sixth entry on the settings/* coverage roster,
+		// inheriting the `set-cov-*` per-tag fixture-isolation
+		// namespace established by API-0351
+		// `settings-assignDomainServer` and extended through
+		// API-0385 `settings-reloadTraefik` (must not back-reference
+		// the closed `srv-cov-*`, `proj-cov-*`, `org-cov-*`,
+		// `compose-cov-*`, `app-cov-*`, `ai-cov-*`, or any other
+		// prior tag's namespace, per the per-tag isolation rule
+		// reasserted at API-0335..API-0385 and originally
+		// established at API-0246 `organization-active`).
+		//
+		// **Spec re-verified per the API-0345..API-0385
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json >
+		// /settings.saveSSHPrivateKey > post`: a **POST** with a
+		// **REQUIRED** `requestBody` (`requestBody.required =
+		// true`) carrying a JSON object with one **required**
+		// string property `sshPrivateKey` (declared in the inner
+		// schema's `required` array); **zero parameters** (no
+		// query, no path, no header). Responses 200/400/401/403/
+		// 500 — note the **absence of 404**, matching the
+		// canonical settings/* mutating-POST cohort and diverging
+		// from the by-id-flavoured 404-bearing response sets.
+		// The 200 schema is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// settings/* roster.
+		//
+		// **Forward-reference confirmation — body-axis pivot to
+		// REQUIRED.** API-0385 `reloadTraefik`'s hand-off comment
+		// correctly forecast that this entry would pivot the
+		// request-body axis from OPTIONAL (API-0385) to REQUIRED
+		// (this entry). Direct inspection of the spec confirms
+		// the prediction: `requestBody.required = true` and the
+		// inner schema declares `sshPrivateKey` in its `required`
+		// array, structurally distinct from the optional-body
+		// `reload*` cohort (API-0385) and from the no-body POST
+		// cohort shared by API-0383/API-0384. The slug-prefix-
+		// is-not-shape lesson reasserted at API-0371..API-0385
+		// holds: the `save*` slug prefix opens with this entry
+		// and is not inherited from the adjacent `reload*` slug-
+		// prefix sub-roster — adjacent slug families can and do
+		// sit on opposite sides of the request-body axis.
+		//
+		// **Family opener — first `save*` slug-prefix peer in
+		// settings/*.** This is the only `save*`-prefixed
+		// operation in the PRD's settings/* ordering; the next
+		// entry API-0387 `settings-setupGPU` opens a different
+		// (`setup*`) slug-prefix sub-roster. API-0386 preserves
+		// the verb axis (POST), the parameter axis (zero
+		// parameters), and the response-set axis (200/400/401/
+		// 403/500, no 404) shared with the preceding `reload*`
+		// peers, but pivots the request-body axis to REQUIRED
+		// with a REQUIRED inner field. Per the slug-prefix-is-
+		// not-shape rule, future settings/* peers in different
+		// slug families must re-verify per-operation rather than
+		// inherit any axis from this entry.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `set-cov-saveSSHPrivateKey-0386` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared
+		//     across every per-tag roster and is unique (verified
+		//     against API-0351..API-0385's `set-cov-*` slugs and
+		//     orthogonal to every prior tag's `srv-cov-*`,
+		//     `proj-cov-*`, `org-cov-*`, `compose-cov-*`,
+		//     `app-cov-*`, `ai-cov-*`, etc. namespaces).
+		//   * `sshPrivateKey` carries the fixture-shaped literal
+		//     `set-cov-saveSSHPrivateKey-0386` rather than a real
+		//     OpenSSH-format private key so the wire payload
+		//     cannot be mistaken for a real production secret and
+		//     any future schema validator's failure messages
+		//     point at the offending field. The schema constrains
+		//     the field to `type: string` only (no `format` or
+		//     `pattern`), so a simple fixture token is structurally
+		//     valid; encoding a real-shaped key is unnecessary
+		//     and would risk shadowing the redactor sentinel
+		//     `[REDACTED]` in test output if the renderer ever
+		//     starts treating SSH-shaped strings as secrets.
+		//
+		// **Failure-leg fields are intentionally omitted.** The
+		// spec does not declare 404 on this operation (the
+		// `saveSSHPrivateKey` verb writes a controller-wide SSH
+		// key, not a by-id resource lookup), so the per-tag
+		// opener convention reasserted at API-0335..API-0385
+		// that reserves 404 → CodeNotFound for canonical `*-one`
+		// peers does not apply here. Auth is the universal
+		// failure mode every Dokploy operation must re-prove, so
+		// 401 → CodeAuth via the harness default
+		// (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""`
+		// → CodeAuth) stays the most informative representative.
+		// 400 → CodeInvalidInput stays reserved for stories
+		// where payload validation is the operation's
+		// distinguishing failure mode; even though
+		// `sshPrivateKey` is REQUIRED, the validator surface is
+		// still a single-string-presence check — too narrow to
+		// make 400 the canonical failure representative.
+		//
+		// The next case in the settings/* roster per PRD
+		// ordering is API-0387 `settings-setupGPU` (declared a
+		// **POST** in the PRD with `requestBody.required = true`
+		// but with the inner property `serverId` **optional** —
+		// no `required` array on the inner schema). The next
+		// contributor must re-verify against
+		// `internal/api/data/openapi.json > /settings.setupGPU >
+		// post` per the forward-reference lesson before assuming
+		// any field is identical to this entry — the inner-
+		// required-field axis pivots from REQUIRED (this entry)
+		// to OPTIONAL (API-0387) even though both share the
+		// outer `requestBody.required = true` axis. Per the
+		// slug-prefix-is-not-shape lesson reasserted at
+		// API-0371..API-0385 and the verb-axis lesson reasserted
+		// at API-0370/API-0383, do not assume any axis carries
+		// over from this entry. The body-axis flip-flop across
+		// API-0383..API-0386 (no-body, no-body, optional-body,
+		// required-body) is now four entries deep within the
+		// same tag; per-operation re-verification stays
+		// mandatory across every family transition.
+		SampleBody: json.RawMessage(`{
+			"sshPrivateKey": "set-cov-saveSSHPrivateKey-0386"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
