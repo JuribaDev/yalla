@@ -12415,3 +12415,70 @@ Learnings for future iterations:
     focused on `data.method` / `data.status` rather than payload
     projection.
 ---
+
+## 2026-05-08 - API-0065
+- **Implemented**: Per-operation contract coverage for `cluster-removeWorker`
+  (POST /cluster.removeWorker). Fourth and final cluster/* entry — closes
+  the `clu-cov-*` per-tag fixture-isolation namespace opened at API-0062
+  `cluster-addManager` and continued through API-0063 `cluster-addWorker`
+  and API-0064 `cluster-getNodes`. **Stands apart from the prior three
+  cluster/* peers**: POST with required JSON body
+  `{nodeId: required, serverId?: optional}` rather than GET with optional
+  `serverId` query, AND the spec declares **no 404** (200/400/401/403/500
+  only) — structurally distinct from the GET cohort that all declared 404.
+  Per the slug-prefix-is-not-shape lesson the spec was re-verified
+  per-operation; the cluster-* slug prefix did not pre-determine the wire
+  shape. Mirrors the API-0061 `certificates-remove` namespace-closer
+  precedent (POST body, harness-default 401 → CodeAuth) since 404 is not
+  declared and 400 → CodeInvalidInput stays reserved for richer-schema
+  payload-validation stories. On hand-off, the next priority-3 tag in the
+  PRD roster is destination/* (API-0102 `destination-all`) which opens a
+  fresh `dest-cov-*` namespace and **must not** back-reference the now-
+  closed `clu-cov-*` namespace.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended the API-0065
+    `apiCoverageCase` literal between API-0064 and API-0066, fixture
+    tokens `clu-cov-removeWorker-0065-node` (nodeId) and
+    `clu-cov-removeWorker-0065-server` (serverId) on the required POST
+    body. Failure leg unset → harness default 401 → `yerr.CodeAuth`.
+    The harness drives registry presence, schema reachability,
+    manifest inclusion, an httptest success exchange (POST body
+    round-trip), and the 401 → CodeAuth failure leg for free.
+  - `ralph/prd.json` — flipped `API-0065.passes` from `false` to `true`.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — PASS (internal/cli 1.909s, all packages green).
+  - `go test -race ./...` — PASS (internal/cli 2.767s, all packages
+    green).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, and
+    `goreleaser` are not installed locally; documented as missing
+    rather than silently skipped (per Codebase Patterns).
+- **Remaining risks / follow-ups**: None for API-0065 itself. The
+  `clu-cov-*` namespace is now fully populated and CLOSED — no further
+  cluster/* entries are pending in the PRD. Next priority-3 tag is
+  destination/* opening at API-0102 `destination-all` with a fresh
+  `dest-cov-*` namespace.
+- **Learnings for future iterations:**
+  - **Slug-prefix-is-not-shape, restated for cluster/***: even within a
+    single tag's roster, three of four cluster/* operations are GETs
+    with optional `serverId` and the fourth (this entry) is a POST
+    with a required body and NO 404 declared. The `cluster-*` slug did
+    not predict the wire shape; the spec must be re-verified per
+    operation. This re-asserts the API-0371..API-0385 lesson
+    intra-tag, not just cross-tag.
+  - **Status-code claims must be backed by the spec**. 404 →
+    CodeNotFound was already claimed by API-0064 for cluster/*, but
+    even if it had been reserved here, claiming it would have been
+    wrong because 404 is not declared in the operation's response set
+    — the harness contract assertion would surface the mismatch. When
+    a story's spec lacks a declared 404, the failure leg defaults to
+    the harness 401 → CodeAuth even if the slug suggests a "remove"
+    operation that morally could 404. Spec is ground truth.
+  - **Closer-entry hand-off note convention**: the closing entry of a
+    per-tag namespace must explicitly name the next priority-3 tag
+    that will open a fresh namespace and forbid back-references to
+    the now-closed namespace. This entry's hand-off names
+    destination/* via API-0102 `destination-all`.
+---

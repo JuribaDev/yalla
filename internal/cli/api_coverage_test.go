@@ -3360,6 +3360,119 @@ var coveredAPIOperations = []apiCoverageCase{
 		FailureCode:   yerr.CodeNotFound,
 	},
 	{
+		StoryID:     "API-0065",
+		OperationID: "cluster-removeWorker",
+		Method:      http.MethodPost,
+		Path:        "/cluster.removeWorker",
+		Tag:         "cluster",
+		// **Fourth and final cluster/* entry — namespace closer.**
+		// The `clu-cov-*` per-tag fixture-isolation namespace was
+		// opened at API-0062 `cluster-addManager` and continued
+		// through API-0063 `cluster-addWorker` and API-0064
+		// `cluster-getNodes`. This entry stays inside the still-
+		// open `clu-cov-*` namespace and **must not** back-
+		// reference any closed `admin-cov-*`, `ai-cov-*`,
+		// `app-cov-*`, `backup-cov-*`, `bb-cov-*`, `cert-cov-*`,
+		// `compose-cov-*`, `deployment-cov-*`, `org-cov-*`,
+		// `proj-cov-*`, `srv-cov-*`, or `set-cov-*` namespace.
+		// On hand-off this is the cluster/* closer: the next
+		// priority-3 tag in the PRD roster (destination/* via
+		// API-0102 `destination-all`) opens a fresh
+		// `dest-cov-*` namespace and **must not** back-
+		// reference the now-closed `clu-cov-*` namespace per
+		// the per-tag isolation rule.
+		//
+		// **Spec re-verified per the API-0345..API-0385
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /cluster.removeWorker
+		// > post`: a **POST** with **a required JSON body** of
+		// shape `{nodeId: string (required), serverId?: string}`,
+		// no path or query parameters. Responses 200/400/401/403/
+		// 500 — **structurally distinct from the cluster/* GET
+		// peers in that 404 is NOT declared** (the prior three
+		// entries — API-0062/0063/0064 — all declared 404). Per
+		// the slug-prefix-is-not-shape lesson reasserted across
+		// API-0371..API-0385, the spec was re-verified
+		// per-operation rather than inheriting the cluster/* GET
+		// cohort's response set. The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort.
+		//
+		// **Shape positioning — POST with required body, the
+		// only mutating cluster/* operation.** Stands apart from
+		// API-0062 `cluster-addManager`, API-0063
+		// `cluster-addWorker`, and API-0064 `cluster-getNodes`
+		// (all GETs with optional `serverId` query). Slug
+		// prefix `cluster-*` is shared but the wire shape is
+		// different: the harness forwards `SampleBody` via the
+		// `--input` JSON `body` field, the request reaches the
+		// httptest server as a POST with `Content-Type:
+		// application/json`, and `runAPICoverageSuccess` re-reads
+		// the body to confirm the CLI propagated `nodeId` and
+		// `serverId` verbatim. Mirrors the API-0061
+		// `certificates-remove` (cert/* closer, POST body) and
+		// API-0066 `compose-cancelDeployment` (compose POST
+		// body) precedents for closer-shaped POST mutation
+		// entries.
+		//
+		// **Family choice — closer entry, harness-default
+		// failure leg.** 404 → CodeNotFound was already claimed
+		// by API-0064 `cluster-getNodes` (the canonical read-
+		// shaped 404 consumer for cluster/*) and **cannot be
+		// claimed here regardless** because 404 is not declared
+		// in the spec for this operation — claiming a non-
+		// declared status would break the contract assertion at
+		// the harness level. 400 → CodeInvalidInput stays
+		// reserved for stories where payload validation is the
+		// operation's distinguishing failure mode; while this
+		// POST does have a required body, the validator surface
+		// is narrow (two-field object with one required string)
+		// and a future payload-validation story on a richer
+		// schema (e.g. application-create's multi-field shape,
+		// API-0014) is the more canonical 400 consumer. This
+		// entry therefore uses the harness default 401 →
+		// CodeAuth (`tc.FailureStatus == 0` → 401,
+		// `tc.FailureCode == ""` → CodeAuth) — mirroring the
+		// API-0061 `certificates-remove` closer precedent (POST
+		// body, namespace closer, harness-default failure leg).
+		// Auth failures stay covered fleet-wide via this entry
+		// alongside API-0062 and API-0063.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `clu-cov-removeWorker-0065` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared
+		//     across every per-tag roster and is unique within
+		//     the `clu-cov-*` namespace opened by API-0062
+		//     (verified orthogonal to `clu-cov-addManager-0062`,
+		//     `clu-cov-addWorker-0063`, `clu-cov-getNodes-0064`,
+		//     and to every prior tag's `cert-cov-*`,
+		//     `srv-cov-*`, `proj-cov-*`, `org-cov-*`,
+		//     `compose-cov-*`, `app-cov-*`, `ai-cov-*`,
+		//     `bb-cov-*`, `set-cov-*`, `admin-cov-*`,
+		//     `backup-cov-*`, `deployment-cov-*` namespaces).
+		//   * `nodeId` and `serverId` carry fixture-shaped
+		//     literals derived from the token base rather than
+		//     real UUIDs so the wire payload cannot be mistaken
+		//     for a real production identifier and any future
+		//     schema validator's failure messages point at the
+		//     offending field. Both fields are populated even
+		//     though `serverId` is optional, matching the
+		//     API-0062/0063/0064 precedent of populating
+		//     optional axes to keep the wire assertion
+		//     meaningful.
+		SampleBody: json.RawMessage(`{
+			"nodeId": "clu-cov-removeWorker-0065-node",
+			"serverId": "clu-cov-removeWorker-0065-server"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0066",
 		OperationID: "compose-cancelDeployment",
 		Method:      http.MethodPost,
