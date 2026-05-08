@@ -14732,3 +14732,18 @@ Learnings for future iterations:
     docker/*-specific conventions (slug prefix, harness fixture
     patterns) belong to that tag, not to user/*.
 ---
+
+## 2026-05-08 - API-0114
+- Implemented coverage entry for `docker-restartContainer` (POST /docker.restartContainer) in `internal/cli/api_coverage_test.go`.
+- Spec re-verified: REQUIRED body with single REQUIRED string field `containerId`; no parameters; responses 200/400/401/403/500 (no 404 declared).
+- First docker/* roster entry exercising the POST request-body forwarding path; prior six (API-0108..API-0113) were all GETs with query/no-body shapes.
+- Failure leg uses harness defaults (401 → CodeAuth) — 404→CodeNotFound override is structurally inapplicable since the spec omits 404 here.
+- Files changed: `internal/cli/api_coverage_test.go`, `ralph/prd.json`, `ralph/progress.txt`.
+- Verification run: `gofmt -w .`, `go vet ./...`, `go test ./...`, `go test -race ./...`. All pass; goimports not installed (skipped).
+- Remaining risks/follow-ups: Next story API-0115 `domain-byApplicationId` opens the `domain-cov-*` per-tag fixture-isolation namespace as the first domain/* entry; contributor must spec-re-verify per the forward-reference lesson.
+- **Learnings for future iterations:**
+  - The `docker-cov-*` namespace stays open through API-0114; this is the first POST mutation in the docker/* roster.
+  - The slug-prefix-is-not-shape lesson reasserts itself even within a single tag: `getContainers*` (GET, query-keyed) and `restartContainer` (POST, body-keyed) share the docker container concept but have entirely distinct wire shapes.
+  - When the spec omits 404 from the response set, the 404→CodeNotFound override is structurally inapplicable regardless of whether the operation has an id-bearing semantic — fall back to the harness default 401→CodeAuth.
+  - Adding a coverage entry alone (no manifest/registry edits) is sufficient because the OpenAPI spec already declares the operation; `TestAPICoverage`, `TestAPI_Operations`, and `TestAPI_Manifest` derive coverage from `coveredAPIOperations` + the embedded spec.
+---

@@ -6040,6 +6040,91 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0114",
+		OperationID: "docker-restartContainer",
+		Method:      http.MethodPost,
+		Path:        "/docker.restartContainer",
+		Tag:         "docker",
+		// **Seventh entry in the docker/* roster** following API-0108
+		// `docker-getConfig`, API-0109 `docker-getContainers`,
+		// API-0110 `docker-getContainersByAppLabel`, API-0111
+		// `docker-getContainersByAppNameMatch`, API-0112
+		// `docker-getServiceContainersByAppName`, and API-0113
+		// `docker-getStackContainersByAppName`. Stays inside the
+		// `docker-cov-*` per-tag fixture-isolation namespace opened
+		// at API-0108 and **must not** back-reference any closed
+		// `admin-cov-*`, `ai-cov-*`, `app-cov-*`, `backup-cov-*`,
+		// `bb-cov-*`, `cert-cov-*`, `clu-cov-*`, `compose-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `org-cov-*`, `proj-cov-*`,
+		// `set-cov-*`, or `srv-cov-*` namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0441
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /docker.restartContainer
+		// > post`: a **POST** with **no parameters**, a **REQUIRED
+		// request body** declaring exactly one REQUIRED string field
+		// `containerId` (the Docker container ID to restart).
+		// Responses 200/400/401/403/500 — note the spec does **not**
+		// declare 404 on this operation, so the canonical
+		// 404→CodeNotFound by-id-restart representative is *not*
+		// available even though `containerId` is technically a
+		// resource identifier. The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort. The slug-prefix-
+		// is-not-shape lesson is honoured: although the parent stems
+		// `getContainers*` and `restartContainer` both reference the
+		// docker container concept, the wire shapes are entirely
+		// distinct (the GET getters take query parameters; this POST
+		// takes a request-body `containerId`), and that distinction
+		// was confirmed by direct spec inspection rather than
+		// inherited from the docker/* peers.
+		//
+		// **Shape positioning — single-field POST mutation, body
+		// REQUIRED.** First docker/* roster entry that exercises the
+		// request-body forwarding path (API-0108..API-0113 are all
+		// GETs); the harness's `len(tc.SampleBody) > 0` gate at
+		// `runAPICoverageSuccess` activates the JSON
+		// content-type and byte-for-byte body comparison legs.
+		// The fixture supplies `containerId` so the success path
+		// verifies the CLI propagated the body verbatim.
+		//
+		// **Family choice — harness-default 401 → CodeAuth failure
+		// leg.** The spec omits 404 from the response set, so the
+		// 404→CodeNotFound override is structurally inapplicable
+		// here. Per the bitbucket/* precedent established at
+		// API-0054..API-0055 — fleet-wide mutation endpoints surface
+		// `E_AUTH` before any container lookup runs when the bearer
+		// is missing/invalid, so 401→CodeAuth remains the universal
+		// failure mode every authenticated Dokploy operation must
+		// re-prove. Per the established `<tag>-cov-<slug>-<storyID>`
+		// deterministic-but-clearly-fake naming convention, the
+		// fixture token base `docker-cov-restart-container-0114`
+		// keeps `git grep` traceable to this PRD story without
+		// colliding with API-0108 (`docker-cov-get-config-0108`),
+		// API-0109 (`docker-cov-get-containers-0109`), API-0110
+		// (`docker-cov-get-containers-by-app-label-0110`), API-0111
+		// (`docker-cov-get-containers-by-app-name-match-0111`),
+		// API-0112 (`docker-cov-get-service-containers-by-app-name-0112`),
+		// or API-0113 (`docker-cov-get-stack-containers-by-app-name-0113`).
+		//
+		// The next case in the PRD-ordered priority-3 backlog is
+		// API-0115 `domain-byApplicationId` (declared a **GET** per
+		// the spec preview; the next contributor must re-verify the
+		// spec against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will open the `domain-cov-*` per-tag fixture-isolation
+		// namespace as the first domain/* entry).
+		SampleBody: json.RawMessage(`{
+			"containerId": "docker-cov-restart-container-0114"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,
