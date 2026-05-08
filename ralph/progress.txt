@@ -8151,3 +8151,87 @@
     `rg 'set-cov-cleanAllDeploymentQueue'` and find this entry as
     the canonical no-body POST exemplar.
 ---
+
+## 2026-05-08 - API-0045 — Cover backup-manualBackupMySql (POST /backup.manualBackupMySql)
+- **Implemented**: Added the canonical `apiCoverageCase` entry for
+  `backup-manualBackupMySql` (POST /backup.manualBackupMySql, tag
+  `backup`) to `internal/cli/api_coverage_test.go`. This is the **sixth**
+  backup/* story and the **fourth** member of the `backup-manualBackup*`
+  family seeded by API-0042 (six siblings: API-0042 compose, API-0043
+  mariadb, API-0044 mongo, API-0045 mySql, API-0046 postgres, API-0047
+  webServer). The shared harness (`TestAPICoverage_RegistryInvariants`,
+  `_SchemaCommandWorks`, `_ManifestListsOperation`, `_SuccessRoundTrip`,
+  `_RepresentativeFailure`) drives registry, schema, manifest, success,
+  and 401 → CodeAuth failure assertions for this operation
+  automatically; all five subtests pass for `API-0045`.
+- Spec re-verified against `internal/api/data/openapi.json >
+  /backup.manualBackupMySql > post`:
+  * `requestBody.required = true`, single field `backupId` (string),
+    listed under `required` — byte-identical to API-0042 compose,
+    API-0043 mariadb, and API-0044 mongo siblings.
+  * Zero parameters (no query, no path, no header).
+  * Responses 200/400/401/403/500 — same set as every prior backup
+    `manualBackup*` peer; no 404 (operation is not by-id-flavoured in
+    the resource-not-found sense — the backupId is in the body).
+  * 200 schema is `{}` with `additionalProperties: false`, matching
+    every prior covered peer.
+- **Forward-reference confirmation**: API-0044's progress entry predicted
+  this would be a near-verbatim mirror with only the slug, story id,
+  and path/operationId rewritten. Re-verification confirmed: the only
+  body-field rename across the four shipped manualBackup siblings is
+  the slug literal inside the `backupId` value (`mongo` → `mysql`),
+  and the OpenAPI shape is otherwise identical.
+- Fixture choices:
+  * Per-case fixture token base `backup-cov-manual-mysql-0045` follows
+    the `backup-cov-manual-<slug>-<storyID>` convention seeded by
+    API-0042 and shared with API-0043/API-0044. Slug rendering of
+    `MySql` → `mysql` mirrors the lowercase-single-token convention
+    used for `mongo` (from `Mongo`) and `mariadb` (from `Mariadb`).
+    Verified unique vs. API-0042 `backup-cov-manual-compose-0042`,
+    API-0043 `backup-cov-manual-mariadb-0043`, and API-0044
+    `backup-cov-manual-mongo-0044`.
+  * `SampleBody` carries the single required `{backupId: <fixture>}`
+    field; no `SampleQuery`/`SamplePathParams` populated.
+  * `SuccessResponse: "{}"` keeps the success-leg envelope assertion
+    focused on `data.method` / `data.status` rather than payload
+    projection (canonical empty-success convention).
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended one
+    `apiCoverageCase` literal between API-0044 and API-0066 entries.
+  - `ralph/prd.json` — flipped `passes: false` → `true` for API-0045.
+  - `ralph/progress.txt` — this entry.
+- **Verification run** (from repo root):
+  - `gofmt -w .` — no diff.
+  - `go mod tidy` — no dep changes.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages `ok`.
+  - `go test -race ./...` — all packages `ok` (`internal/cli` 2.702s).
+  - `go test -run TestAPICoverage ./internal/cli/ -count=1 -v` — all
+    five `API-0045/backup-manualBackupMySql` subtests PASS (Registry,
+    Schema, Manifest, Success, RepresentativeFailure).
+- **Tools NOT available locally** (per Codebase Patterns): `goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`. Skipped
+  silently per the existing convention.
+- **Remaining risks / follow-ups**: none specific to API-0045. The next
+  pending backup/* story is API-0046 `backup-manualBackupPostgres`. Per
+  the forward-reference lesson, expect the spec to be byte-identical to
+  the four shipped `manualBackup*` siblings; only re-verify after
+  reading the OpenAPI fragment for `/backup.manualBackupPostgres`.
+- **Learnings for future iterations**:
+  - The `backup-manualBackup*` family (six siblings API-0042..API-0047)
+    is the cleanest example to date of a multi-story near-verbatim
+    mirror block on the coverage corpus. Each entry's diff against its
+    predecessor is exactly: `StoryID`, `OperationID`, `Path`, the slug
+    inside `SampleBody.backupId`, and three comment fragments
+    (ordinal, sibling list, prior-peer reference list). Lean on this
+    when shipping API-0046 / API-0047.
+  - Slug-rendering for camelCase database names: the convention seeded
+    by API-0043 `mariadb` (from `Mariadb`) and API-0044 `mongo` (from
+    `Mongo`) is **lowercase-single-token**, NOT kebab-cased. So
+    `MySql` → `mysql` (not `my-sql`). This keeps the `backup-cov-manual-<slug>-<storyID>`
+    grep aligned across siblings.
+  - The harness's `if len(tc.SampleBody) > 0` guard at
+    `runAPICoverageSuccess` (and the equivalent path/query guards) keep
+    body-only operations terse — no need to populate `SampleQuery` or
+    `SamplePathParams` when the spec declares no parameters.
+---
