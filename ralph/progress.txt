@@ -10796,3 +10796,120 @@ Learnings for future iterations:
     `runAPICoverageSuccess`, and the failure leg defaults to
     401 -> CodeAuth when `FailureStatus == 0`.
 ---
+## 2026-05-08 - API-0058
+- **Implemented**: Per-operation contract coverage for the
+  `certificates-all` Dokploy API operation
+  (GET /certificates.all, tag certificates). Appended a single
+  `apiCoverageCase` entry to `coveredAPIOperations` (slotted
+  between API-0057 `bitbucket-update` and API-0066
+  `compose-cancelDeployment` to honor the StoryID-sorted
+  diff-friendliness rule documented at the top of
+  `coveredAPIOperations`). The harness fires registry-presence
+  (method/path/tag), `yalla schema get certificates-all --json`
+  reachability, manifest inclusion, an httptest success-leg
+  (200 / `{}`), and a 401 -> CodeAuth representative-failure
+  leg (harness defaults — `FailureStatus == 0`,
+  `FailureCode == ""`).
+- **Spec axes** (re-verified directly against
+  `internal/api/data/openapi.json > /certificates.all > get`):
+  GET, **zero parameters** (no path placeholders, no query
+  string), **no requestBody**, response set
+  200/400/401/403/404/500. The 200 schema is `{}` with
+  `additionalProperties: false`. Body is unauthenticated-shaped
+  except for the `Authorization` security requirement.
+- **Tag-arc opener**: API-0058 opens the certificates/* tag
+  arc. Three peers remain pending: API-0059
+  `certificates-create`, API-0060 `certificates-one`, API-0061
+  `certificates-remove`. The fresh `cert-cov-*` fixture-isolation
+  namespace is opened nominally — no literals consumed because
+  this entry has no `Sample*` fields. Forward-reference
+  reservation: API-0060 `certificates-one` is the canonical
+  by-id reader and should claim the 404 -> CodeNotFound
+  representative-failure slot (mirroring API-0055
+  `bitbucket-one`'s claim of that slot in the bitbucket/* tag
+  arc); the API-0060 contributor must still re-verify against
+  `/certificates.one > get` rather than blindly inheriting.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` -- appended the
+    API-0058 case literal to the `coveredAPIOperations` slice
+    between API-0057 and API-0066, with a
+    ~80-line design-rationale comment block.
+  - `ralph/prd.json` -- set API-0058 `passes: true`.
+  - `ralph/progress.txt` -- this entry.
+- **Verification run** from repo root:
+  - `gofmt -w .` -- clean.
+  - `go mod tidy` -- clean.
+  - `go vet ./...` -- clean.
+  - `go test ./...` -- all packages pass; `internal/cli` runs
+    the new `API-0058/certificates-all` registry, schema,
+    manifest, success-leg, and failure-leg subtests
+    end-to-end through the production exit-code path
+    (1.145s).
+  - `go test -race ./...` -- all packages pass (2.746s).
+- **Tools NOT available locally** (unchanged): `goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`.
+- **Remaining risks / follow-ups**:
+  - 289 PRD stories still have `passes: false`. The next
+    pending priority-5 story is API-0059 `certificates-create`
+    (POST /certificates.create) -- a sibling certificates/*
+    mutation that should consume a `cert-cov-create-0059-*`
+    fixture-token namespace, but per-operation re-verification
+    against `/certificates.create > post` is mandatory.
+  - API-0060 `certificates-one` is the canonical by-id reader
+    in the certificates/* tag and should claim the 404 ->
+    CodeNotFound representative-failure slot reserved by this
+    entry's design-rationale header.
+- **Learnings for future iterations**:
+  - **Minimal-literal GET shape is the canonical opener for a
+    list-style tag arc.** When a tag's first pending entry is
+    a parameter-free, body-free GET (e.g. `<tag>-all` /
+    `<tag>-list`), the case literal should consist of nothing
+    but `StoryID`, `OperationID`, `Method`, `Path`, `Tag`, and
+    a design-rationale comment block — every `Sample*` field
+    omitted, defaulting to 200 / `{}` for success and 401 ->
+    CodeAuth for failure. This matches the minimal-literal
+    pattern established at API-0378/API-0379 and most
+    recently consumed by API-0383 `settings-reloadRedis`. The
+    no-input-flag path is exercised because
+    `buildCoverageInputArgs` short-circuits to an empty slice
+    when no `Sample*` fields are populated.
+  - **Tag-arc-opener entries must explicitly nominate a 404 ->
+    CodeNotFound holder.** When opening a new tag arc whose
+    PRD priority list contains both a list-GET (`<tag>-all`)
+    and a by-id-GET (`<tag>-one`), the list-GET opener must
+    explicitly reserve the 404 -> CodeNotFound
+    representative-failure slot for the upcoming
+    `<tag>-one` peer (this is exactly what API-0055
+    `bitbucket-one` did for the bitbucket/* tag). Reserving
+    the slot in the opener — rather than letting it default
+    out at the by-id peer — keeps the per-tag failure-leg
+    distribution legible and prevents a future
+    `<tag>-one` contributor from accidentally consuming the
+    harness-default 401 -> CodeAuth slot.
+  - **StoryID-sorted insertion catches comment-anchor
+    ambiguity.** The `coveredAPIOperations` slice is kept
+    sorted by StoryID for diff-friendliness. Inserting
+    API-0058 between API-0057 (line 2569) and API-0066
+    (line 2570) required matching a unique anchor — the
+    bare `SuccessResponse: ` + "`" + "{}" + "`" + `,
+	},
+	{` pattern
+    appears many times in the file, so the edit had to
+    include enough of the API-0057 closing context (the
+    `bb-cov-update-0057-organizationId` literal and its
+    trailing comment block) to disambiguate. Future
+    contributors editing into the middle of the slice should
+    anchor on the prior entry's distinctive last lines, not
+    on the generic struct-closer pattern.
+  - **Indentation-of-body-vs-comment trap.** The Read tool's
+    `cat -n` format prepends `<lineno>\t` so every line in a
+    Read result *appears* to have one extra leading tab.
+    The actual struct body uses single-tab indentation
+    (`\t` for braces, `\t\t` for fields), not the apparent
+    double-tab indentation. Edit calls must strip the Read
+    line-number prefix before constructing `old_string` /
+    `new_string`. A first attempt with double-tab indentation
+    failed with "String to replace not found in file"; the
+    fix was to verify the actual byte representation via
+    `ctx_execute_file` + `repr(line)` before retrying.
+---

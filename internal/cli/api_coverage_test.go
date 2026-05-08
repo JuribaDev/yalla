@@ -2568,6 +2568,88 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0058",
+		OperationID: "certificates-all",
+		Method:      http.MethodGet,
+		Path:        "/certificates.all",
+		Tag:         "certificates",
+		// **Tag-arc opener for certificates/*.** API-0058 is
+		// the first of four pending certificates/* peers in
+		// the PRD priority list (API-0058 `certificates-all`,
+		// API-0059 `certificates-create`, API-0060
+		// `certificates-one`, API-0061 `certificates-remove`).
+		// Per the per-tag fixture-isolation rule originally
+		// established at API-0246 `organization-active`,
+		// reasserted at API-0290 `project-all`, API-0335
+		// `server-all`, API-0351
+		// `settings-assignDomainServer`, and most recently at
+		// API-0051 `bitbucket-bitbucketProviders`, this entry
+		// opens a fresh `cert-cov-*` namespace — future
+		// certificates/* peers (API-0059..API-0061) **must**
+		// consume slugs of the form
+		// `cert-cov-<slug>-<storyID>` (e.g.
+		// `cert-cov-create-0059-*`, `cert-cov-one-0060-*`,
+		// `cert-cov-remove-0061-*`) and **must not**
+		// back-reference any closed `admin-cov-*`,
+		// `ai-cov-*`, `app-cov-*`, `backup-cov-*`,
+		// `bb-cov-*`, `compose-cov-*`, `deployment-cov-*`,
+		// `org-cov-*`, `proj-cov-*`, `srv-cov-*`, or
+		// `set-cov-*` namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0364
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /certificates.all
+		// > get`: a **GET** with **zero parameters** (no path
+		// placeholders, no query string), **no requestBody**,
+		// and a 200/400/401/403/404/500 response set. The 200
+		// schema is `{}` with `additionalProperties: false`,
+		// matching the empty-success convention shared by
+		// every prior covered list-style GET. Because no
+		// parameters or body are declared, every case-level
+		// `Sample*` field is intentionally omitted —
+		// `buildCoverageInputArgs` returns an empty slice and
+		// `yalla api call certificates-all --json` exercises
+		// the no-input-flag path.
+		//
+		// **Family choice — list GET, harness-default failure
+		// leg.** The 401 → CodeAuth representative-failure
+		// slot is the canonical default for an authenticated
+		// list-style read whose own 4xx vocabulary (400
+		// invalid input, 403 forbidden, 404 not found) is too
+		// generic to claim a distinguishing failure shape.
+		// The 404 → CodeNotFound slot is *not* claimed
+		// here — `certificates-all` is a list endpoint with
+		// no addressable subject; the canonical 404 →
+		// CodeNotFound representative-failure slot for the
+		// certificates/* tag is reserved for the upcoming
+		// API-0060 `certificates-one` entry (the canonical
+		// by-id reader, mirroring API-0055 `bitbucket-one`'s
+		// claim of that slot in the bitbucket/* tag arc).
+		// Future contributor on API-0060 should consume that
+		// reservation by setting `FailureStatus:
+		// http.StatusNotFound` and `FailureCode:
+		// yerr.CodeNotFound` on the API-0060 case literal —
+		// per-operation re-verification against
+		// `/certificates.one > get` is still mandatory before
+		// inheriting from this entry. API-0059
+		// `certificates-create` and API-0061
+		// `certificates-remove` are mutating POSTs and are
+		// expected to follow the harness-default 401 →
+		// CodeAuth slot, but that prediction must also be
+		// re-verified per-operation against the spec rather
+		// than inherited.
+		//
+		// Fixture conventions: parameter-free, body-free GETs
+		// require no `Sample*` fields and no per-case fixture
+		// token — the `cert-cov-*` namespace is opened here
+		// nominally but no literals are consumed. Defaulting
+		// to 200 / `{}` for success and 401 → CodeAuth for
+		// failure keeps this entry maximally terse, mirroring
+		// the minimal-literal pattern established by
+		// API-0378/API-0379 and most recently consumed by
+		// API-0383 `settings-reloadRedis`.
+	},
+	{
 		StoryID:     "API-0066",
 		OperationID: "compose-cancelDeployment",
 		Method:      http.MethodPost,
