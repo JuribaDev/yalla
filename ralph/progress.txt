@@ -4950,3 +4950,37 @@
     (find the StoryID-sorted slot, paste between two existing braces)
     keeps diffs single-contiguous-insert and grep-friendly.
 ---
+
+## 2026-05-08 - API-0088
+- Implemented coverage for compose-refreshToken (POST /compose.refreshToken).
+- Files changed:
+  - internal/cli/api_coverage_test.go: appended apiCoverageCase entry for API-0088
+    as the eighth member of the minimal-composeId-only POST family
+    (peers: API-0066/0067/0068/0073/0074/0080).
+  - ralph/prd.json: flipped API-0088 passes -> true.
+- Verification run:
+  - gofmt -w .
+  - go mod tidy
+  - go vet ./...
+  - go test ./...           -> all packages OK
+  - go test -race ./...     -> all packages OK
+  - goimports not installed (documented previously).
+- Results: all six contract sub-tests for API-0088 pass via the shared harness
+  (RegistryInvariants, OperationsListIncludes, SchemaCommandWorks,
+  ManifestIncludesOperation, RawAPICallSuccess, RawAPICallFailure).
+- Remaining risks or follow-ups: none specific to this story; compose/* roster
+  now has eight minimal-composeId-only POST entries — the comment ledger will
+  need to be re-summarised once it grows past comfortable enumeration length.
+- **Learnings for future iterations:**
+  - The minimal-composeId-only POST family (single required `composeId`,
+    empty `{}` 200 response) now contains seven peers in addition to the new
+    one (API-0066/0067/0068/0073/0074/0080/0088). A new entry in this family
+    needs only a slug-rotated SampleBody and the family-membership comment.
+  - compose-refreshToken's spec body is byte-for-byte identical to the
+    other minimal-composeId-only siblings; no special handling needed for
+    the `{}` 200 response — it routes through the existing empty-success
+    convention shared by every compose/* peer.
+  - The `compose-cov-<slug>-<storyID>` slug convention continues to provide
+    cross-story grep-ability — `compose-cov-refresh-token-0088` keeps the
+    convention intact.
+---
