@@ -8789,3 +8789,78 @@ Learnings for future iterations:
     harness defaults `tc.FailureStatus == 0` → 401, `tc.FailureCode == ""`
     → CodeAuth deliver the canonical failure-leg mapping.
 ---
+
+## 2026-05-08 - API-0360 - Cover settings-cleanStoppedContainers (POST /settings.cleanStoppedContainers)
+- Added the API-0360 case to `internal/cli/api_coverage_test.go`'s
+  `coveredAPIOperations` table. The new entry registers the operation under
+  the settings/* per-tag fixture-isolation namespace seeded by API-0351
+  `settings-assignDomainServer`, with operationId `settings-cleanStoppedContainers`,
+  method `POST`, path `/settings.cleanStoppedContainers`, tag `settings`.
+- **Spec re-verification per the API-0345..API-0359 forward-reference lesson.**
+  Direct inspection of `internal/api/data/openapi.json >
+  /settings.cleanStoppedContainers > post` confirms an **OPTIONAL**
+  `requestBody` (`requestBody.required = false`) carrying a single optional
+  property `serverId: string` with no `required` array; **zero parameters**;
+  responses 200/400/401/403/500 (no 404). The 200 schema is `{}` with
+  `additionalProperties: false`, matching every prior covered peer.
+- Wire shape lands in the **optional-body POST sub-cohort** alongside
+  API-0353 `settings-cleanAll`, API-0355 `settings-cleanDockerBuilder`,
+  and API-0356 `settings-cleanDockerPrune` — *not* the no-body sub-cohort
+  occupied by API-0354 `settings-cleanAllDeploymentQueue`, API-0357
+  `settings-cleanMonitoring`, API-0358 `settings-cleanRedis`, and API-0359
+  `settings-cleanSSHPrivateKey`. API-0359 → API-0360 is the **fourth
+  body-axis flip across the settings/* `clean*` sub-roster**, vindicating
+  the API-0359 forward-reference comment that warned the next entry must
+  re-verify the spec rather than mirror its no-body schema.
+- `SampleBody` populates the optional `serverId` with the fixture-shaped
+  literal `set-cov-cleanStoppedContainers-0360` so the wire payload cannot
+  be mistaken for a real production server identifier and the success-leg
+  `Content-Type: application/json` header assertion stays meaningful.
+  No `SampleQuery` / `SamplePathParams` (the operation has zero parameters).
+- Failure-leg fields are intentionally omitted: spec declares no 404, and
+  the harness defaults (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""`
+  → CodeAuth) cover the canonical auth-failure leg every Dokploy operation
+  must re-prove. 400 → CodeInvalidInput remains reserved for stories where
+  payload validation is the operation's distinguishing failure mode.
+- `SuccessResponse` is the empty-object literal `{}`, matching the spec's
+  200 schema (`type: object`, `additionalProperties: false`, no properties).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — added API-0360 case (+~135 lines).
+  - `ralph/prd.json` — toggled `passes: false → true` for API-0360.
+  - `ralph/progress.txt` — this entry.
+- Verification (`gofmt -w .`, `go mod tidy`, `go vet ./...`, `go test ./...`,
+  `go test -race ./...`) all green. `goimports`, `golangci-lint`, `staticcheck`,
+  `govulncheck`, and `goreleaser` remain not installed locally and are
+  documented as missing rather than silently skipped — same status as
+  every prior settings/* coverage story.
+- No remaining risks. Coverage harness (`runAPICoverageSuccess` /
+  `runAPICoverageFailure`) and registry-invariant assertions
+  (`TestAPICoverage_RegistryInvariants`) execute the new entry as part of
+  the `t.Run(tc.StoryID + "/" + tc.OperationID, …)` per-case subtest set,
+  with no per-tag scaffolding required.
+- **Learnings for future iterations:**
+  - The settings/* `clean*` sub-roster has now flipped on the body axis
+    **four times** (cleanAll → cleanAllDeploymentQueue, cleanDockerPrune →
+    cleanMonitoring, cleanSSHPrivateKey → cleanStoppedContainers, in
+    addition to the earlier cleanAllDeploymentQueue → cleanDockerBuilder
+    flip). The verb prefix `clean*` is officially **not authoritative**
+    on whether the operation carries an optional `{serverId}` body or no
+    body at all — every contributor must re-verify
+    `internal/api/data/openapi.json > /<operationId> > post >
+    requestBody` before authoring the fixture. API-0361
+    `settings-cleanUnusedImages` is the next case in the roster and
+    should be assumed neither way until the spec is read.
+  - The optional-body cohort fixture pattern is identical across
+    API-0353 / API-0355 / API-0356 / API-0360: populate `SampleBody`
+    with `{"serverId": "set-cov-<slug>-<storyID>"}` so the JSON
+    serialiser's optional-body branch is exercised on the wire and the
+    `Content-Type: application/json` header assertion remains
+    meaningful. Leaving the body unset would degrade the case to the
+    parameter-free POST cohort and lose the body-forwarding round-trip
+    assertion that distinguishes the optional-body shape from the
+    no-body shape.
+  - Test file edits to JSON via `json.dump` strip the trailing newline;
+    after writing PRD updates with Python, append a single `\n` so
+    `git diff` stays a one-line `passes: false → true` change rather
+    than a noisy two-region diff.
+---
