@@ -14833,6 +14833,217 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0399",
+		OperationID: "settings-writeTraefikEnv",
+		Method:      http.MethodPost,
+		Path:        "/settings.writeTraefikEnv",
+		Tag:         "settings",
+		// Forty-ninth and final entry on the settings/* coverage
+		// roster, inheriting the `set-cov-*` per-tag fixture-isolation
+		// namespace established by API-0351
+		// `settings-assignDomainServer` and extended through API-0398
+		// `settings-updateWebServerTraefikConfig` (must not
+		// back-reference the closed `srv-cov-*`, `proj-cov-*`,
+		// `org-cov-*`, `compose-cov-*`, `app-cov-*`, `ai-cov-*`,
+		// `admin-cov-*`, `backup-cov-*`, `bb-cov-*`, `cert-cov-*`,
+		// `clu-cov-*`, `deployment-cov-*`, `dest-cov-*`, or any other
+		// prior tag's namespace, per the per-tag isolation rule
+		// reasserted at API-0335..API-0398 and originally established
+		// at API-0246 `organization-active`).
+		//
+		// **Spec re-verified per the API-0345..API-0398
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /settings.writeTraefikEnv
+		// > post`: a **POST** with a **REQUIRED** `requestBody`
+		// (`requestBody.required = true`) carrying a JSON object with
+		// **two** declared outer properties — `env` (**plain string**,
+		// REQUIRED via the outer `required: ["env"]` array) and
+		// `serverId` (**plain string**, OPTIONAL — absent from the
+		// outer `required` array). **Zero parameters** (no query, no
+		// path, no header). Responses 200/400/401/403/500 — note the
+		// **absence of 404**, matching the canonical settings/*
+		// mutating-POST cohort. The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the settings/* roster.
+		//
+		// **Forward-reference confirmation — slug-prefix exit, novel
+		// shape variant.** API-0398
+		// `updateWebServerTraefikConfig`'s hand-off comment correctly
+		// forecast that this entry exits the `update*` slug-prefix
+		// sub-roster opened by API-0390 while staying on the Traefik
+		// slug-stem, and explicitly enumerated the four possible
+		// inner-shape branches: a single-string-content shape
+		// (matching API-0395 / API-0398), a multi-string shape
+		// (matching API-0396 `updateTraefikFile`), an
+		// array-of-objects shape (matching API-0397
+		// `updateTraefikPorts`), or a key/value-pair / list-of-env
+		// orthogonal shape suggested by the `Env` slug-suffix.
+		// Direct inspection of the spec confirms a **fifth branch
+		// not enumerated in the forecast**: a
+		// **single-required-plain-string + single-optional-plain-
+		// string** shape (`env` REQUIRED, `serverId` OPTIONAL). This
+		// is structurally distinct from every prior settings/* peer:
+		// API-0395 / API-0398 have one REQUIRED string and zero
+		// OPTIONAL fields; API-0396 has two REQUIRED strings and one
+		// OPTIONAL `serverId`; API-0397 has one REQUIRED
+		// array-of-objects and one OPTIONAL `serverId`. This entry's
+		// shape — one REQUIRED string + one OPTIONAL `serverId` — is
+		// the smallest non-trivial superset of API-0395 / API-0398's
+		// single-required-string shape, adding only the cross-cutting
+		// `serverId` discriminator that API-0396 / API-0397 also
+		// carry. The slug-stem-is-not-shape lesson reasserted at
+		// API-0371..API-0398 still holds — the shared `Traefik`
+		// slug-stem with API-0395..API-0398 did not pre-determine
+		// this entry's outer-property-count of two or its
+		// outer-required-field-count of one.
+		//
+		// **Body-axis flip-flop closes settings/* at seventeen.**
+		// The body-axis flip-flop across API-0383..API-0399 is now
+		// seventeen entries deep within the same tag (no-body /
+		// no-body / optional-body / required-body+inner-required /
+		// required-body+inner-optional-string-only / required-body+
+		// inner-optional-mixed-boolean+string / required-body+
+		// inner-required-boolean-only / required-body+
+		// inner-required-mixed-boolean+string / required-body+
+		// inner-required-nullable-string-only / required-body+
+		// inner-required-plain-string-only / no-body-at-all /
+		// required-body+inner-required-plain-string-only /
+		// required-body+inner-required-plain-string-only /
+		// required-body+inner-multi-required-plain-string /
+		// required-body+inner-required-array-of-objects+
+		// optional-string / required-body+inner-required-plain-
+		// string-only / required-body+inner-required-plain-string+
+		// inner-optional-string — **novel shape, smallest
+		// non-trivial superset of the API-0395 / API-0398 shape**);
+		// per-operation re-verification stayed mandatory across every
+		// family transition and was re-validated here against the
+		// most recent (and now closed) `update*` sub-roster.
+		//
+		// **Family closure — settings/* roster ends here.** The
+		// settings/* roster opened at API-0351
+		// `settings-assignDomainServer` closes at this entry per the
+		// PRD ordering. The next pending priority-2 story (per
+		// `ralph/prd.json` ordering at the time of this commit) is
+		// API-0427 `user-all`, which opens the user/* tag roster
+		// with its own `usr-cov-*` fixture-isolation namespace
+		// (forecast — the next contributor establishes the canonical
+		// per-tag prefix on the opener). Per the slug-prefix-is-not-
+		// shape rule reasserted at API-0371..API-0398, no axis from
+		// any settings/* entry carries forward into the user/*
+		// roster — every shape-defining axis must be re-verified
+		// per-operation against `internal/api/data/openapi.json`.
+		//
+		// **Two-property body shape.** The outer schema declares
+		// `env` as the lone REQUIRED plain-string property, semantic
+		// content being a complete environment-variable document
+		// scoped to Traefik (per the `writeTraefikEnv` operationId
+		// the verb writes the Traefik environment-variable file
+		// rather than a configuration document — the singular `env`
+		// noun strongly suggests a multi-line `KEY=VALUE\n…` payload
+		// in dotenv format, but the spec imposes no length, pattern,
+		// or format constraint on the field, only that it be
+		// present and string-typed). The OPTIONAL `serverId` scopes
+		// the write to a remote worker if present (matching the
+		// canonical settings/* `serverId` discriminator carried by
+		// API-0396 / API-0397). The fixture treats the `env` field
+		// as opaque content (the API does not validate the embedded
+		// dotenv structure at the JSON-schema layer) so a
+		// slug-bearing sentinel string suffices for the success-leg
+		// round-trip assertion.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `set-cov-writeTraefikEnv-0399` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared across
+		//     every per-tag roster and is unique (verified against
+		//     API-0351..API-0398's `set-cov-*` slugs and orthogonal
+		//     to every prior tag's `srv-cov-*`, `proj-cov-*`,
+		//     `org-cov-*`, `compose-cov-*`, `app-cov-*`, `ai-cov-*`,
+		//     `admin-cov-*`, `backup-cov-*`, `cert-cov-*`,
+		//     `clu-cov-*`, `deployment-cov-*`, `dest-cov-*`, etc.
+		//     namespaces).
+		//   * **Populating the REQUIRED outer field** is mandatory:
+		//     leaving `env` out would produce a structurally invalid
+		//     request (the outer schema's `required: ["env"]` array
+		//     names it). The fixture passes the slug-on-the-wire
+		//     sentinel `set-cov-writeTraefikEnv-0399` so the
+		//     success-leg body assertion can confirm the bytes
+		//     forwarded verbatim from the `--input` JSON file to the
+		//     httptest server matched the originating fixture, per
+		//     the slug-on-the-wire convention reasserted at
+		//     API-0351..API-0398 for free-form string fields. (Plain
+		//     strings without enum/format constraints accept the
+		//     sentinel directly; the spec imposes no length, pattern,
+		//     or format constraint on `env`.)
+		//   * **OPTIONAL `serverId` is deliberately populated.** The
+		//     fixture includes the OPTIONAL `serverId` carrying its
+		//     own slug-on-the-wire sentinel so the success-leg body
+		//     assertion exercises both branches of the schema's
+		//     outer-property-presence axis. This mirrors API-0396
+		//     `updateTraefikFile`'s and API-0397 `updateTraefikPorts`'s
+		//     fixture choice to populate their OPTIONAL `serverId`
+		//     fields rather than omit them, keeping the
+		//     maximal-body-content shape of the per-case fixture
+		//     consistent with the per-tag precedent for `serverId`
+		//     handling. (Per the API-0396 hand-off, populating an
+		//     OPTIONAL field is always safe — the spec accepts both
+		//     present-and-absent — but never populating either
+		//     branch would leave the OPTIONAL axis unverified.)
+		//
+		// **Failure-leg fields are intentionally omitted.** The spec
+		// does not declare 404 on this operation (the
+		// `writeTraefikEnv` verb mutates the Traefik environment-
+		// variable file rather than performing a by-id resource
+		// lookup — and even the OPTIONAL `serverId` scopes a write
+		// rather than addressing a unique resource by primary key),
+		// so the per-tag opener convention reasserted at
+		// API-0335..API-0398 that reserves 404 → CodeNotFound for
+		// canonical `*-one` peers does not apply here. Auth is the
+		// universal failure mode every Dokploy operation must
+		// re-prove, so 401 → CodeAuth via the harness default
+		// (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""` →
+		// CodeAuth) stays the most informative representative. 400 →
+		// CodeInvalidInput is *technically* available here (the
+		// outer schema's `required: ["env"]` array means a missing-
+		// `env` payload would fail server-side validation), but it
+		// remains reserved for stories where payload validation is
+		// the operation's *uniquely distinguishing* failure mode
+		// (e.g. multi-field cross-validation, conditional `oneOf`/
+		// `anyOf` between distinct shapes, or length-bounded
+		// strings). A single-required-string + single-optional-
+		// string shape is the lightest multi-property validation
+		// surface the catalogue offers; auth therefore remains the
+		// canonical representative failure for this entry per the
+		// precedent reasserted across API-0395..API-0398 (every
+		// prior Traefik-flavoured peer, harness-default 401 →
+		// CodeAuth).
+		//
+		// The next case in the PRD-ordered priority-2 backlog is
+		// API-0427 `user-all` (declared a **GET** in the PRD with no
+		// request body). The next contributor opens the user/* tag
+		// roster and must re-verify against
+		// `internal/api/data/openapi.json > /user.all > get` per the
+		// forward-reference lesson before assuming any field carries
+		// over from any settings/* entry — per the
+		// slug-prefix-is-not-shape and slug-stem-is-not-shape lessons
+		// reasserted at API-0371..API-0398, the cross-tag transition
+		// from settings/* to user/* nullifies any inheritable axis,
+		// and the per-tag fixture-isolation rule established at
+		// API-0246 `organization-active` requires a fresh
+		// `usr-cov-*` (or equivalent) namespace orthogonal to every
+		// prior tag's namespace.
+		SampleBody: json.RawMessage(`{
+			"env": "set-cov-writeTraefikEnv-0399",
+			"serverId": "set-cov-writeTraefikEnv-0399"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

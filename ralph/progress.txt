@@ -12988,3 +12988,17 @@ Learnings for future iterations:
     pattern — the next entry (API-0399 `writeTraefikEnv`) must still
     be re-verified per the slug-prefix-is-not-shape rule.
 ---
+
+## 2026-05-08 - API-0399
+- Implemented Cover settings-writeTraefikEnv (POST /settings.writeTraefikEnv)
+- Files changed: internal/cli/api_coverage_test.go (new fixture entry), ralph/prd.json (passes:true), ralph/progress.txt (this entry)
+- Verification run: gofmt -w, go mod tidy, go vet ./..., go test ./..., go test -race ./...
+- Results: all green; api_coverage_test contract suite picks up the new entry under the existing TestAPICoverage_RegistryInvariants / TestAPICoverage_*Success / TestAPICoverage_*Failure framework, no new test plumbing required.
+- Closes the settings/* roster (API-0351..API-0399); next pending priority-2 story is API-0427 user-all which opens the user/* tag.
+- Remaining risks: none specific to this entry — fixture follows the established `set-cov-<slug>-<storyID>` namespace and the harness-default 401→CodeAuth failure leg.
+- **Learnings for future iterations:**
+  - `settings.writeTraefikEnv`'s body shape is novel within settings/*: a single REQUIRED plain-string (`env`) plus a single OPTIONAL `serverId` plain-string. None of the prior 48 settings/* entries had exactly this two-property/one-required configuration. Recording it here so the next contributor does not assume the shape carries over by slug-stem (`Traefik`) similarity to API-0395..API-0398.
+  - The `Env` slug-suffix did NOT translate into a key/value-pair `Record<string,string>` body — Dokploy passes the entire dotenv document as a single opaque string field. Future `*Env` peers in other tags should re-verify rather than assume either shape.
+  - The settings/* roster (49 stories, API-0351..API-0399) is now closed. The user/* roster (API-0427+) opens next at priority-2 and will need a fresh `usr-cov-*` (or equivalent) fixture-isolation namespace per the per-tag rule from API-0246.
+  - When an OPTIONAL field is the canonical cross-cutting `serverId` carried by multiple peers in the same tag (API-0396 / API-0397 / API-0399), populate it in the fixture rather than omit it — keeps the OPTIONAL axis verified and matches per-tag precedent.
+---
