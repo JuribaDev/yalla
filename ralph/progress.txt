@@ -15488,3 +15488,90 @@ Learnings for future iterations:
     `environment-cov-*` namespace will close before the priority-5
     gitea/* roster begins at API-0131.
 ---
+
+## 2026-05-08 - API-0126 (environment-duplicate)
+- Added covered-operation fixture for `environment-duplicate` (POST
+  `/environment.duplicate`) to `internal/cli/api_coverage_test.go >
+  coveredAPIOperations`. Third entry in the environment/* roster,
+  inserted immediately after API-0125 `environment-create` and
+  before the existing API-0246 `organization-active` block.
+  Continues inside the `environment-cov-*` per-tag fixture-isolation
+  namespace opened by API-0124.
+- Spec re-verified directly against
+  `internal/api/data/openapi.json > /environment.duplicate > post`:
+  POST, no parameters, REQUIRED request body whose REQUIRED fields
+  are `environmentId` and `name` (both string). Optional
+  `description` (string) extends the body surface but is not needed
+  to satisfy the schema. Responses 200/400/401/403/500 — spec does
+  NOT declare 404 on this operation (a *-duplicate mutation under
+  Dokploy's tRPC convention collapses missing-source-environment
+  into 400/validation rather than surfacing a 404 leg), matching
+  sibling create mutation API-0125 `environment-create`. The 200
+  schema is `{}` with `additionalProperties: false`, matching every
+  prior covered peer in the empty-success cohort.
+- Wire shape: two-required-field POST, body REQUIRED. Structurally
+  identical to its immediate predecessor API-0125
+  `environment-create`; only surface differences are the path and
+  the field names (`environmentId`+`name` rather than
+  `name`+`projectId`). Mirrors the cross-tag two-required-scalar
+  precedent on API-0122 `domain-update`. Harness's
+  `len(tc.SampleBody) > 0` gate at `runAPICoverageSuccess`
+  activates the JSON content-type and byte-for-byte body comparison
+  legs; this fixture supplies the two REQUIRED fields so the
+  success path verifies the CLI propagated the body verbatim.
+  Optional `description` intentionally omitted to keep the fixture
+  minimal and shape-faithful.
+- Family choice: harness-default 401→CodeAuth retained. The spec
+  omits 404, so the 404→CodeNotFound override is structurally
+  inapplicable (matching API-0118/API-0119/API-0120/API-0122/
+  API-0123/API-0125). 401→CodeAuth is the most representative
+  failure leg every authenticated Dokploy operation must re-prove.
+- Per-case fixture base `environment-cov-duplicate-0126` keeps `git
+  grep` traceable to this PRD story without colliding with API-0124
+  (`environment-cov-by-project-id-0124`) or API-0125
+  (`environment-cov-create-0125`).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — new `coveredAPIOperations`
+    entry for `environment-duplicate` appended after API-0125
+    `environment-create` and before API-0246 `organization-active`.
+  - `ralph/prd.json` — flipped `API-0126.passes` from `false` →
+    `true`.
+  - `ralph/progress.txt` — this entry.
+- Verification:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — no diff.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all 10 packages PASS (`internal/cli` 1.372s).
+  - `go test -race ./...` — all 10 packages PASS (`internal/cli`
+    2.871s).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — still not installed locally; documented missing
+    rather than silently skipped (per Codebase Patterns).
+- Remaining risks / follow-ups:
+  - None for this story. The next environment/* coverage gap in the
+    PRD-ordered priority-3 backlog is API-0127 `environment-one`
+    (declared a **GET** per the spec preview). The next contributor
+    MUST re-verify the spec directly against
+    `internal/api/data/openapi.json` per the forward-reference
+    lesson and continue inside the `environment-cov-*` per-tag
+    fixture-isolation namespace.
+- Learnings for future iterations:
+  - When a tag's POST roster contains two consecutive
+    two-required-string mutations (`*-create` then `*-duplicate`),
+    the second can be wired as a near-verbatim copy of the first:
+    swap the path, swap the two field names, swap the fixture base.
+    The `description` optional field convention extends from
+    `domain-create` through `environment-create` and now
+    `environment-duplicate` — three identical optional-string
+    extensions in a row, which strongly suggests the convention is
+    a generator-driven Dokploy tRPC default rather than a
+    per-operation design choice.
+  - Five environment/* stories remain in the priority-3 backlog
+    (API-0127 `environment-one`, API-0128 `environment-remove`,
+    API-0129 `environment-search`, API-0130 `environment-update`),
+    after which the `environment-cov-*` namespace will close before
+    the priority-5 gitea/* roster begins at API-0131. Wait —
+    re-counting: five remaining is API-0127..API-0130 which is
+    only four; the namespace closes at API-0130 with four entries
+    still to go after this commit.
+---
