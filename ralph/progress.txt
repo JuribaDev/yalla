@@ -22414,3 +22414,77 @@ forward-reference lesson before assuming any field shape.
     grep this entry's tail for the API-0282 forward reference and
     re-verify the spec before assuming any GET-shaped fields.
 ---
+
+## 2026-05-09 - API-0282 (postgres-search)
+- Added the eleventh entry on the postgres/* coverage roster (`coveredAPIOperations`
+  in `internal/cli/api_coverage_test.go`) for `postgres-search` (GET
+  /postgres.search). Inserted between API-0281 (`postgres-saveExternalPort`) and
+  API-0290 (`project-all`), preserving PRD-id ordering.
+- Spec re-verified against `internal/api/data/openapi.json > /postgres.search >
+  get`: GET, no requestBody, **eight OPTIONAL query params** — `q`, `name`,
+  `appName`, `description`, `projectId`, `environmentId` (all `string`), `limit`
+  (number, default 20), `offset` (number, default 0). Responses
+  200/400/401/403/404/500 with the canonical empty `{}` 200 schema.
+- Fixture follows the cross-tag `*-search` precedent at API-0170
+  (`mariadb-search`), API-0184 (`mongo-search`), and API-0204 (`mysql-search`):
+  populate the representative four-key subset (`q`, `projectId`, `limit`,
+  `offset`) covering free-text search, scoped filter, and the canonical
+  decimal numeric pagination pair. The remaining four optional string filters
+  (`name`, `appName`, `description`, `environmentId`) are byte-for-byte
+  identical in shape to `q` / `projectId`, so populating them would only
+  inflate the fixture without exercising any new code path on the CLI → API
+  client → httptest server round-trip. Fixture token base
+  `postgres-cov-search-0282` follows the `<tag>-cov-<slug>-<storyID>`
+  convention shared across every prior postgres/* peer; verified non-colliding
+  with API-0272..API-0281 literals and with the cross-tag `mariadb-cov-*` /
+  `mongo-cov-*` / `mysql-cov-*` namespaces.
+- Family choice: **harness-default 401→CodeAuth** retained even though the spec
+  declares 404 — the 404→CodeNotFound override is reserved for the canonical
+  by-id `*-one` GET peer (already consumed by API-0276 `postgres-one`), and a
+  `*-search` GET returns an empty result set for unmatched filters rather than
+  404. This preserves the 401→CodeAuth invariant locked in by API-0272
+  `postgres-changeStatus` (the postgres/* kickoff) and mirrors API-0170 /
+  API-0184 / API-0204.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — new entry block (~170 lines including
+    the rationale comment).
+  - `ralph/prd.json` — `API-0282.passes` flipped to `true`.
+  - `ralph/progress.txt` — this entry.
+- Verification run (from repo root, all green):
+  - `gofmt -w internal/cli/api_coverage_test.go`
+  - `go vet ./...`
+  - `go test ./... -count=1`
+  - `go test -race ./... -count=1`
+  - `go mod tidy` (no diff)
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, and `goreleaser`
+    are still not installed locally and remain documented as missing per the
+    Codebase Patterns note rather than silently skipped.
+- Remaining risks / follow-ups: API-0283 `postgres-start` is the next priority-4
+  story on the postgres/* arc (declared a POST per spec preview). The next
+  contributor must re-verify against `internal/api/data/openapi.json > /postgres.start`
+  per the forward-reference lesson before assuming any field shape, and will
+  continue inside the `postgres-cov-*` per-tag fixture-isolation namespace
+  opened by API-0272.
+- **Learnings for future iterations:**
+  - The `*-search` GET shape is now established on **four** tags
+    (`mariadb-search`, `mongo-search`, `mysql-search`, `postgres-search`) with
+    byte-for-byte identical eight-optional-query-param surfaces. Future
+    contributors covering the next `*-search` peer (e.g. when the
+    `previewDeployment` or other tag introduces one) should mirror the same
+    representative-subset fixture (`q`, `<id-filter>`, `limit`, `offset`) and
+    the same 401→CodeAuth family choice rather than re-deriving them — both
+    are now de-facto invariants for the all-optional `*-search` GET cluster.
+  - The harness's `len(tc.SampleBody) > 0` gate means GETs with `SampleQuery`
+    set and `SampleBody` unset stay inert on the body / content-type code paths
+    — no special-casing needed at the test-author level. The same is true for
+    `r.URL.Query()` re-read on the success leg: it works uniformly across
+    GETs whether the params are required (API-0276 `postgres-one`) or optional
+    (this entry).
+  - Per-tag fixture-isolation rule (originally established at API-0246
+    `organization-active`, reasserted at API-0335..API-0444): any new entry
+    on the postgres/* roster MUST stay inside the `postgres-cov-*` namespace
+    and must NOT back-reference any closed prior-tag namespace literal. The
+    cross-tag `*-search` precedent is referenced only structurally (same
+    eight-param shape, same representative-subset choice, same
+    family-choice rationale) — never via fixture-literal copy.
+---

@@ -19971,6 +19971,171 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0282",
+		OperationID: "postgres-search",
+		Method:      http.MethodGet,
+		Path:        "/postgres.search",
+		Tag:         "postgres",
+		// Eleventh entry on the postgres/* coverage roster, immediately
+		// following API-0281 `postgres-saveExternalPort` and completing
+		// the forward reference embedded in that entry's comment block
+		// ("The next case in the PRD-ordered priority-4 backlog is
+		// API-0282 `postgres-search` (declared a **GET** per the spec
+		// preview — the first GET on the postgres/* roster since
+		// API-0276 `postgres-one`)"). Continues inside the
+		// `postgres-cov-*` per-tag fixture-isolation namespace opened
+		// by API-0272 `postgres-changeStatus` and **must not**
+		// back-reference any closed prior-tag namespace (`admin-cov-*`,
+		// `ai-cov-*`, `app-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		// `cert-cov-*`, `clu-cov-*`, `compose-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `docker-cov-*`,
+		// `domain-cov-*`, `environment-cov-*`, `gitea-cov-*`,
+		// `github-cov-*`, `gitlab-cov-*`, `mariadb-cov-*`,
+		// `mongo-cov-*`, `mounts-cov-*`, `mysql-cov-*`, `org-cov-*`,
+		// `proj-cov-*`, `set-cov-*`, `srv-cov-*`, `swarm-cov-*`,
+		// `usr-cov-*`, etc.) per the per-tag isolation rule reasserted
+		// at API-0335..API-0444 and originally established at API-0246
+		// `organization-active`.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against `internal/api/data/openapi.json` >
+		// `/postgres.search` > `get`: method GET, tag postgres, **no
+		// request body** (GETs in this OpenAPI document never carry a
+		// `requestBody` field), and **eight OPTIONAL query parameters**
+		// — `q` (string), `name` (string), `appName` (string),
+		// `description` (string), `projectId` (string), `environmentId`
+		// (string), `limit` (number, default 20), `offset` (number,
+		// default 0). Responses 200/400/401/403/404/500. The 200
+		// response is `{}` with `additionalProperties: false`, matching
+		// every prior covered peer in the empty-success cohort. The
+		// wire shape is byte-for-byte identical to the cross-tag
+		// `*-search` precedent set by API-0170 `mariadb-search`,
+		// API-0184 `mongo-search`, and API-0204 `mysql-search` (same
+		// eight optional query params with identical names and types —
+		// only the tag / path differ), and continues the broader
+		// cross-tag all-optional `*-search` GET chain at API-0035
+		// `application-search` (11 params), API-0089 `compose-search`
+		// (8 params), API-0129 `environment-search` (6 params), and
+		// API-0296 `project-search` (5 params).
+		//
+		// **Shape positioning — all-optional query GET, no body.**
+		// STRUCTURAL FIRST for the postgres/* roster as it crosses from
+		// the body-bearing POST cluster (API-0272 `postgres-changeStatus`,
+		// API-0273 `postgres-create`, API-0274 `postgres-deploy`,
+		// API-0275 `postgres-move`, API-0277 `postgres-rebuild`,
+		// API-0278 `postgres-reload`, API-0279 `postgres-remove`,
+		// API-0280 `postgres-saveEnvironment`, API-0281
+		// `postgres-saveExternalPort`) back into a no-body GET — the
+		// first GET on the postgres/* roster since API-0276
+		// `postgres-one`, and the first all-optional GET on the tag
+		// overall (API-0276 gated on a single REQUIRED `postgresId`
+		// query param). Per the API-0170 / API-0184 / API-0204
+		// precedent, the fixture nevertheless populates a representative
+		// subset so `runAPICoverageSuccess` can re-read `r.URL.Query()`
+		// and prove the CLI propagated every param verbatim — including
+		// the two numeric-typed params (`limit` / `offset`, both
+		// `number` per the spec) which travel through the `--input`
+		// JSON `query` field as strings (HTTP query strings are untyped
+		// on the wire). We exercise (a) free-text search (`q`), (b) a
+		// scoped filter (`projectId`), and (c) numeric pagination
+		// (`limit` / `offset`) — the same representative slice locked
+		// in at API-0170 `mariadb-search`, API-0184 `mongo-search`,
+		// API-0204 `mysql-search`, and originally at API-0129
+		// `environment-search` — without bloating the fixture into a
+		// noisy 8-key map. Numeric values use the canonical decimal
+		// grammar (`"5"` / `"0"`) so a future schema validator that
+		// re-coerces query strings to numbers still accepts them. The
+		// harness's `len(tc.SampleBody) > 0` gate stays inert so no
+		// content-type / body byte-comparison legs activate, exactly as
+		// on every prior all-optional `*-search` GET peer.
+		//
+		// **Family choice — 404→CodeNotFound representative available
+		// but harness-default 401→CodeAuth retained.** The spec
+		// declares 404 on this operation, so the 404→CodeNotFound
+		// override is *technically* applicable. We deliberately stick
+		// with the harness-default 401→CodeAuth representative-failure
+		// leg per the precedent locked in at API-0170 `mariadb-search`,
+		// API-0184 `mongo-search`, and API-0204 `mysql-search`: the
+		// 404 → CodeNotFound override is reserved for the **canonical
+		// by-id `*-one` GET peer** of each tag, which the postgres/*
+		// roster already consumed at API-0276 `postgres-one`. A
+		// `*-search` GET's primary failure mode is unauthenticated
+		// access (an agent without a valid token), not a missing
+		// resource — search returns an empty result set when no records
+		// match its filters, never a 404. 401 → CodeAuth therefore
+		// remains the most informative failure leg to re-prove for this
+		// call site, mirroring every prior all-optional `*-search` GET
+		// peer and preserving the 401→CodeAuth invariant locked in by
+		// the postgres/* kickoff at API-0272 `postgres-changeStatus`.
+		//
+		// Fixture conventions:
+		//   * Per the API-0010 / API-0014 / API-0249 / API-0292 /
+		//     API-0297 / API-0052 / API-0053
+		//     every-optional-populated rule, this entry has eight
+		//     optional parameters; populating a representative subset
+		//     of four (`q`, `projectId`, `limit`, `offset`) follows the
+		//     API-0170 `mariadb-search`, API-0184 `mongo-search`, and
+		//     API-0204 `mysql-search` precedent for the structurally
+		//     identical eight-optional-param `*-search` GET — three
+		//     covering the distinct semantic axes (free-text, scoped
+		//     filter, pagination) plus a paired numeric `offset` so the
+		//     canonical decimal grammar is exercised on both sides of
+		//     the limit/offset pair. The remaining four optional string
+		//     filters (`name`, `appName`, `description`,
+		//     `environmentId`) are byte-for-byte identical in shape to
+		//     `q` / `projectId` so populating them too would only
+		//     inflate the fixture without exercising any new code path
+		//     on the CLI → API client → httptest server round-trip.
+		//   * Per-case fixture token base `postgres-cov-search-0282`
+		//     follows the `<tag>-cov-<slug>-<storyID>` convention
+		//     shared across every prior postgres/* peer
+		//     (API-0272..API-0281). Single-segment slug `search` has no
+		//     internal capitalisation so the kebab-vs-camel choice is
+		//     moot here. Verified non-colliding with API-0272's
+		//     `postgres-cov-changeStatus-0272`, API-0273's
+		//     `postgres-cov-create-0273`, API-0274's
+		//     `postgres-cov-deploy-0274-postgresId`, API-0275's
+		//     `postgres-cov-move-0275-{postgresId,targetEnvironmentId}`,
+		//     API-0276's `postgres-cov-one-0276-postgresId-fixture`,
+		//     API-0277's `postgres-cov-rebuild-0277-postgresId`,
+		//     API-0278's `postgres-cov-reload-0278-{postgresId,appName}`,
+		//     API-0279's `postgres-cov-remove-0279-postgresId`,
+		//     API-0280's `postgres-cov-save-environment-0280-{postgresId,env}`,
+		//     and API-0281's
+		//     `postgres-cov-save-external-port-0281-postgresId`
+		//     literals, and non-colliding with the cross-tag
+		//     `bb-cov-*` / `gitea-cov-*` / `github-cov-*` /
+		//     `gitlab-cov-*` / `mariadb-cov-*` / `mongo-cov-*` /
+		//     `mysql-cov-*` / `proj-cov-*` / `srv-cov-*` / `set-cov-*`
+		//     / `org-cov-*` namespaces. The cross-tag analogs
+		//     `mariadb-cov-search-0170`, `mongo-cov-search-0184`, and
+		//     `mysql-cov-search-0204` are intentionally similar in
+		//     shape — same `<tag>-cov-search-<storyID>` skeleton — but
+		//     the `mariadb` / `mongo` / `mysql` vs `postgres` tag
+		//     prefix and the `0170` / `0184` / `0204` vs `0282` storyID
+		//     suffix make every literal distinguishable.
+		//
+		// The next case in the PRD-ordered priority-4 backlog is
+		// API-0283 `postgres-start` (declared a **POST** per the spec
+		// preview; the next contributor must re-verify the spec against
+		// `internal/api/data/openapi.json` per the forward-reference
+		// lesson before assuming any field shape, and will continue
+		// inside the `postgres-cov-*` per-tag fixture-isolation
+		// namespace opened by API-0272).
+		SampleQuery: map[string][]string{
+			"q":         {"postgres-cov-search-0282"},
+			"projectId": {"postgres-cov-search-project-0282"},
+			"limit":     {"5"},
+			"offset":    {"0"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0290",
 		OperationID: "project-all",
 		Method:      http.MethodGet,
