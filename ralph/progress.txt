@@ -18753,3 +18753,88 @@ forward-reference lesson before assuming any field shape.
     mirror this fixture verbatim with the resource-id field name
     swapped.
 ---
+
+## 2026-05-08 - API-0178 mongo-one
+- Fifth entry on the priority-4 mongo/* coverage roster: appended an
+  apiCoverageCase for `mongo-one` (GET /mongo.one) to
+  `internal/cli/api_coverage_test.go`, immediately after API-0177
+  `mongo-move` and before API-0188 `mounts-allNamedByApplicationId`.
+  Continues inside the `mongo-cov-*` per-tag fixture-isolation namespace
+  opened at API-0174 `mongo-changeStatus`.
+- Spec re-verified against `internal/api/data/openapi.json` >
+  `/mongo.one` > `get`: GET, tag mongo, **one REQUIRED query parameter**
+  `mongoId` (plain string), **no requestBody**, responses
+  200/400/401/403/404/500. The 200 schema is `{}` with
+  `additionalProperties: false`, matching every prior covered peer in
+  the empty-success cohort. **404 is declared on this op** (in contrast
+  to every prior mongo/* peer where the spec omits 404), confirming
+  this is the canonical home for the 404→CodeNotFound representative-
+  failure leg reserved at API-0174..API-0177.
+- Shape positioning: canonical `*-one` by-id GET, byte-for-byte the
+  same wire shape as the cross-tag canonical-by-id-GET precedent chain
+  (API-0008 ai-one, API-0021 application-one, API-0084 compose-one,
+  API-0136 gitea-one, API-0164 mariadb-one, API-0251 organization-one,
+  API-0294 project-one, API-0342 server-one). Harness forwards
+  SampleQuery via `--input` JSON `query` field; `runAPICoverageSuccess`
+  re-reads `r.URL.Query()` for byte-for-byte propagation assertion.
+- Family choice: failure leg overridden to 404→CodeNotFound (4th
+  roster-level act on the reserved override after API-0342, API-0136,
+  API-0164). Mongo's `mongoId` is a strong semantic match for the
+  by-id GET resource-not-found failure mode under Dokploy's tRPC
+  convention. Activated via `FailureStatus: http.StatusNotFound` and
+  `FailureCode: yerr.CodeNotFound` — no harness change needed
+  (`runAPICoverageFailure` already reads tc.FailureStatus /
+  tc.FailureCode and falls back to 401/CodeAuth when zero).
+- Fixture: `mongo-cov-one-0178-mongoId-fixture` follows the
+  `<tag>-cov-<slug>-<storyID>-<field>-fixture` deterministic-but-
+  clearly-fake naming convention (the `-fixture` suffix matches the
+  API-0136 gitea-one and API-0164 mariadb-one precedent for analogous
+  `<id>` fields). Verified non-colliding with API-0174's
+  `mongo-cov-changeStatus-0174`, API-0175's `mongo-cov-create-0175`
+  literals, API-0176's `mongo-cov-deploy-0176-mongoId`, and API-0177's
+  `mongo-cov-move-0177-{mongoId,targetEnvironmentId}` literals.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (insert API-0178 case between
+    API-0177 mongo-move and API-0188 mounts-allNamedByApplicationId).
+  - `ralph/prd.json` (mark API-0178 passes=true).
+  - `ralph/progress.txt` (this entry).
+- Verification run: `gofmt -w .`, `go mod tidy`, `go vet ./...`,
+  `go test ./...`, `go test -race ./...` — all green. Ran the
+  targeted harness legs explicitly:
+  `TestAPICoverage_RegistryInvariants/API-0178/mongo-one`,
+  `TestAPICoverage_SchemaCommandWorks/API-0178/mongo-one`,
+  `TestAPICoverage_ManifestListsOperation/API-0178/mongo-one`,
+  `TestAPICoverage_SuccessRoundTrip/API-0178/mongo-one`, and
+  `TestAPICoverage_RepresentativeFailure/API-0178/mongo-one` — all
+  PASS. `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+  and `goreleaser` remain not installed locally and are documented as
+  missing per prior iterations.
+- Results: 292/462 stories passing (63.2%). API-0178 closes out the
+  by-id GET peer for the mongo/* roster.
+- Remaining risks / follow-ups: none specific to this story. Next
+  priority-4 mongo case in PRD order is API-0179 `mongo-rebuild`
+  (declared a POST per spec preview; the next contributor must
+  re-verify spec at `internal/api/data/openapi.json` per the
+  forward-reference lesson and continue inside the `mongo-cov-*`
+  namespace).
+- **Learnings for future iterations:**
+  - The canonical `*-one` GET pattern is now well-established across
+    9 tags (ai/application/compose/gitea/mariadb/mongo/organization/
+    project/server). When implementing the by-id GET peer for a
+    new tag, mirror API-0164 `mariadb-one` verbatim with the
+    resource-id field renamed and the prior namespaces enumerated
+    in the orthogonality block. The 404→CodeNotFound override is
+    the per-tag-roster-reserved failure leg for this peer.
+  - 404 appears ONLY on `*-one` GETs in the mongo/* roster — every
+    other mongo/* op (changeStatus/create/deploy/move/rebuild)
+    omits 404 because Dokploy's tRPC convention collapses
+    missing-target into 400/validation for action-on-known-id POSTs.
+    This pattern is consistent across mariadb/* and is expected to
+    repeat in mysql/postgres/redis/compose `*-one` GETs.
+  - The `-fixture` suffix on single-id-scalar query fixtures
+    (`<base>-<field>-fixture`) is the cross-tag convention for
+    canonical `*-one` GETs, distinct from the bare
+    `<base>-<field>` form used in body-scalar POSTs. Preserve this
+    distinction to keep grep traceability disjoint between query
+    and body fixture sites.
+---
