@@ -21392,3 +21392,57 @@ forward-reference lesson before assuming any field shape.
     `mysql-stop`" forward-reference made this iteration trivial to
     locate; preserve that contract for API-0207 and beyond.
 ---
+
+## 2026-05-09 — API-0207 (Cover mysql-update / POST /mysql.update)
+- Added `coveredAPIOperations` entry for `mysql-update` in
+  `internal/cli/api_coverage_test.go`, inserted between API-0206
+  (`mysql-stop`) and API-0246 (`organization-active`) to keep the slice
+  sorted by StoryID.
+- Sample body honours the spec: only the REQUIRED `mysqlId` scalar is
+  supplied (`mysql-cov-update-0207-mysqlId`), mirroring the cross-tag
+  precedent set by API-0173 `mariadb-update` for patch-style
+  single-required-scalar update POSTs.
+- Success leg: 200 → `{}` (empty-success cohort). Failure leg:
+  harness-default 401 → `E_AUTH` (404 not declared on the spec; 400
+  validation reserved for stories where it is the uniquely
+  distinguishing failure mode).
+- This entry **closes** the priority-4 mysql/* coverage roster
+  (API-0194..API-0207 all green). The next priority-4 case in PRD order
+  is API-0272 `postgres-changeStatus`, which opens a brand-new
+  `postgres-cov-*` per-tag fixture-isolation namespace.
+- Files changed: `internal/cli/api_coverage_test.go`, `ralph/prd.json`,
+  `ralph/progress.txt`.
+- Verification run from repo root:
+  - `gofmt -w .` ✅
+  - `go mod tidy` ✅
+  - `go vet ./...` ✅
+  - `go test ./...` ✅ (all packages green; cli ~1.3s)
+  - `go test -race ./...` ✅ (all packages green; cli ~3.1s)
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — not installed locally, intentionally skipped per the
+    documented baseline in `Codebase Patterns`.
+- **Learnings for future iterations:**
+  - The `*-update` Dokploy operations across the database tags
+    (mariadb, mongo, mysql, postgres, redis) share a recurring
+    schema shape: a single REQUIRED `<tag>Id` scalar plus a wide
+    optional configuration tail (identity, credentials, runtime,
+    resource limits, networking, applicationStatus enum, swarm
+    cluster, replicas/createdAt/environmentId). The
+    `mysqlId`-only `SampleBody` mirrors the API-0173
+    `mariadb-update` precedent verbatim — adding optional fields
+    would dilute the focused single-required-scalar assertion
+    without exercising new CLI code paths because the harness
+    verifies request-body forwarding via byte-for-byte comparison.
+  - Keep `coveredAPIOperations` sorted by `StoryID`. API-0207 sits
+    between the existing API-0206 `mysql-stop` close-brace and the
+    API-0246 `organization-active` open-brace — a single contiguous
+    insert keeps the diff narrow.
+  - Forward-reference comments in the prior entry (API-0206 closing
+    block) name the next StoryID; honour them when picking the next
+    PRD-ordered story for the tag.
+  - The mysql/* roster (API-0194..API-0207) closes here. The next
+    priority-4 case is API-0272 `postgres-changeStatus`, which opens
+    a brand-new `postgres-cov-*` per-tag fixture-isolation namespace
+    per the per-tag isolation rule reasserted at API-0335..API-0444
+    and originally established at API-0246 `organization-active`.
+---
