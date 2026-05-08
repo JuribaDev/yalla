@@ -6705,3 +6705,77 @@
     rule alongside the third occurrence rather than only at API-0335
     / API-0336.
 ---
+
+## 2026-05-08 - API-0338 (server-create)
+- Implemented coverage for `server-create` (POST /server.create) by appending
+  one `apiCoverageCase` entry to `internal/cli/api_coverage_test.go` after
+  the API-0337 `server-count` block, preserving StoryID-sorted order. This
+  is the **fourth** entry on the server/* coverage roster and the **first
+  mutation** in the server/* tag — succeeds the parameter-free GET cohort
+  closed by API-0335 / API-0336 / API-0337 and opens the server/* mutation
+  arc. Spec source: `/server.create > post` declares zero parameters and a
+  required `application/json` body whose schema lists seven top-level
+  fields where every field is in the `required` array — REQUIRED scalars
+  `name`, `ipAddress`, `port`, `username`; REQUIRED nullables `description`
+  and `sshKeyId` (`anyOf [string, null]`); and the **first
+  enum-constrained scalar in the server/* roster** `serverType` (enum
+  `["deploy", "build"]`). Responses 200/400/401/403/500 (no 404; reserved
+  for the filter-shaped by-id peer API-0342 `server-one`).
+- Files changed:
+  - internal/cli/api_coverage_test.go (appended apiCoverageCase entry for
+    API-0338 with all-required-fields SampleBody `{name, description (str
+    populated, not null), ipAddress (RFC 5737 192.0.2.10), port (22),
+    username, sshKeyId (str populated, not null), serverType ("deploy")}`;
+    inserted after the API-0337 server-count block to keep StoryID-sorted
+    order; design-rationale header documents the populated-string
+    convention for `anyOf [string, null]` (matches API-0292
+    `project-create` and API-0297 `project-update`), the deterministic
+    enum literal pinning for `serverType`, the `srv-cov-create-0338`
+    fixture-token namespace pattern (extends the `srv-cov-*` namespace
+    opened at API-0335), the no-404-on-mutation rule in the server/*
+    tag, and the cross-reference to API-0342 `server-one` as the
+    upcoming filter-shaped peer that will own 404 → CodeNotFound for
+    server/*.)
+  - ralph/prd.json (passes:true for API-0338)
+- Verification (repo root):
+  - gofmt -w .
+  - go mod tidy (no diff)
+  - go vet ./...
+  - go test ./... -count=1
+  - go test -race ./... -count=1
+- Results: all green (no diffs, no failures, no races).
+- Remaining risks or follow-ups: none — API-0338 opens the server/*
+  mutation arc; future server/* mutation peers (e.g. a hypothetical
+  `server-update`) should grep this entry first for the
+  `srv-cov-create-0338` fixture-token namespace pattern and the
+  `serverType: "deploy"` enum-literal pinning convention. Future
+  `*-create` peers in other tags should grep this entry first for the
+  all-required-fields-with-anyOf-null nullable plus enum-constrained
+  scalar shape.
+- **Learnings for future iterations:**
+  - The `apiCoverageCase` harness in `internal/cli/api_coverage_test.go`
+    is the canonical sign-off for every API-XXXX story. Adding coverage
+    for a new operation is a one-line struct literal append — the
+    harness handles registry presence, schema reachability, manifest
+    inclusion, the httptest success exchange, and the representative
+    failure path automatically. **Never duplicate test boilerplate.**
+  - `anyOf [string, null]` schemas are populated with strings (NOT
+    `null` literals) per the populated-branch convention shared with
+    API-0292 `project-create` and API-0297 `project-update` — a
+    populated value proves the wire-forwarding invariant more strongly
+    than a `null` would.
+  - Closed-enum scalars (e.g. `serverType: ["deploy", "build"]`) MUST
+    be pinned to a declared enum member in the SampleBody so a future
+    schema validator that tightens the enum will not reject the
+    fixture. The choice of literal is arbitrary but should be
+    deterministic and reused across same-tag peers for diff-friendliness.
+  - The per-tag fixture-isolation rule (established at API-0246
+    `organization-active`, reasserted at API-0290 `project-all`, and
+    again at API-0335 `server-all`) requires every fixture token in a
+    given tag to share a `<tag-prefix>-cov-*` namespace and **must not**
+    back-reference a different tag's namespace literals.
+  - The 404 → CodeNotFound representative-failure code is reserved for
+    filter-shaped by-id peers (e.g. `*-one`) within a tag, NOT for
+    create/update mutations — those keep the harness default 401 →
+    CodeAuth because auth is the universal failure mode.
+---

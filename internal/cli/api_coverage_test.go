@@ -3922,6 +3922,121 @@ var coveredAPIOperations = []apiCoverageCase{
 		// the correct representative.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0338",
+		OperationID: "server-create",
+		Method:      http.MethodPost,
+		Path:        "/server.create",
+		Tag:         "server",
+		// Fourth entry on the server/* coverage roster and the **first
+		// mutation** in the server/* tag — opens the server/* mutation
+		// arc that succeeds the parameter-free GET cohort closed by
+		// API-0335 `server-all`, API-0336 `server-buildServers`, and
+		// API-0337 `server-count`. Inherits the `srv-cov-*` per-tag
+		// fixture-isolation namespace established at API-0335 (must
+		// not back-reference the `proj-cov-*` namespace from
+		// API-0290..API-0297, per the rule reasserted at API-0335
+		// `server-all` and originally established at API-0246
+		// `organization-active`).
+		//
+		// Spec source `internal/api/data/openapi.json > /server.create
+		// > post`: zero parameters, required `application/json`
+		// request body whose schema declares seven top-level fields
+		// where **every** field is in the `required` array (so there
+		// are no optionals to populate, unlike API-0297
+		// `project-update`'s "every-optional-populated" rule):
+		//   - REQUIRED scalars: `name` (string), `ipAddress` (string),
+		//     `port` (number), `username` (string).
+		//   - REQUIRED nullable scalars: `description` (declared as
+		//     `anyOf [string, null]`), `sshKeyId` (declared as
+		//     `anyOf [string, null]`). Same nullable shape as
+		//     API-0292 `project-create`'s `description` and API-0297
+		//     `project-update`'s `description` — populated with
+		//     strings (not `null` literals) per the API-0292 / API-0297
+		//     populated-string convention because a populated value
+		//     proves the wire-forwarding invariant more strongly than
+		//     a `null` would.
+		//   - REQUIRED enum-constrained scalar: `serverType` (string,
+		//     enum `["deploy", "build"]`). This is the **first
+		//     enum-constrained scalar in the server/* roster**, so the
+		//     fixture pins one of the two declared enum members
+		//     (`"deploy"`) so a future schema validator that tightens
+		//     `serverType` to a closed enum will not reject the
+		//     fixture. The choice of `"deploy"` over `"build"` is
+		//     arbitrary but deterministic; future server/* mutation
+		//     peers that re-encounter this enum (e.g. a hypothetical
+		//     `server-update`) should use the same literal for
+		//     diff-friendliness.
+		//
+		// This is the largest body in the server/* roster so far
+		// (the prior three peers — API-0335 / API-0336 / API-0337 —
+		// were all parameter-free GETs with no body). The body has
+		// no nested objects or arrays, so the wire shape stays inside
+		// the "flat scalar-only mutation" contract shared with
+		// API-0292 `project-create` and API-0297 `project-update`.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base `srv-cov-create-0338`
+		//     follows the `<tag>-cov-<slug>-<storyID>` convention
+		//     shared across the server/* roster and is unique
+		//     (verified: no collisions with the parameter-free GET
+		//     peers API-0335 `server-all`, API-0336
+		//     `server-buildServers`, or API-0337 `server-count`,
+		//     none of which carry SampleBody fixtures, and no
+		//     collisions with the cross-tag `proj-cov-*` namespace
+		//     reserved for the project/* roster).
+		//   * `ipAddress` carries an RFC 5737 documentation-only IP
+		//     literal (`192.0.2.10`) so the fixture cannot be
+		//     mistaken for a real production address.
+		//   * `port` carries the canonical Dokploy SSH port (22)
+		//     because the spec types it as a plain `number` with no
+		//     range constraints; pinning a recognisable value keeps
+		//     the wire fixture readable.
+		//   * The nullable `description` and `sshKeyId` are both
+		//     populated with `srv-cov-*` strings rather than `null`
+		//     so the wire payload exercises the populated branch of
+		//     the `anyOf [string, null]` schema (same convention as
+		//     API-0292 `project-create` and API-0297 `project-update`).
+		//
+		// Responses 200/400/401/403/500 — note **no 404** is declared
+		// on `/server.create`, matching the server/* mutation-peer
+		// convention (404 in the server/* tag is reserved for the
+		// filter-shaped by-id peer API-0342 `server-one`, per the
+		// per-tag opener convention reasserted at API-0335 / API-0336
+		// / API-0337). The 200 schema is `{}` with
+		// `additionalProperties: false`, so the success-leg envelope
+		// assertion stays focused on `data.method` / `data.status`
+		// rather than payload projection — same shape as every prior
+		// server/* peer and most project/* peers.
+		//
+		// The representative-failure leg keeps the harness default
+		// (401 → CodeAuth) because auth is the universal failure mode
+		// every server/* peer must re-prove — the API-0335 design
+		// header reserved 404 → CodeNotFound for the filter-shaped
+		// by-id peers (API-0342 `server-one`), not for this create
+		// mutation.
+		//
+		// Future `*-create` peers in other tags should grep this
+		// entry first for the all-required-fields-with-anyOf-null
+		// nullable plus enum-constrained scalar shape; future
+		// server/* mutation peers should grep this entry first for
+		// the `srv-cov-create-0338` fixture-token namespace pattern.
+		SampleBody: json.RawMessage(`{
+			"name": "yalla-coverage-srv-create-0338",
+			"description": "yalla coverage fixture for srv-cov-create-0338 — deterministic, fake, never deployed",
+			"ipAddress": "192.0.2.10",
+			"port": 22,
+			"username": "yalla-coverage",
+			"sshKeyId": "srv-cov-create-sshkey-0338",
+			"serverType": "deploy"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior server/* peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
