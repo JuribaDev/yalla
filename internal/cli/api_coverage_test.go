@@ -19806,6 +19806,171 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0281",
+		OperationID: "postgres-saveExternalPort",
+		Method:      http.MethodPost,
+		Path:        "/postgres.saveExternalPort",
+		Tag:         "postgres",
+		// Tenth entry on the postgres/* coverage roster, immediately
+		// following API-0280 `postgres-saveEnvironment` and completing
+		// the forward reference embedded in that entry's comment block
+		// ("The next case in the PRD-ordered priority-4 backlog is
+		// API-0281 `postgres-saveExternalPort`"). Continues inside the
+		// `postgres-cov-*` per-tag fixture-isolation namespace opened
+		// by API-0272 `postgres-changeStatus` and **must not**
+		// back-reference any closed prior-tag namespace (`admin-cov-*`,
+		// `ai-cov-*`, `app-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		// `cert-cov-*`, `clu-cov-*`, `compose-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `docker-cov-*`,
+		// `domain-cov-*`, `environment-cov-*`, `gitea-cov-*`,
+		// `github-cov-*`, `gitlab-cov-*`, `mariadb-cov-*`,
+		// `mongo-cov-*`, `mounts-cov-*`, `mysql-cov-*`, `org-cov-*`,
+		// `proj-cov-*`, `set-cov-*`, `srv-cov-*`, `swarm-cov-*`,
+		// `usr-cov-*`, etc.) per the per-tag isolation rule reasserted
+		// at API-0335..API-0444 and originally established at API-0246
+		// `organization-active`.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against `internal/api/data/openapi.json` >
+		// `/postgres.saveExternalPort` > `post`: method POST, tag
+		// postgres, **no parameters**, requestBody REQUIRED with
+		// `application/json` and **two REQUIRED top-level fields** —
+		// `postgresId` (plain string) and `externalPort`
+		// (`anyOf:[number,null]`, i.e. nullable number). Responses
+		// 200/400/401/403/500. The 200 response is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort. **No 404** is declared on
+		// this operation, mirroring the action-on-known-id POST
+		// precedent reasserted across the mariadb/mongo/mysql
+		// `*-saveExternalPort` family (API-0169
+		// `mariadb-saveExternalPort`, API-0183
+		// `mongo-saveExternalPort`, API-0203 `mysql-saveExternalPort`)
+		// and across every body-bearing imperative-action postgres POST
+		// already covered (API-0272 `postgres-changeStatus`, API-0273
+		// `postgres-create`, API-0274 `postgres-deploy`, API-0275
+		// `postgres-move`, API-0277 `postgres-rebuild`, API-0278
+		// `postgres-reload`, API-0279 `postgres-remove`, API-0280
+		// `postgres-saveEnvironment`) whose missing-target failure mode
+		// collapses into 400/validation under Dokploy's tRPC convention
+		// rather than a dedicated 404 leg. The 404 override therefore
+		// reverts to inapplicable here — its sole activation site for
+		// the postgres/* roster remains API-0276 `postgres-one`, the
+		// canonical by-id GET peer.
+		//
+		// **Request body schema (REQUIRED top-level fields):**
+		//   - REQUIRED `postgresId` (string) — resource id scalar; the
+		//     fixture below supplies a deterministic-but-clearly-fake
+		//     `postgres-cov-save-external-port-0281-postgresId` literal
+		//     carrying the `<tag>-cov-<slug>-<storyID>-<field>` suffix
+		//     for `git grep` traceability. Slug `save-external-port`
+		//     follows the kebab-case style established at API-0169
+		//     `mariadb-cov-save-external-port-0169` and reasserted at
+		//     API-0203 `mysql-cov-save-external-port-0203` for the same
+		//     `*-saveExternalPort` family.
+		//   - REQUIRED `externalPort` (`anyOf:[number,null]`) — TCP
+		//     port scalar; the fixture supplies a non-null integer
+		//     literal `25281` so the success leg exercises the
+		//     populated branch of the `anyOf` rather than relying on
+		//     `null`. The value is a valid TCP port (1..65535) with
+		//     the storyID `0281` embedded in the low digits, mirroring
+		//     the API-0169 `mariadb-saveExternalPort` and API-0203
+		//     `mysql-saveExternalPort` precedents which established the
+		//     integer-with-embedded-storyID convention for
+		//     `anyOf:[number,null]` slots across the
+		//     `*-saveExternalPort` family on other tags
+		//     (mariadb/mongo/mysql). A pure string-suffix token is not
+		//     applicable here because the slot's populated branch is
+		//     `type: number`, not `type: string`.
+		//   - **No OPTIONAL fields declared.** The schema is a strict
+		//     two-required-scalar request; cardinality-identical to
+		//     API-0278 `postgres-reload` (`postgresId`, `appName`)
+		//     and API-0280 `postgres-saveEnvironment` (`postgresId`,
+		//     `env`) modulo the second slot's populated-branch type
+		//     (number here, string there), and one REQUIRED slot wider
+		//     than API-0274 `postgres-deploy` / API-0277
+		//     `postgres-rebuild` / API-0279 `postgres-remove` (single
+		//     `postgresId` only).
+		//
+		// **Shape positioning — two-required-scalar POST external-
+		// port-save mutation, body REQUIRED.** The first REQUIRED slot
+		// is a plain non-nullable `type: string` (no `anyOf` /
+		// `nullable` / enum constraints), structurally identical to
+		// the `postgresId` slot on API-0272 `postgres-changeStatus`,
+		// API-0274 `postgres-deploy`, API-0275 `postgres-move`,
+		// API-0277 `postgres-rebuild`, API-0278 `postgres-reload`,
+		// API-0279 `postgres-remove`, and API-0280
+		// `postgres-saveEnvironment`. The second REQUIRED slot is
+		// `anyOf:[number,null]`, structurally identical to the
+		// `externalPort` slot on API-0169 `mariadb-saveExternalPort`
+		// (the cross-tag shape ancestor), API-0183
+		// `mongo-saveExternalPort`, and API-0203
+		// `mysql-saveExternalPort`. The harness's
+		// `len(tc.SampleBody) > 0` gate at `runAPICoverageSuccess`
+		// activates the JSON content-type and byte-for-byte body
+		// comparison legs; this fixture supplies both REQUIRED fields
+		// in the spec-declared property order so the success path
+		// verifies the CLI propagated the body verbatim, including
+		// the unquoted JSON number `25281` (the raw-API path is
+		// type-agnostic at the CLI level — the body is forwarded as
+		// opaque bytes).
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so
+		// the 404→CodeNotFound override is structurally inapplicable.
+		// The 404→CodeNotFound override slot was already consumed for
+		// the postgres/* roster by API-0276 `postgres-one` per the
+		// per-tag opener design header which reserves 404
+		// representatives **specifically for the canonical by-id
+		// `*-one` peer**; `*-saveExternalPort` is an imperative-action
+		// POST and stays on the 401→CodeAuth invariant locked by the
+		// kickoff at API-0272 `postgres-changeStatus` and reasserted
+		// at API-0273 `postgres-create`, API-0274 `postgres-deploy`,
+		// API-0275 `postgres-move`, API-0277 `postgres-rebuild`,
+		// API-0278 `postgres-reload`, API-0279 `postgres-remove`, and
+		// API-0280 `postgres-saveEnvironment`. (API-0276 `postgres-one`
+		// overrode to 404→CodeNotFound because the spec itself first
+		// declared 404 on the canonical by-id GET; that override does
+		// not generalise to body-bearing POSTs whose specs omit 404.)
+		//
+		// **Fixture token base** `postgres-cov-save-external-port-0281`
+		// follows the established `<tag>-cov-<slug>-<storyID>`
+		// deterministic-but-clearly-fake naming convention and is
+		// verified non-colliding with API-0272's
+		// `postgres-cov-changeStatus-0272`, API-0273's
+		// `postgres-cov-create-0273`, API-0274's
+		// `postgres-cov-deploy-0274-postgresId`, API-0275's
+		// `postgres-cov-move-0275-postgresId` /
+		// `postgres-cov-move-0275-targetEnvironmentId`, API-0276's
+		// `postgres-cov-one-0276-postgresId-fixture`, API-0277's
+		// `postgres-cov-rebuild-0277-postgresId`, API-0278's
+		// `postgres-cov-reload-0278-postgresId` /
+		// `postgres-cov-reload-0278-appName`, API-0279's
+		// `postgres-cov-remove-0279-postgresId`, and API-0280's
+		// `postgres-cov-save-environment-0280-postgresId` /
+		// `postgres-cov-save-environment-0280-env` literals (different
+		// slug + storyID → unique under the
+		// `<tag>-cov-<slug>-<storyID>` rule).
+		//
+		// The next case in the PRD-ordered priority-4 backlog is
+		// API-0282 `postgres-search` (declared a **GET** per the spec
+		// preview — the first GET on the postgres/* roster since
+		// API-0276 `postgres-one`; the next contributor must re-verify
+		// the spec against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will continue inside the `postgres-cov-*` per-tag
+		// fixture-isolation namespace opened by API-0272).
+		SampleBody: json.RawMessage(`{
+			"postgresId": "postgres-cov-save-external-port-0281-postgresId",
+			"externalPort": 25281
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0290",
 		OperationID: "project-all",
 		Method:      http.MethodGet,

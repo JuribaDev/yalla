@@ -22299,3 +22299,118 @@ forward-reference lesson before assuming any field shape.
     covering operations with `anyOf:[T,null]` REQUIRED slots
     should default to the non-null branch for the same reason.
 ---
+
+## 2026-05-09 - API-0281 - Cover postgres-saveExternalPort (POST /postgres.saveExternalPort)
+- What was implemented:
+  - Added a new `apiCoverageCase` entry for `postgres-saveExternalPort`
+    (POST /postgres.saveExternalPort, tag postgres) in
+    `internal/cli/api_coverage_test.go`, immediately after API-0280
+    `postgres-saveEnvironment` and before the API-0290 `project-all`
+    boundary that opens the next-tag arc. Tenth entry on the
+    postgres/* coverage roster, completing the forward reference
+    embedded in API-0280's closing block.
+  - **Spec re-verified** against
+    `internal/api/data/openapi.json` > `/postgres.saveExternalPort` >
+    `post`: method POST, tag postgres, no parameters, requestBody
+    REQUIRED with `application/json` and **two REQUIRED top-level
+    fields** (`postgresId` plain string, `externalPort`
+    `anyOf:[number,null]`) and **no optional fields**, responses
+    200/400/401/403/500 with the 200 body `{}`
+    (`additionalProperties: false`). No 404 declared.
+  - **Shape — two-required-scalar POST imperative-action external-
+    port-save mutation, body REQUIRED.** Cardinality-identical to the
+    `<tag>Id + externalPort` saveExternalPort pairing on
+    `/mariadb.saveExternalPort` (API-0169), `/mongo.saveExternalPort`
+    (API-0183), and `/mysql.saveExternalPort` (API-0203). Fixture
+    supplies both REQUIRED scalars in the spec-declared property
+    order with a non-null integer literal `25281` for `externalPort`
+    so the byte-for-byte body comparison leg verifies the CLI
+    propagated the multi-field body without reordering, dropping, or
+    mutating either scalar.
+  - **Family choice — harness-default 401→CodeAuth retained.**
+    Spec omits 404 from the response set, so the 404→CodeNotFound
+    override is structurally inapplicable; the override slot for the
+    postgres/* roster was already consumed by API-0276
+    `postgres-one` per the per-tag opener design header that
+    reserves 404 representatives specifically for the canonical
+    by-id `*-one` peer.
+  - **Fixture token base** `postgres-cov-save-external-port-0281` is
+    verified non-colliding with API-0272's
+    `postgres-cov-changeStatus-0272`, API-0273's
+    `postgres-cov-create-0273`, API-0274's
+    `postgres-cov-deploy-0274-postgresId`, API-0275's
+    `postgres-cov-move-0275-postgresId` /
+    `postgres-cov-move-0275-targetEnvironmentId`, API-0276's
+    `postgres-cov-one-0276-postgresId-fixture`, API-0277's
+    `postgres-cov-rebuild-0277-postgresId`, API-0278's
+    `postgres-cov-reload-0278-postgresId` /
+    `postgres-cov-reload-0278-appName`, API-0279's
+    `postgres-cov-remove-0279-postgresId`, and API-0280's
+    `postgres-cov-save-environment-0280-postgresId` /
+    `postgres-cov-save-environment-0280-env` literals under the
+    `<tag>-cov-<slug>-<storyID>` rule.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (added API-0281 case +
+    comment block)
+  - `ralph/prd.json` (set `passes: true` for API-0281)
+  - `ralph/progress.txt` (this entry)
+- Verification run from repo root:
+  - `gofmt -w .` — clean
+  - `go mod tidy` — clean
+  - `go vet ./...` — pass
+  - `go test ./...` — pass (cli 1.206s; all packages PASS)
+  - `go test -race ./...` — pass (cli 3.117s; all packages PASS)
+  - Targeted: `go test ./internal/cli -run 'TestAPICoverage/API-0281' -v`
+    — all five API-0281/postgres-saveExternalPort subtests PASS
+    (Registry, Schema, Manifest, SuccessRoundTrip,
+    RepresentativeFailure).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — not installed locally, deferred per
+    Codebase-Patterns guidance.
+- Remaining risks or follow-ups: none — coverage matches the
+  established `*-saveExternalPort` two-required-scalar peer pattern
+  (mariadb/mongo/mysql). Next priority-4 backlog case is API-0282
+  `postgres-search` (the first GET on the postgres/* roster since
+  API-0276 `postgres-one`; continues the `postgres-cov-*` per-tag
+  fixture-isolation namespace; spec must be re-verified before
+  assuming any field shape).
+- **Learnings for future iterations:**
+  - **`*-saveExternalPort` family invariant reasserted across four
+    tags.** The cross-tag shape ancestor at API-0169
+    `mariadb-saveExternalPort` locked the
+    `<tag>Id + externalPort:anyOf:[number,null]` pairing; API-0183
+    `mongo-saveExternalPort` and API-0203 `mysql-saveExternalPort`
+    each re-verified that pairing on their tags, and API-0281
+    `postgres-saveExternalPort` extends the cohort. Future
+    contributors covering `*-saveExternalPort` on additional tags
+    (redis, etc.) should grep for `save-external-port-` literals as
+    the canonical fixture-base style and use a non-null integer port
+    with the storyID embedded in the low digits (here `25281`) to
+    keep parity with the established convention.
+  - **Integer-with-embedded-storyID convention for nullable-number
+    slots.** The `anyOf:[number,null]` populated branch is exercised
+    with a non-null integer rather than `null` because the harness's
+    `len(tc.SampleBody) > 0` gate triggers either way, but a
+    populated value better stress-tests the body-pass-through path
+    and keeps the CLI's type-agnostic forwarding (opaque bytes)
+    visible in the byte-for-byte comparison leg. Use a value in
+    the valid TCP-port range (1..65535) with the storyID embedded
+    in the low digits for `git grep` traceability — pure string
+    suffix tokens are not applicable on `type: number` slots.
+  - **slug-prefix-is-not-shape rule reasserted.** Even though every
+    prior `*-saveExternalPort` peer pairs `<tag>Id +
+    externalPort:anyOf:[number,null]`, the spec was re-verified
+    against `internal/api/data/openapi.json` for
+    postgres-saveExternalPort before assuming the shape. Two
+    operations sharing a slug prefix can have divergent request
+    schemas on different tags; never inherit shape from slug alone.
+  - **Forward reference unblocked the next entry.** The closing
+    block of API-0280 named API-0281 explicitly with the
+    `(declared a **POST** per the spec preview; ... must re-verify
+    ...)` cadence; this entry honored that contract and propagated
+    the same cadence to API-0282 `postgres-search` (declared a
+    **GET** per the spec preview — the first GET on the postgres/*
+    roster since API-0276 `postgres-one`). Future iterations should
+    grep this entry's tail for the API-0282 forward reference and
+    re-verify the spec before assuming any GET-shaped fields.
+---
