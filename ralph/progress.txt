@@ -14063,3 +14063,71 @@ Learnings for future iterations:
   - Empty-success cohort (`{}` 200 with `additionalProperties: false`) keeps growing; the harness's `len(tc.SampleBody) > 0` short-circuit at `runAPICoverageSuccess` is now the reliable contract for any zero-parameter GET that returns an empty object.
   - Twelfth user/* entry — re-asserting the `usr-cov-*` namespace seed established at API-0427 and unbroken across API-0428..API-0437.
 ---
+## 2026-05-08 - API-0439 - Cover user-getUserByToken (GET /user.getUserByToken)
+- **Implemented**: Coverage entry for `user-getUserByToken`. Thirteenth entry
+  on the user/* roster, slotted in StoryID order after API-0438
+  `user-getServerMetrics`. Spec re-verified against
+  `internal/api/data/openapi.json > /user.getUserByToken > get`: a GET with
+  no request body and exactly one REQUIRED query parameter `token` (string,
+  no length/pattern/format constraint). Responses 200/400/401/403/404/500;
+  the 200 schema is `{}` with `additionalProperties: false`.
+- **Shape**: Single-required-query-param GET — structurally identical to
+  the user/* roster's prior single-required-query GET at API-0429
+  `user-checkUserOrganizations`, and cross-tag identical to API-0008
+  `ai-one` and API-0005 `ai-get`. Per the slug-prefix-is-not-shape and
+  slug-stem-is-not-shape lessons no axis carries over from API-0438
+  `user-getServerMetrics` (parameter-free GET) or any other prior user/*
+  peer — the shape signature here is one REQUIRED string query parameter,
+  no body, no path placeholders, no headers.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended the API-0439 case to
+    `coveredAPIOperations`. `SampleQuery` populates the single REQUIRED
+    `token` param with the slug-on-the-wire sentinel
+    `usr-cov-getUserByToken-0439`. `SampleBody` and `SamplePathParams`
+    left zero. Failure-leg fields intentionally omitted: harness defaults
+    (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""` → CodeAuth)
+    exercise the 401 → CodeAuth representative. The spec declares 404 on
+    this operation but the canonical user/* `*-one` lookup is API-0433
+    `user-get`, so 404 → CodeNotFound coverage is reserved for that
+    entry per the API-0427/API-0429 hand-off forecast.
+  - `ralph/prd.json` — flipped `passes` to `true` for API-0439.
+  - `ralph/progress.txt` — this entry.
+- **Verification run** (from repo root):
+  - `gofmt -l .` — clean.
+  - `go vet ./...` — clean.
+  - `go mod tidy` — no diff.
+  - `go test ./internal/cli -run 'TestAPICoverage|TestManifest' -count=1 -v` —
+    PASS for API-0439 across all five coverage subtests
+    (RegistryInvariants, SchemaCommandWorks, ManifestListsOperation,
+    SuccessRoundTrip, RepresentativeFailure).
+  - `go test ./...` — all packages pass (`internal/cli` 1.088s).
+  - `go test -race ./...` — all packages pass (`internal/cli` 2.844s).
+- **Tools NOT available locally** (unchanged): `goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`. Documented
+  per the Codebase Patterns "Verification baseline" rule.
+- **Remaining risks / follow-ups**:
+  - None for this story. The next priority-2 user/* peer is API-0440
+    `user-haveRootAccess`. Per the slug-prefix-is-not-shape lesson the
+    next contributor must re-verify the spec at
+    `internal/api/data/openapi.json > /user.haveRootAccess > get` rather
+    than assume it inherits this entry's single-required-query shape.
+- **Learnings for future iterations**:
+  - The user/* roster's single-required-query GET cohort now has two
+    members (API-0429 `user-checkUserOrganizations`, API-0439
+    `user-getUserByToken`). Future entries with the same spec shape
+    can copy the API-0439 docstring template verbatim and swap the
+    StoryID, slug, operation-stem, query-param name, and
+    cross-references.
+  - The slug-on-the-wire convention extends naturally to query params
+    whose schema imposes no length/pattern/format constraint — even
+    when the param is named `token` and could in production carry an
+    opaque secret, the test fixture uses the deterministic-but-clearly-
+    fake sentinel `usr-cov-getUserByToken-0439`. No production token
+    is ever involved; the harness re-reads `r.URL.Query()` to confirm
+    propagation.
+  - The user/* response-code shape `{200, 400, 401, 403, 404, 500}`
+    declared on `getUserByToken` keeps 404 → CodeNotFound coverage
+    reserved for the canonical `*-one` peer (API-0433 `user-get`),
+    consistent with the API-0429 hand-off precedent for membership-
+    /resolution-probe operations within the same tag.
+---

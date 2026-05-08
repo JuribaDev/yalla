@@ -17188,6 +17188,132 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0439",
+		OperationID: "user-getUserByToken",
+		Method:      http.MethodGet,
+		Path:        "/user.getUserByToken",
+		Tag:         "user",
+		// Thirteenth entry on the user/* coverage roster, slotted in
+		// StoryID order after API-0438 `user-getServerMetrics`. The
+		// `usr-cov-*` per-tag fixture-isolation namespace was
+		// established at API-0427 `user-all` and reasserted at
+		// API-0428..API-0438. Per the per-tag isolation rule
+		// originally established at API-0246 `organization-active`,
+		// every user/* fixture token base remains orthogonal to
+		// every prior tag's namespace (`set-cov-*`, `srv-cov-*`,
+		// `proj-cov-*`, `org-cov-*`, `compose-cov-*`, `app-cov-*`,
+		// `ai-cov-*`, `admin-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		// `cert-cov-*`, `clu-cov-*`, `deployment-cov-*`,
+		// `dest-cov-*`, etc.).
+		//
+		// **Spec re-verified per the API-0345..API-0438
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /user.getUserByToken > get`:
+		// a **GET** with **no request body** (the spec omits
+		// `requestBody` entirely on this operation) and **exactly one
+		// declared parameter** — `token` (string, query, REQUIRED).
+		// Responses 200/400/401/403/404/500 — the spec declares 404
+		// on this operation, semantically matching a by-token
+		// resource lookup (a `token` that does not resolve to a
+		// Dokploy user is the natural 404 trigger). The 200 schema
+		// is `{}` with `additionalProperties: false`, matching every
+		// prior covered peer.
+		//
+		// **Single-required-query-param GET shape — structurally
+		// identical to the user/* roster's prior single-required-
+		// query GET at API-0429 `user-checkUserOrganizations`, and
+		// cross-tag identical to the canonical query-only GET
+		// precedents API-0008 `ai-one` and API-0005 `ai-get`.** Per
+		// the slug-prefix-is-not-shape and slug-stem-is-not-shape
+		// lessons reasserted at API-0371..API-0438, no axis from
+		// API-0438 `user-getServerMetrics` (parameter-free GET),
+		// API-0437 `user-getMetricsToken` (parameter-free GET),
+		// API-0436 `user-getInvitations` (parameter-free GET),
+		// API-0435 `user-getContainerMetrics` (four-required-query
+		// GET), or any other prior user/* peer carries over — the
+		// shape signature here is a single REQUIRED string query
+		// parameter, no body, no path placeholders, no headers.
+		// (Despite the shared `getUser*` slug stem with `getUser`-
+		// adjacent peers, `getUserByToken` carries the
+		// distinct-from-`getServerMetrics`/`getMetricsToken`/
+		// `getContainerMetrics` shape per the slug-stem-is-not-shape
+		// lesson — the next contributor must re-verify the spec
+		// rather than assume any axis is inherited.)
+		//
+		// **Parameter semantics (per OpenAPI schema):**
+		//   * `token` — REQUIRED string, query parameter.
+		//     Identifies the auth token whose owning user is being
+		//     resolved. The spec imposes no length, pattern, or
+		//     format constraint, so the slug-on-the-wire sentinel
+		//     `usr-cov-getUserByToken-0439` populates this field
+		//     directly per the convention reasserted at
+		//     API-0351..API-0438 for free-form string fields. The
+		//     harness forwards SampleQuery via the `--input` JSON
+		//     `query` field, and `runAPICoverageSuccess` re-reads
+		//     `r.URL.Query()` to confirm the CLI propagated the
+		//     param verbatim from the originating fixture. No
+		//     production token is involved — the value is a
+		//     deterministic-but-clearly-fake fixture sentinel
+		//     orthogonal to every prior tag's namespace, mirroring
+		//     the slug-on-the-wire convention reasserted at
+		//     API-0345..API-0438.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `usr-cov-getUserByToken-0439` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared with
+		//     every prior covered peer. The slug is the operationId
+		//     suffix (`getUserByToken`) verbatim — per the
+		//     slug-stem-is-not-shape lesson the slug only carries
+		//     identifier semantics, not shape semantics.
+		//   * `SampleBody` and `SamplePathParams` left zero.
+		//     `SampleQuery` populates the single REQUIRED `token`
+		//     query parameter with the slug-on-the-wire sentinel.
+		//
+		// **Failure-leg fields are intentionally omitted.** Even
+		// though the spec declares 404 on this operation (an
+		// unrecognised `token` query value is the natural 404
+		// trigger), within the user/* roster the canonical `*-one`
+		// (by-id resource lookup) representative is API-0433
+		// `user-get` per the API-0427 hand-off forecast; 404 →
+		// CodeNotFound coverage is reserved for that entry, just as
+		// it was for API-0429 `user-checkUserOrganizations`'s
+		// membership-probe 404 case. `getUserByToken` is a token-
+		// resolution probe rather than the canonical user lookup,
+		// so its 404 leg is shape-secondary to `user-get`. 400 →
+		// CodeInvalidInput is structurally available (an empty or
+		// malformed `token` could in principle surface 400) but
+		// auth remains the universal failure mode every Dokploy
+		// operation must re-prove, so 401 → CodeAuth via the
+		// harness default (`tc.FailureStatus == 0` → 401,
+		// `tc.FailureCode == ""` → CodeAuth) stays the most
+		// informative representative for an authenticated GET,
+		// matching API-0427 `user-all`, API-0429
+		// `user-checkUserOrganizations`, API-0433 `user-get`,
+		// API-0434 `user-getBackups`, API-0436 `user-getInvitations`,
+		// API-0437 `user-getMetricsToken`, and API-0438
+		// `user-getServerMetrics` inside the same tag.
+		//
+		// The next case in the PRD-ordered priority-2 backlog is
+		// API-0440 `user-haveRootAccess`; the next contributor
+		// must re-verify against `internal/api/data/openapi.json`
+		// per the forward-reference lesson before assuming any
+		// field carries over from this entry — per the
+		// slug-prefix-is-not-shape lesson reasserted at
+		// API-0371..API-0438, even the shared `user-`
+		// operation-stem does not imply a carried-over body or
+		// parameter shape.
+		SampleQuery: map[string][]string{
+			"token": {"usr-cov-getUserByToken-0439"},
+		},
+		// 200 response in the spec is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
