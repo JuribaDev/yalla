@@ -1,6 +1,6 @@
 {
   "project": "Yalla-Dokploy-Agent-First-CLI",
-  "branchName": "ralph/yalla-cli",
+  "branchName": "ralph/claude-yalla",
   "description": "Build Yalla, a production-grade Go CLI for Dokploy that is first-class for AI agents, covers every Dokploy OpenAPI operation, ships as native cross-platform binaries, and has a strong verification loop.",
   "sourceApi": {
     "path": "/Users/juribadev/projects/poc/dokploy/openapi.json",
@@ -189,7 +189,7 @@
       ],
       "type": "foundation",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Start here. This story creates the skeleton every API story depends on."
     },
     {

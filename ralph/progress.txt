@@ -1,0 +1,111 @@
+## Codebase Patterns
+
+- Module path is `github.com/JuribaDev/yalla`. Go toolchain is 1.24+. The
+  binary entrypoint lives at `cmd/yalla/main.go` and is intentionally tiny —
+  it only wires `BuildInfo` and calls `internal/cli.Execute`.
+- Cobra commands are constructed via injectable factories. The root factory is
+  `cli.NewRootCommand(streams IOStreams, build BuildInfo) *cobra.Command`.
+  Tests instantiate it with `*bytes.Buffer` streams; production passes
+  `cli.DefaultIOStreams()`.
+- `IOStreams{In, Out, ErrOut}` is the canonical stream bundle. **Cobra's own
+  writers (`SetOut`, `SetErr`) are routed to stderr** to honor the
+  stdout-is-data-only contract (help, usage, version, error banners are all
+  diagnostics). Subcommands emit data via `IOStreamsFromContext(ctx).Out`.
+- Persistent root flags are mirrored into a `*GlobalFlags` value and propagated
+  to every subcommand through `WithGlobalFlags(ctx, …)` inside
+  `PersistentPreRunE`. Subcommands read them via
+  `GlobalFlagsFromContext(cmd.Context())`. Same pattern for `IOStreams` and
+  `BuildInfo` (helpers `WithIOStreams`/`IOStreamsFromContext`,
+  `WithBuildInfo`/`BuildInfoFromContext`).
+- Required global flags (US-0001): `--json`, `--no-input`, `--config`,
+  `--base-url`, `--token`, `--verbose` (`-v`), `--version`. Adding or renaming
+  any of these is a public-API change and must update the registry test in
+  `internal/cli/root_test.go`.
+- Root command uses `Args: cobra.NoArgs` so unknown positional arguments fail
+  loudly. Every command sets `SilenceErrors` and `SilenceUsage` so error
+  rendering stays under the typed-error layer (US-0002 onward).
+- Cobra 1.10's default help template skips `UsageString` unless the command is
+  `Runnable` or has subcommands. Until subcommands exist, root needs an explicit
+  `RunE: func(c, _) error { return c.Help() }` so `yalla` (no args) renders the
+  full help with flags.
+- Tests live next to the code they exercise. CLI tests construct the root via
+  the factory, call `cmd.SetArgs(...)`, run `cmd.Execute()`, and assert against
+  the in-memory buffers. Stdout-empty assertions are mandatory for any
+  diagnostic path.
+- Verification baseline: `gofmt -w .`, `go mod tidy`, `go vet ./...`,
+  `go test ./...`, `go test -race ./...` — all must pass before commit.
+  `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, and `goreleaser`
+  are not yet installed locally and should be documented as missing rather
+  than silently skipped.
+
+---
+
+## 2026-05-08 - US-0001
+- **Implemented**: Bootstrap of the Yalla Go module and Cobra root command.
+  Created the production project skeleton with an injectable Cobra factory,
+  context-propagated global flags / streams / build info, and unit tests that
+  drive the command tree through in-memory buffers.
+- **Files changed**:
+  - `go.mod` (new) — module `github.com/JuribaDev/yalla`, Go 1.24, requires
+    `github.com/spf13/cobra v1.10.2`.
+  - `go.sum` (new) — populated by `go mod tidy`.
+  - `cmd/yalla/main.go` (new) — thin entrypoint that wires `BuildInfo`
+    (Version/Commit/Date stamps overridable via `-ldflags`) and exits on the
+    code returned by `cli.Execute`.
+  - `internal/cli/root.go` (new) — `IOStreams`, `GlobalFlags`, `BuildInfo`,
+    context accessors, `NewRootCommand`, `Execute`. Cobra's writers are routed
+    to stderr; persistent flags `--json`, `--no-input`, `--config`,
+    `--base-url`, `--token`, `--verbose` (`-v`), and the implicit `--version`
+    are wired and mirrored into the command context. `Args: cobra.NoArgs`
+    rejects stray positional arguments.
+  - `internal/cli/root_test.go` (new) — covers: stdout stays empty when no
+    subcommand runs, all required persistent flags exist, `--verbose` has the
+    `-v` shorthand, persistent pre-run propagates flags / streams / build info
+    to subcommands, `--version` prints the build line, `--help` keeps stdout
+    empty, unknown commands fail without leaking to stdout, and context
+    accessors return safe fallbacks when called with a bare `context.Background`.
+  - `internal/cli/AGENTS.md` (new) — module-local conventions for future CLI
+    contributors and agents.
+  - `ralph/prd.json` — set US-0001 `passes: true`.
+- **Verification run**:
+  - `gofmt -w .` — clean (no files reformatted).
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — `ok github.com/JuribaDev/yalla/internal/cli`.
+  - `go test -race ./...` — `ok github.com/JuribaDev/yalla/internal/cli`.
+  - `go build ./...` — clean.
+  - Smoke: `go run ./cmd/yalla --version` → `yalla 0.0.0-dev (commit unknown,
+    built unknown)`. `go run ./cmd/yalla` (no args) → empty stdout, full help
+    on stderr including every required flag.
+- **Tools NOT available locally** (documented per the verification policy):
+  `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`.
+  Future stories must either install these or treat their absence the same way.
+- **Remaining risks / follow-ups**:
+  - `--version` output currently writes through Cobra's writer (now stderr) to
+    keep the stdout-is-data rule airtight; the future `yalla version --json`
+    subcommand will be the data-shaped path.
+  - Typed error envelopes / stable exit codes are stubbed only at the binary
+    layer (`Execute` returns 1 on failure, surfacing the message on stderr).
+    The full envelope and exit-code contract land in US-0002.
+  - No real subcommands yet; the unknown-command guard is `cobra.NoArgs` on
+    root rather than Cobra's automatic suggestion engine. Once subcommands
+    exist, also wire `cmd.SuggestionsMinimumDistance` for nicer errors.
+- **Learnings for future iterations**:
+  - Cobra 1.10 will not render `UsageString` from the default help template
+    when a command is neither `Runnable` nor has subcommands. The fix is
+    either to set a `RunE` that returns `c.Help()` (used here) or to register
+    subcommands. Without one of those, `yalla` with no args prints only the
+    `Long` description.
+  - `cmd.SetOut(stderr)` is the cleanest way to keep Cobra-managed output
+    (help, usage, --version template) off of stdout. Subcommands must NOT use
+    `cmd.Print/Println` for data; route data through
+    `IOStreamsFromContext(ctx).Out` instead.
+  - `PersistentPreRunE` is the right place to populate the command context.
+    Cobra propagates the context to children during `Execute`/`ExecuteContext`,
+    so flag values bound by `pflag` are guaranteed to be parsed before the
+    subcommand's `RunE` reads them via `GlobalFlagsFromContext`.
+  - Tests should always assert `stdout.Len() == 0` on diagnostic paths — it is
+    the cheapest way to catch a future regression in the stdout contract.
+  - `cobra.NoArgs` on the root catches `yalla bogus` early; otherwise Cobra
+    silently runs root with a positional arg.
+---
