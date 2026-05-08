@@ -21601,3 +21601,94 @@ forward-reference lesson before assuming any field shape.
     references are valid simultaneously because they refer to
     different orderings (priority-bucket order vs slice order).
 ---
+## 2026-05-09 - API-0273 - Cover postgres-create (POST /postgres.create)
+- What was implemented:
+  - Added a new `apiCoverageCase` entry for API-0273
+    `postgres-create` to `coveredAPIOperations` in
+    `internal/cli/api_coverage_test.go`, inserted in StoryID-sorted
+    order between API-0272 `postgres-changeStatus` and API-0290
+    `project-all`.
+  - This story is the **second entry on the postgres/* coverage
+    roster** and continues inside the `postgres-cov-*` per-tag
+    fixture-isolation namespace opened by API-0272 at the kickoff
+    case. Completes the forward reference embedded in the API-0272
+    closing block ("The next case in the PRD-ordered priority-4
+    backlog is API-0273 `postgres-create`").
+  - Spec re-verified per the API-0345..API-0444 forward-reference
+    lesson against `internal/api/data/openapi.json` >
+    `/postgres.create` > `post`: method POST, tag postgres, **no
+    parameters**, requestBody REQUIRED with `application/json`,
+    responses 200/400/401/403/500. The 200 response is `{}` with
+    `additionalProperties: false` (empty-success cohort). **No 404**
+    declared — consistent with every prior covered `*-create`
+    mutation.
+  - Request body REQUIRED fields: `name`, `databaseName`,
+    `databaseUser`, `databasePassword`, `environmentId` — five
+    plain non-nullable `type: string` slots. Optional fields
+    (`appName`, `dockerImage` default `postgres:18`, `description`,
+    `serverId`) intentionally omitted per the minimal-required-only
+    fixture rule.
+  - Failure leg: harness-default 401 → `E_AUTH`. 404 not declared on
+    the spec; 400 reserved for stories where validation is the
+    uniquely distinguishing failure mode.
+  - Fixture token base `postgres-cov-create-0273` follows
+    `<tag>-cov-<slug>-<storyID>` and is non-colliding with API-0272's
+    `postgres-cov-changeStatus-0272` literals.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (added API-0273 case +
+    comment block)
+  - `ralph/prd.json` (set `passes: true` for API-0273)
+  - `ralph/progress.txt` (this entry)
+- Verification run from repo root:
+  - `gofmt -l .` — clean
+  - `go mod tidy` — clean
+  - `go vet ./...` — pass
+  - `go test ./...` — pass (cli 1.231s)
+  - `go test -race ./...` — pass (cli 3.201s)
+  - Targeted: `go test ./internal/cli -run 'TestAPICoverage' -v` —
+    all five API-0273/postgres-create subtests PASS (Registry,
+    Schema, Manifest, SuccessRoundTrip, RepresentativeFailure).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` not installed locally; skipped per documented
+    policy in `Codebase Patterns`.
+- Remaining risks / follow-ups:
+  - None for this story. Next priority-4 case is API-0274
+    `postgres-deploy` (declared a **POST** per spec preview);
+    contributor must re-verify the spec before assuming field
+    shape and continue inside the `postgres-cov-*` namespace
+    opened at API-0272.
+- **Learnings for future iterations:**
+  - **Five-required-string-scalar `*-create` cohort across the
+    relational database tags.** `postgres-create` is the third
+    member of a structurally identical cohort that also contains
+    API-0161 `mariadb-create` and API-0195 `mysql-create`: same
+    five REQUIRED slots (`name`, `environmentId`, `databaseName`,
+    `databaseUser`, `databasePassword`), all plain non-nullable
+    `type: string`. The non-relational sibling API-0175
+    `mongo-create` is one slot narrower (no `databaseName`).
+  - **Postgres lacks the `databaseRootPassword` optional slot** that
+    mariadb/mysql expose. The minimal-required-only fixture rule
+    historically defended against accidentally hard-coding two
+    credential-shaped values in a single fixture (`databasePassword`
+    + `databaseRootPassword`). For postgres-create that defensive
+    posture is trivially satisfied because the second slot does not
+    exist on the spec — but the rule is still applied uniformly
+    so the redactor test family at
+    `internal/cli/redaction_security_test.go` can extend coverage
+    onto this case without re-deriving the literal.
+  - **Cross-tag analog discovery for second-on-roster entries.**
+    When a tag's coverage roster opens with a `*-changeStatus`
+    case (here API-0272), the canonical second entry tends to be
+    `*-create` (API-0273). The mariadb (API-0160 → API-0161),
+    mongo (API-0174 → API-0175), and mysql (API-0194 → API-0195)
+    rosters all follow the same alphabetic-by-operation pattern
+    inside their priority-4 PRD window, so future contributors
+    reaching a fresh `*-changeStatus` kickoff can pre-stage the
+    `*-create` precedent search before opening the spec.
+  - **StoryID-sorted slice with mixed priorities (re-confirmed).**
+    The `coveredAPIOperations` slice stays StoryID-sorted, so the
+    new API-0273 entry inserts immediately after API-0272 even
+    though API-0290 `project-all` (priority 3) happens to sit at
+    the next slot in the slice. Both forward references — priority-
+    bucket order and slice order — remain valid simultaneously.
+---
