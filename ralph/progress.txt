@@ -19413,3 +19413,21 @@ forward-reference lesson before assuming any field shape.
     400 under tRPC, so 401 -> CodeAuth stays the most representative
     failure mode.
 ---
+
+
+## 2026-05-08 - API-0145 - Cover gitlab-create (POST /gitlab.create)
+- Added apiCoverageCases entry for gitlab-create in internal/cli/api_coverage_test.go between API-0144 github-update and API-0160 mariadb-changeStatus per the StoryID-sorted slice rule. This opens a brand-new `gitlab-cov-*` per-tag fixture-isolation namespace per the kickoff convention established at API-0246, API-0290, API-0335, API-0351, API-0051, API-0131, API-0160, API-0174, API-0139.
+- Spec re-verified directly against `internal/api/data/openapi.json` > `/gitlab.create` > `post`: POST, tag `gitlab`, no parameters, REQUIRED `application/json` body, responses 200/400/401/403/500 (no 404). Body schema declares 3 REQUIRED string fields (`authId`, `name`, `gitlabUrl`) and 6 OPTIONAL fields (`applicationId`, `secret`, `groupName`, `gitProviderId`, `redirectUri`, `gitlabInternalUrl` [anyOf string|null]).
+- Fixture supplies the 3 REQUIRED fields only; OPTIONAL fields deliberately omitted because the optional surface includes the credential-shaped `secret` field, triggering the credential-redaction safety carve-out from the every-optional-populated rule (precedent: API-0131 `gitea-create`, which omitted 13 optional fields including `clientSecret`/`accessToken`/`refreshToken` for the same reason).
+- Failure leg uses the harness-default 401 → CodeAuth, since 404 is structurally inapplicable to `*-create` mutations (no by-id read leg) and 400 → CodeInvalidInput is reserved for stories where payload validation is the operation's uniquely distinguishing failure mode.
+- Files changed: internal/cli/api_coverage_test.go, ralph/prd.json (passes:true on API-0145), ralph/progress.txt.
+- Verification run: `gofmt -w .`, `go mod tidy`, `go vet ./...`, `go test ./...`, `go test -race ./...` — all green.
+- Results: registry/manifest/schema invariants pass automatically (driven by openapi.json); httptest success path verifies the CLI propagated the 3-required-string body verbatim and rendered `yalla.output.v1`; failure leg verifies 401 → CodeAuth → `yalla.error.v1` with non-zero exit.
+- Remaining risks / follow-ups: gitlab/* tag is now OPEN at API-0145. The next priority-5 failing story in the StoryID-sorted backlog is API-0146 `gitlab-getGitlabBranches` (declared a GET per spec preview); the next contributor must re-verify the spec before assuming any field shape, and will continue inside the `gitlab-cov-*` namespace opened here. The remaining priority-5 gitlab/* roster: API-0146 `gitlab-getGitlabBranches`, API-0147 `gitlab-getGitlabRepositories`, API-0148 `gitlab-gitlabProviders`, API-0149 `gitlab-one`, API-0150 `gitlab-testConnection`, API-0151 `gitlab-update`.
+- **Learnings for future iterations:**
+  - The `create` slug is NOT shape-transitive across tags. `gitea-create` requires 2 strings; `gitlab-create` requires 3 strings. Per-operation re-verification against `internal/api/data/openapi.json` is mandatory and was performed.
+  - The credential-redaction safety rule overrides every-optional-populated for OAuth-bearing git provider operations. When the optional surface contains any credential-shaped field (`secret`, `clientSecret`, `accessToken`, `refreshToken`, etc.), the entire optional surface is omitted to keep the fixture audit-clean. Precedent: API-0131 `gitea-create`. Now reasserted at API-0145 `gitlab-create`.
+  - The `<base>-<field>` literal form (no `-fixture` suffix) is the convention for body-scalar create POSTs (API-0131 `gitea-create`, now API-0145 `gitlab-create`); the `-fixture`-suffixed form is reserved for canonical `*-one` by-id GETs (API-0136 `gitea-one`, API-0142 `github-one`).
+  - Cross-tag fixture-namespace verification matters: `app-cov-gitlab-*` literals (from API-0033 application deploy) live in a structurally different coverage slot than this story's new `gitlab-cov-*` namespace. The two are non-colliding but a future contributor scanning `git grep gitlab-cov` should expect both.
+  - The github/* tag has no `github-create` operation in the spec — github OAuth registration happens via `github-update` + `github-githubProviders`, distinct from the gitea/* and gitlab/* git-provider cohorts which both expose explicit `*-create` operations.
+---

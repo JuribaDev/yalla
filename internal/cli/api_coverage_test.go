@@ -9445,6 +9445,177 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0145",
+		OperationID: "gitlab-create",
+		Method:      http.MethodPost,
+		Path:        "/gitlab.create",
+		Tag:         "gitlab",
+		// Kickoff entry for the gitlab/* coverage roster — this is the
+		// first gitlab-tagged operation to ship contract coverage and
+		// opens a brand-new `gitlab-cov-*` per-tag fixture-isolation
+		// namespace that subsequent gitlab/* peers (API-0146
+		// `gitlab-getGitlabBranches`, API-0147
+		// `gitlab-getGitlabRepositories`, API-0148
+		// `gitlab-gitlabProviders`, API-0149 `gitlab-one`, API-0150
+		// `gitlab-testConnection`, API-0151 `gitlab-update`) must inherit,
+		// per the per-tag fixture-isolation rule established at
+		// API-0188 `mounts-allNamedByApplicationId`, API-0246
+		// `organization-active`, API-0268 `port-create`, API-0290
+		// `project-all`, API-0298 `redirects-create`, API-0331
+		// `security-create`, API-0131 `gitea-create`, and API-0139
+		// `github-getGithubBranches`. This entry deliberately stands
+		// alone and **must not** back-reference any closed prior-tag
+		// namespace (`environment-cov-*`, `domain-cov-*`, `proj-cov-*`,
+		// `mounts-cov-*`, `org-cov-*`, `port-cov-*`, `redirects-cov-*`,
+		// `security-cov-*`, `srv-cov-*`, `swarm-cov-*`, `gitea-cov-*`,
+		// `github-cov-*`, etc.). Sandwiched between API-0144
+		// `github-update` (the priority-5 github/* tag closer) and
+		// API-0160 `mariadb-changeStatus` (the priority-4 mariadb/* tag
+		// kickoff) per the StoryID-sorted slice rule. Closes the
+		// forward reference embedded in API-0144 ("API-0145
+		// `gitlab-create`, which will open a brand-new `gitlab-cov-*`
+		// per-tag fixture-isolation namespace per the kickoff
+		// convention").
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json` > `/gitlab.create` > `post`:
+		// a **POST** with **zero parameters** and a **REQUIRED**
+		// `application/json` request body. The body schema declares
+		// **three REQUIRED string fields** (`authId`, `name`,
+		// `gitlabUrl`) plus a wide surface of OPTIONAL fields —
+		// `applicationId` (string), `secret` (string), `groupName`
+		// (string), `gitProviderId` (string), `redirectUri` (string),
+		// `gitlabInternalUrl` (anyOf [string, null]). Responses
+		// 200/400/401/403/500 — **no 404** declared, mirroring the
+		// precedent on sibling create mutations API-0118
+		// `domain-create`, API-0125 `environment-create`, API-0298
+		// `redirects-create`, API-0331 `security-create`, and API-0131
+		// `gitea-create` (a *-create mutation has no by-id read leg, so
+		// missing-target collapses into 400/validation under Dokploy's
+		// tRPC convention). The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort.
+		//
+		// **Slug-prefix-is-not-shape vindicated again.** Per the
+		// lesson reasserted at API-0144, the `create` slug shape is
+		// **not** transitive across tags. API-0131 `gitea-create`
+		// requires only two strings (`giteaUrl`+`name`); gitlab-create
+		// requires *three* strings (`authId`+`name`+`gitlabUrl`) — the
+		// REQUIRED-slot count differs even though both operations sit
+		// in the git-provider OAuth-registration cohort. The optional
+		// surface also differs: gitea-create exposes 13 optional fields
+		// (including OAuth credentials `clientSecret`, `accessToken`,
+		// `refreshToken`); gitlab-create exposes 6 optional fields
+		// (including the credential-shaped `secret`). Per-operation
+		// re-verification against `internal/api/data/openapi.json`
+		// remains mandatory and was performed for this entry.
+		//
+		// **Shape positioning — three-required-string-scalar POST
+		// create-mutation with optional extension fields, body
+		// REQUIRED.** Distinct from the two-required-string-scalar
+		// gitea-create precedent (API-0131) by REQUIRED-slot count, but
+		// shares the broader `*-create OAuth-bearing git provider`
+		// cohort: gitea-create, github-create (not yet shipped — github
+		// `*-create` is not in the openapi spec; the github/* tag
+		// closes its create-shaped slot at github-update + githubProviders),
+		// and now gitlab-create. The harness's `len(tc.SampleBody) > 0`
+		// gate at `runAPICoverageSuccess` activates the JSON
+		// content-type and byte-for-byte body comparison legs; this
+		// fixture supplies the three REQUIRED fields so the success
+		// path verifies the CLI propagated the body verbatim.
+		//
+		// **Credential-redaction safety overrides every-optional-
+		// populated.** The optional surface includes the
+		// credential-shaped `secret` field (a Gitlab OAuth client
+		// secret in the production wire shape). Per the API-0131
+		// `gitea-create` precedent — and the cross-cutting redaction
+		// audit invariant — the fixture deliberately omits *all*
+		// optional fields rather than hard-code a secret-shaped
+		// literal. Including a placeholder `secret` value, even one
+		// like `gitlab-cov-create-0145-secret`, would pollute future
+		// `git grep` audits looking for hard-coded credentials and
+		// muddy the redaction-test suite. The
+		// every-optional-populated rule (re-asserted at API-0010 /
+		// API-0014 / API-0249 / API-0292 / API-0297 / API-0052 /
+		// API-0053) explicitly carves out an exception for
+		// credential-shaped optional fields, and the `secret`
+		// field's mere presence here triggers that carve-out for the
+		// entire optional surface (sibling fields like `redirectUri`
+		// and `gitlabInternalUrl` follow the same omission for
+		// fixture-shape consistency, exactly as on API-0131
+		// `gitea-create`). Future contributors adding optional-field
+		// coverage should do so in a follow-up story rather than
+		// expanding this minimal positive case.
+		//
+		// **Family choice — harness-default 401 → CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so the
+		// 404 → CodeNotFound override is structurally inapplicable
+		// (matching every prior covered `*-create` mutation —
+		// API-0118 `domain-create`, API-0125 `environment-create`,
+		// API-0298 `redirects-create`, API-0331 `security-create`,
+		// API-0131 `gitea-create`). 400 → CodeInvalidInput is
+		// *technically* available — a payload that omits one of the
+		// three REQUIRED fields would fail server-side validation —
+		// but the harness reserves 400 representatives for stories
+		// where payload validation is the operation's *uniquely
+		// distinguishing* failure mode. A conventional `*-create`
+		// mutation collapses to type-checking, so the harness-default
+		// 401 → CodeAuth failure leg remains the most representative
+		// single failure mode every authenticated Dokploy operation
+		// must re-prove, and is particularly load-bearing on a
+		// gitlab/* operation whose purpose is registering an
+		// OAuth-bearing git provider — every gitlab-tagged operation
+		// gates credential-shaped payloads, so re-proving the
+		// bearer-token check at the kickoff entry pins the auth
+		// invariant for the entire `gitlab-cov-*` namespace.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `gitlab-cov-create-0145` follows the
+		//     `<tag>-cov-<slug>-<storyID>` deterministic-but-clearly-
+		//     fake naming convention shared across every prior tag
+		//     kickoff (most directly mirrors API-0131
+		//     `gitea-cov-create-0131`); no prior gitlab/* fixture
+		//     exists, so there are no same-tag collision constraints
+		//     to avoid (the namespace opens here). Verified
+		//     non-colliding with cross-tag `gitea-cov-*`,
+		//     `github-cov-*`, `bb-cov-*`, `mariadb-cov-*`,
+		//     `mongo-cov-*`, `proj-cov-*`, `srv-cov-*`, `set-cov-*`,
+		//     `org-cov-*`, `app-cov-gitlab-*` (the latter is the
+		//     application-tagged gitlab-deployment fixture from
+		//     API-0033 and lives in a structurally different
+		//     coverage slot — the `app-cov-*` namespace, not the
+		//     `gitlab-cov-*` namespace this entry opens).
+		//   * Deterministic-but-clearly-fake `<base>-<field>`
+		//     literals (no `-fixture` suffix) keep diffs readable
+		//     and let any future schema validator's failure
+		//     messages point at the offending field. The bare
+		//     `<base>-<field>` form matches the API-0131
+		//     `gitea-create` precedent for body-scalar create POSTs
+		//     (distinct from the `-fixture`-suffixed form used on
+		//     canonical `*-one` by-id GETs at API-0142 / API-0136).
+		//
+		// The next case in the PRD-ordered priority-5 backlog is
+		// API-0146 `gitlab-getGitlabBranches` (declared a **GET** per
+		// the spec preview; the next contributor must re-verify the
+		// spec against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will continue inside the `gitlab-cov-*` per-tag
+		// fixture-isolation namespace opened here).
+		SampleBody: json.RawMessage(`{
+			"authId": "gitlab-cov-create-0145-authId",
+			"name": "gitlab-cov-create-0145-name",
+			"gitlabUrl": "https://gitlab-cov-create-0145.example"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0160",
 		OperationID: "mariadb-changeStatus",
 		Method:      http.MethodPost,
