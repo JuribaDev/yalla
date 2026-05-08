@@ -3056,3 +3056,51 @@
     extend the redactor to scrub configurable body-field keys, but
     that would be a public-API change and is out of scope here.
 ---
+
+## 2026-05-08 - API-0008 - Cover ai-one (GET /ai.one)
+- Implemented per-operation coverage for `ai-one` by appending a single
+  `apiCoverageCase` literal (StoryID `API-0008`) to
+  `internal/cli/api_coverage_test.go`'s `coveredAPIOperations` slice.
+  No new code paths required — the operation is already present in the
+  embedded OpenAPI registry and the harness asserts all five
+  invariants (registry id/method/path/tag, `yalla schema get`,
+  `yalla manifest`, httptest success round-trip with query forwarding,
+  representative 401 → `E_AUTH` failure) automatically.
+- `ai-one` is structurally identical to `ai-get` (API-0005): a single
+  required `aiId` query parameter, no request body, 200 response
+  shaped as `{}` with `additionalProperties: false`. The fixture reuses
+  the `<tag>-cov-<slug>-<storyID>` naming convention shared with
+  API-0005/0021/0022/0023 — `ai-cov-one-0008` — so the diff stays a
+  single contiguous insert between API-0007 and API-0011.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — added 22-line API-0008 case.
+  - `ralph/prd.json` — flipped `passes: false` → `passes: true` for
+    `API-0008`.
+  - `ralph/progress.txt` — this entry.
+- Verification run from repo root:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — no module changes.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass; `internal/cli` 1.115s.
+  - `go test -race ./...` — all packages pass; `internal/cli` 2.391s.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — not installed locally, intentionally skipped per
+    Codebase Patterns guidance.
+- Remaining risks or follow-ups: none for this story. The next
+  ai/* coverage gap is API-0009 (`ai-suggest`, POST), which will need
+  a SampleBody fixture rather than SampleQuery.
+- **Learnings for future iterations:**
+  - Pure-GET, single-query-param ai/* operations are now fully
+    represented in the coverage harness — API-0005 (`ai-get`),
+    API-0008 (`ai-one`). They share an identical entry shape;
+    a third such operation should reuse the same comment
+    skeleton verbatim and only swap operationId/path/`aiId`
+    fixture value.
+  - The `<tag>-cov-<slug>-<storyID>` fixture-naming convention is
+    grep-friendly and keeps the per-test `t.TempDir()` JSON inputs
+    clearly fake — preserve it on every new GET-shaped story.
+  - Sorting `coveredAPIOperations` by `StoryID` matters: API-0008
+    inserts between API-0007 and API-0011 (the API-0009/0010
+    slots are still pending), and the diff stays a contiguous
+    block that future readers can pattern-match against.
+---

@@ -281,6 +281,29 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0008",
+		OperationID: "ai-one",
+		Method:      http.MethodGet,
+		Path:        "/ai.one",
+		Tag:         "ai",
+		// Third query-only GET in the ai/* coverage roster, structurally
+		// identical to API-0005 (`ai-get`): a single required query
+		// parameter `aiId` (string), no request body. The harness
+		// forwards SampleQuery via the `--input` JSON `query` field,
+		// and `runAPICoverageSuccess` re-reads `r.URL.Query()` to
+		// confirm the CLI propagated the param verbatim. We reuse the
+		// deterministic-but-clearly-fake `<tag>-cov-<slug>-<storyID>`
+		// naming convention shared with API-0005/0021/0022/0023.
+		SampleQuery: map[string][]string{
+			"aiId": {"ai-cov-one-0008"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching every prior ai/* peer. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0011",
 		OperationID: "application-cancelDeployment",
 		Method:      http.MethodPost,
