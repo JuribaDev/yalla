@@ -16963,3 +16963,56 @@ Learnings for future iterations:
     their fixture token bases per the per-tag isolation rule
     reasserted across every prior tag's namespace.
 ---
+
+## 2026-05-08 - API-0424
+- **Implemented**: Coverage for `swarm-getNodeInfo` (GET /swarm.getNodeInfo).
+  Second entry on the swarm/* roster, inheriting the `swarm-cov-*` per-tag
+  fixture-isolation namespace established at API-0423. Introduces a new
+  shape-signature on the swarm/* roster: a single-REQUIRED-query-param
+  (`nodeId`) + single-OPTIONAL-query-param (`serverId`) GET, structurally
+  distinct from API-0423's single-OPTIONAL-only shape. Slug-on-the-wire
+  sentinel `swarm-cov-getNodeInfo-0424` populates both query parameters so
+  the success-leg `r.URL.Query()` round-trip exercises both the REQUIRED
+  and OPTIONAL axes.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended one `apiCoverageCase`
+    literal between API-0423 and API-0427 (StoryID-sorted). Spec
+    re-verified per the API-0345..API-0444 forward-reference lesson
+    against `internal/api/data/openapi.json > /swarm.getNodeInfo > get`.
+  - `ralph/prd.json` — set US/API-0424 `passes: true`.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./... -count=1` — all packages OK.
+  - `go test -race ./... -count=1` — all packages OK.
+- **Tools NOT available locally** (unchanged): `goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`.
+- **Remaining risks / follow-ups**:
+  - The remaining swarm/* entry is API-0425 `swarm-getNodes` (single
+    OPTIONAL `serverId`, no body — structurally identical to API-0423
+    but with a distinct operationId/path slug). Per the
+    slug-prefix-is-not-shape lesson, the next contributor must still
+    re-verify against `internal/api/data/openapi.json > /swarm.getNodes
+    > get` rather than carrying the API-0423 shape forward by tag.
+  - Failure leg uses the harness 401 → CodeAuth default. 404 → CodeNotFound
+    is not exercised on the swarm/* roster because none of its operations
+    are canonical `*-one` (by-id resource lookup) peers — every swarm/*
+    operation is a node-listing or node-attribute probe scoped by
+    OPTIONAL `serverId`.
+- **Learnings for future iterations**:
+  - The harness's `SampleQuery` field is a `map[string][]string`, so
+    multiple query parameters are added by including additional keys —
+    the runner forwards each via the `--input` JSON `query` field
+    verbatim and `runAPICoverageSuccess` reads `r.URL.Query()` to verify
+    propagation.
+  - When a GET operation has both REQUIRED and OPTIONAL query
+    parameters, populating BOTH at fixture time is correct: it
+    exercises the OPTIONAL axis while still satisfying the REQUIRED
+    axis. Skipping the OPTIONAL would leave it unverified across the
+    roster's first multi-param entry.
+  - The `runAPICoverageSuccess` runner re-reads `r.URL.Query()`
+    rather than the request body, so query-only operations (no
+    `requestBody`) are fully covered by the SampleQuery map alone —
+    no body fixture is required when the spec omits `requestBody`.
+---
