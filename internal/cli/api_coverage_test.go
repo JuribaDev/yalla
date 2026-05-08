@@ -304,6 +304,31 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0009",
+		OperationID: "ai-suggest",
+		Method:      http.MethodPost,
+		Path:        "/ai.suggest",
+		Tag:         "ai",
+		// Mirrors the schema in `data/openapi.json` for /ai.suggest:
+		// two required string fields (`aiId`, `input`) plus one optional
+		// (`serverId`). Per the API-0004/API-0014 convention we supply
+		// the optional with a deterministic-but-clearly-fake value so
+		// the wire payload exercises the full suggest envelope, not just
+		// the minimum-required pair. Per-case fixture token
+		// `*-cov-suggest-0009` keeps `git grep` traceable to this PRD
+		// story.
+		SampleBody: json.RawMessage(`{
+			"aiId": "ai-cov-suggest-0009",
+			"input": "yalla coverage prompt for API-0009",
+			"serverId": "srv-cov-suggest-0009"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching every prior ai/* peer. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0011",
 		OperationID: "application-cancelDeployment",
 		Method:      http.MethodPost,

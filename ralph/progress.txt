@@ -3976,3 +3976,37 @@
     multi-field bodies (0069). API-0071+ will continue to mix these
     shapes; do not pattern-match on "compose-XXX" alone.
 ---
+
+## 2026-05-08 - API-0009
+- Added registry/contract coverage for `ai-suggest` (POST /ai.suggest).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended an `apiCoverageCase`
+    literal between API-0008 and API-0011 with `SampleBody` carrying both
+    required strings (`aiId`, `input`) plus the optional `serverId` so
+    the wire payload exercises the full suggest envelope.
+  - `ralph/prd.json` — flipped `API-0009.passes` from `false` to `true`.
+- Verification run:
+  - `gofmt -w .`
+  - `go mod tidy`
+  - `go vet ./...`
+  - `go test ./...`
+  - `go test -race ./...`
+- Results: all green.
+- Remaining risks or follow-ups: none specific to this story; the
+  ai/* tag still has API-0010 (`ai-update`) outstanding and follows the
+  same POST-with-required-body shape — should be a near-mechanical copy.
+- **Learnings for future iterations:**
+  - The ai/* tag's `*-suggest` endpoint is NOT a deploy/create twin —
+    its body is intentionally lean (two required strings, one optional)
+    so this is the canonical "small body" template for any future
+    sibling that asks for `aiId + freeform input`. Reuse the
+    `ai-cov-suggest-NNNN` token convention for downstream suggest-style
+    operations rather than copying ai-deploy's heavy multi-array
+    fixture.
+  - The harness happily accepts a 200-with-empty-object response for
+    any operation whose spec declares `additionalProperties: false`
+    on the success schema — no need to invent a payload just because
+    the request body is non-trivial. Keep `SuccessResponse: ` + "`{}`"
+    so envelope assertions stay focused on `data.method` /
+    `data.status`.
+---
