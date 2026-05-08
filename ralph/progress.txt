@@ -3321,3 +3321,75 @@
     cleanly indexes every fixture-as-test-data marker across the
     suite without false positives from real credentials.
 ---
+
+## 2026-05-08 - API-0033 - Cover application-saveGitlabProvider (POST /application.saveGitlabProvider)
+- Implemented per-operation contract coverage for
+  `application-saveGitlabProvider` by appending a single
+  `apiCoverageCase` literal (StoryID `API-0033`) to
+  `internal/cli/api_coverage_test.go`'s `coveredAPIOperations`
+  slice. The append-only harness automatically asserts all five
+  invariants: registry id/method/path/tag, `yalla schema get`,
+  `yalla manifest`, httptest success round-trip with body
+  forwarding, and a representative 401 -> `E_AUTH` failure path.
+- The saveGitlabProvider body extends the gitea/github six-field
+  shape with TWO extra required vendor fields:
+  `gitlabProjectId` (`anyOf:[number,null]`) and
+  `gitlabPathNamespace` (`anyOf:[string,null]`). Required set as
+  per the spec is: `applicationId` (plain string),
+  `gitlabBranch` / `gitlabBuildPath` / `gitlabOwner` /
+  `gitlabRepository` / `gitlabId` / `gitlabPathNamespace`
+  (`anyOf:[string,null]`), plus the numeric `gitlabProjectId`.
+  Optional `enableSubmodules` (boolean) and `watchPaths`
+  (`anyOf:[array<string>,null]`) are intentionally omitted to
+  keep the fixture minimal-but-valid, matching the API-0031 /
+  API-0032 precedent. `gitlabProjectId` is populated with the
+  numeric literal `1033` (story-id-derived) — the FIRST
+  application/* coverage entry whose required surface contains a
+  non-string, non-boolean primitive.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` -- appended the API-0033
+    case after API-0032 (one contiguous block; no other touches).
+  - `ralph/prd.json` -- flipped `passes: false` -> `passes: true`
+    for `API-0033`.
+  - `ralph/progress.txt` -- this entry.
+- Verification run from repo root:
+  - `gofmt -l .` -- clean.
+  - `go mod tidy` -- no module changes.
+  - `go vet ./...` -- clean.
+  - `go test ./...` -- all packages pass.
+  - `go test -race ./...` -- all packages pass; `internal/cli` 2.430s.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` -- not installed locally, intentionally skipped per
+    Codebase Patterns guidance.
+- Remaining risks or follow-ups: none for this story. The next
+  application/* coverage gap is API-0034 (saveGitProvider, the
+  custom-git outlier of the family). Per the spec, custom-git
+  promotes `watchPaths` (`anyOf:[array<string>,null]`) from
+  optional to required, so the fixture must populate it with at
+  minimum an empty array (or a single-element array). The other
+  required custom-git fields are `applicationId` plus
+  `customGitBranch` / `customGitBuildPath` / `customGitUrl` /
+  `customGitSSHKeyId` (each `anyOf:[string,null]`).
+- **Learnings for future iterations:**
+  - `application-saveGitlabProvider` is now the canonical literal
+    for `save*Provider` family entries that mix nullable-string
+    required fields with a numeric required field. Future
+    coverage entries with `anyOf:[number,null]` requirements
+    should pattern-match against this literal: use a JSON numeric
+    literal (e.g. `1033`) rather than the usual `app-cov-*`
+    string placeholder, with a story-id-derived value to keep it
+    distinct.
+  - The contiguous, story-id-sorted ordering of
+    `coveredAPIOperations` continues to scale: API-0030 -> 0031
+    -> 0032 -> 0033 are now one readable block of four
+    application/* `save*Provider` entries with progressively
+    richer required surfaces (env-vars boolean, gitea nullable
+    strings, github closed enum, gitlab numeric primitive).
+  - Closed-enum required fields (e.g. github `triggerType`)
+    should always be populated with the schema's `default` value
+    when one exists; nullable-number required fields should be
+    populated with a story-id-derived numeric literal that is
+    distinct from any string placeholder. Both conventions keep
+    fixtures resilient against future schema-aware validators
+    being wired into the harness.
+---

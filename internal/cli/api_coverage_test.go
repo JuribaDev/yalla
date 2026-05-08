@@ -891,6 +891,56 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0033",
+		OperationID: "application-saveGitlabProvider",
+		Method:      http.MethodPost,
+		Path:        "/application.saveGitlabProvider",
+		Tag:         "application",
+		// Mirrors the schema in `data/openapi.json` for
+		// /application.saveGitlabProvider. The required set extends the
+		// gitea/github six-field shape with TWO extra vendor fields:
+		// `gitlabProjectId` (`anyOf:[number,null]`) and
+		// `gitlabPathNamespace` (`anyOf:[string,null]`). This makes
+		// API-0033 the FIRST application/* coverage entry whose required
+		// surface includes a non-string, non-boolean primitive
+		// (`gitlabProjectId` is numeric), so we populate it with a JSON
+		// numeric literal rather than the usual `app-cov-*` string
+		// placeholder. The trailing-`1033` digit convention echoes the
+		// story id and keeps the value distinct from any other fixture
+		// in the file. Required fields are: `applicationId` (plain
+		// string), `gitlabBranch` / `gitlabBuildPath` / `gitlabOwner` /
+		// `gitlabRepository` / `gitlabId` / `gitlabPathNamespace` (each
+		// `anyOf:[string,null]`), and `gitlabProjectId`
+		// (`anyOf:[number,null]`). Optional `enableSubmodules`
+		// (boolean) and `watchPaths` (`anyOf:[array<string>,null]`) are
+		// intentionally omitted to keep the fixture minimal-but-valid,
+		// matching the API-0031 / API-0032 precedent for
+		// many-required-nullable-string `save*Provider` bodies.
+		// Distinct `app-cov-gitlab-<slug>-0033` placeholders keep diffs
+		// readable and let any future schema validator's failure
+		// messages point at the offending field. The successor story
+		// API-0034 (custom git) is the family outlier — it promotes
+		// `watchPaths` from optional to required — and should
+		// pattern-match against THIS literal only for the shared
+		// `applicationId` / nullable-string spine, not the
+		// numeric-required `gitlabProjectId`.
+		SampleBody: json.RawMessage(`{
+			"applicationId": "app-cov-gitlab-application-id-0033",
+			"gitlabBranch": "app-cov-gitlab-branch-0033",
+			"gitlabBuildPath": "app-cov-gitlab-build-path-0033",
+			"gitlabOwner": "app-cov-gitlab-owner-0033",
+			"gitlabRepository": "app-cov-gitlab-repository-0033",
+			"gitlabId": "app-cov-gitlab-id-0033",
+			"gitlabProjectId": 1033,
+			"gitlabPathNamespace": "app-cov-gitlab-path-namespace-0033"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching every prior application/* peer. Empty-object body keeps
+		// the success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
