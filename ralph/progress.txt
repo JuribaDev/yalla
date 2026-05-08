@@ -15270,3 +15270,35 @@ Learnings for future iterations:
     404→CodeNotFound override stays unavailable; the harness-default
     401→CodeAuth representative failure is the right call.
 ---
+
+## 2026-05-08 - API-0123
+- Implemented coverage for `domain-validateDomain` (POST /domain.validateDomain).
+- Added fixture entry in `internal/cli/api_coverage_test.go` after API-0122
+  inside the `domain-cov-*` per-tag fixture-isolation namespace. SampleBody
+  supplies the spec-required `domain` field
+  (`domain-cov-validate-domain-0123.example.com`); optional `serverIp` is
+  intentionally omitted to keep the positive case minimal. SuccessResponse is
+  `{}` per the spec's empty-success cohort. Failure leg defaults to 401
+  → CodeAuth (spec omits 404 — stateless validation).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (added API-0123 fixture)
+  - `ralph/prd.json` (`API-0123.passes` → true)
+  - `ralph/progress.txt` (this entry)
+- Verification run: `gofmt -w .`, `go vet ./...`, `go test ./...`,
+  `go test -race ./...`, `go mod tidy`. All pass. Optional tools
+  (`goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+  `goreleaser`) are not installed locally; documented per house rule
+  rather than silently skipped.
+- Remaining risks: none beyond the standing API-coverage harness contract.
+- Learnings for future iterations:
+  - `domain` tag is now fully covered (API-0115..API-0123, nine ops). Next
+    PRD-ordered priority-3 backlog story is API-0124
+    `environment-byProjectId` which opens a brand-new `environment-cov-*`
+    per-tag fixture-isolation namespace; the next contributor must
+    re-verify the spec against `internal/api/data/openapi.json` per the
+    forward-reference lesson before assuming any field shape.
+  - The `<tag>-cov-<slug>-<storyID>` fixture-naming convention scales
+    cleanly to single-required-string POST validation endpoints; the
+    minimal positive case is still SampleBody only the REQUIRED field,
+    deferring optional-field coverage to follow-up stories.
+---
