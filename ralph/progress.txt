@@ -2730,3 +2730,50 @@
     in the application/* tag are reload (API-0026) and start/stop
     (API-0036/0037), which the spec spot-check should confirm before each.
 ---
+
+## 2026-05-08 - API-0025 (application-refreshToken, POST /application.refreshToken)
+- Added the per-operation contract entry for `application-refreshToken` to
+  `coveredAPIOperations` in `internal/cli/api_coverage_test.go`. Same minimal
+  POST shape as the nine prior application/* peers (cancelDeployment,
+  cleanQueues, clearDeployments, delete, disconnectGitProvider, killBuild,
+  markRunning, redeploy, …): a single required `applicationId` string in
+  the request body and a `{}` empty-object 200 response with
+  `additionalProperties: false`. The shared harness (registry/schema/
+  manifest/success/failure sub-tests) picks the entry up automatically
+  with no production-code changes; the operation was already wired through
+  the embedded OpenAPI spec, the `api.Default()` registry, and the raw
+  `yalla api call` executor.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (+25 lines, one struct literal).
+  - `ralph/prd.json` (`API-0025.passes` → `true`).
+  - `ralph/progress.txt` (this entry).
+- Verification run (from repo root):
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — no diff.
+  - `go vet ./...` — clean.
+  - `go test ./internal/cli -run 'TestAPICoverage' -count=1` — PASS.
+  - `go test ./...` — PASS (cli 0.887s, all other packages cached).
+  - `go test -race ./...` — PASS (cli 2.398s, all other packages cached).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`
+    not installed locally — documented per the Codebase Patterns baseline
+    rather than silently skipped. No new imports introduced.
+- Remaining risks / follow-ups: none. Next pending API story by priority is
+  API-0026 (`application-reload`, POST /application.reload), still
+  `passes: false`. Per the spec spot-check convention, re-confirm its
+  required-field shape via
+  `jq '.paths["/application.reload"]' internal/api/data/openapi.json`
+  before copy-pasting this fixture; based on the API-0024 learnings, reload
+  is expected to be another single-`applicationId` POST, but verify before
+  duplicating.
+- **Learnings for future iterations:**
+  - The `applicationId`-only minimal POST pattern now spans NINE operations:
+    cancelDeployment, cleanQueues, clearDeployments, delete,
+    disconnectGitProvider, killBuild, markRunning, redeploy, and now
+    refreshToken. Copy-paste pace can stay high while the spec spot-check
+    discipline (always run the `jq '.paths[...]'` query) prevents another
+    API-0020-style miss when an operation introduces a second required field.
+  - The next likely peers in the application/* tag remain `reload`
+    (API-0026), `start` (API-0036), and `stop` (API-0037), all of which
+    the historical Dokploy spec describes as targeting a single application
+    by id. Confirm each individually rather than batching assumptions.
+---

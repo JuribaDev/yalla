@@ -516,6 +516,31 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0025",
+		OperationID: "application-refreshToken",
+		Method:      http.MethodPost,
+		Path:        "/application.refreshToken",
+		Tag:         "application",
+		// Mirrors the schema in `data/openapi.json` for
+		// /application.refreshToken: a single required string field
+		// `applicationId` and no optional fields. Same minimal POST
+		// shape as the nine prior application/* peers
+		// (cancelDeployment, cleanQueues, clearDeployments, delete,
+		// disconnectGitProvider, killBuild, markRunning, redeploy, …).
+		// Deterministic-but-clearly-fake slug follows the established
+		// `app-cov-<slug>-<storyID>` convention so a future schema
+		// validator wired into the harness still sees a well-formed
+		// value.
+		SampleBody: json.RawMessage(`{
+			"applicationId": "app-cov-refresh-token-0025"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching every prior application/* peer. Empty-object body keeps
+		// the success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
