@@ -117,6 +117,31 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{"ok":true}`,
 	},
 	{
+		StoryID:     "API-0002",
+		OperationID: "ai-create",
+		Method:      http.MethodPost,
+		Path:        "/ai.create",
+		Tag:         "ai",
+		// Mirrors the schema in `data/openapi.json` for /ai.create:
+		// every top-level field (`name`, `apiUrl`, `apiKey`, `model`,
+		// `isEnabled`) is required, so the fixture supplies all five
+		// with deterministic-but-clearly-fake values. The bytes only
+		// ever live in a per-test `t.TempDir()` so the placeholder
+		// `apiKey` does not leak between cases.
+		SampleBody: json.RawMessage(`{
+			"name": "yalla-coverage-ai-create-0002",
+			"apiUrl": "https://example.test/v1",
+			"apiKey": "fake-api-key-coverage-0002",
+			"model": "gpt-test",
+			"isEnabled": true
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`.
+		// Keep the body empty-object so the success-leg envelope assertion
+		// stays focused on `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0011",
 		OperationID: "application-cancelDeployment",
 		Method:      http.MethodPost,

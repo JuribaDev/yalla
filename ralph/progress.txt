@@ -2015,3 +2015,58 @@
     (`app-cov-cancel-deploy-0011` → `app-cov-clean-queues-0012`) so a
     grep through the test file leads back to the exact PRD story.
 ---
+
+## 2026-05-08 - API-0002
+
+- **Story:** Cover ai-create (POST /ai.create), tag `ai`, priority 5.
+- **What shipped:** Appended one `apiCoverageCase{...}` literal to
+  `coveredAPIOperations` in `internal/cli/api_coverage_test.go` so the
+  existing five-part harness (registry invariants, `yalla schema get`,
+  `yalla manifest`, `httptest`-driven success round-trip, default
+  401 → `E_AUTH` failure leg) now also gates `ai-create`. No new
+  production code: the operation is already wired through the embedded
+  OpenAPI spec, the singleton `api.Default()` registry, and the raw
+  `yalla api call` executor.
+- **Sample body:** All five top-level fields are required on the spec
+  (`name`, `apiUrl`, `apiKey`, `model`, `isEnabled`), so the fixture
+  supplies all five with deterministic-but-clearly-fake values. The
+  bytes only ever live in a per-test `t.TempDir()` so the placeholder
+  `apiKey` never escapes the test process.
+- **Files changed:**
+  - `internal/cli/api_coverage_test.go` (+22 lines, sorted-by-StoryID insert
+    between API-0001 and API-0011).
+  - `ralph/prd.json` (`API-0002.passes` flipped `false` → `true`).
+  - `ralph/progress.txt` (this entry).
+- **Verification:**
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages PASS.
+  - `go test -race ./...` — all packages PASS.
+  - `bash scripts/verify.sh --quiet` — `all checks passed`.
+  - Optional tools (`govulncheck`, `staticcheck`, `golangci-lint`,
+    `goreleaser`) remain not installed locally; `verify.sh` documents the
+    skip list explicitly per CONTRIBUTING.md (not silently skipped).
+- **Remaining risks / follow-ups:** None for this story. The 200 response
+  is `{}` with `additionalProperties: false`, identical to the
+  application-* peers, so the success-leg envelope assertion stays focused
+  on `data.method` / `data.status` rather than payload projection. Future
+  iterations covering richer `ai.*` operations may want to add a non-401
+  representative failure (e.g. 422 on schema rejection) once an `ai-update`
+  / `ai-list` story lands.
+- **Learnings for future iterations:**
+  - For an API-XXXX story whose OpenAPI request body has only required
+    primitives (string/bool), the cheapest correct fixture is to enumerate
+    every required field with deterministic placeholders. The harness
+    round-trips bytes through `json.Unmarshal`, so any whitespace style is
+    fine, but field *names* must match the spec verbatim.
+  - The `ai` tag is the third tag covered (after `admin`, `application`).
+    `internal/api/registry_test.go` already lists `"ai"` in the expected
+    tag set, so no test-side change was needed; future stories adding a
+    *new* tag will need to update that slice and `TestAPICoverage_*` will
+    fail on `op.Tag != tc.Tag` if the registry does not surface it.
+  - The append-only `coveredAPIOperations` slice keeps story diffs down
+    to one contiguous insert. Sticking to the StoryID sort order means
+    `git blame` on a single line points back to the right commit even
+    when later stories add unrelated entries above or below.
+---
