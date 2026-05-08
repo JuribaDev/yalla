@@ -14747,3 +14747,54 @@ Learnings for future iterations:
   - When the spec omits 404 from the response set, the 404→CodeNotFound override is structurally inapplicable regardless of whether the operation has an id-bearing semantic — fall back to the harness default 401→CodeAuth.
   - Adding a coverage entry alone (no manifest/registry edits) is sufficient because the OpenAPI spec already declares the operation; `TestAPICoverage`, `TestAPI_Operations`, and `TestAPI_Manifest` derive coverage from `coveredAPIOperations` + the embedded spec.
 ---
+
+## 2026-05-08 18:35 UTC - API-0115
+- Implemented coverage for `domain-byApplicationId` (GET /domain.byApplicationId).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended a single
+    `apiCoverageCase` between API-0114 and API-0246. GET shape with
+    `SampleQuery: {"applicationId": ["domain-cov-by-application-id-0115"]}`,
+    no SampleBody (body-byte-comparison legs intentionally inert),
+    `SuccessResponse: "{}"`. Opens the `domain-cov-*` per-tag fixture
+    namespace as the first entry in the domain/* roster.
+  - `ralph/prd.json` — flipped API-0115 `passes` to `true`.
+- Verification run from repo root:
+  - `gofmt -w .`
+  - `go mod tidy` (no changes)
+  - `go vet ./...` — clean
+  - `go test ./... -count=1` — all packages OK
+  - `go test -race ./... -count=1` — all packages OK
+- Results: harness's success (200) and failure (default 401→CodeAuth)
+  legs both validate the new entry; the registry contract test
+  proves the operation is GET /domain.byApplicationId with tag
+  domain, the schema-get and manifest tests pick the entry up
+  automatically since the registry is openapi.json-driven.
+- Remaining risks or follow-ups:
+  - 234 priority-3 API stories remain. Next forward-reference target
+    is API-0116 `domain-byComposeId` — comment block already
+    pre-stages the spec re-verify reminder for the next contributor.
+- **Learnings for future iterations:**
+  - The api-operation stories are *not* code-gen stories. The
+    OpenAPI registry is built directly from
+    `internal/api/data/openapi.json` at startup, so neither
+    `internal/api/registry.go` nor any `cmd/` wiring needs editing
+    when adding a single operation. The whole story collapses to:
+    add one entry in `internal/cli/api_coverage_test.go >
+    coveredAPIOperations`, flip the PRD `passes` flag, append to
+    progress, commit.
+  - The `apiCoverageCase` struct fields default well: `FailureStatus`
+    defaults to 401, `FailureCode` defaults to `yerr.CodeAuth`,
+    `SuccessResponse` defaults to `{}` — a parameter-free GET needs
+    only StoryID/OperationID/Method/Path/Tag.
+  - For id-bearing GETs, `SampleQuery: map[string][]string{...}` is
+    the harness contract; the success-leg assertion re-reads
+    `r.URL.Query()` to confirm the CLI propagated the param verbatim.
+  - The "Keep entries sorted by StoryID" comment on
+    `coveredAPIOperations` is enforced loosely: insert by numeric
+    StoryID order. API-0114→API-0115→API-0246 is correct because
+    the priority-3 backlog is being filled in PRD order, not
+    alphabetic-tag order.
+  - The slug-prefix-is-not-shape lesson holds: cross-tag
+    `<tag>-cov-<slug>-<storyID>` names keep `git grep` traceable
+    without leaking shape information.
+---
