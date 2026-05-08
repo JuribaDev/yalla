@@ -17665,3 +17665,43 @@ Learnings for future iterations:
     header; future gitea/* peers should consult it rather than
     re-deriving.
 ---
+
+## 2026-05-08 - API-0163
+- Implemented coverage for `mariadb-move` (POST /mariadb.move) by appending an
+  `apiCoverageCase` literal between API-0162 (mariadb-deploy) and API-0188
+  (mounts-allNamedByApplicationId) in `internal/cli/api_coverage_test.go`,
+  preserving the StoryID-sorted insertion contract.
+- Spec re-verified directly against `internal/api/data/openapi.json`:
+  POST, tag `mariadb`, requestBody REQUIRED with two required string
+  scalars (`mariadbId`, `targetEnvironmentId`), responses 200/400/401/403/500,
+  no 404 declared. Empty-success body `{}` (additionalProperties:false).
+- Fixture token base `mariadb-cov-move-0163`, suffixed per-field for grep
+  traceability. Continues the open `mariadb-cov-*` per-tag namespace opened
+  at API-0160 and joined by API-0161/API-0162; verified non-colliding with
+  prior mariadb literals.
+- Failure leg: harness-default 401 -> CodeAuth retained (action POST has no
+  uniquely distinguishing 4xx surface; 404 inapplicable).
+- Forward reference updated: API-0162 entry's "next case is API-0163" comment
+  is now satisfied; new entry forwards to API-0164 `mariadb-one` (GET).
+- Files changed:
+  - internal/cli/api_coverage_test.go (insertion only)
+  - ralph/prd.json (passes:false -> true for API-0163)
+- Verification run: `gofmt -w .`, `go mod tidy`, `go vet ./...`,
+  `go test ./...`, `go test -race ./...` all pass. The
+  `coveredAPIOperations` harness automatically asserts the five
+  invariants (registry presence, schema get, manifest listing,
+  httptest success round-trip with body forwarding, 401 failure leg).
+- Remaining risks / follow-ups: none specific to this story. Next PRD
+  priority-4 entry is API-0164 `mariadb-one` (GET, parameter-bearing —
+  body-less coverage shape, distinct fixture pattern from POST cohort).
+- **Learnings for future iterations:**
+  - The mariadb roster is settling on a stable structure: kickoff at
+    API-0160 (changeStatus), single-required POST at deploy, multi-required
+    POST at create, two-required move/transfer POST. Re-using the existing
+    forward-reference comment block format keeps diffs small and readable.
+  - For two-required-string-scalar `*-move` operations, supplying both
+    fields verbatim activates the harness body-equality check; omitting
+    either would weaken the success leg without any compensating signal.
+  - The `next case` forward-reference paragraph in each entry is an
+    enforced contract — the consuming entry must satisfy it explicitly.
+---

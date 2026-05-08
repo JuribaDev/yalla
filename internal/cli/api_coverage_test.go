@@ -8707,6 +8707,117 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0163",
+		OperationID: "mariadb-move",
+		Method:      http.MethodPost,
+		Path:        "/mariadb.move",
+		Tag:         "mariadb",
+		// Fourth entry on the mariadb/* coverage roster, immediately
+		// following API-0162 `mariadb-deploy` and completing the
+		// forward reference embedded in that entry's comment block
+		// ("The next case in the PRD-ordered priority-4 backlog is
+		// API-0163 `mariadb-move`"). Continues inside the
+		// `mariadb-cov-*` per-tag fixture-isolation namespace opened by
+		// API-0160 `mariadb-changeStatus` and **must not** back-reference
+		// any closed prior-tag namespace (`set-cov-*`, `srv-cov-*`,
+		// `proj-cov-*`, `org-cov-*`, `compose-cov-*`, `app-cov-*`,
+		// `ai-cov-*`, `admin-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		// `cert-cov-*`, `clu-cov-*`, `deployment-cov-*`, `dest-cov-*`,
+		// `docker-cov-*`, `domain-cov-*`, `environment-cov-*`,
+		// `gitea-cov-*`, `mounts-cov-*`, `swarm-cov-*`, `usr-cov-*`,
+		// etc.) per the per-tag isolation rule reasserted at
+		// API-0335..API-0444 and originally established at API-0246
+		// `organization-active`.
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json` > `/mariadb.move` >
+		// `post`: method POST, tag mariadb, **no parameters**,
+		// requestBody REQUIRED with `application/json` and two
+		// REQUIRED top-level scalars `mariadbId` (string) and
+		// `targetEnvironmentId` (string), responses
+		// 200/400/401/403/500. The 200 response is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort. **No 404** is declared on
+		// this operation, mirroring the action-on-known-id POST
+		// precedent reasserted at API-0162 `mariadb-deploy`
+		// (a body-bearing imperative-action POST whose missing-target
+		// failure mode collapses into 400/validation under Dokploy's
+		// tRPC convention rather than a dedicated 404 leg).
+		//
+		// **Request body schema (REQUIRED top-level fields):**
+		//   - REQUIRED `mariadbId` (string) — resource id scalar; the
+		//     fixture below supplies a deterministic-but-clearly-fake
+		//     `mariadb-cov-move-0163-mariadbId` literal carrying the
+		//     `<tag>-cov-<slug>-<storyID>-<field>` suffix for `git grep`
+		//     traceability.
+		//   - REQUIRED `targetEnvironmentId` (string) — destination
+		//     environment scalar identifying where the resource is being
+		//     re-parented; the fixture supplies a clearly-fake
+		//     `mariadb-cov-move-0163-targetEnvironmentId` literal under
+		//     the same suffix convention.
+		//   - **No OPTIONAL fields declared.** The schema is a strict
+		//     two-required-scalar request, wider than API-0162
+		//     `mariadb-deploy`'s single-required-scalar shape and
+		//     narrower than the five-required-scalar API-0161
+		//     `mariadb-create`. This is the canonical
+		//     two-required-string-scalar move/transfer POST shape used
+		//     across every covered tag's `*-move` re-parenting mutation.
+		//
+		// **Shape positioning — two-required-string-scalar POST
+		// re-parenting mutation, body REQUIRED.** Both REQUIRED slots
+		// are plain non-nullable `type: string` (no `anyOf` /
+		// `nullable` / enum constraints), matching the minimal
+		// body-forwarding shape exercised by every covered re-parenting
+		// POST whose inputs are the source-id and target-environment
+		// scalars. The harness's `len(tc.SampleBody) > 0` gate at
+		// `runAPICoverageSuccess` activates the JSON content-type and
+		// byte-for-byte body comparison legs; this fixture supplies
+		// both REQUIRED fields so the success path verifies the CLI
+		// propagated the body verbatim.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so the
+		// 404→CodeNotFound override is structurally inapplicable.
+		// 400→CodeInvalidInput is *technically* available — a payload
+		// that omits either REQUIRED scalar would fail server-side
+		// validation — but the harness reserves 400 representatives
+		// for stories where payload validation is the operation's
+		// *uniquely distinguishing* failure mode. A conventional
+		// re-parenting POST collapses to type-checking, so the
+		// harness-default 401→CodeAuth failure leg remains the most
+		// representative single failure mode every authenticated
+		// Dokploy operation must re-prove, and is consistent with the
+		// 401→CodeAuth choice locked in by the mariadb/* kickoff at
+		// API-0160 `mariadb-changeStatus` and continued at API-0161
+		// `mariadb-create` and API-0162 `mariadb-deploy`.
+		//
+		// **Fixture token base** `mariadb-cov-move-0163` follows the
+		// established `<tag>-cov-<slug>-<storyID>` deterministic-but-
+		// clearly-fake naming convention and is verified non-colliding
+		// with API-0160's `mariadb-cov-changeStatus-0160`, API-0161's
+		// `mariadb-cov-create-0161`, and API-0162's
+		// `mariadb-cov-deploy-0162` literals.
+		//
+		// The next case in the PRD-ordered priority-4 backlog is
+		// API-0164 `mariadb-one` (declared a **GET** per the spec
+		// preview; the next contributor must re-verify the spec
+		// against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will continue inside the `mariadb-cov-*` per-tag
+		// fixture-isolation namespace opened by API-0160).
+		SampleBody: json.RawMessage(`{
+			"mariadbId": "mariadb-cov-move-0163-mariadbId",
+			"targetEnvironmentId": "mariadb-cov-move-0163-targetEnvironmentId"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0188",
 		OperationID: "mounts-allNamedByApplicationId",
 		Method:      http.MethodGet,
