@@ -14450,3 +14450,82 @@ Learnings for future iterations:
     fifteen-required-field mixed-type body or with any prior user/*
     GET on the roster.
 ---
+
+## 2026-05-08 - API-0113 - Cover docker-getStackContainersByAppName
+- Implemented coverage for `docker-getStackContainersByAppName`
+  (GET `/docker.getStackContainersByAppName`).
+- Added a new entry to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go` immediately after the API-0112
+  block and before the API-0246 organization opener. Spec
+  re-verified against `internal/api/data/openapi.json` per the
+  forward-reference lesson: GET with two query parameters —
+  `appName` (string, REQUIRED) and `serverId` (string, OPTIONAL) —
+  no requestBody, responses 200/400/401/403/404/500, 200 schema
+  is `{}` with `additionalProperties: false`. The harness's
+  `runAPICoverageSuccess` / `runAPICoverageFailure` pipeline picks
+  up the case automatically; no command-layer or registry code
+  changes were needed.
+- Failure-leg fields intentionally omitted (defaults to
+  401 → CodeAuth → exit 4). API-0112's design header had floated
+  this story as the natural home for the docker/* roster's
+  404→CodeNotFound representative, but the spec re-verification
+  here reveals `docker-getStackContainersByAppName` is *not* an
+  id-bearing retrieval — it's an `appName`-keyed list-style getter
+  (returns the container roster backing the stack, not a single
+  resource keyed by id). Per the bitbucket/* precedent at
+  API-0054..API-0055, fleet-wide list-style getters keep the
+  harness-default 401 path; the 404 override is reserved for the
+  canonical by-id peer where missing-row is the most representative
+  failure semantic.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (added API-0113 case)
+  - `ralph/prd.json` (passes: true for API-0113)
+  - `ralph/progress.txt` (this entry)
+- Verification run from repo root:
+  - `gofmt -w .` — clean
+  - `go mod tidy` — no changes
+  - `go vet ./...` — pass
+  - `go test ./...` — pass (all packages green)
+  - `go test -race ./...` — pass
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — not installed locally; documented previously,
+    skipped here per established practice.
+- Remaining risks/follow-ups:
+  - The docker/* roster's 404→CodeNotFound representative slot is
+    now formally *unreserved* — the docker/* tag exposes only
+    parameter-free, optional-serverId, or appName-keyed endpoints
+    in priority-3 coverage, so no docker/* peer offers an
+    id-bearing GET that would naturally consume the override. The
+    docker/* tag may legitimately exit without a 404 representative.
+  - API-0114 `docker-restartContainer` is the next docker/* case
+    per PRD ordering — declared a POST per the spec preview, almost
+    certainly carrying a request body shape distinct from the
+    appName-keyed GETs covered to date. The next contributor must
+    re-verify the spec before assuming any field carries over.
+- Learnings for future iterations:
+  - **Forward-reference predictions are hypotheses, not contracts.**
+    API-0112's design header predicted API-0113 would host the
+    docker/* 404 override "if 404 exercisability is confirmed at
+    spec re-verification". The re-verification here disconfirmed
+    the prediction — `docker-getStackContainersByAppName` is
+    structurally identical to API-0112 (appName-keyed list, not
+    id-bearing). Always re-verify and be prepared to *retract* a
+    prior story's forward reference. Documenting the retraction in
+    the new entry's design header is the canonical way to keep the
+    rationale chain auditable.
+  - **Slug-prefix coincidence ≠ shape inheritance, even within a
+    single tag.** API-0112 (`getServiceContainers*`) and API-0113
+    (`getStackContainers*`) happen to share an exact wire shape
+    (REQUIRED appName + OPTIONAL serverId, empty 200), but that
+    coincidence was confirmed by direct OpenAPI inspection — not
+    inherited from the peer entry. The slug-prefix-is-not-shape
+    lesson re-asserted at API-0345..API-0440 applies even to
+    near-duplicate operation names within the same tag prefix.
+  - **404 override slot can legitimately exit a tag empty.** Not
+    every tag *must* consume the 404→CodeNotFound representative.
+    If a tag's roster contains no canonical by-id GET (only
+    parameter-free, optional-serverId, or list-style endpoints),
+    the 404 slot stays unused and the tag closes on the
+    harness-default 401→CodeAuth path. The docker/* roster is
+    on track to be such a tag.
+---
