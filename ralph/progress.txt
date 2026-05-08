@@ -19276,3 +19276,76 @@ forward-reference lesson before assuming any field shape.
   - The `update` slug is NOT shape-transitive across tags. github-update has FOUR strictly-required strings and no optional fields — distinct from cross-tag `update` analogues that often carry a mix of required identifier + optional patch fields. Always re-verify the spec per-operation against `internal/api/data/openapi.json` per the API-0345..API-0444 forward-reference lesson.
   - The `<base>-<field>` (no `-fixture` suffix) literal style for fixture values is the precedent for body-scalar POSTs (API-0137 gitea-testConnection, API-0143 github-testConnection, now API-0144 github-update); the `-fixture`-suffixed form is used on canonical `*-one` by-id GETs (API-0142 github-one).
 ---
+
+## 2026-05-08 - API-0180 - Cover mongo-reload (POST /mongo.reload)
+- Added apiCoverageCases entry for `mongo-reload` in
+  `internal/cli/api_coverage_test.go` between API-0179 `mongo-rebuild`
+  and API-0188 `mounts-allNamedByApplicationId` per the StoryID-sorted
+  slice rule. This is the seventh entry on the priority-4 mongo/*
+  coverage roster opened at API-0174 `mongo-changeStatus`.
+- Spec re-verified per the API-0345..API-0444 forward-reference
+  lesson against `internal/api/data/openapi.json` >
+  `/mongo.reload` > `post`:
+  * Method POST, tag `mongo`
+  * Zero parameters
+  * REQUIRED `application/json` request body with TWO REQUIRED string
+    scalars (`mongoId`, `appName`) and NO optional fields
+  * Responses 200/400/401/403/500 (no 404)
+  * 200 schema is `{}` with `additionalProperties: false`
+- Fixture token base `mongo-cov-reload-0180` continues the per-tag
+  `mongo-cov-*` namespace; both REQUIRED scalars are populated inline
+  with the `<tag>-cov-<slug>-<storyID>-<field>` literal convention.
+- Failure leg uses harness defaults (401 -> CodeAuth) since 404 is
+  not declared on this operation and the by-id 404-override slot was
+  consumed by API-0178 `mongo-one`. Consistent with the imperative-
+  action POST precedent at API-0162 `mariadb-deploy`, API-0174
+  `mongo-changeStatus`, API-0176 `mongo-deploy`, and API-0179
+  `mongo-rebuild`.
+- Files changed:
+  * `internal/cli/api_coverage_test.go` (+1 case literal, ~120 lines)
+  * `ralph/prd.json` (passes: true for API-0180)
+  * `ralph/progress.txt` (this entry)
+- Verification (all from repo root):
+  * `gofmt -w .` -> clean
+  * `go mod tidy` -> no diff
+  * `go vet ./...` -> clean
+  * `go test ./...` -> all packages PASS
+  * `go test -race ./...` -> all packages PASS
+  * Targeted `go test -v -run TestAPICoverage ./internal/cli/...`
+    confirms all five contract subtests (RegistryInvariants,
+    SchemaCommandWorks, ManifestListsOperation, SuccessRoundTrip,
+    RepresentativeFailure) PASS for API-0180/mongo-reload.
+- Tools NOT available locally (per documented policy): `goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`.
+- Remaining risks / follow-ups: API-0181 `mongo-remove` is the next
+  pending priority-4 mongo/* peer; the forward-reference comment in
+  this entry reserves the `mongo-cov-remove-0181` slug for it. The
+  next contributor must re-verify the spec per-operation per the
+  slug-prefix-is-not-shape lesson.
+- **Learnings for future iterations:**
+  - **Two-scalar `(<id>, appName)` reload shape is the canonical
+    `*-reload` POST surface** under Dokploy's tRPC convention. It
+    sits structurally between API-0179 `mongo-rebuild`'s single
+    `mongoId` and API-0174 `mongo-changeStatus`'s `(mongoId,
+    applicationStatus)` shape — narrower than the 4-required-scalar
+    create POSTs (e.g. API-0175 `mongo-create`, API-0144
+    `github-update`) and wider than the single-scalar imperative
+    POSTs. Re-verify per-operation: the `appName` companion is not
+    universal across the database tags' reload endpoints.
+  - **Per-tag isolation comment must enumerate `github-cov-*`** as
+    a closed prior-tag namespace (closed at API-0144). The previous
+    mongo/* entries (API-0174..API-0179) predate that closure and
+    do not list it; subsequent mongo/* entries (and any priority-3
+    backlog peers landing after API-0144) must include it in the
+    "must not back-reference" enumeration.
+  - **Inline JSON body field ordering** in `SampleBody` matches the
+    spec's `required` array order (`mongoId` first, `appName`
+    second). The harness's success-leg byte-for-byte body
+    comparison is order-sensitive on raw bytes; the renderer
+    preserves the `--input` field order verbatim, so fixture order
+    must match the order the OpenAPI spec lists. The two-scalar
+    request body uses `json.RawMessage` with tab-indented keys, one
+    per line, terminating each non-final field with a comma —
+    structurally identical to API-0177 `mongo-move`'s two-scalar
+    body.
+---
