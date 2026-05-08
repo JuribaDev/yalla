@@ -22109,3 +22109,73 @@ forward-reference lesson before assuming any field shape.
     spec re-verification is what makes the peer-template short-cut
     safe.
 ---
+
+## 2026-05-09 02:13 +03 - API-0279 Cover postgres-remove (POST /postgres.remove)
+- Added the `postgres-remove` coverage entry to the table-driven
+  `coveredAPIOperations` slice in `internal/cli/api_coverage_test.go` so
+  the shared `runAPICoverageSuccess` / `runAPICoverageFailure` harness
+  exercises `yalla api call postgres-remove --input <file> --json` and
+  `yalla schema get postgres-remove --json` against an `httptest.Server`
+  fixture. The harness assertions cover (a) the operation appears in
+  `yalla manifest --json` via `Registry.AllSchemas()`, (b) the
+  success-leg JSON envelope uses `yalla.output.v1` with stdout-only
+  data, (c) the failure-leg JSON envelope uses `yalla.error.v1`
+  with the harness-default `401 → CodeAuth` mapping and stderr-only
+  rendering, and (d) the request body is propagated byte-for-byte to
+  the upstream Dokploy stub.
+- Spec re-verified (`internal/api/data/openapi.json` >
+  `/postgres.remove` > `post`): method POST, tag `postgres`, **no
+  parameters**, requestBody REQUIRED with a single REQUIRED
+  `postgresId` (string) and **no optional fields**, responses
+  `200/400/401/403/500`. The 200 schema is `{}` with
+  `additionalProperties: false`. **No 404** is declared, so
+  `404→CodeNotFound` is structurally inapplicable here and the
+  postgres/* per-tag 404 representative remains exclusive to
+  API-0276 `postgres-one`.
+- Shape matches API-0274 `postgres-deploy` and API-0277
+  `postgres-rebuild` exactly (single-required-string-scalar POST
+  imperative-action mutation), and the cross-tag `*-remove` peer chain
+  (API-0167 `mariadb-remove`, API-0181 `mongo-remove`,
+  API-0201 `mysql-remove`). Fixture token base
+  `postgres-cov-remove-0279` follows the
+  `<tag>-cov-<slug>-<storyID>` deterministic-but-clearly-fake naming
+  convention and is verified non-colliding with prior postgres-cov-*
+  literals (API-0272..API-0278).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (registry entry insertion only)
+  - `ralph/prd.json` (`API-0279.passes` → true)
+  - `ralph/progress.txt` (this entry)
+- Verification:
+  - `gofmt -w .` clean.
+  - `go mod tidy` clean.
+  - `go vet ./...` clean.
+  - `go test ./...` clean (all packages green).
+  - `go test -race ./...` clean (all packages green).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` remain not installed locally and are documented as
+    such per the established baseline.
+- Remaining risks / follow-ups:
+  - API-0280 `postgres-saveEnvironment` is the next PRD-ordered
+    priority-4 backlog story; the next contributor must re-verify the
+    spec against `internal/api/data/openapi.json` per the
+    forward-reference lesson before assuming any field shape, and
+    will continue inside the `postgres-cov-*` per-tag fixture-isolation
+    namespace opened by API-0272.
+- Learnings for future iterations:
+  - Single-required-string-scalar POST imperative-action mutations
+    (e.g. `*-deploy`, `*-rebuild`, `*-remove`, `*-start`, `*-stop`)
+    are the most common postgres/* shape; the registry entry collapses
+    to `SampleBody: {"postgresId": "<token>"}` and
+    `SuccessResponse: "{}"` plus a forward-reference comment block.
+    No new harness scaffolding is required.
+  - When the spec omits 404 from the response set, the
+    404→CodeNotFound override is structurally inapplicable; the
+    harness-default 401→CodeAuth failure leg is the correct invariant
+    for action-on-known-id POSTs whose missing-target failure mode
+    collapses into 400/validation under Dokploy's tRPC convention.
+  - The fixture token base must follow `<tag>-cov-<slug>-<storyID>`
+    and be verified non-colliding against every prior covered peer
+    in the same per-tag namespace (here: API-0272..API-0278). A
+    `git grep` for the new literal (`postgres-cov-remove-0279`)
+    must return zero hits before the entry is committed.
+---
