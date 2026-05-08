@@ -3235,3 +3235,89 @@
     so a grep for `app-cov-` cleanly indexes every fixture-as-
     test-data marker across the suite.
 ---
+
+## 2026-05-08 - API-0032 - Cover application-saveGithubProvider (POST /application.saveGithubProvider)
+- Implemented per-operation contract coverage for
+  `application-saveGithubProvider` by appending a single
+  `apiCoverageCase` literal (StoryID `API-0032`) to
+  `internal/cli/api_coverage_test.go`'s `coveredAPIOperations`
+  slice. The append-only harness automatically asserts all five
+  invariants: registry id/method/path/tag, `yalla schema get`,
+  `yalla manifest`, httptest success round-trip with body
+  forwarding, and a representative 401 → `E_AUTH` failure path.
+- The saveGithubProvider body inherits the six-field gitea shape
+  (`applicationId` plain string + five `anyOf:[string,null]`
+  vendor fields: `repository`, `branch`, `owner`, `buildPath`,
+  `githubId`) and adds ONE github-only required field:
+  `triggerType`, a closed enum (`"push"` / `"tag"`) with
+  `default: "push"`. This is the FIRST application/* coverage
+  entry to exercise a closed-enum required field. We populated
+  `triggerType` with the spec default `"push"` so the fixture
+  stays inside the permitted value set even if a future schema
+  validator is wired into the harness. Optional `enableSubmodules`
+  (boolean) and `watchPaths` (`anyOf:[array<string>,null]`) are
+  intentionally omitted to keep the fixture minimal-but-valid,
+  matching the API-0031 (saveGiteaProvider) precedent for
+  many-required-nullable-string `save*Provider` bodies. Distinct
+  `app-cov-github-<slug>-0032` placeholders keep diffs readable
+  and make any future schema-validator failure unambiguously
+  point at the offending field.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended the API-0032
+    case after API-0031 (one contiguous block; no other touches).
+  - `ralph/prd.json` — flipped `passes: false` → `passes: true`
+    for `API-0032`.
+  - `ralph/progress.txt` — this entry.
+- Verification run from repo root:
+  - `gofmt -l .` — clean.
+  - `go mod tidy` — no module changes.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass; `internal/cli` 0.904s.
+  - `go test -race ./...` — all packages pass; `internal/cli` 2.421s.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — not installed locally, intentionally skipped per
+    Codebase Patterns guidance.
+- Remaining risks or follow-ups: none for this story. The next
+  application/* coverage gaps are API-0033 (saveGitlabProvider)
+  and API-0034 (saveGitProvider). Per the spec, API-0033 (gitlab)
+  extends the gitea/github shape with two nullable fields —
+  `gitlabProjectId` (`anyOf:[number,null]`, the FIRST numeric-typed
+  required field across application/* coverage) and
+  `gitlabPathNamespace` (`anyOf:[string,null]`). API-0034
+  (custom git) is the outlier of the family: its required set
+  includes `watchPaths` (`anyOf:[array<string>,null]`) rather
+  than an `*Id` field, so its fixture must populate `watchPaths`
+  with at minimum an empty array (or a single placeholder string
+  inside an array) rather than omitting it.
+- **Learnings for future iterations:**
+  - `application-saveGithubProvider` is now the canonical literal
+    for `save*Provider` family entries that extend the gitea
+    shape with vendor-specific REQUIRED fields. API-0033 (gitlab)
+    should pattern-match against this entry — copy the
+    seven-field body, swap the `github*` slugs to `gitlab*`, and
+    add the two extra fields. Importantly, `gitlabProjectId` is
+    `anyOf:[number,null]`, so its placeholder MUST be a numeric
+    JSON literal (e.g. `1032`, mirroring the trailing story-id
+    digits convention) rather than the usual `app-cov-*` string —
+    this will be the first application/* fixture with a non-
+    string required value.
+  - Closed-enum required fields (`triggerType` here) should
+    always be populated with the schema's `default` value when
+    the enum has a default. This keeps the fixture valid against
+    both the current happy-path harness AND any future
+    enum-aware validator without forcing the test author to
+    audit the enum at fixture-write time.
+  - The contiguous, story-id-sorted ordering of
+    `coveredAPIOperations` continues to scale: API-0030 → 0031
+    → 0032 are now one readable block of three application/*
+    `save*Provider` entries with progressively richer required
+    surfaces (env-vars boolean, gitea nullable strings, github
+    closed enum). Reviewers can scan the block top-down to see
+    the family pattern emerge.
+  - The `app-cov-<vendor>-<slug>-<storyID>` placeholder
+    convention scales cleanly: `app-cov-github-*` here parallels
+    `app-cov-gitea-*` (API-0031), `app-cov-env-*` (API-0030), and
+    `app-cov-docker-*` (API-0029), so a grep for `app-cov-`
+    cleanly indexes every fixture-as-test-data marker across the
+    suite without false positives from real credentials.
+---

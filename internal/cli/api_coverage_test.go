@@ -844,6 +844,53 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0032",
+		OperationID: "application-saveGithubProvider",
+		Method:      http.MethodPost,
+		Path:        "/application.saveGithubProvider",
+		Tag:         "application",
+		// Mirrors the schema in `data/openapi.json` for
+		// /application.saveGithubProvider. The required set is the
+		// same six-field shape as API-0031 (saveGiteaProvider) —
+		// `applicationId` (plain string) plus `repository`, `branch`,
+		// `owner`, `buildPath`, and `githubId` (each
+		// `anyOf:[string,null]`) — PLUS one extra required field
+		// unique to the github vendor: `triggerType`, a closed enum
+		// (`"push"` / `"tag"`) with a `default: "push"`. This is the
+		// FIRST application/* coverage entry to exercise a
+		// closed-enum required field, so we populate it with the
+		// default value `"push"` to keep the fixture inside the
+		// permitted value set even if a future schema validator is
+		// wired into the harness. Optional `enableSubmodules`
+		// (boolean) and `watchPaths` (`anyOf:[array<string>,null]`)
+		// are intentionally omitted to keep the fixture minimal-but-
+		// valid, matching the API-0031 precedent for
+		// many-required-nullable-string `save*Provider` bodies.
+		// Distinct `app-cov-github-<slug>-0032` placeholders keep
+		// diffs readable and let any future schema validator's
+		// failure messages point at the offending field. The
+		// successor stories API-0033 (gitlab) / API-0034 (custom git)
+		// should pattern-match against THIS literal rather than
+		// API-0031 because both also extend the gitea shape with
+		// vendor-specific fields (gitlab adds two nullable
+		// `gitlabProjectId` / `gitlabPathNamespace`; custom-git
+		// promotes `watchPaths` from optional to required).
+		SampleBody: json.RawMessage(`{
+			"applicationId": "app-cov-github-application-id-0032",
+			"repository": "app-cov-github-repository-0032",
+			"branch": "app-cov-github-branch-0032",
+			"owner": "app-cov-github-owner-0032",
+			"buildPath": "app-cov-github-build-path-0032",
+			"githubId": "app-cov-github-id-0032",
+			"triggerType": "push"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching every prior application/* peer. Empty-object body keeps
+		// the success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
