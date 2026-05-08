@@ -15776,3 +15776,64 @@ Learnings for future iterations:
   - Single-required-scalar update mutations follow the API-0122 `domain-update`
     template byte-for-byte; only the field name and operation path change.
 ---
+## 2026-05-08 - API-0188 Cover mounts-allNamedByApplicationId (GET /mounts.allNamedByApplicationId)
+- First entry in the priority-3 mounts/* roster. Opens the new
+  `mounts-cov-*` per-tag fixture-isolation namespace. Spec re-verified
+  directly against `internal/api/data/openapi.json >
+  /mounts.allNamedByApplicationId > get`: GET, single REQUIRED query
+  parameter `applicationId` (string), no request body, responses
+  200/400/401/403/404/500. The 200 schema is `{}` with
+  `additionalProperties: false` (empty-success cohort).
+- Wire shape: single-required-query GET, no body. Structurally identical
+  to API-0124 `environment-byProjectId` with the parameter swapped from
+  `projectId` to `applicationId`. Continues the cross-tag id-bearing GET
+  precedent chain (API-0005, API-0113, API-0115, API-0116, API-0117,
+  API-0121, API-0124, API-0127).
+- Failure family: harness-default 401→CodeAuth retained. Spec declares
+  404 (so the 404→CodeNotFound override is technically applicable) but
+  the auth-first leg mirrors every prior single-required-query GET
+  opener and re-proves the auth invariant for the new `mounts-cov-*`
+  namespace.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended one
+    `apiCoverageCase` literal (StoryID API-0188) under
+    `coveredAPIOperations` between the API-0130
+    `environment-update` block and the API-0246 `organization-active`
+    block. Fixture base `mounts-cov-all-named-by-application-id-0188`.
+  - `ralph/prd.json` — flipped `API-0188.passes` from `false` → `true`.
+  - `ralph/progress.txt` — this entry.
+- Verification run from repo root:
+  - `gofmt -w .`        — clean.
+  - `go mod tidy`       — no diff.
+  - `go vet ./...`      — pass.
+  - `go test ./...`     — all 9 packages PASS (`internal/cli` 1.322s).
+  - `go test -race ./...` — all 9 packages PASS (`internal/cli` 2.903s).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser`: not installed in this environment; documented
+    missing per the iteration runbook fallback.
+- Remaining risks / follow-ups:
+  - 218 priority-3+ stories still pending. Next PRD-ordered priority-3
+    entry is API-0189 `mounts-create` (declared a POST in the spec
+    preview); next contributor must re-verify against
+    `internal/api/data/openapi.json` per the forward-reference lesson
+    and continue inside the `mounts-cov-*` namespace opened here.
+- **Learnings for future iterations:**
+  - The `mounts/*` tag namespace opens at API-0188 with a
+    single-required-query GET (`applicationId`) — the same shape that
+    opened `environment/*` at API-0124 with `projectId`. When opening
+    a brand-new tag namespace whose first PRD-ordered entry is a
+    `*-allBy<Foreign>Id` GET, prefer the API-0124 / API-0188 template
+    byte-for-byte (parameter rename only).
+  - The id-bearing-GET precedent chain now spans nine covered
+    operations across six tags (ai, docker, domain ×3, environment ×2,
+    mounts). The auth-first failure-leg discipline (401→CodeAuth even
+    when 404 is structurally available) remains the canonical opener
+    invariant for any per-tag namespace kickoff that uses a
+    single-required-query GET as its first entry.
+  - The append-only `coveredAPIOperations` slice in
+    `internal/cli/api_coverage_test.go` remains the *only* surface
+    that needs touching for an API-XXXX story when the operation
+    already lives in `internal/api/data/openapi.json`. The registry,
+    schema, and manifest are all built at runtime from the embedded
+    spec — no extra registration/manifest edits required.
+---
