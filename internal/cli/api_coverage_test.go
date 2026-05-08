@@ -5026,6 +5026,85 @@ var coveredAPIOperations = []apiCoverageCase{
 		FailureCode:   yerr.CodeNotFound,
 	},
 	{
+		StoryID:     "API-0105",
+		OperationID: "destination-remove",
+		Method:      http.MethodPost,
+		Path:        "/destination.remove",
+		Tag:         "destination",
+		// **Fourth entry in the destination/* roster** and the
+		// canonical by-id mutation for the tag — succeeds the
+		// parameter-free list-style GET kickoff at API-0102
+		// `destination-all`, the flat-required-body POST create at
+		// API-0103 `destination-create`, and the by-id GET fetch at
+		// API-0104 `destination-one`. Stays inside the still-open
+		// `dest-cov-*` per-tag fixture-isolation namespace opened at
+		// API-0102 and **must not** back-reference any closed
+		// `admin-cov-*`, `ai-cov-*`, `app-cov-*`, `backup-cov-*`,
+		// `bb-cov-*`, `cert-cov-*`, `clu-cov-*`, `compose-cov-*`,
+		// `deployment-cov-*`, `org-cov-*`, `proj-cov-*`, `set-cov-*`,
+		// or `srv-cov-*` namespace. The `dst-cov-*` fixture-token
+		// literal seen inside backup/* `destinationId` payloads
+		// (API-0040, API-0041, API-0050) is a *value* shape from the
+		// backup tag's namespace and is orthogonal to this
+		// destination/* tag namespace — the two must not be
+		// confused.
+		//
+		// **Spec re-verified per the API-0345..API-0396
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /destination.remove >
+		// post`: a **POST** with a **required JSON body** whose only
+		// required field is `destinationId` (string). Responses
+		// 200/400/401/403/500 — **structurally distinct from the
+		// destination/* `*-one` by-id GET (API-0104) which exposed a
+		// 404 slot; this `*-remove` mutation declares no 404,
+		// matching the API-0103 `destination-create` peer's
+		// no-404 mutation profile and reverting the failure-leg
+		// default to the cross-tag 401 → CodeAuth invariant. The
+		// 200 schema is `{}` with `additionalProperties: false`,
+		// matching every prior covered peer in the empty-success
+		// cohort.
+		//
+		// **Shape positioning — single-required-body-field POST,
+		// the canonical "delete a single resource by ID via
+		// request body" wire shape.** Mirrors the cross-tag by-id
+		// mutation precedent established by API-0003 `ai-delete`
+		// (one required `aiId` field) byte-for-byte at the wire
+		// level — only the field name on the body changes
+		// (`destinationId` here vs `aiId`). The harness forwards
+		// SampleBody verbatim via the `--input` JSON `body` field,
+		// the request reaches the httptest server as a POST with
+		// `Content-Type: application/json`, and
+		// `runAPICoverageSuccess` re-reads the body to confirm the
+		// CLI propagated the required field unchanged.
+		//
+		// **Family choice — harness-default 401 → CodeAuth failure
+		// leg.** The spec declares no 404 for this operation, so
+		// the API-0104 `destination-one` 404 → CodeNotFound override
+		// does not apply here. Auth-failure on a POST mutation is
+		// the most informative representative-failure assertion to
+		// exercise — a missing/invalid token must surface
+		// `E_AUTH` before any payload validation runs. Mirrors the
+		// API-0103 `destination-create` peer inside the same tag
+		// and the cross-tag mutation default established by
+		// API-0002 `ai-create`, API-0003 `ai-delete`, and
+		// API-0014 `application-create`. Per the established
+		// `<tag>-cov-<slug>-<storyID>` deterministic-but-clearly-
+		// fake naming convention, the fixture token
+		// `dest-cov-remove-0105` keeps `git grep` traceable to this
+		// PRD story without colliding with API-0102, API-0103
+		// (`dest-cov-create-0103-*`), or API-0104
+		// (`dest-cov-one-0104`) fixtures.
+		SampleBody: json.RawMessage(`{
+			"destinationId": "dest-cov-remove-0105"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer. Empty-object body
+		// keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,

@@ -13304,3 +13304,64 @@ Learnings for future iterations:
     fields, and `runAPICoverageSuccess` re-reads `r.URL.Query()` to
     confirm propagation. Anything else would conflate the contract.
 ---
+
+## 2026-05-08 - API-0105
+- Implemented coverage for Dokploy operation `destination-remove`
+  (POST /destination.remove, tag `destination`).
+- Files changed:
+  - `internal/cli/api_coverage_test.go`: appended a new
+    `apiCoverageCase` struct literal between API-0104 and API-0246.
+    Body fixture `{ "destinationId": "dest-cov-remove-0105" }` mirrors
+    the only required field declared by the spec; success leg returns
+    the `{}` empty-object body matching every prior peer in the
+    empty-success cohort. Failure leg uses the harness defaults
+    (401 → CodeAuth) because the spec declares no 404 for this
+    operation — explicitly distinct from the API-0104 by-id GET 404
+    override and matching the API-0103 create-mutation profile. The
+    `dest-cov-remove-0105` fixture token stays inside the still-open
+    `dest-cov-*` per-tag namespace and is collision-free vs API-0102,
+    API-0103, and API-0104 fixtures.
+  - `ralph/prd.json`: flipped API-0105 `passes` from `false` to `true`.
+- Verification run:
+  - `gofmt -w .` clean.
+  - `go mod tidy` clean.
+  - `go vet ./...` clean.
+  - `go test ./...` PASS (all packages).
+  - `go test -race ./...` PASS (all packages).
+- Results: API-0105 acceptance criteria proven by the shared
+  apiCoverageCase harness:
+  - registry presence (operationId/method/path/tag invariants),
+  - schema reachability (`yalla schema get destination-remove --json`),
+  - manifest inclusion (`yalla manifest --json`),
+  - httptest-backed success exchange with `--input request.json --json`
+    forwarding the required `destinationId` body field verbatim,
+  - representative-failure leg surfacing 401 → `E_AUTH` with
+    `yalla.error.v1` envelope and non-zero exit code.
+- Remaining risks or follow-ups: none for this story. The
+  destination/* roster continues at API-0106 `destination-testConnection`
+  (POST) — re-verify the spec body shape per the slug-prefix-is-not-shape
+  / forward-reference lessons before assuming any field shape is
+  identical.
+- **Learnings for future iterations:**
+  - API-XXXX stories whose operations are entirely OpenAPI-driven
+    (raw API call + schema + manifest) require **no production code
+    changes** — only a single `apiCoverageCase` literal in
+    `internal/cli/api_coverage_test.go`. The shared harness handles
+    every acceptance bullet automatically.
+  - Per-tag fixture-token namespaces (`dest-cov-*` here) stay open
+    across consecutive stories within a tag. A new entry inside an
+    open namespace must not back-reference any closed sibling-tag
+    namespace, but it **must** stay collision-free against earlier
+    entries inside the same open namespace.
+  - The 404 → CodeNotFound failure-leg override is **opt-in per
+    operation** and only applies when the spec actually declares
+    a 404 response for that operationId. Mutation operations like
+    `*-create`, `*-remove`, `*-update`, `*-delete` typically declare
+    no 404 in the Dokploy spec and therefore default back to the
+    cross-tag 401 → CodeAuth invariant.
+  - When the spec lists the same operationId-suffix across tags
+    (e.g. `*-remove`), do not assume the body shape matches any
+    other tag's `*-remove` — re-verify the body schema against
+    `internal/api/data/openapi.json > /<tag>.<op> > <method>`
+    before constructing the SampleBody fixture.
+---
