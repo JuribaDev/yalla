@@ -9870,3 +9870,47 @@ Learnings for future iterations:
     `-fixture` suffix so the redactor's defence-in-depth path stays exercised
     even though the harness never wires real secrets.
 ---
+
+## 2026-05-08 - API-0371
+- **Implemented**: Coverage for Dokploy operation `settings-getWebServerSettings`
+  (GET /settings.getWebServerSettings) — appended one struct literal to
+  `coveredAPIOperations` so the existing harness drives all five contract
+  legs (registry invariants, schema reachability, manifest inclusion,
+  httptest success, representative 401 → CodeAuth failure).
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` (+~140 lines): API-0371 case appended
+    after API-0370. Parameter-free GET shape (no `SampleBody`, no
+    `SampleQuery`, no `SamplePathParams`, no failure overrides), matching
+    the API-0363..API-0368 sub-roster precedent and explicitly NOT
+    inheriting API-0369's OPTIONAL `serverId` query.
+  - `ralph/prd.json`: flipped `API-0371.passes` to `true`.
+- **Verification**:
+  - `gofmt -w internal/cli/api_coverage_test.go` ✓
+  - `go mod tidy` ✓ (no diff)
+  - `go vet ./...` ✓
+  - `go test ./...` ✓ (all 9 packages pass)
+  - `go test -race ./...` ✓ (all 9 packages pass)
+  - Optional tools (`goimports`, `golangci-lint`, `staticcheck`,
+    `govulncheck`, `goreleaser`) remain not installed locally; documented
+    in the existing US-0011 verify.sh contract.
+- **Remaining risks / follow-ups**: none. Next case in the settings/*
+  roster is API-0372 `settings-haveActivateRequests` (GET; per the PRD
+  the response set drops 404, the first deviation from the
+  API-0363..API-0368/API-0371 404-bearing GET sub-roster). The
+  hand-off comment in the API-0371 entry warns the next contributor
+  to re-verify the spec rather than assuming carry-over.
+- **Learnings for future iterations**:
+  - The settings/* GET cohort now contains TWO distinct shapes:
+    parameter-free (API-0363..API-0368, API-0371) and OPTIONAL
+    `serverId` query (API-0369). The verb axis flipped at API-0370
+    (POST), then flipped back here. Slug-prefix matching (`get*`)
+    is unreliable for any axis (verb, parameters, or response set).
+  - Every parameter-free GET on this OpenAPI surface continues to
+    declare a 200 schema of `{ "type": "object", "properties": {},
+    "additionalProperties": false }` regardless of what the actual
+    payload would be on a live Dokploy instance. The harness ships
+    `{}` as the canonical wire body and the contract tests pass.
+  - `runAPICoverageSuccess`'s GET branch ignores `SampleBody`
+    entirely, so populating one would silently encode dead code on
+    the wire. Leave it nil for GETs.
+---
