@@ -1532,6 +1532,49 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0049",
+		OperationID: "backup-remove",
+		Method:      http.MethodPost,
+		Path:        "/backup.remove",
+		Tag:         "backup",
+		// Tenth backup/* coverage entry and the SECOND non-`manualBackup*`
+		// backup/* POST after the seed API-0040 (backup-create). With
+		// API-0048 the inspection cohort opened (sole member: backup-one,
+		// the only backup/* GET besides API-0041 backup-listBackupFiles);
+		// this entry pivots the roster from inspection back to mutation
+		// to open the by-id mutation cohort that API-0050 (backup-update)
+		// will close. The spec at `data/openapi.json > /backup.remove >
+		// post` is byte-identical in shape to every member of the
+		// `backup-manualBackup*` family closed at API-0047 — single
+		// REQUIRED `backupId` (string) under `requestBody.required =
+		// true`, no optional siblings, no path or query parameters — so
+		// the fixture is a near-verbatim mirror of API-0046
+		// (backup-manualBackupPostgres) with only the slug, story id,
+		// and path/operationId rewritten. The `manualBackup*` family
+		// took a sub-namespace (`backup-cov-manual-<slug>-<storyID>`);
+		// `remove` lives outside that family, so it returns to the bare
+		// `backup-cov-<slug>-<storyID>` namespace seeded by API-0040
+		// (`backup-cov-create-0040`), tweaked by API-0041
+		// (`backup-cov-list-files-0041`), and reasserted by API-0048
+		// (`backup-cov-one-0048`). API-0050 backup-update will follow
+		// the same bare namespace as the second by-id mutation sibling.
+		SampleBody: json.RawMessage(`{
+			"backupId": "backup-cov-remove-0049"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the empty-success convention shared by every prior
+		// backup/* peer (API-0040 backup-create, API-0041
+		// backup-listBackupFiles, API-0042 backup-manualBackupCompose,
+		// API-0043 backup-manualBackupMariadb, API-0044
+		// backup-manualBackupMongo, API-0045 backup-manualBackupMySql,
+		// API-0046 backup-manualBackupPostgres, API-0047
+		// backup-manualBackupWebServer, API-0048 backup-one). Empty-
+		// object body keeps the success-leg envelope assertion focused
+		// on `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0066",
 		OperationID: "compose-cancelDeployment",
 		Method:      http.MethodPost,

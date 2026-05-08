@@ -8511,3 +8511,85 @@
   - When adding a GET-with-single-required-query-param entry, the canonical templates are API-0005 (ai-get) and API-0008 (ai-one). The harness ignores empty `SampleBody` / `SamplePathParams` maps so query-only operations stay terse — only `SampleQuery` needs to be populated.
   - The OpenAPI 200 schema being `{}` with `additionalProperties: false` is *not* the same as the runtime payload — Dokploy returns the populated record on 200; the spec just leaves the response surface empty. The coverage harness asserts forwarding and envelope shape, not payload semantics, so the empty-object `SuccessResponse` fixture is correct (and matches every prior covered peer's convention).
 ---
+
+## 2026-05-08 - API-0049 (Cover backup-remove POST /backup.remove)
+- Added one entry to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go` between API-0048 (backup-one) and
+  API-0066 (compose-cancelDeployment), keeping the slice sorted by StoryID
+  as the harness comment requires.
+- Spec at `data/openapi.json > /backup.remove > post`: POST,
+  `requestBody.required = true`, single REQUIRED `backupId` (string), no
+  optional siblings, no path/query parameters. 200 response is `{}` with
+  `additionalProperties: false`. Same shape as the `backup-manualBackup*`
+  family closed at API-0047, so the entry mirrors API-0046 verbatim with
+  only slug, story id, and operationId/path swapped.
+- Slug: `backup-cov-remove-0049` — back to the bare
+  `backup-cov-<slug>-<storyID>` namespace seeded by API-0040
+  (`backup-cov-create-0040`) since `remove` is not a member of the
+  `backup-cov-manual-*` sub-namespace closed at API-0047.
+- SuccessResponse left as `{}` so the success-leg envelope assertion stays
+  focused on `data.method` / `data.status` rather than payload projection
+  (matches every prior backup/* peer).
+- FailureStatus / FailureCode intentionally omitted: the spec declares
+  the standard 400/401/403/500 set, so the harness defaults
+  (FailureStatus=0 → 401, FailureCode="" → CodeAuth) are the most
+  representative. The 403 declared by the spec is **not** the
+  distinguishing failure mode for this op.
+
+Files changed:
+- `internal/cli/api_coverage_test.go` — +44 lines (one new
+  apiCoverageCase entry).
+- `ralph/prd.json` — flipped `passes: false` → `passes: true` for
+  API-0049 (single-line diff).
+- `ralph/progress.txt` — appended this entry.
+
+Verification run (all from repo root):
+- `gofmt -w .` — no diff.
+- `go mod tidy` — clean.
+- `go vet ./...` — clean.
+- `go test ./... -count=1` — all packages PASS.
+- `go test -race ./... -count=1` — all packages PASS (no races).
+- `go test ./internal/cli/... -run TestAPICoverage -v` — all five
+  per-story subtests for API-0049 PASS:
+  RegistryInvariants, SchemaCommandWorks, ManifestListsOperation,
+  SuccessRoundTrip, RepresentativeFailure.
+- `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+  `goreleaser` — not installed in this environment (documented in earlier
+  iterations; same status here).
+
+Remaining risks / follow-ups:
+- API-0050 (backup-update) is the next priority-4 backup/* story and per
+  the family pattern (mutation by-id) should also adopt the bare
+  `backup-cov-<slug>-<storyID>` namespace. Spec inspection of
+  `/backup.update > post` will determine whether it carries a wider body
+  than the `manualBackup*` family — if so, it's the second non-mirror
+  POST in the backup tag and may want extra optional-field commentary.
+- After API-0050, the next non-backup priority-4 backup/* sibling is
+  none; the backup tag closes at API-0050 and the roster moves on to
+  API-0051+ (bitbucket/*) per the priority order in `ralph/prd.json`.
+
+Learnings for future iterations:
+- The `apiCoverageCase` struct fields are minimal: leaving
+  SuccessStatus/SuccessResponse/FailureStatus/FailureCode at zero values
+  picks up sane defaults (200, `{}`, 401, CodeAuth). For an empty-body
+  POST with a single required string field and the standard
+  400/401/403/500 response set, the entry needs only StoryID,
+  OperationID, Method, Path, Tag, SampleBody, and (optionally)
+  SuccessResponse — five fields plus narration, no failure-leg
+  customisation.
+- The `backup-cov-manual-<slug>-<storyID>` sub-namespace ONLY belongs to
+  the six `manualBackup*` siblings (API-0042..API-0047). Other backup/*
+  by-id POST stories (remove, update) revert to the bare
+  `backup-cov-<slug>-<storyID>` namespace seeded by API-0040 — using
+  the manual sub-namespace for non-manualBackup stories would break the
+  cross-story grep convention.
+- Keep the slice sorted by StoryID (the file-level comment at line 83
+  enforces this). Inserting between API-0048 and API-0066 keeps the
+  diff a single contiguous insert and the file order matches the
+  PRD's natural enumeration order.
+- The `TestAPICoverage_*` family auto-discovers entries from
+  `coveredAPIOperations`, so adding a new fixture is the ONLY change
+  required — no test-function edits, no registry edits, no schema
+  fixture files. The five subtests (Registry, Schema, Manifest,
+  Success, Failure) get generated automatically.
+---
