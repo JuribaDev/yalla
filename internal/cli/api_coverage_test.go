@@ -16509,6 +16509,128 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0435",
+		OperationID: "user-getContainerMetrics",
+		Method:      http.MethodGet,
+		Path:        "/user.getContainerMetrics",
+		Tag:         "user",
+		// Ninth entry on the user/* coverage roster, slotted in
+		// StoryID order after API-0434 `user-getBackups`. The
+		// `usr-cov-*` per-tag fixture-isolation namespace was
+		// established at API-0427 `user-all` and reasserted at
+		// API-0428..API-0434. Per the per-tag isolation rule
+		// originally established at API-0246 `organization-active`,
+		// every user/* fixture token base remains orthogonal to
+		// every prior tag's namespace (`set-cov-*`, `srv-cov-*`,
+		// `proj-cov-*`, `org-cov-*`, `compose-cov-*`, `app-cov-*`,
+		// `ai-cov-*`, `admin-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		// `cert-cov-*`, `clu-cov-*`, `deployment-cov-*`,
+		// `dest-cov-*`, etc.).
+		//
+		// **Spec re-verified per the API-0345..API-0434
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /user.getContainerMetrics > get`:
+		// a **GET** with **no request body** (the spec omits
+		// `requestBody` entirely on this operation) and **four
+		// required query parameters** — `url` (string), `token`
+		// (string), `appName` (string), and `dataPoints` (string).
+		// No path or header parameters are declared. Responses
+		// 200/400/401/403/404/500 — the 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort.
+		//
+		// **Shape positioning — multi-query GET that forwards an
+		// upstream provider URL and bearer token to a remote
+		// metrics scrape target.** Unlike the parameter-free GETs
+		// at API-0427 `user-all`, API-0433 `user-get`, and
+		// API-0434 `user-getBackups` inside the same tag, this
+		// operation requires the caller to supply the metrics
+		// endpoint coordinates verbatim. Cross-tag the closest
+		// precedent for a multi-query GET that ferries an upstream
+		// secret on the wire is API-0007 `ai-getModels` (`apiUrl`
+		// + `apiKey`); the four-query shape itself echoes the
+		// query-only GETs at API-0005 `ai-get` and API-0008
+		// `ai-one` but with a wider parameter list. The harness
+		// forwards SampleQuery via the `--input` JSON `query`
+		// field and `runAPICoverageSuccess` re-reads
+		// `r.URL.Query()` to confirm the CLI propagated each param
+		// verbatim.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `usr-cov-getContainerMetrics-0435` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared with
+		//     every prior covered peer. The slug is the
+		//     operationId suffix (`getContainerMetrics`) verbatim —
+		//     per the slug-stem-is-not-shape lesson the slug only
+		//     carries identifier semantics, not shape semantics.
+		//   * `url` carries an `https://example.test/...` host so
+		//     the deterministic-but-clearly-fake convention is
+		//     preserved on the wire (matching API-0007
+		//     `ai-getModels`'s `apiUrl` precedent). The metrics
+		//     endpoint suffix `/metrics` is fabricated and stays
+		//     inside the per-test fixture; it never reaches a real
+		//     network because the success-leg httptest server
+		//     replies before any forwarded scrape would resolve.
+		//   * `token` is a secret-shaped query parameter and uses
+		//     the `fake-...-coverage-0435` placeholder shape
+		//     established by API-0007's `apiKey` precedent. The
+		//     value is restricted to the per-test `t.TempDir()`
+		//     JSON `--input` document and never reaches stdout,
+		//     stderr, or git history. The harness's
+		//     `output.NewRedactor(flags.Token)` scrubber operates
+		//     on the global `--token` flag, not on per-operation
+		//     query secrets, so the placeholder is the only
+		//     defence-in-depth here — agents supplying a real
+		//     metrics token must accept that the remote URL log
+		//     line of the forwarded request will not redact it.
+		//   * `appName` carries the `usr-cov-getContainerMetrics-0435`
+		//     fixture sentinel verbatim per the slug-on-the-wire
+		//     convention so a regression that drops the param
+		//     surfaces an unmistakable failure string.
+		//   * `dataPoints` is declared as a string in the spec
+		//     even though it represents a count; the fixture
+		//     supplies `"50"` to match the spec's wire shape
+		//     literally rather than coercing to an integer.
+		//
+		// **Failure-leg fields are intentionally omitted.** The
+		// 401 → CodeAuth representative remains the most
+		// informative for an authenticated GET that also forwards
+		// an upstream secret, matching API-0007 `ai-getModels`,
+		// API-0427 `user-all`, API-0429
+		// `user-checkUserOrganizations`, API-0433 `user-get`, and
+		// API-0434 `user-getBackups`. Although the spec declares
+		// 400/404 on this operation, exercising them would require
+		// the harness to drive the upstream metrics endpoint into
+		// a specific failure shape — that is outside the
+		// httptest-bounded contract test scope, and the harness
+		// default (`tc.FailureStatus == 0` → 401,
+		// `tc.FailureCode == ""` → CodeAuth) is the canonical
+		// representative cohort-wide.
+		//
+		// The next case in the PRD-ordered priority-2 backlog is
+		// API-0436; the next contributor must re-verify against
+		// `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field
+		// carries over from this entry — per the
+		// slug-prefix-is-not-shape lesson reasserted at
+		// API-0371..API-0434, even the shared `user-`
+		// operation-stem does not imply a carried-over body or
+		// parameter shape.
+		SampleQuery: map[string][]string{
+			"url":        {"https://example.test/usr-cov-getContainerMetrics-0435/metrics"},
+			"token":      {"fake-metrics-token-coverage-0435"},
+			"appName":    {"usr-cov-getContainerMetrics-0435"},
+			"dataPoints": {"50"},
+		},
+		// 200 response in the spec is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

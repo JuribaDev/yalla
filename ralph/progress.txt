@@ -13812,3 +13812,57 @@ Learnings for future iterations:
     docker/* coverage story; its spec lookup is a hard gate before any
     contributor can copy this entry's shape.
 ---
+
+## 2026-05-08 - API-0435
+- **Implemented**: Coverage entry for the Dokploy API operation
+  `user-getContainerMetrics` (GET /user.getContainerMetrics). Unlike the
+  parameter-free GET cohort that immediately precedes it
+  (API-0427/0433/0434), this operation requires four query parameters
+  (`url`, `token`, `appName`, `dataPoints`) and ferries an upstream
+  bearer token to a remote metrics scrape target. Wiring is therefore a
+  single struct-literal append to `coveredAPIOperations` with a populated
+  `SampleQuery` map; the existing harness covers registry invariants,
+  schema reachability, manifest inclusion, success round-trip (including
+  query-string verbatim propagation), and the 401 → CodeAuth
+  representative failure leg automatically.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended the API-0435 entry
+    after API-0434, sorted by StoryID. Mirrors the multi-query-with-
+    upstream-secret precedent from API-0007 `ai-getModels`. Uses the
+    `usr-cov-getContainerMetrics-0435` fixture-namespace token for
+    `appName` so a regression dropping the param surfaces an
+    unmistakable failure string. The placeholder secret
+    `fake-metrics-token-coverage-0435` lives only in the per-test JSON
+    `--input` document and never reaches stdout/stderr or git history.
+  - `ralph/prd.json` — flipped `passes` to `true` for API-0435.
+  - `ralph/progress.txt` — this entry.
+- **Verification**:
+  - `gofmt -w .` (clean)
+  - `go mod tidy` (no changes)
+  - `go vet ./...` (clean)
+  - `go test ./...` (all packages pass)
+  - `go test -race ./...` (all packages pass)
+- **Remaining risks**: None directly. The 400/404 failure-leg slots are
+  declared in the spec but exercising them would require driving the
+  remote metrics endpoint into a specific failure shape — outside the
+  httptest-bounded contract scope. The 401 → CodeAuth representative
+  remains the canonical cohort-wide failure leg.
+- **Learnings for future iterations**:
+  - The `usr-cov-getContainerMetrics-0435` fixture sentinel is wired
+    onto the wire via the `appName` query param; the
+    slug-on-the-wire convention applies here because the operation
+    declares string parameters the fixture can embed the sentinel
+    into. Contrast with API-0434 where the slug-on-the-wire
+    convention did *not* apply because the op was parameter-free.
+  - `dataPoints` is declared as a string type in the OpenAPI spec
+    even though it semantically represents an integer count; the
+    fixture supplies `"50"` (a numeric string) to match the spec's
+    wire shape literally — coercing to `50` (number) would violate
+    the closed-shape contract.
+  - The harness's `output.NewRedactor` only redacts the global
+    `--token` flag; per-operation query-string secrets like the
+    metrics-target `token` are not redacted in CLI logs or error
+    messages. Future contributors covering similar operations
+    (upstream provider tokens passed as query params) should note
+    this defence-in-depth gap.
+---
