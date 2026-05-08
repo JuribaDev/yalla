@@ -3629,3 +3629,56 @@
     skew, but plain `go test ./...` is enough when you've just edited a
     test file.
 ---
+
+## 2026-05-08 - API-0038
+- **Implemented**: Per-operation contract coverage for Dokploy `application-update`
+  (POST /application.update, tag `application`). Single new
+  `apiCoverageCase` literal in `internal/cli/api_coverage_test.go`. The
+  shared harness derives registry/method/path/tag invariants, schema-get
+  envelope, manifest inclusion, an httptest-backed success exchange, and
+  a 401→`E_AUTH` failure path from that one entry — no production-code
+  change is required because `application-update` was already wired into
+  the embedded OpenAPI registry and surfaced through `yalla api call` /
+  `yalla schema get` / `yalla manifest --json` from US-0004 onward.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — new struct literal for
+    `API-0038`, sorted after `API-0037` (application-stop).
+  - `ralph/prd.json` — set US-API-0038 `passes: true`.
+- **Schema notes**: request body schema lists `applicationId` as the
+  only required field; every other property (name, appName, env,
+  buildType, swarm config blobs, per-git-provider IDs, resource limits,
+  preview flags, …) is optional with anyOf-null semantics. The
+  minimal-but-valid fixture is therefore `{"applicationId": "..."}`,
+  staying robust if a future schema validator is wired into the harness.
+  200 response is `{}` with `additionalProperties: false`, matching
+  every other application/* mutation peer.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages `ok`; `internal/cli` runtime 1.137s.
+  - `go test -race ./...` — all packages `ok`; `internal/cli` runtime
+    2.431s with the race detector on.
+- **Tools NOT available locally** (unchanged from prior stories):
+  `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+  `goreleaser`.
+- **Remaining risks / follow-ups**: none. The harness covers registry
+  invariants, schema reachability, manifest inclusion, success
+  round-trip, and the representative failure path from the same single
+  entry.
+- **Learnings for future iterations**:
+  - The Dokploy `application-update` schema is the largest in the
+    `application` tag (90+ optional properties spanning app metadata,
+    swarm config, every supported git provider, build args, registry
+    IDs, preview deployment toggles, and resource limits). The required
+    set is still just `applicationId`, so the minimal-applicationId
+    POST family fixture (used by start/stop/reload/redeploy/delete) is
+    the right baseline — adding optional fields would only matter once
+    the harness gains a JSON-Schema validator. Until then, less is
+    more.
+  - When a schema's `additionalProperties` is *unset* (vs `false`),
+    JSON Schema treats it as permissive. `application-update` request
+    body falls into that bucket, so a future validator would not
+    reject extra keys; do not over-tighten the fixture for that
+    reason alone.
+---

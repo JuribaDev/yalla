@@ -1072,6 +1072,31 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0038",
+		OperationID: "application-update",
+		Method:      http.MethodPost,
+		Path:        "/application.update",
+		Tag:         "application",
+		// Mirrors the schema in `data/openapi.json` for /application.update:
+		// the only required top-level field is `applicationId` (string); every
+		// other property (name, env, buildType, swarm config, git provider IDs,
+		// resource limits, …) is optional with anyOf-null semantics so the
+		// minimal-but-valid fixture is a single-field document. The harness
+		// forwards these bytes verbatim to the httptest server, so the success
+		// leg still exercises real JSON serialisation, the application/json
+		// content-type negotiation, and the body forwarding through
+		// `yalla api call`.
+		SampleBody: json.RawMessage(`{
+			"applicationId": "app-cov-update-0038"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// consistent with every other application/* mutation peer (start, stop,
+		// reload, redeploy, delete, deploy, cancelDeployment, …). Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
