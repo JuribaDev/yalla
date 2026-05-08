@@ -14,6 +14,8 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+
+	"github.com/JuribaDev/yalla/internal/config"
 )
 
 // IOStreams bundles the three CLI streams. Data goes to Out (stdout). Logs,
@@ -129,8 +131,15 @@ func NewRootCommand(streams IOStreams, build BuildInfo) *cobra.Command {
 // and the *GlobalFlags pointer cobra writes parsed values into. The CLI
 // layer needs the pointer so the terminal error renderer can read --json
 // (and the secrets that must be redacted) when cmd.Execute returns an error.
+//
+// PersistentPreRunE resolves a *config.Config once and stashes it on the
+// command context. Mirroring the resolved values back into *GlobalFlags
+// ensures the parse-time error renderer (which keeps a pointer to flags)
+// also benefits from env-var and file values for JSON mode and the
+// redactor's secret list.
 func buildRoot(streams IOStreams, build BuildInfo) (*cobra.Command, *GlobalFlags) {
 	flags := &GlobalFlags{}
+	loader := config.NewLoader()
 
 	cmd := &cobra.Command{
 		Use:   "yalla",
@@ -149,10 +158,15 @@ while logs, prompts, warnings, and errors are written to stderr.`,
 		// silently dropped.
 		Args: cobra.NoArgs,
 		PersistentPreRunE: func(c *cobra.Command, _ []string) error {
+			cfg, err := resolveConfig(c, loader, flags)
+			if err != nil {
+				return err
+			}
 			ctx := c.Context()
 			ctx = WithIOStreams(ctx, streams)
 			ctx = WithGlobalFlags(ctx, flags)
 			ctx = WithBuildInfo(ctx, build)
+			ctx = config.WithConfig(ctx, cfg)
 			c.SetContext(ctx)
 			return nil
 		},
@@ -186,7 +200,56 @@ while logs, prompts, warnings, and errors are written to stderr.`,
 	pf.StringVar(&flags.Token, "token", "", "Dokploy API token; redacted in all logs and output")
 	pf.BoolVarP(&flags.Verbose, "verbose", "v", false, "enable verbose diagnostic logging on stderr")
 
+	// Subcommands are registered after the persistent flags are wired so the
+	// child constructors can rely on the flag set existing for any inherited
+	// behaviour they need (today: nothing, but the seam is here for US-0007+).
+	cmd.AddCommand(newConfigCommand())
+	cmd.AddCommand(newAuthCommand())
+
 	return cmd, flags
+}
+
+// resolveConfig packages the parsed flag values together with their
+// `Changed` bits and asks the loader for a fully-resolved *config.Config.
+// The returned config is the source of truth for every subcommand; the
+// resolved values are also mirrored back into *GlobalFlags so the existing
+// flag-based contract (used by the parse-time error renderer and any future
+// helpers) sees env-var and file values too.
+func resolveConfig(c *cobra.Command, loader *config.Loader, flags *GlobalFlags) (*config.Config, error) {
+	pf := c.Root().PersistentFlags()
+	changed := func(name string) bool {
+		if f := pf.Lookup(name); f != nil {
+			return f.Changed
+		}
+		return false
+	}
+
+	fv := config.FlagValues{
+		JSON: flags.JSON, JSONSet: changed("json"),
+		NoInput: flags.NoInput, NoInputSet: changed("no-input"),
+		Config: flags.Config, ConfigSet: changed("config"),
+		BaseURL: flags.BaseURL, BaseURLSet: changed("base-url"),
+		Token: flags.Token, TokenSet: changed("token"),
+		Verbose: flags.Verbose, VerboseSet: changed("verbose"),
+	}
+
+	cfg, err := loader.Load(fv)
+	if err != nil {
+		return nil, err
+	}
+
+	// Mirror resolved values back into the bound flag struct so the
+	// terminal error renderer (which holds a pointer to flags from
+	// parse-time) can honour env-var-only --json mode and redact tokens
+	// supplied via the env or config file.
+	flags.JSON = cfg.Output.IsJSON()
+	flags.NoInput = cfg.NoInput
+	flags.BaseURL = cfg.BaseURL
+	flags.Token = cfg.Token
+	flags.Verbose = cfg.Verbose
+	flags.Config = cfg.ConfigPath
+
+	return cfg, nil
 }
 
 // Execute runs the root command using the process's default IO streams and

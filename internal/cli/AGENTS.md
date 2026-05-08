@@ -30,3 +30,42 @@ Conventions for the Cobra command tree.
   consumed only by the renderer so it can read `--json` and `--token` even
   when cobra returns an error before `PersistentPreRunE` populates the
   context.
+
+## Configuration (US-0003)
+
+- `PersistentPreRunE` calls `internal/config.Loader.Load` exactly once and
+  stashes the resolved `*config.Config` on the command context via
+  `config.WithConfig`. Subcommands read it via `config.FromContext(ctx)`.
+  **Never** call `Loader.Load` from inside a subcommand `RunE` — the
+  precedence chain (CLI flag > env > file > default) lives in one place.
+- The resolved values are also mirrored back into `*GlobalFlags` so the
+  parse-time error renderer (which only has the flag pointer) honours
+  env-var-only `--json` mode and redacts tokens supplied via env or file.
+- The error renderer's env fallback runs through
+  `envSnapshotForRenderer`. Tests **must** override this variable (the
+  `main_test.go` `TestMain` resets it to a deterministic empty snapshot)
+  before asserting on JSON-mode behaviour.
+- New env vars in the public agent contract belong in
+  `internal/config/config.go` (`EnvBaseURL`, `EnvToken`, `EnvConfig`,
+  `EnvOutput`, `EnvNoInput`). Adding one is a minor change; renaming or
+  removing one is major.
+- Subcommands construct their `output.Renderer` via `rendererFromContext`
+  to inherit JSON mode + the secret redactor seeded from the resolved
+  token. Hand-rolling a `Renderer` in a `RunE` skips the redactor and is a
+  contract violation.
+- `--no-input` is a global flag and is *not* enforced centrally: every
+  command that might prompt has to read `cfg.NoInput` itself and return
+  `*errors.Error{Code: errors.CodeNoInput}` before consulting stdin. The
+  current commands (`config`, `auth`) never prompt, so they ignore the flag
+  by construction.
+
+## Tests
+
+- `TestMain` in `main_test.go` unsets every `YALLA_*` env var and pins
+  `envSnapshotForRenderer` to an empty snapshot. New tests must NOT rely on
+  the host shell's environment leaking through.
+- Tests that mutate the env via `t.Setenv` cannot use `t.Parallel`. Use the
+  `withTempConfig` helper to seed a writable `YALLA_CONFIG` per test.
+- For end-to-end command assertions use `runRootArgs(t, args...)`. It runs
+  `buildRoot` + `cmd.Execute()` + `renderTerminalError` so the captured
+  stderr matches what the binary prints in production.

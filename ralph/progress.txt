@@ -63,6 +63,47 @@
 - `cli.Execute` is now a one-liner over `executeWith(streams, build)`. Tests
   drive `executeWith` via `runExecuteWith(t, sub, args...)` to assert exit
   codes, JSON envelopes, and stdout silence on failure.
+- Config layer (US-0003): `internal/config.Loader.Load(FlagValues)` is the
+  ONLY config entry point. `PersistentPreRunE` calls it once, stashes the
+  resolved `*config.Config` on the command context via `config.WithConfig`,
+  and mirrors the resolved values back into `*GlobalFlags`. Subcommands read
+  via `config.FromContext(ctx)`; never call `Load` from a `RunE`.
+- Config precedence (US-0003): CLI flag > env var > config file > default.
+  The flag layer respects the parse-time `Changed` bit so an unchanged flag
+  never beats a lower source. Env var names (`YALLA_BASE_URL`, `YALLA_TOKEN`,
+  `YALLA_CONFIG`, `YALLA_OUTPUT`, `YALLA_NO_INPUT`) and config keys
+  (`base_url`, `token`, `output`, `no_input`, `verbose`) are public API.
+- On-disk config (US-0003): YAML via `gopkg.in/yaml.v3` with
+  `Decoder.KnownFields(true)` so typos fail fast. Files are written with
+  0600 inside a 0700 parent directory (`internal/config.WriteFile`). Path is
+  cross-platform via `os.UserConfigDir`. **Missing files are never an
+  error** regardless of how the path was supplied — yalla works out of the
+  box.
+- Config validation (US-0003): base URL is validated at load time
+  (http/https scheme + non-empty host) so dial errors don't leak from deep
+  in the call stack. `YALLA_OUTPUT` accepts `json`/`human`/`text`;
+  `YALLA_NO_INPUT` accepts the relaxed bool grammar (`1`/`true`/`yes`/`on`
+  and inverses).
+- Renderer env fallback (US-0003): cobra parse failures happen *before*
+  `PersistentPreRunE`, so `internal/cli/error_render.go` consults
+  `envSnapshotForRenderer()` (a package var, mockable in tests) which calls
+  `Loader.SnapshotForRenderer()` for YALLA_OUTPUT/YALLA_TOKEN-only
+  configurations. JSON envelopes and redaction stay honoured even on usage
+  failures.
+- Subcommand renderer construction (US-0003): use the `rendererFromContext`
+  helper inside any `RunE`. It builds an `output.Renderer` from the resolved
+  `IOStreams` + `*GlobalFlags`, seeded with the secret redactor — hand-
+  rolling a Renderer in a command body skips the redactor and is a contract
+  violation.
+- Test isolation (US-0003): `internal/cli/main_test.go::TestMain` unsets
+  every YALLA_* env var and pins `envSnapshotForRenderer` to an empty
+  snapshot. Tests that mutate env (`t.Setenv`) cannot use `t.Parallel`; the
+  `withTempConfig(t, contents)` helper centralises the YALLA_CONFIG fixture.
+- E2E command tests (US-0003): use `runRootArgs(t, args...)` from
+  `internal/cli/config_cmd_test.go`. It runs `buildRoot` + `cmd.Execute` +
+  `renderTerminalError` so the captured stderr matches what the binary
+  prints in production. Calling `cmd.Execute` alone hides the typed banner
+  because of `SilenceErrors`.
 
 ---
 
@@ -243,5 +284,159 @@
     parses `-v --json` and `--verbose --json` identically, but `-vjson`
     (no space) is a parse error mapped to `CodeUsage` here. Worth noting
     when documenting agent-friendly invocation patterns.
+---
+
+## 2026-05-08 - US-0003
+- **Implemented**: Configuration and authentication layers. New
+  `internal/config` package owns the resolved, typed configuration consumed
+  by every subcommand. Loader layers CLI flag > env var > config file >
+  built-in default with the `Changed` bit honoured per-flag so unchanged
+  flags never beat a lower-priority source. New top-level commands
+  `yalla config get|set` and `yalla auth status` ship with full --json
+  + human renderings, secret-suppressed token reporting, and stable typed
+  errors (`E_CONFIG`, `E_AUTH`, `E_INVALID_INPUT`).
+- **Files changed**:
+  - `internal/config/config.go` (new) — `Config`, `Source`,
+    `OutputFormat`, `FlagValues`, env-var name constants
+    (`YALLA_BASE_URL`/`YALLA_TOKEN`/`YALLA_CONFIG`/`YALLA_OUTPUT`/
+    `YALLA_NO_INPUT`), key constants (`base_url`/`token`/`output`/
+    `no_input`/`verbose`), `AllKeys` (canonical order),
+    `ParseOutputFormat`, `ParseBool`, `Config.Ready`/`HasToken`/
+    `HasBaseURL`, `WithConfig`/`FromContext`.
+  - `internal/config/load.go` (new) — `Loader` with injectable
+    `LookupEnv`/`ReadFile`/`UserConfigDir` hooks, `Load(FlagValues)`,
+    `SetValue`, `Config.ResolvedValue`, `SnapshotForRenderer`
+    (parse-time fallback for JSON mode + token redaction).
+  - `internal/config/file.go` (new) — YAML on-disk shape (gopkg.in/yaml.v3,
+    `KnownFields(true)` rejects typos), `readFile` with base-URL
+    validation, `WriteFile` (0600 file inside 0700 parent),
+    `MergeFileData`, `DefaultConfigPath` (cross-platform via
+    `os.UserConfigDir`), `IsNotExist`.
+  - `internal/config/load_test.go` (new) — covers default/flag/env/file
+    precedence, --json=false flag wins over YALLA_OUTPUT=json, missing
+    explicit --config is silent (not an error), permission-denied bubbles
+    as CodeConfig, invalid base URL (flag + env), invalid YALLA_OUTPUT,
+    invalid YALLA_NO_INPUT, --no-input flag beats env, `Config.Ready`
+    cases, `SetValue` round-trip, `SnapshotForRenderer`,
+    `ParseOutputFormat`/`ParseBool`, `IsKnownKey`.
+  - `internal/config/file_test.go` (new) — happy-path read,
+    empty-file decode, unknown-key rejection, invalid base URL on read,
+    missing-file ErrNotExist, write+round-trip with 0600 perms,
+    `MergeFileData` preservation, `DefaultConfigPath` variants.
+  - `internal/config/AGENTS.md` (new).
+  - `internal/cli/root.go` — `buildRoot` now constructs a
+    `config.NewLoader()`, `PersistentPreRunE` calls `resolveConfig`
+    (extracted helper) which reads flag `Changed` bits, runs
+    `Loader.Load`, mirrors resolved values back into `*GlobalFlags`,
+    and stashes the `*Config` on the command context. `buildRoot`
+    registers `newConfigCommand()` and `newAuthCommand()`.
+  - `internal/cli/error_render.go` — added `envSnapshotForRenderer`
+    package-var indirection (mockable in tests). The renderer now ORs the
+    env-derived JSON-mode bit on top of `flags.JSON` and uses the env
+    token for redaction when no flag value is bound, so an agent that only
+    set YALLA_OUTPUT or YALLA_TOKEN still gets a JSON envelope and
+    redaction even on parse-time failures.
+  - `internal/cli/config_cmd.go` (new) — `yalla config get [key]`,
+    `yalla config set <key> <value>`. JSON shapes:
+    `configGetDoc`/`configValueDoc`/`configSetDoc` (token value
+    suppressed with `secret: true`), human renders via the existing
+    `output.Table` writer with `[REDACTED]` for the token row.
+    `rendererFromContext` helper centralises Renderer construction.
+  - `internal/cli/auth_cmd.go` (new) — `yalla auth status` with
+    `authStatusDoc` (base_url, token, config_path, no_input, output,
+    ready, reason). Token value never echoed in either render path.
+    `Ready` derives from `cfg.Ready()`; reason carries the typed
+    `E_AUTH`/`E_CONFIG` classification when not ready.
+  - `internal/cli/main_test.go` (new) — TestMain unsets every
+    YALLA_* env var before `m.Run()` and pins
+    `envSnapshotForRenderer` to an empty snapshot so the host shell
+    never bleeds into assertions.
+  - `internal/cli/config_cmd_test.go` (new) — `runRootArgs` helper
+    (drives `buildRoot` + `cmd.Execute` + `renderTerminalError` so
+    captured stderr matches production), `withTempConfig` (writable
+    YALLA_CONFIG fixture), tests for: JSON list shape, file_loaded flag,
+    token-secret JSON contract, human-mode redaction, single-key get,
+    unknown-key CodeInvalidInput, persists base_url, preserves
+    unrelated keys, never echoes token value on set, rejects unknown key,
+    rejects invalid base URL on set, --no-input plus blocking stdin
+    completes cleanly.
+  - `internal/cli/auth_cmd_test.go` (new) — JSON ready/not-ready
+    paths (token missing → reason mentions E_AUTH; base_url missing →
+    reason mentions E_CONFIG), human render never echoes token, human
+    "ready: no" path, --no-input plus blocking stdin completes.
+  - `internal/cli/AGENTS.md` — new "Configuration (US-0003)" and
+    "Tests" sections covering loader-once rule, env fallback in renderer,
+    `rendererFromContext` helper, --no-input enforcement model, and the
+    `t.Setenv`/`t.Parallel` interaction.
+  - `go.mod`/`go.sum` — added `gopkg.in/yaml.v3 v3.0.1`.
+  - `ralph/prd.json` — set US-0003 `passes: true`.
+- **Verification run**:
+  - `gofmt -l .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — `ok` for cli, config, errors, output (88
+    test functions).
+  - `go test -race ./...` — `ok` across all packages.
+  - `go build ./...` — clean.
+  - Smoke (binary): `config set base_url` writes YAML at 0600;
+    `--json config get` returns the canonical envelope with a
+    secret-suppressed token entry; `config get token` (with env token)
+    prints `[REDACTED]`; `auth status` reports `ready: yes` only
+    when both token + base_url are configured; bare `yalla` still
+    keeps stdout empty and renders the full help on stderr.
+- **Tools NOT available locally** (documented per the verification
+  policy, unchanged from US-0001/US-0002): `goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`.
+- **Remaining risks / follow-ups**:
+  - `yalla auth status` does not contact Dokploy yet — "ready" is
+    purely a structural check (token present, base_url valid). The
+    live-call probe lands once US-0006 ships the HTTP client; the
+    `reason` field already carries the typed code so the JSON shape
+    will not need to change.
+  - The on-disk YAML format is intentionally minimal (5 keys). Adding a
+    new key requires (1) a constant + AllKeys entry, (2) a loader
+    resolver branch, (3) a SetValue branch, (4) a ResolvedValue branch,
+    (5) a fileShape struct field, and (6) tests. The
+    `KnownFields(true)` decoder will reject any partially-implemented
+    field on read — this is a feature, not a bug.
+  - `config set` writes to whichever path the loader resolved
+    (`--config` > `YALLA_CONFIG` > default). When the default path
+    is unresolvable (no `$HOME` in a sandbox) the command emits
+    `E_CONFIG` instead of falling back to `./yalla.yaml` — agents
+    in unusual hosts must pass `--config` explicitly.
+  - The renderer's env-var fallback (`envSnapshotForRenderer`) reads
+    YALLA_OUTPUT/YALLA_TOKEN at call time. Tests must keep
+    overriding the variable or the host shell will leak into
+    assertions; the `TestMain` in `internal/cli/main_test.go` is
+    the canonical place to do that.
+- **Learnings for future iterations**:
+  - `t.Setenv` panics inside `t.Parallel` tests. Helpers that
+    mutate the env (`withTempConfig`) implicitly forbid
+    parallelism; centralising those in a single helper keeps the rule
+    one-line for new contributors.
+  - `yaml.v3`'s `Decoder.KnownFields(true)` is the right default
+    for config files — silent unknown-key acceptance is a footgun for
+    agents typing `base-url` instead of `base_url`. The decoder
+    surfaces a parse error we wrap in `CodeConfig`.
+  - `os.UserConfigDir` differs by platform (macOS:
+    `~/Library/Application Support`; Linux: `~/.config`). Use it
+    rather than hardcoding the Linux XDG path so the binary feels
+    native on every host.
+  - The error renderer needs an env-var fallback for JSON mode and
+    redaction because cobra parse failures happen *before*
+    `PersistentPreRunE` runs. A `SnapshotForRenderer()` helper on
+    the loader (no validation, silent fallback to defaults) keeps the
+    error path infallible.
+  - When mirroring resolved config values back into `*GlobalFlags`,
+    only the rendering-relevant fields matter. The token mirror is
+    what lets the redactor scrub env-supplied tokens out of error
+    messages even though the user never typed `--token`.
+  - Cobra's Persistent Pre-RunE chain runs once per Execute, not per
+    subcommand depth. A single call site for the loader keeps the
+    precedence chain auditable.
+  - For tests that drive the *binary* error path, replicate
+    `buildRoot` + `cmd.Execute` + `renderTerminalError` rather
+    than calling `cmd.Execute` alone — `SilenceErrors` keeps the
+    typed banner out of stderr otherwise.
 ---
 
