@@ -16840,3 +16840,126 @@ Learnings for future iterations:
     risk of re-ordering, and there is no need to renumber any
     subsequent fixture.
 ---
+
+## 2026-05-08 - API-0423 (swarm-getNodeApps)
+- Implemented per-operation contract coverage for `swarm-getNodeApps`
+  (GET /swarm.getNodeApps). This is the **opener** of the priority-3
+  swarm/* roster (three stories total — API-0424 `swarm-getNodeInfo`
+  and API-0425 `swarm-getNodes` will follow and inherit the
+  `swarm-cov-*` namespace established here).
+- The story rolls the PRD-ordered backlog from priority 2 (user/*,
+  closed at API-0444 `user-update`) to priority 3 (swarm/* opens here).
+  At commit time swarm/* is the *only* remaining priority-3 backlog —
+  every prior priority-3 story has shipped (the API-0444 tail comment's
+  forecast of "API-0114 `docker-restartContainer`" was accurate at its
+  commit time but now reads as historical because API-0114 has since
+  shipped — the only priority-3 work left is API-0423/0424/0425).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended one
+    `apiCoverageCase` literal in StoryID-sorted position between
+    API-0399 `settings-writeTraefikEnv` (closing the priority-2
+    settings/* roster) and API-0427 `user-all` (opening the priority-2
+    user/* roster). The literal opens a fresh `swarm-cov-*` per-tag
+    fixture-isolation namespace and supplies a single OPTIONAL
+    `serverId` query parameter populated with the slug-on-the-wire
+    sentinel `swarm-cov-getNodeApps-0423` so the success-leg query
+    assertion exercises the OPTIONAL axis (the spec marks `serverId`
+    as `required: false`, so populating it is always safe and the
+    only way to verify the parameter is propagated verbatim).
+    Harness-default 401 → CodeAuth retained on the failure leg (the
+    swarm/* roster has no canonical `*-one` (by-id resource lookup)
+    peer to anchor a 404 → CodeNotFound override to — the three
+    swarm/* operations are all node-listing probes scoped by the
+    OPTIONAL `serverId` rather than by-id resource lookups).
+  - `ralph/prd.json` — set `passes: true` for API-0423.
+  - `ralph/progress.txt` — this entry.
+- Spec re-verified against `internal/api/data/openapi.json >
+  /swarm.getNodeApps > get`: GET, no `requestBody`, exactly one query
+  parameter `serverId` (string, OPTIONAL — the spec omits the
+  `required` flag, defaulting to false). Responses
+  200/400/401/403/404/500. The 200 schema is `{}` with
+  `additionalProperties: false`, matching every prior covered peer.
+- Verification run:
+  - `gofmt -w .` — no diffs.
+  - `go mod tidy` — no diffs.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass.
+  - `go test -race ./...` — race-clean (cli package 2.970s).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — not installed locally; documented as missing per
+    the established convention (no silent skip).
+  - The five harness loops
+    (`TestAPICoverage_RegistryInvariants/SchemaReachable/
+    ManifestIncludes/SuccessRoundTrip/RepresentativeFailure`) all
+    spawned the `API-0423/swarm-getNodeApps` subtest and all five
+    passed.
+- Remaining risks / follow-ups:
+  - The next pending priority-3 backlog entries are API-0424
+    `swarm-getNodeInfo` (GET) and API-0425 `swarm-getNodes` (GET).
+    Both will inherit the `swarm-cov-*` namespace established here,
+    but the next contributor must re-verify each spec against
+    `internal/api/data/openapi.json > /swarm.getNodeInfo > get` and
+    `> /swarm.getNodes > get` before assuming any field shape (per
+    the forward-reference lesson reasserted at API-0345..API-0444 —
+    even the shared `swarm-getNode` operation-stem does not pre-
+    determine the next peer's parameter shape; e.g. a peer GET could
+    declare additional REQUIRED parameters such as a REQUIRED
+    `nodeId` selecting a specific swarm node).
+  - The swarm/* roster's lack of a canonical `*-one` peer means the
+    404 → CodeNotFound override has no canonical home in this tag.
+    All three swarm/* fixtures should stay on harness-default 401 →
+    CodeAuth unless one of them surfaces payload validation as a
+    *uniquely distinguishing* failure mode (none does at present).
+- **Learnings for future iterations:**
+  - **Tag-roster opener with no canonical `*-one` peer.** When a
+    tag roster contains no by-id resource lookup (every operation in
+    the tag is a list/probe/effect rather than a primary-key fetch),
+    the per-tag opener convention's reservation of 404 →
+    CodeNotFound for `*-one` peers becomes shape-inapplicable to the
+    entire roster. The swarm/* tag is the first such roster
+    encountered (three GETs, all listing-shaped, all scoped only by
+    an OPTIONAL `serverId`) — every entry stays on harness-default
+    401 → CodeAuth without any 404 override anywhere in the
+    roster. Future tag rosters whose every operation is a
+    listing/probe (rather than a by-id mix) should follow the same
+    pattern: harness-default 401 → CodeAuth across the whole
+    roster, no 404 override at any entry.
+  - **OPTIONAL single-only-param GET shape — the OPTIONAL/REQUIRED
+    distinction matters at the per-case level.** API-0429
+    `user-checkUserOrganizations` and API-0423 `swarm-getNodeApps`
+    are both single-query-param GETs but differ on the OPTIONAL-vs-
+    REQUIRED axis: API-0429's REQUIRED `userId` would 400 if
+    omitted; API-0423's OPTIONAL `serverId` is a scoping
+    discriminator that may be omitted entirely (the spec then
+    returns the global view). Both populate the param with the
+    slug-on-the-wire sentinel so the success-leg query assertion
+    exercises the populated branch — but the *meaning* of populating
+    differs: REQUIRED-branch fixtures verify the only valid input
+    shape, while OPTIONAL-branch fixtures opt into the worker-
+    scoped execution path the spec authorises but does not require.
+    Future contributors must re-verify each spec's `required` flag
+    per-parameter (the OpenAPI default when omitted is `false`,
+    which makes single-param GETs ambiguous at first glance).
+  - **PRD priority transition crossings are explicit, not implicit.**
+    When the PRD-ordered backlog rolls from one priority class to
+    another, the new opener's comment should explicitly call out
+    the transition ("priority-2 user/* roster closed at API-0444,
+    priority-3 swarm/* roster opens here") so future contributors
+    reading the file in StoryID order understand the cross-priority
+    insertion. Don't conflate StoryID order (file-diff stability)
+    with PRD priority order (commit-sequence chronology) — the two
+    are decoupled.
+  - **Predecessor "next case" forecasts age into history.** API-0399
+    forecasts API-0427; API-0444 forecasts API-0114. Both were
+    accurate at their respective commit times but now read as
+    historical because the forecasted next-stories have since
+    shipped. The convention is to NOT back-edit historical
+    forecasts — the new entry's own comment carries the
+    *current-truth* forecast for the *next* pending case
+    (API-0423's tail forecasts API-0424).
+  - **`swarm-cov-*` is now an established per-tag namespace.** The
+    next two swarm/* contributors (API-0424, API-0425) must use
+    `swarm-cov-getNodeInfo-0424` / `swarm-cov-getNodes-0425` as
+    their fixture token bases per the per-tag isolation rule
+    reasserted across every prior tag's namespace.
+---
