@@ -302,6 +302,50 @@
   `go test` binary carries `-update-golden` and any other
   test-specific flag — leaking them into the command tree always
   produced E_USAGE.
+- Channel-aware upgrade (US-0010): `internal/upgrade.Detect(Probe)`
+  is a **pure** function — no subprocesses, no filesystem reads, no
+  network. Tests inject a synthetic `Probe{BinaryPath, GOOS, Env}`
+  to drive every channel. `ChannelHomebrew | NPM | NPX | Scoop |
+  WinGet | Manual | Unknown` are public API; renaming a value is a
+  breaking change that must update the CLI tests, the manifest
+  `wantTopLevel`, and the docs together.
+- Self-replacement gate (US-0010): only `ChannelManual` is
+  self-upgradable. `yalla upgrade --yes` on every other channel
+  returns `E_UNSUPPORTED` (exit 10) with a hint that names the
+  package-manager command. The PRD's "self-update is allowed only
+  for unmanaged/manual binaries" contract lives inside
+  `upgrade.PlanFor` (every non-Manual plan keeps `SelfUpgradable:
+  false`). The CLI never writes to a binary it does not own.
+- Upgrade HTTP seams (US-0010): `upgradeCheckBaseURL`,
+  `upgradeApplyArchiveURL`, `upgradeApplyChecksums`, and
+  `upgradeProbeFactory` are package vars in
+  `internal/cli/upgrade_cmd.go` that tests override (with
+  `t.Cleanup` restore) to point Check/Apply at `httptest.Server`
+  instances. Production keeps them empty so `Check` defaults to
+  `https://api.github.com` and `ApplyManual` derives the GitHub
+  Releases CDN URL from `(owner, repo, version, archive_name)`.
+  Mirrors the `apiCallClientFactory` seam from US-0005.
+- Atomic replace (US-0010): `apply.go::atomicReplace` writes to
+  `<dir>/.yalla-upgrade-*.tmp`, chmods 0o755, and `os.Rename`s over
+  the binary. Both files share a directory and a filesystem so the
+  rename is atomic on Unix; on Windows `os.Rename` calls
+  `MoveFileEx` with `MOVEFILE_REPLACE_EXISTING`. A SHA-256 mismatch
+  aborts before any write so a tampered archive can never replace
+  the running binary. `lookupChecksum` parses GoReleaser's
+  `<hex>  <filename>` format (and tolerates a leading `*` for
+  binary-mode lines).
+- Embedded SemVer parser (US-0010): `internal/upgrade.ParseSemVer`
+  /`Compare` cover yalla's tag grammar (`MAJOR.MINOR.PATCH[-pre]
+  [+build]`) without pulling in an external dep. Pre-release sorts
+  before its release; numeric pre-release fields beat alphanumeric
+  per SemVer 2.0 §11; build metadata is ignored for ordering.
+  Loosening the grammar (e.g. accepting non-numeric majors) is a
+  public-API change.
+- Top-level command registry (US-0010 onward): every new top-level
+  command **must** be added to
+  `internal/cli/manifest_cmd_test.go::wantTopLevel`. The list is
+  intentionally explicit so a forgotten registration trips the
+  test before the manifest contract drifts.
 
 
 ---
@@ -1389,4 +1433,114 @@
     line, sometimes with a leading `*` (binary mode flag from coreutils).
     `parseChecksum` strips the `*` and lowercases the hex so the wrapper
     survives both shapes.
+---
+
+## 2026-05-08 - US-0010
+- **Implemented**: Channel-aware upgrade commands. `yalla upgrade --check`
+  detects the install channel (Homebrew, npm, npx, Scoop, WinGet, manual,
+  unknown) without spawning subprocesses, fetches the latest release from
+  the GitHub Releases API, and reports either the package-manager command
+  or — for manual installs — `yalla upgrade --yes` to download and replace
+  the binary atomically. `--check`, `--check --json`, and `--yes` are all
+  scriptable; `--check`/`--yes` are mutually exclusive; bare `yalla
+  upgrade` is `--check` (the safe default).
+- **Files added**:
+  - `internal/upgrade/detect.go` — `Channel`, `Probe`, `Detect`,
+    `DefaultProbe`. Pure path-pattern + env-driven classifier with no
+    side effects.
+  - `internal/upgrade/plan.go` — `Plan` + `PlanFor(channel, binaryPath)`.
+    Maps channel → package-manager command + Note. Only `ChannelManual`
+    is `SelfUpgradable: true`.
+  - `internal/upgrade/version.go` — minimal `SemVer`, `ParseSemVer`, and
+    `Compare`. Implements SemVer 2.0 §11 ordering for pre-release
+    identifiers without pulling an external dep.
+  - `internal/upgrade/check.go` — `LatestRelease`, `ReleaseAsset`,
+    `CheckOptions`, `Check(ctx, opts)`. Talks to GitHub via injected
+    `*http.Client` + `BaseURL`; supports `IncludePrerelease`.
+  - `internal/upgrade/apply.go` — `ApplyOptions`, `ApplyManual(ctx, opts)`.
+    Downloads checksums + archive, verifies SHA-256, extracts the binary
+    (tar.gz on Unix, zip on Windows), and atomically renames over the
+    on-disk binary. Aborts before any write on checksum mismatch.
+  - `internal/cli/upgrade_cmd.go` — Cobra command. Owns the JSON
+    envelope (`upgradeStatusDoc`), exit-code mapping, and the
+    `upgradeCheckBaseURL` / `upgradeApplyArchiveURL` /
+    `upgradeApplyChecksums` / `upgradeProbeFactory` test seams.
+  - `internal/upgrade/AGENTS.md` — package conventions doc.
+  - Tests: `detect_test.go`, `version_test.go`, `check_test.go`,
+    `apply_test.go`, `upgrade_cmd_test.go`. Coverage spans every
+    install-method decision branch (Homebrew, npm, npx, Scoop, WinGet,
+    manual on Linux/Windows, unknown), version comparison cases,
+    successful download/replace, checksum-mismatch refusal,
+    missing-checksum-entry refusal, Windows zip extraction, command-
+    level JSON envelopes per channel, the `--yes` refusal on
+    package-managed channels, network-error mapping, mutual exclusion
+    of `--check` / `--yes`, and a `--no-input` smoke test.
+- **Files modified**:
+  - `internal/cli/root.go` — registers `newUpgradeCommand()`.
+  - `internal/cli/manifest_cmd_test.go::wantTopLevel` — added `upgrade`.
+  - `ralph/prd.json` — `US-0010.passes = true`.
+  - `ralph/progress.txt` — Codebase Patterns + this report.
+- **Verification run**:
+  - `gofmt -l .` → clean
+  - `go vet ./...` → clean
+  - `go mod tidy` → no changes
+  - `go test ./...` → ok (every package, including
+    `internal/upgrade` and `internal/cli`)
+  - `go test -race ./...` → ok
+  - `goimports`, `staticcheck`, `golangci-lint`, `govulncheck`,
+    `goreleaser` → not installed locally; skipped (consistent with
+    every prior story).
+- **Remaining risks / follow-ups**:
+  - Production-only branches not covered by unit tests:
+    - The non-prerelease GitHub `/releases/latest` endpoint is HTTPS
+      to api.github.com; if the user is rate-limited (HTTP 403) we
+      surface it as a generic non-2xx string. A future US could add
+      a `Retry-After`-aware backoff and a `CodeRateLimited` mapping
+      for upgrade checks.
+    - `ApplyManual` does not currently sign the archive: SHA-256
+      from the GoReleaser `checksums.txt` is the only integrity
+      guarantee. US-0011 (security/dependency verification gates)
+      should layer cosign or PGP verification on top.
+  - Detection is path-based. A future "force channel" flag
+    (e.g. `--channel manual`) would let an operator override it on
+    a corporate-package-manager layout that yalla cannot
+    auto-detect; not implemented to keep US-0010 minimal.
+  - The Linux-temp-dir path in `TestUpgradeYes_ManualChannel_*`
+    deliberately ends in `/bin/yalla` so `Detect` classifies it as
+    Manual. If a future detection refactor narrows the manual
+    heuristic, this fixture needs updating.
+- **Learnings for future iterations**:
+  - **Channel detection without subprocesses**: every install method
+    has a stable path-segment marker. Homebrew → `Cellar/yalla/`,
+    npm → `node_modules/yalla-cli/`, npx → `_npx/`, Scoop →
+    `\scoop\apps\yalla\`, WinGet → `\Microsoft\WinGet\Packages\` or
+    `\WindowsApps\`. Substring matching is hermetic, fast, and CI-
+    friendly; shelling out to `brew --prefix yalla` would be
+    flakier and slower for no real gain.
+  - **HTTP test seams**: package-level vars (`upgradeCheckBaseURL`,
+    `upgradeApplyArchiveURL`, etc.) restored via `t.Cleanup` are
+    cleaner than threading dependency-injection structs through the
+    Cobra layer for a single command. Mirrors US-0005's
+    `apiCallClientFactory` pattern; both are documented in the
+    `internal/cli` AGENTS.md so future commands reuse the seam.
+  - **Atomic replace order**: download → verify → write to sibling
+    temp file → rename. Doing the verification BEFORE writing the
+    temp file (or any byte to disk near the binary) means a
+    tampered archive cannot leave a partially-replaced binary
+    behind. The `defer` in `atomicReplace` only removes the temp
+    file if the rename failed (checked via `os.Stat`).
+  - **GoReleaser checksums format compatibility**: `lookupChecksum`
+    uses `strings.Fields` so it tolerates one or many spaces; we
+    also strip a leading `*` per coreutils' binary-mode flag — the
+    same shape the npm wrapper's `parseChecksum` accepts.
+  - **Per-OS archive format**: `internal/release.Target.ArchiveExt`
+    is `.zip` on Windows and `.tar.gz` everywhere else, and
+    `extractBinary` branches on the same. Reusing `release.Target`
+    (instead of duplicating the table inside `internal/upgrade`)
+    keeps the build matrix honest in one place.
+  - **Don't auto-update silently**: `internal/upgrade` is imported
+    only from `internal/cli/upgrade_cmd.go`. No other command
+    triggers an upgrade check. The "never auto-update silently"
+    PRD requirement is an architectural property, not a runtime
+    flag.
 ---

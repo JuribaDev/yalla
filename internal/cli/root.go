@@ -216,6 +216,7 @@ while logs, prompts, warnings, and errors are written to stderr.`,
 	cmd.AddCommand(newManifestCommand())
 	cmd.AddCommand(newDocsCommand())
 	cmd.AddCommand(newCompletionCommand())
+	cmd.AddCommand(newUpgradeCommand())
 
 	return cmd, flags
 }

@@ -156,6 +156,31 @@ Conventions for the Cobra command tree.
   the manifest contract stays explicit (the same friction as
   `TestRoot_RegistersAllRequiredGlobalFlags` for global flags).
 
+## Channel-aware upgrade (US-0010)
+
+- `yalla upgrade` is the only command that imports `internal/upgrade`,
+  and the only place that may write to the on-disk yalla binary. Keep
+  it that way: every other subcommand should `import` neither the
+  package nor the seam vars, so "never auto-update silently during
+  normal commands" is an architectural property rather than a runtime
+  flag.
+- The HTTP test seams — `upgradeCheckBaseURL`,
+  `upgradeApplyArchiveURL`, `upgradeApplyChecksums`,
+  `upgradeProbeFactory`, and the two `*ClientFactory` vars — mirror
+  US-0005's `apiCallClientFactory`. Tests override them via
+  `t.Cleanup` so production code stays free of branch-on-tests
+  conditionals.
+- `--yes` is gated to `ChannelManual`. Every other channel returns
+  `*errors.Error{Code: CodeUnsupported}` (exit 10) with a hint that
+  names the package-manager command. Loosening the gate would violate
+  the PRD's "self-update is allowed only for unmanaged/manual
+  binaries" contract.
+- Adding a new top-level command (today: upgrade) requires updating
+  `wantTopLevel` in
+  `manifest_cmd_test.go::TestManifest_JSONListsAllSubcommands`; the
+  test is intentionally explicit so a forgotten registration trips the
+  manifest contract before it ships.
+
 ## Tests
 
 - `TestMain` in `main_test.go` unsets every `YALLA_*` env var and pins

@@ -339,7 +339,7 @@
       ],
       "type": "foundation",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Self-update is allowed only for unmanaged/manual binaries."
     },
     {
