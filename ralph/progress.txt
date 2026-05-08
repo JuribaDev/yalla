@@ -22760,3 +22760,88 @@ forward-reference lesson before assuming any field shape.
     fixture-token literal (e.g. `postgres-cov-stop-0284-postgresId`)
     that occurs exactly once in the file.
 ---
+
+## 2026-05-09 - API-0286
+- Implemented: Cover previewDeployment-all (GET /previewDeployment.all),
+  the kickoff entry for the brand-new previewDeployment/* per-tag
+  fixture-isolation namespace flagged by the API-0285 forward reference.
+- Files changed:
+  - internal/cli/api_coverage_test.go: appended the API-0286 case
+    immediately after the API-0285 postgres-update closer and before
+    the API-0290 project-all opener.
+  - ralph/prd.json: flipped userStories[id=API-0286].passes to true.
+  - ralph/progress.txt: this entry.
+- Spec re-verification (per the API-0345..API-0444 forward-reference
+  lesson, never trust the PRD preview alone): against
+  internal/api/data/openapi.json > /previewDeployment.all > get the
+  shape is GET, tag previewDeployment, no requestBody, exactly one
+  REQUIRED query parameter applicationId (string), responses
+  200/400/401/403/404/500 with the 200 schema being {} +
+  additionalProperties:false. All five fields (Method, Path, Tag,
+  parameter shape, response cohort) match the entry as added.
+- Verification (run from repo root):
+  - gofmt -w .                     -> clean
+  - go mod tidy                    -> no diff
+  - go vet ./...                   -> pass
+  - go test ./internal/cli -run 'TestAPICoverage/API-0286' -v
+                                   -> all five legs pass
+                                      (RegistryInvariants,
+                                       SchemaCommandWorks,
+                                       ManifestListsOperation,
+                                       SuccessRoundTrip,
+                                       RepresentativeFailure)
+  - go test ./...                  -> all packages ok
+  - go test -race ./...            -> all packages ok
+  - goimports / golangci-lint / staticcheck / govulncheck / goreleaser:
+                                      not installed locally, skipped
+                                      with documentation per the
+                                      established convention.
+- Family / failure-leg choice: per-tag opener convention reasserted at
+  API-0290 project-all kept the harness-default 401->CodeAuth
+  representative-failure leg even though the spec declares 404. The
+  404->CodeNotFound override is reserved for the canonical by-id
+  *-one peer of each tag, which for previewDeployment/* is the
+  upcoming API-0288 previewDeployment-one.
+- Fixture token base: preview-cov-all-0286 (with the appended
+  applicationId field as preview-cov-all-0286-applicationId). The
+  preview- slug prefix is a deliberate shortening of the
+  previewDeployment tag, consistent with proj- (project), org-
+  (organization), srv- (server), usr- (user), set- (settings).
+  Verified non-colliding with every prior tag namespace listed in
+  the API-0282 postgres-search block plus the postgres-cov-* namespace
+  closed at API-0285.
+- Remaining risks / follow-ups:
+  - API-0287 previewDeployment-delete: the spec preview suggests POST.
+    The next contributor must re-verify the spec against
+    internal/api/data/openapi.json per the forward-reference lesson
+    before assuming any field shape, and must continue inside the
+    preview-cov-* per-tag fixture-isolation namespace opened here.
+  - 115 priority-4+ stories still open in the PRD.
+- **Learnings for future iterations:**
+  - The kickoff entry for a brand-new tag namespace is a
+    well-precedented shape (API-0246 organization-active, API-0290
+    project-all). Mirror the kickoff comment style: spell out the
+    namespace transition, list every prior closed namespace explicitly
+    so a future grep finds this block, and call out the *-one
+    forward reference for the 404 representative reservation.
+  - For a per-tag opener that *also* happens to be a single-required-
+    query-string-parameter GET, the postgres-search comment block
+    (API-0282) plus the project-all comment block (API-0290) together
+    are the right composition: take the namespace-transition and
+    forward-reference paragraphs from the kickoff style and the
+    parameter-shape paragraphs from the *-search style.
+  - 401->CodeAuth is the safe default failure leg even when the spec
+    declares 404. The 404->CodeNotFound override is reserved
+    *exclusively* for the canonical by-id *-one peer of each tag,
+    even at the price of a slightly less informative failure leg on
+    the *-all entry. The convention has been reasserted at every
+    per-tag opener since API-0246 and the next contributor on
+    API-0288 previewDeployment-one is the one who finally gets to
+    use it for this tag.
+  - A camelCase tag (previewDeployment) does not get a camelCase
+    fixture slug. Pick a short, lowercase, underscore-free prefix
+    that doesn't collide with any prior tag namespace; the
+    convention is "obviously short for X" rather than "byte-for-byte
+    identical to the tag name". Document the choice in the comment
+    block so the next per-tag peer inherits the slug literally.
+---

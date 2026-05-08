@@ -20587,6 +20587,111 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0286",
+		OperationID: "previewDeployment-all",
+		Method:      http.MethodGet,
+		Path:        "/previewDeployment.all",
+		Tag:         "previewDeployment",
+		// First entry in the previewDeployment/* roster, opening a
+		// fresh tag arc after API-0285 `postgres-update` closed the
+		// postgres/* roster (API-0272..API-0285). The forward-reference
+		// comment in API-0285 flagged this opener verbatim: "API-0286
+		// previewDeployment-all opens a brand-new previewDeployment/*
+		// per-tag fixture-isolation namespace." Per the per-tag fixture
+		// rule reasserted at API-0290 `project-all` and originally
+		// established at API-0246 `organization-active`, this entry
+		// deliberately stands alone and any previewDeployment/* peers
+		// that follow (API-0287 `*-delete`, API-0288 `*-one`) should
+		// grep this block first to inherit the previewDeployment/*
+		// `preview-cov-*` slug namespace rather than back-referencing
+		// the closed postgres/* `postgres-cov-*` namespace or any
+		// other prior-tag namespace (`admin-cov-*`, `ai-cov-*`,
+		// `app-cov-*`, `backup-cov-*`, `bb-cov-*`, `cert-cov-*`,
+		// `clu-cov-*`, `compose-cov-*`, `deployment-cov-*`,
+		// `dest-cov-*`, `docker-cov-*`, `domain-cov-*`,
+		// `environment-cov-*`, `gitea-cov-*`, `github-cov-*`,
+		// `gitlab-cov-*`, `mariadb-cov-*`, `mongo-cov-*`,
+		// `mounts-cov-*`, `mysql-cov-*`, `org-cov-*`, `postgres-cov-*`,
+		// `proj-cov-*`, `set-cov-*`, `srv-cov-*`, `swarm-cov-*`,
+		// `usr-cov-*`).
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against `internal/api/data/openapi.json` >
+		// `/previewDeployment.all` > `get`: method GET, tag
+		// previewDeployment, **no request body** (GETs in this OpenAPI
+		// document never carry a `requestBody` field), and **one
+		// REQUIRED query parameter** — `applicationId` (string).
+		// Responses 200/400/401/403/404/500 where the 200 schema is
+		// `{}` with `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort. The wire shape
+		// (single required string query parameter, empty-object 200)
+		// is the canonical `*-all`-listing-scoped-by-parent-id pattern,
+		// distinct from the parameter-free `*-all` peers (API-0247
+		// `organization-all`, API-0290 `project-all`) whose lists are
+		// scoped server-side by the bearer token alone.
+		//
+		// **Shape positioning — single REQUIRED string query GET, no
+		// body.** STRUCTURAL FIRST for the previewDeployment/* roster.
+		// The fixture must populate the required `applicationId` query
+		// param so `runAPICoverageSuccess` can re-read `r.URL.Query()`
+		// and prove the CLI propagated it verbatim. The harness's
+		// `len(tc.SampleBody) > 0` gate stays inert so no content-type
+		// / body byte-comparison legs activate, exactly as on every
+		// prior parameter-only GET peer.
+		//
+		// **Family choice — 404→CodeNotFound representative available
+		// but harness-default 401→CodeAuth retained.** The spec
+		// declares 404 on this operation, so the 404→CodeNotFound
+		// override is *technically* applicable. We deliberately stick
+		// with the harness-default 401→CodeAuth representative-failure
+		// leg per the per-tag opener convention reasserted at API-0290
+		// `project-all`: the 404→CodeNotFound override is reserved for
+		// the **canonical by-id `*-one` GET peer** of each tag, which
+		// for the previewDeployment/* roster is the upcoming API-0288
+		// `previewDeployment-one`. A `*-all`-listing-scoped-by-parent-
+		// id GET's primary failure mode is unauthenticated access (an
+		// agent without a valid token), not a missing parent — when no
+		// preview deployments exist for the given `applicationId` the
+		// server returns a 200 with an empty result rather than 404.
+		// 401 → CodeAuth therefore remains the most informative failure
+		// leg to re-prove for this call site, mirroring the kickoff
+		// invariant locked in by every prior per-tag opener.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base `preview-cov-all-0286`
+		//     follows the established `<tag>-cov-<slug>-<storyID>`
+		//     deterministic-but-clearly-fake naming convention shared
+		//     across every prior covered peer. Single-segment slug
+		//     `all` has no internal capitalisation so the kebab-vs-
+		//     camel choice is moot here. The `preview-` slug prefix is
+		//     a deliberate shortening of the `previewDeployment` tag
+		//     (consistent with `proj-` for `project`, `org-` for
+		//     `organization`, `srv-` for `server`, `usr-` for `user`,
+		//     `set-` for `settings`) and is verified non-colliding
+		//     with every prior tag namespace.
+		//   * The required `applicationId` value uses the appended-
+		//     field-name suffix `preview-cov-all-0286-applicationId`
+		//     so a future cross-fixture audit can grep the field name
+		//     and the storyID independently.
+		//
+		// The next case in the PRD-ordered priority-4 backlog is
+		// API-0287 `previewDeployment-delete` (declared a **POST** per
+		// the spec preview; the next contributor must re-verify the
+		// spec against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will continue inside the `preview-cov-*` per-tag
+		// fixture-isolation namespace opened here).
+		SampleQuery: map[string][]string{
+			"applicationId": {"preview-cov-all-0286-applicationId"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0290",
 		OperationID: "project-all",
 		Method:      http.MethodGet,
