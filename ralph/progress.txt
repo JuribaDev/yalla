@@ -19170,3 +19170,86 @@ forward-reference lesson before assuming any field shape.
     representative failure) automatically; adding a new operation is
     purely a struct-literal append + spec re-verification.
 ---
+
+## 2026-05-08 - API-0179 mongo-rebuild
+- Sixth entry on the priority-4 mongo/* coverage roster: appended an
+  apiCoverageCase for `mongo-rebuild` (POST /mongo.rebuild) to
+  `internal/cli/api_coverage_test.go`, immediately after API-0178
+  `mongo-one` and before API-0188 `mounts-allNamedByApplicationId`.
+  Continues inside the `mongo-cov-*` per-tag fixture-isolation namespace
+  opened at API-0174 `mongo-changeStatus`.
+- Spec re-verified against `internal/api/data/openapi.json` >
+  `/mongo.rebuild` > `post`: POST, tag mongo, **no parameters**,
+  requestBody REQUIRED with a single REQUIRED top-level scalar
+  `mongoId` (string), responses 200/400/401/403/500. The 200 schema
+  is `{}` with `additionalProperties: false`, matching every prior
+  covered peer in the empty-success cohort. **No 404** is declared on
+  this op (per the action-on-known-id POST precedent reasserted at
+  API-0162 `mariadb-deploy`, API-0174 `mongo-changeStatus`, and
+  API-0176 `mongo-deploy`); 404 stays exclusive to the canonical
+  by-id `*-one` GET peer covered at API-0178 for this tag.
+- Shape positioning: single-required-string-scalar POST imperative-
+  action mutation, byte-for-byte identical request body shape to
+  API-0176 `mongo-deploy`. Both ops forward only the resource scalar
+  and rely on Dokploy's server side to drive the rebuild/deploy state
+  machine. Harness's `len(tc.SampleBody) > 0` gate at
+  `runAPICoverageSuccess` activates the JSON content-type and
+  byte-for-byte body comparison legs.
+- Family choice: harness-default 401→CodeAuth retained — spec omits
+  404 (override structurally inapplicable), and 400→CodeInvalidInput
+  is reserved for stories where payload validation is the operation's
+  uniquely distinguishing failure mode. Consistent with the
+  401→CodeAuth choice locked in at the mongo/* kickoff (API-0174) and
+  continued at API-0175/API-0176/API-0177; API-0178 `mongo-one` was
+  the lone roster-level override to 404, structurally restricted to
+  the by-id GET peer.
+- Fixture: `mongo-cov-rebuild-0179-mongoId` follows the
+  `<tag>-cov-<slug>-<storyID>-<field>` deterministic-but-clearly-fake
+  naming convention. Verified non-colliding with API-0174's
+  `mongo-cov-changeStatus-0174`, API-0175's `mongo-cov-create-0175`,
+  API-0176's `mongo-cov-deploy-0176-mongoId`, API-0177's
+  `mongo-cov-move-0177-{mongoId,targetEnvironmentId}`, and API-0178's
+  `mongo-cov-one-0178-mongoId-fixture` literals.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (insert API-0179 case between
+    API-0178 mongo-one and API-0188 mounts-allNamedByApplicationId).
+  - `ralph/prd.json` (mark API-0179 passes=true).
+  - `ralph/progress.txt` (this entry).
+- Verification run: `gofmt -w .`, `go mod tidy`, `go vet ./...`,
+  `go test ./...`, `go test -race ./...` — all green. The harness
+  parameterised tests (`TestAPICoverage_RegistryInvariants`,
+  `TestAPICoverage_SchemaCommandWorks`,
+  `TestAPICoverage_ManifestListsOperation`,
+  `TestAPICoverage_SuccessRoundTrip`,
+  `TestAPICoverage_RepresentativeFailure`) automatically pick up the
+  new case via the `coveredAPIOperations` slice. `goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, and `goreleaser`
+  remain not installed locally and are documented as missing per
+  prior iterations.
+- Results: 297/462 stories passing (64.3%). API-0179 closes out the
+  rebuild op for the mongo/* roster.
+- Remaining risks / follow-ups: none specific to this story. Next
+  priority-4 mongo case in PRD order is API-0180 `mongo-reload`
+  (declared a POST per spec preview; the next contributor must
+  re-verify spec at `internal/api/data/openapi.json` per the
+  forward-reference lesson and continue inside the `mongo-cov-*`
+  namespace).
+- **Learnings for future iterations:**
+  - The single-required-string-scalar POST shape (lone `<resource>Id`
+    body field, empty 200, no 404) is now the canonical
+    "imperative-action mutation" template across mongo/* (deploy,
+    rebuild) and mariadb/* (deploy). Future `*-reload`, `*-remove`,
+    `*-start`, `*-stop` ops in the same tag rosters are highly
+    likely to share this exact shape — mirror API-0176 verbatim
+    with the slug renamed.
+  - 404 is exclusive to the canonical by-id `*-one` GET peer in each
+    tag's roster (mariadb-one, mongo-one, etc.). Imperative-action
+    POSTs in the same tag uniformly omit 404 because Dokploy's tRPC
+    convention collapses missing-target into 400/validation.
+  - When the spec shape is byte-for-byte identical to a prior peer
+    in the same tag (e.g. mongo-rebuild ≡ mongo-deploy modulo path),
+    the comment block should explicitly call out the structural
+    equivalence and copy the design rationale rather than re-deriving
+    it. This keeps the rationale centralised on the precedent-setter
+    and reduces drift risk when the rule needs to evolve.
+---
