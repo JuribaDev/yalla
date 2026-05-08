@@ -16010,6 +16010,153 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0201",
+		OperationID: "mysql-remove",
+		Method:      http.MethodPost,
+		Path:        "/mysql.remove",
+		Tag:         "mysql",
+		// Eighth entry on the mysql/* coverage roster, immediately
+		// following API-0200 `mysql-reload` and completing the
+		// forward reference embedded in that entry's comment block
+		// ("The next case in the PRD-ordered priority-4 backlog is
+		// API-0201 `mysql-remove`"). Continues inside the
+		// `mysql-cov-*` per-tag fixture-isolation namespace opened by
+		// API-0194 `mysql-changeStatus` and **must not** back-reference
+		// any closed prior-tag namespace (`set-cov-*`, `srv-cov-*`,
+		// `proj-cov-*`, `org-cov-*`, `compose-cov-*`, `app-cov-*`,
+		// `ai-cov-*`, `admin-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		// `cert-cov-*`, `clu-cov-*`, `deployment-cov-*`, `dest-cov-*`,
+		// `docker-cov-*`, `domain-cov-*`, `environment-cov-*`,
+		// `gitea-cov-*`, `github-cov-*`, `gitlab-cov-*`,
+		// `mariadb-cov-*`, `mongo-cov-*`, `mounts-cov-*`,
+		// `swarm-cov-*`, `usr-cov-*`, etc.) per the per-tag isolation
+		// rule reasserted at API-0335..API-0444 and originally
+		// established at API-0246 `organization-active`.
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json` > `/mysql.remove` >
+		// `post`: method POST, tag mysql, **no parameters**,
+		// requestBody REQUIRED with `application/json` and a SINGLE
+		// REQUIRED top-level scalar `mysqlId` (string), responses
+		// 200/400/401/403/500. The 200 response is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort. **No 404** is declared on
+		// this operation, mirroring the action-on-known-id POST
+		// precedent reasserted at API-0194 `mysql-changeStatus`,
+		// API-0195 `mysql-create`, API-0196 `mysql-deploy`, API-0197
+		// `mysql-move`, API-0199 `mysql-rebuild`, and API-0200
+		// `mysql-reload` (every body-bearing imperative-action mysql
+		// POST whose missing-target failure mode collapses into
+		// 400/validation under Dokploy's tRPC convention rather than
+		// a dedicated 404 leg). The 404 override therefore reverts to
+		// inapplicable here — its sole activation site for the
+		// mysql/* roster remains API-0198 `mysql-one`, the canonical
+		// by-id GET peer.
+		//
+		// **Cross-tag wire-shape lineage.** The single-required-`<tag>Id`
+		// remove-mutation pairing is the canonical remove-shape
+		// recurrence across the Dokploy database tags — verified
+		// against the OpenAPI spec to be present on
+		// `/mariadb.remove` (`mariadbId`), `/mongo.remove` (`mongoId`),
+		// `/postgres.remove` (`postgresId`), and `/redis.remove`
+		// (`redisId`). Within the covered roster the direct precedent
+		// is API-0167 `mariadb-remove` and the analogous mongo entry
+		// at `OperationID: "mongo-remove"`, both of which take the
+		// tag-specific resource id as the lone required scalar
+		// exactly as `/mysql.remove` does. mysql-remove is therefore
+		// byte-for-byte cardinality-identical to those peer entries
+		// modulo the resource-id field name (`mysqlId` instead of
+		// `mariadbId` / `mongoId`), and is *also* shape-identical to
+		// the mysql/* peer API-0199 `mysql-rebuild` (likewise a
+		// single-`mysqlId` POST imperative action) — every
+		// distinguishing assertion below derives from the OperationID,
+		// Path, and StoryID scalars rather than the body cardinality.
+		//
+		// **Request body schema (REQUIRED top-level fields):**
+		//   - REQUIRED `mysqlId` (string) — resource id scalar; the
+		//     fixture below supplies a deterministic-but-clearly-fake
+		//     `mysql-cov-remove-0201-mysqlId` literal carrying the
+		//     `<tag>-cov-<slug>-<storyID>-<field>` suffix for `git grep`
+		//     traceability.
+		//   - **No OPTIONAL fields declared.** The schema is a strict
+		//     single-scalar request, byte-for-byte cardinality-identical
+		//     to the API-0199 `mysql-rebuild` request shape and narrower
+		//     than the two-scalar API-0197 `mysql-move` /
+		//     API-0200 `mysql-reload` requests. The harness's
+		//     `len(tc.SampleBody) > 0` gate at `runAPICoverageSuccess`
+		//     activates the JSON content-type and byte-for-byte body
+		//     comparison legs; this fixture supplies the lone REQUIRED
+		//     field verbatim so the success path verifies the CLI
+		//     propagated the body without mutating, dropping, or
+		//     rewriting the scalar. Omitting the field would collapse
+		//     the body to `{}` and weaken the success leg without any
+		//     compensating signal, per the API-0167 `mariadb-remove`
+		//     single-required-scalar lesson.
+		//
+		// **Shape positioning — single-required-string-scalar POST
+		// imperative-action remove-mutation, body REQUIRED.** The lone
+		// REQUIRED slot is plain non-nullable `type: string` (no
+		// `anyOf` / `nullable` / enum constraints), structurally
+		// identical to the single-scalar `mysql-rebuild` body and to
+		// the `mariadb-remove` / `mongo-remove` peer remove entries.
+		// Within the mysql/* roster this is the third appearance of a
+		// single-required-scalar POST shape after API-0196
+		// `mysql-deploy` and API-0199 `mysql-rebuild`.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so the
+		// 404→CodeNotFound override is structurally inapplicable and
+		// remains pinned to API-0198 `mysql-one` for the mysql/* roster.
+		// 400→CodeInvalidInput is *technically* available — a payload
+		// that omits the REQUIRED scalar would fail server-side
+		// validation — but the harness reserves 400 representatives
+		// for stories where payload validation is the operation's
+		// *uniquely distinguishing* failure mode. A conventional
+		// imperative-action POST collapses to type-checking, so the
+		// harness-default 401→CodeAuth failure leg remains the most
+		// representative single failure mode every authenticated
+		// Dokploy operation must re-prove, and is consistent with the
+		// 401→CodeAuth choice locked in by the mysql/* kickoff at
+		// API-0194 `mysql-changeStatus` and continued at API-0195
+		// `mysql-create`, API-0196 `mysql-deploy`, API-0197
+		// `mysql-move`, API-0199 `mysql-rebuild`, and API-0200
+		// `mysql-reload`. (API-0198 `mysql-one` overrode to
+		// 404→CodeNotFound because the spec itself first declared 404
+		// on the canonical by-id GET; that override does not
+		// generalise to body-bearing POSTs whose specs omit 404.)
+		//
+		// **Fixture token base** `mysql-cov-remove-0201` follows the
+		// established `<tag>-cov-<slug>-<storyID>` deterministic-but-
+		// clearly-fake naming convention and is verified non-colliding
+		// with API-0194's `mysql-cov-changeStatus-0194`, API-0195's
+		// `mysql-cov-create-0195`, API-0196's
+		// `mysql-cov-deploy-0196-mysqlId`, API-0197's
+		// `mysql-cov-move-0197-mysqlId` /
+		// `mysql-cov-move-0197-targetEnvironmentId`, API-0198's
+		// `mysql-cov-one-0198-mysqlId-fixture`, API-0199's
+		// `mysql-cov-rebuild-0199-mysqlId`, and API-0200's
+		// `mysql-cov-reload-0200-mysqlId` /
+		// `mysql-cov-reload-0200-appName` literals.
+		//
+		// The next case in the PRD-ordered priority-4 backlog is
+		// API-0202 `mysql-saveEnvironment` (declared a **POST** per the
+		// spec preview; the next contributor must re-verify the spec
+		// against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will continue inside the `mysql-cov-*` per-tag
+		// fixture-isolation namespace opened by API-0194).
+		SampleBody: json.RawMessage(`{
+			"mysqlId": "mysql-cov-remove-0201-mysqlId"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,

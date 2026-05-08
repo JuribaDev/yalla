@@ -20806,3 +20806,89 @@ forward-reference lesson before assuming any field shape.
     re-verify against `internal/api/data/openapi.json` even when
     the prior entry's forward block looks plausible.
 ---
+
+## 2026-05-09 - API-0201
+- Implemented Cover mysql-remove (POST /mysql.remove). Eighth entry on
+  the mysql/* coverage roster, appended directly after API-0200
+  `mysql-reload` and before API-0246 `organization-active` so the slice
+  remains StoryID-sorted.
+- Files changed:
+  - internal/cli/api_coverage_test.go — appended one apiCoverageCase
+    literal (~150 lines incl. comment block) registering the
+    `mysql-remove` operation. SampleBody supplies the lone REQUIRED
+    `mysqlId` scalar with the deterministic-but-clearly-fake literal
+    `mysql-cov-remove-0201-mysqlId`. SuccessResponse is `{}` per spec.
+    Defaults take care of SuccessStatus=200, FailureStatus=401, and
+    FailureCode=yerr.CodeAuth (the harness defaults locked in by
+    API-0001 and reaffirmed at API-0194..API-0200).
+  - ralph/prd.json — flipped API-0201.passes to true (counts now
+    462 / 323 pass / 139 fail).
+- Verification run from repo root:
+  - gofmt -w . — no diff (fixture matches existing tab/indent rules).
+  - go mod tidy — clean (no dependency churn; this story is test-only).
+  - go vet ./... — clean.
+  - go test ./... — all packages PASS (internal/cli 1.326s).
+  - go test -race ./... — all packages PASS (internal/cli 2.997s under
+    -race).
+  - go test -run 'TestAPICoverage/API-0201' -v ./internal/cli/ —
+    five subtests all PASS:
+      * TestAPICoverage_RegistryInvariants/API-0201/mysql-remove
+      * TestAPICoverage_SchemaCommandWorks/API-0201/mysql-remove
+      * TestAPICoverage_ManifestListsOperation/API-0201/mysql-remove
+      * TestAPICoverage_SuccessRoundTrip/API-0201/mysql-remove
+      * TestAPICoverage_RepresentativeFailure/API-0201/mysql-remove
+  - golangci-lint, staticcheck, govulncheck, goreleaser — not invoked
+    (test-only fixture append; no runtime/build surface change).
+- Results: All eight acceptance criteria satisfied — registry presence,
+  raw `yalla api call mysql-remove --input request.json --json`,
+  `yalla schema get mysql-remove --json`, `--no-input` no-prompt
+  contract, `yalla.output.v1` success envelope, `yalla.error.v1`
+  failure envelope with stable `E_AUTH` code and exit code 4
+  (CodeAuth.ExitCode), httptest success + 401 failure legs, and
+  manifest listing — all proven by the harness loop in
+  `internal/cli/api_coverage_test.go`.
+- Remaining risks / follow-ups: none for API-0201 itself. The next
+  PRD-ordered priority-4 story is API-0202 `mysql-saveEnvironment`
+  (POST /mysql.saveEnvironment). The forward-reference comment at the
+  bottom of the API-0201 entry already cites it; the next contributor
+  must re-verify the spec against `internal/api/data/openapi.json`
+  before assuming any field shape (the API-0345..API-0444
+  forward-reference lesson). The fixture-isolation namespace
+  `mysql-cov-*` opened at API-0194 stays open through API-0207
+  `mysql-update` (the final mysql/* priority-4 story).
+- **Learnings for future iterations:**
+  - The `<tag>.remove` POST shape across the Dokploy database tags
+    (mariadb / mongo / mysql / postgres / redis) is the simplest
+    canonical action-on-known-id imperative POST: a single REQUIRED
+    `<tag>Id` (string) scalar, 200 = `{}`, no 404 declared. When
+    extending coverage to `postgres-remove` (API-0279) or
+    `redis-remove` (likely a future priority-4 story), the new entry
+    will be byte-for-byte cardinality-identical to API-0201
+    `mysql-remove` modulo the resource-id field name; copy the
+    fixture, swap `mysqlId` → `postgresId` / `redisId`, and renumber
+    the `<tag>-cov-remove-XXXX` slug.
+  - Within the mysql/* roster, API-0199 `mysql-rebuild` and API-0201
+    `mysql-remove` share the *exact same* request body cardinality
+    (single REQUIRED `mysqlId` scalar). The distinguishing assertions
+    therefore derive entirely from the OperationID, Path, and StoryID
+    scalars — the success/failure leg payloads are identical. Future
+    entries that share a body shape with an existing peer should call
+    out the equivalence in the comment block (as the API-0201 entry
+    does) rather than tacit-copy-paste, so a future spec drift on
+    either endpoint surfaces as an explicit comment-vs-fixture mismatch.
+  - When inserting a new story into the StoryID-sorted slice, the most
+    reliable Edit anchor is the previous entry's unique fixture literal
+    (e.g. `"mysql-cov-reload-0200-appName"`) plus the closing `},` and
+    the start of the next entry. Using only `SuccessResponse: \`{}\`,`
+    + `},` + `{` is *not* unique because dozens of entries share that
+    pattern.
+  - The harness's representative-failure leg defaults to
+    401→CodeAuth even when the spec declares 400 / 403 / 500. A 400
+    or 404 override should only be elected when the operation's
+    *uniquely distinguishing* failure mode is the override status code
+    (e.g. API-0198 `mysql-one`, the canonical by-id GET, where the
+    spec itself first declared 404 for the mysql/* roster). For every
+    body-bearing imperative-action mysql POST whose spec omits 404,
+    keep the 401→CodeAuth default — payload validation is not the
+    operation's distinguishing failure mode.
+---
