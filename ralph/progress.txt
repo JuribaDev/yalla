@@ -20104,3 +20104,66 @@ forward-reference lesson before assuming any field shape.
     it makes the next iteration's first scan cheap (one grep for the
     next storyID lands directly on the pre-built scaffolding).
 ---
+
+## 2026-05-09 - API-0187
+- Implemented: Added the `mongo-update` (POST /mongo.update) entry to
+  `coveredAPIOperations` in `internal/cli/api_coverage_test.go`,
+  positioned between API-0186 `mongo-stop` and API-0188
+  `mounts-allNamedByApplicationId` to preserve operationId-sorted slice
+  order. Single REQUIRED top-level `mongoId` (string) request body, 200
+  response is `{}` with `additionalProperties: false`, no 404 declared.
+  This entry closes the priority-4 mongo/* roster — fourteen mongo/*
+  stories (API-0174..API-0187) now ship contract coverage and the
+  `mongo-cov-*` per-tag fixture-isolation namespace exits the active
+  cohort.
+- Files changed:
+  - internal/cli/api_coverage_test.go (+118 lines, one new
+    apiCoverageCase block at the API-0187 insertion site)
+  - ralph/prd.json (passes: true on API-0187)
+  - ralph/progress.txt (this entry)
+- Verification run: gofmt -w ., go mod tidy, go vet ./..., go test
+  ./... (count=1 on internal/cli, cached elsewhere), and go test
+  -race ./... — all PASS. goimports, golangci-lint, staticcheck,
+  govulncheck, and goreleaser are NOT INSTALLED in this environment
+  and were skipped accordingly (documented as missing per the
+  Codebase Patterns rule, not silently omitted).
+- Results: full test suite green; the api_coverage_test.go diff is
+  purely additive — no existing apiCoverageCase entries were modified,
+  so the slice's operationId-sorted invariant and every prior fixture
+  token are preserved verbatim. Re-running the recently rebuilt
+  coverage harness on the new entry exercises registry presence,
+  schema reachability, manifest inclusion, success-leg byte-for-byte
+  body forwarding, and the harness-default 401→CodeAuth failure leg.
+- Remaining risks / follow-ups: the priority-4 mongo/* tag is now
+  closed. The next priority-4 case is API-0188
+  `mounts-allNamedByApplicationId` (GET, single REQUIRED query
+  parameter `applicationId`), which opens a brand-new `mounts-cov-*`
+  per-tag fixture-isolation namespace per the per-tag isolation rule
+  established at API-0246 `organization-active`. The kickoff comment
+  block already drafted in the existing API-0188 entry must remain
+  untouched — it forward-references API-0188 from this entry's tail.
+- **Learnings for future iterations:**
+  - Update mutations on Dokploy database tags (mariadb / mongo /
+    mysql / postgres / redis) declare a wide OPTIONAL surface area
+    (resource-spec / Swarm config / metadata fields) as
+    `[{...}, {"type":"null"}]` `anyOf` unions on top of the single
+    REQUIRED id scalar. The fixture for these stories should mirror
+    API-0173 `mariadb-update` and supply only the REQUIRED id field —
+    the harness's success-leg assertion is byte-for-byte body
+    forwarding, not server-side schema validation, so adding OPTIONAL
+    fields would only inflate the diff without strengthening coverage.
+  - `mongo-update`'s response set is 200/400/401/403/500 (no 404),
+    same as the other mongo/* imperative-action POSTs. The
+    404→CodeNotFound override stays pinned to API-0178 `mongo-one`
+    (the only mongo/* GET-by-id), so update / start / stop / deploy /
+    rebuild / remove all default to the harness's 401→CodeAuth
+    failure leg.
+  - When closing a per-tag roster, the tail comment of the final
+    entry should explicitly call out that the namespace is exiting
+    active cohort status so future entries don't accidentally
+    back-reference it. The kickoff comment of the next-tag entry
+    (API-0188 mounts-* in this case) already enumerates the closed
+    prior namespaces it must avoid; no edit to that entry was
+    required because it was drafted with the correct closed-namespace
+    list at commit time.
+---
