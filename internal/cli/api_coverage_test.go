@@ -13017,6 +13017,177 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0393",
+		OperationID: "settings-updateServer",
+		Method:      http.MethodPost,
+		Path:        "/settings.updateServer",
+		Tag:         "settings",
+		// Forty-third entry on the settings/* coverage roster, inheriting
+		// the `set-cov-*` per-tag fixture-isolation namespace established
+		// by API-0351 `settings-assignDomainServer` and extended through
+		// API-0392 `settings-updateMiddlewareTraefikConfig` (must not
+		// back-reference the closed `srv-cov-*`, `proj-cov-*`,
+		// `org-cov-*`, `compose-cov-*`, `app-cov-*`, `ai-cov-*`, or any
+		// other prior tag's namespace, per the per-tag isolation rule
+		// reasserted at API-0335..API-0392 and originally established at
+		// API-0246 `organization-active`).
+		//
+		// **Spec re-verified per the API-0345..API-0392 forward-reference
+		// lesson** against `internal/api/data/openapi.json >
+		// /settings.updateServer > post`: a **POST** with **no
+		// `requestBody` field at all** — the spec declares only
+		// `operationId`, `tags`, `security`, and `responses`, with
+		// **no `parameters` array and no `requestBody` object
+		// whatsoever**. Structurally identical to API-0354
+		// `cleanAllDeploymentQueue`, API-0357 `cleanMonitoring`,
+		// API-0358 `cleanRedis`, API-0359 `cleanSSHPrivateKey`,
+		// API-0370 `getUpdateData`, and API-0383 `reloadRedis` — a
+		// true no-input POST. Responses 200/400/401/403/500 — note
+		// the **absence of 404**, matching the no-body POST cohort
+		// above and the canonical settings/* mutating-POST shape.
+		// The 200 schema is `{}` with `additionalProperties: false`,
+		// matching every prior covered peer in the settings/*
+		// roster.
+		//
+		// **Forward-reference correction — API-0392's hand-off
+		// comment was wrong on the outer-body axis.** API-0392's
+		// hand-off forecast that this entry would carry
+		// `requestBody.required = true` (inheriting the REQUIRED
+		// outer-body axis from API-0392). Direct inspection of the
+		// spec falsifies that prediction in a strictly stronger
+		// direction: `/settings.updateServer > post` declares **no
+		// `requestBody` at all**, which is a stronger pivot than
+		// "REQUIRED → OPTIONAL" — it's "REQUIRED → ABSENT". The PRD
+		// entry for API-0393 correctly records `requestBody.required
+		// = false` and `contentTypes: []`, matching the spec; the
+		// API-0392 comment's `requestBody.required = true` was an
+		// optimistic forecast based on the immediately-prior
+		// `update*` peer's shape, not a spec inspection. This
+		// re-asserts the slug-prefix-is-not-shape rule reasserted at
+		// API-0371..API-0392 with extra force: even the
+		// **outer-body axis** can pivot inside a contiguous `update*`
+		// slug sub-roster, not just the inner-property axes. Future
+		// contributors must inspect the spec rather than trusting any
+		// prior hand-off forecast — and PRD-level
+		// `requestBody.required` flags are an *insufficient* proxy
+		// for the spec's declarative shape because PRD `false` can
+		// mean either "no `requestBody` at all" or "`requestBody`
+		// declared but `required: false`".
+		//
+		// **Multi-axis pivot from API-0392.** Four axes pivot in
+		// concert from API-0392 to API-0393:
+		//   (a) outer-body axis: REQUIRED `requestBody` →
+		//       **ABSENT** `requestBody` (no body field at all).
+		//   (b) inner-property-count axis: one inner property
+		//       (`traefikConfig`) → **zero** inner properties (no
+		//       inner schema exists).
+		//   (c) inner-property-type axis: plain string → **N/A**
+		//       (no inner schema).
+		//   (d) inner-required-field axis: `traefikConfig` REQUIRED
+		//       → **N/A** (no inner schema).
+		// The shared axes are: the slug-prefix axis (`update*`),
+		// the verb axis (POST), the parameter axis (zero
+		// parameters), and the response-set axis
+		// (200/400/401/403/500, no 404). The body-axis flip-flop
+		// across API-0383..API-0393 is now eleven entries deep
+		// within the same tag — the body axis remains the most
+		// volatile axis on the settings/* roster.
+		//
+		// **Family continuation — fourth `update*` slug-prefix peer
+		// in settings/*.** The `update*` slug sub-roster opened by
+		// API-0390 `updateDockerCleanup`, continued through API-0391
+		// `updateLogCleanup` and API-0392
+		// `updateMiddlewareTraefikConfig`, continues here. The PRD
+		// ordering forecasts four more `update*` peers
+		// (API-0394..API-0397: `updateServerIp`,
+		// `updateTraefikConfig`, `updateTraefikFile`,
+		// `updateTraefikPorts`). Per the slug-prefix-is-not-shape
+		// rule reasserted at API-0371..API-0392, future `update*`
+		// peers must re-verify per-operation rather than inherit any
+		// axis from this entry — the next `update*` peer
+		// (`updateServerIp`) may well declare a different
+		// outer-body, inner-property-count, inner-property-type, or
+		// inner-required-field axis, and the API-0392 → API-0393
+		// outer-body pivot is the cautionary precedent.
+		//
+		// **No-body POST sub-cohort within settings/* now totals
+		// seven entries.** API-0354 `cleanAllDeploymentQueue`,
+		// API-0357 `cleanMonitoring`, API-0358 `cleanRedis`,
+		// API-0359 `cleanSSHPrivateKey`, API-0370 `getUpdateData`,
+		// API-0383 `reloadRedis`, and now API-0393 `updateServer`
+		// share the canonical no-body, no-parameter, no-404
+		// mutating-POST shape. The response-set axis (no 404) stays
+		// consistent across the cohort because Dokploy mutating
+		// actions in this OpenAPI document consistently omit 404 —
+		// there is no per-resource lookup that could miss for an
+		// `updateServer` action that updates the running Dokploy
+		// instance's own server record.
+		//
+		// **Fixture conventions.** No per-case fixture token base is
+		// needed because this case populates neither `SampleBody`,
+		// `SampleQuery`, nor `SamplePathParams` — the no-body POST
+		// cohort precedent (API-0354/0357/0358/0359/0370/0383)
+		// applies. A reservation slot `set-cov-updateServer-0393` is
+		// left open under the settings/* `set-cov-*` namespace for
+		// any future regression test that needs a unique literal
+		// tied to this story; the reservation is unique against
+		// API-0351..API-0392's `set-cov-*` slugs and orthogonal to
+		// every prior tag's `srv-cov-*`, `proj-cov-*`, `org-cov-*`,
+		// `compose-cov-*`, `app-cov-*`, `ai-cov-*`, etc. namespaces.
+		// `SampleBody` is omitted entirely so the harness's
+		// `if len(tc.SampleBody) > 0` guard inside
+		// `runAPICoverageSuccess` skips writing a request body,
+		// matching the API-0383 / API-0370 precedent for no-body
+		// POSTs.
+		//
+		// **Failure-leg fields are intentionally omitted.** The spec
+		// does not declare 404 on this operation (the `updateServer`
+		// verb mutates the running Dokploy instance's own server
+		// record rather than performing a by-id resource lookup), so
+		// the per-tag opener convention reasserted at
+		// API-0335..API-0392 that reserves 404 → CodeNotFound for
+		// stories whose response-set spec actually lists 404
+		// applies. Auth is the universal failure mode every Dokploy
+		// operation must re-prove, so 401 → CodeAuth via the harness
+		// default (`tc.FailureStatus == 0` → 401, `tc.FailureCode ==
+		// ""` → CodeAuth) stays the most informative representative.
+		// 400 → CodeInvalidInput is **not even structurally
+		// available** here because there is no payload to mis-shape
+		// — the no-body POST cohort inherently cannot fail
+		// server-side payload-shape validation. 401 is the only
+		// meaningful representative failure for this entry.
+		//
+		// 200 response in the spec is `{}` with
+		// `additionalProperties: false`, matching the canonical
+		// settings/* mutating-POST cohort. Leaving `SuccessResponse`
+		// unset lets the harness default to `{}` so the success leg
+		// stays terse (per the API-0383 precedent for no-body
+		// POSTs).
+		//
+		// The next case in the settings/* roster per PRD ordering is
+		// API-0394 `settings-updateServerIp` (declared a **POST** in
+		// the PRD with `requestBody.required = false`,
+		// `contentTypes: []`). The next contributor must re-verify
+		// against `internal/api/data/openapi.json >
+		// /settings.updateServerIp > post` per the forward-reference
+		// lesson before assuming any field is identical to this
+		// entry — the PRD's `requestBody.required = false` could
+		// either mean "no `requestBody` at all" (matching this
+		// entry's no-body POST shape) **or** "`requestBody` is
+		// declared but `required: false`" (a different shape
+		// entirely, with an optional but non-empty inner schema).
+		// The API-0392 → API-0393 forecast error demonstrates that
+		// PRD `requestBody.required` flags are an *insufficient*
+		// proxy for the spec's declarative shape; only direct
+		// inspection of `internal/api/data/openapi.json` settles the
+		// outer-body axis. Per the slug-prefix-is-not-shape lesson
+		// reasserted at API-0371..API-0392, even sharing the
+		// `update*` slug prefix and the `updateServer*` slug stem
+		// does not imply the outer-body, inner-property-count,
+		// inner-property-type, inner-required-field, parameter, or
+		// response-set axes carry over.
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

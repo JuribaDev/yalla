@@ -12009,3 +12009,180 @@ Learnings for future iterations:
     required-body+inner-required-plain-string-only).
     Per-operation re-verification stays mandatory.
 ---
+
+## 2026-05-08 - API-0393
+- Implemented coverage for `settings-updateServer`
+  (POST /settings.updateServer) via the table-driven
+  `apiCoverageCase` entry pattern in
+  `internal/cli/api_coverage_test.go`. The harness
+  exercises registry invariants (method/path/tag), the
+  raw `yalla api call settings-updateServer --input <file>
+  --json` success leg with an httptest.Server fixture,
+  the representative auth failure leg (401 → CodeAuth
+  via the harness default), the `yalla schema get
+  settings-updateServer --json` envelope, and the
+  manifest entry — satisfying every PRD acceptance
+  criterion (registry presence, api call, schema get,
+  --no-input safety, success envelope, failure envelope,
+  contract tests, manifest coverage) in one fixture.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended a
+    single `apiCoverageCase` entry for `API-0393 /
+    settings-updateServer`. `Method = http.MethodPost`,
+    `Path = /settings.updateServer`, `Tag = settings`.
+    `SampleBody` is **omitted entirely** (no-body POST,
+    matching API-0354/0357/0358/0359/0370/0383
+    precedent). `SuccessResponse` is also omitted so the
+    harness defaults to `{}`. The case comment
+    re-verifies the spec against
+    `internal/api/data/openapi.json >
+    /settings.updateServer > post`, documents the
+    multi-axis pivot from API-0392, **explicitly
+    corrects** the API-0392 hand-off comment which
+    incorrectly forecast `requestBody.required = true`
+    (the actual spec has no `requestBody` at all),
+    enumerates the no-body POST sub-cohort that now
+    totals seven entries within settings/*, and
+    forecasts the next case `API-0394
+    settings-updateServerIp` with explicit warning that
+    PRD `requestBody.required = false` is ambiguous
+    between "no body at all" and "body declared but
+    optional" — only direct spec inspection settles the
+    outer-body axis.
+  - `ralph/prd.json` — set US `API-0393.passes = true`.
+  - `ralph/progress.txt` — this report.
+- **Verification run** (from repository root):
+  - `gofmt -w .` — clean (no files reformatted beyond
+    the new entry).
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass; `internal/cli`
+    runs the expanded `TestAPICoverage_*` and
+    manifest-coverage suites green (~1.1s wall clock).
+  - `go test -race ./...` — all packages pass green
+    under the race detector (~2.8s wall clock for
+    `internal/cli`).
+- **Tools NOT available locally** (documented per the
+  verification policy): `goimports`, `golangci-lint`,
+  `staticcheck`, `govulncheck`, `goreleaser`. The
+  repo-level `scripts/verify.sh` reports each missing
+  optional tool with an install hint and never silently
+  skips.
+- **Spec axes verified directly against**
+  `internal/api/data/openapi.json >
+  /settings.updateServer > post`: POST verb, **no
+  `requestBody` field at all**, **no `parameters` array**,
+  responses 200/400/401/403/500 (no 404), 200 schema is
+  `{}` with `additionalProperties: false`. The spec
+  block declares only `operationId`, `tags`, `security`,
+  and `responses` — strictly smaller than API-0392's
+  spec block.
+- **Remaining risks or follow-ups**: none for this
+  story. Forward-reference recorded in the new entry's
+  hand-off comment for API-0394
+  `settings-updateServerIp` — per the slug-prefix-is-
+  not-shape rule and the cautionary precedent of the
+  API-0392 → API-0393 outer-body pivot, the next
+  contributor must inspect the spec directly rather
+  than trusting the PRD's `requestBody.required = false`
+  flag (which is ambiguous between "no body at all"
+  and "body declared but optional with non-empty inner
+  schema").
+- **Learnings for future iterations:**
+  - **The PRD's `requestBody.required` flag is an
+    insufficient proxy for the spec's outer-body shape.**
+    The PRD records `requestBody.required: false,
+    contentTypes: []` for API-0393, which is
+    superficially compatible with two structurally
+    distinct shapes: (a) no `requestBody` field at all
+    in the spec (this entry's case), and (b)
+    `requestBody` declared with `required: false` and
+    a non-empty inner schema. Only direct inspection
+    of `internal/api/data/openapi.json` settles which
+    branch applies. The API-0392 hand-off comment's
+    forecast that API-0393 would carry
+    `requestBody.required = true` was a clean miss in
+    the *opposite* direction (forecasting REQUIRED but
+    the spec has ABSENT) — the correct mental model is
+    that the PRD's `requestBody.required` flag tells
+    you *nothing* about whether the spec declares a
+    `requestBody` field; it only tells you the
+    `requestBody.required` flag's value if the field
+    exists. Future contributors must inspect the spec
+    *unconditionally* before assuming any outer-body
+    shape.
+  - **The slug-prefix-is-not-shape rule extends to the
+    outer-body axis.** Prior `update*` peers in
+    settings/* (API-0390 `updateDockerCleanup`, API-0391
+    `updateLogCleanup`, API-0392
+    `updateMiddlewareTraefikConfig`) all carry a
+    REQUIRED `requestBody` with at least one inner
+    property. API-0393 `updateServer` shares the
+    `update*` slug prefix but has no `requestBody` at
+    all. This is the **first instance of an outer-body
+    axis pivot inside a contiguous slug sub-roster**
+    on the settings/* tag — prior pivots stayed within
+    the inner-property axes (count, type, name,
+    required-ness) while keeping the outer body
+    REQUIRED. The lesson is that *no* axis is
+    structurally privileged: any axis can pivot at any
+    boundary, and per-operation re-verification is
+    mandatory regardless of slug-prefix continuity.
+  - **The no-body POST cohort within settings/* now
+    totals seven entries** (API-0354, 0357, 0358, 0359,
+    0370, 0383, 0393), spread across four slug prefixes
+    (`clean*`, `getUpdateData`, `reload*`, `update*`).
+    The cohort is structurally homogeneous: no body, no
+    parameters, no 404, success schema `{}` with
+    `additionalProperties: false`. This is the largest
+    structural sub-cohort on the settings/* tag — and
+    the only one that spans four distinct slug prefixes.
+    Its growth pattern (one new member every 3-13
+    stories) suggests future settings/* `update*` peers
+    will likely add to it, but the API-0392 → API-0393
+    pivot proves that within-cohort membership is *not*
+    predictable from slug prefix.
+  - **For no-body POSTs, omit both `SampleBody` and
+    `SuccessResponse`** — the harness's
+    `if len(tc.SampleBody) > 0` guard inside
+    `runAPICoverageSuccess` correctly skips writing a
+    request body when `SampleBody` is unset, and
+    `SuccessResponse`'s default of `{}` matches the
+    canonical settings/* mutating-POST 200 schema.
+    Carrying an empty `SampleBody: json.RawMessage(\`{}\`)`
+    would silently encode a non-empty request body on
+    the wire (the JSON object `{}`) which is
+    structurally distinct from a true bodyless POST.
+    The API-0383 entry's "Leaving `SuccessResponse`
+    unset lets the harness default to `{}`" comment is
+    the canonical precedent — follow it for every
+    no-body POST going forward.
+  - **400 → CodeInvalidInput is structurally
+    unavailable for the no-body POST cohort.** Without
+    a payload to mis-shape, the operation cannot fail
+    server-side payload-shape validation; the spec's
+    400 response is reserved for other categories of
+    invalid input (e.g. invalid `Authorization` header
+    formatting) which the harness does not exercise.
+    401 → CodeAuth via the harness default is therefore
+    the **only** meaningful representative failure for
+    no-body POST entries — there is no story-specific
+    coverage burden that would justify overriding
+    `FailureStatus` / `FailureCode` to 400.
+  - **The body-axis flip-flop within settings/* is now
+    eleven entries deep across API-0383..API-0393.**
+    The body axis is the most volatile axis on the tag
+    — it has flipped at every boundary in this stretch:
+    no-body / required-body+inner-required (API-0386) /
+    required-body+inner-optional-string-only (API-0387) /
+    required-body+inner-optional-mixed (API-0388) /
+    required-body+inner-required-boolean (API-0389) /
+    required-body+inner-required-mixed (API-0390) /
+    required-body+inner-required-nullable-string
+    (API-0391) / required-body+inner-required-plain-
+    string (API-0392) / no-body (API-0393). Future
+    contributors should expect continued body-axis
+    volatility within settings/* and per-operation
+    re-verification stays mandatory across every
+    family transition.
+---
