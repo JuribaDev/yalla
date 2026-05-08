@@ -7079,3 +7079,82 @@
     this entry now names API-0343 `server-publicIp` for the
     parameter-free re-anchoring.
 ---
+
+## 2026-05-08 - API-0343
+- What was implemented: Coverage for `server-publicIp` (GET
+  /server.publicIp, tag `server`, zero parameters, no request
+  body). Added a single `apiCoverageCase` struct literal to
+  `internal/cli/api_coverage_test.go` immediately after API-0342
+  `server-one` (slice stays sorted by StoryID). The five
+  parameterised tests (`TestAPICoverage_RegistryInvariants`,
+  `TestAPICoverage_SchemaCommandWorks`,
+  `TestAPICoverage_ManifestListsOperation`,
+  `TestAPICoverage_SuccessRoundTrip`,
+  `TestAPICoverage_RepresentativeFailure`) extend automatically.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (one struct literal +
+    forward-reference commentary)
+  - `ralph/prd.json` (API-0343 `passes` → true)
+- Verification run:
+  * `gofmt -w .` → clean
+  * `goimports` → not installed (consistent with prior iterations)
+  * `go mod tidy` → no changes
+  * `go test ./...` → ok
+  * `go test -race ./...` → ok
+  * `go vet ./...` → clean
+- Results: All required quality checks pass. The new case
+  exercises the parameter-free GET shape end-to-end (registry
+  invariants, schema command, manifest inclusion, httptest-backed
+  success exchange, default 401 → CodeAuth representative
+  failure).
+- Remaining risks or follow-ups: None specific to this story.
+  The next server/* parameter-free GET peers in the queue
+  (API-0345 `server-security`, API-0349 `server-validate`,
+  API-0350 `server-withSSHKey`) should mirror this entry verbatim
+  — pure copy-and-rename, only StoryID / OperationID / Path
+  change. The next case in the server/* roster, API-0344
+  `server-remove`, is a POST mutation that re-introduces the
+  body-mutation shape last exercised at API-0338 `server-create`
+  and will need a fixture body following the
+  `srv-cov-remove-0344` slug; the API-0343 entry's
+  forward-reference comment names it explicitly.
+- **Learnings for future iterations:**
+  - **Re-anchoring after a one-time failure-leg override.**
+    API-0342 `server-one` introduced the 404 → CodeNotFound
+    override that was reserved at API-0290 / API-0294 / API-0335.
+    API-0343 is the **first case after that override** to revert
+    to the default 401 → CodeAuth, and the per-case literal must
+    **explicitly omit** the FailureStatus / FailureCode lines —
+    they are not inherited across slice elements (the harness
+    fall-through is `tc.FailureStatus == 0` → 401, `tc.FailureCode
+    == ""` → CodeAuth) but a copy-paste from API-0342 would
+    silently flip the assertion to 404. The new entry's
+    "Failure-leg fields are intentionally omitted" comment block
+    documents this trap for the next contributor; future peers
+    that re-anchor after any override should preserve it.
+  - **Second parameter-free server/* peer to follow query-shaped
+    peers.** API-0341 was the first (after API-0339/0340);
+    API-0343 is the second (after API-0342's by-id `serverId`
+    query). The harness's `r.URL.RawQuery == ""` assertion in
+    `runAPICoverageSuccess` catches any accidental copy-paste
+    that leaks the API-0342 `serverId` key, but the
+    intent-documenting comment block (re-asserted from API-0341)
+    is the cheaper safety net — future contributors who notice
+    they are about to copy a SampleQuery line should grep this
+    entry's commentary first.
+  - **Forward-reference chain remains the cheapest design tool.**
+    API-0341 named API-0343 as the next parameter-free re-anchor;
+    API-0342 named API-0343 as the next case to "return to the
+    parameter-free GET shape" with the default 401 leg restored.
+    Both forward references made the design decision a single
+    `git grep "API-0343"` instead of a re-derivation. The chain
+    continues: this entry now names API-0344 `server-remove` as
+    the next body-mutation re-introduction, and API-0345 / 0349 /
+    0350 as the remaining parameter-free peers.
+  - **Adding a parameter-free coverage entry remains a pure-data
+    change** — no production code, registry, schema, or manifest
+    edits are needed because the embedded OpenAPI document
+    already advertises the operation. This was true for every
+    prior parameter-free entry and remains true here. The
+    parameterised tests pick up the new case automatically.
+---
