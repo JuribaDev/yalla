@@ -9319,3 +9319,98 @@ Learnings for future iterations:
     to be documented as missing rather than silently skipped —
     same status as every prior coverage story.
 ---
+
+## 2026-05-08 - API-0364 (settings-getDokployVersion)
+- Added the parameter-free GET `settings-getDokployVersion`
+  (path `/settings.getDokployVersion`, tag `settings`,
+  responses 200/400/401/403/404/500) to the apiCoverageCases
+  table as the **fourteenth** entry in the settings/* roster
+  and the **second** member of the parameter-free
+  `getDokploy*` GET sub-family that API-0363
+  `settings-getDokployCloudIps` opened. Spec re-verified
+  against `internal/api/data/openapi.json >
+  /settings.getDokployVersion > get` per the
+  API-0345..API-0363 forward-reference lesson: zero
+  parameters (no query, path, or header), no `requestBody`
+  (GETs in this OpenAPI doc never carry one), 200 schema
+  `{}` with `additionalProperties: false`. Same wire
+  shape as API-0363, API-0350 `server-withSSHKey`, and
+  API-0006 `ai-getAll`; no `SampleBody`/`SampleQuery`/
+  `SamplePathParams` populated since the harness's GET
+  branch ignores them (and would silently encode dead
+  code on the wire if `SampleBody` were set). Failure
+  leg uses the harness default 401 → CodeAuth — 404 is
+  spec-declared but the per-tag opener convention
+  reserves CodeNotFound for canonical by-id `*-one`
+  peers, not for parameter-free platform-info getters
+  like `getDokployVersion`.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended a
+    ~108-line apiCoverageCase struct literal (entry
+    #148, sorted by StoryID immediately after API-0363
+    `settings-getDokployCloudIps` per the
+    diff-friendliness rule). The header comment forbids
+    cargo-culting this entry's parameter-free GET shape
+    onto the next settings/* peer (API-0365
+    `settings-getIp`) without per-operation
+    re-derivation from the embedded spec, and pre-
+    reserves the slug `set-cov-getDokployVersion-0364`
+    under the settings/* `set-cov-*` namespace.
+  - `ralph/prd.json` — flipped API-0364 `passes` to `true`.
+  - `ralph/progress.txt` — this entry.
+- Verification run (from repo root):
+  - `gofmt -l .`                           → clean (no diff).
+  - `goimports -w .`                       → not installed
+                                             (documented).
+  - `go mod tidy`                          → clean (no diff).
+  - `go vet ./...`                         → pass.
+  - `go test ./...`                        → pass (10 packages ok).
+  - `go test -race ./...`                  → pass (10 packages ok).
+  - Focused: `go test ./internal/cli -run 'TestAPICoverage/API-0364'
+    -v` → all five subtests green (registry, schema, manifest,
+    success round-trip, representative failure).
+- Results: API coverage advances from 147 → 148 passing /
+  462 total (314 remaining). The settings/* tag now has 14
+  covered peers; the parameter-free `getDokploy*` GET
+  sub-family has 2 members (API-0363, API-0364).
+- Remaining risks or follow-ups: API-0365 `settings-getIp`
+  (GET) is the next story by PRD ordering. It is **also**
+  declared a GET in the PRD with responses
+  200/400/401/403/404/500, so on shape it appears to
+  continue the parameter-free GET sub-family — but the
+  next contributor must re-verify against
+  `internal/api/data/openapi.json > /settings.getIp >
+  get` per the forward-reference lesson before assuming
+  any field is identical to this entry. Do not assume the
+  parameter list, request body, or response set carries
+  over solely because the verb prefix and adjacent slug
+  match.
+- **Learnings for future iterations:**
+  - **Sub-family confirmation, not introduction.** API-0364
+    is the *second* parameter-free `getDokploy*` GET
+    after API-0363 opened the sub-family. The header
+    comment leans on API-0363 as the canonical reference
+    rather than re-explaining the cohort from scratch;
+    the comment's job is to *confirm* the sub-family
+    shape and pre-reserve the next slot, not to re-derive
+    every wire-level invariant the prior peer already
+    established.
+  - **Failure-leg consistency across the GET sub-family.**
+    Both API-0363 and API-0364 declare 404 in the spec
+    yet both deliberately omit failure-leg overrides so
+    the harness exercises the canonical 401 → CodeAuth
+    path. The 404-bearing-but-unused rationale is
+    identical (these are platform-info getters, not by-id
+    peers) — future parameter-free `getDokploy*`
+    additions should match this pattern unless the
+    operation genuinely keys on a single resource id.
+  - **Comment density discipline.** The API-0363 entry's
+    forward-reference comment to API-0364 successfully
+    pre-warned this iteration; the API-0364 comment
+    pre-warns API-0365 with the same forward-reference
+    + per-operation re-verification hedge. Keep the
+    pattern: every entry forward-references its
+    immediate successor by PRD ordering and forbids
+    cargo-culting until the next contributor re-derives
+    the spec shape.
+---
