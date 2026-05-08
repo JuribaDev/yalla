@@ -21333,3 +21333,62 @@ forward-reference lesson before assuming any field shape.
     cat-with-line-numbers to verify the exact tab count before
     crafting an Edit.
 ---
+
+## 2026-05-09 - API-0206
+- Implemented coverage fixture for `mysql-stop` (POST /mysql.stop). The
+  spec re-verified against `internal/api/data/openapi.json` declares a
+  single REQUIRED `mysqlId` (string) request body, no parameters, and
+  responses 200/400/401/403/500 with the empty-success `{}` shape.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended the
+    `apiCoverageCase` entry between the API-0205 (`mysql-start`) and
+    API-0246 (`organization-active`) blocks. Fixture token base
+    `mysql-cov-stop-0206`. SampleBody supplies the lone REQUIRED
+    `mysqlId` literal for byte-for-byte body assertion. Default
+    401→CodeAuth representative-failure leg retained per the
+    body-bearing imperative-action precedent (404 not declared).
+  - `ralph/prd.json` — flipped `userStories[id=API-0206].passes` to
+    `true` (1-line diff; passing flag flip only).
+- Verification (run from repo root):
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass (internal/api, internal/cli,
+    internal/config, internal/curated, internal/errors,
+    internal/output, internal/release, internal/testutil,
+    internal/upgrade).
+  - `go test -race ./...` — all packages pass.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, and
+    `goreleaser` remain not installed locally; baseline still met.
+- Remaining risks / follow-ups: none for this story. The next
+  PRD-ordered priority-4 mysql/* backlog entry is API-0207
+  `mysql-update` (declared a **POST** per the spec preview); the
+  forward-reference comment block at the foot of the API-0206 entry
+  names it explicitly so the next iteration's `git grep API-0207`
+  lands on the closest applicable precedent.
+- **Learnings for future iterations:**
+  - The mysql-stop spec is byte-for-byte cardinality-identical to the
+    just-landed mysql-start (API-0205): same single-required `mysqlId`
+    body, same 200/400/401/403/500 response set with `{}` empty-
+    success, no 404 declared. Reusing the API-0205 fixture skeleton
+    verbatim modulo the storyID/slug suffixes is the correct move and
+    is the precedent established by the entire imperative-action mysql
+    POST cohort (changeStatus, create, deploy, move, rebuild, reload,
+    remove, start, stop). Save context by *not* re-deriving the
+    failure-leg taxonomy from scratch — the 401→CodeAuth default has
+    been locked in by every prior body-bearing imperative-action mysql
+    POST and continues to hold here.
+  - The cross-tag stop-shape is canonically single-`<tag>Id` across
+    the Dokploy database tags (mariadb-stop / mongo-stop /
+    postgres-stop / redis-stop), mirroring the start-shape recurrence
+    documented at API-0205. When a future iteration covers the
+    postgres/redis stop entries, the API-0206 fixture is the
+    closest in-tree precedent; the only edits required will be the
+    storyID, OperationID, Path, fixture-token slug, and the
+    resource-id field name.
+  - Keep the forward-reference comment block at the foot of every
+    coverage entry pointing at the next PRD-ordered backlog entry.
+    The mysql-start (API-0205) entry's "next case is API-0206
+    `mysql-stop`" forward-reference made this iteration trivial to
+    locate; preserve that contract for API-0207 and beyond.
+---
