@@ -4124,3 +4124,49 @@
     valid RFC3339 timestamp future-proofs the fixture against a stricter
     schema validator landing on the harness later.
 ---
+
+## 2026-05-08 - API-0073
+- Implemented per-operation contract coverage for compose-disconnectGitProvider
+  (POST /compose.disconnectGitProvider) — fifth compose/* entry in
+  coveredAPIOperations, sorted directly after API-0072.
+- Files changed:
+  - internal/cli/api_coverage_test.go (+27 lines, single appended
+    apiCoverageCase literal sorted after API-0072)
+  - ralph/prd.json (passes: false -> true for API-0073)
+  - ralph/progress.txt (this entry)
+- Implementation: member of the minimal-composeId-only POST family.
+  Confirmed in internal/api/data/openapi.json that
+  /compose.disconnectGitProvider's required surface is just
+  `composeId` (string) — no `deleteVolumes`, no optional siblings —
+  so the fixture is the same shape as API-0066/0067/0068 (cancelDeployment,
+  cleanQueues, clearDeployments). 200 response is `{}` with
+  `additionalProperties: false`, matching the empty-success convention.
+  Shared harness in internal/cli/api_coverage_test.go derives all five
+  contract assertions (registry / schema get / manifest inclusion /
+  httptest success / 401 -> E_AUTH failure) from the entry alone, so
+  no production-code change is required.
+- Verification (from /Users/juribadev/projects/poc/yalla-claude):
+  - gofmt -w .   (clean)
+  - go mod tidy  (no module changes)
+  - go vet ./... (PASS)
+  - go test ./... (PASS — internal/cli 1.035s)
+  - go test -race ./... (PASS — internal/cli 2.427s)
+  - goimports / golangci-lint / staticcheck / govulncheck / goreleaser:
+    not installed locally; documented in the existing baseline note.
+- Remaining risks / follow-ups: none specific to this story. 403 stories
+  remain failing. The next priority-2 compose/* story is API-0074
+  (compose-fetchSourceType), continuing the compose/* batch.
+- **Learnings for future iterations:**
+  - compose-disconnectGitProvider is a pure unlink; unlike compose-delete
+    (API-0070) it does NOT carry a `deleteVolumes` boolean and unlike
+    compose-deploy (API-0071) it does NOT accept optional title/description.
+    The compose/* family is now 5 entries with three canonical shapes:
+      * minimal-composeId-only POST: API-0066/0067/0068/0073.
+      * composeId + required deleteVolumes: API-0070.
+      * composeId + optional title/description: API-0071.
+      * composeId-free template envelope (environmentId + id required,
+        serverId/baseUrl optional): API-0072.
+      * full create envelope: API-0069.
+    Future compose/* stories should still re-read the spec — sibling
+    operations under the same tag continue to mix shapes.
+---

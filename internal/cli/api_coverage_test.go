@@ -1376,6 +1376,33 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.method` / `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0073",
+		OperationID: "compose-disconnectGitProvider",
+		Method:      http.MethodPost,
+		Path:        "/compose.disconnectGitProvider",
+		Tag:         "compose",
+		// Mirrors the schema in `data/openapi.json` for
+		// /compose.disconnectGitProvider: the only required field is
+		// `composeId` (string), with no optional siblings. Fifth
+		// compose/* member of the minimal-composeId-only POST family —
+		// same shape as API-0066 (compose-cancelDeployment), API-0067
+		// (compose-cleanQueues), and API-0068 (compose-clearDeployments).
+		// Unlike API-0070 (compose-delete) this operation does NOT carry
+		// a `deleteVolumes` boolean — disconnecting a git provider is a
+		// pure unlink and the spec does not expose any cleanup flags.
+		// Keep the fixture minimal-but-valid so a future schema validator
+		// wired into the harness still accepts it.
+		SampleBody: json.RawMessage(`{
+			"composeId": "compose-cov-disconnect-git-0073"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the empty-success convention shared by every prior
+		// application/* and compose/* mutation peer. Empty-object body
+		// keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
