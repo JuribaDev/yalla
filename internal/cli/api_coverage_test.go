@@ -7069,6 +7069,116 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0363",
+		OperationID: "settings-getDokployCloudIps",
+		Method:      http.MethodGet,
+		Path:        "/settings.getDokployCloudIps",
+		Tag:         "settings",
+		// Thirteenth entry on the settings/* coverage roster, inheriting
+		// the `set-cov-*` per-tag fixture-isolation namespace
+		// established by API-0351 `settings-assignDomainServer`
+		// (must not back-reference the closed `srv-cov-*`,
+		// `proj-cov-*`, `org-cov-*`, `compose-cov-*`, `app-cov-*`,
+		// `ai-cov-*`, or any other prior tag's namespace, per the
+		// per-tag isolation rule reasserted at API-0335..API-0362
+		// and originally established at API-0246
+		// `organization-active`).
+		//
+		// **Spec re-verified per the API-0345..API-0362
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json >
+		// /settings.getDokployCloudIps > get`: a **GET** with **zero
+		// parameters** (no query, no path, no header) and **no
+		// request body** (GETs in this OpenAPI document never
+		// carry a `requestBody` field). Responses
+		// 200/400/401/403/404/500 — note the **presence of 404**,
+		// pivoting back from the eleven-entry
+		// `clean*`/`assign*`/`getDokploy*`/`POST` cohort that
+		// dominated settings/* between API-0353..API-0362 (where
+		// 404 was uniformly absent) and rejoining the
+		// `404-bearing` response set first seen in this roster at
+		// API-0352 `settings-checkGPUStatus`. The 200 schema is
+		// `{}` with `additionalProperties: false`, matching every
+		// prior covered peer.
+		//
+		// **Family pivot — twelfth-entry POST sub-roster ends here.**
+		// API-0362's comment correctly warned that this entry is a
+		// hard pivot off the `clean*` POST family onto the `get*`
+		// GET sub-family: the `cleanUnused*`/`clean*`/`assign*`
+		// POST cluster (API-0351, API-0353..API-0362, with the
+		// single-OPTIONAL-query API-0352 GET interleaved) ends at
+		// API-0362, and `getDokployCloudIps` opens the
+		// parameter-free GET sub-family (cf. API-0006 `ai-getAll`,
+		// API-0350 `server-withSSHKey`). The harness's GET branch
+		// asserts that **no `Content-Type` request header is
+		// sent** and ignores `SampleBody` entirely, so carrying a
+		// `SampleBody` into this case would silently encode dead
+		// code on the wire — `SampleBody` is therefore deliberately
+		// omitted, mirroring API-0006 and API-0350. Likewise,
+		// `SampleQuery` and `SamplePathParams` are omitted: the
+		// spec declares zero parameters, distinguishing this case
+		// from API-0352 `settings-checkGPUStatus` which carried a
+		// single optional `serverId` query parameter. The harness
+		// still asserts the wire-level invariants (method, path,
+		// `Authorization` header, empty query string, empty
+		// request body) at `runAPICoverageSuccess`, and the
+		// canonical no-input invocation
+		// `yalla api call settings-getDokployCloudIps --input '{}'
+		// --json` is what the agent contract guarantees.
+		//
+		// Fixture conventions:
+		//   * No per-case fixture token base is needed because
+		//     this case populates neither `SampleBody`,
+		//     `SampleQuery`, nor `SamplePathParams` — the
+		//     parameter-free GET cohort (API-0006 `ai-getAll`,
+		//     API-0350 `server-withSSHKey`) precedent applies. A
+		//     reservation slot `set-cov-getDokployCloudIps-0363`
+		//     is left open under the settings/* `set-cov-*`
+		//     namespace for any future regression test that
+		//     needs a unique literal tied to this story; the
+		//     reservation is unique against API-0351..API-0362's
+		//     `set-cov-*` slugs and orthogonal to every prior
+		//     tag's `srv-cov-*`, `proj-cov-*`, `org-cov-*`,
+		//     `compose-cov-*`, `app-cov-*`, `ai-cov-*`, etc.
+		//     namespaces.
+		//
+		// **Failure-leg fields are intentionally omitted.** Even
+		// though the spec declares 404 on this operation (it
+		// reappears on the GET branch after eleven 404-absent
+		// POST peers), the per-tag opener convention reasserted
+		// at API-0335..API-0362 reserves 404 → CodeNotFound for
+		// the canonical by-id `*-one` peer, not for fleet-wide
+		// list-style getters like `getDokployCloudIps` (which
+		// returns the cloud platform's IP allocation, not a
+		// single resource keyed by id). Auth is the universal
+		// failure mode every Dokploy operation must re-prove, so
+		// 401 → CodeAuth via the harness default
+		// (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""`
+		// → CodeAuth) stays the most informative representative.
+		// 400 → CodeInvalidInput stays reserved for stories where
+		// payload validation is the operation's distinguishing
+		// failure mode; this entry uses the canonical 401.
+		//
+		// The next case in the settings/* roster, API-0364
+		// `settings-getDokployVersion`, is also a **GET** with
+		// zero parameters and no request body per the PRD
+		// (responses 200/400/401/403/404/500). Future
+		// contributors authoring API-0364 should grep this entry
+		// first for the parameter-free GET cohort handling and
+		// the 404-bearing-but-omitted-from-failure-leg rationale,
+		// then re-verify the spec against
+		// `internal/api/data/openapi.json >
+		// /settings.getDokployVersion > get` per the
+		// forward-reference lesson — do **not** assume the
+		// parameter list, request body, or response set mirrors
+		// this entry's shape solely because the verb prefix and
+		// adjacent slug match; the eleven-flip body-axis history
+		// of the preceding `clean*` sub-roster (API-0353..API-0362)
+		// demonstrates why per-operation re-verification stays
+		// mandatory across every family transition.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

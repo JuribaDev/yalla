@@ -8998,3 +8998,94 @@ Learnings for future iterations:
     `SampleBody`; carrying a `SampleBody` into a GET case would
     silently encode dead code. Pivot deliberately.
 ---
+
+## 2026-05-08 - API-0363 settings-getDokployCloudIps (GET /settings.getDokployCloudIps)
+- Implemented: appended the API-0363 coverage case to
+  `internal/cli/api_coverage_test.go` as the thirteenth entry on the
+  settings/* roster — the first member of the parameter-free GET
+  sub-family on this tag, pivoting off the eleven-entry
+  `clean*`/`assign*`/POST cohort that dominated settings/* between
+  API-0351..API-0362. Spec re-verified against
+  `internal/api/data/openapi.json > /settings.getDokployCloudIps >
+  get`: a GET with **zero parameters** (no query, no path, no header)
+  and **no `requestBody`** field at all (GETs in this OpenAPI
+  document never carry one); responses 200/400/401/403/404/500 with
+  404 reappearing after eleven 404-absent POST peers. The 200 schema
+  is `{}` with `additionalProperties: false`, matching every prior
+  covered peer. Wire shape lands in the parameter-free GET cohort
+  alongside API-0006 `ai-getAll` and API-0350 `server-withSSHKey`,
+  *not* the single-OPTIONAL-query GET cohort (API-0352
+  `settings-checkGPUStatus` carried a single optional `serverId`
+  query parameter — this entry has none). Case populates neither
+  `SampleBody`, `SampleQuery`, nor `SamplePathParams`; the harness's
+  GET branch ignores `SampleBody` and asserts that no `Content-Type`
+  request header is sent on a GET, so carrying any of the three
+  would silently encode dead code on the wire. Failure-leg fields
+  intentionally omitted: 404 is declared but the per-tag opener
+  convention reserves 404 → CodeNotFound for canonical by-id
+  `*-one` peers, not for fleet-wide list-style getters like
+  `getDokployCloudIps`. Harness defaults
+  (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""` →
+  CodeAuth) deliver the canonical failure-leg mapping.
+  `SuccessResponse` is the empty-object literal `{}`, matching the
+  spec's 200 schema. Forward-reference comment block points to
+  API-0364 `settings-getDokployVersion`, which is also a GET with
+  zero parameters per the PRD — but per the per-operation
+  re-verification rule, future contributors must not assume
+  parameter-list / response-set parity solely because the verb
+  prefix and adjacent slug match.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended API-0363 case
+    to the `coveredAPIOperations` slice.
+  - `ralph/prd.json` — flipped API-0363 `passes` to `true`.
+  - `ralph/progress.txt` — this entry.
+- Verification run (from repo root):
+  - `gofmt -w .`                           → clean.
+  - `goimports -w .`                       → not installed (documented).
+  - `go mod tidy`                          → clean (no diff).
+  - `go vet ./...`                         → pass.
+  - `go test ./...`                        → pass (10 packages ok).
+  - `go test -race ./...`                  → pass (10 packages ok).
+- Results: all required quality gates green; manifest, registry,
+  and per-operation contract tests cover the new entry via the
+  existing harness with no per-tag scaffolding required.
+- Remaining risks or follow-ups: API-0364
+  `settings-getDokployVersion` (GET) is the next story and continues
+  the settings/* `get*` GET sub-family opened by this entry. Future
+  contributors must re-verify the spec rather than mirror this
+  entry's parameter-free shape — even adjacent `getDokploy*` slugs
+  are not guaranteed to share parameter or response-set shape per
+  the eleven-flip body-axis history of the preceding `clean*`
+  POST sub-roster (API-0353..API-0362).
+- **Learnings for future iterations:**
+  - The settings/* roster has now opened its second sub-family at
+    API-0363: the parameter-free GET cohort (one entry so far,
+    just `getDokployCloudIps`), distinct from the
+    single-OPTIONAL-query GET cohort opened at API-0352
+    (`checkGPUStatus`) and the eleven-entry `clean*`/`assign*`
+    POST cohort (API-0351, API-0353..API-0362). Three GET
+    sub-shapes are now possible going forward in settings/*:
+    parameter-free, single-optional-query, and (potentially)
+    multi-parameter — each must be detected per-operation.
+  - The harness's GET branch has three structural guarantees
+    that POST handlers never assert: (a) no `Content-Type`
+    request header is sent, (b) `SampleBody` is ignored
+    entirely, and (c) the request body byte-stream is empty.
+    Carrying a `SampleBody` into a GET case is therefore
+    silent dead code and a coverage-scope regression that the
+    success-leg envelope assertion will not catch.
+  - The 404-bearing-but-omitted-from-failure-leg pattern
+    (declared in the spec, but not exercised because the
+    per-tag opener convention reserves 404 → CodeNotFound for
+    canonical by-id `*-one` peers) reappears here after eleven
+    consecutive 404-absent POST peers (API-0353..API-0362).
+    The convention is per-tag, not per-spec-response-set, so
+    future settings/* GET getters that declare 404 should
+    continue to inherit the harness default 401 → CodeAuth
+    failure-leg mapping rather than promoting 404 →
+    CodeNotFound.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    and `goreleaser` remain not installed locally and continue
+    to be documented as missing rather than silently skipped —
+    same status as every prior settings/* coverage story.
+---

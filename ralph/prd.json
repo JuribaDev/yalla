@@ -16630,7 +16630,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-getDokployCloudIps",
