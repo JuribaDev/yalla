@@ -11071,3 +11071,66 @@ Learnings for future iterations:
     needed; the harness's POST branch picks up the body via
     `--input`'s JSON `body` field.
 ---
+
+## 2026-05-08 - API-0060
+- **Implemented**: Per-operation contract coverage for `certificates-one`
+  (GET `/certificates.one`), the canonical by-id GET in the
+  certificates/* tag. Adds the third certificates/* `apiCoverageCase`
+  entry — a single-required `certificateId` query (plain string),
+  empty-object 200 body, and the reserved 404 → CodeNotFound
+  failure-leg override (the slot was forward-reserved by API-0058's
+  design-rationale header for the by-id peer, mirroring API-0055
+  `bitbucket-one`'s claim of the same slot in the bitbucket/* tag arc
+  and API-0342 `server-one`'s precedent across tags). All five
+  subtests (registry invariants, schema reachability, manifest
+  inclusion, success round-trip, representative failure) flow through
+  the existing `runAPICoverage*` harness — no harness changes
+  required.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended the API-0060 struct
+    literal between API-0059 and API-0066, sorted by StoryID.
+  - `ralph/prd.json` — flipped `API-0060.passes` to `true`.
+  - `ralph/progress.txt` — this entry.
+- **Verification run** (from repo root):
+  - `gofmt -w .` — clean.
+  - `goimports` — not installed (documented as missing per the
+    Codebase Patterns convention).
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass.
+  - `go test -race ./...` — all packages pass under the race
+    detector.
+- **Remaining risks or follow-ups**:
+  - API-0061 `certificates-remove` is the last pending peer in the
+    certificates/* tag arc. Per the forward-reference at API-0058's
+    design-rationale header (and reasserted at this entry's
+    rationale), API-0061 is a mutating POST expected to revert to
+    the harness-default 401 → CodeAuth slot — but per-operation
+    re-verification against `internal/api/data/openapi.json >
+    /certificates.remove > post` is mandatory before inheriting
+    that prediction. Preliminary spec inspection at hand-off shows
+    a required JSON body and 200/400/401/403/500 responses
+    (no 404), matching the canonical mutation response set already
+    exercised by API-0059.
+- **Learnings for future iterations**:
+  - The 404 → CodeNotFound failure-leg slot is a per-tag resource
+    reserved exclusively for the canonical by-id reader (`*-one`
+    GETs). When a tag-arc opener (the `*-all` list-style GET)
+    forward-reserves that slot in its design-rationale header, the
+    by-id peer must consume it via `FailureStatus:
+    http.StatusNotFound` and `FailureCode: yerr.CodeNotFound` on
+    the case literal — even when the by-id peer's spec also
+    declares 401/403 responses. This is now the standing precedent
+    across server/* (API-0342), bitbucket/* (API-0055), and
+    certificates/* (this entry).
+  - For single-required-string-query GETs with no optional
+    siblings, the `Sample*` field surface is exhaustively a
+    one-key `SampleQuery` map. No `SampleBody` is set (GETs in
+    this OpenAPI document never carry a `requestBody`).
+  - Per-tag fixture-isolation namespaces are append-only across the
+    PRD lifecycle: once `cert-cov-*` is opened by the tag-arc
+    opener (API-0058), subsequent peers (API-0059, this entry,
+    API-0061) must consume `cert-cov-<slug>-<storyID>` slugs and
+    must not back-reference any closed cross-tag namespace
+    (`bb-cov-*`, `srv-cov-*`, etc.).
+---
