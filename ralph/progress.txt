@@ -20167,3 +20167,72 @@ forward-reference lesson before assuming any field shape.
     required because it was drafted with the correct closed-namespace
     list at commit time.
 ---
+
+## 2026-05-09 - API-0194
+- Implemented: Added the `mysql-changeStatus` (POST /mysql.changeStatus)
+  entry to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go`, positioned between API-0193
+  `mounts-update` and API-0246 `organization-active` to preserve the
+  StoryID-sorted slice invariant. This is the **kickoff entry for the
+  priority-4 mysql/* roster** — first mysql-tagged operation to ship
+  contract coverage and opens a brand-new `mysql-cov-*` per-tag
+  fixture-isolation namespace. Body shape is byte-for-byte identical to
+  API-0160 `mariadb-changeStatus` and API-0174 `mongo-changeStatus`
+  modulo the resource-id field name (`mysqlId`). Two REQUIRED top-level
+  fields: `mysqlId` (string) + `applicationStatus` (enum:
+  idle|running|done|error), 200 response is `{}` with
+  `additionalProperties: false`, no 404 declared (status mutations gate
+  on body-supplied id and collapse missing-target into 400/RBAC per
+  Dokploy tRPC convention). Harness-default 401→CodeAuth failure leg
+  retained — locks the auth invariant for the entire `mysql-cov-*`
+  namespace at the kickoff entry. Fixture token base
+  `mysql-cov-changeStatus-0194`.
+- Files changed:
+  - internal/cli/api_coverage_test.go (+131 lines, one new
+    apiCoverageCase block at the API-0194 insertion site between the
+    just-closed priority-3 `mounts-update` and the existing
+    `organization-active`)
+  - ralph/prd.json (passes: true on API-0194)
+  - ralph/progress.txt (this entry)
+- Verification run: gofmt -w ., go mod tidy, go vet ./..., go test
+  ./..., and go test -race ./... — all PASS. goimports,
+  golangci-lint, staticcheck, govulncheck, and goreleaser are NOT
+  INSTALLED in this environment and were skipped accordingly
+  (documented as missing per the Codebase Patterns rule, not silently
+  omitted).
+- Results: full test suite green; the api_coverage_test.go diff is
+  purely additive — no existing apiCoverageCase entries were modified,
+  so the slice's StoryID-sorted invariant and every prior fixture
+  token are preserved verbatim. The new entry exercises registry
+  presence, schema reachability, manifest inclusion, success-leg
+  byte-for-byte body forwarding (with `mysqlId` +
+  `applicationStatus: "idle"`), and the harness-default 401→CodeAuth
+  failure leg.
+- Remaining risks / follow-ups: API-0194 opens the priority-4 mysql/*
+  roster. The next priority-4 case is API-0195 `mysql-create` (POST,
+  body REQUIRED — re-verify spec field shape before assuming any
+  schema). Thirteen mysql/* peers remain reserved (API-0195..API-0207:
+  create, deploy, move, one, rebuild, reload, remove, saveEnvironment,
+  saveExternalPort, search, start, stop, update). The `mysql-cov-*`
+  namespace is now active and back-references to closed namespaces
+  (`mariadb-cov-*`, `mongo-cov-*`, `mounts-cov-*`, etc.) are
+  prohibited per the per-tag isolation rule.
+- **Learnings for future iterations:**
+  - The `*-changeStatus` family across database tags (mariadb, mongo,
+    mysql) is structurally identical: two REQUIRED string fields
+    (resource-id + applicationStatus enum), 200=`{}`, no 404. When
+    landing the next analogous tag-changeStatus, the only edits
+    relative to the prior peer are: tag name, path, resource-id field
+    name, fixture token, and the closed-namespace enumeration.
+  - The mysql/* roster sits between the just-closed priority-3
+    mounts/* roster (API-0188..API-0193) and the priority-5
+    notification/* roster (API-0208..API-0218). Within mysql/* the
+    fourteen operations follow the same database-tag template
+    (mariadb/mongo) so future mysql/* entries can directly mirror
+    the analogous mariadb/mongo peer modulo `mysqlId` substitution.
+  - Insertion site found via `OperationID: "mounts-update"` →
+    end-of-block `\n\t},\n` regex; confirmed next entry is
+    `API-0246` `organization-active`. The slice is StoryID-sorted
+    (which also coincides with operationId-alphabetical for
+    contiguous tag clusters).
+---
