@@ -7466,3 +7466,53 @@
     Failure-leg fields stay omitted; harness defaults (401 → CodeAuth)
     apply.
 ---
+
+## 2026-05-08T08:21:28Z - API-0043
+- Added per-operation coverage case for backup-manualBackupMariadb
+  (POST /backup.manualBackupMariadb, tag backup) as the SECOND member of
+  the `backup-manualBackup*` family seeded by API-0042. The Mariadb spec
+  is byte-identical to its compose sibling — single required `backupId`
+  string, no path/query params, 200 returns `{}` — so the entry is a
+  near-verbatim mirror of API-0042 with only the slug, story id, and
+  operationId/path rewritten. `apiCoverageCase` harness drives registry,
+  schema, manifest, success, and failure assertions automatically.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (+32 lines: one struct literal
+    inserted alphabetically between API-0042 and API-0066, mirroring the
+    family slug convention `backup-cov-manual-mariadb-0043`).
+  - `ralph/prd.json` (`API-0043.passes` flipped `false → true`).
+  - `ralph/progress.txt` (this entry).
+- Verification run from repo root:
+  - `gofmt -l .` — clean.
+  - `goimports` — not installed locally (documented; CI gate covers it).
+  - `go mod tidy` — clean (no diff).
+  - `go vet ./...` — clean.
+  - `go test ./...` — PASS (all 9 packages).
+  - `go test -race ./...` — PASS (all 9 packages).
+  - `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser` — not
+    installed locally (same baseline as prior backup/* iterations).
+- Remaining risks / follow-ups: four `backup-manualBackup*` siblings still
+  open (API-0044 mongo, API-0045 mySql, API-0046 postgres, API-0047
+  webServer); each is a verbatim mirror of this entry with the operationId,
+  path, and slug rewritten. The fifth backup/* peer API-0048
+  (backup-one) is a GET shaped after API-0041 `backup-listBackupFiles`.
+- **Learnings for future iterations:**
+  - The `backup-manualBackup*` family schemas are byte-identical at
+    `data/openapi.json` (verified for compose and mariadb; the
+    API-0042 comment block asserts the same for mongo/mySql/postgres/
+    webServer). Each remaining sibling is an alphabetical insert into
+    `apiCoverageCase` followed by a PRD `passes` flip — no Cobra wiring,
+    no schema work, no manifest churn.
+  - Slug convention `backup-cov-manual-<api-slug>-<storyID>` is now
+    seeded for all six siblings; preserving it keeps cross-story grep
+    useful and each diff a single contiguous insert.
+  - The harness (`apiCoverageCase` struct + `coveredAPIOperations`
+    table) makes per-operation coverage stories essentially append-only
+    — adding a new struct literal is the only churn, and the runner
+    proves registry, schema, manifest, success, and failure
+    automatically. New stories should resist the urge to factor in
+    bespoke helpers.
+  - `coveredAPIOperations` is sorted by operationId; `backup-manualBackupMariadb`
+    sits immediately after `backup-manualBackupCompose` and before the
+    `compose-*` block. Future backup/* inserts should keep that order.
+---

@@ -2279,7 +2279,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "backup",
         "operationId": "backup-manualBackupMariadb",
