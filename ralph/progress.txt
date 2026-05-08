@@ -22016,3 +22016,96 @@ forward-reference lesson before assuming any field shape.
     must be re-verified). The `postgres-cov-*` namespace stays open
     and is owned by API-0272→API-0285 (all postgres/* peers).
 ---
+
+## 2026-05-09 - API-0278 - Cover postgres-reload (POST /postgres.reload)
+- What was implemented:
+  - Added a new `apiCoverageCase` entry for `postgres-reload`
+    (POST /postgres.reload, tag postgres) in
+    `internal/cli/api_coverage_test.go`, immediately after API-0277
+    `postgres-rebuild` and before the API-0290 `project-all`
+    boundary that opens the next-tag arc. Seventh entry on the
+    postgres/* coverage roster, completing the forward reference
+    embedded in API-0277's closing block.
+  - **Spec re-verified** against
+    `internal/api/data/openapi.json` > `/postgres.reload` > `post`:
+    method POST, tag postgres, no parameters, requestBody REQUIRED
+    with `application/json` and **two REQUIRED top-level string
+    scalars** (`postgresId`, `appName`) and **no optional fields**,
+    responses 200/400/401/403/500 with the 200 body `{}`
+    (`additionalProperties: false`). No 404 declared.
+  - **Shape — two-required-string-scalar POST imperative-action
+    reload-mutation, body REQUIRED.** Cardinality-identical to the
+    `<tag>Id + appName` reload pairing on `/mariadb.reload`
+    (API-0166), `/mongo.reload` (API-0180), and `/mysql.reload`
+    (API-0200). Fixture supplies both REQUIRED scalars in the
+    spec-declared property order so the byte-for-byte body
+    comparison leg verifies the CLI propagated the multi-field body
+    without reordering, dropping, or mutating either scalar.
+  - **Family choice — harness-default 401→CodeAuth retained.**
+    Spec omits 404 from the response set, so the 404→CodeNotFound
+    override is structurally inapplicable; the override slot for the
+    postgres/* roster was already consumed by API-0276
+    `postgres-one` per the per-tag opener design header that
+    reserves 404 representatives specifically for the canonical
+    by-id `*-one` peer.
+  - **Fixture token base** `postgres-cov-reload-0278` is verified
+    non-colliding with API-0272's `postgres-cov-changeStatus-0272`,
+    API-0273's `postgres-cov-create-0273`, API-0274's
+    `postgres-cov-deploy-0274-postgresId`, API-0275's
+    `postgres-cov-move-0275-postgresId` /
+    `postgres-cov-move-0275-targetEnvironmentId`, API-0276's
+    `postgres-cov-one-0276-postgresId-fixture`, and API-0277's
+    `postgres-cov-rebuild-0277-postgresId` literals under the
+    `<tag>-cov-<slug>-<storyID>` rule.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (added API-0278 case +
+    comment block)
+  - `ralph/prd.json` (set `passes: true` for API-0278)
+  - `ralph/progress.txt` (this entry)
+- Verification run from repo root:
+  - `gofmt -w .` — clean
+  - `go mod tidy` — clean
+  - `go vet ./...` — pass
+  - `go test ./...` — pass (cli 1.239s; all packages PASS)
+  - `go test -race ./...` — pass (cli 3.128s; all packages PASS)
+  - Targeted: `go test ./internal/cli -run 'TestAPICoverage/API-0278' -v`
+    — all five API-0278/postgres-reload subtests PASS (Registry,
+    Schema, Manifest, SuccessRoundTrip, RepresentativeFailure).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — not installed locally, deferred per
+    Codebase-Patterns guidance.
+- Remaining risks or follow-ups: none — coverage matches the
+  established `*-reload` two-required-scalar peer pattern
+  (mariadb-reload / mongo-reload / mysql-reload). Next priority-4
+  backlog case is API-0279 `postgres-remove` (continues the
+  `postgres-cov-*` per-tag fixture-isolation namespace; spec must be
+  re-verified before assuming any field shape).
+- **Learnings for future iterations:**
+  - **`*-reload` two-required-scalar peer template is now
+    re-asserted for postgres/*.** Across the relational database
+    tags the `<tag>Id + appName` pairing is byte-for-byte
+    cardinality-identical: `mariadb-reload` (API-0166),
+    `mongo-reload` (API-0180), `mysql-reload` (API-0200), and now
+    `postgres-reload` (API-0278). Future `redis-reload` (API-0307
+    in the priority-5 cohort) should grep
+    `OperationID: "mysql-reload"` first as the canonical template
+    and re-verify the spec per-operation since Dokploy's
+    `/application.reload` reverses the property order to
+    (`appName`, `applicationId`).
+  - **postgres/* roster forward-reference chain still intact.** The
+    API-0277 closing block correctly forward-referenced API-0278
+    `postgres-reload`, and the API-0278 closing block now forward-
+    references API-0279 `postgres-remove` (declared POST per spec
+    preview; must be re-verified). The `postgres-cov-*` namespace
+    remains open and is owned by API-0272→API-0285 (all eleven
+    postgres/* peers), with API-0278 marking the roster's halfway
+    point.
+  - **slug-prefix-is-not-shape rule reasserted.** Even though every
+    prior `*-reload` peer pairs `<tag>Id + appName`, the spec was
+    re-verified against `internal/api/data/openapi.json` for
+    postgres-reload before assuming the shape. This guards against
+    the historical pitfall where two operations sharing a slug
+    differed in property cardinality; the harness's per-operation
+    spec re-verification is what makes the peer-template short-cut
+    safe.
+---
