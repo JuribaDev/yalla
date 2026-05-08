@@ -285,3 +285,30 @@ func executeWith(streams IOStreams, build BuildInfo) int {
 	}
 	return 0
 }
+
+// ExecuteForTest is the exported test seam consumed by internal/testutil. It
+// runs the full production code path — buildRoot, cmd.Execute, and
+// renderTerminalError — so the harness's exit codes, JSON envelopes, and
+// stderr banners exactly match what the binary prints. args may be nil OR
+// empty for a bare `yalla` invocation; cobra would otherwise fall back to
+// os.Args when SetArgs receives nil, which leaks the test binary's own
+// flags (e.g. -update-golden) into the command tree.
+//
+// This exists solely to spare external test packages from re-implementing
+// the terminal error pipeline. Production binaries should call Execute.
+func ExecuteForTest(streams IOStreams, build BuildInfo, args []string) int {
+	cmd, flags := buildRoot(streams, build)
+	// Cobra treats a nil arg slice as "use os.Args[1:]". Tests run inside
+	// a `go test` binary whose os.Args carries -update-golden and any
+	// other test-specific flag; passing those down to yalla would always
+	// produce E_USAGE. Normalising to an empty slice forces cobra to
+	// honour the explicit "no args" case.
+	if args == nil {
+		args = []string{}
+	}
+	cmd.SetArgs(args)
+	if err := cmd.Execute(); err != nil {
+		return renderTerminalError(streams, flags, err)
+	}
+	return 0
+}

@@ -305,7 +305,7 @@
       ],
       "type": "foundation",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Do this before adding many operation stories so later work stays consistent."
     },
     {

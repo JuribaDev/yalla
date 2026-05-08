@@ -232,6 +232,47 @@
   legitimately writes raw bytes to `Renderer.Out()` because shell
   scripts cannot tolerate substring redaction (and yalla never
   embeds tokens in completion output).
+- Verification harness (US-0008): `internal/testutil` is the shared
+  test toolbox for every command, API, and contract test going
+  forward. `testutil.Run`/`RunArgs` drives the production exit-code
+  path through the new exported `cli.ExecuteForTest` seam — never
+  call `cli.NewRootCommand` + `cmd.Execute` directly from tests
+  because that bypasses `renderTerminalError` and loses the typed
+  banner. `IsolateEnv(t)` clears every `YALLA_*` env var and
+  `WriteTempConfig(t, contents)` seeds a per-test config without
+  threading `--config` through every assertion.
+- Envelope assertions (US-0008): `DecodeSuccess`/`DecodeSuccessInto`
+  for `yalla.output.v1`, `DecodeError`/`AssertExitForCode` for
+  `yalla.error.v1`. `MustBeValidJSON` is the bedrock single-document
+  check; `AssertStdoutEmpty`/`AssertStderrEmpty` enforce the data-
+  only stdout contract; `AssertNotContains` is the secret-leak
+  regression net (pass the literal token).
+- Golden workflow (US-0008): `Golden(t, name, got, opts)` and
+  `GoldenJSON(t, name, got, normalisers...)` write to
+  `testdata/<name>.golden`. Run `go test -update-golden ./...` to
+  regenerate. Always pair JSON goldens with
+  `testutil.DefaultJSONNormalizers()` so request_id / trace_id /
+  duration_ms / timestamps stay deterministic across runs. Tests
+  that exercise the comparison branch must call
+  `SetUpdateGoldenForTest(t, false)` so a developer running
+  `-update-golden` for an unrelated package does not silently mask
+  logic regressions.
+- HTTP fixtures (US-0008): `testutil.NewServer(t, handler)` is the
+  everyday Dokploy stand-in (it wires `YALLA_BASE_URL`,
+  `YALLA_TOKEN`, and `t.Cleanup` in one call) and returns the
+  seeded token so secret-leak assertions have a literal value to
+  compare. `RecordingServer(t, handler)` wraps that with a request
+  recorder so contract tests can assert exactly what was sent.
+  `LookupOperation(t, opID)` resolves an operation from
+  `api.Default()` and fails the test with a hint when the id is
+  missing. `RoundTripperFunc` is the bypass for transport-level
+  error injection.
+- Cobra arg fallback (US-0008): `cli.ExecuteForTest` normalises a
+  `nil` args slice to `[]string{}` before calling `cmd.SetArgs`.
+  Without that, cobra falls back to `os.Args[1:]`, which inside a
+  `go test` binary carries `-update-golden` and any other
+  test-specific flag — leaking them into the command tree always
+  produced E_USAGE.
 
 
 ---
@@ -1070,4 +1111,122 @@
     no runnable children — that would also exclude our `auth` and
     `schema` umbrella commands which we DO want in the manifest.
     Hand-rolling `isInternalCobraCmd` keeps the filter precise.
+---
+
+## 2026-05-08 - US-0008
+- **Implemented**: the reusable verification harness every later command
+  and API story will lean on. Centralises the patterns that were duplicated
+  across `internal/cli/*_test.go` (in-memory streams, root construction,
+  JSON envelope decoders, exit-code parity), adds a golden-file workflow
+  with `-update-golden`, ships httptest fixtures with request recording,
+  and documents focused vs full verification loops.
+- **Files changed**:
+  - `internal/cli/root.go` — added the exported `ExecuteForTest(streams,
+    build, args)` seam that runs `buildRoot` + `cmd.Execute` +
+    `renderTerminalError` so external tests see the same exit codes,
+    JSON envelopes, and banners as the binary. Normalises a `nil` args
+    slice to `[]string{}` so cobra cannot fall back to the test binary's
+    own `os.Args` (and pull `-update-golden` into the command tree).
+  - `internal/testutil/doc.go` (new) — package-level doc that explains
+    the harness, what it imports, and which test packages may consume it.
+  - `internal/testutil/cli.go` (new) — `Streams`, `StreamsWithStdin`,
+    `RunOptions`, `RunResult`, `Run`, `RunArgs`, `DefaultBuildInfo`.
+    Pinned BuildInfo keeps version-bearing goldens stable across hosts.
+  - `internal/testutil/jsonassert.go` (new) — `MustBeValidJSON`,
+    `DecodeSuccess`, `DecodeSuccessInto`, `DecodeError`, `AssertExit`,
+    `AssertCode`, `AssertExitForCode`, `AssertStdoutEmpty`,
+    `AssertStderrEmpty`, `AssertStderrContains`, `AssertNotContains`,
+    plus an internal `exitCodeName` mnemonic that decorates failure
+    messages with the canonical Code → exit-code mapping.
+  - `internal/testutil/env.go` (new) — `IsolateEnv`, `SetEnv`,
+    `WriteTempConfig`. Walks the canonical `config.Env*` constants so
+    a future env var addition automatically participates in isolation.
+  - `internal/testutil/golden.go` (new) — `Golden`, `GoldenJSON`,
+    `GoldenOptions`, `UpdateGolden`, `SetUpdateGoldenForTest`,
+    `prettyJSONIfPossible`, and the registered `-update-golden`
+    CLI flag. Pretty-prints both sides for JSON goldens so
+    whitespace differences never destabilise an assertion.
+  - `internal/testutil/normalize.go` (new) — `NormalizeRequestID`,
+    `NormalizeTraceID`, `NormalizeDuration`, `NormalizeTimestamps`,
+    `ChainNormalizers`, `DefaultJSONNormalizers`. The default stack
+    handles every dynamic field yalla currently emits.
+  - `internal/testutil/httpfix.go` (new) — `RoundTripperFunc`,
+    `JSONResponse`, `NewServer`, `RecordingServer`, `Recorder`,
+    `CapturedRequest` (with `AsJSON`), `AssertOperationCalled`, and
+    `LookupOperation`. The recording layer reads `r.Body`, restores
+    it for the inner handler, and then exposes the raw bytes — that
+    means contract tests can drive a single fixture for both the wire
+    assertion and the response logic.
+  - `internal/testutil/cli_test.go`, `golden_test.go`,
+    `normalize_test.go`, `httpfix_test.go` (new) — exercise every
+    helper in both the success and failure branches via a `fakeT`
+    stub that satisfies `testing.TB` through embedding. The golden
+    tests `chdir` into a temp directory so they never write to the
+    real `testdata/` directory and never depend on a checked-in fixture.
+  - `internal/testutil/AGENTS.md` (new) — module-local conventions and
+    the explicit "don't" list (no production imports, no
+    `IsolateEnv` bypass, no direct testdata writes).
+  - `ralph/VERIFICATION.md` (new) — focused vs full verification
+    loops, the per-command contract checklist, and the API operation
+    contract recipe future stories will follow.
+  - `ralph/prd.json` — set US-0008 `passes: true`.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean (no module change; `internal/testutil` only
+    imports first-party packages).
+  - `go vet ./...` — clean.
+  - `go test ./...` — all six packages pass: `internal/api`,
+    `internal/cli`, `internal/config`, `internal/errors`,
+    `internal/output`, `internal/testutil` (new).
+  - `go test -race ./...` — same.
+  - Smoke: `go test -count=1 ./internal/testutil/ -update-golden`
+    succeeds. The `TestGolden_UpdateModeWritesFile` covers the write
+    branch and the comparison-branch tests opt out via
+    `SetUpdateGoldenForTest(t, false)` so update-mode runs do not
+    mask logic regressions.
+- **Tools NOT available locally** (per the verification policy):
+  `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+  `goreleaser`. Same baseline as US-0001 through US-0007.
+- **Remaining risks / follow-ups**:
+  - The harness is purposely consumed only from external `_test`
+    packages (its own tests use `package testutil_test`). Existing
+    in-package tests under `internal/cli/` and `internal/api/` keep
+    their local helpers (`runRootArgs`, `roundTripperFunc`, …) so
+    we did not churn passing tests. New stories should reach for
+    `testutil` first; refactoring older tests is fair game in a
+    later cleanup.
+  - `Golden` writes with mode `0644` and the testdata directory
+    with `0755`. That is the standard Go convention but worth
+    revisiting if we ever ship goldens with secrets baked in (we
+    should not — keep secrets out of goldens entirely).
+  - The `fakeT` shim used inside the testutil tests cannot stop
+    execution on `Fatalf` (only the real `testing.T` can). Helpers
+    we test must therefore be safe to keep running after a Fatal —
+    a useful constraint that ruled out a couple of "panic on
+    impossible state" shortcuts during implementation.
+- **Learnings for future iterations**:
+  - **Cobra + test binaries**: `cmd.SetArgs(nil)` falls back to
+    `os.Args[1:]`. Inside a `go test` binary that means the test
+    binary's own flags (`-update-golden`, `-test.run`, …) leak into
+    the command tree. Always pass an explicit slice — even an
+    empty one — when constructing a command for a test.
+  - **`testing.TB` embedding**: structs that embed `testing.TB`
+    satisfy the interface despite the unexported `private()`
+    method. That made the `fakeT` shim possible without dropping
+    out of the `testing.TB` parameter type for every helper.
+  - **Flag registration timing**: `flag.Bool` at package init is the
+    right hook for `-update-golden`; `testing.M` calls
+    `flag.Parse()` once on its own, so we never call it ourselves.
+    Tests that want to override the value mid-run reach for
+    `SetUpdateGoldenForTest` instead of `flag.Set` so the cleanup
+    path is consistent.
+  - **Net-test isolation**: `httptest.NewServer` plus `t.Setenv` is
+    the simplest way to wire `YALLA_BASE_URL`/`YALLA_TOKEN` for the
+    raw API executor. The recording variant must read the request
+    body BEFORE forwarding it (and restore it via
+    `io.NopCloser(bytes.NewReader(b))`) so the inner handler still
+    sees the original bytes.
+  - **Verification doc placement**: `ralph/VERIFICATION.md` lives
+    next to the PRD so future iterations grep `ralph/` for guidance
+    and find the focused-vs-full loop in one hop.
 ---
