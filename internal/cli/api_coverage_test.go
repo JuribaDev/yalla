@@ -3170,6 +3170,45 @@ var coveredAPIOperations = []apiCoverageCase{
 		// SampleBody / SampleQuery / SamplePathParams.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0291",
+		OperationID: "project-allForPermissions",
+		Method:      http.MethodGet,
+		Path:        "/project.allForPermissions",
+		Tag:         "project",
+		// Second entry in the project/* roster opened by API-0290
+		// `project-all`. Per the per-tag fixture rule that opening
+		// block established ("project/* peers should grep this block
+		// first to inherit the project/* slug namespace rather than
+		// copying organization/* fixtures across the tag boundary"),
+		// this entry inherits the parameter-free GET shape from
+		// API-0290 unchanged: zero parameters, no request body, and
+		// the canonical agent invocation `yalla api call
+		// project-allForPermissions --json` with no `--input`.
+		//
+		// Spec source `internal/api/data/openapi.json >
+		// /project.allForPermissions > get`: identical to
+		// `/project.all` — zero `parameters`, no request body,
+		// responses 200/400/401/403/404/500 where the 200 schema is
+		// `{}` with `additionalProperties: false`. That keeps this
+		// operation in the same parameter-free GET cohort as
+		// API-0290 `project-all`, API-0246 `organization-active`, and
+		// API-0247 `organization-all`. SampleQuery /
+		// SamplePathParams / SampleBody all stay unset; the
+		// representative-failure leg keeps the harness default
+		// (401 → CodeAuth) because auth is the universal failure
+		// every project/* peer must re-prove. 404 in the spec is
+		// still reserved for filter-shaped peers like the upcoming
+		// API-0294 `project-one`, not this permissions-scoped list
+		// which differs from `project-all` only in server-side
+		// authorisation filtering — the wire contract is identical.
+		//
+		// No fixture token: this entry carries no SampleBody /
+		// SampleQuery / SamplePathParams, so the `proj-cov-*` slug
+		// namespace reserved by API-0290 stays untouched until the
+		// first project/* mutation peer (API-0292 `project-create`).
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

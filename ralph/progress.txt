@@ -6158,3 +6158,25 @@
     per-tag; `proj-cov-*` is reserved for project/* stories and
     must never collide with `org-cov-*`.
 ---
+
+## 2026-05-08 - API-0291
+- Added apiCoverageCase entry for `project-allForPermissions` (GET /project.allForPermissions, tag `project`) to `internal/cli/api_coverage_test.go`, sorted after API-0290.
+- Wire contract is identical to API-0290 `project-all`: zero parameters, no request body, 200 returns `{}` per spec, 400/401/403/404/500 error codes — confirmed against `internal/api/data/openapi.json > /project.allForPermissions > get`. Inherits harness defaults (200 success body `{}`, 401 → CodeAuth representative failure).
+- Comment block annotates the per-tag fixture-isolation rule: this entry inherits the project/* slug namespace opened by API-0290 unchanged and carries no fixture token, so the `proj-cov-*` reservation stays untouched until the first project/* mutation peer (API-0292 `project-create`).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (+39 lines, new struct literal)
+  - `ralph/prd.json` (passes flag flip)
+  - `ralph/progress.txt` (this entry)
+- Verification (repo root):
+  - `gofmt -w .` (clean)
+  - `go mod tidy` (no changes)
+  - `go vet ./...` (clean)
+  - `go test ./... -count=1` (all packages OK)
+  - `go test -race ./... -count=1` (all packages OK)
+- Remaining risks: none — the harness automatically validates registry presence, schema reachability, manifest inclusion, success exchange, and representative failure for the appended entry.
+- **Learnings for future iterations:**
+  - For parameter-free GET operations identical in shape to a prior project/* peer (project-all), the implementation reduces to one struct literal append. No code under `internal/api/`, `internal/cli/api_call*.go`, `internal/cli/schema*.go`, or `internal/cli/manifest*.go` needs editing — the operation registry, schema generator, and manifest renderer are spec-driven from `internal/api/data/openapi.json`.
+  - `project-allForPermissions` differs from `project-all` only in *server-side* authorisation filtering (the response is filtered per the caller's permissions). The wire contract is identical, so the fixture genuinely is a clone of API-0290 minus the namespace-reservation comment block.
+  - The next project/* story (API-0292 `project-create`) will be the first to populate `SampleBody`, and per the API-0290 rule must use the `proj-cov-create-0292` slug — keep the slug namespace separate from organization/*'s `org-cov-*`.
+  - 404 in the `project-allForPermissions` spec is *not* the right representative failure for this list-shaped operation; the harness default 401 → CodeAuth stays correct. 404 should be reserved for filter-shaped peers like `project-one` (API-0294).
+---
