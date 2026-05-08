@@ -266,6 +266,30 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.method` / `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0016",
+		OperationID: "application-deploy",
+		Method:      http.MethodPost,
+		Path:        "/application.deploy",
+		Tag:         "application",
+		// Mirrors the schema in `data/openapi.json` for /application.deploy:
+		// the only required field is `applicationId` (string); `title` and
+		// `description` are optional strings. The fixture supplies all three
+		// with deterministic-but-clearly-fake values so the wire payload
+		// assertion exercises the full deploy envelope rather than just the
+		// minimum, matching the *-create / *-update convention recorded in
+		// internal/cli/AGENTS.md.
+		SampleBody: json.RawMessage(`{
+			"applicationId": "app-cov-deploy-0016",
+			"title": "API-0016 deploy fixture",
+			"description": "API-0016 fixture for application-deploy coverage"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the other application/* peers. We keep an empty-object
+		// body so the success-leg envelope assertion stays focused on
+		// `data.method` / `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

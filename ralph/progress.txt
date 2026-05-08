@@ -2276,3 +2276,51 @@
     the spec is `additionalProperties: false` and `{}` keeps the
     success-leg assertion focused on envelope/method/status invariants.
 ---
+
+## 2026-05-08 - API-0016
+- **Implemented**: API coverage for `application-deploy` (POST
+  /application.deploy). Pattern follows API-0014/API-0015: appended one
+  `apiCoverageCase{...}` literal to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go`. The five-part harness
+  (registry invariants, `yalla schema get`, `yalla manifest`, httptest
+  success round-trip, default 401 → CodeAuth representative failure) now
+  also gates `application-deploy`. No production-code changes; the
+  operation is already wired through the embedded OpenAPI spec, the
+  `api.Default()` registry, and the raw `yalla api call` executor.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended one `apiCoverageCase`
+    entry for `API-0016 / application-deploy`. Fixture supplies all
+    three spec fields: required `applicationId` plus optional `title`
+    and `description` with deterministic-but-clearly-fake values, so
+    the wire-payload assertion exercises the full deploy envelope and
+    not just the minimum (matches the API-0014 *-create / *-update
+    convention).
+  - `ralph/prd.json` — `API-0016.passes` flipped to `true`.
+- **Verification run**: `gofmt -w .`, `go mod tidy`, `go vet ./...`,
+  `go test ./...`, `go test -race ./...`, plus a focused
+  `go test ./internal/cli -run 'TestAPICoverage' -v -count=1`. All
+  green; the five new `API-0016/application-deploy` subtests pass on
+  the first run.
+- **Tools not installed locally** (documented per the Codebase Patterns
+  baseline rather than silently skipped): `goimports`, `golangci-lint`,
+  `staticcheck`, `govulncheck`, `goreleaser`. CI still runs the
+  security/lint matrix on push.
+- **Results**: All required gates pass. `application-deploy` is now
+  registry-checked, schema-reachable, manifest-listed, success-round-tripped
+  through `httptest.Server`, and failure-mapped to `CodeAuth` on 401.
+- **Remaining risks / follow-ups**: None for this story. The next
+  pending API story by priority is API-0017
+  (`application-disconnectGitProvider`), still `passes: false`.
+- **Learnings for future iterations**:
+  - The `application/*` operations under coverage all share the same
+    request shape: required `applicationId` plus a small set of
+    optional strings. Keeping the fixture comment cross-referenced to
+    `data/openapi.json` makes future schema-validator wiring trivial.
+  - The optional-field convention from API-0014
+    (supply optionals when the spec declares them) is now consistent
+    across application-create and application-deploy. Future
+    *-deploy / *-update / *-create stories should follow suit so the
+    wire fixture exercises the full payload, not just the minimum.
+  - Coverage entries stay sorted by StoryID; appending at the end of
+    the slice keeps diffs minimal and the harness output deterministic.
+---
