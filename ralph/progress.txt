@@ -5128,3 +5128,22 @@
   - The `minimal-composeId-only POST` family in compose/* now has nine members (API-0066/0067/0068/0073/0074/0080/0088/0090, plus the upcoming API-0091 stop). The schema is byte-identical: one required `composeId` string, empty 200 response. Cross-story grep with the `compose-cov-<slug>-<storyID>` slug convention finds every member.
   - For lifecycle ops (start/stop/restart/deploy), Dokploy reuses the exact same minimal-id POST shape. Do not over-engineer the fixture — copy the precedent and rotate the slug.
 ---
+
+## 2026-05-08 - API-0091
+- Implemented coverage for `compose-stop` (POST /compose.stop).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended `apiCoverageCase` literal after API-0090. Single required `composeId` field, no optional siblings, no params. Body fixture: `{"composeId":"compose-cov-stop-0091"}`. Empty-object 200 response.
+  - `ralph/prd.json` — flipped API-0091 `passes` to true.
+- Verification run (clean tree):
+  - `gofmt -w .` → no diff.
+  - `go mod tidy` → no diff.
+  - `go vet ./...` → ok.
+  - `go test ./... -count=1` → all packages ok.
+  - `go test -race ./... -count=1` → all packages ok.
+  - `goimports` not installed locally; `gofmt` covered the formatting requirement.
+- Results: harness asserts the five invariants — registry presence, `yalla schema get`, `yalla manifest`, success round-trip, default 401→E_AUTH failure leg — automatically through `coveredAPIOperations`.
+- Remaining risks / follow-ups: none. API-0091 is the tenth member of the `minimal-composeId-only POST` family and a near-verbatim twin of API-0090 (compose-start), its lifecycle counterpart. API-0093 (compose-update) is the next compose/* POST but has a different (multi-field) shape; API-0092 (compose-templates) is the next compose/* GET.
+- **Learnings for future iterations:**
+  - The `minimal-composeId-only POST` family in compose/* now has ten members (API-0066/0067/0068/0073/0074/0080/0088/0090/0091). For lifecycle ops (start/stop/restart/cancel/etc.), Dokploy reuses the exact same minimal-id POST shape — copy the precedent and rotate the slug.
+  - Always confirm the OpenAPI body shape via `jq '.paths."/compose.X".post.requestBody' internal/api/data/openapi.json` before assuming a fixture is byte-identical to its predecessor — even sibling lifecycle ops can drift in future spec revisions.
+---

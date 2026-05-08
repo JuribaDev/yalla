@@ -2137,6 +2137,43 @@ var coveredAPIOperations = []apiCoverageCase{
 		// payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0091",
+		OperationID: "compose-stop",
+		Method:      http.MethodPost,
+		Path:        "/compose.stop",
+		Tag:         "compose",
+		// Tenth compose/* member of the minimal-composeId-only POST
+		// family — same shape as API-0066 (compose-cancelDeployment),
+		// API-0067 (compose-cleanQueues), API-0068 (compose-clearDeployments),
+		// API-0073 (compose-disconnectGitProvider), API-0074
+		// (compose-fetchSourceType), API-0080 (compose-killBuild),
+		// API-0088 (compose-refreshToken), and API-0090 (compose-start).
+		// The spec at `data/openapi.json > /compose.stop > post` declares
+		// the request body is REQUIRED with one required string field
+		// `composeId` (the target compose record whose containers should
+		// be stopped) and no optional siblings, so this entry is a
+		// near-verbatim slug-rotated twin of API-0090 (compose-start),
+		// its lifecycle counterpart. Distinct from API-0078/0083/0085
+		// (two required fields), API-0079/0086 (required+optional with
+		// `suffix`), and API-0071/0087 (required+optional with
+		// `title`+`description`). Keep the fixture minimal-but-valid so
+		// a future schema validator wired into the harness still
+		// accepts it, and so the success leg confirms the CLI
+		// propagated the single required field verbatim through the
+		// `--input` JSON `body` envelope. Slug convention
+		// `compose-cov-<slug>-<storyID>` continues the cross-story grep
+		// contract from every prior compose/* case.
+		SampleBody: json.RawMessage(`{
+			"composeId": "compose-cov-stop-0091"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the empty-success convention shared by every prior
+		// compose/* peer. Empty-object body keeps the success-leg envelope
+		// assertion focused on `data.method` / `data.status` rather than
+		// payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
