@@ -2543,6 +2543,43 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0246",
+		OperationID: "organization-active",
+		Method:      http.MethodGet,
+		Path:        "/organization.active",
+		Tag:         "organization",
+		// First entry in the organization/* roster and the kickoff for the
+		// tag's parameter-free GET cohort. Spec source:
+		// `data/openapi.json > /organization.active > get` declares
+		// `parameters: []` and no request body — the endpoint resolves the
+		// caller's currently-active organization purely from the bearer
+		// token, mirroring the cross-tag parameter-free GET precedent set
+		// by API-0006 (`ai-getAll`), API-0098 (`deployment-allCentralized`),
+		// and API-0100 (`deployment-queueList`). The 404 response code in
+		// the spec reflects "no active organization for this principal";
+		// the harness's representative-failure leg still defaults to
+		// 401→CodeAuth because authentication is the universal failure
+		// mode shared across every Dokploy operation, and 404→CodeNotFound
+		// would shadow the auth invariant we want each per-tag opener to
+		// re-prove.
+		//
+		// Leaving SampleQuery/SamplePathParams/SampleBody unset is
+		// intentional — the harness still asserts the wire-level
+		// invariants (method, path, Authorization header, empty query
+		// string) at runAPICoverageSuccess, and the canonical agent
+		// invocation is `yalla api call organization-active --input '{}'
+		// --json`. The 200 response in the spec is `{}` with
+		// `additionalProperties: false`, identical to API-0094..0101 and
+		// the cross-tag GET-list precedent API-0033
+		// (application-readTraefikConfig). Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection. Future
+		// organization/* peers (API-0247 `*-all`, API-0248
+		// `*-allInvitations`, API-0251 `*-one`) should grep this entry
+		// first when extending the parameter-free GET cohort.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

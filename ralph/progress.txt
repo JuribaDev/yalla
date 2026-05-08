@@ -5579,3 +5579,67 @@
     this as the standard spec-drift smoke test for any
     api-operation story.
 ---
+
+## 2026-05-08 - API-0246 (organization-active)
+- Covered Dokploy operation `organization-active` (GET
+  /organization.active) by appending one `apiCoverageCase` entry to
+  the `coveredAPIOperations` table in
+  `internal/cli/api_coverage_test.go`. First entry in the
+  organization/* roster (10 stories total, API-0246..0255) and the
+  kickoff for that tag's parameter-free GET cohort.
+- Spec source `internal/api/data/openapi.json >
+  /organization.active > get`: `parameters: []`, no request body,
+  responses 200/400/401/403/404/500. The 404 represents "no active
+  organization for this principal"; we deliberately keep the
+  representative-failure leg on the harness default of 401→CodeAuth
+  because authentication is the universal failure mode each per-tag
+  opener should re-prove. No
+  SampleQuery/SamplePathParams/SampleBody set — the parameter-free
+  GET precedent established by API-0006 (`ai-getAll`) and re-used by
+  API-0098 + API-0100 makes empty fields the canonical "agent sends
+  `--input '{}'`" invocation under the harness.
+- Files changed:
+  - internal/cli/api_coverage_test.go (added API-0246 case)
+  - ralph/prd.json (flipped passes:true for API-0246)
+  - ralph/progress.txt (this entry)
+- Verification run from repo root:
+  - gofmt -w . — clean
+  - go mod tidy — clean
+  - go vet ./... — clean
+  - go test ./... — all packages pass (cli 1.181s)
+  - go test -race ./... — all packages pass (cli 2.537s)
+- Optional tooling not invoked this iteration (golangci-lint,
+  staticcheck, govulncheck, goreleaser, goimports): not installed
+  locally, documented baseline since US-0001.
+- Remaining risks / follow-ups: none for API-0246. The
+  organization/* tag now has one covered (API-0246) of ten; the
+  next nine peers (API-0247..0255) will mostly be parameter-free
+  GETs and minimal-required-id POSTs, so the slug convention
+  `organization-cov-<slug>-<storyID>` is reserved here for the POST
+  family that opens at API-0249 (`organization-create`).
+- **Learnings for future iterations:**
+  - The `responseCodes` array on a parameter-free GET story can
+    include codes that look semantically meaningful (here 404 for
+    "no active organization"), but the harness's representative
+    failure leg should still default to 401→CodeAuth. Each per-tag
+    opener re-proves the auth invariant; story-specific failure
+    codes are reserved for entries that explicitly override the
+    `FailureStatus`/`FailureCode` fields. Documenting the spec's
+    extra response codes in the comment block keeps future readers
+    from "fixing" the missing code mapping.
+  - The forward-reference pattern (mentioning future peers by ID
+    in the comment block, e.g. "Future organization/* peers
+    (API-0247 `*-all`, ...) should grep this entry first") was
+    already used inside API-0099 → API-0101 and API-0098 → API-0100.
+    Continuing it across tag boundaries keeps cross-story greps
+    cohesive when extending a roster, especially when an opener
+    establishes a slug or fixture convention the rest of the tag
+    will reuse.
+  - Spec drift smoke test:
+    `jq '.paths."/organization.active" | {get_method:
+    (.get.operationId), parameters: (.get.parameters // []),
+    requestBody, responses: (.get.responses | keys)}'` against
+    `internal/api/data/openapi.json` validated the
+    parameter/body/response shape before writing the comment block.
+    Same one-liner shape used by API-0100 and API-0101.
+---
