@@ -20409,6 +20409,184 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0285",
+		OperationID: "postgres-update",
+		Method:      http.MethodPost,
+		Path:        "/postgres.update",
+		Tag:         "postgres",
+		// Fourteenth and final entry on the priority-4 postgres/*
+		// coverage roster (API-0272..API-0285 all green), closing the
+		// postgres/* arc and completing the forward reference embedded
+		// in API-0284 `postgres-stop`'s closing comment ("The next
+		// case in the PRD-ordered priority-4 backlog is API-0285
+		// `postgres-update` (declared a POST per the spec preview -
+		// closes the postgres/* roster before the API-0286
+		// `previewDeployment-all` boundary opens the next-tag arc)").
+		// Continues inside the `postgres-cov-*` per-tag fixture-
+		// isolation namespace opened by API-0272 `postgres-changeStatus`
+		// and **must not** back-reference any closed prior-tag namespace
+		// (`admin-cov-*`, `ai-cov-*`, `app-cov-*`, `backup-cov-*`,
+		// `bb-cov-*`, `cert-cov-*`, `clu-cov-*`, `compose-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `docker-cov-*`,
+		// `domain-cov-*`, `environment-cov-*`, `gitea-cov-*`,
+		// `github-cov-*`, `gitlab-cov-*`, `mariadb-cov-*`,
+		// `mongo-cov-*`, `mounts-cov-*`, `mysql-cov-*`, `org-cov-*`,
+		// `proj-cov-*`, `set-cov-*`, `srv-cov-*`, `swarm-cov-*`,
+		// `usr-cov-*`, etc.) per the per-tag isolation rule reasserted
+		// at API-0335..API-0444 and originally established at API-0246
+		// `organization-active`.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against `internal/api/data/openapi.json` >
+		// `/postgres.update` > `post`: method POST, tag postgres, **no
+		// parameters**, requestBody REQUIRED with `application/json`,
+		// responses 200/400/401/403/500. The 200 response is `{}` with
+		// `additionalProperties: false`, mirroring the empty-success
+		// cohort. The schema declares **one REQUIRED top-level scalar**
+		// `postgresId` (plain non-nullable `type: string`, no `anyOf` /
+		// `nullable` / enum constraints) plus a wide tail of OPTIONAL
+		// configuration fields covering identity (`name`, `appName`,
+		// `description`), database credentials (`databaseName`,
+		// `databaseUser`, `databasePassword`), runtime image and
+		// command (`dockerImage` default `postgres:18`, `command`,
+		// `args`, `env`), resource limits (`memoryReservation`,
+		// `memoryLimit`, `cpuReservation`, `cpuLimit`), networking
+		// (`externalPort`), the `applicationStatus` enum, the swarm-
+		// orchestration cluster (`healthCheckSwarm`,
+		// `restartPolicySwarm`, `placementSwarm`, `updateConfigSwarm`,
+		// `rollbackConfigSwarm`, `modeSwarm`, `labelsSwarm`,
+		// `networkSwarm`, `stopGracePeriodSwarm`, `endpointSpecSwarm`,
+		// `ulimitsSwarm`), `replicas` (number), `createdAt` (string),
+		// and `environmentId` (string). **No 404** is declared on this
+		// operation, mirroring the action-on-known-id POST precedent
+		// reasserted across every body-bearing imperative-action
+		// postgres POST already covered (API-0272
+		// `postgres-changeStatus`, API-0273 `postgres-create`,
+		// API-0274 `postgres-deploy`, API-0275 `postgres-move`,
+		// API-0277 `postgres-rebuild`, API-0278 `postgres-reload`,
+		// API-0279 `postgres-remove`, API-0280
+		// `postgres-saveEnvironment`, API-0281
+		// `postgres-saveExternalPort`, API-0283 `postgres-start`,
+		// API-0284 `postgres-stop`) and across the cross-tag
+		// `*-update` patch-style POST family (API-0173
+		// `mariadb-update`, API-0187 `mongo-update`, API-0207
+		// `mysql-update`) whose missing-target failure mode collapses
+		// into 400/validation under Dokploy's tRPC convention rather
+		// than a dedicated 404 leg. The 404 override therefore reverts
+		// to inapplicable here - its sole activation site for the
+		// postgres/* roster remains API-0276 `postgres-one`, the
+		// canonical by-id GET peer.
+		//
+		// **Body composition:**
+		//   - **REQUIRED:** `postgresId` (plain string). Identifies the
+		//     postgres service to update. The fixture below supplies a
+		//     deterministic-but-clearly-fake
+		//     `postgres-cov-update-0285-postgresId` literal carrying
+		//     the `<tag>-cov-<slug>-<storyID>-<field>` suffix for
+		//     `git grep` traceability.
+		//   - **OPTIONAL fields intentionally OMITTED.** A patch-style
+		//     POST `update` with one REQUIRED key resolves the
+		//     server-side validation contract by supplying just that
+		//     key; the optional configuration tail is exhaustively
+		//     covered through the create/save-* sibling stories
+		//     (API-0273 `postgres-create` for the full multi-scalar
+		//     creation shape, API-0280 `postgres-saveEnvironment` for
+		//     env mutation, API-0281 `postgres-saveExternalPort` for
+		//     port mutation). The harness verifies request-body
+		//     forwarding via byte-for-byte comparison, so adding
+		//     unused optional fixture fields would dilute the focused
+		//     single-required-scalar assertion without exercising any
+		//     new CLI code path.
+		//
+		// **Shape positioning - single-required-string-scalar POST
+		// patch-style mutation, body REQUIRED, with WIDE optional
+		// tail.** Cardinality- and type-identical to API-0274
+		// `postgres-deploy`, API-0277 `postgres-rebuild`, API-0279
+		// `postgres-remove`, API-0283 `postgres-start`, and API-0284
+		// `postgres-stop` (single REQUIRED `postgresId` plain string),
+		// one REQUIRED slot narrower than API-0278 `postgres-reload` /
+		// API-0280 `postgres-saveEnvironment` / API-0281
+		// `postgres-saveExternalPort` (two REQUIRED slots). Direct
+		// cross-tag analog of API-0173 `mariadb-update`, API-0187
+		// `mongo-update`, and API-0207 `mysql-update` (same single-
+		// required-string `<tag>Id` body, same patch-style `update`
+		// slug with WIDE optional tail, only the tag / path / id-
+		// field-name differ). The harness's `len(tc.SampleBody) > 0`
+		// gate at `runAPICoverageSuccess` activates the JSON
+		// content-type and byte-for-byte body comparison legs; this
+		// fixture supplies the single REQUIRED field so the success
+		// path verifies the CLI propagated the body verbatim.
+		//
+		// **Family choice - harness-default 401->CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so the
+		// 404->CodeNotFound override is structurally inapplicable. The
+		// 404->CodeNotFound override slot was already consumed for the
+		// postgres/* roster by API-0276 `postgres-one` per the per-tag
+		// opener design header which reserves 404 representatives
+		// **specifically for the canonical by-id `*-one` peer**;
+		// `*-update` is a body-bearing patch-style POST and stays on
+		// the 401->CodeAuth invariant locked by the kickoff at
+		// API-0272 `postgres-changeStatus` and reasserted at API-0273
+		// `postgres-create`, API-0274 `postgres-deploy`, API-0275
+		// `postgres-move`, API-0277 `postgres-rebuild`, API-0278
+		// `postgres-reload`, API-0279 `postgres-remove`, API-0280
+		// `postgres-saveEnvironment`, API-0281
+		// `postgres-saveExternalPort`, API-0283 `postgres-start`, and
+		// API-0284 `postgres-stop`. (API-0276 `postgres-one` overrode
+		// to 404->CodeNotFound because the spec itself first declared
+		// 404 on the canonical by-id GET; that override does not
+		// generalise to body-bearing POSTs whose specs omit 404.)
+		//
+		// **Fixture token base** `postgres-cov-update-0285` follows
+		// the established `<tag>-cov-<slug>-<storyID>` deterministic-
+		// but-clearly-fake naming convention. Single-segment slug
+		// `update` has no internal capitalisation so the kebab-vs-camel
+		// choice is moot here. Verified non-colliding with API-0272's
+		// `postgres-cov-changeStatus-0272`, API-0273's
+		// `postgres-cov-create-0273`, API-0274's
+		// `postgres-cov-deploy-0274-postgresId`, API-0275's
+		// `postgres-cov-move-0275-{postgresId,targetEnvironmentId}`,
+		// API-0276's `postgres-cov-one-0276-postgresId-fixture`,
+		// API-0277's `postgres-cov-rebuild-0277-postgresId`,
+		// API-0278's `postgres-cov-reload-0278-{postgresId,appName}`,
+		// API-0279's `postgres-cov-remove-0279-postgresId`,
+		// API-0280's
+		// `postgres-cov-save-environment-0280-{postgresId,env}`,
+		// API-0281's
+		// `postgres-cov-save-external-port-0281-postgresId`,
+		// API-0282's `postgres-cov-search-0282{,-project}`, API-0283's
+		// `postgres-cov-start-0283-postgresId`, and API-0284's
+		// `postgres-cov-stop-0284-postgresId` literals (different slug
+		// + storyID -> unique under the `<tag>-cov-<slug>-<storyID>`
+		// rule). Cross-tag analogs `mariadb-cov-update-0173`,
+		// `mongo-cov-update-0187`, and `mysql-cov-update-0207` are
+		// intentionally similar in shape - same
+		// `<tag>-cov-update-<storyID>` skeleton - but the `mariadb` /
+		// `mongo` / `mysql` vs `postgres` tag prefix and the `0173` /
+		// `0187` / `0207` vs `0285` storyID suffix make every literal
+		// distinguishable.
+		//
+		// This entry **closes** the priority-4 postgres/* coverage
+		// roster. The next case in the PRD-ordered priority-4 backlog
+		// is API-0286 `previewDeployment-all`, which opens a new tag
+		// (previewDeployment) and therefore a brand-new
+		// `previewDeployment-cov-*` per-tag fixture-isolation
+		// namespace. The next contributor must re-verify the spec
+		// against `internal/api/data/openapi.json` per the forward-
+		// reference lesson before assuming any field shape, and must
+		// NOT back-reference any postgres-cov-* token bases per the
+		// per-tag isolation rule.
+		SampleBody: json.RawMessage(`{
+			"postgresId": "postgres-cov-update-0285-postgresId"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0290",
 		OperationID: "project-all",
 		Method:      http.MethodGet,

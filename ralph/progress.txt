@@ -22654,3 +22654,109 @@ forward-reference lesson before assuming any field shape.
     explicit `\t` rendering) to avoid wasted Edit attempts on
     indentation mismatches.
 ---
+
+## 2026-05-09 - API-0285 - Cover postgres-update (POST /postgres.update)
+- What was implemented:
+  - Added a new `apiCoverageCase` entry for `postgres-update`
+    (POST /postgres.update, tag postgres) in
+    `internal/cli/api_coverage_test.go`, immediately after API-0284
+    `postgres-stop` and before the API-0290 `project-all` boundary
+    that opens the next-tag arc. Fourteenth and final entry on the
+    postgres/* coverage roster (API-0272..API-0285 all green),
+    completing the forward reference embedded in API-0284's closing
+    block.
+  - **Spec re-verified** against
+    `internal/api/data/openapi.json` > `/postgres.update` > `post`:
+    method POST, tag postgres, no parameters, requestBody REQUIRED
+    with `application/json` and **one REQUIRED top-level field**
+    (`postgresId` plain string, no `anyOf` / `nullable` / enum
+    constraints) plus a WIDE OPTIONAL tail of 30 configuration fields
+    (identity, db credentials, runtime image, resource limits,
+    networking, applicationStatus enum, swarm-orchestration cluster,
+    replicas, createdAt, environmentId). Responses 200/400/401/403/500
+    with the 200 body `{}` (`additionalProperties: false`). **No 404**
+    declared - mirroring the action-on-known-id POST precedent across
+    every prior body-bearing imperative-action postgres POST and the
+    cross-tag `*-update` family (API-0173 `mariadb-update`, API-0187
+    `mongo-update`, API-0207 `mysql-update`).
+  - **Shape - single-required-string-scalar POST patch-style mutation,
+    body REQUIRED, with WIDE optional tail.** Cardinality- and
+    type-identical to API-0274 `postgres-deploy`, API-0277
+    `postgres-rebuild`, API-0279 `postgres-remove`, API-0283
+    `postgres-start`, and API-0284 `postgres-stop` (single REQUIRED
+    `postgresId` plain string). Direct cross-tag analog of API-0173
+    `mariadb-update`, API-0187 `mongo-update`, API-0207
+    `mysql-update`.
+  - **Family choice - harness-default 401->CodeAuth retained.** Spec
+    omits 404, so the 404->CodeNotFound override is structurally
+    inapplicable; the override slot for the postgres/* roster was
+    already consumed by API-0276 `postgres-one`.
+  - **Fixture token base** `postgres-cov-update-0285` follows the
+    `<tag>-cov-<slug>-<storyID>` rule and is verified non-colliding
+    with API-0272..API-0284 literals and with cross-tag
+    `mariadb-cov-update-0173` / `mongo-cov-update-0187` /
+    `mysql-cov-update-0207` namespaces.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (added API-0285 case +
+    rationale comment block, ~178 lines)
+  - `ralph/prd.json` (set `passes: true` for API-0285)
+  - `ralph/progress.txt` (this entry)
+- Verification run from repo root:
+  - `gofmt -w .` - clean (only the new block diffed)
+  - `go mod tidy` - clean (no diff)
+  - `go vet ./...` - pass
+  - `go test ./... -count=1` - pass (cli 1.553s; all packages PASS)
+  - `go test -race ./... -count=1` - pass (cli 4.708s; all packages PASS)
+  - Targeted: `go test ./internal/cli -run 'TestAPICoverage/API-0285' -v`
+    - all five legs PASS (RegistryInvariants, SchemaCommandWorks,
+    ManifestListsOperation, SuccessRoundTrip, RepresentativeFailure).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, and
+    `goreleaser` are still not installed locally and remain documented
+    as missing per the Codebase Patterns note rather than silently
+    skipped.
+- Remaining risks / follow-ups: API-0285 **closes** the priority-4
+  postgres/* coverage roster (API-0272..API-0285 all green). The next
+  case in the PRD-ordered priority-4 backlog is API-0286
+  `previewDeployment-all`, which **opens a brand-new tag** (previewDeployment)
+  and therefore a fresh `previewDeployment-cov-*` per-tag
+  fixture-isolation namespace. The next contributor MUST:
+  (1) re-verify the spec against `internal/api/data/openapi.json` per
+  the forward-reference lesson before assuming any field shape;
+  (2) NOT back-reference any closed prior-tag namespace literals;
+  (3) seed the new `previewDeployment-cov-*` namespace with the
+  kickoff entry's design header (per-tag isolation rule originally
+  established at API-0246 `organization-active`).
+- **Learnings for future iterations:**
+  - The `*-update` patch-style POST shape is now established on
+    **four** tags (`mariadb-update`, `mongo-update`, `mysql-update`,
+    `postgres-update`) with byte-for-byte identical single-required-
+    `<tag>Id`-string surfaces backed by a wide optional configuration
+    tail. Future contributors covering the next `*-update` peer can
+    copy this entry's structure 1:1 and simply swap tag/path/id-
+    field-name, mirroring the same single-field fixture and the same
+    401->CodeAuth family choice.
+  - The lifecycle-quartet pattern observed across `mariadb`, `mongo`,
+    `mysql`, and now `postgres` (start/stop/deploy/rebuild/remove/
+    update each as single-required-string-scalar POSTs sharing the
+    `<tag>Id` field) is a stable cross-tag invariant. When a new
+    database tag arrives in the spec, expect six structurally
+    identical entries plus a `create` (multi-scalar) and `*-one`
+    (404-bearing GET) at minimum.
+  - The **PRD story-ID for cross-tag `*-update` peers** is
+    API-0173 (mariadb), API-0187 (mongo), API-0207 (mysql),
+    API-0285 (postgres). When citing cross-tag analogs in entry
+    comments, verify the actual PRD ID via
+    `jq '.userStories[] | select(.apiOperation.operationId=="X") | .id' ralph/prd.json`
+    rather than relying on pattern-extrapolation; some prior entries
+    (e.g. the API-0284 postgres-stop comment block) cite stale IDs
+    like "API-0174 mariadb-stop" when the actual PRD ID is API-0172.
+    These stale citations are harmless (comments only, not asserted)
+    but new entries should use verified IDs.
+  - Raw-bytes Python `read -> bytes.replace -> write` via
+    `ctx_execute` remains the safe insertion mechanism for
+    `internal/cli/api_coverage_test.go`. Anchor uniqueness should
+    span the closing `},` of the prior entry through the
+    `StoryID:     "..."` of the next entry, rooted on a
+    fixture-token literal (e.g. `postgres-cov-stop-0284-postgresId`)
+    that occurs exactly once in the file.
+---
