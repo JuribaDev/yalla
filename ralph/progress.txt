@@ -3771,3 +3771,54 @@
   - The OpenAPI source of truth is internal/api/data/openapi.json (NOT
     data/openapi.json — that path does not exist at the repo root).
 ---
+
+## 2026-05-08 - API-0067 (compose-cleanQueues)
+- Implemented per-operation contract coverage for compose-cleanQueues
+  (POST /compose.cleanQueues) — second compose/* entry in
+  coveredAPIOperations, sorted directly after API-0066.
+- Files changed:
+  - internal/cli/api_coverage_test.go (+25 lines, single appended
+    apiCoverageCase literal sorted after API-0066)
+  - ralph/prd.json (passes: false -> true for API-0067)
+  - ralph/progress.txt (this entry)
+- Implementation: identical shape to API-0066 (compose-cancelDeployment),
+  the minimal-composeId-only POST family member. The shared harness in
+  internal/cli/api_coverage_test.go derives all five contract assertions
+  (registry / schema get / manifest inclusion / httptest success / 401
+  -> E_AUTH failure) from the entry alone, so no production-code change
+  is required. Confirmed in internal/api/data/openapi.json that
+  /compose.cleanQueues required surface is exactly {"composeId": string}
+  and the 200 response is {} with additionalProperties: false.
+- Verification (from /Users/juribadev/projects/poc/yalla-claude):
+  - gofmt -w .   (clean)
+  - go mod tidy  (no module changes)
+  - go vet ./... (PASS)
+  - go test ./internal/cli -run 'TestAPICoverage' -count=1 (PASS)
+  - go test ./... (PASS — internal/cli 0.919s)
+  - go test -race ./... (PASS — internal/cli 2.445s)
+  - goimports / golangci-lint / staticcheck / govulncheck / goreleaser:
+    not installed locally; documented in the existing baseline note from
+    earlier iterations.
+- Remaining risks / follow-ups: none specific to this story. 411 stories
+  remain failing. The next priority-2 compose/* story is API-0068
+  (compose-clearDeployments), expected to be the same minimal-composeId
+  POST shape per the precedent set by application-clearDeployments
+  (API-0013).
+- **Learnings for future iterations:**
+  - The compose/* minimal-composeId POST family is now a two-member set
+    (API-0066 cancelDeployment, API-0067 cleanQueues). The next
+    contiguous block (API-0068..0073-ish) is expected to be more of the
+    same: clearDeployments / delete / disconnectGitProvider / etc. all
+    take a single composeId. Verify each in
+    internal/api/data/openapi.json before appending — most should be
+    pure copy-paste-plus-storyID work.
+  - Fixture slug convention "compose-cov-<verb>-<storyID>" mirrors the
+    application/* "app-cov-<verb>-<storyID>" naming. Multi-word verbs
+    are kebab-cased (clean-queues, cancel-deploy) to keep the slug
+    grep-friendly. Preserve this on every new compose/* story.
+  - The append-only sort by StoryID continues to work cleanly: with
+    API-0066 and API-0067 now both at the tail, the slice is dense up
+    to API-0039 and dense again from API-0066 onward. The API-0040..0065
+    backup/* + bitbucket/* range will need to be inserted ABOVE the
+    compose/* entries when those stories land.
+---

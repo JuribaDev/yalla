@@ -1150,6 +1150,30 @@ var coveredAPIOperations = []apiCoverageCase{
 		// than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0067",
+		OperationID: "compose-cleanQueues",
+		Method:      http.MethodPost,
+		Path:        "/compose.cleanQueues",
+		Tag:         "compose",
+		// Mirrors the schema in `data/openapi.json` for
+		// /compose.cleanQueues: the only required field is `composeId`
+		// (string), with no optional siblings. Second compose/* member of
+		// the minimal-id-only POST family — same shape as API-0066
+		// (compose-cancelDeployment) and the application/* twins
+		// (API-0011/0012/0013/0015/0024/0036/0037). Keep the fixture
+		// minimal-but-valid so a future schema validator wired into the
+		// harness still accepts it.
+		SampleBody: json.RawMessage(`{
+			"composeId": "compose-cov-clean-queues-0067"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the empty-success convention shared by every prior
+		// application/* and compose/* mutation peer. Empty-object body
+		// keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
