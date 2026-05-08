@@ -941,6 +941,49 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0034",
+		OperationID: "application-saveGitProvider",
+		Method:      http.MethodPost,
+		Path:        "/application.saveGitProvider",
+		Tag:         "application",
+		// Mirrors the schema in `data/openapi.json` for
+		// /application.saveGitProvider. This is the FAMILY OUTLIER among
+		// the application/save*Provider entries (API-0031 gitea / API-0032
+		// github / API-0033 gitlab): instead of a `*Id` vendor field, the
+		// custom-git provider promotes `watchPaths`
+		// (`anyOf:[array<string>,null]`) from optional to required. That
+		// makes API-0034 the FIRST application/* coverage entry whose
+		// required surface includes a non-string, non-boolean, non-numeric
+		// primitive — namely a JSON array of strings. Required fields per
+		// the spec are: `applicationId` (plain string), `customGitBranch`
+		// / `customGitBuildPath` / `customGitUrl` (each
+		// `anyOf:[string,null]`), and `watchPaths`
+		// (`anyOf:[array<string>,null]`). Optional `customGitSSHKeyId`
+		// (`anyOf:[string,null]`) is intentionally omitted to keep the
+		// fixture minimal-but-valid, mirroring the API-0031/0032/0033
+		// precedent of leaving optional fields off the SampleBody so the
+		// success-leg comparator stays decoupled from optional-field
+		// behavior the spec may evolve. Distinct `app-cov-customgit-<slug>-0034`
+		// placeholders keep diffs readable and let any future
+		// schema-validator failure messages point at the offending field.
+		// `watchPaths` is populated with a single-element array (rather
+		// than an empty array) so the success-leg JSON round-trip
+		// non-trivially verifies that array-typed required fields survive
+		// the api/call body forwarding intact.
+		SampleBody: json.RawMessage(`{
+			"applicationId": "app-cov-customgit-application-id-0034",
+			"customGitBranch": "app-cov-customgit-branch-0034",
+			"customGitBuildPath": "app-cov-customgit-build-path-0034",
+			"customGitUrl": "app-cov-customgit-url-0034",
+			"watchPaths": ["app-cov-customgit-watch-path-0034"]
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching every prior application/* peer. Empty-object body keeps
+		// the success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

@@ -3393,3 +3393,76 @@
     fixtures resilient against future schema-aware validators
     being wired into the harness.
 ---
+
+## 2026-05-08 - API-0034 - Cover application-saveGitProvider (POST /application.saveGitProvider)
+- Implemented per-operation contract coverage for
+  `application-saveGitProvider` by appending a single `apiCoverageCase`
+  literal (StoryID `API-0034`) to `internal/cli/api_coverage_test.go`'s
+  `coveredAPIOperations` slice. The append-only harness automatically
+  asserts all five invariants: registry id/method/path/tag,
+  `yalla schema get`, `yalla manifest`, httptest success round-trip
+  with body forwarding, and a representative 401 -> `E_AUTH` failure
+  path. No production-code changes required — the operation is already
+  enumerated in `internal/api/data/openapi.json`, so registry / schema /
+  manifest plumbing already accept it.
+- API-0034 is the FAMILY OUTLIER among the application/save*Provider
+  entries (API-0031 gitea, API-0032 github, API-0033 gitlab): instead of
+  a vendor-specific `*Id` field, the custom-git provider promotes
+  `watchPaths` (`anyOf:[array<string>,null]`) from optional to required.
+  That makes API-0034 the FIRST application/* coverage entry whose
+  required surface includes a JSON array. Per the spec, required fields
+  are `applicationId` (plain string), `customGitBranch` /
+  `customGitBuildPath` / `customGitUrl` (each `anyOf:[string,null]`),
+  and `watchPaths`. Optional `customGitSSHKeyId` is omitted to keep the
+  fixture minimal-but-valid, matching the precedent of API-0031/0032/0033.
+  `watchPaths` is populated with a single-element array (rather than an
+  empty array) so the success-leg JSON round-trip non-trivially verifies
+  array-typed required fields survive api/call body forwarding intact.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended the API-0034 case
+    after API-0033 (one contiguous block; no other touches).
+  - `ralph/prd.json` — flipped `passes: false` -> `passes: true` for
+    `API-0034`.
+  - `ralph/progress.txt` — this entry.
+- Verification run from repo root:
+  - `gofmt -l .` — clean.
+  - `go mod tidy` — no module changes.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass; `internal/cli` 1.119s.
+  - `go test -race ./internal/cli` — pass; 2.423s.
+  - `go test -race ./...` — all packages pass.
+  - `go test ./internal/cli -run 'TestAPICoverage' -count=1` — pass.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — not installed locally, intentionally skipped per
+    the Codebase Patterns guidance.
+- Remaining risks or follow-ups: none for this story. The application/*
+  `save*Provider` block (API-0031 / 0032 / 0033 / 0034) is now fully
+  covered. The next priority-2 application/* gaps are API-0035
+  (`application-search`, GET) — a single-query-param GET that should
+  pattern-match against API-0005 (`ai-get`) / API-0008 (`ai-one`) — and
+  API-0036/0037 (`application-start` / `application-stop`), both of
+  which mirror the minimal `applicationId`-only POST shape used across
+  cancelDeployment, cleanQueues, redeploy, etc. After those, API-0038
+  (`application-update`) will be the largest application/* body to
+  date and will need a careful spec spot-check.
+- **Learnings for future iterations:**
+  - `application-saveGitProvider` is now the canonical literal for any
+    future coverage entry whose required surface includes an
+    `anyOf:[array<X>,null]` field. Two tactical choices to copy:
+    (1) populate the array with at least one element (not `[]`) so the
+    httptest success-leg round-trip non-trivially verifies array
+    forwarding; (2) keep the inner element a deterministic
+    `<tag>-cov-<slug>-<storyID>` string for grep-friendliness.
+  - When the spec promotes a previously-optional field to required for
+    a single subtype of a family (gitea/github/gitlab kept `watchPaths`
+    optional; custom-git made it required), the fixture must include
+    that field, but unrelated optional fields the family routinely
+    omits (e.g. `enableSubmodules`, `customGitSSHKeyId`) should still
+    be omitted. The minimal-but-valid invariant is per-spec, not
+    per-family.
+  - The append-only `coveredAPIOperations` slice has now grown to 34
+    entries, all sorted by StoryID. Diff-friendliness continues to
+    scale: API-0030 -> 0031 -> 0032 -> 0033 -> 0034 form one
+    contiguous five-entry block of application/save*Provider coverage
+    that future readers can pattern-match in a single screenful.
+---
