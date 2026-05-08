@@ -2368,3 +2368,67 @@
   - Coverage entries stay sorted by StoryID; appending at the end of
     the slice keeps diffs minimal and the harness output deterministic.
 ---
+
+## 2026-05-08 - API-0004
+- **Implemented**: API coverage for `ai-deploy` (POST /ai.deploy).
+  Pattern follows API-0014/API-0015/API-0016: appended one
+  `apiCoverageCase{...}` literal to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go`. The five-part harness
+  (registry invariants, `yalla schema get`, `yalla manifest`, httptest
+  success round-trip, default 401 → CodeAuth representative failure) now
+  also gates `ai-deploy`. No production-code changes; the operation is
+  already wired through the embedded OpenAPI spec
+  (`internal/api/data/openapi.json`), the `api.Default()` registry, and
+  the raw `yalla api call` executor.
+- **Sample body**: The /ai.deploy schema is the widest ai/* envelope
+  covered so far — six required strings (`environmentId`, `id`,
+  `dockerCompose`, `envVariables`, `name`, `description`) plus three
+  optionals (`serverId`, `domains[]`, `configFiles[]`). Per the
+  API-0014 convention we supply every optional with deterministic-but-
+  clearly-fake values so the wire-payload assertion exercises the full
+  deploy envelope, including the array branches with their own nested
+  required fields (`domains[].host/port/serviceName` and
+  `configFiles[].filePath/content`). The per-case fixture token
+  `*-cov-ai-deploy-0004` keeps `git grep` traceable to this PRD story.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended one
+    `apiCoverageCase` entry between API-0003 and API-0011 (sorted by
+    StoryID).
+  - `ralph/prd.json` — `API-0004.passes` flipped `false` → `true`.
+  - `ralph/progress.txt` — this entry.
+- **Verification run**: `gofmt -w .`, `go mod tidy`, `go vet ./...`,
+  `go test ./...`, `go test -race ./...`, plus a focused
+  `go test ./internal/cli -run 'TestAPICoverage' -v -count=1`. All
+  green; the new `API-0004/ai-deploy` subtests in both
+  `TestAPICoverage_SuccessRoundTrip` and
+  `TestAPICoverage_RepresentativeFailure` pass on the first run.
+- **Tools not installed locally** (documented per the Codebase Patterns
+  baseline rather than silently skipped): `goimports`, `golangci-lint`,
+  `staticcheck`, `govulncheck`, `goreleaser`. CI still runs the
+  security/lint matrix on push.
+- **Results**: All required gates pass. `ai-deploy` is now
+  registry-checked, schema-reachable, manifest-listed, success-round-
+  tripped through `httptest.Server`, and failure-mapped to `CodeAuth`
+  on 401.
+- **Remaining risks / follow-ups**: None for this story. The next
+  pending API story by priority is API-0005 (`ai-get`, GET /ai.get),
+  still `passes: false`. ai-get is a GET-no-body operation; coverage
+  there will exercise the parameter-less GET branch of the harness
+  (no SampleBody, no Content-Type forwarding).
+- **Learnings for future iterations**:
+  - **Multi-line string literals (e.g. `dockerCompose` YAML,
+    `envVariables` `KEY=VAL` pairs) survive the `json.RawMessage` →
+    `json.Unmarshal` → `json.Marshal` round-trip in
+    `runAPICoverageSuccess` cleanly. No special escaping needed beyond
+    standard JSON quoting.**
+  - **Array-of-object request fields with their own `required` blocks
+    (here `domains[]` and `configFiles[]`) cost zero harness changes:
+    the canonical body-equality assertion already normalises through
+    `encoding/json`, so nested arrays are diff-stable without a
+    sort-stable comparator.**
+  - **`/ai.deploy` is the first ai/* operation to mix required strings
+    with optional arrays. The same shape repeats for many curated
+    deploy endpoints (compose-deploy, application-deploy variants);
+    keeping the `*-cov-<short>-<storyId>` naming convention on every
+    fixture string makes spec-drift bisection a single `git grep`.**
+---

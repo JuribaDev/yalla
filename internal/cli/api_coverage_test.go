@@ -162,6 +162,50 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0004",
+		OperationID: "ai-deploy",
+		Method:      http.MethodPost,
+		Path:        "/ai.deploy",
+		Tag:         "ai",
+		// Mirrors the schema in `data/openapi.json` for /ai.deploy: six
+		// required string fields (`environmentId`, `id`, `dockerCompose`,
+		// `envVariables`, `name`, `description`) plus three optional
+		// ones (`serverId`, `domains[]`, `configFiles[]`). Per the
+		// API-0014 convention we supply every optional with a
+		// deterministic-but-clearly-fake value so the wire payload
+		// exercises the full deploy envelope (array branches included),
+		// not just the minimum. Per-case fixture token
+		// `*-cov-ai-deploy-0004` keeps `git grep` traceable to this PRD
+		// story.
+		SampleBody: json.RawMessage(`{
+			"environmentId": "env-cov-ai-deploy-0004",
+			"id": "ai-cov-ai-deploy-0004",
+			"dockerCompose": "version: \"3\"\nservices:\n  app:\n    image: yalla/coverage:0004\n",
+			"envVariables": "FOO=bar\nBAZ=qux\n",
+			"serverId": "srv-cov-ai-deploy-0004",
+			"name": "yalla-coverage-ai-deploy-0004",
+			"description": "yalla coverage fixture for API-0004",
+			"domains": [
+				{
+					"host": "ai-deploy-0004.example.test",
+					"port": 8080,
+					"serviceName": "app"
+				}
+			],
+			"configFiles": [
+				{
+					"filePath": "/etc/yalla/coverage-0004.conf",
+					"content": "key=value\n"
+				}
+			]
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the other ai/* and application/* peers. Keep the body
+		// empty-object so the success-leg envelope assertion stays focused
+		// on `data.method` / `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0011",
 		OperationID: "application-cancelDeployment",
 		Method:      http.MethodPost,
