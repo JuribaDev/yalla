@@ -9930,3 +9930,55 @@ Learnings for future iterations:
   - The parameter-free GET settings/* sub-roster pattern is now stable across eight entries (API-0363, API-0364, API-0365, API-0366, API-0367, API-0368, API-0371, API-0372). Diff against the prior entry remains purely the StoryID, OperationID, Path, slug-named reservation, sub-roster ordinal, and the design-rationale comments naming the right preceding peers and the right next operation.
   - The `coveredAPIOperations` slice's closing `}` followed by `// TestAPICoverage_RegistryInvariants` continues to be the canonical insertion point. The `Edit` tool with the prior entry's forward-reference comment as the `old_string` anchor reliably preserves the surrounding fixture intact.
 ---
+
+## 2026-05-08 - API-0373
+- **Implemented**: Coverage entry for `settings-haveTraefikDashboardPortEnabled`
+  (`GET /settings.haveTraefikDashboardPortEnabled`) in the existing
+  `coveredAPIOperations` registry. Spec-verified the operation in
+  `internal/api/data/openapi.json`: a GET with **one OPTIONAL `serverId`
+  query parameter**, no request body, responses 200/400/401/403/404/500,
+  200 schema is `{}` with `additionalProperties: false`. The case populates
+  `SampleQuery` with the slug `set-cov-haveTraefikDashboardPortEnabled-0373`
+  (unique under the settings/* `set-cov-*` namespace and orthogonal to all
+  prior tag namespaces) so the harness's success-leg `r.URL.Query()` re-read
+  exercises end-to-end forwarding even though the parameter is OPTIONAL,
+  following the API-0369 `settings-getTraefikPorts` precedent. Failure leg
+  uses harness defaults (401 → CodeAuth) per the per-tag opener convention
+  reasserted at API-0335..API-0372.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended the API-0373 case to
+    `coveredAPIOperations`. Comment block re-cites the per-tag isolation
+    rule (API-0246 origin, reasserted at API-0335..API-0372), the
+    parameter-bearing precedent (API-0369), and notes the falsified
+    forward-reference at API-0371 → API-0372 (parameter-free) versus the
+    re-confirmed parameter-bearing shape at API-0372 → API-0373.
+  - `ralph/prd.json` — set US API-0373 `passes: true`.
+  - `ralph/progress.txt` — this entry.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass.
+  - `go test -race ./...` — all packages pass.
+- **Tools NOT available locally** (unchanged from prior stories):
+  `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`.
+- **Remaining risks / follow-ups**:
+  - Next pending settings/* roster entry per PRD ordering is API-0374
+    `settings-health` (declared GET in the PRD). Per the forward-reference
+    lesson, the next contributor must re-verify the parameter axis,
+    request-body axis, and response-set axis (presence/absence of 404)
+    against the spec before assuming any field carries over from API-0373.
+- **Learnings for future iterations**:
+  - The API-0371 → API-0372 falsified forward-reference (slug-prefix `have*`
+    landed on the parameter-free side of the axis) versus the re-confirmed
+    parameter-bearing shape at API-0372 → API-0373 (same `have*` slug prefix
+    landed on the parameter-bearing side) demonstrates that two adjacent
+    entries with the same slug prefix can sit on opposite sides of the
+    parameter axis. Slug-prefix matching alone is unreliable; per-operation
+    spec re-verification stays mandatory across every family transition.
+  - The fixture-isolation namespace pattern `set-cov-<opSlug>-<storyId>` keeps
+    each settings/* OPTIONAL-query value unique against every prior story
+    while requiring zero cross-tag coordination — this is the same
+    convention proven across API-0351..API-0372 and now extended to
+    API-0373 without modification.
+---

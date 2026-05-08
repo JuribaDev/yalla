@@ -9130,6 +9130,152 @@ var coveredAPIOperations = []apiCoverageCase{
 		// mandatory across every family transition.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0373",
+		OperationID: "settings-haveTraefikDashboardPortEnabled",
+		Method:      http.MethodGet,
+		Path:        "/settings.haveTraefikDashboardPortEnabled",
+		Tag:         "settings",
+		// Twenty-third entry on the settings/* coverage roster,
+		// inheriting the `set-cov-*` per-tag fixture-isolation
+		// namespace established by API-0351
+		// `settings-assignDomainServer` and extended through
+		// API-0372 `settings-haveActivateRequests` (must not
+		// back-reference the closed `srv-cov-*`, `proj-cov-*`,
+		// `org-cov-*`, `compose-cov-*`, `app-cov-*`, `ai-cov-*`,
+		// or any other prior tag's namespace, per the per-tag
+		// isolation rule reasserted at API-0335..API-0372 and
+		// originally established at API-0246
+		// `organization-active`).
+		//
+		// **Spec re-verified per the API-0345..API-0372
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json >
+		// /settings.haveTraefikDashboardPortEnabled > get`: a
+		// **GET** with **one OPTIONAL query parameter**
+		// `serverId` (string, `required: false` — scopes the
+		// dashboard-port probe to a specific Dokploy worker
+		// server when Traefik is replicated across multiple
+		// servers) and **no request body** (GETs in this OpenAPI
+		// document never carry a `requestBody` field). Responses
+		// 200/400/401/403/404/500 — the **404 stays present**,
+		// matching the parameter-bearing GET precedent at
+		// API-0369 `settings-getTraefikPorts` and the
+		// parameter-free GET sub-roster opened at API-0363
+		// `settings-getDokployCloudIps` and extended through
+		// API-0368 `settings-getReleaseTag`, API-0371
+		// `settings-getWebServerSettings`, and API-0372
+		// `settings-haveActivateRequests`. The 200 schema is `{}`
+		// with `additionalProperties: false`, matching every
+		// prior covered peer in the settings/* GET cohort.
+		//
+		// **Forward-reference correction.** The API-0372 hand-off
+		// comment hedged that the parameter axis (zero vs one
+		// optional query) had to be re-verified per-operation
+		// despite the matching `have*` slug prefix. Direct
+		// inspection of the spec at
+		// `/settings.haveTraefikDashboardPortEnabled > get`
+		// confirmed the divergence in the affirmative direction:
+		// this entry **does** carry an OPTIONAL `serverId`
+		// query parameter (unlike API-0372 which was
+		// parameter-free), so the entry tracks the parameter-
+		// bearing GET precedent at API-0369
+		// `settings-getTraefikPorts` rather than the
+		// parameter-free precedent at API-0372. The
+		// per-operation re-verification rule kept the
+		// contributor from accidentally adopting the API-0372
+		// parameter-free shape — slug-prefix matching alone
+		// could not have settled which side of the parameter
+		// axis this entry belongs to.
+		//
+		// **Family continuation — tenth entry of the settings/*
+		// GET cohort, second of the parameter-bearing GET
+		// sub-roster.** API-0363 opened the parameter-free
+		// sub-family by pivoting off the eleven-entry POST cohort
+		// (API-0353..API-0362); API-0364..API-0368 extended the
+		// parameter-free shape across five consecutive entries;
+		// API-0369 pivoted to a single OPTIONAL `serverId` query
+		// (the first parameter-bearing GET in the settings/*
+		// roster); API-0370 pivoted the verb axis to POST while
+		// keeping the no-body, no-parameter shape; API-0371
+		// reverted to the parameter-free GET shape under the
+		// `getWebServer*` slug prefix; API-0372 continued the
+		// parameter-free GET shape under the `have*` slug
+		// prefix; and API-0373 pivots back to the
+		// parameter-bearing GET shape under the same `have*`
+		// slug prefix (the second OPTIONAL-`serverId` GET in
+		// the settings/* roster). Following the API-0369
+		// precedent and the per-tag isolation rule, we populate
+		// `SampleQuery` with a fixture-slug literal under the
+		// settings/* `set-cov-*` namespace so the success-leg
+		// `r.URL.Query()` re-read at `runAPICoverageSuccess`
+		// exercises end-to-end forwarding even though the
+		// parameter is OPTIONAL — the harness does not gate on
+		// `required`-ness, it forwards whatever `SampleQuery`
+		// carries (per the API-0077 `compose-getTags` precedent,
+		// the API-0041 `backup-listBackupFiles` precedent, and
+		// the API-0369 `settings-getTraefikPorts` precedent).
+		//
+		// Fixture conventions:
+		//   * `set-cov-haveTraefikDashboardPortEnabled-0373` —
+		//     slug-named literal for the OPTIONAL `serverId`
+		//     query parameter, unique against
+		//     API-0351..API-0372's `set-cov-*` slugs and
+		//     orthogonal to every prior tag's `srv-cov-*`,
+		//     `proj-cov-*`, `org-cov-*`, `compose-cov-*`,
+		//     `app-cov-*`, `ai-cov-*`, etc. namespaces.
+		SampleQuery: map[string][]string{
+			"serverId": {"set-cov-haveTraefikDashboardPortEnabled-0373"},
+		},
+		// 200 response in the spec is `{}` with
+		// `additionalProperties: false`, matching the
+		// empty-success convention shared by every prior
+		// settings/* GET peer (API-0363..API-0372). Empty-object
+		// body keeps the success-leg envelope assertion focused
+		// on `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+		//
+		// **Failure-leg fields are intentionally omitted.** Even
+		// though the spec declares 404 on this operation, the
+		// per-tag opener convention reasserted at
+		// API-0335..API-0372 reserves 404 → CodeNotFound for the
+		// canonical by-id `*-one` peer, not for parameter-bearing
+		// platform-state probes like
+		// `haveTraefikDashboardPortEnabled` (which returns
+		// whether the running Dokploy/Traefik instance has the
+		// dashboard port exposed, scoped optionally by server,
+		// not a single resource keyed by id). Auth is the
+		// universal failure mode every Dokploy operation must
+		// re-prove, so 401 → CodeAuth via the harness default
+		// (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""`
+		// → CodeAuth) stays the most informative representative.
+		// 400 → CodeInvalidInput stays reserved for stories
+		// where payload validation is the operation's
+		// distinguishing failure mode; this entry uses the
+		// canonical 401.
+		//
+		// The next case in the settings/* roster per PRD
+		// ordering is API-0374 `settings-health` (declared a
+		// **GET** in the PRD). The next contributor must
+		// re-verify against `internal/api/data/openapi.json >
+		// /settings.health > get` per the forward-reference
+		// lesson before assuming any field is identical to this
+		// entry — the response-set axis (presence vs absence of
+		// 404), the parameter axis (zero vs one optional query
+		// vs other), and the request-body axis (none vs JSON)
+		// must each be re-verified per-operation. Do not assume
+		// the parameter list, request body, or response set
+		// carries over solely because the verb is GET and the
+		// adjacent slug matches; the falsified prediction at
+		// API-0371 → API-0372 (parameter-free) and the
+		// re-confirmed parameter-bearing shape at
+		// API-0372 → API-0373 demonstrate that two adjacent
+		// entries with the same slug prefix can sit on opposite
+		// sides of the parameter axis. Per-operation
+		// re-verification stays mandatory across every family
+		// transition.
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
