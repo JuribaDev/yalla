@@ -2622,6 +2622,55 @@ var coveredAPIOperations = []apiCoverageCase{
 		// API-0033 (application-readTraefikConfig).
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0248",
+		OperationID: "organization-allInvitations",
+		Method:      http.MethodGet,
+		Path:        "/organization.allInvitations",
+		Tag:         "organization",
+		// Third entry in the organization/* roster, completing the
+		// trio of parameter-free GETs forecast by the API-0246 comment
+		// block ("Future organization/* peers (API-0247 `*-all`,
+		// API-0248 `*-allInvitations`, API-0251 `*-one`) should grep
+		// this entry first when extending the parameter-free GET
+		// cohort"). Spec source `data/openapi.json >
+		// /organization.allInvitations > get` is byte-for-byte the
+		// same wire shape as `/organization.active` and
+		// `/organization.all`: no `parameters` array (the spec omits
+		// it entirely rather than declaring `[]` — the registry
+		// normalises both forms to "no query/path params"), no
+		// request body, responses 200/400/401/403/404/500 where the
+		// 200 schema is `{}` with `additionalProperties: false`.
+		//
+		// The semantic difference vs. API-0246/API-0247 is the
+		// resource being listed: this endpoint returns every
+		// outstanding invitation across organizations the bearer
+		// principal can administer, rather than the principal's own
+		// organization memberships. From the coverage harness's
+		// perspective it is identical to API-0247 — the canonical
+		// agent invocation is `yalla api call organization-allInvitations
+		// --input '{}' --json`, SampleQuery / SamplePathParams /
+		// SampleBody stay unset, and the representative-failure leg
+		// keeps the harness default of 401→CodeAuth (auth is the
+		// universal failure mode every organization/* peer must
+		// re-prove; 404 in the spec exists for filter-shaped peers
+		// like `*-one` rather than this list endpoint, and 403
+		// applies to admin-scope checks the success leg already
+		// short-circuits).
+		//
+		// This entry also closes out the *list-shaped* sub-cohort of
+		// the organization/* roster — the next failing story
+		// (API-0249 `organization-create`) introduces a required
+		// request body and shifts the cohort into POST mutation
+		// territory, where API-0249 → API-0250 → API-0252 → API-0253
+		// → API-0254 → API-0255 will follow the
+		// minimal-required-body precedent set by ai-create
+		// (API-0003) / certificates-create rather than the empty
+		// `{}` fixture this trio uses. Future contributors picking
+		// up the organization/* mutation arc should grep API-0249
+		// (once landed) first instead of this entry.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

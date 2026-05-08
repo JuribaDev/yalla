@@ -5724,3 +5724,52 @@
     the standard pre-comment validation step keeps spec-drift
     surprises out of the test file.
 ---
+
+## 2026-05-08 - API-0248
+- Implemented per-operation contract coverage for `organization-allInvitations`
+  (GET /organization.allInvitations) by appending a single `apiCoverageCase`
+  entry to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go`. The harness's existing five-part check
+  (registry presence, schema reachability, manifest inclusion, httptest
+  success exchange, representative-failure exchange) now exercises the
+  operation end-to-end without any new product code — the embedded OpenAPI
+  bundle (`internal/api/data/openapi.json:42904`) already declared the
+  endpoint, so registry/schema/manifest paths picked it up automatically the
+  moment the coverage entry landed.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (added the API-0248 entry,
+    closing the parameter-free GET trio inside the organization/* roster).
+  - `ralph/prd.json` (flipped `passes` to `true` for API-0248).
+- Verification run: `gofmt -w .`, `go mod tidy`, `go vet ./...`,
+  `go test ./...`, `go test -race ./...` — all green.
+- Results: every quality gate passes; the coverage harness now runs four
+  subtests (registry / schema / manifest / success / failure) for
+  `organization-allInvitations` and they all assert clean.
+- Remaining risks or follow-ups: none for this story. The next failing
+  organization/* peer (API-0249 `organization-create`) shifts the cohort
+  into mutation territory with a required request body, which means the
+  precedent contributors should grep changes from API-0246/0247/0248
+  (empty-fixture parameter-free GETs) to API-0003 (`ai-create`) or
+  another minimal-required-body POST. The forward-reference comment in
+  the API-0248 entry documents that hand-off explicitly so the next
+  iteration does not waste effort searching for the right precedent.
+- **Learnings for future iterations:**
+  - When the OpenAPI bundle already declares an operation with `parameters: []`
+    (or simply omits the `parameters` key, as
+    `/organization.allInvitations` does), no registry change is required —
+    the embedded loader normalises both shapes to "no query/path params"
+    and the coverage harness just needs the matching `apiCoverageCase`
+    literal.
+  - The third entry in a same-shape cohort is where it starts paying off
+    to *forward-reference the next sub-cohort* in the comment block. The
+    API-0248 comment block flags that API-0249 leaves the parameter-free
+    GET trio behind, so the next contributor lands on a precedent that
+    actually matches the new shape (required-body POST) instead of
+    mechanically copy-pasting an empty-fixture entry that would skip the
+    body-forwarding wire assertion.
+  - `runAPICoverageSuccess` already asserts `Authorization: Bearer …` and
+    empty query string for parameter-free GETs, so adding a third copy of
+    the same SuccessResponse: `{}` literal is genuinely zero-risk —
+    `go test -race ./...` confirmed no shared-state regressions across
+    the three concurrent sub-table entries.
+---
