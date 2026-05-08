@@ -3209,6 +3209,89 @@ var coveredAPIOperations = []apiCoverageCase{
 		// first project/* mutation peer (API-0292 `project-create`).
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0292",
+		OperationID: "project-create",
+		Method:      http.MethodPost,
+		Path:        "/project.create",
+		Tag:         "project",
+		// First mutation in the project/* roster and the first
+		// required-body POST after the API-0290 / API-0291 pair of
+		// parameter-free GETs that opened the tag arc. This entry
+		// is also the first project/* peer to populate `SampleBody`
+		// and therefore *opens the `proj-cov-*` slug namespace*
+		// reserved by API-0290's design-rationale header — every
+		// subsequent project/* mutation (API-0293 `*-duplicate`,
+		// API-0295 `*-remove`, API-0297 `*-update`) and filter-
+		// shaped peer (API-0294 `*-one`, API-0296 `*-search`) must
+		// grep this block first when shaping their fixture tokens
+		// and **must not** back-reference the organization/*
+		// `org-cov-*` literals, per the per-tag fixture-isolation
+		// rule established at API-0290.
+		//
+		// Spec source `internal/api/data/openapi.json >
+		// /project.create > post`: zero parameters, required
+		// `application/json` request body whose schema declares
+		// three top-level fields — `name` (required string),
+		// `description` (optional, `anyOf [string, null]`), and
+		// `env` (optional string). `name` is the only required
+		// scalar; the closed-shape pair `{description, env}` is
+		// the optional surface. Per the API-0010 / API-0014 /
+		// API-0249 every-optional-populated convention adopted
+		// across the ai/*, application/*, and organization/*
+		// mutation rosters, we supply all three fields with
+		// deterministic-but-clearly-fake values so the wire
+		// payload exercises the entire envelope (not just the
+		// minimum-required `name`) and the success-leg JSON
+		// forwarding assertion exercises array-free-but-non-
+		// trivial shape projection. Per-case fixture token
+		// `proj-cov-create-0292` keeps `git grep` traceable to
+		// this PRD story and is unique across the project/*
+		// roster (verified: no collisions with future
+		// `*-duplicate-0293` / `*-one-0294` / `*-remove-0295` /
+		// `*-search-0296` / `*-update-0297` slugs).
+		//
+		// Responses 200/400/401/403/500 mirror the rest of the
+		// project/* tag — the 200 schema is `{}` with
+		// `additionalProperties: false`, identical to API-0290 /
+		// API-0291 above and to every ai/*, application/*, and
+		// organization/* mutation peer; the success-leg envelope
+		// assertion therefore stays focused on `data.method` /
+		// `data.status` rather than payload projection. The
+		// representative-failure leg keeps the harness default
+		// (401 → CodeAuth) because auth is the universal failure
+		// mode every project/* peer must re-prove — 400
+		// (validation) is exercised once at the package level by
+		// the API-0001 entry rather than re-asserted on every
+		// minimum-required-body POST in the roster, and 404 is
+		// still reserved for the filter-shaped peer API-0294
+		// `project-one`.
+		//
+		// Future contributors picking up the next mutation in the
+		// arc (API-0293 `project-duplicate`, expected to be a
+		// `{projectId, name}` two-required-scalar POST in the
+		// shape API-0255 `organization-updateMemberRole` exercises
+		// in the prior tag) should grep this entry first when
+		// shaping their `SampleBody` — every successor is a one-
+		// or two-field POST that can copy this closed-shape
+		// `{name, description, env}` literal pattern verbatim with
+		// the field names swapped, and the comment header above
+		// keeps the design rationale (every-optional-populated,
+		// per-case fixture token, default 401 failure leg)
+		// discoverable without re-deriving it from API-0010 /
+		// API-0014 / API-0249.
+		SampleBody: json.RawMessage(`{
+			"name": "yalla-coverage-proj-create-0292",
+			"description": "yalla coverage fixture for proj-cov-create-0292 — deterministic, fake, never deployed",
+			"env": "PROJ_COV_CREATE_0292=fixture\nYALLA_COVERAGE_STORY=API-0292"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior project/* peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

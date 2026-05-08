@@ -6180,3 +6180,80 @@
   - The next project/* story (API-0292 `project-create`) will be the first to populate `SampleBody`, and per the API-0290 rule must use the `proj-cov-create-0292` slug — keep the slug namespace separate from organization/*'s `org-cov-*`.
   - 404 in the `project-allForPermissions` spec is *not* the right representative failure for this list-shaped operation; the harness default 401 → CodeAuth stays correct. 404 should be reserved for filter-shaped peers like `project-one` (API-0294).
 ---
+## 2026-05-08 - API-0292 - Cover project-create (POST /project.create)
+
+- Added the `apiCoverageCase` entry for `project-create` to
+  `internal/cli/api_coverage_test.go`, sorted immediately after API-0291.
+  This is the first project/* mutation peer and the first project/* entry
+  to populate `SampleBody`, opening the `proj-cov-*` slug namespace
+  reserved by API-0290's design-rationale header.
+- Spec-derived body shape (verified against
+  `internal/api/data/openapi.json > /project.create > post`):
+  `name` is the only required field; `description` (anyOf [string, null])
+  and `env` (string) are optional. Per the API-0010 / API-0014 / API-0249
+  every-optional-populated convention re-affirmed across the ai/*,
+  application/*, and organization/* mutation rosters, all three fields
+  are populated with deterministic-but-clearly-fake values so the wire
+  payload exercises the full envelope. Per-case fixture token
+  `proj-cov-create-0292` is unique across the project/* roster and never
+  collides with the `org-cov-*` namespace.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (new struct literal, +93 lines)
+  - `ralph/prd.json` (passes flag flipped to true for API-0292)
+  - `ralph/progress.txt` (this entry)
+- Verification (repo root):
+  - `gofmt -w .` — clean
+  - `go mod tidy` — no changes
+  - `go vet ./...` — clean
+  - `go test ./... -count=1` — PASS (every package)
+  - `go test -race ./... -count=1` — PASS (every package)
+  - Per-story confirmation: all five subtests
+    (`Registry`, `Schema`, `Manifest`, `SuccessRoundTrip`,
+    `RepresentativeFailure`) PASS for `API-0292/project-create`.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, and
+    `goreleaser` not installed locally; documented in earlier entries
+    as the verification-tools baseline gap.
+- Results: harness loop now runs all five contract checks for API-0292
+  alongside the prior 100 covered operations; no source files outside
+  the `apiCoverageCase` table needed editing — registry, schema, manifest,
+  success exchange, and representative-failure paths are all data-driven
+  off `coveredAPIOperations`.
+- Remaining risks / follow-ups:
+  - API-0293 `project-duplicate` is the next mutation in the project/*
+    arc. The future-contributors block in this entry forecasts it as a
+    likely two-required-scalar POST (`projectId`, `name`) that can copy
+    the API-0255 `organization-updateMemberRole` shape verbatim with
+    field names swapped — but the SampleBody literal must always be
+    cross-checked against `data/openapi.json` before assuming the
+    forecast holds.
+  - API-0294 `project-one` will be the first filter-shaped peer in the
+    arc and per the API-0290 / API-0291 reservation is the legitimate
+    home for a 404 → CodeNotFound representative-failure leg.
+- **Learnings for future iterations:**
+  - When opening a tag's mutation cohort (here: project/* mutation arc
+    after two parameter-free GETs), the first mutation entry is also
+    the first opportunity to *anchor* the per-tag fixture-token
+    namespace declared by the tag's opening parameter-free GET. The
+    design-rationale comment block must therefore re-state the
+    namespace rule from the opener (`proj-cov-*` here, not `org-cov-*`)
+    so future contributors do not accidentally cross the tag boundary.
+  - Optional-field surfaces with `anyOf [string, null]` (here:
+    `description`) are still safe to populate with a plain string in the
+    fixture — the `null` alternative is exercised at the schema-validator
+    level by API-0001's package-level negative coverage rather than per
+    operation. Populating the string branch keeps the success-leg
+    JSON forwarding assertion non-trivial without sacrificing the
+    every-optional-populated invariant.
+  - The `env` field in `project-create` is a free-form string (not a
+    map or list of `KEY=VALUE`), so a multi-line literal with embedded
+    `\n` is the most informative fixture value — it exercises the
+    request-body byte forwarding path through quoted JSON without
+    drifting into payload projection that the success-leg assertion
+    intentionally avoids.
+  - For the first mutation peer in a fresh tag arc, the mechanical
+    work is still a single struct literal append. No code under
+    `internal/api/`, `internal/cli/api_call*.go`, `internal/cli/schema*.go`,
+    or `internal/cli/manifest*.go` needs editing — the operation
+    registry, schema generator, and manifest renderer are spec-driven
+    from `internal/api/data/openapi.json`.
+---
