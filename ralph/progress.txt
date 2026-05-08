@@ -8300,3 +8300,84 @@
     leaves the file's whitespace exactly as upstream wrote it (no
     line-count delta).
 ---
+
+## 2026-05-08 - API-0355 — Cover settings-cleanDockerBuilder (POST /settings.cleanDockerBuilder)
+- **Implemented**: Added the canonical `apiCoverageCase` entry for
+  `settings-cleanDockerBuilder` (POST /settings.cleanDockerBuilder, tag
+  `settings`) to `internal/cli/api_coverage_test.go`. This is the **fifth**
+  settings/* coverage entry, inheriting the `set-cov-*` per-tag
+  fixture-isolation namespace seeded by API-0351
+  `settings-assignDomainServer`. The shared harness
+  (`TestAPICoverage_RegistryInvariants`, `_SchemaCommandWorks`,
+  `_ManifestListsOperation`, `_SuccessRoundTrip`,
+  `_RepresentativeFailure`) drives registry, schema, manifest, success,
+  and 401 → CodeAuth failure assertions for this operation
+  automatically; all five subtests pass for `API-0355`.
+- Spec re-verified against `internal/api/data/openapi.json >
+  /settings.cleanDockerBuilder > post`:
+  * `requestBody.required = false`, single OPTIONAL `serverId` (string),
+    no `required` array — byte-identical to API-0353 `settings-cleanAll`
+    (NOT API-0354 `settings-cleanAllDeploymentQueue`'s no-body shape).
+  * Zero parameters (no query, no path, no header).
+  * Responses 200/400/401/403/500 — same set as API-0351/0353/0354;
+    no 404 (this is a fleet-wide operation, not by-id).
+  * 200 schema is `{}` with `additionalProperties: false`, matching
+    every prior covered peer.
+- **Forward-reference correction**: API-0354's progress entry cautioned
+  that this entry's body shape should NOT be assumed to mirror its own
+  no-body schema, API-0353's `{serverId}` schema, or API-0351's
+  `{host,certificateType,...}` schema. Re-verification confirmed the
+  spec here is byte-identical to API-0353 — optional body carrying an
+  optional `serverId`. The `clean*` family in settings/* therefore
+  splits into two sub-cohorts on the wire: (a) optional-body POSTs
+  with optional `serverId` (API-0353 cleanAll, API-0355
+  cleanDockerBuilder, API-0356 cleanDockerPrune per direct spec
+  inspection), and (b) no-body POSTs (API-0354
+  cleanAllDeploymentQueue, API-0357 cleanMonitoring, API-0358
+  cleanRedis, API-0359 cleanSSHPrivateKey per direct spec inspection).
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended one
+    `apiCoverageCase` literal at the tail of `coveredAPIOperations`.
+  - `ralph/prd.json` — flipped `passes: false` → `true` for API-0355.
+  - `ralph/progress.txt` — this entry.
+- **Verification run** (from repo root):
+  - `gofmt -w .` — no diff after format.
+  - `go mod tidy` — no dep changes.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages `ok`.
+  - `go test -race ./...` — all packages `ok` (`internal/cli` 2.653s).
+  - `go test -run TestAPICoverage ./internal/cli/ -count=1 -v` — all
+    five `API-0355/settings-cleanDockerBuilder` subtests PASS
+    (Registry, Schema, Manifest, Success, RepresentativeFailure).
+- **Tools NOT available locally** (per Codebase Patterns): `goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`. Skipped
+  silently per the existing convention.
+- **Remaining risks / follow-ups**: none specific to API-0355. The next
+  pending settings/* story is API-0356 `settings-cleanDockerPrune`.
+  Per direct spec inspection during this iteration, API-0356 carries
+  the same optional-body `{serverId}` shape as this entry — but per
+  the forward-reference lesson, the next contributor MUST still
+  re-verify the spec before authoring the fixture. The verb prefix
+  `clean*` alone is not authoritative (API-0354 already proved two
+  `clean*` siblings can diverge on the body axis).
+- **Learnings for future iterations**:
+  - The settings/* `clean*` family does NOT have a single canonical
+    body shape. Two sub-cohorts coexist: optional-body `{serverId}`
+    (API-0353/0355/0356) and no-body (API-0354/0357/0358/0359). The
+    OpenAPI spec is the only authority — `requestBody` either has
+    `content.application/json.schema` or it is absent entirely. Both
+    are valid in the harness; the `if len(tc.SampleBody) > 0` guard
+    handles each correctly.
+  - For optional-body POSTs the canonical fixture is to populate the
+    body with the per-case slug (`set-cov-cleanDockerBuilder-0355` in
+    this entry). Even though the body and the `serverId` field are
+    both optional, populating them keeps the success-leg
+    `Content-Type: application/json` header assertion meaningful and
+    distinguishes this shape from the no-body POST cohort.
+  - Forward-reference predictions in comment blocks should now
+    explicitly call out the *axis of divergence* (e.g. "do not assume
+    the BODY shape mirrors") rather than a generic "do not assume
+    similarity" — API-0354's caution was specific enough that
+    authoring this entry took ~5 minutes of spec re-verification, vs
+    open-ended cautions which require re-reading the entire spec.
+---
