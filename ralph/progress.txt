@@ -20636,3 +20636,52 @@ forward-reference lesson before assuming any field shape.
     spec declared it; API-0199 mysql-rebuild does not regress
     that override because *its* spec omits 404).
 ---
+
+## 2026-05-09 - API-0152
+- **Implemented**: Per-operation contract coverage for `gitProvider-getAll`
+  (GET /gitProvider.getAll). This is the **kickoff entry for the
+  gitProvider/* coverage roster** and opens a brand-new
+  `gitProvider-cov-*` per-tag fixture-isolation namespace. One struct
+  literal appended to `coveredAPIOperations` in StoryID-sorted order;
+  the harness handles registry, schema, manifest, success, and failure
+  legs automatically.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended `apiCoverageCase` for
+    API-0152 between API-0151 (`gitlab-update`) and API-0160
+    (`mariadb-changeStatus`). Parameter-free GET with no body, no fixture
+    token (no payload field to namespace), default failure leg
+    401→`CodeAuth`. `SuccessResponse` is `{}` matching the
+    empty-success cohort.
+  - `ralph/prd.json` — flipped `passes` from `false` to `true` on the
+    API-0152 story.
+- **Verification run**:
+  - `gofmt -w .` — clean (no reformat).
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass.
+  - `go test -race ./...` — all packages pass.
+- **Tools NOT available locally**: `goimports`, `golangci-lint`,
+  `staticcheck`, `govulncheck`, `goreleaser` (documented baseline; no
+  change from prior iterations).
+- **Remaining risks / follow-ups**: API-0153 `gitProvider-remove` (POST,
+  declared body REQUIRED in spec preview) is the next priority-5 entry;
+  it must continue inside the new `gitProvider-cov-*` namespace and
+  re-verify the spec per-operation before assuming the body shape.
+- **Learnings for future iterations**:
+  - The `gitProvider/*` tag is the abstract cross-provider aggregate
+    (cuts across bitbucket/gitea/github/gitlab provider rows). Its wire
+    shape on `getAll` collapses to the same parameter-free GET pattern
+    as the tag-specific `*Providers` listings (API-0051 / API-0135 /
+    API-0141 / API-0148), but the tag itself opens a separate
+    fixture-isolation namespace.
+  - For account-wide collection listings (`getAll` / `*Providers`),
+    even when 404 is declared in the response set, the harness-default
+    401→`CodeAuth` failure leg remains the most representative
+    failure mode. The 404→`CodeNotFound` override is reserved for
+    canonical by-id `*-one` peers.
+  - The gitProvider/* roster has only TWO operations in the PRD:
+    `gitProvider-getAll` (API-0152) and `gitProvider-remove`
+    (API-0153). There is no `*-one` peer in the tag, so 404→CodeNotFound
+    will not apply to either entry — `*-remove` is a deletion mutation
+    and historically uses 401→CodeAuth as well.
+---

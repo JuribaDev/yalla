@@ -10549,6 +10549,146 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0152",
+		OperationID: "gitProvider-getAll",
+		Method:      http.MethodGet,
+		Path:        "/gitProvider.getAll",
+		Tag:         "gitProvider",
+		// Kickoff entry for the gitProvider/* coverage roster — this is
+		// the first gitProvider-tagged operation to ship contract
+		// coverage and opens a brand-new `gitProvider-cov-*` per-tag
+		// fixture-isolation namespace that subsequent gitProvider/*
+		// peers (API-0153 `gitProvider-remove`) must inherit, per the
+		// per-tag fixture-isolation rule reasserted at
+		// API-0335..API-0444 and originally established at API-0246
+		// `organization-active`. This entry deliberately stands alone
+		// and **must not** back-reference any closed prior-tag
+		// namespace (`set-cov-*`, `srv-cov-*`, `proj-cov-*`,
+		// `org-cov-*`, `compose-cov-*`, `app-cov-*`, `ai-cov-*`,
+		// `admin-cov-*`, `backup-cov-*`, `bb-cov-*`, `cert-cov-*`,
+		// `clu-cov-*`, `deployment-cov-*`, `dest-cov-*`,
+		// `docker-cov-*`, `domain-cov-*`, `environment-cov-*`,
+		// `gitea-cov-*`, `github-cov-*`, `gitlab-cov-*`,
+		// `mounts-cov-*`, `swarm-cov-*`, `usr-cov-*`, etc.).
+		// Sandwiched between API-0151 `gitlab-update` (the priority-5
+		// gitlab/* tag closer) and API-0160 `mariadb-changeStatus`
+		// (the priority-4 mariadb/* tag kickoff) per the
+		// StoryID-sorted slice rule, and closes the forward reference
+		// embedded in the API-0151 comment block ("All future
+		// priority-5 work moves to the next pending tag in the
+		// backlog (priority-5 gitProvider/* and licenseKey/* per
+		// `ralph/prd.json`'s passes-false ordering)").
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json` > `/gitProvider.getAll` >
+		// `get`: a **GET** with **zero parameters** (no query, no
+		// path, no header) and **no request body** (GETs in this
+		// OpenAPI document never carry a `requestBody` field).
+		// Responses 200/400/401/403/404/500 — the **404 stays
+		// present**, matching the canonical Dokploy GET response set
+		// shared by every prior covered listing peer. The 200 schema
+		// is `{}` with `additionalProperties: false`, matching every
+		// prior covered peer in the empty-success cohort. Wire shape
+		// is the canonical zero-parameter GET — structurally
+		// identical to API-0006 `ai-getAll`, API-0051
+		// `bitbucket-bitbucketProviders`, API-0058
+		// `certificates-all`, API-0135 `gitea-giteaProviders`,
+		// API-0141 `github-githubProviders`, API-0148
+		// `gitlab-gitlabProviders`, and API-0376
+		// `settings-isUserSubscribed` — the cross-tag parameter-free
+		// account-wide listing cohort.
+		//
+		// **Slug-prefix-is-not-shape vindicated again.** Per the
+		// lesson reasserted at API-0144 / API-0145, the `getAll` slug
+		// shape is **not** transitive across tags. API-0006
+		// `ai-getAll` is also a parameter-free GET, but per-tag
+		// re-verification against `internal/api/data/openapi.json`
+		// remains mandatory and was performed for this entry. The
+		// gitProvider tag is the abstract `git-provider` aggregate
+		// (cross-cutting bitbucket/gitea/github/gitlab provider
+		// rows), distinct from the tag-specific `*Providers` listings
+		// (API-0051 / API-0135 / API-0141 / API-0148) which scope to
+		// a single underlying provider type. The wire shape collapses
+		// to the same parameter-free GET regardless because both
+		// surfaces are account-wide collection probes — the
+		// gitProvider/* tag returns *every* git provider configured
+		// against the authenticated Dokploy account across all four
+		// underlying provider types.
+		//
+		// **Shape positioning — zero-parameter GET, no body.** This
+		// entry carries **no per-case fixture token** because the
+		// operation is parameter-free with no request body — there
+		// is no payload field to namespace, mirroring the
+		// no-fixture-token convention codified at API-0376
+		// `settings-isUserSubscribed` and reasserted at API-0006
+		// `ai-getAll`, API-0051 `bitbucket-bitbucketProviders`,
+		// API-0135 `gitea-giteaProviders`, API-0141
+		// `github-githubProviders`, and API-0148
+		// `gitlab-gitlabProviders`. `buildCoverageInputArgs`
+		// short-circuits (`len(SampleBody)==0 && len(SampleQuery)==0
+		// && len(SamplePathParams)==0`) and returns no extra args,
+		// so the CLI invocation is the terse `--json api call
+		// gitProvider-getAll` form with no `--input` flag at all.
+		// The `len(tc.SampleBody) > 0` content-type / body-byte
+		// comparison gate stays inert and the `range tc.SampleQuery`
+		// query-comparison loop iterates zero times — both exactly
+		// as on every prior parameter-free GET peer.
+		//
+		// **Every-optional-populated rule is structurally
+		// inapplicable.** The spec declares zero optional query
+		// parameters (and zero required ones), so the rule codified
+		// at API-0137 `gitea-testConnection` and reasserted at
+		// API-0146 `gitlab-getGitlabBranches` and API-0147
+		// `gitlab-getGitlabRepositories` has nothing to populate
+		// here — the entire query-parameter surface is empty.
+		//
+		// **Family choice — 404 → CodeNotFound representative
+		// inapplicable; harness-default 401 → CodeAuth retained.**
+		// The spec declares 404 on this operation, but per the
+		// per-tag opener convention reasserted at
+		// API-0335..API-0444 and at API-0148
+		// `gitlab-gitlabProviders`, the 404 → CodeNotFound override
+		// is reserved for canonical by-id `*-one` peers (no `*-one`
+		// peer exists in the gitProvider/* tag — the tag's only
+		// other operation is the body-bearing `gitProvider-remove`
+		// at API-0153, a deletion mutation), not for account-wide
+		// collection listings like `getAll`. The 401 → CodeAuth
+		// harness default mirrors the API-0006 `ai-getAll`, API-0051
+		// `bitbucket-bitbucketProviders`, API-0058
+		// `certificates-all`, API-0135 `gitea-giteaProviders`,
+		// API-0141 `github-githubProviders`, API-0148
+		// `gitlab-gitlabProviders`, and API-0376
+		// `settings-isUserSubscribed` precedent — bearer-token
+		// enforcement runs before any git-provider lookup, so the
+		// universal `E_AUTH` mode is the most representative single
+		// failure leg every authenticated Dokploy operation must
+		// re-prove, and pins the auth invariant for the entire new
+		// `gitProvider-cov-*` namespace at the kickoff entry.
+		//
+		// 200 response in the spec is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+		//
+		// The next case in the PRD-ordered priority-5 backlog is
+		// API-0153 `gitProvider-remove` (declared a **POST** per the
+		// spec preview; the next contributor must re-verify the spec
+		// against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will continue inside the `gitProvider-cov-*` per-tag
+		// fixture-isolation namespace opened here). The `*-remove`
+		// slug is the canonical deletion mutation and historically
+		// takes a single REQUIRED resource-id scalar (mirroring the
+		// `*-remove` peers across tags) — but per the
+		// slug-prefix-is-not-shape lesson reasserted at
+		// API-0371..API-0375, the parameter list, request body, and
+		// response set must each be re-verified per-operation.
+	},
+	{
 		StoryID:     "API-0160",
 		OperationID: "mariadb-changeStatus",
 		Method:      http.MethodPost,
