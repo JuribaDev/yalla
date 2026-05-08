@@ -8038,3 +8038,116 @@
     by-id peers does not even apply — falling through to the harness
     default 401 → CodeAuth is the right call.
 ---
+
+## 2026-05-08 - API-0354 — Cover settings-cleanAllDeploymentQueue (POST /settings.cleanAllDeploymentQueue)
+- **Implemented**: Added the canonical `apiCoverageCase` entry for
+  `settings-cleanAllDeploymentQueue` (POST
+  /settings.cleanAllDeploymentQueue, tag `settings`) to
+  `internal/cli/api_coverage_test.go`. This is the **fourth** settings/*
+  story; it inherits the `set-cov-*` per-tag fixture-isolation namespace
+  established at API-0351 `settings-assignDomainServer` (must not
+  back-reference any closed `srv-cov-*`, `proj-cov-*`, `org-cov-*`,
+  `compose-cov-*`, `app-cov-*`, `ai-cov-*`, etc. namespace). The shared
+  harness (`TestAPICoverage_RegistryInvariants`, `_SchemaCommandWorks`,
+  `_ManifestListsOperation`, `_SuccessRoundTrip`,
+  `_RepresentativeFailure`) drives registry, schema, manifest, success,
+  and 401 → CodeAuth failure assertions for this operation
+  automatically; all five subtests pass for `API-0354`.
+- Spec re-verified against `internal/api/data/openapi.json >
+  /settings.cleanAllDeploymentQueue > post` per the API-0345..API-0353
+  forward-reference lesson:
+  * **No `requestBody` field at all** in the spec — this is
+    structurally stronger than API-0353 `settings-cleanAll`'s
+    `requestBody.required = false` carrying an optional `serverId`.
+    Here the operation declares no request body schema whatsoever.
+  * Zero parameters (no query, no path, no header).
+  * Responses 200/400/401/403/500 — note the **absence of 404**,
+    mirroring the API-0351 opener's and API-0353's response sets
+    rather than API-0352's by-id-flavoured 404-bearing response set.
+  * 200 schema is `{}` with `additionalProperties: false`, matching
+    every prior covered peer.
+- **Forward-reference correction**: API-0353's comment predicted this
+  entry would be a POST per the `clean*`-family verb pattern but
+  cautioned against assuming the body shape mirrored API-0353's
+  `{serverId}` schema. Re-verification confirmed the caution: this
+  operation has *no* request body at all, degenerating from
+  API-0353's optional-body shape to a true no-input POST. This is a
+  brand-new shape on the coverage corpus — the **first** parameter-
+  free, no-request-body POST entry across all `coveredAPIOperations`
+  (a programmatic scan for prior `MethodPost` blocks lacking
+  `SampleBody`, `SampleQuery`, and `SamplePathParams` returned this
+  entry alone).
+- Fixture choices:
+  * Per-case fixture token base `set-cov-cleanAllDeploymentQueue-0354`
+    follows the `<tag>-cov-<slug>-<storyID>` convention shared across
+    every per-tag roster; verified unique vs. API-0351
+    `set-cov-assignDomainServer-0351`, API-0352
+    `set-cov-checkGPUStatus-0352`, and API-0353
+    `set-cov-cleanAll-0353`. Even though no fixture-token literal is
+    materialised on the wire (the operation has no body and no
+    parameters), the slug is reserved here to keep the per-tag
+    cross-reference grep useful for future contributors.
+  * **Neither `SampleBody`, `SampleQuery`, nor `SamplePathParams` are
+    populated.** The spec declares no body and no parameters, and
+    inventing a fictional body would (a) violate the
+    re-verify-the-spec rule reasserted across API-0345..API-0353,
+    (b) cause `runAPICoverageSuccess` to assert a body round-trip
+    the CLI would never send, and (c) waste the no-body branch
+    coverage this entry uniquely provides.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended the API-0354 case
+    to `coveredAPIOperations`.
+  - `ralph/prd.json` — set `passes: true` for API-0354.
+  - `ralph/progress.txt` — this entry.
+- **Verification run** from repo root:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean (no dep changes).
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages `ok`.
+  - `go test -race ./...` — all packages `ok` (`internal/cli` 2.605s).
+  - `go test -run TestAPICoverage ./internal/cli/ -count=1 -v` — all
+    five `API-0354/settings-cleanAllDeploymentQueue` subtests PASS
+    (Registry, Schema, Manifest, Success, RepresentativeFailure).
+- **Tools NOT available locally** (per Codebase Patterns):
+  `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+  `goreleaser`. Skipped silently per the existing convention.
+- **Remaining risks / follow-ups**: none specific to API-0354. The
+  next pending settings/* story is API-0355
+  `settings-cleanDockerBuilder`. Per the forward-reference lesson, do
+  NOT mirror this entry's no-body shape, API-0353's `{serverId}`
+  shape, or API-0351's `{host,certificateType,...}` shape —
+  re-verify against `internal/api/data/openapi.json >
+  /settings.cleanDockerBuilder > post` before authoring. The
+  `clean*` verb family in the settings/* tag has already shown
+  three different body shapes (none, optional `{serverId}`, and the
+  upcoming API-0355 unknown), proving the per-operation spec is the
+  only authoritative source.
+- **Learnings for future iterations:**
+  - **No-body POST is a distinct sub-cohort.** Until this story, every
+    POST entry in `coveredAPIOperations` had a `SampleBody`. API-0354
+    establishes the no-body-POST convention: omit `SampleBody`,
+    `SampleQuery`, and `SamplePathParams` together; the harness's
+    `if len(tc.SampleBody) > 0` guard at `runAPICoverageSuccess`
+    skips the Content-Type and body round-trip assertions, while
+    method, path, Authorization header, empty query string,
+    schema_version, data.operation_id, data.method, and data.status
+    all remain asserted. This is the canonical form for a future
+    `clean*`-family no-body peer.
+  - **`requestBody.required = false` ≠ no `requestBody`.** API-0353
+    had an optional body schema (`requestBody.required = false`
+    carrying `{serverId}`); API-0354 has no `requestBody` field at
+    all. The two shapes both fall under the same agent contract
+    (`yalla api call <op> --input '{}' --json` works for both), but
+    on the wire only the API-0353 case forwards a body, and only
+    API-0353's success-leg test asserts a body round-trip.
+    Re-verifying the spec against the embedded openapi.json before
+    authoring is the only way to disambiguate — this is the
+    seventh consecutive iteration of the same lesson
+    (API-0345/0347/0348/0349/0350/0352/0354).
+  - **Fixture-slug reservation is still useful for no-body POSTs.**
+    Even when no fixture-token literal reaches the wire, reserving
+    `set-cov-<slug>-<storyID>` keeps future contributors' cross-
+    reference grep working — a contributor authoring API-0355 can
+    `rg 'set-cov-cleanAllDeploymentQueue'` and find this entry as
+    the canonical no-body POST exemplar.
+---
