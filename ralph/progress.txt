@@ -21268,3 +21268,68 @@ forward-reference lesson before assuming any field shape.
     the new fixture's trailer (now pointing to API-0206) keeps the
     chain intact.
 ---
+
+## 2026-05-09 - API-0154
+- Added api-coverage harness entry for `licenseKey-activate` (priority-5
+  POST /licenseKey.activate, tag licenseKey).
+- Slot inserted PRD-ordered between API-0153 `gitProvider-remove` and
+  API-0160 `mariadb-changeStatus` per the StoryID-sorted slice rule.
+- Spec re-verified against `internal/api/data/openapi.json >
+  /licenseKey.activate > post`: zero parameters; required
+  `application/json` body with one REQUIRED string `licenseKey` and zero
+  optional fields; responses 200/400/401/403/500 (no 404); 200 schema is
+  `{}` with `additionalProperties: false`.
+- Fixture: `licenseKey-cov-activate-0154-licenseKey` literal exercises
+  the CLI -> API client -> httptest server byte-for-byte body
+  comparison leg. Failure leg keeps harness-default 401 → CodeAuth.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (+~165 lines, one new struct
+    literal in `coveredAPIOperations` for API-0154; no other call sites
+    touched — the registry entry already exists in the OpenAPI ops
+    catalog so no production code change was required).
+  - `ralph/prd.json` (`passes: true` for API-0154).
+  - `ralph/progress.txt` (this entry).
+- Verification:
+  - `gofmt -w .` — clean.
+  - `go vet ./...` — pass.
+  - `go test ./...` — all packages pass (internal/cli 1.4s).
+  - `go test -race ./...` — all packages pass (internal/cli 3.1s).
+  - `go mod tidy` — no diff.
+- Remaining risks / follow-ups: none for this story. The next
+  PRD-ordered priority-5 backlog item is API-0155
+  `licenseKey-deactivate` (POST /licenseKey.deactivate); per the
+  forward-reference lesson the next contributor must re-verify the spec
+  against `internal/api/data/openapi.json` before assuming any field
+  shape, and will continue inside the `licenseKey-cov-*` per-tag
+  fixture-isolation namespace opened here.
+- **Learnings for future iterations:**
+  - The api-coverage harness in `internal/cli/api_coverage_test.go`
+    is the single point of contact for new API-XXXX coverage stories
+    when the OperationID is already in the OpenAPI registry — adding
+    one struct literal to `coveredAPIOperations` runs five contract
+    legs (registry/schema/manifest/success/failure) in lockstep, no
+    other code change required.
+  - Insertion is StoryID-sorted within the slice. Locate the existing
+    immediate-predecessor and immediate-successor entries by `grep -n
+    'StoryID:     "API-0XXX"'` and slot the new struct literal
+    between them. Don't append to the end of the slice — the harness
+    iterates in declaration order and PRD-order keeps `git blame`
+    bisectable across tag boundaries.
+  - When opening a brand-new per-tag namespace (`<tag>-cov-*`),
+    enumerate every prior closed namespace in the back-reference
+    fence (the API-0152/API-0153 gitProvider/* kickoff and closer
+    comments are the canonical template). Add the closing tag's
+    namespace (e.g. `gitProvider-cov-*`, `mysql-cov-*`) to the fence
+    so the next per-tag opener inherits the up-to-date list.
+  - Go raw-string literals inside `json.RawMessage(...)` accept tab
+    indentation cleanly because the `--input` file write goes through
+    `json.Compact` before the byte-for-byte comparison leg — no need
+    to hand-pack the JSON.
+  - Indentation of struct literals at the top level of the slice uses
+    a single tab for the `{` / `},` braces and two tabs for fields;
+    nested raw-string contents use one extra tab. `gofmt` enforces
+    this so a misaligned `Edit` will be silently re-flowed but the
+    `old_string` matcher is whitespace-sensitive — use `awk` /
+    cat-with-line-numbers to verify the exact tab count before
+    crafting an Edit.
+---

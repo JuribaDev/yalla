@@ -10835,6 +10835,177 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0154",
+		OperationID: "licenseKey-activate",
+		Method:      http.MethodPost,
+		Path:        "/licenseKey.activate",
+		Tag:         "licenseKey",
+		// Kickoff entry for the priority-5 licenseKey/* coverage
+		// roster — this is the first licenseKey-tagged operation to
+		// ship contract coverage and opens a brand-new
+		// `licenseKey-cov-*` per-tag fixture-isolation namespace
+		// forecast in the API-0153 `gitProvider-remove` close-out
+		// comment block ("All future priority-5 work moves to the
+		// next pending tag in the backlog (priority-5 licenseKey/*
+		// per `ralph/prd.json`'s passes-false ordering); the next
+		// contributor must re-verify the spec against
+		// `internal/api/data/openapi.json` per the forward-reference
+		// lesson before assuming any field shape, and will open a
+		// brand-new `licenseKey-cov-*` per-tag fixture-isolation
+		// namespace following the per-tag isolation rule"). Per the
+		// per-tag isolation rule established at API-0246
+		// `organization-active` and reasserted at API-0290
+		// `project-all`, API-0335 `server-all`, API-0351
+		// `settings-assignDomainServer`, API-0051's bitbucket/*
+		// kickoff, API-0131's gitea/* kickoff, API-0139's github/*
+		// kickoff, API-0145's gitlab/* kickoff, API-0152's
+		// gitProvider/* kickoff, API-0160's mariadb/* kickoff, and
+		// API-0174's mongo/* kickoff: this entry **must not**
+		// back-reference any closed prior-tag namespace
+		// (`set-cov-*`, `srv-cov-*`, `proj-cov-*`, `org-cov-*`,
+		// `compose-cov-*`, `app-cov-*`, `ai-cov-*`, `admin-cov-*`,
+		// `backup-cov-*`, `bb-cov-*`, `cert-cov-*`, `clu-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `docker-cov-*`,
+		// `domain-cov-*`, `environment-cov-*`, `gitea-cov-*`,
+		// `github-cov-*`, `gitlab-cov-*`, `gitProvider-cov-*`,
+		// `mariadb-cov-*`, `mongo-cov-*`, `mounts-cov-*`,
+		// `mysql-cov-*`, `swarm-cov-*`, `usr-cov-*`, etc.).
+		// Sandwiched between API-0153 `gitProvider-remove` and
+		// API-0160 `mariadb-changeStatus` (the priority-4 mariadb/*
+		// tag kickoff) per the StoryID-sorted slice rule.
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json` > `/licenseKey.activate` >
+		// `post`: a **POST** with **zero parameters** (no query, no
+		// path, no header) and a **REQUIRED** `application/json`
+		// request body. The body schema is a flat object with **one
+		// REQUIRED string field** (`licenseKey`) and **zero optional
+		// fields**. Responses 200/400/401/403/500 — **no 404**
+		// declared, mirroring every other body-bearing imperative-
+		// action POST in the priority-5 backlog whose spec lacks a
+		// dedicated missing-target failure leg (validation collapses
+		// into 400 under Dokploy's tRPC convention). The 200 schema
+		// is `{}` with `additionalProperties: false`, matching every
+		// prior covered peer in the empty-success cohort.
+		//
+		// **Cross-tag wire-shape lineage.** licenseKey-activate is
+		// byte-for-byte cardinality-identical to API-0153
+		// `gitProvider-remove` (single-required-string-scalar POST,
+		// no 404, empty `{}` success body) modulo the resource-id
+		// field name (`licenseKey` instead of `gitProviderId`) and
+		// the operation semantics (license activation rather than
+		// row deletion). It is also shape-identical to API-0167
+		// `mariadb-remove`, API-0171 `mariadb-start`, and to the
+		// mysql/* peers API-0199 `mysql-rebuild`, API-0201
+		// `mysql-remove`, and API-0205 `mysql-start` — every
+		// distinguishing assertion below derives from the
+		// OperationID, Path, and StoryID scalars rather than the
+		// body cardinality.
+		//
+		// **Request body schema (REQUIRED top-level fields):**
+		//   - REQUIRED `licenseKey` (string) — license-key scalar;
+		//     the fixture below supplies a deterministic-but-
+		//     clearly-fake `licenseKey-cov-activate-0154-licenseKey`
+		//     literal carrying the
+		//     `<tag>-cov-<slug>-<storyID>-<field>` suffix for
+		//     `git grep` traceability. **Note** the field happens to
+		//     share a name with its containing tag (`licenseKey`);
+		//     the fixture literal therefore deliberately uses the
+		//     full namespaced form so a future schema-validator
+		//     failure cannot be confused with the bare tag prefix.
+		//   - **No OPTIONAL fields declared.** The schema is a
+		//     strict single-scalar request, byte-for-byte
+		//     cardinality-identical to the API-0153
+		//     `gitProvider-remove` request shape. The harness's
+		//     `len(tc.SampleBody) > 0` gate at
+		//     `runAPICoverageSuccess` activates the JSON content-type
+		//     and byte-for-byte body comparison legs; this fixture
+		//     supplies the lone REQUIRED field verbatim so the
+		//     success path verifies the CLI propagated the body
+		//     without mutating, dropping, or rewriting the scalar.
+		//     Omitting the field would collapse the body to `{}` and
+		//     weaken the success leg without any compensating signal,
+		//     per the API-0153 `gitProvider-remove` /
+		//     API-0167 `mariadb-remove` single-required-scalar
+		//     lesson.
+		//
+		// **Shape positioning — single-required-string-scalar POST
+		// imperative-action license-activation, body REQUIRED.** The
+		// lone REQUIRED slot is plain non-nullable `type: string`
+		// (no `anyOf` / `nullable` / enum constraints), structurally
+		// identical to the single-scalar `gitProvider-remove` /
+		// `mariadb-remove` / `mariadb-start` / `mysql-rebuild` /
+		// `mysql-remove` / `mysql-start` peers across the prior tags.
+		// This is the first appearance of the shape inside the
+		// licenseKey/* roster.
+		//
+		// **Every-optional-populated rule is structurally
+		// inapplicable.** The spec declares zero optional body
+		// fields, so the rule codified at API-0010 / API-0014 /
+		// API-0249 / API-0292 / API-0297 / API-0052 / API-0053 has
+		// nothing to populate here — the entire optional surface is
+		// empty. This is the same posture taken by API-0143
+		// `github-testConnection`, API-0153 `gitProvider-remove`,
+		// API-0167 `mariadb-remove`, and API-0201 `mysql-remove`,
+		// and is distinct from API-0150 `gitlab-testConnection`
+		// (one required + one optional, both populated).
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so
+		// the 404→CodeNotFound override is structurally inapplicable
+		// for this entry and remains pinned to the canonical by-id
+		// GET peers (API-0008 `ai-one`, API-0021 `application-one`,
+		// API-0166 `mariadb-one`, API-0198 `mysql-one`).
+		// 400→CodeInvalidInput is *technically* available — a
+		// payload that omits the REQUIRED scalar would fail
+		// server-side validation — but the harness reserves 400
+		// representatives for stories where payload validation is
+		// the operation's *uniquely distinguishing* failure mode. A
+		// conventional imperative-action POST collapses to type-
+		// checking, so the harness-default 401→CodeAuth failure leg
+		// remains the most representative single failure mode every
+		// authenticated Dokploy operation must re-prove, and pins
+		// the auth invariant for the licenseKey/* namespace at this
+		// kickoff entry. (License activation is intuitively a
+		// pre-bearer flow, but the spec still attaches the
+		// `Authorization: []` security requirement, so the bearer
+		// header is enforced before any license-key validation.)
+		//
+		// **Fixture token base** `licenseKey-cov-activate-0154`
+		// follows the established `<tag>-cov-<slug>-<storyID>`
+		// deterministic-but-clearly-fake naming convention and is
+		// verified non-colliding with every prior tag's namespace
+		// (cross-tag analog peers like
+		// `mariadb-cov-start-0171-mariadbId`,
+		// `mongo-cov-start-0185-mongoId`,
+		// `mysql-cov-start-0205-mysqlId`, and
+		// `gitProvider-cov-remove-0153-gitProviderId` use the same
+		// skeleton with their own tag prefix and storyID suffix, so
+		// every literal stays distinguishable). The bare
+		// `<base>-<field>` form (no `-fixture` suffix) matches the
+		// API-0153 `gitProvider-remove` precedent for body-scalar
+		// POSTs (distinct from the `-fixture`-suffixed form used on
+		// canonical `*-one` by-id GETs).
+		//
+		// The next case in the PRD-ordered priority-5 backlog is
+		// API-0155 `licenseKey-deactivate` (declared a **POST** per
+		// the spec preview; the next contributor must re-verify the
+		// spec against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will continue inside the `licenseKey-cov-*` per-tag
+		// fixture-isolation namespace opened here).
+		SampleBody: json.RawMessage(`{
+			"licenseKey": "licenseKey-cov-activate-0154-licenseKey"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0160",
 		OperationID: "mariadb-changeStatus",
 		Method:      http.MethodPost,
