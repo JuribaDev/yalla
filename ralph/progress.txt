@@ -19253,3 +19253,26 @@ forward-reference lesson before assuming any field shape.
     it. This keeps the rationale centralised on the precedent-setter
     and reduces drift risk when the rule needs to evolve.
 ---
+
+## 2026-05-08 - API-0144 - Cover github-update (POST /github.update)
+- Added apiCoverageCases entry for github-update in internal/cli/api_coverage_test.go between API-0143 github-testConnection and API-0160 mariadb-changeStatus per the StoryID-sorted slice rule.
+- Closes the priority-5 github/* tag (sixth and final entry; opened by API-0139, extended through API-0140..API-0143).
+- Spec re-verified against internal/api/data/openapi.json:
+  * POST /github.update
+  * Zero parameters; REQUIRED application/json body
+  * FOUR REQUIRED string fields (githubId, name, gitProviderId, githubAppName); NO optional fields
+  * Responses 200/400/401/403/500 (no 404)
+  * 200 schema is {} with additionalProperties: false
+- Fixture supplies all four required scalars under fixture-token base `github-cov-update-0144` (per-tag isolation namespace continues from API-0139..API-0143).
+- Failure leg uses harness defaults (401 -> CodeAuth) since the 404 -> CodeNotFound override slot for the github/* tag was already consumed by API-0142 github-one and 404 is not declared on this operation.
+- Files changed:
+  * internal/cli/api_coverage_test.go (+136 lines, one new apiCoverageCase entry)
+  * ralph/prd.json (passes: true for API-0144)
+  * ralph/progress.txt (this entry)
+- Verification: gofmt clean, goimports n/a (not installed - documented), go mod tidy no diff, go vet clean, go test ./... PASS, go test -race ./... PASS. All five contract subtests (RegistryInvariants, SchemaCommandWorks, ManifestListsOperation, SuccessRoundTrip, RepresentativeFailure) PASS for the new case.
+- Remaining risks: none beyond the standard slug-prefix-is-not-shape caution; spec was re-verified per-operation.
+- **Learnings for future iterations:**
+  - The github/* tag is now CLOSED at API-0144. The next priority-5 failing story in the StoryID-sorted backlog is API-0145 `gitlab-create`, which will open a brand-new `gitlab-cov-*` per-tag fixture-isolation namespace per the kickoff convention established at API-0246, API-0290, API-0335, API-0351, API-0051, API-0131, API-0160, API-0174, API-0139.
+  - The `update` slug is NOT shape-transitive across tags. github-update has FOUR strictly-required strings and no optional fields — distinct from cross-tag `update` analogues that often carry a mix of required identifier + optional patch fields. Always re-verify the spec per-operation against `internal/api/data/openapi.json` per the API-0345..API-0444 forward-reference lesson.
+  - The `<base>-<field>` (no `-fixture` suffix) literal style for fixture values is the precedent for body-scalar POSTs (API-0137 gitea-testConnection, API-0143 github-testConnection, now API-0144 github-update); the `-fixture`-suffixed form is used on canonical `*-one` by-id GETs (API-0142 github-one).
+---

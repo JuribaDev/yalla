@@ -9323,6 +9323,128 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0144",
+		OperationID: "github-update",
+		Method:      http.MethodPost,
+		Path:        "/github.update",
+		Tag:         "github",
+		// Sixth and final entry on the priority-5 github/* coverage
+		// roster, completing the github/* tag opened by API-0139
+		// `github-getGithubBranches` and extended through API-0140
+		// `github-getGithubRepositories`, API-0141
+		// `github-githubProviders`, API-0142 `github-one`, and
+		// API-0143 `github-testConnection`. Continues inside the
+		// `github-cov-*` per-tag fixture-isolation namespace per the
+		// rule established at API-0246 `organization-active` and
+		// reasserted at every prior tag kickoff (most recently
+		// API-0139's github/* kickoff). Sandwiched between API-0143
+		// `github-testConnection` and API-0160 `mariadb-changeStatus`
+		// per the StoryID-sorted slice rule. Closes the forward
+		// reference embedded in API-0139..API-0143 ("API-0144
+		// `github-update`").
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json` > `/github.update` >
+		// `post`: a **POST** with **zero parameters** and a
+		// **REQUIRED** `application/json` request body. The body
+		// schema is a flat object with **four REQUIRED string
+		// fields** (`githubId`, `name`, `gitProviderId`,
+		// `githubAppName`) and **no optional fields**. Responses
+		// 200/400/401/403/500 — **no 404** declared, matching every
+		// prior covered github/* peer. The 200 schema is `{}` with
+		// `additionalProperties: false`, matching the empty-success
+		// cohort.
+		//
+		// **Slug-prefix-is-not-shape vindicated again.** Per the
+		// lesson reasserted at API-0143, the `update` slug shape is
+		// **not** transitive across tags. API-0138 `gitea-update`
+		// historically pivots off the create payload but per the
+		// slug-prefix-is-not-shape lesson the github/* `update`
+		// body must be re-verified per-operation. The github
+		// `update` body is *strictly all-required* with four flat
+		// strings — no booleans, no nested objects, no optional
+		// fields — distinct from cross-tag `update` analogues that
+		// often carry a mix of required identifier + optional
+		// patch fields.
+		//
+		// **Family choice — harness-default 401 → CodeAuth
+		// retained.** The 404 → CodeNotFound failure-leg slot for
+		// the github/* tag was consumed by API-0142 `github-one`
+		// (the canonical by-id GET peer). 400 → CodeInvalidInput
+		// is reachable in principle (a malformed body would fail
+		// server-side validation) but the harness reserves 400
+		// representatives for stories where payload validation is
+		// the operation's *uniquely distinguishing* failure mode;
+		// `update` is a write that ultimately defers to the
+		// underlying record-not-found / auth checks before
+		// validation, so 401 → CodeAuth remains the most
+		// representative single failure mode every authenticated
+		// Dokploy operation must re-prove. This also keeps the
+		// failure-leg shape consistent with every other github/*
+		// peer that did not consume the 404 override
+		// (API-0139..API-0141, API-0143).
+		//
+		// **Every-optional-populated rule trivially satisfied.**
+		// Per the API-0010 / API-0014 / API-0249 / API-0292 /
+		// API-0297 / API-0052 / API-0053 every-optional-populated
+		// rule, the fixture must supply every OPTIONAL field. This
+		// entry has **zero optional parameters** so the rule is
+		// trivially satisfied — the fixture supplies exactly the
+		// four REQUIRED scalars and nothing else. The harness's
+		// success-leg byte-for-byte body equality observes this
+		// end-to-end through the CLI -> API client -> httptest
+		// server path.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `github-cov-update-0144` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared
+		//     across every prior github/* peer
+		//     (API-0139..API-0143) and is verified non-colliding
+		//     with API-0139's `github-cov-getBranches-0139`
+		//     literals, API-0140's
+		//     `github-cov-getRepositories-0140-githubId`
+		//     literal, API-0141's no-fixture-token entry,
+		//     API-0142's `github-cov-one-0142-githubId-fixture`
+		//     literal, and API-0143's
+		//     `github-cov-testConn-0143-githubId` literal, and
+		//     non-colliding with the cross-tag `bb-cov-*` /
+		//     `gitea-cov-*` / `mariadb-cov-*` / `mongo-cov-*` /
+		//     `proj-cov-*` / `srv-cov-*` / `set-cov-*` /
+		//     `org-cov-*` namespaces.
+		//   * Deterministic-but-clearly-fake `<base>-<field>`
+		//     literals (no `-fixture` suffix) keep diffs readable
+		//     and let any future schema validator's failure
+		//     messages point at the offending field. The bare
+		//     `<base>-<field>` form matches the API-0143
+		//     `github-testConnection` precedent for body-scalar
+		//     POSTs (distinct from the `-fixture`-suffixed form
+		//     used on canonical `*-one` by-id GETs at API-0142).
+		//
+		// API-0144 closes the priority-5 github/* tag. The next
+		// entry in the StoryID-sorted slice is API-0160
+		// `mariadb-changeStatus`, which sits inside the priority-4
+		// mariadb/* roster and was already shipped as the
+		// mariadb/* tag kickoff. The next *failing* priority-5
+		// story in the PRD-ordered backlog is API-0145
+		// `gitlab-create`, which will open a brand-new `gitlab-cov-*`
+		// per-tag fixture-isolation namespace per the kickoff
+		// convention.
+		SampleBody: json.RawMessage(`{
+			"githubId": "github-cov-update-0144-githubId",
+			"name": "github-cov-update-0144-name",
+			"gitProviderId": "github-cov-update-0144-gitProviderId",
+			"githubAppName": "github-cov-update-0144-githubAppName"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0160",
 		OperationID: "mariadb-changeStatus",
 		Method:      http.MethodPost,
