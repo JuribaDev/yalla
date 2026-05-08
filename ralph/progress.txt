@@ -14022,3 +14022,23 @@ Learnings for future iterations:
     should continue the docker block at the same location rather
     than scattering across the end of the slice.
 ---
+
+## 2026-05-08 - API-0437
+- Implemented coverage for `user-getMetricsToken` (GET /user.getMetricsToken).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — added `apiCoverageCase` entry for API-0437 mirroring API-0436 `user-getInvitations` (parameter-free GET, empty `{}` 200, default 401→CodeAuth failure-leg).
+  - `ralph/prd.json` — flipped API-0437 `passes` to `true`.
+- Verification run:
+  - `gofmt -w .`
+  - `go mod tidy`
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass (cli 1.32s).
+  - `go test -race ./...` — all packages pass (cli 2.84s).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser` not installed locally; skipped per documented baseline.
+- Results: `yalla manifest --json` and `yalla schema get user-getMetricsToken --json` continue to surface the operation via the openapi.json-backed registry; success and 401-failure contract subtests (`TestAPICoverage_Success/API-0437`, `TestAPICoverage_Failure/API-0437`) now exercise the operation against an `httptest.Server` fixture.
+- Remaining risks or follow-ups: none specific to this story. Next priority-2 backlog entry is API-0438 `user-getServerMetrics`; the spec must be re-verified per the forward-reference lesson because the `Server` slug stem does not imply the same parameter shape as `getMetricsToken`.
+- **Learnings for future iterations:**
+  - The user/* tag's no-parameter GET cohort (API-0427 user-all, API-0433 user-get, API-0434 user-getBackups, API-0436 user-getInvitations, now API-0437 user-getMetricsToken) all collapse to the same 6-line `apiCoverageCase` shape: StoryID/OperationID/Method/Path/Tag + `SuccessResponse: "{}"`. The harness's `len(tc.SampleBody) > 0` short-circuit at `runAPICoverageSuccess` is what makes the empty-fixture case correct rather than weak — there is no payload to assert because the spec authorises none.
+  - `getMetricsToken` and `getContainerMetrics` share the `Metrics` slug stem but carry orthogonal wire shapes — `getContainerMetrics` ferries four required query params (`url`, `token`, `appName`, `dataPoints`), `getMetricsToken` declares zero parameters. This is the slug-stem-is-not-shape lesson asserted again; never carry over `SampleQuery` from a same-slug-stem peer without re-reading openapi.json.
+  - The 400/404 in the spec for `getMetricsToken` are defensive-only declarations (no input the CLI can supply can surface either), so the harness default of 401 → CodeAuth remains the most informative failure representative for parameter-free authenticated GETs in this tag.
+---
