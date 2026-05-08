@@ -17595,3 +17595,73 @@ Learnings for future iterations:
   - Coverage entries are sorted by StoryID ascending (numeric within the API-XXXX namespace), so new stories slot into their numeric position rather than appending at the end. API-0135 was inserted between API-0134 and API-0160 (the next-existing entry) at line ~8069 of `api_coverage_test.go`.
   - The fixture-slug reservation chain in prior entries' forward-reference comments (API-0133 reserved `gitea-cov-one-0136`, API-0134 reserved `gitea-cov-providers-0135`, etc.) is load-bearing — it lets each new entry verify non-collision with future peers without needing to know the eventual fixture content.
 ---
+
+## 2026-05-08 - API-0136
+- **Implemented**: Coverage for Dokploy API operation `gitea-one`
+  (`GET /gitea.one`). Sixth entry on the gitea/* coverage roster and
+  the **canonical by-id GET peer** for the tag — the gitea/* analogue
+  of `ai-one`/`application-one`/`compose-one`/`organization-one`/
+  `project-one`/`server-one`. Acts on the 404 → CodeNotFound override
+  reserved across API-0131..API-0135 (every prior gitea/* commit named
+  `gitea-one` by id as the failure-leg override site), making this the
+  second roster-level act on the override after API-0342 `server-one`.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended one struct literal
+    for `API-0136 / gitea-one` after the API-0135 entry (line 8201)
+    and before the API-0160 mariadb kickoff (line 8202). Wire shape
+    matches every other `*-one` peer: single REQUIRED `giteaId` query
+    string, no body, empty-object 200, failure-leg override
+    `FailureStatus: 404 / FailureCode: CodeNotFound`. Per-case fixture
+    base `gitea-cov-one-0136` with literal
+    `gitea-cov-one-0136-giteaId-fixture` — verified non-colliding
+    against API-0131..API-0135's `gitea-cov-create-0131` /
+    `gitea-cov-getBranches-0132` / `gitea-cov-getRepos-0133` /
+    `gitea-cov-getUrl-0134` / `gitea-cov-providers-0135` slugs and
+    the cross-tag `bb-cov-*` / `mariadb-cov-*` / `proj-cov-*` /
+    `srv-cov-*` / `set-cov-*` / `org-cov-*` namespaces.
+  - `ralph/prd.json` — set `API-0136.passes = true`.
+  - `ralph/progress.txt` — this entry.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — `ok github.com/JuribaDev/yalla/internal/cli`
+    and every other package; targeted
+    `go test -run TestAPICoverage_.*/API-0136 -v` exercised all five
+    harness legs (registry invariants, schema reachability, manifest
+    inclusion, success round-trip, representative-failure 404).
+  - `go test -race ./...` — clean.
+- **Tools NOT available locally** (documented per the verification
+  policy from US-0001): `goimports`, `golangci-lint`, `staticcheck`,
+  `govulncheck`, `goreleaser`. Not exercised this iteration.
+- **Remaining risks / follow-ups**:
+  - Two gitea/* peers still uncovered: API-0137 `gitea-testConnection`
+    (POST per the spec preview — re-verify shape against
+    `internal/api/data/openapi.json` per the forward-reference lesson
+    before assuming any field shape) and API-0138 `gitea-update`
+    (POST). Both will continue inside the `gitea-cov-*` per-tag
+    fixture-isolation namespace; the slugs `gitea-cov-testConn-0137`
+    and `gitea-cov-update-0138` are reserved.
+- **Learnings for future iterations**:
+  - The `*-one` by-id GET shape is the canonical home for the
+    404 → CodeNotFound representative-failure override across every
+    tag. The harness already supports this natively via
+    `tc.FailureStatus` / `tc.FailureCode`; no harness change needed.
+    Override is a pure two-line opt-in. Continue this pattern on
+    every tag's first canonical `*-one` peer that an agent will
+    fetch from a stale ID source.
+  - When a tag-roster reserves the 404 override across multiple
+    upcoming peers (as gitea/* did across API-0131..API-0135 for
+    API-0136), the design-rationale block in the new entry should
+    explicitly cite each prior reservation site by ID so the
+    forward-reference traceability stays intact for `git grep`
+    audits.
+  - Per the per-tag fixture-isolation namespace rule, `gitea-one`
+    inherits the `gitea-cov-*` namespace from API-0131 — the slug
+    must NOT back-reference any closed namespace. The exact
+    cross-tag back-reference list (`bb-cov-*`, `mariadb-cov-*`,
+    `proj-cov-*`, `srv-cov-*`, `set-cov-*`, `org-cov-*`,
+    plus the API-0246 baseline list) lives in API-0131's design
+    header; future gitea/* peers should consult it rather than
+    re-deriving.
+---

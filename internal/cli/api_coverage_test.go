@@ -8200,6 +8200,170 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0136",
+		OperationID: "gitea-one",
+		Method:      http.MethodGet,
+		Path:        "/gitea.one",
+		Tag:         "gitea",
+		// Sixth entry on the gitea/* coverage roster and the
+		// **canonical by-id GET peer** for the tag — the gitea/*
+		// analogue of API-0008 `ai-one`, API-0021 `application-one`,
+		// API-0084 `compose-one`, API-0251 `organization-one`,
+		// API-0294 `project-one`, and most directly API-0342
+		// `server-one` (the first roster to act on the reserved
+		// 404 → CodeNotFound override). Completes the forward
+		// reference embedded in every prior gitea/* comment block
+		// from API-0131..API-0135 ("404 → CodeNotFound is reserved
+		// for the canonical `gitea-one` by-id peer at API-0136").
+		// Continues inside the `gitea-cov-*` per-tag fixture-
+		// isolation namespace opened by API-0131's design-rationale
+		// header. Per the per-tag isolation rule established at
+		// API-0246 `organization-active`, reasserted at API-0290
+		// `project-all`, API-0335 `server-all`, API-0351
+		// `settings-assignDomainServer`, API-0051's bitbucket/*
+		// kickoff, API-0131's gitea/* kickoff, and API-0160's
+		// mariadb/* kickoff: this entry **must not** back-reference
+		// the closed `admin-cov-*`, `ai-cov-*`, `app-cov-*`,
+		// `backup-cov-*`, `bb-cov-*`, `cert-cov-*`, `clu-cov-*`,
+		// `compose-cov-*`, `deployment-cov-*`, `dest-cov-*`,
+		// `docker-cov-*`, `domain-cov-*`, `environment-cov-*`,
+		// `mariadb-cov-*`, `mounts-cov-*`, `org-cov-*`,
+		// `port-cov-*`, `proj-cov-*`, `redirects-cov-*`,
+		// `security-cov-*`, `set-cov-*`, `srv-cov-*`, or
+		// `swarm-cov-*` namespaces.
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /gitea.one > get`: a
+		// **GET** with **one required query parameter** and **no
+		// request body** (GETs in this OpenAPI document never carry
+		// a `requestBody` field). Parameters per the spec:
+		//   - REQUIRED scalar: `giteaId` (plain string).
+		//   - **No optional parameters.**
+		// The single param is typed `string` with no `anyOf` /
+		// `nullable` / enum constraints — byte-for-byte identical
+		// to the `giteaId` field on API-0133 `getGiteaRepositories`
+		// and API-0134 `getGiteaUrl`. Responses
+		// 200/400/401/403/404/500 — the 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer.
+		//
+		// **Shape positioning — canonical `*-one` by-id GET.** This
+		// is byte-for-byte the same wire shape as the cross-tag
+		// canonical-by-id-GET precedent chain at API-0008 `ai-one`
+		// (`aiId`), API-0021 `application-one` (`applicationId`),
+		// API-0084 `compose-one` (`composeId`), API-0251
+		// `organization-one` (`organizationId`), API-0294
+		// `project-one` (`projectId`), and API-0342 `server-one`
+		// (`serverId`). The harness forwards SampleQuery via the
+		// `--input` JSON `query` field, and `runAPICoverageSuccess`
+		// re-reads `r.URL.Query()` to confirm the CLI propagated
+		// the param verbatim — exactly the assertion path every
+		// prior `*-one` peer exercises. Identical wire shape to
+		// API-0133 `gitea-getGiteaRepositories` and API-0134
+		// `gitea-getGiteaUrl` (both single-required-`giteaId` GETs)
+		// — the wire-equality round-trip through
+		// `r.URL.Query().Get("giteaId")` proves the CLI → API
+		// client → httptest server path independently for each
+		// operationId, which is the per-PRD-story granularity the
+		// manifest invariant demands.
+		//
+		// **Family choice — failure leg overridden to 404 →
+		// CodeNotFound.** Every prior gitea/* covered case
+		// (API-0131..API-0135) kept the harness default 401 →
+		// CodeAuth representative failure because auth is the
+		// universal failure mode every Dokploy operation must
+		// re-prove. The per-tag opener design header (re-asserted
+		// at API-0290 `project-all`, API-0335 `server-all`, and
+		// API-0131's gitea/* kickoff) explicitly reserved 404 →
+		// CodeNotFound as the representative-failure leg for **the
+		// canonical by-id `*-one` peer**, and every gitea/* entry
+		// from API-0131..API-0135 deferred the override to API-0136
+		// `gitea-one` by name. API-0136 is that peer: the gitea/*
+		// tag's `giteaId` is a strong semantic match for "by-id GET
+		// whose primary failure mode is the resource not existing"
+		// — a Dokploy-managed Gitea provider record is pinned to
+		// long-lived UUIDs that an agent will frequently fetch by
+		// ID on cold-cache restart, where 404 (the provider was
+		// deleted between cache fill and fetch, or the agent
+		// learned the ID from a stale source) is a far more common
+		// failure than 401 (the process already proved auth on
+		// every prior call in the gitea/* arc). The 404 leg is
+		// therefore the most informative failure to re-prove for
+		// this specific peer's call site. The harness already
+		// supports the override natively (`runAPICoverageFailure`
+		// reads tc.FailureStatus / tc.FailureCode and falls back
+		// to 401 / CodeAuth when either is zero) so no harness
+		// change is needed; we simply opt in via the two struct
+		// fields. This is the **second** roster-level act on the
+		// reserved override, after API-0342 `server-one` opened
+		// it. 400 → CodeInvalidInput stays reserved for stories
+		// where payload validation is the operation's
+		// distinguishing failure mode; this entry's
+		// single-string-param query surface is too generic to
+		// claim that distinguishing shape.
+		//
+		// Fixture conventions:
+		//   * Per the API-0010 / API-0014 / API-0249 / API-0292 /
+		//     API-0297 / API-0052 / API-0053
+		//     every-optional-populated rule, this entry has **zero
+		//     optional parameters** so the rule is trivially
+		//     satisfied — the fixture supplies exactly the single
+		//     REQUIRED scalar `giteaId` and nothing else. The
+		//     harness's success-leg `r.URL.Query()` round-trip
+		//     observes this end-to-end through the CLI → API
+		//     client → httptest server path.
+		//   * Per-case fixture token base
+		//     `gitea-cov-one-0136` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared
+		//     across every prior gitea/* peer (API-0131..API-0135)
+		//     and the cross-tag `*-cov-one-XXXX` slug used at
+		//     API-0008, API-0021, API-0084, API-0251, API-0294,
+		//     and API-0342. Verified non-colliding with API-0131's
+		//     `gitea-cov-create-0131` literals, API-0132's
+		//     `gitea-cov-getBranches-0132` literals, API-0133's
+		//     `gitea-cov-getRepos-0133` literals, API-0134's
+		//     `gitea-cov-getUrl-0134` literals, API-0135's
+		//     `gitea-cov-providers-0135` reservation, and the
+		//     forthcoming `gitea-cov-testConn-0137` /
+		//     `gitea-cov-update-0138` slugs reserved for upcoming
+		//     gitea/* peers, and non-colliding with the cross-tag
+		//     `bb-cov-*` / `mariadb-cov-*` / `proj-cov-*` /
+		//     `srv-cov-*` / `set-cov-*` / `org-cov-*` namespaces.
+		//   * Deterministic-but-clearly-fake
+		//     `<base>-giteaId-fixture` literal keeps diffs
+		//     readable and lets any future schema validator's
+		//     failure messages point at the offending field. The
+		//     `-fixture` suffix matches the API-0132 / API-0133 /
+		//     API-0134 precedent for the same `giteaId` field
+		//     name.
+		//
+		// The next case in the PRD-ordered priority-5 backlog is
+		// API-0137 `gitea-testConnection` (declared a **POST** per
+		// the spec preview; the next contributor must re-verify
+		// the spec against `internal/api/data/openapi.json` per
+		// the forward-reference lesson before assuming any field
+		// shape, and will continue inside the `gitea-cov-*`
+		// per-tag fixture-isolation namespace).
+		SampleQuery: map[string][]string{
+			"giteaId": {"gitea-cov-one-0136-giteaId-fixture"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+		// Failure-leg override: this is the canonical home for
+		// the 404 → CodeNotFound representative-failure assertion
+		// reserved at API-0131..API-0135 for `gitea-one`, and
+		// follows the precedent set by API-0342 `server-one`. See
+		// the design-rationale block above for the full
+		// justification.
+		FailureStatus: http.StatusNotFound,
+		FailureCode:   yerr.CodeNotFound,
+	},
+	{
 		StoryID:     "API-0160",
 		OperationID: "mariadb-changeStatus",
 		Method:      http.MethodPost,
