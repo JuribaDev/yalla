@@ -21870,3 +21870,66 @@ forward-reference lesson before assuming any field shape.
     remains open and is owned by API-0272→API-0285 (all eleven
     postgres/* peers).
 ---
+
+## 2026-05-09 - API-0276
+- **Implemented**: Per-operation contract coverage for `postgres-one`
+  (`GET /postgres.one`, tag `postgres`). Adds the fifth entry on the
+  postgres/* coverage roster opened by API-0272 `postgres-changeStatus`
+  and the canonical by-id GET peer for the postgres tag, completing the
+  forward reference embedded in API-0275 `postgres-move`'s comment block.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended one append-only
+    `apiCoverageCase` literal between the API-0275 `postgres-move` and
+    API-0290 `project-all` blocks. Single required query parameter
+    `postgresId` (string) forwarded via the `--input` JSON `query` field;
+    fixture token `postgres-cov-one-0276-postgresId-fixture`. 200
+    response is `{}` (additionalProperties:false) per spec. Failure-leg
+    overridden to 404 → `yerr.CodeNotFound` per the per-tag opener
+    convention reserving 404 for the canonical `*-one` peer when the
+    spec declares 404 (the prior four postgres/* peers' specs omit
+    404 entirely). Sixth roster-level act on the override after
+    `gitea-one`, `mariadb-one`, `mongo-one`, `mysql-one`, and
+    `server-one`. The new entry's design block forward-references
+    API-0277 `postgres-rebuild` for the next contributor.
+  - `ralph/prd.json` — set API-0276 `passes: true`.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — `ok github.com/JuribaDev/yalla/internal/cli` and
+    every other package PASS.
+  - `go test -race ./...` — same, `ok internal/cli` (3.2s).
+  - Targeted: `go test ./internal/cli -run TestAPICoverage` — all
+    sub-tests including `API-0276/postgres-one` pass (registry
+    invariants, schema reachability, manifest inclusion, success leg,
+    failure leg).
+- **Tools NOT available locally** (per the verification policy):
+  `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+  `goreleaser`. Documented as missing rather than silently skipped.
+- **Remaining risks / follow-ups**:
+  - None for this story. Next priority-4 case in PRD order is API-0277
+    `postgres-rebuild`; per the forward-reference lesson the next
+    contributor must re-verify the spec against
+    `internal/api/data/openapi.json` before assuming any field shape
+    and continue inside the `postgres-cov-*` per-tag fixture-isolation
+    namespace opened by API-0272.
+- **Learnings for future iterations**:
+  - When the spec adds 404 only on the canonical `*-one` by-id GET
+    (and the prior peers in the same tag's roster omit it), this is the
+    reserved slot for the 404 → CodeNotFound representative-failure
+    override. The per-tag opener locks 401 → CodeAuth as the namespace
+    invariant, and the override only applies on the by-id GET. The
+    pattern is now reasserted for the sixth time across
+    gitea/mariadb/mongo/mysql/server/postgres.
+  - The `<tag>-cov-<slug>-<storyID>-<fieldName>-fixture` literal pattern
+    is the canonical naming convention for `*-one` GET query-param
+    fixtures; the `-fixture` suffix is intentional and traces back to
+    `mariadb-one`/`mongo-one`/`mysql-one`/`gitea-one`. Following it
+    keeps git-grep traceability across the cross-tag canonical-by-id
+    chain.
+  - GETs in the Dokploy OpenAPI document never carry a `requestBody`
+    field — verified again here. The harness `len(tc.SampleBody) > 0`
+    gate at `runAPICoverageSuccess` therefore stays inactive for
+    `*-one` peers, and the success-leg assertion focuses on
+    `r.URL.Query()` round-trip rather than payload byte comparison.
+---
