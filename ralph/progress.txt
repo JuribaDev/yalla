@@ -5034,3 +5034,60 @@
     the success-leg `r.URL.Query()` re-read exercising every
     declared field in a single fixture.
 ---
+
+## 2026-05-08 - API-0089
+- Added per-operation coverage for `compose-search` (GET /compose.search) by
+  appending one `apiCoverageCase` literal at the tail of `coveredAPIOperations`
+  in `internal/cli/api_coverage_test.go`. The harness's five-phase contract
+  (registry invariants, schema reachability, manifest inclusion, success
+  round-trip via httptest, representative auth-failure) lights up automatically
+  because every `TestAPICoverage_*` ranges over the slice.
+- This is a STRUCTURAL FIRST inside the compose/* roster: every prior
+  compose/* GET (API-0075/0076/0077/0081/0082/0084) carried at least one
+  REQUIRED query param (typically `composeId`); /compose.search is the first
+  compose/* GET where every query parameter is OPTIONAL. The closest precedent
+  in the entire roster is API-0035 (application-search) which mirrors the same
+  all-optional fan-out — free-text `q`, identity/name filters, scoped-resource
+  filters, and a numeric pagination pair — just on the application/* surface.
+  We exercised three representative slices (free-text `q`, scoped
+  `projectId`/`environmentId`, numeric `limit`/`offset`) instead of all 8 keys
+  to stay consistent with the API-0035 precedent.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — added one `apiCoverageCase`
+    literal for API-0089 / compose-search.
+  - `ralph/prd.json` — flipped `passes: true` for the API-0089 story only.
+  - `ralph/progress.txt` — this entry.
+- Verification (run from repo root):
+  - `gofmt -w .`            → no diff
+  - `goimports -w .`        → not installed; documented in progress trail
+  - `go mod tidy`           → no diff
+  - `go vet ./...`          → clean
+  - `go test ./...`         → all packages pass (internal/cli ~0.9s)
+  - `go test -race ./...`   → all packages pass (internal/cli ~2.5s)
+  - Targeted: `go test ./internal/cli -run 'TestAPICoverage' -v -count=1`
+    confirms all 5 sub-phases (RegistryInvariants, SchemaCommandWorks,
+    ManifestListsOperation, SuccessRoundTrip, RepresentativeFailure) fire and
+    PASS for `API-0089/compose-search`.
+- Remaining risks / follow-ups: none specific to this story. Future
+  compose/* GET stories with all-optional query params (none currently
+  pending in the priority-2 queue) can copy this fixture verbatim and just
+  rotate the slug.
+- **Learnings for future iterations:**
+  - When adding a new structural-first fixture (e.g. all-optional query
+    params for the first time on a tag), point the comment at the closest
+    cross-tag precedent (API-0035 here) — that's the canonical way the
+    roster signals "this pattern already exists, just on a different tag".
+  - HTTP query strings are untyped on the wire, so OpenAPI `number` query
+    params travel through the `--input` JSON `query` field as strings.
+    Use canonical decimal grammar (`"10"` / `"0"`, never `"10.0"`) so a
+    future schema validator that re-coerces query strings to numbers
+    still accepts them — same convention API-0035 established.
+  - Don't bloat fixtures into N-key maps when N is large. Pick a
+    representative slice (free-text + scoped + numeric pagination = 3
+    facets) so the success-leg `r.URL.Query()` re-read still proves
+    end-to-end forwarding without making the diff a wall of slugs.
+  - The harness's five-phase contract (`TestAPICoverage_*`) ranges over
+    `coveredAPIOperations`, so adding a single struct literal is the entire
+    surface area of a coverage story — never touch the harness functions
+    themselves unless the contract is changing for ALL stories.
+---

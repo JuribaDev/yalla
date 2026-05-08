@@ -2017,6 +2017,54 @@ var coveredAPIOperations = []apiCoverageCase{
 		// payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0089",
+		OperationID: "compose-search",
+		Method:      http.MethodGet,
+		Path:        "/compose.search",
+		Tag:         "compose",
+		// Tenth GET-shaped compose/* coverage entry, after API-0075
+		// (compose-getConvertedCompose), API-0076 (compose-getDefaultCommand),
+		// API-0077 (compose-getTags), API-0081 (compose-loadMountsByService),
+		// API-0082 (compose-loadServices), and API-0084 (compose-one).
+		// STRUCTURAL FIRST for the compose/* roster: every query parameter
+		// on /compose.search is OPTIONAL (`required: false`) — every prior
+		// compose/* GET gated on at least one required string param
+		// (typically `composeId`), so this is the first compose/* case
+		// where a fully-empty query is wire-valid. The closest precedent in
+		// the entire roster is API-0035 (application-search) which mirrors
+		// the same all-optional fan-out — free-text `q`, identity/name
+		// filters, scoped-resource filters, and a numeric pagination pair —
+		// just on the application/* surface. The spec at
+		// `data/openapi.json > /compose.search > get` declares no request
+		// body and 8 OPTIONAL parameters: free-text `q`, the three
+		// name/identity filters (`name`, `appName`, `description`),
+		// scoped-resource filters (`projectId`, `environmentId`), and the
+		// numeric pagination pair (`limit`, `offset`, both `number` per the
+		// spec). HTTP query strings are untyped on the wire, so the numeric
+		// pair travels through the `--input` JSON `query` field as strings;
+		// canonical decimal grammar (`"10"` / `"0"`) keeps a future schema
+		// validator that re-coerces query strings to numbers happy. We
+		// exercise three representative slices so the harness covers
+		// (a) free-text search, (b) a scoped filter, and (c) numeric
+		// pagination — without bloating the fixture into a noisy 8-key map,
+		// matching the API-0035 precedent verbatim. Slug convention
+		// `compose-cov-<slug>-<storyID>` continues the cross-story grep
+		// contract from every prior compose/* case.
+		SampleQuery: map[string][]string{
+			"q":             {"compose-cov-search-q-0089"},
+			"projectId":     {"compose-cov-search-project-0089"},
+			"environmentId": {"compose-cov-search-environment-0089"},
+			"limit":         {"10"},
+			"offset":        {"0"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the empty-success convention shared by every prior
+		// compose/* peer. Empty-object body keeps the success-leg envelope
+		// assertion focused on `data.method` / `data.status` rather than
+		// payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
