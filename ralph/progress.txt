@@ -17938,3 +17938,76 @@ None specific to this story. Next PRD priority-4 entry is API-0168
   the harness. A POST with no body would skip those legs.
 
 ---
+
+## 2026-05-08 - API-0168 - Cover mariadb-saveEnvironment (POST /mariadb.saveEnvironment)
+
+### Files changed
+- internal/cli/api_coverage_test.go: appended new apiCoverageCase entry
+  for API-0168 mariadb-saveEnvironment between API-0167 mariadb-remove
+  and API-0188 mounts-allNamedByApplicationId, preserving the
+  StoryID-sorted insertion contract.
+- ralph/prd.json: set passes:true for API-0168.
+
+### What was implemented
+Coverage entry for `mariadb-saveEnvironment` (POST /mariadb.saveEnvironment).
+The entry adds a `runAPICoverageSuccess` + `runAPICoverageFailure` test
+fixture pair (the harness automatically derives both legs from the single
+`apiCoverageCase` literal) and exercises:
+  - success leg: 200 with `{}` body, byte-for-byte body equality on the
+    POST request payload, and full `yalla.output.v1` envelope assertion.
+  - failure leg: 401 → CodeAuth (harness default), `yalla.error.v1`
+    envelope, non-zero exit code.
+
+### Spec verification
+Re-verified `internal/api/data/openapi.json > /mariadb.saveEnvironment >
+post`: method POST, tag mariadb, no parameters, requestBody REQUIRED with
+**two REQUIRED top-level fields**:
+  - `mariadbId` (plain string)
+  - `env` (`anyOf:[string,null]`, i.e. nullable string)
+Responses 200/400/401/403/500. **No 404** declared (action-on-known-id
+POST precedent — 404 override remains pinned to API-0164 mariadb-one).
+
+### Verification run
+- gofmt -w .                         OK
+- go mod tidy                         OK (no changes)
+- go vet ./...                        OK
+- go test ./internal/cli/ -run TestAPICoverage  ok 0.726s
+- go test ./...                       all packages OK
+- go test -race ./...                 all packages OK 3.076s
+- golangci-lint, staticcheck, govulncheck, goreleaser: not installed (per
+  baseline documented in Codebase Patterns).
+
+### Results
+PASS. API-0168 marked passes:true in ralph/prd.json. Total: 279/462.
+
+### Remaining risks or follow-ups
+- Next priority-4 entry is API-0169 `mariadb-saveExternalPort` (POST per
+  the spec preview; re-verify against `internal/api/data/openapi.json`
+  before assuming any field shape).
+
+### Learnings for future iterations
+- API-0168 mariadb-saveEnvironment is a two-required-scalar POST with one
+  plain string (`mariadbId`) plus one `anyOf:[string,null]` nullable
+  string (`env`) — cardinality-identical to API-0163 `mariadb-move` /
+  API-0166 `mariadb-reload` (also two REQUIRED scalars) but with one slot
+  nullable rather than both plain. The cross-tag precedent for the
+  nullable `env` slot is API-0030 `application-saveEnvironment` (which
+  populates every `anyOf:[string,null]` slot with a real string to keep
+  the wire body close to a realistic call); we follow that pattern here
+  rather than supplying `null`.
+- Insertion location: between API-0167 (mariadb-remove) and the
+  next-existing entry API-0188 (mounts-allNamedByApplicationId), not at
+  file end — the `apiCoverageCases` slice is StoryID-sorted and the
+  harness relies on that ordering for deterministic test names.
+- Fixture token base `mariadb-cov-save-environment-0168` follows the
+  `<tag>-cov-<slug>-<storyID>-<field>` suffix convention for git-grep
+  traceability (slug derived from `saveEnvironment` → `save-environment`,
+  matching the kebab-case style established at API-0030
+  `app-cov-env-*-0030` for the analogous `*-saveEnvironment` operation
+  on the application/* roster).
+- 401→CodeAuth harness-default failure leg retained; 404 override
+  inapplicable (spec omits 404), 400 not reserved here (payload
+  validation is not the uniquely-distinguishing failure mode).
+- Forward reference embedded for next entry: API-0169
+  `mariadb-saveExternalPort`.
+---
