@@ -10612,6 +10612,109 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0334",
+		OperationID: "security-update",
+		Method:      http.MethodPost,
+		Path:        "/security.update",
+		Tag:         "security",
+		// Fourth and final entry on the security/* roster, immediately
+		// following API-0331 `security-create`, API-0332
+		// `security-delete`, and API-0333 `security-one`, and closing
+		// the `security-cov-*` per-tag fixture-isolation namespace
+		// opened by API-0331. Per the per-tag fixture-isolation rule
+		// this entry **must not** back-reference any closed prior-tag
+		// namespace (`port-cov-*`, `proj-cov-*`, `mounts-cov-*`,
+		// `org-cov-*`, `domain-cov-*`, `redirects-cov-*`, etc.); the
+		// security/* roster ends here so no future security/* peer
+		// inherits the namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /security.update > post`:
+		// a **POST** with a closed-shape request body declaring three
+		// **REQUIRED** scalar strings — `securityId`, `username`, and
+		// `password` — no parameters, and responses
+		// 200/400/401/403/500 (no 404, mirroring API-0331/API-0332's
+		// tRPC-convention shape where missing-target collapses into
+		// 400/validation rather than a structural 404). The 200
+		// schema is `{}` with `additionalProperties: false`, matching
+		// every prior covered peer in the empty-success cohort.
+		//
+		// **Shape positioning — three-required-string-scalar POST
+		// update-mutation.** The wire shape is byte-for-byte the same
+		// as API-0331 `security-create` (three REQUIRED string fields
+		// in a closed-shape body, empty-object 200, no 404). The only
+		// semantic shift is `applicationId` → `securityId` —
+		// security-update targets an existing security record by id
+		// rather than creating one against a parent application.
+		// Direct cross-tag peer for the *update*-by-id flavor: every
+		// `*-update` POST in the prior tags (e.g. API-0301
+		// `redirects-update`) which similarly takes the record id
+		// plus the mutable fields and returns `{}`. Direct same-tag
+		// peer for the three-required-string-scalar body shape:
+		// API-0331 `security-create`. The harness's `SampleBody` JSON
+		// renders verbatim into the wire request body and
+		// `runAPICoverageSuccess` re-reads `r.Body` to confirm the
+		// CLI propagated the bytes byte-for-byte (the
+		// `len(tc.SampleBody) > 0` gate activates the content-type
+		// `application/json` and body-comparison legs).
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// Spec omits 404 (Dokploy's tRPC convention collapses
+		// missing-target into 400/validation on update-by-id
+		// mutations, exactly as on API-0301 `redirects-update`,
+		// API-0331 `security-create`, and API-0332 `security-delete`
+		// inside this same tag). The 400→CodeInvalidInput override
+		// is *technically* applicable for the validation leg — an
+		// empty `securityId` or `password` would fail server-side
+		// validation — but the harness reserves 400 representatives
+		// for stories where payload validation is the operation's
+		// *uniquely distinguishing* failure mode. A conventional
+		// update POST collapses to type-checking, so the harness-
+		// default 401→CodeAuth failure leg remains the most
+		// representative single failure mode every authenticated
+		// Dokploy operation must re-prove, and additionally re-proves
+		// the auth invariant inside the closing `security-cov-*`
+		// namespace for the three-required-string-scalar update-
+		// mutation shape — particularly load-bearing on a security/*
+		// operation whose entire purpose is gating credential
+		// management.
+		//
+		// Per the established `<tag>-cov-<slug>-<storyID>`
+		// deterministic-but-clearly-fake naming convention, the
+		// fixture id base `security-cov-update-0334` keeps `git grep`
+		// traceable to this PRD story without colliding with API-0331
+		// (`security-cov-create-0331-app`/`-user`/`-pass`), API-0332
+		// (`security-cov-delete-0332`), or API-0333
+		// (`security-cov-one-0333`). The `-id`/`-user`/`-pass`
+		// suffixes mirror API-0331's `-app`/`-user`/`-pass` triplet
+		// so the wire fixture readably indicates which slot each
+		// scalar fills (`-pass` is the harness's secret-redaction
+		// tripwire — the renderer-layer redactor must NOT match a
+		// fixture password value, only credentials supplied via
+		// `--token` or per-operation auth headers).
+		//
+		// API-0334 closes the priority-3 security/* roster; the next
+		// pending PRD-ordered priority-3 backlog entry is API-0335
+		// `server-all`, which opens a fresh per-tag fixture-isolation
+		// namespace `srv-cov-*`; the next contributor must re-verify
+		// the spec against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and **must not** back-reference the `security-cov-*`
+		// namespace closed by this entry.
+		SampleBody: json.RawMessage(`{
+			"securityId": "security-cov-update-0334-id",
+			"username": "security-cov-update-0334-user",
+			"password": "security-cov-update-0334-pass"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0335",
 		OperationID: "server-all",
 		Method:      http.MethodGet,

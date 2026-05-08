@@ -16774,3 +16774,69 @@ Learnings for future iterations:
     re-verify against `internal/api/data/openapi.json` itself before
     assuming any field shape, because forward references can drift.
 ---
+
+## 2026-05-08 - API-0334
+- Implemented contract coverage for security-update (POST /security.update)
+  by adding a fixture to `internal/cli/api_coverage_test.go` between
+  API-0333 and API-0335 — the fourth and final entry in the
+  `security-cov-*` per-tag namespace opened by API-0331.
+- Spec re-verified against `internal/api/data/openapi.json >
+  /security.update > post`: closed-shape body with three REQUIRED string
+  scalars (`securityId`, `username`, `password`), responses
+  200/400/401/403/500 (no 404). 200 schema is `{}` with
+  `additionalProperties: false` → empty-success cohort.
+- Shape: three-required-string-scalar POST update-mutation. Direct
+  same-tag peer for body shape: API-0331 `security-create`. Direct
+  cross-tag peer for the *update*-by-id flavor: API-0301
+  `redirects-update`. Distinct from API-0332 `security-delete`'s single-
+  required-string-scalar delete.
+- Failure family: harness-default 401→CodeAuth (404 structurally
+  inapplicable per the tRPC convention; 400 reserved for stories where
+  validation is the uniquely distinguishing failure mode).
+- Fixture id base `security-cov-update-0334` with `-id`/`-user`/`-pass`
+  triplet mirroring API-0331's `-app`/`-user`/`-pass` slot semantics.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (new fixture between API-0333
+    and API-0335)
+  - `ralph/prd.json` (passes: true on API-0334)
+  - `ralph/progress.txt` (this entry)
+- Verification:
+  - gofmt -w . (clean)
+  - go mod tidy (no changes)
+  - go vet ./... (clean)
+  - go test ./... (all packages passing)
+  - go test -race ./... (all packages passing, internal/cli 2.987s)
+  - goimports / golangci-lint / staticcheck / govulncheck / goreleaser
+    not installed locally — documented as missing per the existing
+    Codebase Patterns rule, never silently skipped.
+- Remaining risks / follow-ups:
+  - API-0334 closes the priority-3 `security/*` roster. The next
+    pending PRD-ordered priority-3 backlog entry is API-0335
+    `server-all` (declared a parameter-free GET per the existing
+    fixture, which already lives in the file as a forward-staged entry
+    — re-verify against `internal/api/data/openapi.json` per the
+    forward-reference lesson before assuming any field shape).
+  - Security/* roster is now closed (API-0331..API-0334); future
+    contributors must NOT back-reference the `security-cov-*`
+    namespace.
+- **Learnings for future iterations:**
+  - `*-update` operations in Dokploy that target a record by id
+    consistently omit 404 from the response set; missing-target
+    collapses into 400/validation per the tRPC convention, mirroring
+    the same-tag `*-delete` shape and matching API-0301
+    `redirects-update`. Stay on harness-default 401→CodeAuth unless
+    payload validation is the operation's uniquely distinguishing
+    failure mode.
+  - The `security/*` roster is fully closed in four entries (API-0331
+    create, API-0332 delete, API-0333 one, API-0334 update); each used
+    the same `security-cov-*` namespace with deterministic
+    `<tag>-cov-<slug>-<storyID>[-<role>]` slugging, demonstrating the
+    intended usage pattern for any tag whose roster spans
+    create/delete/one/update.
+  - When a future entry in the same file (API-0335) is already
+    forward-staged, the new fixture insertion point is identifiable by
+    the trailing `},` of the prior entry plus the opening `StoryID`
+    line of the next — Edit's anchor-based match handles this without
+    risk of re-ordering, and there is no need to renumber any
+    subsequent fixture.
+---
