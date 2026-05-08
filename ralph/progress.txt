@@ -15977,3 +15977,82 @@ Learnings for future iterations:
     schema, or manifest edits required (built at runtime from the
     embedded spec).
 ---
+
+## 2026-05-08 - API-0191 Cover mounts-one (GET /mounts.one)
+- Fourth entry in the priority-3 mounts/* roster, immediately following
+  API-0190 `mounts-listByServiceId`. Continues inside the `mounts-cov-*`
+  per-tag fixture-isolation namespace opened by API-0188.
+- Spec re-verified directly against `internal/api/data/openapi.json >
+  /mounts.one > get`: GET, **single REQUIRED query parameter** `mountId`
+  (string), no request body, responses 200/400/401/403/404/500. The 200
+  body schema is `{}` with `additionalProperties: false`, matching every
+  prior covered peer in the empty-success cohort.
+- Shape positioning: single-required-query GET, no body. Falls back into
+  the well-trodden single-foreign-id GET cohort (API-0005, API-0113,
+  API-0115, API-0116, API-0117, API-0121, API-0124, API-0127, API-0188)
+  after the API-0190 two-required-query outlier. The harness's
+  `SampleQuery: map[string][]string` field renders the single key/value
+  verbatim into the `--input` JSON `query` object; the success-leg
+  assertion at `runAPICoverageSuccess` re-reads `r.URL.Query()` to
+  confirm the CLI propagated the key end-to-end.
+- Failure family: harness-default 401→CodeAuth retained. Spec declares
+  404 (so the 404→CodeNotFound override is technically applicable on
+  unknown-mountId), but bearer-token enforcement runs before any mount
+  lookup, so the universal `E_AUTH` mode is the most representative
+  single failure leg and additionally re-proves the auth invariant
+  inside the `mounts-cov-*` namespace for the id-bearing GET shape —
+  consistent with the API-0115/API-0116/API-0117/API-0121/API-0124/
+  API-0127/API-0188/API-0190 precedent.
+- Fixture base: `mounts-cov-one-0191` per the
+  `<tag>-cov-<slug>-<storyID>` naming convention; does not collide with
+  API-0188 (`mounts-cov-all-named-by-application-id-0188`), API-0189
+  (`mounts-cov-create-0189`), or API-0190
+  (`mounts-cov-list-by-service-id-0190`).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended one `apiCoverageCase`
+    literal (StoryID API-0191) under `coveredAPIOperations` between the
+    API-0190 `mounts-listByServiceId` block and the API-0246
+    `organization-active` block.
+  - `ralph/prd.json` — flipped `API-0191.passes` from `false` → `true`.
+  - `ralph/progress.txt` — this entry.
+- Verification run from repo root:
+  - `gofmt -w .`        — clean (gofmt -l reported no diffs).
+  - `go mod tidy`       — no diff.
+  - `go vet ./...`      — pass.
+  - `go test ./...`     — all 9 packages PASS (`internal/cli` 1.098s).
+  - `go test -race ./...` — all 9 packages PASS (`internal/cli` 2.885s).
+  - `go test ./internal/cli/ -run TestAPICoverage/API-0191 -v`
+    (RegistryInvariants, SchemaCommandWorks, ManifestListsOperation,
+    SuccessRoundTrip, RepresentativeFailure) PASS.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser`: not installed in this environment; documented missing
+    per the iteration runbook fallback.
+- Remaining risks / follow-ups:
+  - 215 priority-3+ stories still pending. Next PRD-ordered priority-3
+    entry is API-0192 `mounts-remove` (declared a POST with a
+    single-required-string body field `mountId` per the spec preview);
+    next contributor must re-verify against
+    `internal/api/data/openapi.json` per the forward-reference lesson
+    and continue inside the `mounts-cov-*` namespace opened by
+    API-0188.
+- **Learnings for future iterations:**
+  - **Reverting from a multi-required-query GET (API-0190) back to a
+    single-required-query GET is a no-op for the harness.** The same
+    `SampleQuery: map[string][]string` field handles both shapes; only
+    the literal map-key list shrinks. Future single-required-query GET
+    stories that immediately follow a multi-key precedent should
+    proceed without harness changes — the success-leg assertion at
+    `runAPICoverageSuccess` adapts automatically.
+  - **`/mounts.one` confirms the mounts/* tag's id-bearing GET cohort
+    uses `mountId` as the foreign-key parameter name** (rather than
+    `serviceId` like `/mounts.listByServiceId`). When grepping for
+    sample fixture values inside this tag, both keys are in use; future
+    mounts/* stories should match the spec's exact parameter name
+    rather than reusing a sibling case's key verbatim.
+  - The append-only `coveredAPIOperations` slice in
+    `internal/cli/api_coverage_test.go` remains the *only* surface
+    that needs touching for an API-XXXX story when the operation
+    already lives in `internal/api/data/openapi.json`. No registry,
+    schema, or manifest edits required (built at runtime from the
+    embedded spec).
+---
