@@ -19,5 +19,10 @@ Single source of truth for stdout/stderr formatting.
 - `Redactor` is **defence-in-depth**. Classify errors cleanly first; do not
   rely on the redactor to hide unclassified fields. Add new transport-layer
   patterns (cookies, refresh tokens) here together with a regression test.
+- The end-to-end secret-leak regression net lives at
+  `internal/cli/redaction_security_test.go` (US-0011). Every new visible
+  writer in the command tree must be exercised there with a sentinel token
+  across `--json`, human, and `--verbose` modes, otherwise the redactor
+  contract documented in `SECURITY.md` is not actually enforced.
 - Schema constants (`SuccessSchema`, `yalla.error.v1`) are public API; bump
   the version only as part of a deliberate breaking change.

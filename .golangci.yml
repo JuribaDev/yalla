@@ -1,0 +1,90 @@
+# yalla golangci-lint configuration.
+#
+# Layered on top of the required checks (gofmt, go vet, go test) executed by
+# scripts/verify.sh and the CI workflow. The linters listed here are
+# configured — i.e. they are part of the security/quality gate the project
+# has opted into per US-0011 acceptance criterion #2. Adding or removing a
+# linter is a public contributor-experience change; document the rationale
+# in CONTRIBUTING.md when you change this file.
+
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+
+issues:
+  # Don't hide already-fixed findings: every report should be actionable.
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  exclude-use-default: false
+  exclude-rules:
+    # Test files often need long literal payloads, intentional shadowing for
+    # table-driven tests, and "magic" constants for golden inputs. Keep the
+    # security-relevant linters on but relax cosmetic ones.
+    - path: _test\.go
+      linters:
+        - dupl
+        - funlen
+        - gocyclo
+        - gocognit
+        - lll
+    # Generated files (registry, schemas, manifest) carry verbatim payloads
+    # that we never want to lint into oblivion.
+    - path: internal/api/data/
+      linters:
+        - dupl
+        - funlen
+        - lll
+        - gocyclo
+
+linters:
+  disable-all: true
+  enable:
+    # Correctness / security
+    - govet            # deeper static analysis on top of `go vet`
+    - staticcheck      # SA-series correctness, performance, and style
+    - errcheck         # unchecked error returns
+    - ineffassign      # ineffectual assignments
+    - unused           # dead code
+    - bodyclose        # http response bodies always closed
+    - gosec            # well-known security anti-patterns
+    - errorlint        # %w / errors.Is / errors.As discipline
+    # Style / readability — only ones that don't fight the existing codebase
+    - gofmt
+    - goimports
+    - misspell
+    - unconvert
+    - revive
+
+linters-settings:
+  govet:
+    enable-all: true
+  staticcheck:
+    checks:
+      - all
+  errcheck:
+    check-type-assertions: true
+    check-blank: false
+  gosec:
+    excludes:
+      # G304 (file inclusion via variable) is unavoidable for a CLI that
+      # accepts user-supplied paths (e.g. --input, --config). We mitigate
+      # by validating the path before opening, never embedding user input
+      # in shell commands, and treating files as data only.
+      - G304
+  revive:
+    rules:
+      - name: var-naming
+      - name: exported
+      - name: package-comments
+      - name: receiver-naming
+      - name: error-naming
+      - name: error-return
+      - name: error-strings
+      - name: blank-imports
+      - name: increment-decrement
+      - name: range
+      - name: superfluous-else
+      - name: time-naming
+      - name: indent-error-flow
+      - name: errorf

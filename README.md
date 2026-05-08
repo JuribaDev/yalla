@@ -41,6 +41,18 @@ Releases are produced by [GoReleaser](https://goreleaser.com) on tag push. See
 [`RELEASING.md`](./RELEASING.md) for the release process and verification
 gates.
 
+## Security
+
+Yalla handles production deployment credentials. See
+[`SECURITY.md`](./SECURITY.md) for the full threat model, redaction policy,
+required verification gates, and vulnerability disclosure process.
+
+## Contributing
+
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the minimum required checks
+before commit and before release, the dependency-review checklist, and the
+local verification harness (`scripts/verify.sh`).
+
 ## License
 
 MIT — see [`LICENSE`](./LICENSE).

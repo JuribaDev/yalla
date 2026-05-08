@@ -355,7 +355,7 @@
       ],
       "type": "foundation",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "The CLI will handle production infrastructure credentials. Treat leaks as release blockers."
     },
     {

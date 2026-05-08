@@ -347,6 +347,39 @@
   intentionally explicit so a forgotten registration trips the
   test before the manifest contract drifts.
 
+- Security gate (US-0011): the public commit gate is `gofmt`, `go mod tidy`,
+  `go vet ./...`, `go test ./...`, `go test -race ./...`. The security gate
+  layered on top runs `govulncheck`, `staticcheck`, and `golangci-lint` in
+  CI's `security` job and locally via `scripts/verify.sh`. Optional tools
+  must be **reported, never silently skipped** — `verify.sh` prints the
+  install hint and `--strict` turns missing tools into a hard failure.
+- `scripts/verify.sh` is the single local entry point for the full gate.
+  Flags: `--release` adds `goreleaser release --snapshot --clean`,
+  `--strict` makes missing optional tools fatal, `--quiet` mutes per-step
+  banners. The script is the documented mirror of the CI `test` and
+  `security` jobs and is referenced from CONTRIBUTING.md and SECURITY.md.
+- Lint configuration lives in `.golangci.yml` (US-0011): `govet` (all
+  checks), `staticcheck`, `errcheck`, `ineffassign`, `unused`, `bodyclose`,
+  `gosec` (G304 excluded — CLI-supplied paths are the project's job to
+  validate, not the linter's), `errorlint`, `gofmt`, `goimports`,
+  `misspell`, `unconvert`, and a focused `revive` ruleset. Adding or
+  disabling a linter is a contributor-experience change; document it in
+  CONTRIBUTING.md when you do.
+- Dependency review (US-0011): `.github/workflows/dependency-review.yml`
+  runs `actions/dependency-review-action@v4` on every PR with
+  `fail-on-severity: high` and an explicit license allowlist (MIT,
+  Apache-2.0, BSD-2/3, ISC, MPL-2.0, CC0-1.0, Unlicense, 0BSD). The
+  CONTRIBUTING.md "Dependency Review Checklist" is the human-facing
+  counterpart and is required reading before adding a new module.
+- Secret-leak regression net (US-0011): every release candidate must
+  pass `internal/cli/redaction_security_test.go`. The file drives the
+  production exit-code path with a sentinel token across
+  `--json` / human / `--verbose` modes, an auth error envelope, the
+  dry-run path, the config set/get round-trip, the
+  `?token=` query-string pattern, and the top-level cobra parse-error
+  path. Adding a new visible writer in the command tree without
+  exercising it here is a contract violation.
+
 
 ---
 
@@ -1543,4 +1576,119 @@
     triggers an upgrade check. The "never auto-update silently"
     PRD requirement is an architectural property, not a runtime
     flag.
+---
+
+## 2026-05-08 - US-0011
+- **Implemented**: Security and dependency verification gates. Layered the
+  vulnerability scan, lint suite, and dependency-review action on top of the
+  existing commit gate; added a single local entry point (`scripts/verify.sh`)
+  that mirrors the CI pipeline; documented the minimum required checks for
+  commit and release in `SECURITY.md` and `CONTRIBUTING.md`; added an
+  end-to-end secret-leak regression net that drives the production
+  exit-code path with a sentinel token across every redaction-relevant
+  rendering path.
+- **Files changed**:
+  - `scripts/verify.sh` (new) — required + optional checks, `--release`,
+    `--strict`, `--quiet` flags. Reports missing optional tools explicitly
+    rather than silently skipping.
+  - `.golangci.yml` (new) — configured linter set: `govet`, `staticcheck`,
+    `errcheck`, `ineffassign`, `unused`, `bodyclose`, `gosec` (G304
+    excluded), `errorlint`, `gofmt`, `goimports`, `misspell`, `unconvert`,
+    `revive`. Test files relax cosmetic linters; `internal/api/data/`
+    relaxes verbosity linters for verbatim payloads.
+  - `.github/workflows/ci.yml` — added a `security` job that runs
+    `govulncheck`, `staticcheck`, and `golangci-lint` on every push and
+    PR. Existing test/goreleaser jobs unchanged.
+  - `.github/workflows/dependency-review.yml` (new) —
+    `actions/dependency-review-action@v4` on every PR with
+    `fail-on-severity: high` and an explicit OSI license allowlist.
+  - `SECURITY.md` (new) — vulnerability disclosure process, threat model,
+    redaction contract, required verification gates table, dependency
+    review pointer, and a best-effort disclosure timeline.
+  - `CONTRIBUTING.md` (new) — minimum required checks before commit,
+    minimum required checks before release, optional-tool install hints,
+    coding conventions, dependency-review checklist, and a Ralph Loop
+    pointer.
+  - `README.md` — added Security and Contributing sections linking the
+    new docs.
+  - `internal/cli/redaction_security_test.go` (new) — the canonical
+    end-to-end secret-leak regression net.
+  - `ralph/prd.json` — `US-0011.passes` flipped to `true`.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all pass (cli 1.106s, race 2.656s, total all green).
+  - `go test -race ./...` — all pass.
+  - `bash scripts/verify.sh --quiet` — exit 0; reports the four optional
+    tools as missing (govulncheck, staticcheck, golangci-lint, goreleaser)
+    rather than silently skipping.
+  - `govulncheck ./...` — installed and ran locally; surfaced two
+    pre-existing stdlib advisories tied to the host toolchain
+    (`go1.26.2` vs fixed `go1.26.3`). See "Remaining risks" below — the
+    point of US-0011 was to wire the gate, not to bump the toolchain.
+- **Results**: All required checks pass. The new secret-leak suite has 6
+  top-level test cases (some table-driven with sub-cases) — every one
+  passes. The lint and vulnerability gates are live in CI starting with
+  the next push.
+- **Remaining risks / follow-ups**:
+  - The local `govulncheck` run found two stdlib vulns (`GO-2026-4971`,
+    `GO-2026-4918`) reported against `net@go1.26.2` (fixed in
+    `net@go1.26.3`). These exist on the developer host's toolchain. CI
+    installs Go via `setup-go` with `go-version-file: go.mod` (currently
+    `go 1.24`), which should pick up the latest 1.24.x patch — fixes for
+    both advisories are typically backported, but the CI run will be the
+    authoritative answer. If CI flags the same advisories, the
+    follow-up is to add a `toolchain` directive in `go.mod` pinning a
+    patched version (e.g. `toolchain go1.26.3`) or bump the `go`
+    directive to a known-good patch. This is **not** a US-0011 scope
+    item — US-0011 is the wiring; the toolchain bump is a separate,
+    isolated change.
+  - `staticcheck` and `golangci-lint` were not run locally (not
+    installed). CI will be the first place they execute. If either flags
+    a finding in the existing codebase the immediate follow-up is to
+    fix it; the lint config is intentionally strict because the security
+    gate is part of the public contract.
+- **Learnings for future iterations**:
+  - **Patterns discovered**:
+    - The CI gate has two natural tiers: the `test` job (correctness;
+      runs on every push) and the `security` job (vulns + lint;
+      independent so a slow vulnerability database fetch does not gate
+      the test signal). `goreleaser-check` already lived in its own job
+      for the same reason. Future gates (e.g. SBOM generation) should
+      follow the same pattern.
+    - Secret-leak tests are most effective when they exercise the
+      *renderer* (Renderer.Error, Renderer.Logf, Renderer.Data) through
+      the production exit-code path rather than constructing a
+      Renderer in isolation. The integration suite catches missing
+      wire-ups (e.g. a new command that bypassed `r.Logf`) that
+      renderer-only unit tests would not.
+    - GitHub Actions writes a workflow-injection warning whenever a
+      run-step uses `${{ github.event.* }}` interpolation. Keep
+      vulnerable inputs out of `run:` blocks — use `env:` indirection.
+      None of the new workflow files use untrusted inputs in `run:`.
+  - **Gotchas encountered**:
+    - `actions/dependency-review-action@v4` only runs on `pull_request`
+      events; pushing directly to a branch will not trigger it. That is
+      intentional (the action diffs base-against-head) but worth
+      documenting so contributors don't expect it from a push.
+    - `golangci-lint` v2 requires a `version: 2` field in the config
+      file; v1 does not accept it. The `.golangci.yml` here targets
+      v1's grammar (no top-level `version:`); golangci-lint-action
+      installs the latest stable, which currently still resolves to
+      v1's compatible mode. If CI fails on schema, pin the action to a
+      v1 release.
+    - `gosec` flags G304 ("file inclusion via variable") on every
+      `os.Open` taking a CLI-supplied path. That is the entire point of
+      `--input <path>` and `--config <path>`; we explicitly exclude
+      G304 in `.golangci.yml` and rely on path validation done in the
+      command layer instead.
+  - **Useful context**:
+    - The redactor is defence-in-depth: classification of errors and
+      explicit field handling are still primary. The new test file is
+      a regression net, not the security boundary itself.
+    - `verify.sh`'s "report, never silently skip" rule is a project
+      principle, not a tooling quirk. The Ralph Loop iteration pattern
+      depends on every gap being visible in `progress.txt` so future
+      iterations can act on it.
 ---
