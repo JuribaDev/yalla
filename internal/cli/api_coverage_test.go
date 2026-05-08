@@ -8364,6 +8364,128 @@ var coveredAPIOperations = []apiCoverageCase{
 		FailureCode:   yerr.CodeNotFound,
 	},
 	{
+		StoryID:     "API-0137",
+		OperationID: "gitea-testConnection",
+		Method:      http.MethodPost,
+		Path:        "/gitea.testConnection",
+		Tag:         "gitea",
+		// Seventh entry on the gitea/* coverage roster and the first
+		// **POST after** the canonical by-id GET peer at API-0136
+		// `gitea-one`. Completes the forward reference embedded in
+		// every prior gitea/* comment block from
+		// API-0131..API-0136 ("the forthcoming
+		// `gitea-cov-testConn-0137` slug reserved for upcoming
+		// gitea/* peers"). Continues inside the `gitea-cov-*`
+		// per-tag fixture-isolation namespace opened by API-0131's
+		// design-rationale header. Per the per-tag isolation rule
+		// established at API-0246 `organization-active`,
+		// reasserted at API-0290 `project-all`, API-0335
+		// `server-all`, API-0351 `settings-assignDomainServer`,
+		// API-0051's bitbucket/* kickoff, API-0131's gitea/*
+		// kickoff, and API-0160's mariadb/* kickoff: this entry
+		// **must not** back-reference the closed `admin-cov-*`,
+		// `ai-cov-*`, `app-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		// `cert-cov-*`, `clu-cov-*`, `compose-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `docker-cov-*`,
+		// `domain-cov-*`, `environment-cov-*`, `mariadb-cov-*`,
+		// `mounts-cov-*`, `org-cov-*`, `port-cov-*`, `proj-cov-*`,
+		// `redirects-cov-*`, `security-cov-*`, `set-cov-*`,
+		// `srv-cov-*`, or `swarm-cov-*` namespaces.
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /gitea.testConnection >
+		// post`: a **POST** with **zero parameters** and a
+		// **REQUIRED** `application/json` request body. The body
+		// schema is a flat object with **two OPTIONAL string
+		// fields** (`giteaId`, `organizationName`) — the schema
+		// declares no `required` array, so neither field is
+		// strictly required, but the requestBody envelope itself
+		// is. Responses 200/400/401/403/500 — **no 404** declared,
+		// matching the precedent on every prior covered
+		// connection-probe operation. The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort.
+		//
+		// **Shape positioning — connection-probe POST with two
+		// optional scalars.** Where API-0131 `gitea-create` ships
+		// the largest gitea/* POST envelope (1 required + 13
+		// optionals), API-0137 lands the **simplest** gitea/* POST
+		// shape: zero required, two optional flat strings. The
+		// harness's `len(tc.SampleBody) > 0` gate at
+		// `runAPICoverageSuccess` activates the JSON content-type
+		// and byte-for-byte body comparison legs because the
+		// requestBody envelope is required even though every
+		// individual field is optional. Cross-tag analogue: the
+		// equivalent connection-probe shape on bitbucket/* and
+		// github/* tags will share the same skeleton when their
+		// per-tag rosters reach the testConnection peer.
+		//
+		// **Every-optional-populated rule.** Per the API-0010 /
+		// API-0014 / API-0249 / API-0292 / API-0297 / API-0052 /
+		// API-0053 every-optional-populated rule, the fixture
+		// supplies **both** OPTIONAL string fields with
+		// deterministic-but-clearly-fake values so the body-
+		// equality leg of `runAPICoverageSuccess` exercises every
+		// declared field name on the wire. Omitting either field
+		// would weaken the success-leg round-trip and let a future
+		// schema drift on the omitted field land silently.
+		//
+		// **Family choice — harness-default 401 → CodeAuth
+		// retained.** The per-tag opener convention reserved 404
+		// → CodeNotFound for the canonical `gitea-one` by-id peer
+		// at API-0136 (already shipped). 400 → CodeInvalidInput
+		// is reachable in principle (a malformed body would fail
+		// server-side validation) but the harness reserves 400
+		// representatives for stories where payload validation is
+		// the operation's *uniquely distinguishing* failure mode;
+		// a connection-probe whose body is two optional flat
+		// strings has no distinguishing payload-shape failure
+		// surface to claim. The harness-default 401 → CodeAuth
+		// failure leg therefore remains the most representative
+		// single failure mode every authenticated Dokploy
+		// operation must re-prove.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `gitea-cov-testConn-0137` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared
+		//     across every prior gitea/* peer (API-0131..API-0136)
+		//     and is verified non-colliding with API-0131's
+		//     `gitea-cov-create-0131`, API-0132's
+		//     `gitea-cov-getBranches-0132`, API-0133's
+		//     `gitea-cov-getRepos-0133`, API-0134's
+		//     `gitea-cov-getUrl-0134`, API-0135's
+		//     `gitea-cov-providers-0135` reservation, API-0136's
+		//     `gitea-cov-one-0136` literal, and the forthcoming
+		//     `gitea-cov-update-0138` slug reserved for the next
+		//     gitea/* peer, and non-colliding with the cross-tag
+		//     `bb-cov-*` / `mariadb-cov-*` / `proj-cov-*` /
+		//     `srv-cov-*` / `set-cov-*` / `org-cov-*` namespaces.
+		//   * Deterministic-but-clearly-fake `<base>-giteaId`
+		//     and `<base>-organizationName` literals keep diffs
+		//     readable and let any future schema validator's
+		//     failure messages point at the offending field.
+		//
+		// The next case in the PRD-ordered priority-5 backlog is
+		// API-0138 `gitea-update` (declared a **POST** per the
+		// spec preview; the next contributor must re-verify the
+		// spec against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field
+		// shape, and will continue inside the `gitea-cov-*`
+		// per-tag fixture-isolation namespace).
+		SampleBody: json.RawMessage(`{
+			"giteaId": "gitea-cov-testConn-0137-giteaId",
+			"organizationName": "gitea-cov-testConn-0137-organizationName"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0160",
 		OperationID: "mariadb-changeStatus",
 		Method:      http.MethodPost,

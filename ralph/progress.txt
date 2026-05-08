@@ -18011,3 +18011,52 @@ PASS. API-0168 marked passes:true in ralph/prd.json. Total: 279/462.
 - Forward reference embedded for next entry: API-0169
   `mariadb-saveExternalPort`.
 ---
+
+## 2026-05-08 - API-0137 - Cover gitea-testConnection (POST /gitea.testConnection)
+- Appended one `apiCoverageCase` literal to `internal/cli/api_coverage_test.go`
+  for `gitea-testConnection` (StoryID API-0137). Spec re-verified directly from
+  `internal/api/data/openapi.json`: POST, no parameters, requestBody required,
+  body shape `{giteaId?: string, organizationName?: string}` with no `required`
+  array, responses 200/400/401/403/500 (no 404). Followed the
+  `gitea-cov-testConn-0137` slug reserved by API-0131..API-0136 and applied
+  the every-optional-populated rule: fixture supplies both OPTIONAL strings so
+  the success-leg byte-for-byte body comparison covers every declared field
+  name. Failure leg keeps the harness default (401 → CodeAuth) per the per-tag
+  opener convention that reserves 404 → CodeNotFound exclusively for the
+  by-id `gitea-one` peer at API-0136.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (appended one struct literal between
+    API-0136 and API-0160; sorted-by-StoryID invariant preserved)
+  - `ralph/prd.json` (flipped API-0137 `passes` to `true`)
+  - `ralph/progress.txt` (this entry)
+- Verification run:
+  - `gofmt -w .` clean.
+  - `go vet ./...` clean.
+  - `go test ./...` ok (all packages, `internal/cli` re-ran as expected).
+  - `go test -race ./...` ok.
+  - `go mod tidy` clean (no diff).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`
+    remain not installed locally and were therefore skipped (documented at
+    the top of this file).
+- Results: All five harness invariants for API-0137 pass — registry presence,
+  schema reachability via `yalla schema get`, manifest inclusion, httptest
+  success round-trip with body forwarding, and the 401 → CodeAuth failure
+  leg.
+- Remaining risks or follow-ups:
+  - Next PRD-ordered priority-5 story is API-0138 `gitea-update` (declared a
+    POST per the spec preview). The forward-reference comment block in the
+    new entry already names the reserved `gitea-cov-update-0138` slug.
+- **Learnings for future iterations:**
+  - When a Dokploy operation declares `requestBody.required: true` but the
+    body schema declares no `required` array, the `requestBody` envelope is
+    still required on the wire. The harness's `len(tc.SampleBody) > 0` gate
+    therefore activates body-forwarding assertions even though every
+    individual field is optional — apply the every-optional-populated rule
+    so each optional field name is exercised on the wire.
+  - Edit tool old_string matching is byte-exact, including tab-vs-space
+    differences. When indentation around a target is `\t},\n\t{` (one tab
+    on the closing brace) the surrounding context literal must use exactly
+    that. For mass struct-literal inserts in tab-indented Go test data,
+    falling back to a Python-driven byte replacement that asserts a single
+    occurrence is faster than iterating Edit calls.
+---
