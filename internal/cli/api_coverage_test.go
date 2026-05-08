@@ -4928,6 +4928,104 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0104",
+		OperationID: "destination-one",
+		Method:      http.MethodGet,
+		Path:        "/destination.one",
+		Tag:         "destination",
+		// **Third entry in the destination/* roster** and the
+		// canonical by-id GET for the tag — succeeds the
+		// parameter-free list-style GET kickoff at API-0102
+		// `destination-all` and the flat-required-body POST mutation
+		// at API-0103 `destination-create`. Inherits the `dest-cov-*`
+		// per-tag fixture-isolation namespace opened at API-0102 and
+		// kept open through API-0103; this entry stays inside that
+		// still-open namespace and **must not** back-reference any
+		// closed `admin-cov-*`, `ai-cov-*`, `app-cov-*`,
+		// `backup-cov-*`, `bb-cov-*`, `cert-cov-*`, `clu-cov-*`,
+		// `compose-cov-*`, `deployment-cov-*`, `org-cov-*`,
+		// `proj-cov-*`, `set-cov-*`, or `srv-cov-*` namespace. The
+		// `dst-cov-*` fixture-token literal seen inside backup/*
+		// `destinationId` payloads (API-0040, API-0041, API-0050) is
+		// a *value* shape from the backup tag's namespace and is
+		// orthogonal to this destination/* tag namespace — the two
+		// must not be confused.
+		//
+		// **Spec re-verified per the API-0345..API-0396
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /destination.one > get`:
+		// a **GET** with **no request body** and exactly one
+		// **required `destinationId` query parameter** (string).
+		// Responses 200/400/401/403/404/500 — **structurally distinct
+		// from the destination/* `*-all` opener (API-0102) which
+		// declared no 404, and from the `*-create` mutation
+		// (API-0103) which also declared no 404; this entry is the
+		// first destination/* peer to expose the 404 slot per the
+		// forecast block at API-0102's failure-leg discussion. The
+		// 200 schema is `{}` with `additionalProperties: false`,
+		// matching every prior covered peer in the empty-success
+		// cohort.
+		//
+		// **Shape positioning — single-required-query-param GET, the
+		// canonical "fetch a single resource by ID" wire shape.**
+		// Mirrors the cross-tag by-id GET precedent established by
+		// API-0008 `ai-one`, API-0021 `application-one`, API-0055
+		// `bitbucket-one`, API-0060 `certificates-one`, API-0251
+		// `organization-one`, and API-0342 `server-one` byte-for-byte
+		// at the wire level — only the field name on the query
+		// changes (`destinationId` here vs `aiId`/`applicationId`/
+		// `bitbucketId`/`certificateId`/`organizationId`/`serverId`
+		// respectively). The harness forwards SampleQuery via the
+		// `--input` JSON `query` field, and `runAPICoverageSuccess`
+		// re-reads `r.URL.Query()` to confirm the CLI propagated the
+		// param verbatim.
+		//
+		// **Family choice — 404 → CodeNotFound failure-leg
+		// override.** This is the canonical home for the 404 →
+		// CodeNotFound representative-failure assertion reserved at
+		// API-0102's design-rationale header for the destination/*
+		// by-id peer. Mirrors the API-0055 `bitbucket-one`, API-0060
+		// `certificates-one`, and API-0342 `server-one` 404-override
+		// precedent across tags (API-0251 `organization-one` kept
+		// the harness default per its own design-rationale block;
+		// destination/* explicitly reserved this slot at API-0102).
+		// A missing-resource by-id retrieval is the most informative
+		// failure to exercise here; auth failures stay covered
+		// fleet-wide by the cross-tag default 401 → CodeAuth path on
+		// parameter-free or mutation peers. Per the established
+		// `<tag>-cov-<slug>-<storyID>` deterministic-but-clearly-fake
+		// naming convention, the fixture token `dest-cov-one-0104`
+		// keeps `git grep` traceable to this PRD story without
+		// colliding with API-0103 (`dest-cov-create-0103-*`) fixtures.
+		//
+		// The next case in the destination/* roster per PRD ordering
+		// is API-0105 `destination-remove` (declared a **POST** with
+		// a required JSON body whose schema must be re-verified
+		// against `internal/api/data/openapi.json >
+		// /destination.remove > post` per the forward-reference
+		// lesson before assuming any field shape is identical to
+		// this entry — slug-prefix-is-not-shape, even within the
+		// same tag).
+		SampleQuery: map[string][]string{
+			"destinationId": {"dest-cov-one-0104"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer. Empty-object body
+		// keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+		// Failure-leg override: 404 → CodeNotFound is the canonical
+		// representative for the destination/* by-id peer per the
+		// API-0102 forecast block. A missing-resource by-id
+		// retrieval is the most informative failure to exercise here;
+		// auth failures stay covered fleet-wide by the cross-tag
+		// default 401 → CodeAuth path on parameter-free and mutation
+		// peers.
+		FailureStatus: http.StatusNotFound,
+		FailureCode:   yerr.CodeNotFound,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,

@@ -13202,3 +13202,105 @@ Learnings for future iterations:
     than path; createApiKey mints a fresh resource), so CodeNotFound is
     not an applicable failure representative for either entry.
 ---
+
+## 2026-05-08 - API-0104
+
+What was implemented:
+- Per-operation coverage entry for `destination-one`
+  (GET /destination.one) appended to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go`. The entry mirrors the canonical
+  by-id GET wire shape established by API-0008 `ai-one`, API-0021
+  `application-one`, API-0055 `bitbucket-one`, API-0060
+  `certificates-one`, API-0251 `organization-one`, and API-0342
+  `server-one` — only the query-param field name (`destinationId`)
+  differs. SampleQuery carries the deterministic-but-clearly-fake
+  fixture token `dest-cov-one-0104` per the established
+  `<tag>-cov-<slug>-<storyID>` convention; the `dest-cov-*` namespace
+  was opened at API-0102 and remains open through API-0103, so this
+  entry stays inside the still-open namespace and back-references no
+  closed cross-tag namespace.
+- Failure-leg override: `FailureStatus: http.StatusNotFound`,
+  `FailureCode: yerr.CodeNotFound`. This lands the canonical 404 →
+  CodeNotFound representative-failure assertion that API-0102's
+  failure-leg discussion explicitly reserved for the destination/*
+  by-id peer. Mirrors the API-0055 `bitbucket-one`, API-0060
+  `certificates-one`, and API-0342 `server-one` 404-override
+  precedent across tags.
+- 200 response is `{}` with `additionalProperties: false`, identical to
+  every other empty-success peer; the success-leg envelope assertion
+  stays focused on `data.method` / `data.status` rather than payload
+  projection.
+- Forecast block at the tail of the entry hands off to API-0105
+  `destination-remove`, restating the slug-prefix-is-not-shape lesson:
+  even within the same tag, the next contributor must re-verify
+  against `internal/api/data/openapi.json > /destination.remove > post`
+  before assuming any field shape is identical to this entry.
+
+Files changed:
+- internal/cli/api_coverage_test.go (one new struct literal appended
+  between API-0103 and API-0246, sorted by StoryID)
+- ralph/prd.json (passes flipped false → true on API-0104)
+- ralph/progress.txt (this entry)
+
+Verification run:
+- gofmt -w .                       → clean
+- go mod tidy                      → clean
+- go vet ./...                     → clean
+- go test ./...                    → ok
+- go test -race ./...              → ok
+- targeted: TestAPICoverage_{RegistryInvariants,SchemaCommandWorks,
+  ManifestListsOperation,SuccessRoundTrip/API-0104,
+  RepresentativeFailure/API-0104} → ok (all five harness invariants)
+- goimports / golangci-lint / staticcheck / govulncheck / goreleaser
+  remain not installed locally; documented per the existing
+  "Verification baseline" pattern at the top of this file.
+
+Results:
+- All five harness assertions for API-0104 pass via the
+  `coveredAPIOperations` fixture: registry presence (method/path/tag
+  invariants), schema reachability through `yalla schema get
+  destination-one --json`, manifest inclusion, success exchange
+  (httptest with `destinationId` query forwarded by the CLI through
+  `runAPICoverageSuccess` and re-read on the server), and the 404 →
+  CodeNotFound failure path through `runAPICoverageFailure`.
+
+Remaining risks or follow-ups:
+- 400 → CodeInvalidInput coverage for query-shape validation on by-id
+  GETs is still pending across the destination/* roster; the harness
+  here only proves required-query forwarding plus the 404 override and
+  the cross-tag 401 default still applies on parameter-free / mutation
+  peers.
+- The destination/* roster still has API-0105 (`destination-remove`),
+  API-0106 (`destination-testConnection`), and API-0107
+  (`destination-update`) outstanding before the namespace can close.
+- The `dest-cov-*` namespace is now consumed by three distinct slug
+  bases (`dest-cov-all-*` implicit at API-0102, `dest-cov-create-*` at
+  API-0103, `dest-cov-one-*` here at API-0104). Future destination/*
+  contributors must continue picking fresh slugs to avoid cross-story
+  fixture collisions.
+
+Learnings for future iterations:
+  - **Canonical *-one slot 404 → CodeNotFound override pattern.** When
+    an opener's failure-leg discussion *explicitly reserves* the 404
+    slot for the upcoming `*-one` by-id peer (as API-0102 did here),
+    that peer must claim it via `FailureStatus: http.StatusNotFound`
+    + `FailureCode: yerr.CodeNotFound`. Leaving the harness default
+    (401 → CodeAuth) in place would silently break the cross-tag
+    convention that API-0055 / API-0060 / API-0342 already encode.
+    Note that not every tag follows this — API-0251 `organization-one`
+    intentionally kept the harness default per its own design-rationale
+    block. Always read the opener's forecast before deciding.
+  - **By-id GET wire shape is the most-replicated shape signature in
+    the harness.** API-0104 makes seven covered peers
+    (`ai-one`, `application-one`, `bitbucket-one`, `certificates-one`,
+    `organization-one`, `server-one`, `destination-one`) sharing the
+    exact same wire convention: GET, no body, exactly one required
+    `<resourceId>` query param. The slug-prefix-is-not-shape lesson
+    still demands per-operation re-verification, but contributors can
+    safely copy the SampleQuery skeleton and only swap the param name.
+  - **Single-required-query-param GETs need only `SampleQuery`.**
+    Leaving SamplePathParams and SampleBody unset is the correct
+    minimal envelope; `buildCoverageInputArgs` writes only the present
+    fields, and `runAPICoverageSuccess` re-reads `r.URL.Query()` to
+    confirm propagation. Anything else would conflate the contract.
+---
