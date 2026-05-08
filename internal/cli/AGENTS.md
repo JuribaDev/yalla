@@ -214,6 +214,12 @@ Conventions for the Cobra command tree.
   shape mirrors the OpenAPI request body. The bytes go on the wire
   verbatim, so a malformed fixture fails the success leg's body-equality
   check.
+- For OpenAPI fields declared as `anyOf [string, null]` (a recurring
+  Dokploy idiom on `*-create` / `*-update` bodies), supply the **string**
+  branch in `SampleBody`. The string variant satisfies both schema
+  branches, exercises real serialisation, and keeps fixtures
+  grep-friendly. A `null` fixture would skip body-forwarding on the
+  field and weaken the success-leg round-trip.
 - Override `FailureStatus` / `FailureCode` when an operation's
   representative failure is not authentication (e.g. quota → 429,
   conflict → 409). The default is intentional: every Dokploy operation

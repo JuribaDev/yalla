@@ -220,6 +220,33 @@ var coveredAPIOperations = []apiCoverageCase{
 		// rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0014",
+		OperationID: "application-create",
+		Method:      http.MethodPost,
+		Path:        "/application.create",
+		Tag:         "application",
+		// Mirrors the schema in `data/openapi.json` for /application.create:
+		// the required top-level fields are `name` and `environmentId`. The
+		// optional `appName`, `description`, and `serverId` fields are also
+		// supplied with deterministic-but-clearly-fake values so the wire
+		// fixture exercises the full create payload, not just the minimum.
+		// `description` and `serverId` use anyOf [string, null]; we send the
+		// string variant so the fixture remains valid against either branch
+		// once a future schema validator is wired into the harness.
+		SampleBody: json.RawMessage(`{
+			"name": "yalla-coverage-app-create-0014",
+			"appName": "yalla-cov-app-create-0014",
+			"description": "API-0014 fixture for application-create coverage",
+			"environmentId": "env-cov-app-create-0014",
+			"serverId": "srv-cov-app-create-0014"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the other application/* peers. We keep an empty-object
+		// body so the success-leg envelope assertion stays focused on
+		// `data.method` / `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

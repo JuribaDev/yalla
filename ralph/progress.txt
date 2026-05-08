@@ -2163,3 +2163,71 @@
     keep the diff tiny per story while still satisfying the
     one-story-per-iteration rule (just commit each separately).
 ---
+## 2026-05-08 - API-0014
+
+- **Story:** Cover application-create (POST /application.create), tag
+  `application`, priority 2.
+- **What shipped:** Appended one `apiCoverageCase{...}` literal to
+  `coveredAPIOperations` in `internal/cli/api_coverage_test.go` so the
+  existing five-part harness (registry invariants, `yalla schema get`
+  envelope, `yalla manifest` inclusion, httptest-driven success
+  round-trip, default 401 → `CodeAuth` representative failure leg) now
+  also gates `application-create`. No production-code changes — the
+  operation is already wired through the embedded OpenAPI spec
+  (`internal/api/data/openapi.json`), the singleton `api.Default()`
+  registry, and the raw `yalla api call` executor.
+- **Sample body:** Unlike prior delete/cancel-shaped peers, the spec
+  marks two top-level fields as required (`name`, `environmentId`) and
+  three optional fields (`appName`, plus `description` and `serverId`
+  declared as `anyOf [string, null]`). The fixture supplies all five
+  with the string branch of the `anyOf` so the wire payload stays valid
+  against either schema branch once a future schema validator is wired
+  into the harness. Per-case fixture token (`*-cov-app-create-0014`)
+  remains unique so a `git grep` traces back to the exact PRD story.
+- **Files changed:**
+  - `internal/cli/api_coverage_test.go` (+27 lines, sorted-by-StoryID
+    insert between API-0013 and the closing `}` of `coveredAPIOperations`).
+  - `ralph/prd.json` (`API-0014.passes` flipped `false` → `true`).
+  - `ralph/progress.txt` (this entry).
+- **Verification:**
+  - `gofmt -l .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./internal/cli/ -run 'TestAPICoverage' -count=1` — all
+    `TestAPICoverage_*/API-0014/application-create` subtests PASS
+    alongside API-0001…API-0013.
+  - `go test ./...` — all packages PASS.
+  - `go test -race ./...` — all packages PASS.
+  - `bash scripts/verify.sh --quiet` — `all checks passed`. Optional
+    tools (`govulncheck`, `staticcheck`, `golangci-lint`, `goreleaser`)
+    remain not installed locally and are documented in the verify.sh
+    skip banner per CONTRIBUTING.md (not silently skipped).
+- **Remaining risks / follow-ups:**
+  - Default 401 → `CodeAuth` representative failure leg is appropriate;
+    the spec also declares 400 (BAD_REQUEST), 403 (FORBIDDEN), and 500
+    (INTERNAL_SERVER_ERROR), but those broader status-mapping invariants
+    are already exercised cross-cuttingly by `internal/api/client_test.go`.
+  - We do not yet validate `SampleBody` against the OpenAPI request
+    schema. With API-0014 introducing the first `anyOf` field in the
+    coverage suite, drift between the fixture and the `[string, null]`
+    branches would only be caught by the wire-side equality assertion
+    today. Wiring a schema validator into the harness becomes more
+    valuable as create/update operations land.
+- **Learnings for future iterations:**
+  - **Two-required-field create operations are still a single-line cost.**
+    API-0014 added 27 lines with no harness changes despite being the
+    first covered case with multiple required fields. Future
+    `*-create` / `*-update` operations should expect the same
+    one-struct-literal pattern even when the body grows wider.
+  - **`anyOf [string, null]` is a recurring Dokploy idiom.** Treat the
+    string branch as the canonical fixture variant: it satisfies both
+    schema branches and exercises real serialisation, whereas a `null`
+    fixture would skip the body-forwarding round-trip on the field. As
+    more `*-create` / `*-update` operations land (API-0015 onward), the
+    same convention keeps fixtures consistent and grep-friendly.
+  - **Application-namespace fixture tokens should encode the verb.**
+    The slug pattern `app-cov-<verb>-<seq>` (`app-cov-cancel-deploy-0011`,
+    `app-cov-clean-queues-0012`, `app-cov-clear-deploys-0013`,
+    `*-cov-app-create-0014`) keeps a single grep pointing back to the
+    PRD story even when the operationId namespace gets crowded.
+---
