@@ -16691,3 +16691,40 @@ Learnings for future iterations:
   - Security/* operations gate credential management; the harness's renderer-layer secret redaction is covered by separate dedicated stories, so plain-text `password` literals in the per-operation `SampleBody` fixture are intentional and clearly-fake to remain obvious false positives in any future grep for real credentials.
   - When opening a fresh per-tag namespace, the prior-tag-closing entry's docstring usually pre-announces which namespace is next (API-0301's docstring named `security-cov-*` here); cross-checking the predecessor's closing comment is a fast way to confirm namespace boundaries before grepping.
 ---
+
+## 2026-05-08 — API-0332 (security-delete)
+- Added API-0332 entry to `internal/cli/api_coverage_test.go` covering
+  `POST /security.delete`. Spec re-verified against
+  `internal/api/data/openapi.json`: closed-shape body with single REQUIRED
+  string `securityId`, responses 200/400/401/403/500 (no 404). 200 schema
+  is `{}` additionalProperties:false → empty-success cohort.
+- Shape: single-required-string-scalar POST delete-mutation. Direct cross-
+  tag peers: API-0119 `domain-delete`, API-0192 `mounts-remove`, API-0269
+  `port-delete`, API-0299 `redirects-delete`. Distinct from API-0331
+  `security-create`'s three-required-string-scalar create.
+- Failure family: harness-default 401→CodeAuth (404 structurally
+  inapplicable; 400 reserved for stories where validation is the uniquely
+  distinguishing failure mode).
+- Fixture: `securityId: "security-cov-delete-0332"` — second entry inside
+  the `security-cov-*` per-tag namespace opened by API-0331; no collision
+  with the API-0331 `-app`/`-user`/`-pass` slugs or future API-0333/0334
+  slugs.
+- Files changed: `internal/cli/api_coverage_test.go`, `ralph/prd.json`,
+  `ralph/progress.txt`.
+- Verification: `gofmt -w .`, `go mod tidy`, `go vet ./...`, `go test ./...`,
+  `go test -race ./...` all pass. `goimports`, `golangci-lint`,
+  `staticcheck`, `govulncheck`, `goreleaser` not installed locally
+  (documented as missing per the established baseline).
+- Remaining: API-0333 `security-one` (GET, per spec preview), API-0334
+  `security-update` (POST, per spec preview) close the security/* roster.
+- **Learnings for future iterations:**
+  - The `security-cov-*` namespace is now a two-entry chain (API-0331,
+    API-0332). The next contributor for API-0333/0334 should grep
+    `security-cov-` and inherit the slug pattern rather than re-deriving
+    from a closed prior-tag namespace.
+  - `*-delete` operations in Dokploy consistently omit 404 from the
+    response set; missing-target collapses into 400/validation per the
+    tRPC convention, so harness-default 401→CodeAuth remains the
+    representative failure leg unless validation is uniquely
+    distinguishing.
+---

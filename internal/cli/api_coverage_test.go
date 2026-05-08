@@ -10412,6 +10412,115 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0332",
+		OperationID: "security-delete",
+		Method:      http.MethodPost,
+		Path:        "/security.delete",
+		Tag:         "security",
+		// Second entry in the security/* roster, immediately following
+		// API-0331 `security-create` and continuing inside the
+		// `security-cov-*` per-tag fixture-isolation namespace opened
+		// there. Per the per-tag fixture-isolation rule this entry
+		// **must not** back-reference any closed prior-tag namespace
+		// (`port-cov-*`, `proj-cov-*`, `mounts-cov-*`, `org-cov-*`,
+		// `domain-cov-*`, `redirects-cov-*`, etc.); future security/*
+		// peers (API-0333 `security-one`, API-0334 `security-update`)
+		// should grep this block to inherit the `security-cov-*` slug
+		// namespace established by API-0331.
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /security.delete > post`:
+		// a **POST** with **no parameters** and a **REQUIRED
+		// request body** whose schema is the closed-shape
+		// single-required-string-scalar `{securityId}` (one required
+		// string field, zero optionals). Responses 200/400/401/403/
+		// 500 — the spec does **not** declare 404 on this
+		// operation, matching the cross-tag `*-delete`/`*-remove`
+		// mutation precedent on API-0119 `domain-delete` (closed
+		// `{domainId}` body), API-0192 `mounts-remove` (closed
+		// `{mountId}` body), API-0269 `port-delete` (closed
+		// `{portId}` body), and API-0299 `redirects-delete` (closed
+		// `{redirectId}` body) where missing-target collapses into
+		// 400/validation per Dokploy's tRPC conventions. The 200
+		// schema is `{}` with `additionalProperties: false`,
+		// matching every prior covered peer in the empty-success
+		// cohort.
+		//
+		// **Shape positioning — single-required-string-scalar POST
+		// delete-mutation, body REQUIRED, no optional surface.**
+		// First `*-delete` mutation in the security/* roster and
+		// the second request-body POST in this tag (after API-0331
+		// `security-create`'s three-required-string-scalar create).
+		// Aligns directly with the established cross-tag
+		// single-required-string-scalar POST delete cohort:
+		//   * API-0119 `domain-delete` — closed `{domainId}` body
+		//     (the canonical single-required-string-scalar POST
+		//     delete-mutation precedent).
+		//   * API-0192 `mounts-remove` — closed `{mountId}` body.
+		//   * API-0269 `port-delete` — closed `{portId}` body.
+		//   * API-0299 `redirects-delete` — closed `{redirectId}`
+		//     body (the cross-tag direct shape peer most recently
+		//     covered before this entry).
+		// Distinct from API-0331 `security-create`'s three-
+		// required-string-scalar POST create shape. The harness's
+		// `len(tc.SampleBody) > 0` gate at `runAPICoverageSuccess`
+		// activates the JSON content-type and byte-for-byte body
+		// comparison legs; this fixture supplies the single
+		// REQUIRED `securityId` field so the success path verifies
+		// the CLI propagated the body verbatim. No optional fields
+		// exist on the spec, so the closed-shape body matches the
+		// schema exactly, mirroring the API-0119/API-0192/API-0269/
+		// API-0299 closed-shape precedent.
+		//
+		// **Family choice — harness-default 401→CodeAuth
+		// retained.** The spec omits 404 from the response set
+		// (per above), so the 404→CodeNotFound override is
+		// structurally inapplicable (matching the cross-tag
+		// `*-delete`/`*-remove` mutation precedent on API-0119,
+		// API-0192, API-0269, and API-0299). 400→CodeInvalidInput
+		// is *technically* available — a payload that omits the
+		// REQUIRED `securityId` field would fail server-side
+		// validation — but the harness reserves 400
+		// representatives for stories where payload validation
+		// is the operation's *uniquely distinguishing* failure
+		// mode. A conventional `*-delete` mutation collapses to
+		// type-checking, so the harness-default 401→CodeAuth
+		// failure leg remains the most representative single
+		// failure mode every authenticated Dokploy operation must
+		// re-prove, and additionally re-proves the auth invariant
+		// inside the `security-cov-*` namespace for the single-
+		// required-string-scalar POST delete-mutation shape —
+		// particularly load-bearing on a security/* operation
+		// whose entire purpose is gating credential management.
+		// Per the established `<tag>-cov-<slug>-<storyID>`
+		// deterministic-but-clearly-fake naming convention, the
+		// fixture id base `security-cov-delete-0332` keeps `git
+		// grep` traceable to this PRD story without colliding
+		// with API-0331 (`security-cov-create-0331-app`/`-user`/
+		// `-pass`), the future API-0333 (`security-cov-one-0333`-
+		// style slug), or API-0334 (`security-cov-update-0334`-
+		// style slug).
+		//
+		// The next case in the PRD-ordered priority-3 backlog is
+		// API-0333 `security-one` (declared a **GET** per the
+		// spec preview; the next contributor must re-verify the
+		// spec against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field
+		// shape, and will continue inside the `security-cov-*`
+		// per-tag fixture-isolation namespace opened by
+		// API-0331).
+		SampleBody: json.RawMessage(`{
+			"securityId": "security-cov-delete-0332"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0335",
 		OperationID: "server-all",
 		Method:      http.MethodGet,
