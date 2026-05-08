@@ -5272,3 +5272,39 @@
     established for the deployment/* roster; keep it for grep
     cohesion.
 ---
+
+## 2026-05-08 - API-0095
+- Implemented per-operation contract coverage for Dokploy operation
+  `deployment-allByCompose` (`GET /deployment.allByCompose`).
+- Files changed:
+  - `internal/cli/api_coverage_test.go`: appended one `apiCoverageCase`
+    literal — byte-for-byte twin of API-0094 (`deployment-all`) with
+    the discriminator query swapped from `applicationId` to
+    `composeId`. No body, empty `{}` 200 response.
+  - `ralph/prd.json`: flipped `passes: true` for API-0095.
+- Verification:
+  - `gofmt -w .`
+  - `go mod tidy`
+  - `go vet ./...`
+  - `go test ./...`
+  - `go test -race ./...`
+- Results: all green. (`goimports`, `golangci-lint`, `staticcheck`,
+  `govulncheck`, `goreleaser` not installed locally; documented in
+  prior entries.)
+- Remaining risks / follow-ups: none — the harness-driven five-part
+  invariant (registry/schema/manifest/success/failure) is automatically
+  enforced by `coveredAPIOperations`. The next deployment/* peers
+  (API-0096 `allByServer`, API-0097 `allByType`,
+  API-0098 `allCentralized`) remain twins of this entry; just rotate
+  the discriminator query name (`serverId`, `type`, none).
+- **Learnings for future iterations:**
+  - The `composeId` discriminator name matches the compose/* tag's
+    own id grammar (API-0090/0091/0092/0093) — consistent across tags.
+  - When the spec only varies by parameter name and response payload
+    stays `{}`, mechanical twinning of the prior `apiCoverageCase`
+    keeps the file scannable; resist the urge to refactor a shared
+    helper because each entry doubles as living documentation of the
+    spec shape.
+  - Kept the `deployment-cov-<slug>-<storyID>` slug convention
+    established in API-0094 (`deployment-cov-allbycompose-0095`).
+---

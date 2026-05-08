@@ -2293,6 +2293,38 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0095",
+		OperationID: "deployment-allByCompose",
+		Method:      http.MethodGet,
+		Path:        "/deployment.allByCompose",
+		Tag:         "deployment",
+		// Second deployment/* roster member and a byte-for-byte twin of
+		// the API-0094 (`deployment-all`) precedent: no request body, a
+		// SINGLE REQUIRED query parameter, and an empty-object 200. The
+		// only delta versus API-0094 is the discriminator field name —
+		// `composeId` here, mirroring the compose/* tag's id grammar
+		// (see API-0090/0091/0092/0093 for the matching compose-side
+		// usage). Spec source: `data/openapi.json >
+		// /deployment.allByCompose > get` declares
+		// `parameters[0]` as `{ in: "query", name: "composeId",
+		// required: true, schema: { type: "string" } }`. SampleQuery
+		// drives the same end-to-end query-propagation assertion the
+		// harness exercises via `runAPICoverageSuccess` (`r.URL.Query()`
+		// re-read inside the httptest handler). Slug continues the
+		// `deployment-cov-<slug>-<storyID>` convention opened by
+		// API-0094 so cross-story greps stay cohesive.
+		SampleQuery: map[string][]string{
+			"composeId": {"deployment-cov-allbycompose-0095"},
+		},
+		// 200 response in the spec is `{}` with
+		// `additionalProperties: false`, identical to API-0094 and the
+		// cross-tag GET-list precedent API-0033
+		// (application-readTraefikConfig). Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
