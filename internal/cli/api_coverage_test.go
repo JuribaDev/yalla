@@ -3292,6 +3292,123 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0293",
+		OperationID: "project-duplicate",
+		Method:      http.MethodPost,
+		Path:        "/project.duplicate",
+		Tag:         "project",
+		// Second mutation in the project/* roster after API-0292
+		// `project-create` opened the `proj-cov-*` slug namespace.
+		// Per the per-tag fixture-isolation rule established at
+		// API-0290 and re-affirmed at API-0292, this entry stays
+		// inside the `proj-cov-*` namespace and **must not** back-
+		// reference the organization/* `org-cov-*` literals — even
+		// though API-0255 `organization-updateMemberRole` was the
+		// nearest two-required-scalar precedent in the prior tag.
+		//
+		// Spec source `internal/api/data/openapi.json >
+		// /project.duplicate > post`: zero parameters, required
+		// `application/json` request body whose schema declares six
+		// top-level fields:
+		//   - REQUIRED scalars: `sourceEnvironmentId` (string),
+		//     `name` (string).
+		//   - OPTIONAL scalar: `description` (plain string — note
+		//     this peer does NOT declare `anyOf [string, null]`,
+		//     unlike API-0292 `project-create`'s `description`).
+		//   - OPTIONAL boolean (default `true`): `includeServices`.
+		//   - OPTIONAL boolean (default `false`):
+		//     `duplicateInSameProject`.
+		//   - OPTIONAL array-of-objects: `selectedServices`, where
+		//     each element is `{id (string, required), type
+		//     (enum, required)}` with `type` pinned to one of
+		//     `application | postgres | mariadb | mongo | mysql |
+		//     redis | compose`.
+		// This is the first project/* peer with a nested array-of-
+		// objects body shape (the prior project/* mutation
+		// API-0292 was a flat scalar-only body), so it is the
+		// roster's first opportunity to exercise the same nested-
+		// array contract API-0004 `ai-deploy` opened in the ai/*
+		// roster (which used `domains: [{host, port, serviceName}]`
+		// and `configFiles: [{filePath, content}]`).
+		//
+		// Fixture conventions:
+		//   * Per the API-0010 / API-0014 / API-0249 / API-0292
+		//     every-optional-populated rule, all four optionals are
+		//     populated with deterministic-but-clearly-fake values
+		//     so the wire payload exercises the entire envelope —
+		//     not just the minimum-required `sourceEnvironmentId`
+		//     + `name`.
+		//   * The two booleans are flipped to the inverse of their
+		//     spec-declared defaults (`includeServices: false`,
+		//     `duplicateInSameProject: true`) so the success-leg
+		//     wire forwarding actually transmits the chosen value
+		//     rather than relying on a server-side default that
+		//     would round-trip the same bytes regardless of CLI
+		//     behaviour. This keeps the body forwarding invariant
+		//     observable end-to-end through the CLI → API client →
+		//     httptest server path.
+		//   * `selectedServices` carries one element with
+		//     `type: "application"` enum-pinned (per the API-0255
+		//     enum-constrained-scalar rule: the alternate values
+		//     `postgres | mariadb | mongo | mysql | redis | compose`
+		//     are intentionally not duplicated to keep the
+		//     success-leg byte forwarding deterministic). The `id`
+		//     scalar follows the `<tag>-cov-<slug>-<storyID>` token
+		//     namespace as `app-cov-duplicate-0293-svc1`.
+		//   * Per-case fixture token base `proj-cov-duplicate-0293`
+		//     keeps `git grep` traceable to this PRD story and is
+		//     unique across the project/* roster (verified: no
+		//     collisions with API-0292 `proj-cov-create-0292`,
+		//     future API-0294 `*-one-0294`, API-0295 `*-remove-
+		//     0295`, API-0296 `*-search-0296`, API-0297
+		//     `*-update-0297` slugs, nor with the organization/*
+		//     `org-cov-*` namespace).
+		//
+		// Responses 200/400/401/403/500 mirror API-0292
+		// `project-create` (note: 404 is not declared on
+		// `/project.duplicate`, which differs from the GET-shaped
+		// API-0290 / API-0291 peers and matches the mutation peer
+		// API-0292 — 404 in the project/* tag is reserved for the
+		// filter-shaped peer API-0294 `project-one`). The 200
+		// schema is `{}` with `additionalProperties: false`, so the
+		// success-leg envelope assertion stays focused on
+		// `data.method` / `data.status` rather than payload
+		// projection. The representative-failure leg keeps the
+		// harness default (401 → CodeAuth) because auth is the
+		// universal failure mode every project/* peer must re-prove.
+		//
+		// Future contributors picking up the next mutation in the
+		// arc (API-0294 `project-one`, expected to be the first
+		// filter-shaped GET in the project/* tag and the legitimate
+		// home for a 404 → CodeNotFound representative-failure leg
+		// per the API-0290 / API-0291 / API-0292 reservation)
+		// should grep this entry first when shaping their fixture
+		// — but only the slug-namespace and per-case-token
+		// conventions transfer; the body shape will diverge
+		// (project-one is a query-parameter GET with no
+		// `SampleBody`, so this nested-array literal is project/*-
+		// internal only and must not be re-templated for it).
+		SampleBody: json.RawMessage(`{
+			"sourceEnvironmentId": "env-cov-proj-duplicate-0293",
+			"name": "yalla-coverage-proj-duplicate-0293",
+			"description": "yalla coverage fixture for proj-cov-duplicate-0293 — deterministic, fake, never deployed",
+			"includeServices": false,
+			"duplicateInSameProject": true,
+			"selectedServices": [
+				{
+					"id": "app-cov-duplicate-0293-svc1",
+					"type": "application"
+				}
+			]
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior project/* peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

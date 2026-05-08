@@ -6257,3 +6257,107 @@
     registry, schema generator, and manifest renderer are spec-driven
     from `internal/api/data/openapi.json`.
 ---
+
+## 2026-05-08 - API-0293
+- Added apiCoverageCase entry for `project-duplicate`
+  (POST /project.duplicate, tag `project`) to
+  `internal/cli/api_coverage_test.go`, sorted immediately after
+  API-0292. This is the second mutation peer in the project/*
+  roster and the first project/* entry to exercise a nested
+  array-of-objects body shape.
+- Spec-derived body shape (verified against
+  `internal/api/data/openapi.json > /project.duplicate > post`):
+  required scalars `sourceEnvironmentId` + `name`; optional plain
+  string `description`; optional booleans `includeServices`
+  (default `true`) and `duplicateInSameProject` (default `false`);
+  optional array-of-objects `selectedServices` with each element
+  carrying required `id` (string) and required `type` enum
+  (application|postgres|mariadb|mongo|mysql|redis|compose). Per
+  the API-0010 / API-0014 / API-0249 / API-0292 every-optional-
+  populated convention all four optionals are populated. Booleans
+  are flipped to the *inverse* of their spec defaults so the
+  success-leg byte forwarding actually transmits the chosen
+  value rather than coinciding with what a server-side default
+  would emit. `selectedServices` carries one element with
+  `type: "application"` enum-pinned (per the API-0255 enum-
+  constrained-scalar rule). Per-case fixture token base
+  `proj-cov-duplicate-0293`; nested element id
+  `app-cov-duplicate-0293-svc1`; both are unique across the
+  project/* roster and never collide with `org-cov-*`.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (new struct literal,
+    +118 lines including comment header)
+  - `ralph/prd.json` (passes flag flipped to true for API-0293)
+  - `ralph/progress.txt` (this entry)
+- Verification (repo root):
+  - `gofmt -w .` — clean
+  - `go mod tidy` — no changes
+  - `go vet ./...` — clean
+  - `go test ./... -count=1` — all packages OK
+  - `go test -race ./... -count=1` — all packages OK
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    and `goreleaser` not installed locally; documented in earlier
+    entries as the verification-tools baseline gap.
+- Results: harness loop now runs the five contract checks
+  (registry / schema / manifest / success round-trip /
+  representative failure) for API-0293 alongside the prior 102
+  covered operations. No source files outside the
+  `apiCoverageCase` table needed editing — the operation
+  registry, schema generator, and manifest renderer are spec-
+  driven from `internal/api/data/openapi.json`.
+- Remaining risks / follow-ups:
+  - API-0294 `project-one` is the next entry in the project/*
+    arc and per the API-0290 / API-0291 / API-0292 reservation
+    is the legitimate home for the project/* tag's first
+    filter-shaped GET. It will be the first project/* peer to
+    populate `SampleQuery` (the spec declares a required
+    `projectId` query parameter and no body), and the first
+    appropriate place in the project/* roster to lift the
+    harness default failure leg from 401 → CodeAuth to
+    404 → CodeNotFound — auth (401) has been re-proven across
+    every project/* peer so far, and 404 is precisely the
+    failure shape a single-resource lookup must surface.
+  - API-0295 `project-remove`, API-0297 `project-update` are
+    expected to share the project-duplicate `{required, +optional}`
+    pattern but with simpler bodies (likely
+    `{projectId}` for remove and `{projectId, name?, description?}`
+    for update). They can copy this entry's slug-namespace
+    discipline but must rederive their `SampleBody` literal from
+    the spec — the array-of-objects shape used here is
+    project-duplicate-specific and does not transfer.
+- **Learnings for future iterations:**
+  - For mutation peers with optional booleans that have non-
+    `false` spec defaults, **flip the fixture value to the
+    inverse of the default** (`includeServices: true` (default)
+    → `false` (fixture); `duplicateInSameProject: false`
+    (default) → `true` (fixture)). This keeps the success-leg
+    body forwarding invariant observable end-to-end: a server
+    rendering server-side defaults would round-trip the same
+    bytes regardless of CLI behaviour, but inverted booleans
+    force the wire to actually carry the chosen value through
+    the CLI → API client → httptest server path. The
+    every-optional-populated convention is therefore really
+    every-optional-populated-with-non-default-where-feasible.
+  - Nested array-of-objects body fixtures pre-exist in the ai/*
+    roster (API-0004 `ai-deploy` with `domains[]` and
+    `configFiles[]`) — when adding the first such fixture in a
+    new tag arc, grep for the prior tag's array-of-objects entry
+    to inherit the indentation style (`[` / `\n\t\t\t\t{` /
+    `\n\t\t\t}` / `\n\t\t]`) rather than re-deriving it.
+  - Enum-constrained array element fields follow the same rule
+    as scalar enums established at API-0255 `organization-
+    updateMemberRole`: pin to **one** fixed enum value and do not
+    duplicate alternates across additional array elements. The
+    schema-validator coverage for the alternate enum branches is
+    handled at the spec-level by the registry, not at the per-
+    operation success-leg fixture.
+  - `description` in the project/* tag is not uniformly nullable:
+    API-0292 `project-create` declared `anyOf [string, null]`,
+    while API-0293 `project-duplicate` declares plain `string`.
+    Always cross-check the per-operation spec for nullability —
+    the every-optional-populated rule's "populate the string
+    branch" guidance from API-0292 still works for both cases
+    (the populated string is valid in either schema), but
+    schema-level assertions about which branch is exercised
+    differ between the two peers.
+---
