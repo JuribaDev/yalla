@@ -13671,3 +13671,64 @@ Learnings for future iterations:
     `internal/api/data/openapi.json` per the forward-reference lesson before
     assuming any field shape is identical to this entry.
 ---
+
+## 2026-05-08 - API-0434
+- **Implemented**: Coverage entry for the Dokploy API operation
+  `user-getBackups` (GET /user.getBackups). The operation is structurally
+  identical to API-0427 `user-all` and API-0433 `user-get`: a parameter-
+  free GET with no request body, no path/query/header parameters, and a
+  200 schema of `{}` with `additionalProperties: false`. Wiring is
+  therefore a single struct-literal append to `coveredAPIOperations` —
+  the existing harness covers registry invariants, schema reachability,
+  manifest inclusion, success round-trip, and the 401 → CodeAuth
+  representative failure leg automatically.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended the API-0434 entry
+    after API-0433, sorted by StoryID. Mirrors the parameter-free GET
+    cohort with the standard `usr-cov-getBackups-0434` fixture-namespace
+    docstring, the per-tag isolation reminder, the "next contributor
+    must re-verify against openapi.json" forward-reference lesson, and
+    the explanation of why 400/404 are structurally inapplicable for
+    this shape (no input the CLI can supply could exercise either —
+    they are defensive declarations only).
+  - `ralph/prd.json` — flipped US API-0434 `passes: false` → `true`.
+- **Verification run**:
+  - `gofmt -l .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./internal/cli -run TestAPICoverage -count=1` — `ok` (all
+    five subtests pass for API-0434: RegistryInvariants,
+    SchemaCommandWorks, ManifestListsOperation, SuccessRoundTrip,
+    RepresentativeFailure).
+  - `go test ./...` — all packages `ok`.
+  - `go test -race ./...` — all packages `ok`.
+- **Tools NOT available locally** (unchanged): `goimports`, `golangci-lint`,
+  `staticcheck`, `govulncheck`, `goreleaser`.
+- **Remaining risks / follow-ups**:
+  - Same defensive-spec note as API-0427 / API-0433: the spec declares
+    400 and 404 on this operation but neither is reachable from a
+    legitimate `--input` document (zero parameters, no body), so we
+    deliberately exercise only the 401 representative — the harness
+    enforces this consistency across the parameter-free GET cohort.
+  - Next priority-2 user/* story is API-0435 `user-getContainerMetrics`
+    — the next contributor must re-verify the openapi.json shape
+    rather than assume it inherits this entry's "empty closed-shape
+    `{}` --input" pattern, per the slug-prefix-is-not-shape lesson
+    re-asserted at API-0371..API-0433.
+- **Learnings for future iterations**:
+  - The parameter-free authenticated-GET cohort
+    (API-0006/API-0051/API-0204/API-0247/API-0427/API-0433/API-0434) is
+    now seven entries strong; future entries in this cohort can copy
+    the API-0434 docstring template verbatim, swap the StoryID, slug,
+    operation-stem, and cross-references, and confirm the openapi.json
+    shape is still `{}` with `additionalProperties: false`. No code
+    changes outside `coveredAPIOperations` are required because the
+    harness's `len(tc.SampleBody) > 0` short-circuit handles the
+    empty-success leg automatically.
+  - The "Authorization bearer is the only principal selector"
+    discussion in API-0433 carries over verbatim to `user-getBackups`:
+    the operation lists *backups owned by the authenticated user*, not
+    backups for an arbitrary userId. That is the structural reason
+    `--input '{}'` is the canonical agent invocation here and 404 is
+    not exercisable.
+---
