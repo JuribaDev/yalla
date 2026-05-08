@@ -2626,3 +2626,45 @@
     assertion focuses on `data.method` / `data.status`, not payload
     projection, matching every prior application/* peer.
 ---
+
+## 2026-05-08 - API-0022 (application-readAppMonitoring, GET /application.readAppMonitoring)
+- Added the per-operation contract entry for `application-readAppMonitoring`
+  to `coveredAPIOperations` in `internal/cli/api_coverage_test.go`. This is
+  the **second** GET-shaped entry in the application/* coverage roster:
+  no request body, a single required query parameter — but with the param
+  name `appName` (not `applicationId`). Expressed via
+  `SampleQuery: map[string][]string{"appName": {"app-cov-read-app-monitoring-0022"}}`.
+  The shared harness (registry/schema/manifest/success/failure sub-tests)
+  picks the entry up automatically with no production-code changes.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (+24 lines, one struct literal).
+  - `ralph/prd.json` (`API-0022.passes` → `true`).
+  - `ralph/progress.txt` (this entry).
+- Verification run (from repo root):
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — no diff.
+  - `go vet ./...` — clean.
+  - `go test ./...` — PASS, including the new
+    `TestAPICoverage_*/API-0022/application-readAppMonitoring` sub-tests
+    across registry, schema, manifest, success-leg, and failure-leg checks.
+  - `go test -race ./...` — PASS.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`
+    not installed locally — documented per the Codebase Patterns baseline
+    rather than silently skipped. No new imports introduced.
+- Remaining risks / follow-ups: none specific. Next pending API story by
+  priority is API-0023 (likely `application-readTraefikConfig` per the
+  earlier API-0020 forward-look note — confirm via the PRD before copy-
+  pasting the GET shape).
+- **Learnings for future iterations:**
+  - Not every application/* GET uses `applicationId` as the query key —
+    `application-readAppMonitoring` uses `appName`. The 30-second
+    `jq '.paths["/application.readAppMonitoring"]' internal/api/data/openapi.json`
+    spot-check (echoing the API-0019/0020 reminder) caught this before
+    blind-copying the API-0021 fixture.
+  - `runAPICoverageSuccess` enforces verbatim query-key propagation for
+    *every* key the case declares, so a misnamed key would surface as a
+    test failure rather than a silent contract gap. Pattern remains:
+    re-read `data/openapi.json`, populate `SampleQuery` (or `SampleBody`/
+    `SamplePathParams`) accordingly, keep `SuccessResponse: \`{}\`` for
+    application/* peers whose 200 is the spec's empty object.
+---

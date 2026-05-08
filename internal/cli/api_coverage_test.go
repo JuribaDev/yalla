@@ -444,6 +444,30 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.method` / `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0022",
+		OperationID: "application-readAppMonitoring",
+		Method:      http.MethodGet,
+		Path:        "/application.readAppMonitoring",
+		Tag:         "application",
+		// Second GET-shaped application/* entry. Mirrors the schema in
+		// `data/openapi.json` for /application.readAppMonitoring: no
+		// request body, a single required query parameter — but unlike
+		// API-0021 the param name is `appName` (string), not
+		// `applicationId`. The harness forwards SampleQuery via the
+		// `--input` JSON `query` field, and `runAPICoverageSuccess`
+		// re-reads `r.URL.Query()` to confirm the CLI propagated the
+		// param verbatim. Deterministic-but-clearly-fake value follows
+		// the established `app-cov-<slug>-<storyID>` convention.
+		SampleQuery: map[string][]string{
+			"appName": {"app-cov-read-app-monitoring-0022"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching every prior application/* peer. Empty-object body keeps
+		// the success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
