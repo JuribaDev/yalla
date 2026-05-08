@@ -6277,6 +6277,84 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0117",
+		OperationID: "domain-canGenerateTraefikMeDomains",
+		Method:      http.MethodGet,
+		Path:        "/domain.canGenerateTraefikMeDomains",
+		Tag:         "domain",
+		// Third entry in the domain/* roster, immediately following
+		// API-0116 `domain-byComposeId`. Stays inside the
+		// `domain-cov-*` per-tag fixture-isolation namespace opened
+		// by API-0115 and **must not** back-reference any closed
+		// `admin-cov-*`, `ai-cov-*`, `app-cov-*`, `backup-cov-*`,
+		// `bb-cov-*`, `cert-cov-*`, `clu-cov-*`, `compose-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `docker-cov-*`,
+		// `org-cov-*`, `proj-cov-*`, `set-cov-*`, or `srv-cov-*`
+		// namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0441
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json >
+		// /domain.canGenerateTraefikMeDomains > get`: a **GET** with
+		// **one REQUIRED query parameter** `serverId` (string),
+		// **no request body**, and responses 200/400/401/403/404/500.
+		// The 200 schema is `{}` with `additionalProperties: false`,
+		// matching every prior covered peer in the empty-success
+		// cohort. Wire shape is structurally identical to API-0115
+		// `domain-byApplicationId` and API-0116 `domain-byComposeId`
+		// — only the query-parameter name differs (`serverId` vs.
+		// `applicationId`/`composeId`). The cross-tag id-bearing GET
+		// precedent chain (API-0005 `ai-get`, API-0113
+		// `docker-getStackContainersByAppName`, API-0115
+		// `domain-byApplicationId`, API-0116 `domain-byComposeId`)
+		// extends here unchanged.
+		//
+		// **Shape positioning — single-required-query GET, no body.**
+		// The harness forwards `SampleQuery` via the `--input` JSON
+		// `query` field, and the success-leg assertion at
+		// `runAPICoverageSuccess` re-reads `r.URL.Query()` to confirm
+		// the CLI propagated `serverId` verbatim. The
+		// `len(tc.SampleBody) > 0` gate stays inert so no
+		// content-type / body byte-comparison legs activate, exactly
+		// as on prior id-bearing GET peers.
+		//
+		// **Family choice — 404→CodeNotFound representative
+		// available but harness-default 401→CodeAuth retained.**
+		// The spec declares 404 on this operation (an unknown
+		// `serverId` is a structurally valid not-found case), so
+		// the 404→CodeNotFound override is *technically* applicable.
+		// We deliberately stick with the harness-default
+		// 401→CodeAuth failure leg, however, to mirror the
+		// API-0115/API-0116 precedent (and through them API-0005
+		// `ai-get` and API-0113 `docker-getStackContainersByAppName`)
+		// — bearer-token enforcement runs before any server lookup,
+		// so the universal `E_AUTH` mode is the most representative
+		// single failure leg. Per the established
+		// `<tag>-cov-<slug>-<storyID>` deterministic-but-clearly-fake
+		// naming convention, the fixture id base
+		// `domain-cov-can-generate-traefik-me-domains-0117` keeps
+		// `git grep` traceable to this PRD story and continues the
+		// `domain-cov-*` namespace opened at API-0115.
+		//
+		// The next case in the PRD-ordered priority-3 backlog is
+		// API-0118 `domain-create` (re-verified against
+		// `internal/api/data/openapi.json` as a **POST** with a
+		// required request body — structurally NOT a sibling of the
+		// id-bearing GET cohort closed here; the next contributor
+		// must re-verify per the forward-reference lesson before
+		// assuming any field shape, and will continue inside the
+		// `domain-cov-*` per-tag fixture-isolation namespace).
+		SampleQuery: map[string][]string{
+			"serverId": {"domain-cov-can-generate-traefik-me-domains-0117"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,

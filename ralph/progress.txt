@@ -14838,3 +14838,96 @@ Learnings for future iterations:
     confirmed the structural-sibling claim before the comment was committed,
     keeping the PRD's "forward-reference lesson" honoured.
 ---
+
+## 2026-05-08 - API-0117
+- Implemented coverage for the Dokploy API operation
+  `domain-canGenerateTraefikMeDomains`
+  (GET /domain.canGenerateTraefikMeDomains, tag `domain`).
+- Spec re-verified per the forward-reference lesson against
+  `internal/api/data/openapi.json > /domain.canGenerateTraefikMeDomains
+  > get`: a **GET** with **one REQUIRED query parameter** `serverId`
+  (string), **no request body**, and responses 200/400/401/403/404/500.
+  The 200 schema is `{}` with `additionalProperties: false`, matching
+  every prior covered peer in the empty-success cohort. Wire shape is
+  structurally identical to API-0115 `domain-byApplicationId` and
+  API-0116 `domain-byComposeId` — only the query-parameter name
+  differs (`serverId` vs. `applicationId`/`composeId`). The
+  cross-tag id-bearing GET precedent chain (API-0005 `ai-get`,
+  API-0113 `docker-getStackContainersByAppName`,
+  API-0115 `domain-byApplicationId`, API-0116 `domain-byComposeId`)
+  extends here unchanged, confirming the API-0116 forward-reference
+  prediction (structural sibling, only param-name differs) — the
+  prediction held end-to-end on this entry.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended the API-0117
+    `apiCoverageCase` entry directly after the API-0116 block. The
+    entry locks the registry invariant (GET
+    /domain.canGenerateTraefikMeDomains, tag `domain`) and uses
+    `SampleQuery: {serverId: "domain-cov-can-generate-traefik-me-domains-0117"}`
+    plus `SuccessResponse: \`{}\``. Inherits the harness-default
+    401 → CodeAuth failure leg (the spec declares 404 but we
+    deliberately retain the universal-auth representative leg per
+    API-0115/API-0116 precedent). Continues the `domain-cov-*`
+    per-tag fixture-isolation namespace opened at API-0115.
+  - `ralph/prd.json` — set `API-0117.passes = true`.
+  - `ralph/progress.txt` — this entry.
+- Verification run from repo root:
+  - `gofmt -w .`                 OK
+  - `goimports -w .`             NOT INSTALLED (skipped, documented)
+  - `go mod tidy`                OK (no changes)
+  - `go vet ./...`               OK
+  - `go test ./...`              OK (all packages pass)
+  - `go test -race ./...`        OK (all packages pass)
+  - `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`:
+    NOT INSTALLED locally; documented as such per established practice.
+- Remaining risks / follow-ups:
+  - The domain/* tag's id-bearing GET cohort (API-0115/0116/0117)
+    is now closed. The next PRD-ordered priority-3 story is
+    API-0118 `domain-create` (POST /domain.create), which crosses
+    the GET→POST shape boundary and introduces a required request
+    body. The next contributor must re-verify against
+    `internal/api/data/openapi.json > /domain.create > post` per
+    the forward-reference lesson — neither the 200 empty-body
+    pattern nor the single-required-query-param shape carries
+    over to a POST with a body schema.
+- **Learnings for future iterations:**
+  - **API-0116's forward-reference prediction was correct.** The
+    API-0116 entry forecast that API-0117 would be a structural
+    sibling (single REQUIRED string query param, empty 200 body,
+    standard 400/401/403/404/500 family). Re-verification against
+    the spec confirmed the prediction verbatim — only the param
+    name differs (`serverId` vs `composeId`). Forward-reference
+    predictions on within-tag siblings have a strong success rate
+    when the operation slugs share a structural verb pattern
+    (`*-by<Id>`, `*-can*`); cross-tag and cross-method (GET→POST)
+    predictions are still hypotheses requiring re-verification.
+  - **The domain/* id-bearing GET cohort is now stable across
+    three entries.** API-0115/0116/0117 all share the exact same
+    case shape — only `Method` is constant (GET), `Path` and
+    `OperationID` mirror the operation slug, `SampleQuery` carries
+    one entry whose key matches the spec's required query param,
+    and `SuccessResponse` is `{}`. Future domain/* GET-by-id
+    stories (and any other tag's id-bearing GET cohort that
+    follows the same spec pattern) can copy this entry shape
+    verbatim and only change the query param name + fixture id
+    slug + StoryID/OperationID/Path. The inert-`SampleBody` /
+    inert-`SamplePathParams` defaults are correct for this cohort.
+  - **Tag-internal namespace continuity holds across same-tag
+    cohort entries.** The `domain-cov-*` namespace opened at
+    API-0115 continues unbroken through API-0117 with the
+    deterministic-but-clearly-fake `<tag>-cov-<slug>-<storyID>`
+    convention. The slug for this entry expands the operation's
+    `canGenerateTraefikMeDomains` → `can-generate-traefik-me-domains`
+    via standard kebab-case decomposition; this lower-case-kebab
+    expansion of camelCase operation slugs is the established
+    convention for fixture id bases.
+  - **GET→POST shape boundary at API-0118 will require axis
+    reset.** API-0118 `domain-create` is a POST with a required
+    request body, breaking the GET-no-body axis that has been
+    stable across API-0115/0116/0117. The next contributor cannot
+    inherit any axis from this cohort; they must re-derive the
+    shape from `/domain.create > post` directly. Tag-internal
+    namespace continuity (`domain-cov-*` slug prefix) does carry
+    over across method boundaries — only spec-derived shape
+    inheritance breaks.
+---
