@@ -4896,3 +4896,57 @@
     were touched. Document the fallback in the verification section to
     keep future iterations from re-discovering the same gap.
 ---
+
+## 2026-05-08 - API-0040
+- Implemented coverage for `backup-create` (POST /backup.create) by
+  appending a `coveredAPIOperations` entry in
+  `internal/cli/api_coverage_test.go`. The entry feeds the shared
+  `runAPICoverageSuccess`/`runAPICoverageFailure` harness so the existing
+  `TestAPICoverage_*` invariants exercise the operation end-to-end via
+  `yalla api call backup-create --input ... --json`, the registry
+  invariant suite, the schema-get coverage, and the manifest projection.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — added the API-0040 case
+    (slug `backup-cov-create-0040` and `*-cov-backup-create-0040`
+    siblings) populating every required field
+    (`schedule`/`prefix`/`destinationId`/`database`/`databaseType`)
+    plus every nullable optional sibling
+    (`enabled`/`keepLatestCount`/`mariadbId`/`mysqlId`/`postgresId`/
+    `mongoId`/`userId`/`backupType`/`composeId`/`serviceName`/
+    `metadata`) so the wire-payload assertion exercises the full
+    create envelope. Modeled on API-0014 (application-create) and
+    API-0069 (compose-create); first backup/* coverage entry, so it
+    seeds the slug convention for that tag namespace.
+  - `ralph/prd.json` — flipped `passes` to `true` for API-0040.
+- Verification (from repo root):
+  - `gofmt -w internal/cli/api_coverage_test.go` (clean).
+  - `goimports` not installed locally; `gofmt` covered the formatting
+    requirement on the touched file.
+  - `go mod tidy` (clean, no module-graph drift).
+  - `go vet ./...` (clean).
+  - `go test ./internal/cli/ -run 'TestAPICoverage' -count=1` — pass
+    (covers registry invariants, schema-get coverage, success leg, and
+    the representative failure leg for every entry including
+    `backup-create`).
+  - `go test ./...` — all packages pass.
+  - `go test -race ./...` — all packages pass.
+- Remaining risks / follow-ups: 388 API-XXXX stories remain in the
+  failing pool (next: API-0041 `backup-listBackupFiles`).
+- **Learnings for future iterations:**
+  - First backup/* tag entry. The slug pattern `backup-cov-<slug>-<storyID>`
+    follows the cross-tag convention from compose/* and application/*.
+  - `databaseType` is the second `string + enum` required field
+    encountered (after `composeType` in API-0069). Always pick a value
+    that is internally consistent with the populated polymorphic id
+    siblings (here: `postgres` paired with `postgresId`) so a future
+    server-side validator that cross-checks the polymorphic shape stays
+    happy with the same fixture.
+  - For `anyOf [boolean, null]` and `anyOf [number, null]` optional
+    fields, send the non-null branch (analogous to the documented
+    `anyOf [string, null] → string` rule). Same single-fixture wins:
+    one populated branch covers serialisation testing without a second
+    null fixture.
+  - The harness file is now 2272 lines; the entry-insertion pattern
+    (find the StoryID-sorted slot, paste between two existing braces)
+    keeps diffs single-contiguous-insert and grep-friendly.
+---

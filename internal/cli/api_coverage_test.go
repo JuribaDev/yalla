@@ -1183,6 +1183,62 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0040",
+		OperationID: "backup-create",
+		Method:      http.MethodPost,
+		Path:        "/backup.create",
+		Tag:         "backup",
+		// Mirrors the schema in `data/openapi.json` for /backup.create:
+		// the required top-level fields are `schedule`, `prefix`,
+		// `destinationId`, `database`, and `databaseType` (enum:
+		// postgres|mariadb|mysql|mongo|web-server). Optional siblings
+		// — `enabled` (anyOf [boolean, null]), `keepLatestCount` (anyOf
+		// [number, null]), `mariadbId`/`mysqlId`/`postgresId`/`mongoId`/
+		// `userId`/`composeId`/`serviceName` (anyOf [string, null]),
+		// `backupType` (enum: database|compose), and `metadata` (anyOf
+		// [object, null]) — are populated with deterministic-but-clearly-
+		// fake values so the wire fixture exercises the full create
+		// payload, not just the minimum, matching the *-create
+		// convention from API-0014 (application-create) and API-0069
+		// (compose-create) recorded in internal/cli/AGENTS.md. Per the
+		// AGENTS.md "anyOf [string, null] → send string branch" rule we
+		// supply strings for every nullable string field; the same logic
+		// generalises to the boolean/number/object anyOfs (we send the
+		// non-null branch) so a future schema validator confirms
+		// forwarding for the populated branch in one fixture. Picking
+		// `databaseType: "postgres"` alongside a populated `postgresId`
+		// keeps the fixture internally consistent (the postgres branch
+		// of Dokploy's polymorphic backup record), and `backupType:
+		// "database"` matches the chosen database-mode shape. This is
+		// the FIRST backup/* coverage entry, so it also seeds the
+		// `backup-cov-<slug>-<storyID>` slug convention for every
+		// backup/* peer that follows.
+		SampleBody: json.RawMessage(`{
+			"schedule": "0 3 * * *",
+			"enabled": true,
+			"prefix": "yalla-cov-backup-create-0040/",
+			"destinationId": "dst-cov-backup-create-0040",
+			"keepLatestCount": 7,
+			"database": "yalla-cov-backup-db-0040",
+			"mariadbId": "mariadb-cov-backup-create-0040",
+			"mysqlId": "mysql-cov-backup-create-0040",
+			"postgresId": "postgres-cov-backup-create-0040",
+			"mongoId": "mongo-cov-backup-create-0040",
+			"databaseType": "postgres",
+			"userId": "user-cov-backup-create-0040",
+			"backupType": "database",
+			"composeId": "compose-cov-backup-create-0040",
+			"serviceName": "service-cov-backup-create-0040",
+			"metadata": {"yallaStoryId": "API-0040"}
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the empty-success convention shared by every prior
+		// *-create peer (API-0014, API-0069). Empty-object body keeps
+		// the success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0066",
 		OperationID: "compose-cancelDeployment",
 		Method:      http.MethodPost,
