@@ -2971,6 +2971,77 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.method` / `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0254",
+		OperationID: "organization-update",
+		Method:      http.MethodPost,
+		Path:        "/organization.update",
+		Tag:         "organization",
+		// Fifth mutation in the organization/* roster and the first
+		// entry to break out of the strict `{single-required-scalar}`
+		// arc the API-0250 / API-0252 / API-0253 future-contributors
+		// blocks forecast — `organization-update` is the natural
+		// "two-required-plus-optional" peer the arc expected to land
+		// next. Per the spec source `data/openapi.json >
+		// /organization.update > post`, the request body declares zero
+		// parameters and a required `application/json` payload with
+		// `organizationId` and `name` both `required` plus an optional
+		// `logo` string. The fixture intentionally omits the optional
+		// `logo` field to keep the closed-shape contract focused on
+		// the minimum-required body shape (the same reductionist
+		// posture API-0249 `organization-create` took with its own
+		// optional `logo`/`slug` fields), which keeps the success-leg
+		// envelope assertion squarely on `data.method` / `data.status`
+		// rather than encouraging payload projection drift.
+		//
+		// Per the established `<tag>-cov-<slug>-<storyID>`
+		// deterministic-but-clearly-fake naming convention, both
+		// fixture tokens (`yalla-coverage-org-update-0254-id` /
+		// `yalla-coverage-org-update-0254-name`) keep `git grep`
+		// traceable to this PRD story without colliding with the
+		// API-0249 (`yalla-coverage-org-create-0249`), API-0250
+		// (`yalla-coverage-org-delete-0250`), API-0252
+		// (`yalla-coverage-org-removeInvitation-0252`), or API-0253
+		// (`yalla-coverage-org-setDefault-0253`) mutation fixtures —
+		// the `-id` / `-name` suffixes disambiguate the two required
+		// scalars within this single body without losing the story-ID
+		// trail.
+		//
+		// Responses 200/400/401/403/500 mirror every other
+		// organization/* mutation peer — the 200 schema is `{}` with
+		// `additionalProperties: false`, identical to API-0246/0247/
+		// 0248/0249/0250/0251/0252/0253 above; like the other
+		// state-mutation peers (and unlike API-0251 `organization-one`,
+		// the lookup-shape GET) the 404 response code is absent
+		// because `update` is a state-mutation action whose
+		// missing-target failure path collapses into 400 (validation)
+		// rather than 404 (not found) per Dokploy's tRPC conventions.
+		// The representative-failure leg therefore keeps the harness
+		// default (401 → CodeAuth) because auth is the universal
+		// failure mode every organization/* peer must re-prove —
+		// 400 (validation) is exercised once at the package level by
+		// the API-0001 entry rather than re-asserted on every
+		// minimum-required-body POST in the roster.
+		//
+		// Future contributors picking up the final mutation in the
+		// arc (API-0255 `*-updateMemberRole`) should continue grepping
+		// API-0249 first for the design-rationale header and either
+		// this entry (for the `{required-scalar, required-scalar,
+		// +optional}` shape) or API-0250 / API-0252 / API-0253 (for
+		// the strict `{single-required-scalar}` shape) second
+		// depending on whichever closed-shape literal lines up with
+		// the spec — `updateMemberRole` is the last `*-update*` POST
+		// in the organization/* roster and closes the tag.
+		SampleBody: json.RawMessage(`{
+			"organizationId": "yalla-coverage-org-update-0254-id",
+			"name": "yalla-coverage-org-update-0254-name"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior organization/* peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

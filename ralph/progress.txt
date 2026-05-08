@@ -6015,3 +6015,47 @@
     literal — verify it against `data/openapi.json` before copying the
     previous peer's body verbatim.
 ---
+
+## 2026-05-08 - API-0254 - Cover organization-update (POST /organization.update)
+
+- Added a new `apiCoverageCase` entry for `organization-update` to the
+  shared `coveredAPIOperations` table in
+  `internal/cli/api_coverage_test.go`. The entry mirrors the API-0253
+  `organization-setDefault` literal but breaks out of the
+  `{single-required-scalar}` arc to match the spec's two required
+  fields (`organizationId`, `name`) plus the optional `logo` (which the
+  fixture intentionally omits to keep the closed-shape contract
+  focused on the minimum-required body shape — same posture as
+  API-0249 `organization-create` with its own optional fields).
+- Fixture tokens follow the established
+  `<tag>-cov-<slug>-<storyID>` deterministic-but-clearly-fake pattern
+  with `-id` / `-name` suffixes to disambiguate the two required
+  scalars within a single body without losing the story-ID trail.
+- Files changed: `internal/cli/api_coverage_test.go`,
+  `ralph/prd.json` (passes: true for API-0254), `ralph/progress.txt`.
+- Verification run: `gofmt -w .`, `go mod tidy`, `go vet ./...`,
+  `go test ./...`, `go test -race ./...` — all green.
+- Results: API coverage harness derives manifest, registry, schema,
+  raw-call success, and representative-failure (401 → CodeAuth)
+  assertions automatically from the new entry. No additional
+  per-story scaffolding required.
+- Remaining risks: none specific to this story. The `organization` tag
+  has one mutation peer left (API-0255 `*-updateMemberRole`) before
+  the tag closes.
+- **Learnings for future iterations:**
+  - The `apiCoverageCase` table is the single source of truth for
+    every `api-operation` PRD story — adding an entry automatically
+    drives manifest, registry, schema, call-success, and
+    representative-failure tests via the harness. There is no need
+    to scaffold per-story files.
+  - When the spec declares optional body fields (e.g. `logo` here,
+    `slug` in `organization-create`), the established posture is to
+    omit them from the fixture so the success-leg envelope assertion
+    stays focused on `data.method` / `data.status` rather than
+    drifting into payload projection.
+  - `<tag>-cov-<slug>-<storyID>` fixture tokens with `-id` / `-name`
+    suffixes are the right way to disambiguate multiple required
+    scalars within a single body without losing the `git grep` trail
+    back to the PRD story.
+
+---
