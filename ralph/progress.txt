@@ -2432,3 +2432,50 @@
     keeping the `*-cov-<short>-<storyId>` naming convention on every
     fixture string makes spec-drift bisection a single `git grep`.**
 ---
+
+## 2026-05-08 - API-0018
+- **Implemented**: API coverage for `application-killBuild`
+  (POST /application.killBuild). Pattern follows
+  API-0013/API-0015/API-0017: appended one `apiCoverageCase{...}`
+  literal to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go`. The five-part harness
+  (registry invariants, `yalla schema get`, `yalla manifest`,
+  httptest success round-trip, default 401 → CodeAuth representative
+  failure) now also gates `application-killBuild`. No production-code
+  changes; the operation is already wired through the embedded
+  OpenAPI spec, the `api.Default()` registry, and the raw
+  `yalla api call` executor.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended one `apiCoverageCase`
+    entry for `API-0018 / application-killBuild`. Fixture supplies the
+    only required field (`applicationId`) with a deterministic-but-
+    clearly-fake value (`app-cov-kill-build-0018`). Same minimal shape
+    as API-0013/0015/0017.
+  - `ralph/prd.json` — `API-0018.passes` flipped to `true`.
+- **Verification run**: `gofmt -w .`, `go mod tidy`, `go vet ./...`,
+  `go test ./...`, `go test -race ./...`, plus a focused
+  `go test ./internal/cli -run 'TestAPICoverage' -count=1`. All green;
+  the new `API-0018/application-killBuild` subtests pass.
+- **Tools not installed locally** (documented per the Codebase Patterns
+  baseline rather than silently skipped): `goimports`, `golangci-lint`,
+  `staticcheck`, `govulncheck`, `goreleaser`. CI still runs the
+  security/lint matrix on push.
+- **Results**: All required gates pass. `application-killBuild` is now
+  registry-checked, schema-reachable, manifest-listed, success-round-
+  tripped through `httptest.Server`, and failure-mapped to `CodeAuth`
+  on 401.
+- **Remaining risks / follow-ups**: None for this story. The next
+  pending API story by priority is API-0019
+  (`application-markRunning`), still `passes: false`.
+- **Learnings for future iterations**:
+  - The `applicationId`-only minimal pattern now spans
+    cancelDeployment, cleanQueues, clearDeployments, delete,
+    disconnectGitProvider, and killBuild. Each is a one-line shape
+    in `data/openapi.json`, so the next time another peer surfaces
+    (markRunning, redeploy, refreshToken, reload …) the edit is
+    mechanical: copy the previous block, swap StoryID/OperationID/
+    Path and the deterministic-fake `applicationId` token.
+  - Sorting by StoryID keeps the diff a single contiguous insert at
+    the bottom of `coveredAPIOperations`; resist the urge to group
+    by tag or alphabetise by operationId.
+---

@@ -355,6 +355,27 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.method` / `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0018",
+		OperationID: "application-killBuild",
+		Method:      http.MethodPost,
+		Path:        "/application.killBuild",
+		Tag:         "application",
+		// Mirrors the schema in `data/openapi.json` for
+		// /application.killBuild: the only required field is
+		// `applicationId` (string). Same minimal shape as
+		// API-0013/API-0015/API-0017 — keep the fixture
+		// minimal-but-valid so a future schema validator wired into
+		// the harness still accepts it.
+		SampleBody: json.RawMessage(`{
+			"applicationId": "app-cov-kill-build-0018"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the other application/* peers. We keep an empty-object
+		// body so the success-leg envelope assertion stays focused on
+		// `data.method` / `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
