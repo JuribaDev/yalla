@@ -15084,3 +15084,64 @@ Learnings for future iterations:
     the green `go test ./...` run that ran the registry-driven
     invariants test against the new case without further wiring.
 ---
+
+## 2026-05-08 - API-0120 (domain-generateDomain)
+- Added covered-operation fixture for `domain-generateDomain` to
+  `internal/cli/api_coverage_test.go > coveredAPIOperations`. Sixth
+  entry in the domain/* roster after API-0115..API-0119; stays inside
+  the `domain-cov-*` per-tag fixture-isolation namespace.
+- Spec re-verified directly against
+  `internal/api/data/openapi.json > /domain.generateDomain > post`:
+  POST, no parameters, REQUIRED body
+  `{appName (required), serverId (optional)}`,
+  responses 200/400/401/403/500 (no 404). 200 schema is `{}` with
+  `additionalProperties: false`, matching the empty-success cohort.
+- SampleBody supplies the REQUIRED `appName` (`domain-cov-generate-domain-0120`)
+  and intentionally omits the optional `serverId`, so the success leg
+  confirms the harness propagates the body verbatim without injecting
+  unspecified fields. Strict JSON literal keeps the byte-for-byte body
+  comparison legs at `runAPICoverageSuccess` honest.
+- Failure leg: harness-default 401→CodeAuth — the spec omits 404 from
+  the response set (Dokploy tRPC convention; missing-target collapses
+  into 400 / validation), so the canonical 404→CodeNotFound override
+  is structurally inapplicable, matching API-0117/0118 in the same tag.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — new `coveredAPIOperations`
+    entry for `domain-generateDomain`.
+  - `ralph/prd.json` — flipped API-0120 `passes` from false → true.
+  - `ralph/progress.txt` — this entry.
+- Verification:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — no diff.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all 10 packages PASS.
+  - `go test -race ./...` — all 10 packages PASS.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — still not installed locally; documented missing
+    rather than silently skipped (per Codebase Patterns).
+- Remaining risks / follow-ups:
+  - None for this story. The next domain/* coverage gap in the
+    PRD-ordered priority-3 backlog is API-0121 `domain-one`, declared
+    a **GET** with a **REQUIRED query parameter** `domainId` per the
+    spec preview. The next contributor MUST re-verify the spec
+    directly against `internal/api/data/openapi.json` per the
+    forward-reference lesson and continue inside the `domain-cov-*`
+    per-tag fixture-isolation namespace.
+- Learnings for future iterations:
+  - The domain/* roster now has three distinct request-body POST
+    shapes proven in-cohort: open-shape catch-all body
+    (API-0118 `domain-create`), strict `{single-required-scalar}`
+    (API-0119 `domain-delete`), and required-plus-one-optional-scalar
+    (API-0120 `domain-generateDomain`). When wiring future domain/*
+    POSTs, copy the closest precedent verbatim and swap field names —
+    the harness's `len(tc.SampleBody) > 0` gate handles every shape
+    identically.
+  - For required-plus-optional bodies, prefer to **omit** the optional
+    field in `SampleBody` so the success leg actively proves the CLI
+    does not inject unspecified fields. Including it would still pass
+    the byte-for-byte comparison leg but would not regression-guard
+    against accidental field injection.
+  - Naming: `<tag>-cov-<slug>-<storyID>` keeps `git grep` traceable
+    and avoids collisions across stories. For multi-word
+    `operationId`s like `generateDomain`, the slug is `generate-domain`.
+---

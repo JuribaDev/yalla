@@ -6534,6 +6534,97 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0120",
+		OperationID: "domain-generateDomain",
+		Method:      http.MethodPost,
+		Path:        "/domain.generateDomain",
+		Tag:         "domain",
+		// Sixth entry in the domain/* roster, immediately following
+		// API-0115 `domain-byApplicationId`, API-0116
+		// `domain-byComposeId`, API-0117
+		// `domain-canGenerateTraefikMeDomains`, API-0118
+		// `domain-create`, and API-0119 `domain-delete`. Stays
+		// inside the `domain-cov-*` per-tag fixture-isolation
+		// namespace opened by API-0115 and **must not**
+		// back-reference any closed `admin-cov-*`, `ai-cov-*`,
+		// `app-cov-*`, `backup-cov-*`, `bb-cov-*`, `cert-cov-*`,
+		// `clu-cov-*`, `compose-cov-*`, `deployment-cov-*`,
+		// `dest-cov-*`, `docker-cov-*`, `org-cov-*`, `proj-cov-*`,
+		// `set-cov-*`, or `srv-cov-*` namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0441
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /domain.generateDomain
+		// > post`: a **POST** with **no parameters** and a
+		// **REQUIRED** request body whose schema is the
+		// required-plus-optional pair `{appName (required),
+		// serverId (optional)}`. Responses 200/400/401/403/500 —
+		// note the spec does **not** declare 404 on this operation
+		// (mirroring API-0117 `domain-canGenerateTraefikMeDomains`
+		// and API-0118 `domain-create` in the same family), so the
+		// canonical 404→CodeNotFound override is *not* available.
+		// The 200 schema is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort.
+		//
+		// **Shape positioning — required-plus-optional-pair POST
+		// with body REQUIRED.** Third request-body POST in the
+		// domain/* roster (after API-0118 `domain-create`'s
+		// open-shape catch-all body and API-0119 `domain-delete`'s
+		// strict `{single-required-scalar}` body), and the first
+		// inside this tag to use the
+		// required-plus-one-optional-scalar shape. The fixture
+		// supplies the REQUIRED `appName` and intentionally
+		// **omits** the optional `serverId` so the success leg
+		// confirms the harness propagates the body verbatim
+		// without injecting unspecified fields. The closed-shape
+		// literal copies the cross-tag mutation precedent set by
+		// every prior `appName`-keyed mutation in the
+		// `application-cov-*` cohort and stays compatible with
+		// the harness's `len(tc.SampleBody) > 0` gate at
+		// `runAPICoverageSuccess`, which activates the JSON
+		// content-type and byte-for-byte body comparison legs.
+		//
+		// **Family choice — harness-default 401 → CodeAuth failure
+		// leg.** The spec omits 404 from the response set
+		// (per Dokploy's tRPC conventions, missing-target /
+		// unknown-app collapse into 400 / validation, exactly as
+		// established for API-0117/0118 in the same tag), so the
+		// 404→CodeNotFound override is structurally inapplicable
+		// here. Per the established precedent — fleet-wide
+		// mutation endpoints surface `E_AUTH` before any
+		// persistence runs when the bearer is missing/invalid —
+		// 401→CodeAuth remains the universal failure mode every
+		// authenticated Dokploy operation must re-prove. Per the
+		// established `<tag>-cov-<slug>-<storyID>` deterministic-
+		// but-clearly-fake naming convention, the fixture token
+		// base `domain-cov-generate-domain-0120` keeps `git grep`
+		// traceable to this PRD story without colliding with
+		// API-0115 (`domain-cov-by-application-id-0115`),
+		// API-0116 (`domain-cov-by-compose-id-0116`),
+		// API-0117 (`domain-cov-can-generate-traefik-me-domains-0117`),
+		// API-0118 (`domain-cov-create-0118`), or API-0119
+		// (`domain-cov-delete-0119`).
+		//
+		// The next case in the PRD-ordered priority-3 backlog is
+		// API-0121 `domain-one` (declared a **GET** with a
+		// **REQUIRED query parameter** `domainId` per the spec
+		// preview; the next contributor must re-verify the spec
+		// against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will continue inside the `domain-cov-*` per-tag
+		// fixture-isolation namespace).
+		SampleBody: json.RawMessage(`{
+			"appName": "domain-cov-generate-domain-0120"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,
