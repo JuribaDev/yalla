@@ -18060,3 +18060,100 @@ PASS. API-0168 marked passes:true in ralph/prd.json. Total: 279/462.
     falling back to a Python-driven byte replacement that asserts a single
     occurrence is faster than iterating Edit calls.
 ---
+
+## 2026-05-08 - API-0169 - Cover mariadb-saveExternalPort (POST /mariadb.saveExternalPort)
+
+### What was implemented
+Coverage entry for `mariadb-saveExternalPort` (POST /mariadb.saveExternalPort).
+The harness automatically derives `runAPICoverageSuccess` and
+`runAPICoverageFailure` legs from the single `apiCoverageCase` literal:
+  - success leg: 200 with `{}` body, byte-for-byte body equality on the
+    POST request payload, and full `yalla.output.v1` envelope assertion.
+  - failure leg: 401 → CodeAuth (harness default), `yalla.error.v1`
+    envelope, non-zero exit code.
+
+### Files changed
+- internal/cli/api_coverage_test.go — inserted API-0169 case between
+  API-0168 (`mariadb-saveEnvironment`) and API-0188
+  (`mounts-allNamedByApplicationId`), preserving StoryID-sorted order.
+- ralph/prd.json — flipped API-0169.passes to true.
+- ralph/progress.txt — this entry.
+
+### Spec verification
+Re-verified against `internal/api/data/openapi.json` >
+`/mariadb.saveExternalPort` > `post`: method POST, tag mariadb, NO
+parameters, requestBody REQUIRED with `application/json`, body schema
+two REQUIRED top-level fields — `mariadbId` (plain `type: string`) and
+`externalPort` (`anyOf:[number,null]`, i.e. nullable number). Responses
+200/400/401/403/500. The 200 response is `{}` with
+`additionalProperties: false`, matching the empty-success cohort. NO
+404 declared on this operation.
+
+### Verification run
+- gofmt -w .                         OK
+- go mod tidy                         OK (no changes)
+- go vet ./...                        OK
+- go test ./internal/cli/ -run TestAPICoverage  ok 1.987s
+- go test ./...                       all packages OK
+- go test -race ./...                 all packages OK 2.980s
+- golangci-lint, staticcheck, govulncheck, goreleaser: not installed
+  (per baseline documented in Codebase Patterns).
+
+### Results
+All checks pass. 281/462 stories passing (60.8%). API-0169 is the tenth
+entry on the mariadb/* coverage roster.
+
+### Remaining risks or follow-ups
+None specific to this story. Next PRD priority-4 entry is API-0170
+`mariadb-search` (GET per the spec preview — the first GET on the
+mariadb/* roster since API-0164 `mariadb-one`; re-verify against
+`internal/api/data/openapi.json` before assuming any field shape).
+
+### Learnings for future iterations
+- API-0169 mariadb-saveExternalPort is the FIRST `anyOf:[number,null]`
+  slot covered across the entire coverage roster. Every previously
+  covered nullable scalar has been `anyOf:[string,null]` (e.g.
+  API-0030 `application-saveEnvironment`, API-0168
+  `mariadb-saveEnvironment`). For this new shape we populate the
+  `anyOf` branch with a real (non-null) JSON number rather than `null`,
+  mirroring the established API-0030/API-0168 precedent of populating
+  the `anyOf` branch with a realistic value to keep the wire body close
+  to a realistic call.
+- For numeric slots a pure string-suffix token (e.g.
+  `mariadb-cov-save-external-port-0169-externalPort`) is not
+  type-applicable. The convention established here for storyID
+  traceability on numeric slots: pick a value that is BOTH semantically
+  realistic (a valid TCP port in 1..65535 for a `*-saveExternalPort`
+  field) AND embeds the storyID in its low digits — `25169` carries
+  `0169` in the low digits while landing in the unprivileged port
+  range. Future `*-saveExternalPort` operations on other tags
+  (postgres/redis/mongo/mysql/etc.) should reuse the same
+  `<25xxx>`-style integer-with-embedded-storyID scheme.
+- Cardinality: API-0169 is structurally identical to API-0168 (two
+  REQUIRED scalars, one plain string + one nullable scalar, no optional
+  fields), but the second scalar's populated branch is
+  `type: number` rather than `type: string`. The raw-API path is
+  type-agnostic at the CLI level — the body is forwarded as opaque
+  bytes — so the byte-for-byte body-comparison leg in
+  `runAPICoverageSuccess` works identically for unquoted JSON numbers
+  as for JSON strings.
+- Insertion location: between API-0168 (mariadb-saveEnvironment) and
+  the next-existing entry API-0188 (mounts-allNamedByApplicationId),
+  not at file end — the `apiCoverageCases` slice is StoryID-sorted and
+  the harness relies on that ordering for deterministic test names.
+- Fixture token base `mariadb-cov-save-external-port-0169` follows the
+  established `<tag>-cov-<slug>-<storyID>-<field>` suffix convention
+  for git-grep traceability (slug derived from `saveExternalPort` →
+  `save-external-port`, matching the kebab-case style established at
+  API-0168 `mariadb-cov-save-environment-0168` for the analogous
+  `*-save<Camel>` family).
+- 401→CodeAuth harness-default failure leg retained; 404 override
+  inapplicable (spec omits 404 — body-bearing imperative-action POST
+  pattern), 400 not reserved here (payload validation is not the
+  uniquely-distinguishing failure mode).
+- Forward reference embedded for next entry: API-0170
+  `mariadb-search` (GET). This will be the first GET on the mariadb/*
+  roster since API-0164 `mariadb-one`, so the failure-leg override
+  story may need re-evaluation (404→CodeNotFound is typically
+  reactivated on by-id GETs).
+---

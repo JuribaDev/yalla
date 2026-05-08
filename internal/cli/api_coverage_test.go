@@ -9591,6 +9591,149 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0169",
+		OperationID: "mariadb-saveExternalPort",
+		Method:      http.MethodPost,
+		Path:        "/mariadb.saveExternalPort",
+		Tag:         "mariadb",
+		// Tenth entry on the mariadb/* coverage roster, immediately
+		// following API-0168 `mariadb-saveEnvironment` and completing
+		// the forward reference embedded in that entry's comment block
+		// ("The next case in the PRD-ordered priority-4 backlog is
+		// API-0169 `mariadb-saveExternalPort`"). Continues inside the
+		// `mariadb-cov-*` per-tag fixture-isolation namespace opened by
+		// API-0160 `mariadb-changeStatus` and **must not** back-reference
+		// any closed prior-tag namespace (`set-cov-*`, `srv-cov-*`,
+		// `proj-cov-*`, `org-cov-*`, `compose-cov-*`, `app-cov-*`,
+		// `ai-cov-*`, `admin-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		// `cert-cov-*`, `clu-cov-*`, `deployment-cov-*`, `dest-cov-*`,
+		// `docker-cov-*`, `domain-cov-*`, `environment-cov-*`,
+		// `gitea-cov-*`, `mounts-cov-*`, `swarm-cov-*`, `usr-cov-*`,
+		// etc.) per the per-tag isolation rule reasserted at
+		// API-0335..API-0444 and originally established at API-0246
+		// `organization-active`.
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json` > `/mariadb.saveExternalPort` >
+		// `post`: method POST, tag mariadb, **no parameters**,
+		// requestBody REQUIRED with `application/json` and **two
+		// REQUIRED top-level fields** — `mariadbId` (plain string) and
+		// `externalPort` (`anyOf:[number,null]`, i.e. nullable number).
+		// Responses 200/400/401/403/500. The 200 response is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort. **No 404** is declared on
+		// this operation, mirroring the action-on-known-id POST
+		// precedent reasserted at API-0160 `mariadb-changeStatus`,
+		// API-0162 `mariadb-deploy`, API-0163 `mariadb-move`, API-0165
+		// `mariadb-rebuild`, API-0166 `mariadb-reload`, API-0167
+		// `mariadb-remove`, and API-0168 `mariadb-saveEnvironment`
+		// (every body-bearing imperative-action mariadb POST whose
+		// missing-target failure mode collapses into 400/validation
+		// under Dokploy's tRPC convention rather than a dedicated 404
+		// leg). The 404 override therefore reverts to inapplicable
+		// here — its sole activation site for the mariadb/* roster
+		// remains API-0164 `mariadb-one`, the canonical by-id GET peer.
+		//
+		// **Request body schema (REQUIRED top-level fields):**
+		//   - REQUIRED `mariadbId` (string) — resource id scalar; the
+		//     fixture below supplies a deterministic-but-clearly-fake
+		//     `mariadb-cov-save-external-port-0169-mariadbId` literal
+		//     carrying the `<tag>-cov-<slug>-<storyID>-<field>` suffix
+		//     for `git grep` traceability.
+		//   - REQUIRED `externalPort` (`anyOf:[number,null]`) — TCP
+		//     port scalar; the fixture supplies a non-null integer
+		//     literal `25169` so the success leg exercises the
+		//     populated branch of the `anyOf` rather than relying on
+		//     `null`. The value is a valid TCP port (1..65535) with
+		//     the storyID `0169` embedded in the low digits, mirroring
+		//     the API-0168 `mariadb-saveEnvironment` precedent of
+		//     populating the `anyOf` branch with a realistic value
+		//     while still encoding the storyID for `git grep`
+		//     traceability. (A pure string-suffix token is not
+		//     applicable here because the slot's populated branch is
+		//     `type: number`, not `type: string`; this is the first
+		//     `anyOf:[number,null]` slot covered across the entire
+		//     coverage roster, so the integer-with-embedded-storyID
+		//     convention is established here as the precedent for
+		//     subsequent `*-saveExternalPort` operations on other
+		//     tags — postgres/redis/mongo/mysql/etc.)
+		//
+		// **Shape positioning — two-required-scalar POST external-
+		// port-save mutation, body REQUIRED.** The first REQUIRED slot
+		// is a plain non-nullable `type: string` (no `anyOf` /
+		// `nullable` / enum constraints), structurally identical to
+		// the `mariadbId` slot on API-0160 `mariadb-changeStatus`,
+		// API-0162 `mariadb-deploy`, API-0163 `mariadb-move`, API-0165
+		// `mariadb-rebuild`, API-0166 `mariadb-reload`, API-0167
+		// `mariadb-remove`, and API-0168 `mariadb-saveEnvironment`.
+		// The second REQUIRED slot is `anyOf:[number,null]`, a NEW
+		// shape on the coverage roster (no prior precedent — every
+		// previously covered nullable scalar has been
+		// `anyOf:[string,null]`, e.g. API-0030
+		// `application-saveEnvironment` and API-0168
+		// `mariadb-saveEnvironment`). The harness's
+		// `len(tc.SampleBody) > 0` gate at `runAPICoverageSuccess`
+		// activates the JSON content-type and byte-for-byte body
+		// comparison legs; this fixture supplies both REQUIRED fields
+		// so the success path verifies the CLI propagated the body
+		// verbatim, including the unquoted JSON number `25169` (the
+		// raw-API path is type-agnostic at the CLI level — the body
+		// is forwarded as opaque bytes).
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so the
+		// 404→CodeNotFound override is structurally inapplicable and
+		// remains pinned to API-0164 `mariadb-one` for the mariadb/*
+		// roster. 400 (validation) is omitted from the response-code
+		// override map by design at the harness level — payload
+		// validation is not the uniquely-distinguishing failure mode
+		// for an authenticated mutation, so the harness-default
+		// 401→CodeAuth failure leg remains the most representative
+		// single failure mode every authenticated Dokploy operation
+		// must re-prove, and is consistent with the 401→CodeAuth
+		// choice locked in by the mariadb/* kickoff at API-0160
+		// `mariadb-changeStatus` and continued at API-0161
+		// `mariadb-create`, API-0162 `mariadb-deploy`, API-0163
+		// `mariadb-move`, API-0165 `mariadb-rebuild`, API-0166
+		// `mariadb-reload`, API-0167 `mariadb-remove`, and API-0168
+		// `mariadb-saveEnvironment`.
+		//
+		// **Fixture token base** `mariadb-cov-save-external-port-0169`
+		// follows the established `<tag>-cov-<slug>-<storyID>`
+		// deterministic-but-clearly-fake naming convention (slug
+		// derived from `saveExternalPort` → `save-external-port` per
+		// the kebab-case style established at API-0168
+		// `mariadb-cov-save-environment-0168` for the analogous
+		// `*-save<Camel>` family) and is verified non-colliding with
+		// API-0160's `mariadb-cov-changeStatus-0160`, API-0161's
+		// `mariadb-cov-create-0161`, API-0162's `mariadb-cov-deploy-0162`,
+		// API-0163's `mariadb-cov-move-0163`, API-0164's
+		// `mariadb-cov-one-0164`, API-0165's `mariadb-cov-rebuild-0165`,
+		// API-0166's `mariadb-cov-reload-0166`, API-0167's
+		// `mariadb-cov-remove-0167`, and API-0168's
+		// `mariadb-cov-save-environment-0168` literals.
+		//
+		// The next case in the PRD-ordered priority-4 backlog is
+		// API-0170 `mariadb-search` (declared a **GET** per the spec
+		// preview — the first GET on the mariadb/* roster since
+		// API-0164 `mariadb-one`; the next contributor must re-verify
+		// the spec against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will continue inside the `mariadb-cov-*` per-tag
+		// fixture-isolation namespace opened by API-0160).
+		SampleBody: json.RawMessage(`{
+			"mariadbId": "mariadb-cov-save-external-port-0169-mariadbId",
+			"externalPort": 25169
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0188",
 		OperationID: "mounts-allNamedByApplicationId",
 		Method:      http.MethodGet,
