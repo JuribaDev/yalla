@@ -7516,3 +7516,49 @@
     sits immediately after `backup-manualBackupCompose` and before the
     `compose-*` block. Future backup/* inserts should keep that order.
 ---
+
+## 2026-05-08 - API-0044
+- **Implemented**: Coverage case for `backup-manualBackupMongo`
+  (POST `/backup.manualBackupMongo`). Added a single
+  `apiCoverageCase` entry to the shared harness in
+  `internal/cli/api_coverage_test.go`. The OpenAPI shape is byte-
+  identical to the compose / mariadb siblings (single required
+  `backupId` string, empty 200 body), so the fixture is a near-
+  verbatim mirror of API-0043 with only the slug, story id, and
+  path/operationId rewritten. The shared harness drives registry,
+  schema, manifest, success, and failure assertions automatically.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — new `coveredAPIOperations`
+    entry between API-0043 and API-0066; uses
+    `backup-cov-manual-mongo-0044` as the SampleBody slug per the
+    seeded `backup-cov-manual-<slug>-<storyID>` convention.
+  - `ralph/prd.json` — set US `API-0044.passes = true`.
+  - `ralph/progress.txt` — this entry.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages OK.
+  - `go test -race ./...` — all packages OK.
+- **Tools NOT available locally** (continuing the documented
+  policy from US-0001): `goimports`, `golangci-lint`, `staticcheck`,
+  `govulncheck`, `goreleaser`.
+- **Remaining risks / follow-ups**:
+  - Three siblings remain in the `backup-manualBackup*` family
+    (API-0045 mySql, API-0046 postgres, API-0047 webServer). They
+    share the same byte-identical schema and will land as the same
+    near-verbatim mirror.
+- **Learnings for future iterations**:
+  - The `manualBackup*` family was correctly identified by API-0042
+    as a closed six-element set sharing one schema; the comment
+    chain seeded there (and continued by API-0043) makes adding the
+    next sibling a 30-line diff with no harness changes.
+  - Verifying schema identity by stripping `operationId` and
+    comparing the rest of the path POST object is the cheapest
+    check that the family-shape assumption still holds. Confirmed
+    here: mongo == mariadb == compose (sans `operationId`).
+  - Insertion order in `coveredAPIOperations` is API-id-ascending
+    inside each tag block, so the new entry sits immediately after
+    `backup-manualBackupMariadb` and before the `compose-*` block.
+    Future backup/* inserts should keep that order.
+---
