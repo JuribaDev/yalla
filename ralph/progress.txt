@@ -9703,3 +9703,18 @@ Learnings for future iterations:
     case never requires touching the registry, manifest
     emitter, or schema emitter.
 ---
+
+## 2026-05-08 - API-0366
+- Covered Dokploy operation `settings-getLogCleanupStatus` (GET /settings.getLogCleanupStatus, tag `settings`).
+- Spec re-verified against `internal/api/data/openapi.json`: parameter-free GET, no request body, 200 returns `{}` with `additionalProperties: false`, response set 200/400/401/403/404/500 — identical wire shape to API-0363 / API-0364 / API-0365.
+- Added entry to `internal/cli/api_coverage_test.go` `coveredAPIOperations` slice (after the API-0365 `settings-getIp` case). Inherits the `set-cov-*` per-tag fixture-isolation namespace; reservation slot `set-cov-getLogCleanupStatus-0366` left open. SampleBody/Query/PathParams deliberately omitted (parameter-free GET cohort precedent: API-0006/API-0350/API-0363/API-0364/API-0365). Failure leg uses harness default 401 → CodeAuth — 404 stays reserved for canonical by-id `*-one` peer per the per-tag opener convention reasserted at API-0335..API-0365.
+- Files changed: `internal/cli/api_coverage_test.go`, `ralph/prd.json`, `ralph/progress.txt`.
+- Verification run: `gofmt -w .`, `go mod tidy`, `go vet ./...`, `go test ./...`, `go test -race ./...` — all green. `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser` not installed locally; documented as missing per the existing baseline.
+- Remaining risks / follow-ups: next case in roster is API-0367 `settings-getOpenApiDocument`. Per the forward-reference lesson, **must re-verify** against `internal/api/data/openapi.json > /settings.getOpenApiDocument > get` before assuming the parameter-free GET shape carries over — the 200 response body for an OpenAPI document is non-trivially shaped and may differ from the canonical `{}` schema.
+- **Learnings for future iterations:**
+  - The pattern for parameter-free GET settings/* operations is now stable across four consecutive entries (API-0363, API-0364, API-0365, API-0366). The diff against the prior entry is purely the StoryID, OperationID, Path, slug-named reservation, and the design-rationale comments naming the right preceding peers and the right next operation.
+  - `coveredAPIOperations` slice in `internal/cli/api_coverage_test.go` ends at line ~7963 (closing `}` followed by `// TestAPICoverage_RegistryInvariants`); insert before the closing brace.
+  - The harness's GET branch ignores `SampleBody` and asserts no `Content-Type` is sent; do not add a body field to a parameter-free GET case.
+  - Failure-leg defaults: when `tc.FailureStatus == 0` the harness uses 401, when `tc.FailureCode == ""` it expects `CodeAuth`. For parameter-free getters, leave both unset and the canonical auth-failure path fires.
+  - Always re-verify the openapi.json shape before duplicating a previous entry — the body-axis flips in API-0353..API-0362 are the canonical reminder.
+---
