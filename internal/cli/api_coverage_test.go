@@ -1027,6 +1027,29 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0036",
+		OperationID: "application-start",
+		Method:      http.MethodPost,
+		Path:        "/application.start",
+		Tag:         "application",
+		// Mirrors the schema in `data/openapi.json` for /application.start:
+		// the only required field is `applicationId` (string), with no
+		// optional siblings — `properties` is the single key. This
+		// pattern-matches the minimal-applicationId POST family already
+		// covered by API-0011 (cancelDeployment), API-0012 (cleanQueues),
+		// API-0013 (clearDeployments), API-0015 (delete), and API-0024
+		// (redeploy). Keep the fixture minimal-but-valid so a future
+		// schema validator wired into the harness still accepts it.
+		SampleBody: json.RawMessage(`{
+			"applicationId": "app-cov-start-0036"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching every prior application/* peer. Empty-object body keeps
+		// the success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

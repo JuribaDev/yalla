@@ -3525,3 +3525,60 @@
     matter (verbatim CLI propagation + numeric grammar) without
     over-specifying.
 ---
+
+## 2026-05-08 - API-0036 - Cover application-start (POST /application.start)
+- Implemented per-operation contract coverage for `application-start`
+  by appending a single `apiCoverageCase` literal (StoryID `API-0036`)
+  to `internal/cli/api_coverage_test.go`'s `coveredAPIOperations`
+  slice. The append-only harness automatically asserts all five
+  invariants: registry id/method/path/tag,
+  `yalla schema get application-start --json`, manifest inclusion,
+  httptest success round-trip with body forwarding, and a
+  representative 401 -> `E_AUTH` failure path. No production-code
+  changes required — the operation is already enumerated in
+  `internal/api/data/openapi.json`, so registry / schema / manifest
+  plumbing already accept it.
+- API-0036 is the SIXTH entry in the "minimal applicationId-only POST"
+  family, joining API-0011 (cancelDeployment), API-0012 (cleanQueues),
+  API-0013 (clearDeployments), API-0015 (delete), and API-0024
+  (redeploy). The /application.start request body declares exactly
+  one required field (`applicationId`, plain string) with NO optional
+  siblings — `properties` is the single key — matching the cleanest
+  family-member shape (cancelDeployment / cleanQueues /
+  clearDeployments / delete / redeploy). Fixture uses the same
+  `app-cov-<verb>-<storyID>` naming convention.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended the API-0036 case
+    after API-0035 (one contiguous block; no other touches).
+  - `ralph/prd.json` — flipped `passes: false` -> `passes: true` for
+    `API-0036`.
+  - `ralph/progress.txt` — this entry.
+- Verification run from repo root:
+  - `gofmt -l .` — clean.
+  - `go mod tidy` — no module changes.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass; `internal/cli` 0.911s.
+  - `go test -race ./...` — all packages pass; `internal/cli` 2.469s.
+  - `go test ./internal/cli -run 'TestAPICoverage' -count=1` — pass.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — not installed locally, intentionally skipped per
+    Codebase Patterns guidance.
+- Remaining risks or follow-ups: none for this story. The next
+  priority-2 application/* gap is API-0037 (`application-stop`),
+  another minimal-applicationId-only POST that should follow the
+  same one-line append pattern. After that, API-0038
+  (`application-update`, the full update payload) and API-0039
+  (`application-updateTraefikConfig`).
+- **Learnings for future iterations:**
+  - The minimal-applicationId-only POST family is now a six-member
+    set (API-0011/0012/0013/0015/0024/0036). New family members are
+    pure copy-paste-plus-storyID work — no fixture novelty, no
+    schema research beyond confirming `properties` is exactly
+    `{"applicationId"}` and `required` is exactly `["applicationId"]`.
+    Verify that one fact in `internal/api/data/openapi.json` and the
+    rest is mechanical.
+  - The fixture-id slug ("start" -> "app-cov-start-0036") should
+    derive from the operation verb to keep diffs scannable; this
+    mirrors the existing convention (cancel-deploy, clean-queues,
+    clear-deploys, delete, redeploy).
+---

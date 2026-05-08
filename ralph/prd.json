@@ -1967,7 +1967,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "application",
         "operationId": "application-start",
