@@ -15657,3 +15657,37 @@ Learnings for future iterations:
     `environment-cov-*` namespace will close before the next tag's
     roster begins.
 ---
+
+## 2026-05-08 - API-0128
+- Added environment-remove (POST /environment.remove) entry to the API
+  coverage harness in internal/cli/api_coverage_test.go between API-0127 and
+  API-0246, mirroring the API-0119 domain-delete single-required-scalar POST
+  template. Body fixture: {"environmentId":"environment-cov-remove-0128"}.
+- Files changed: internal/cli/api_coverage_test.go, ralph/prd.json,
+  ralph/progress.txt.
+- Verification:
+  - gofmt -w .  (clean)
+  - go mod tidy  (clean)
+  - go vet ./...  (clean)
+  - go test ./...  (all packages pass)
+  - go test -race ./...  (all packages pass)
+  - /tmp/yalla schema get environment-remove --json -> data envelope OK
+  - /tmp/yalla manifest --json -> environment-remove present in
+    operations.ids; environment tag now lists 7 ops.
+- Remaining risks / follow-ups: none for this story. Optional `description`
+  on environment-create/duplicate is still not exercised — left to a
+  future optional-field coverage story per the API-0125/0126 footnotes.
+- Learnings for future iterations:
+  - The single-required-scalar POST mutation shape now has an in-tag
+    template (`environment-remove`) for the environment/* tag; future
+    delete/remove stories in this tag should mirror its `{environmentId}`
+    body literal instead of re-deriving from cross-tag predecessors.
+  - The empty-success cohort + harness-default 401→CodeAuth failure leg
+    continues to be the right family for delete-by-id mutations whose
+    spec omits 404 (Dokploy collapses missing-target into 400/validation
+    via tRPC). API-0119, API-0250, and now API-0128 share this footnote.
+  - Dokploy's OpenAPI auto-discovers operations into `manifest.operations`
+    purely from `internal/api/data/openapi.json`; no extra registration
+    file edit is needed for raw API coverage — the harness entry alone
+    provides the success/failure contract test.
+---
