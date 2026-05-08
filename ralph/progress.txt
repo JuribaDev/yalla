@@ -8627,3 +8627,52 @@ Learnings for future iterations:
     `internal/cli/AGENTS.md` keeps update-fixture symmetry with create-fixture
     even when the update spec marks more anyOf siblings as required.
 ---
+
+## 2026-05-08 - API-0357
+- **Implemented**: Full Dokploy API coverage for settings-cleanMonitoring
+  (POST /settings.cleanMonitoring), the seventh entry on the settings/*
+  coverage roster (after API-0351..API-0356) and the second member of
+  the settings/* no-body POST sub-cohort (sharing the shape with
+  API-0354 cleanAllDeploymentQueue).
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — added the API-0357 entry between
+    API-0356 (settings-cleanDockerPrune) and the slice's closing brace.
+    Spec re-verified directly against
+    `internal/api/data/openapi.json > /settings.cleanMonitoring > post`:
+    no `requestBody` field at all, zero parameters, responses
+    200/400/401/403/500. Fixture sets only StoryID/OperationID/Method/
+    Path/Tag/SuccessResponse — neither `SampleBody`, `SampleQuery`, nor
+    `SamplePathParams` are populated. Failure leg uses the harness
+    default (401 → CodeAuth).
+  - `ralph/prd.json` — set API-0357 `passes: true`.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./... -count=1` — all packages `ok`.
+  - `go test -race ./... -count=1` — all packages `ok`.
+- **Tools NOT available locally** (unchanged): `goimports`, `golangci-lint`,
+  `staticcheck`, `govulncheck`, `goreleaser`.
+- **Remaining risks / follow-ups**: none. settings/* roster continues with
+  API-0358 cleanRedis, also a no-body POST per direct spec inspection.
+- **Learnings for future iterations**:
+  - The settings/* `clean*` family splits into two stable wire sub-cohorts:
+    optional-body (API-0353 cleanAll, API-0355 cleanDockerBuilder, API-0356
+    cleanDockerPrune) and no-body (API-0354 cleanAllDeploymentQueue,
+    API-0357 cleanMonitoring; API-0358/cleanRedis and API-0359/
+    cleanSSHPrivateKey are also no-body per spec). The verb prefix alone
+    is not authoritative — always re-verify against
+    `internal/api/data/openapi.json`.
+  - For a no-body POST whose only declared failures are 400/401/403/500,
+    the entry needs five fields plus narration: StoryID, OperationID,
+    Method, Path, Tag, plus optional SuccessResponse — leaving all body/
+    query/path-param fields zero hits the harness's no-body branch
+    (`runAPICoverageSuccess` skips Content-Type and body round-trip
+    assertions when `len(tc.SampleBody) == 0`) and the harness default
+    `tc.FailureStatus == 0` → 401, `tc.FailureCode == ""` → CodeAuth
+    delivers the canonical failure-leg mapping with no extra config.
+  - The per-tag fixture-isolation namespace (here `set-cov-*`) is
+    reserved for the slug of every entry on the roster even when no
+    fixture-token literal lands on the wire — keeps cross-story grep
+    convention working for future contributors.
+---
