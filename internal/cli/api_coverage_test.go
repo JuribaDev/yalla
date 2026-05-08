@@ -1575,6 +1575,58 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0050",
+		OperationID: "backup-update",
+		Method:      http.MethodPost,
+		Path:        "/backup.update",
+		Tag:         "backup",
+		// Eleventh backup/* coverage entry and the SECOND member of the
+		// by-id mutation cohort opened at API-0049 (backup-remove); with
+		// this commit the cohort closes and the entire backup/* roster
+		// (API-0040..API-0050) is covered. Unlike `backup-remove`, whose
+		// payload is a single REQUIRED `backupId`, `backup-update` has
+		// the **broadest required set** of any backup/* operation: the
+		// spec at `data/openapi.json > /backup.update > post` lists
+		// `schedule`, `enabled`, `prefix`, `backupId`, `destinationId`,
+		// `database`, `keepLatestCount`, `serviceName`, `metadata`, and
+		// `databaseType` as `requestBody.required` — i.e. every property
+		// except the database-flavour foreign keys (`mariadbId`,
+		// `mysqlId`, `postgresId`, `mongoId`, `userId`, `composeId`,
+		// `backupType`) that distinguished the create payload at
+		// API-0040. No path or query parameters. The fixture mirrors
+		// API-0040 (backup-create) for every shared property so the
+		// two POSTs read as a matched pair, and adds the `backupId`
+		// target so the wire payload reflects an "update <existing>"
+		// shape. Per the AGENTS.md "anyOf [string|number|boolean|object,
+		// null] → send the populated branch" rule we emit booleans for
+		// `enabled`, numbers for `keepLatestCount`, strings for
+		// `serviceName`, and an object for `metadata`. `databaseType`
+		// stays on the `postgres` enum branch picked at API-0040 so the
+		// inter-fixture invariant holds. Slug stays in the bare
+		// `backup-cov-<slug>-<storyID>` namespace re-asserted by
+		// API-0049 (backup-cov-remove-0049) → here `backup-cov-update-0050`.
+		SampleBody: json.RawMessage(`{
+			"schedule": "0 4 * * *",
+			"enabled": true,
+			"prefix": "yalla-cov-backup-update-0050/",
+			"backupId": "backup-cov-update-0050",
+			"destinationId": "dst-cov-backup-update-0050",
+			"database": "yalla-cov-backup-db-0050",
+			"keepLatestCount": 14,
+			"serviceName": "service-cov-backup-update-0050",
+			"metadata": {"yallaStoryId": "API-0050"},
+			"databaseType": "postgres"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the empty-success convention shared by every prior
+		// backup/* peer (API-0040..API-0049). Empty-object body keeps
+		// the success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection — and closes the
+		// backup/* cohort on the same SuccessResponse shape it opened
+		// with at API-0040.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0066",
 		OperationID: "compose-cancelDeployment",
 		Method:      http.MethodPost,

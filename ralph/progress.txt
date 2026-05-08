@@ -8593,3 +8593,37 @@ Learnings for future iterations:
   fixture files. The five subtests (Registry, Schema, Manifest,
   Success, Failure) get generated automatically.
 ---
+
+## 2026-05-08 - API-0050
+- **Implemented**: Full Dokploy API coverage for backup-update (POST /backup.update),
+  closing the backup/* roster (API-0040..API-0050).
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — added the API-0050 entry between API-0049
+    (backup-remove) and API-0066 (compose-cancelDeployment). Mirrors the API-0040
+    backup-create payload for shared properties, plus the required `backupId`
+    target. The fixture covers the broadest required-set in the backup/* family
+    (10 required properties: schedule, enabled, prefix, backupId, destinationId,
+    database, keepLatestCount, serviceName, metadata, databaseType).
+  - `ralph/prd.json` — set API-0050 `passes: true`.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./... -count=1` — all packages `ok`.
+  - `go test -race ./... -count=1` — all packages `ok`.
+- **Tools NOT available locally** (unchanged): `goimports`, `golangci-lint`,
+  `staticcheck`, `govulncheck`, `goreleaser`.
+- **Remaining risks / follow-ups**: none. backup/* roster is complete.
+- **Learnings for future iterations**:
+  - The shared `coveredAPIOperations` table-driven harness validates registry
+    presence, schema availability, manifest exposure, the success path with the
+    SampleBody round-tripped through httptest, and the canonical failure-leg
+    mappings — adding a new API story is exactly one entry in that slice.
+  - `backup-update`'s required-set is a strict superset of `backup-create`'s
+    plus `backupId`. When a future Dokploy `*-update` operation lacks the
+    create's flavor-FKs (mariadbId/mysqlId/etc) it is the same shape as here:
+    "every observable property except the polymorphic discriminators".
+  - The "anyOf [T, null] → send the populated branch" rule from
+    `internal/cli/AGENTS.md` keeps update-fixture symmetry with create-fixture
+    even when the update spec marks more anyOf siblings as required.
+---
