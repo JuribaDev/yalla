@@ -18138,6 +18138,130 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0444",
+		OperationID: "user-update",
+		Method:      http.MethodPost,
+		Path:        "/user.update",
+		Tag:         "user",
+		// Eighteenth entry on the user/* coverage roster, slotted in
+		// StoryID order after API-0443 `user-sendInvitation`. The
+		// `usr-cov-*` per-tag fixture-isolation namespace was
+		// established at API-0427 `user-all` and reasserted at
+		// API-0428..API-0443. Per the per-tag isolation rule
+		// originally established at API-0246 `organization-active`,
+		// every user/* fixture string carries the `usr-cov-*` prefix
+		// so coverage cases never collide with peer tag rosters
+		// (`set-cov-*`, `srv-cov-*`, `proj-cov-*`, `org-cov-*`,
+		// `compose-cov-*`, `app-cov-*`, `ai-cov-*`, `admin-cov-*`,
+		// `backup-cov-*`, `bb-cov-*`, `cert-cov-*`, `clu-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, etc.).
+		//
+		// **Spec re-verified per the API-0345..API-0443
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /user.update > post`: a
+		// **POST** with `requestBody.required = true` carrying a
+		// single `application/json` body schema and **zero declared
+		// parameters** (no query, no path, no header). Responses
+		// 200/400/401/403/500 — note the **absence of 404**,
+		// mirroring API-0428 `user-assignPermissions`, API-0442
+		// `user-remove`, and API-0443 `user-sendInvitation`. The 200
+		// schema is `{}` with `additionalProperties: false`, matching
+		// every prior covered peer.
+		//
+		// **All-OPTIONAL body shape — first such shape on the user/*
+		// roster.** The body schema is `type: object` with **`required`
+		// absent (i.e. null)** and **23 declared properties** of mixed
+		// type families: plain strings (`id`, `firstName`, `lastName`,
+		// `expirationDate`, `createdAt2`, `email`, `updatedAt`,
+		// `password`, `currentPassword`), plain booleans
+		// (`isRegistered`, `emailVerified`, `enablePaidFeatures`,
+		// `allowImpersonation`, `enableEnterpriseFeatures`), a plain
+		// number (`serversQuantity`), and seven nullable
+		// `anyOf [T, null]` shapes spanning string-or-null
+		// (`createdAt`, `image`, `banReason`, `banExpires`,
+		// `licenseKey`, `stripeCustomerId`, `stripeSubscriptionId`)
+		// and boolean-or-null (`twoFactorEnabled`, `banned`).
+		// Distinct from every prior covered user/* peer:
+		//   * API-0427/0436/0437/0438/0440 — parameter-free GETs.
+		//   * API-0429/0439/0441 — single-required-query GETs.
+		//   * API-0428 — fifteen-REQUIRED-field mixed-type body POST.
+		//   * API-0442 — single-REQUIRED-string body POST (`userId`).
+		//   * API-0443 — two-REQUIRED-string body POST.
+		// This is the first entry on the user/* roster where the body
+		// schema declares zero REQUIRED fields. The slug-prefix-is-
+		// not-shape and slug-stem-is-not-shape lessons reasserted at
+		// API-0371..API-0443 still apply — even within the user/* tag
+		// the all-optional shape here cannot inherit any axis from
+		// API-0443's two-required-string body. Cross-tag, the all-
+		// optional partial-update body shape is the conventional
+		// signature of `*-update` mutations whose REST-over-RPC entry
+		// point lets a client mutate any subset of an existing row's
+		// columns.
+		//
+		// **Body field selection (per OpenAPI schema).** With every
+		// field optional and 23 properties declared, the success-path
+		// fixture deliberately populates only a representative subset
+		// rather than enumerating all 23 axes. The four chosen fields
+		// exercise the three non-nullable type families the schema
+		// declares — string (`id`, `firstName`), boolean
+		// (`enablePaidFeatures`), number (`serversQuantity`) — so
+		// JSON serialisation, content-type negotiation, and body
+		// forwarding are exercised across heterogeneous primitive
+		// shapes without inflating the fixture surface beyond what
+		// the harness contract requires (one representative success
+		// path). The slug-on-the-wire convention reasserted at
+		// API-0351..API-0443 populates each string field with a
+		// per-field sentinel (`usr-cov-update-0444-id` for `id`,
+		// `usr-cov-update-0444-fn` for `firstName`); per-field
+		// suffixes (`-id`, `-fn`) keep the two strings independently
+		// traceable through the success-path body assertion in
+		// `runAPICoverageSuccess`. The boolean and number fields
+		// carry literal `true` and a deterministic small integer
+		// respectively — the harness's body assertion is byte-level,
+		// so the chosen literals only need to be valid JSON for the
+		// declared types.
+		SampleBody: json.RawMessage(`{
+			"id": "usr-cov-update-0444-id",
+			"firstName": "usr-cov-update-0444-fn",
+			"enablePaidFeatures": true,
+			"serversQuantity": 1
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		//
+		// **Failure-leg fields are intentionally omitted.** The spec
+		// does not declare 404 on this operation (per above), so the
+		// 404 → CodeNotFound override pattern established at API-0441
+		// `user-one` does not apply to a *mutation* whose by-id
+		// semantics the spec funnels into 400/403. Within the user/*
+		// roster the 404-override is reserved for canonical by-id
+		// retrievals (`*-one`, `*-get`); destructive/effectful
+		// mutations like `*-remove`, `*-sendInvitation`, and
+		// `*-update` fall back to the harness default 401 → CodeAuth,
+		// mirroring the API-0442 and API-0443 precedents. 400 →
+		// CodeInvalidInput is *technically* available (a payload with
+		// a type-mismatched field would fail server-side validation),
+		// but it remains reserved for stories where payload validation
+		// is the operation's *uniquely distinguishing* failure mode;
+		// an all-optional partial-update shape collapses to
+		// conventional type-checking, so auth remains the canonical
+		// representative.
+		//
+		// The next case in the PRD-ordered backlog drops to priority
+		// 3 and crosses tag boundaries to API-0114
+		// `docker-restartContainer` (declared a **POST** in the PRD).
+		// The next contributor must re-verify against
+		// `internal/api/data/openapi.json > /docker.restartContainer
+		// > post` per the forward-reference lesson before assuming
+		// any field carries over from this entry — neither tag,
+		// operation-stem, nor request-body shape is shared with this
+		// entry, so no axis inheritance applies.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

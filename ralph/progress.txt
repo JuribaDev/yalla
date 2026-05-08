@@ -14611,3 +14611,124 @@ Learnings for future iterations:
     destructive or effectful mutations whose body fields name the
     target resource.
 ---
+
+## 2026-05-08 - API-0444
+- Implemented coverage for the Dokploy API operation `user-update`
+  (POST /user.update, tag `user`).
+- Spec re-verified per the forward-reference lesson against
+  `internal/api/data/openapi.json > /user.update > post`:
+  POST, `requestBody.required = true`, **zero declared parameters**
+  (no query, no path, no header). Body schema declares **23
+  properties of mixed type families** with **`required` absent
+  (i.e. null)** — the first ALL-OPTIONAL body POST on the user/*
+  roster. Properties span plain strings (`id`, `firstName`,
+  `lastName`, `expirationDate`, `createdAt2`, `email`, `updatedAt`,
+  `password`, `currentPassword`), plain booleans (`isRegistered`,
+  `emailVerified`, `enablePaidFeatures`, `allowImpersonation`,
+  `enableEnterpriseFeatures`), a plain number (`serversQuantity`),
+  and seven nullable `anyOf [T, null]` shapes (string-or-null:
+  `createdAt`, `image`, `banReason`, `banExpires`, `licenseKey`,
+  `stripeCustomerId`, `stripeSubscriptionId`; boolean-or-null:
+  `twoFactorEnabled`, `banned`). Responses 200/400/401/403/500 —
+  note the **absence of 404**, mirroring API-0428
+  `user-assignPermissions`, API-0442 `user-remove`, and API-0443
+  `user-sendInvitation`. 200 schema is `{}` with
+  `additionalProperties: false`, matching every prior covered peer.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended the API-0444
+    entry to `coveredAPIOperations` directly after the API-0443
+    block. The entry locks the registry invariant
+    (POST /user.update, tag `user`), declares a representative
+    success-path JSON body that exercises three of the schema's
+    non-nullable type families — string (`id`, `firstName`),
+    boolean (`enablePaidFeatures`), number (`serversQuantity`) —
+    using per-field slug-on-the-wire sentinels
+    (`usr-cov-update-0444-id`, `usr-cov-update-0444-fn`) for the
+    two strings and deterministic literals for the boolean and
+    number. The body deliberately covers a representative subset
+    of the 23 declared optional axes rather than enumerating all
+    of them — the harness contract is one representative success
+    path, not exhaustive field enumeration. Inherits the harness-
+    default 401 → CodeAuth failure leg (the spec does not declare
+    404 on this mutation, mirroring the API-0442/0443 precedent
+    for destructive/effectful user/* POSTs).
+  - `ralph/prd.json` — set `API-0444.passes = true`.
+  - `ralph/progress.txt` — this entry.
+- Verification run from repo root:
+  - `gofmt -w .`                 OK
+  - `goimports -w .`             NOT INSTALLED (skipped, documented)
+  - `go mod tidy`                OK (no changes)
+  - `go vet ./...`               OK
+  - `go test ./...`              OK (all packages pass)
+  - `go test -race ./...`        OK (all packages pass)
+  - `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`:
+    NOT INSTALLED locally; documented as such per established practice.
+- Remaining risks / follow-ups:
+  - The user/* tag's priority-2 backlog is now fully covered through
+    API-0444. The next PRD-ordered entry drops to **priority 3** and
+    crosses tag boundaries to API-0114 `docker-restartContainer`
+    (POST /docker.restartContainer). Per the forward-reference lesson
+    the next contributor must re-verify against
+    `internal/api/data/openapi.json > /docker.restartContainer > post`
+    before assuming any axis carries over from this entry — neither
+    tag, operation-stem, nor request-body shape is shared, so no axis
+    inheritance applies. Most candidate docker/* POSTs are container-
+    keyed mutations that typically declare a small body referencing a
+    specific container by id; that prediction is a hypothesis, not a
+    contract, and must be confirmed at re-verification.
+  - The user/* roster's 404-override slot was last consumed at
+    API-0441 `user-one` and is now formally closed for this tag
+    (every remaining user/* operation in priority-2 was a mutation
+    whose spec does not declare 404). The 404 → CodeNotFound
+    representative slot for the user/* tag is locked in at the
+    canonical by-id retrieval (`*-one`), as predicted.
+- **Learnings for future iterations:**
+  - **All-optional body POST shape — first such on user/* roster.**
+    The user/* roster's eighteenth entry introduces a body shape
+    distinct from every prior covered peer: zero REQUIRED fields,
+    23 declared OPTIONAL properties, including seven nullable
+    `anyOf [T, null]` shapes. This is the conventional signature
+    of `*-update` mutations whose REST-over-RPC surface lets a
+    client mutate any subset of an existing row's columns. The
+    design implication: the success-path fixture should populate
+    a *representative subset* (one or two strings, one boolean,
+    one number) rather than attempt exhaustive field enumeration.
+    The harness contract is one representative success path; field
+    enumeration belongs to a hypothetical schema-validator-driven
+    fuzz suite, not the per-story contract test.
+  - **`required: null` vs. `required: []` are equivalent at the
+    spec level.** The `/user.update > post` body schema omits the
+    `required` key entirely; `jq` returns `null`. Both shapes mean
+    "all fields optional" and the harness's body-byte assertion
+    treats them identically — no `required` field needs to appear
+    in the SampleBody at all.
+  - **Nullable `anyOf [T, null]` shapes ≠ T-or-omitted.** The seven
+    nullable fields in the body schema declare an explicit
+    `null`-or-T union. Omitting the field entirely (the conventional
+    interpretation of "optional") is *also* valid because the field
+    is not in `required`, so the success-path fixture sidesteps the
+    union shape by simply not populating those fields. Future
+    coverage where a nullable field is the operation's
+    *uniquely distinguishing* axis must populate the field with an
+    explicit JSON `null` to exercise the union — but a generic
+    success path has no obligation to do so.
+  - **Forward-reference predictions are hypotheses, not contracts
+    — reasserted.** API-0443's design header predicted that
+    API-0444's `*-update` shape would be a "many-field partial-
+    update body shape distinct from this two-string body's
+    signature". The re-verification here *confirmed* that
+    prediction — but the confirmation was independent of the
+    forward-reference; the shape was rederived from
+    `/user.update > post` directly, not inherited from API-0443's
+    hypothesis. The slug-prefix-is-not-shape lesson stands: every
+    new entry must re-verify against the OpenAPI document.
+  - **Priority-2 backlog closing — tag-boundary transition ahead.**
+    API-0444 closes out the user/* tag's priority-2 contributions.
+    The next PRD-ordered story (API-0114 `docker-restartContainer`)
+    is priority 3 and on a different tag. Cross-tag transitions
+    re-set every axis hypothesis: the docker/* fixture-isolation
+    namespace was established at earlier docker/* entries
+    (priority-3 cases reaching back to API-0001), and any
+    docker/*-specific conventions (slug prefix, harness fixture
+    patterns) belong to that tag, not to user/*.
+---
