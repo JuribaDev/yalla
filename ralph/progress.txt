@@ -4636,3 +4636,54 @@
     entity referenced by FK" — here `compose-cov-move-0083` for the
     compose FK and `env-cov-move-0083` for the environment FK.
 ---
+
+## 2026-05-08 - API-0084
+- Implemented coverage for compose-one (GET /compose.one) by appending a new
+  `apiCoverageCase` entry to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go`. Sixth GET-shaped entry in the
+  compose/* roster after API-0075/0076/0077/0081/0082, and the third member
+  of the single-required-composeId-query GET sub-shape (API-0075/0076/0084).
+- Files changed:
+  - internal/cli/api_coverage_test.go (+30 lines, single appended
+    apiCoverageCase literal sorted after API-0083)
+  - ralph/prd.json (passes: false -> true for API-0084)
+  - ralph/progress.txt (this entry)
+- Implementation: per `data/openapi.json > /compose.one > get` the request
+  surface is no body and a single REQUIRED query parameter `composeId`
+  (string). 200 response is `{}` with `additionalProperties: false`,
+  matching the empty-success convention. Structurally identical to API-0075
+  (compose-getConvertedCompose) and API-0076 (compose-getDefaultCommand);
+  the entry is a near-verbatim copy with the slug rotated to
+  `compose-cov-one-0084`. Distinct from API-0077 (single OPTIONAL query),
+  API-0081 (two REQUIRED queries), and API-0082 (one REQUIRED + one
+  OPTIONAL enum). Shared harness derives all five contract assertions
+  (registry / schema get / manifest inclusion / httptest success / 401
+  -> E_AUTH failure) from the entry alone — no production-code change
+  required.
+- Verification (from /Users/juribadev/projects/poc/yalla-claude):
+  - gofmt -w .   (clean; gofmt -l . reports no diff)
+  - go mod tidy  (no module changes)
+  - go vet ./... (clean)
+  - go test ./... (all 9 packages PASS, including internal/cli with the
+    5 new TestAPICoverage_* subtests for API-0084)
+  - go test -race ./... (PASS — internal/cli 2.490s)
+  - goimports / golangci-lint / staticcheck / govulncheck / goreleaser:
+    not installed locally; documented in the existing baseline note.
+- Remaining risks / follow-ups: none specific to this story. 392 user
+  stories remain with passes=false out of 462. Next priority-2 compose/*
+  candidate is API-0085 (compose-processTemplate, POST) per
+  `(priority, id)` sort order.
+- **Learnings for future iterations:**
+  - The compose/* GET roster's single-required-composeId-query sub-shape
+    is now three entries deep (API-0075/0076/0084). Future compose/* GET
+    stories whose spec resolves to "no body, one required `composeId`
+    query, 200 == `{}`" should pattern-match against this trio rather
+    than re-derive from the spec — the only per-story diff is the
+    slug suffix.
+  - The compose/* GET sub-shape taxonomy is now stable enough to be
+    captured in one place: single REQUIRED composeId query
+    (API-0075/0076/0084), single OPTIONAL query (API-0077), two REQUIRED
+    queries (API-0081), and required+optional-enum (API-0082). When a
+    new compose/* GET story lands, classify it against this taxonomy
+    first; only spec-novel shapes need new commentary in the entry.
+---

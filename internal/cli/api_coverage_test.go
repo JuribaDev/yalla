@@ -1726,6 +1726,39 @@ var coveredAPIOperations = []apiCoverageCase{
 		// payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0084",
+		OperationID: "compose-one",
+		Method:      http.MethodGet,
+		Path:        "/compose.one",
+		Tag:         "compose",
+		// Sixth GET-shaped entry in the compose/* coverage roster after
+		// API-0075 (getConvertedCompose), API-0076 (getDefaultCommand),
+		// API-0077 (getTags), API-0081 (loadMountsByService), and API-0082
+		// (loadServices). The spec at `data/openapi.json > /compose.one >
+		// get` declares no request body and a SINGLE REQUIRED query
+		// parameter `composeId` (string) — structurally identical to
+		// API-0075 (compose-getConvertedCompose) and API-0076
+		// (compose-getDefaultCommand). Distinct from API-0077 which carries
+		// a single OPTIONAL query, from API-0081 which carries two
+		// REQUIRED queries, and from API-0082 which mixes one REQUIRED
+		// with one OPTIONAL enum query. We mirror the API-0075/0076
+		// fixture verbatim, only swapping the slug to keep the
+		// `compose-cov-<slug>-<storyID>` convention every prior compose/*
+		// case has used. The harness forwards SampleQuery via the
+		// `--input` JSON `query` field, and `runAPICoverageSuccess`
+		// re-reads `r.URL.Query()` to confirm the CLI propagated the
+		// param verbatim.
+		SampleQuery: map[string][]string{
+			"composeId": {"compose-cov-one-0084"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the empty-success convention shared by every prior
+		// compose/* peer. Empty-object body keeps the success-leg envelope
+		// assertion focused on `data.method` / `data.status` rather than
+		// payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
