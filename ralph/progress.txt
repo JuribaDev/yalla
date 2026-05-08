@@ -20295,3 +20295,51 @@ forward-reference lesson before assuming any field shape.
     out-of-order insertion would break the slice invariant that surrounds
     every coverage case.
 ---
+
+## 2026-05-09 - API-0196
+- Added apiCoverageCase block for `mysql-deploy` (POST /mysql.deploy) at the
+  StoryID-sorted insertion site between API-0195 `mysql-create` and
+  API-0246 `organization-active` in `internal/cli/api_coverage_test.go`.
+- Body shape mirrors API-0162 `mariadb-deploy` and API-0176 `mongo-deploy`
+  byte-for-byte modulo the resource-id field name: a single REQUIRED
+  non-nullable string scalar `mysqlId`. No optional fields exist on the
+  spec, so the API-0131 `gitea-create` minimal-required-only fixture rule
+  is trivially satisfied.
+- Spec re-verified against `internal/api/data/openapi.json` >
+  `/mysql.deploy` > `post`: method POST, tag mysql, no parameters,
+  requestBody REQUIRED with `application/json`, responses
+  200/400/401/403/500. The 200 response is `{}` with `additionalProperties:
+  false`. **No 404** is declared, so the 404→CodeNotFound override is
+  structurally inapplicable; harness-default 401→CodeAuth failure leg
+  retained, consistent with API-0194 / API-0195.
+- Fixture token base `mysql-cov-deploy-0196` follows the established
+  `<tag>-cov-<slug>-<storyID>` deterministic-but-clearly-fake convention
+  and is verified non-colliding with API-0194 (`mysql-cov-changeStatus-0194`)
+  and API-0195 (`mysql-cov-create-0195`) literals.
+- Files changed: `internal/cli/api_coverage_test.go`, `ralph/prd.json`
+  (passes: false → true), `ralph/progress.txt`.
+- Verification: `gofmt -w .`, `go mod tidy`, `go vet ./...`,
+  `go test ./...`, `go test -race ./...` — all green. Optional tools
+  (`goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+  `goreleaser`) remain not installed locally per the standing baseline.
+- Remaining risks / follow-ups: forward reference to API-0197
+  `mysql-move` (declared POST per spec preview) embedded in the
+  trailing comment block; the next contributor must re-verify the spec
+  against `internal/api/data/openapi.json` per the forward-reference
+  lesson before assuming any field shape.
+- **Learnings for future iterations:**
+  - The `*-deploy` family (mariadb / mongo / mysql) is structurally
+    identical: a single REQUIRED string scalar resource-id field, empty
+    `{}` 200 response with `additionalProperties: false`, and 404 absent
+    from the response set. New `*-deploy` cases should mirror the
+    sibling-tag template comment-for-comment, only swapping the
+    resource-id field name and fixture-token prefix.
+  - The `mysql-cov-*` per-tag fixture-isolation namespace was opened by
+    API-0194 and continues to be the only valid prefix for mysql/*
+    fixtures. Do not back-reference any closed prior-tag namespace.
+  - Action-on-known-id POSTs (deploy, changeStatus, etc.) collapse
+    missing-target errors into 400/validation under Dokploy's tRPC
+    convention rather than 404, so 404→CodeNotFound coverage has no
+    canonical home and the harness-default 401→CodeAuth failure leg
+    remains the most representative single failure mode.
+---
