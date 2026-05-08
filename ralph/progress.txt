@@ -18680,3 +18680,76 @@ forward-reference lesson before assuming any field shape.
     between API-0138 and API-0160) into the right slot rather than
     appending at the end.
 ---
+
+## 2026-05-08 - API-0177 mongo-move
+- Fourth entry on the priority-4 mongo/* coverage roster: appended an
+  apiCoverageCase for `mongo-move` (POST /mongo.move) to
+  `internal/cli/api_coverage_test.go`, immediately after API-0176
+  `mongo-deploy` and before API-0188 `mounts-allNamedByApplicationId`.
+  Continues inside the `mongo-cov-*` per-tag fixture-isolation
+  namespace opened at API-0174 `mongo-changeStatus`.
+- Spec re-verified per the API-0345..API-0444 forward-reference lesson
+  against `internal/api/data/openapi.json` > `/mongo.move` > `post`:
+  tag mongo, **no parameters**, requestBody REQUIRED with
+  `application/json` and **two REQUIRED top-level scalars** `mongoId`
+  (string) and `targetEnvironmentId` (string). Responses
+  200/400/401/403/500 (no 404 — action-on-known-id POST collapses
+  missing-target into 400 under Dokploy's tRPC convention, matching
+  API-0162 `mariadb-deploy`, API-0174 `mongo-changeStatus`, and
+  API-0176 `mongo-deploy`). Both REQUIRED slots are plain
+  non-nullable `type: string` (no `anyOf`/`nullable`/enum).
+- Shape positioning: **two-required-string-scalar POST imperative-
+  action mutation, body REQUIRED.** Cardinality-identical to API-0174
+  `mongo-changeStatus` but the second slot is a free-form id rather
+  than the enum-shaped `applicationStatus`, so this is the canonical
+  *resource-relocation* shape rather than the *status-mutation* shape.
+  Narrower than the four-required-scalar API-0175 `mongo-create` and
+  wider than the lone-required-scalar API-0176 `mongo-deploy`.
+- Failure leg: harness-default 401→CodeAuth retained per the mongo/*
+  namespace convention locked in by API-0174 `mongo-changeStatus` and
+  continued at API-0175 / API-0176. The 404 override is structurally
+  inapplicable; 400 is reserved for stories where payload validation
+  is the *uniquely distinguishing* failure mode.
+- Fixture token base `mongo-cov-move-0177` follows the
+  `<tag>-cov-<slug>-<storyID>` deterministic-but-clearly-fake naming
+  convention. Verified non-colliding against API-0174's
+  `mongo-cov-changeStatus-0174`, API-0175's `mongo-cov-create-0175`,
+  and API-0176's `mongo-cov-deploy-0176` literals.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (insert API-0177 case between
+    API-0176 mongo-deploy and API-0188 mounts-allNamedByApplicationId).
+  - `ralph/prd.json` (mark API-0177 passes=true).
+  - `ralph/progress.txt` (this entry).
+- Verification run: `gofmt -w .`, `go mod tidy`, `go vet ./...`,
+  `go test ./...`, `go test -race ./...` — all green.
+  `TestAPICoverage_RegistryInvariants/API-0177/mongo-move`,
+  `TestAPICoverage_SchemaCommandWorks/API-0177/mongo-move`,
+  `TestAPICoverage_ManifestListsOperation/API-0177/mongo-move`,
+  `TestAPICoverage_SuccessRoundTrip/API-0177/mongo-move`, and
+  `TestAPICoverage_RepresentativeFailure/API-0177/mongo-move` all PASS.
+  Optional tooling not installed locally: goimports, golangci-lint,
+  staticcheck, govulncheck, goreleaser.
+- Results: 291/462 stories passing (63.0%).
+- Remaining risks / follow-ups: none specific to this story. The next
+  priority-4 mongo case in PRD order is API-0178 `mongo-one` (GET
+  per spec preview). The next contributor must re-verify the spec at
+  `internal/api/data/openapi.json` per the forward-reference lesson
+  before assuming any field shape, and should continue inside the
+  `mongo-cov-*` per-tag fixture-isolation namespace opened at
+  API-0174.
+- **Learnings for future iterations:**
+  - The two-required-string-scalar POST shape now has TWO subfamilies
+    inside a single tag: *status-mutation* (slot two is an enum-bound
+    string, e.g. `applicationStatus` at API-0174) and
+    *resource-relocation* (slot two is a free-form target id, e.g.
+    `targetEnvironmentId` at API-0177). Both share fixture cardinality
+    but the structural narrative differs — call it out in the comment
+    block so future contributors classifying their case have an
+    explicit precedent rather than collapsing them into one family.
+  - For `*-move` operations specifically, the second REQUIRED scalar
+    is consistently `targetEnvironmentId` (Dokploy's environment-
+    scoped resource model). Future `*-move` entries (e.g.
+    application-move, mariadb-move, redis-move if present) can
+    mirror this fixture verbatim with the resource-id field name
+    swapped.
+---
