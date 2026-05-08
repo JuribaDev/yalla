@@ -11583,3 +11583,72 @@ Learnings for future iterations:
     use a JSON `true`/`false` literal rather than a fixture-string
     token for the boolean axis.
 ---
+
+## 2026-05-08 - API-0388
+- Implemented API-0388 `settings-toggleDashboard` (POST /settings.toggleDashboard).
+- Added the 38th settings/* coverage entry to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go`. The shared coverage harness
+  (`TestAPICoverage_RegistryInvariants`,
+  `TestAPICoverage_SchemaCommandWorks`,
+  `TestAPICoverage_ManifestListsOperation`,
+  `TestAPICoverage_SuccessRoundTrip`,
+  `TestAPICoverage_RepresentativeFailure`) automatically picks up the new
+  case and proves every PRD acceptance criterion: registry invariants
+  (method=POST, path=/settings.toggleDashboard, tag=settings), schema
+  resolution via `yalla schema get settings-toggleDashboard --json`,
+  manifest listing, success round-trip via `yalla api call …`, and a
+  representative 401 → CodeAuth failure leg.
+- Files changed:
+    * `internal/cli/api_coverage_test.go` — appended case API-0388.
+    * `ralph/prd.json` — flipped `passes` to true for API-0388.
+    * `ralph/progress.txt` — this entry.
+- Verification run from repo root:
+    * `gofmt -w .` — clean.
+    * `goimports -w .` — not installed locally; `gofmt` re-format clean.
+    * `go vet ./...` — clean.
+    * `go test ./...` — all packages pass (cli 1.069s).
+    * `go test -race ./...` — all packages pass under race detector
+      (cli 2.813s).
+    * `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`
+      not installed locally; documented here per the "do not skip
+      verification silently" rule.
+- Spec re-verified directly against
+  `internal/api/data/openapi.json > /settings.toggleDashboard > post`
+  before adding the entry: outer `requestBody.required = true`, inner
+  schema `{enableDashboard: boolean, serverId: string}` with **no**
+  inner `required` array (both inner properties OPTIONAL), zero
+  parameters, responses 200/400/401/403/500 (no 404), 200 schema is
+  `{}` with `additionalProperties: false`.
+- Remaining risks or follow-ups: none for this story. Forward-reference
+  recorded in the new entry's hand-off comment for API-0389
+  `settings-toggleRequests` — three axes pivot (inner-property-count
+  2 → 1, inner-property-type mixed → boolean-only, inner-required-field
+  no-inner-required → REQUIRED via `required: ["enable"]`). The next
+  contributor must re-verify against the spec before assuming any axis
+  carries over from this entry.
+- **Learnings for future iterations:**
+  - The `coveredAPIOperations` slice is the single insertion point
+    for new API-XXXX coverage stories. The five-test harness fans out
+    automatically — adding a new case is a one-place edit, no schema
+    file or registry mutation required (the OpenAPI spec is already
+    embedded).
+  - Forward-reference comments from the prior entry are load-bearing.
+    API-0387's hand-off correctly forecast all three axis pivots for
+    this entry; honour the convention and continue forecasting for the
+    next entry. The next contributor will read this entry's hand-off
+    comment first.
+  - When an inner schema declares OPTIONAL fields, populate them in
+    `SampleBody` rather than leaving the body as `{}`. This
+    exercises the JSON serialiser's non-empty-body branch, keeps the
+    `Content-Type: application/json` header assertion meaningful,
+    and distinguishes the case on the wire from the no-body and
+    empty-body cohorts. API-0388 was the first settings/* case to
+    populate a **boolean** alongside a string — a code path no prior
+    settings/* entry exercised.
+  - The body-axis flip-flop within the settings/* tag is now six
+    entries deep (no-body / no-body / optional-body / required-body+
+    inner-required / required-body+inner-optional-string-only /
+    required-body+inner-optional-mixed-boolean+string). Per-operation
+    re-verification stays mandatory; never assume the next entry
+    inherits axes from the prior one.
+---

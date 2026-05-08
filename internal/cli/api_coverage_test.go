@@ -12119,6 +12119,172 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0388",
+		OperationID: "settings-toggleDashboard",
+		Method:      http.MethodPost,
+		Path:        "/settings.toggleDashboard",
+		Tag:         "settings",
+		// Thirty-eighth entry on the settings/* coverage roster,
+		// inheriting the `set-cov-*` per-tag fixture-isolation
+		// namespace established by API-0351
+		// `settings-assignDomainServer` and extended through
+		// API-0387 `settings-setupGPU` (must not back-reference the
+		// closed `srv-cov-*`, `proj-cov-*`, `org-cov-*`,
+		// `compose-cov-*`, `app-cov-*`, `ai-cov-*`, or any other
+		// prior tag's namespace, per the per-tag isolation rule
+		// reasserted at API-0335..API-0387 and originally
+		// established at API-0246 `organization-active`).
+		//
+		// **Spec re-verified per the API-0345..API-0387
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /settings.toggleDashboard
+		// > post`: a **POST** with a **REQUIRED** `requestBody`
+		// (`requestBody.required = true`) carrying a JSON object
+		// with two **OPTIONAL** properties — `enableDashboard`
+		// (**boolean**) and `serverId` (**string**) — both declared
+		// in the inner schema's `properties` map but **absent** from
+		// any `required` array (the inner schema has no `required`
+		// key at all). **Zero parameters** (no query, no path, no
+		// header). Responses 200/400/401/403/500 — note the
+		// **absence of 404**, matching the canonical settings/*
+		// mutating-POST cohort and diverging from the by-id-flavoured
+		// 404-bearing response sets. The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the settings/* roster.
+		//
+		// **Forward-reference confirmation — three axes pivot from
+		// API-0387.** API-0387 `setupGPU`'s hand-off comment
+		// correctly forecast that this entry would (a) pivot the
+		// inner-property-count axis from one to two, (b) pivot the
+		// inner-property-type axis from string-only to mixed
+		// boolean+string, (c) pivot the slug-prefix axis from
+		// `setup*` to `toggle*`, while sharing the outer-body axis
+		// (REQUIRED) and the inner-required-field axis (no
+		// inner-required). Direct inspection of the spec confirms
+		// the prediction: the outer `requestBody.required` is
+		// `true`, the inner schema has `properties.enableDashboard
+		// : boolean` and `properties.serverId: string` with no
+		// inner `required` array. The body-axis flip-flop across
+		// API-0383..API-0388 is now six entries deep within the
+		// same tag (no-body / no-body / optional-body /
+		// required-body+inner-required / required-body+inner-
+		// optional-string-only / required-body+inner-optional-
+		// mixed-boolean+string); per-operation re-verification stays
+		// mandatory across every family transition.
+		//
+		// **Family opener — first `toggle*` slug-prefix peer in
+		// settings/*.** API-0387 closed the `setup*` slug-prefix
+		// sub-roster (only one peer in the PRD); this entry opens
+		// the `toggle*` slug-prefix sub-roster within the
+		// settings/* tag. API-0388 preserves the verb axis (POST),
+		// the parameter axis (zero parameters), the outer-body
+		// axis (REQUIRED), the inner-required-field axis (no
+		// inner-required), and the response-set axis
+		// (200/400/401/403/500, no 404) shared with API-0387, but
+		// pivots the slug-prefix axis (`setup*` → `toggle*`), the
+		// inner-property-count axis (1 → 2), and the
+		// inner-property-type axis (string-only → mixed
+		// boolean+string). Per the slug-prefix-is-not-shape rule
+		// reasserted at API-0371..API-0387, future settings/* peers
+		// in different slug families must re-verify per-operation
+		// rather than inherit any axis from this entry.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `set-cov-toggleDashboard-0388` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared
+		//     across every per-tag roster and is unique (verified
+		//     against API-0351..API-0387's `set-cov-*` slugs and
+		//     orthogonal to every prior tag's `srv-cov-*`,
+		//     `proj-cov-*`, `org-cov-*`, `compose-cov-*`,
+		//     `app-cov-*`, `ai-cov-*`, etc. namespaces).
+		//   * `enableDashboard` carries the literal boolean `true`
+		//     so the success-leg JSON serialiser exercises the
+		//     boolean branch (rather than a string-only branch as
+		//     in API-0386/API-0387). Either boolean would be
+		//     structurally valid; `true` is chosen to mirror the
+		//     operation's plain-language semantics (the verb is
+		//     "toggle on") and to keep this fixture distinguishable
+		//     on the wire from a default zero-valued false.
+		//   * `serverId` carries the fixture-shaped literal
+		//     `set-cov-toggleDashboard-0388` rather than a real UUID
+		//     so the wire payload is uniquely identifiable in test
+		//     output and cannot collide with any production server
+		//     identifier. The schema constrains the field to
+		//     `type: string` only (no `format` or `pattern`), so a
+		//     simple fixture token is structurally valid.
+		//   * **Populating both optional fields** even though both
+		//     are OPTIONAL in the inner schema follows the
+		//     API-0353 `settings-cleanAll`, API-0385
+		//     `settings-reloadTraefik`, and API-0387
+		//     `settings-setupGPU` precedent for populating optional
+		//     axes on settings/* operations. Populating both (a)
+		//     exercises the JSON serialiser's mixed-type-property
+		//     branch (boolean alongside string — a code path no
+		//     prior settings/* entry exercises), (b) keeps the
+		//     `Content-Type: application/json` header assertion
+		//     meaningful, and (c) distinguishes this case on the
+		//     wire from the no-body POST cohort
+		//     (API-0383/API-0384), the optional-body POST cohort
+		//     (API-0385), and the single-string-property cohorts
+		//     (API-0386/API-0387). Leaving the body as `{}` would
+		//     degrade this case to a degenerate empty-payload
+		//     round-trip and lose both the boolean-property and
+		//     mixed-type-property assertions.
+		//
+		// **Failure-leg fields are intentionally omitted.** The
+		// spec does not declare 404 on this operation (the
+		// `toggleDashboard` verb mutates a controller-wide feature
+		// flag rather than performing a by-id resource lookup),
+		// so the per-tag opener convention reasserted at
+		// API-0335..API-0387 that reserves 404 → CodeNotFound for
+		// canonical `*-one` peers does not apply here. Auth is the
+		// universal failure mode every Dokploy operation must
+		// re-prove, so 401 → CodeAuth via the harness default
+		// (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""` →
+		// CodeAuth) stays the most informative representative.
+		// 400 → CodeInvalidInput stays reserved for stories where
+		// payload validation is the operation's distinguishing
+		// failure mode; the inner schema here declares zero
+		// required fields, so the validator surface is degenerate
+		// (the empty-object `{}` payload would itself be a
+		// structurally valid request) — too narrow to make 400 the
+		// canonical failure representative.
+		//
+		// The next case in the settings/* roster per PRD ordering
+		// is API-0389 `settings-toggleRequests` (declared a **POST**
+		// in the PRD with `requestBody.required = true` and a
+		// **single REQUIRED** inner property `enable`
+		// (**boolean**) — the inner schema has a `required: ["enable"]`
+		// array, pivoting the inner-required-field axis back to
+		// REQUIRED). The next contributor must re-verify against
+		// `internal/api/data/openapi.json > /settings.toggleRequests
+		// > post` per the forward-reference lesson before assuming
+		// any field is identical to this entry — the inner-property-
+		// count axis pivots from two (this entry) back to one
+		// (API-0389), the inner-property-type axis pivots from
+		// mixed boolean+string (this entry) to boolean-only
+		// (API-0389), and the inner-required-field axis pivots
+		// from no-inner-required (this entry) to REQUIRED
+		// (API-0389). The slug-prefix axis (`toggle*`), the verb
+		// axis (POST), the outer-body axis (REQUIRED), the
+		// parameter axis (zero parameters), and the response-set
+		// axis (200/400/401/403/500, no 404) are shared, but per
+		// the slug-prefix-is-not-shape lesson reasserted at
+		// API-0371..API-0387, do not assume any axis carries over
+		// from this entry.
+		SampleBody: json.RawMessage(`{
+			"enableDashboard": true,
+			"serverId": "set-cov-toggleDashboard-0388"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
