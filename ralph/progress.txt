@@ -5308,3 +5308,37 @@
   - Kept the `deployment-cov-<slug>-<storyID>` slug convention
     established in API-0094 (`deployment-cov-allbycompose-0095`).
 ---
+
+## 2026-05-08 - API-0096 (deployment-allByServer)
+- Added coverage-test entry for `deployment-allByServer` (GET /deployment.allByServer, tag=deployment) to `internal/cli/api_coverage_test.go` `coveredAPIOperations` slice.
+- Single required query parameter `serverId`; SampleQuery uses slug `deployment-cov-allbyserver-0096` continuing the deployment/* slug grammar opened by API-0094.
+- Spec 200 is `{}` with `additionalProperties: false` — matches the empty-success precedent of API-0033/0094/0095, so SuccessResponse stays `{}`.
+- Files changed:
+  - internal/cli/api_coverage_test.go (new entry, comment block)
+  - ralph/prd.json (passes=true for API-0096)
+- Verification:
+  - gofmt -w . → clean
+  - go mod tidy → clean
+  - go vet ./... → clean
+  - go test ./... → all packages OK
+  - go test -race ./... → all packages OK
+  - goimports / golangci-lint / staticcheck / govulncheck / goreleaser → not installed locally (already documented under prior stories)
+- Results: PASS. Auto-discovered by the four `TestAPICoverage_*` harness loops:
+  RegistryInvariants, SchemaCommandWorks, ManifestListsOperation, RawApiCallSuccessAndFailure.
+- Remaining risks / follow-ups: none — twin of API-0094/0095, no new pattern.
+- **Learnings for future iterations:**
+  - The deployment/* GET-with-required-id-query family (API-0094 `*-all`,
+    API-0095 `*-allByCompose`, API-0096 `*-allByServer`) is now a stable
+    three-member precedent. The next pending peer API-0097 (`*-allByType`)
+    will also fit this template — only the discriminator field name changes
+    (`type` instead of `serverId`) — so future iterations can copy this
+    block verbatim and only rotate the query field name + slug suffix.
+  - Adding a coverage entry is a pure-test change: the OpenAPI registry is
+    spec-driven (loaded from `data/openapi.json` via `internal/api.Default()`),
+    so no production code touches the registry. The four harness loops in
+    `api_coverage_test.go` (`RegistryInvariants`, `SchemaCommandWorks`,
+    `ManifestListsOperation`, and the success/failure round-trip) auto-cover
+    every entry, which means adding a new operation is one struct literal +
+    PRD flip + progress note. Keep that minimalism — do not add per-story
+    bespoke tests when the harness already covers the contract.
+---

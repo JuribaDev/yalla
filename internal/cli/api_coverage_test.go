@@ -2325,6 +2325,40 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0096",
+		OperationID: "deployment-allByServer",
+		Method:      http.MethodGet,
+		Path:        "/deployment.allByServer",
+		Tag:         "deployment",
+		// Third deployment/* roster member and a byte-for-byte twin of
+		// the API-0094 (`deployment-all`) / API-0095
+		// (`deployment-allByCompose`) precedents: no request body, a
+		// SINGLE REQUIRED query parameter, and an empty-object 200. The
+		// only delta versus API-0094/0095 is the discriminator field
+		// name — `serverId` here, mirroring the server-scoped lookup
+		// grammar shared with future deployment/* peers (see API-0097
+		// `*-allByType` and API-0098 `*-allCentralized` for the
+		// remaining shape variants in this sub-family). Spec source:
+		// `data/openapi.json > /deployment.allByServer > get` declares
+		// `parameters[0]` as `{ in: "query", name: "serverId",
+		// required: true, schema: { type: "string" } }`. SampleQuery
+		// drives the same end-to-end query-propagation assertion the
+		// harness exercises via `runAPICoverageSuccess` (`r.URL.Query()`
+		// re-read inside the httptest handler). Slug continues the
+		// `deployment-cov-<slug>-<storyID>` convention opened by
+		// API-0094 so cross-story greps stay cohesive.
+		SampleQuery: map[string][]string{
+			"serverId": {"deployment-cov-allbyserver-0096"},
+		},
+		// 200 response in the spec is `{}` with
+		// `additionalProperties: false`, identical to API-0094/0095 and
+		// the cross-tag GET-list precedent API-0033
+		// (application-readTraefikConfig). Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
