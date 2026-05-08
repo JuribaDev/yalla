@@ -19941,3 +19941,96 @@ forward-reference lesson before assuming any field shape.
     correctly. `buildCoverageInputArgs` returns `nil` and the harness skips
     `--input` injection automatically.
 ---
+
+## 2026-05-09 - API-0149
+- Implemented contract coverage for `gitlab-one` (GET /gitlab.one),
+  the canonical by-id GET peer for the gitlab/* tag and the **sixth**
+  roster-level act on the reserved 404 → CodeNotFound representative-
+  failure override (after API-0342 `server-one` opener, API-0136
+  `gitea-one`, API-0164 `mariadb-one`, API-0178 `mongo-one`, and
+  API-0142 `github-one`).
+- Inserted between API-0148 `gitlab-gitlabProviders` and API-0160
+  `mariadb-changeStatus` (the priority-4 mariadb/* kickoff) per the
+  StoryID-sorted slice rule. Closes the forward reference embedded
+  in the API-0148 hand-off comment ("the 404 → CodeNotFound override
+  may finally apply at API-0149 if the spec confirms `*-one`'s by-id
+  semantics") — direct spec inspection at
+  `internal/api/data/openapi.json > /gitlab.one > get` confirmed the
+  shape: GET, single REQUIRED query parameter `gitlabId` (string),
+  no body, 200/400/401/403/404/500 with 200 = `{}` +
+  `additionalProperties:false`. Override applied.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — new apiCoverageCase entry
+    for API-0149 with `SampleQuery: {"gitlabId":
+    {"gitlab-cov-one-0149-gitlabId-fixture"}}`, `SuccessResponse:
+    "{}"`, `FailureStatus: http.StatusNotFound`, `FailureCode:
+    yerr.CodeNotFound`. Comment block mirrors API-0142 `github-one`
+    canonical-`*-one` design header verbatim with the gitlab/*
+    cohort cross-references swapped in.
+  - `ralph/prd.json` — flipped `API-0149.passes` from false to true.
+  - `ralph/progress.txt` — this entry.
+- Verification run from repository root:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all 9 packages green; `internal/cli` rebuilt
+    in 1.295s, all other packages cached.
+  - `go test -race ./...` — all 9 packages green; `internal/cli`
+    re-ran in 3.056s under the race detector.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, and
+    `goreleaser` not installed in this environment (consistent with
+    every prior progress entry from API-0136..API-0148).
+- Remaining risks / follow-ups: priority-5 gitlab/* roster now five
+  of seven done (create, getGitlabBranches, getGitlabRepositories,
+  gitlabProviders, one). Two priority-5 gitlab/* peers remain:
+  API-0150 `gitlab-testConnection` (POST per spec preview, body
+  scalar likely mirrors API-0137 `gitea-testConnection` /
+  API-0143 `github-testConnection`), API-0151 `gitlab-update` (POST
+  per spec preview). Per the slug-prefix-is-not-shape lesson
+  reasserted at API-0371..API-0375, the next contributor must
+  re-verify each upcoming op's parameter list, request body, and
+  response set against `internal/api/data/openapi.json` before
+  assuming any field shape.
+- **Learnings for future iterations:**
+  - The cross-tag canonical `*-one` by-id GET cohort now spans ten
+    operationIds: API-0008 `ai-one` (`aiId`), API-0021
+    `application-one` (`applicationId`), API-0084 `compose-one`
+    (`composeId`), API-0136 `gitea-one` (`giteaId`), API-0142
+    `github-one` (`githubId`), API-0149 `gitlab-one` (`gitlabId`),
+    API-0164 `mariadb-one` (`mariadbId`), API-0178 `mongo-one`
+    (`mongoId`), API-0251 `organization-one` (`organizationId`),
+    API-0294 `project-one` (`projectId`), API-0342 `server-one`
+    (`serverId`). Wire shape is byte-for-byte identical: GET, one
+    REQUIRED `<tag>Id` query string, no body, 200 `{}` +
+    `additionalProperties:false`, response set 200/400/401/403/404/
+    500. Future `*-one` peers (postgres, mysql, redis, etc.) can
+    copy the API-0149 entry verbatim and only swap StoryID,
+    operationId/path/tag, the `<tag>Id` field name, and the fixture
+    base — no other field changes needed. The fifth roster-level
+    act on the override (API-0142) had to call out "fifth"; this
+    sixth one must call out "sixth". Increment the count on each
+    new tag.
+  - The git-provider OAuth-registration cohort (gitea/github/
+    gitlab/bitbucket) shares an identical 5-operation roster shape
+    per tag: `*-create` (POST body, no 404), `*-getXxxBranches`
+    (GET multi-query, 404 reserved for `*-one`), `*-getXxx
+    Repositories` (GET single-query, 404 reserved for `*-one`),
+    `*-xxxProviders` (GET zero-param, 404 reserved for `*-one`),
+    `*-one` (GET single-query, **404 override applies**).
+    Additional `*-testConnection` (POST body) and `*-update` (POST
+    body) ops round out the 7-op roster. Bitbucket's roster at
+    API-0051..API-0055 was the original template; gitea API-0131..
+    API-0138 followed; github API-0139..API-0144 followed; now
+    gitlab API-0145..API-0151 is mid-completion. The
+    canonical-by-id reservation is structural, not coincidental.
+  - The `<tag>-cov-one-<storyID>-<id>-fixture` fixture-token form
+    (e.g. `gitlab-cov-one-0149-gitlabId-fixture`) is the shared
+    convention for canonical `*-one` GET fixtures across every
+    git-provider tag. The `-fixture` suffix distinguishes it from
+    the bare `<base>-<field>` form used in body-scalar POST
+    create-mutations (e.g. `gitlab-cov-create-0145-gitlabUrl`).
+    The convention was set at API-0136 `gitea-one`, reasserted at
+    API-0142 `github-one`, and now extended to API-0149 — confirm
+    by-eye that future `*-one` fixtures keep both the
+    `-cov-one-<id>` segment and the `-fixture` suffix.
+---
