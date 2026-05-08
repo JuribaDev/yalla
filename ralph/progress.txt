@@ -14406,3 +14406,47 @@ Learnings for future iterations:
     next contributor exactly which axis to re-verify against the
     spec. Maintain this hand-off in the new entry too.
 ---
+
+## 2026-05-08 - API-0442
+- Implemented coverage for the Dokploy API operation `user-remove`
+  (POST /user.remove, tag `user`).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended the API-0442 entry to
+    `coveredAPIOperations`. The entry locks the registry invariant
+    (POST /user.remove, tag `user`), declares the success-path JSON body
+    (single REQUIRED `userId` string with the `usr-cov-remove-0442`
+    fixture token), and inherits the harness-default 401 → CodeAuth
+    failure leg (the spec does not declare 404 on this mutation).
+  - `ralph/prd.json` — set `API-0442.passes = true`.
+  - `ralph/progress.txt` — this entry.
+- Verification run: `gofmt -w .`, `go vet ./...`, `go mod tidy`,
+  `go test ./...`, `go test -race ./...`. All green.
+- Tools unavailable on this host (documented elsewhere): `goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`.
+- Remaining risks / follow-ups: none specific to this story. The next
+  PRD-ordered priority-2 entry is API-0443 `user-sendInvitation`
+  (POST /user.sendInvitation, two-required-string body —
+  `invitationId` and `notificationId`). Per the
+  forward-reference lesson, the next contributor must re-verify the
+  spec against `internal/api/data/openapi.json > /user.sendInvitation
+  > post` before assuming any axis carries over from API-0442.
+- **Learnings for future iterations:**
+  - The user/* roster's first single-REQUIRED-string body POST. The
+    shape is structurally identical to the cross-tag `*-delete` /
+    `*-remove` POST precedents at API-0003 `ai-delete` and the
+    broader `<tag>-remove` family — a single REQUIRED string body
+    field naming the resource being mutated.
+  - The spec collapses by-id resolution failures on `*-remove`
+    mutations into 400/403 rather than declaring 404. The 404 →
+    CodeNotFound override pattern established at API-0441 `user-one`
+    therefore does not apply to a destructive `*-remove` whose by-id
+    semantics live in the body, not a path placeholder. The user/*
+    roster's 404-override is reserved for canonical by-id retrievals
+    (`*-one`, `*-get`).
+  - The slug-prefix-is-not-shape and slug-stem-is-not-shape lessons
+    continue to hold: even within a single tag, sharing the operation
+    stem (`user-`) does not pre-determine peer shape — API-0442's
+    single-required-string body shares no axis with API-0428's
+    fifteen-required-field mixed-type body or with any prior user/*
+    GET on the roster.
+---

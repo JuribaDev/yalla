@@ -17777,6 +17777,125 @@ var coveredAPIOperations = []apiCoverageCase{
 		FailureStatus: http.StatusNotFound,
 		FailureCode:   yerr.CodeNotFound,
 	},
+	{
+		StoryID:     "API-0442",
+		OperationID: "user-remove",
+		Method:      http.MethodPost,
+		Path:        "/user.remove",
+		Tag:         "user",
+		// Sixteenth entry on the user/* coverage roster, slotted in
+		// StoryID order after API-0441 `user-one`. The `usr-cov-*`
+		// per-tag fixture-isolation namespace was established at
+		// API-0427 `user-all` and reasserted at API-0428..API-0441.
+		// Per the per-tag isolation rule originally established at
+		// API-0246 `organization-active`, every user/* fixture token
+		// base remains orthogonal to every prior tag's namespace
+		// (`set-cov-*`, `srv-cov-*`, `proj-cov-*`, `org-cov-*`,
+		// `compose-cov-*`, `app-cov-*`, `ai-cov-*`, `admin-cov-*`,
+		// `backup-cov-*`, `bb-cov-*`, `cert-cov-*`, `clu-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, etc.).
+		//
+		// **Spec re-verified per the API-0345..API-0441
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /user.remove > post`:
+		// a **POST** with `requestBody.required = true` carrying a
+		// single `application/json` body schema and **zero declared
+		// parameters** (no query, no path, no header). Responses
+		// 200/400/401/403/500 — note the **absence of 404** in the
+		// spec: although `remove` is a by-id mutation whose body's
+		// `userId` could *semantically* fail to resolve, the spec
+		// collapses that case into 400/403 rather than declaring 404,
+		// matching the earlier user/* POST precedent at API-0428
+		// `user-assignPermissions` (also 200/400/401/403/500). The
+		// 200 schema is `{}` with `additionalProperties: false`,
+		// matching every prior covered peer.
+		//
+		// **Single-REQUIRED-string body shape — first such shape on
+		// the user/* roster.** Body schema is `{userId: string}` with
+		// `required: ["userId"]`. Cross-tag identical to the canonical
+		// `*-delete`/`*-remove` POST precedents at API-0003
+		// `ai-delete` (`aiId`), API-0042 `backup-remove` (`backupId`),
+		// and the broader `<tag>-remove` family — a single REQUIRED
+		// string body field naming the resource to mutate. Within the
+		// user/* roster, structurally distinct from API-0428
+		// `user-assignPermissions` (fifteen-REQUIRED-field mixed-type
+		// body) and from every parameter-free GET on the roster
+		// (API-0427/0436/0437/0438/0440) and every single-required-
+		// query GET (API-0429/0439/0441). Per the
+		// slug-prefix-is-not-shape and slug-stem-is-not-shape lessons
+		// reasserted at API-0371..API-0441, no axis from any prior
+		// user/* peer carries over — the shape signature here is a
+		// single REQUIRED string body field, no other fields, no
+		// query, no path placeholders, no headers.
+		//
+		// **Body field semantics (per OpenAPI schema):**
+		//   * `userId` — REQUIRED string. Identifies the Dokploy
+		//     user being removed by id. The spec imposes no length,
+		//     pattern, or format constraint, so the slug-on-the-wire
+		//     sentinel `usr-cov-remove-0442` populates this field
+		//     directly per the convention reasserted at
+		//     API-0351..API-0441 for free-form string fields. The
+		//     harness forwards SampleBody verbatim through the
+		//     `--input` JSON `body` field, and `runAPICoverageSuccess`
+		//     re-reads the request body to confirm the CLI propagated
+		//     the bytes verbatim from the originating fixture.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base `usr-cov-remove-0442`
+		//     follows the `<tag>-cov-<slug>-<storyID>` convention
+		//     shared with every prior covered peer. The slug is the
+		//     operationId suffix (`remove`) verbatim — per the
+		//     slug-stem-is-not-shape lesson the slug only carries
+		//     identifier semantics, not shape semantics.
+		//   * `SampleQuery` and `SamplePathParams` left zero.
+		//     `SampleBody` populates the single REQUIRED `userId`
+		//     body field with the slug-on-the-wire sentinel.
+		//
+		// **Failure-leg fields are intentionally omitted.** The spec
+		// does not declare 404 on this operation (per above), so the
+		// 404 → CodeNotFound override pattern established at API-0441
+		// `user-one` (the user/* roster's first 404-override entry,
+		// matching the cross-tag `*-one` by-id-retrieval precedent)
+		// does not apply to a *mutation* whose by-id semantics the
+		// spec funnels into 400/403. Within the user/* roster the
+		// 404-override is reserved for canonical by-id retrievals
+		// (`*-one`, `*-get`); destructive mutations like `*-remove`
+		// fall back to the harness default. Auth is the universal
+		// failure mode every Dokploy operation must re-prove, so
+		// 401 → CodeAuth via the harness default
+		// (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""` →
+		// CodeAuth) stays the most informative representative. 400 →
+		// CodeInvalidInput is *technically* available here (a payload
+		// omitting `userId` or carrying a type-mismatched value would
+		// fail server-side validation), but it remains reserved for
+		// stories where payload validation is the operation's
+		// *uniquely distinguishing* failure mode; a single
+		// REQUIRED-string shape collapses to conventional REQUIRED-
+		// field validation, so auth remains the canonical
+		// representative.
+		//
+		// The next case in the PRD-ordered priority-2 backlog is
+		// API-0443 `user-sendInvitation` (declared a **POST** in the
+		// PRD with a two-required-string body — `invitationId` and
+		// `notificationId`). The next contributor must re-verify
+		// against `internal/api/data/openapi.json >
+		// /user.sendInvitation > post` per the forward-reference
+		// lesson before assuming any field carries over from this
+		// entry — per the slug-prefix-is-not-shape lesson reasserted
+		// at API-0371..API-0441, even the shared `user-`
+		// operation-stem and shared POST method do not pre-determine
+		// the next peer's shape (a two-field body cannot inherit any
+		// axis from this single-field body's shape signature).
+		SampleBody: json.RawMessage(`{
+			"userId": "usr-cov-remove-0442"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
