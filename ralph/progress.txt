@@ -14042,3 +14042,24 @@ Learnings for future iterations:
   - `getMetricsToken` and `getContainerMetrics` share the `Metrics` slug stem but carry orthogonal wire shapes — `getContainerMetrics` ferries four required query params (`url`, `token`, `appName`, `dataPoints`), `getMetricsToken` declares zero parameters. This is the slug-stem-is-not-shape lesson asserted again; never carry over `SampleQuery` from a same-slug-stem peer without re-reading openapi.json.
   - The 400/404 in the spec for `getMetricsToken` are defensive-only declarations (no input the CLI can supply can surface either), so the harness default of 401 → CodeAuth remains the most informative failure representative for parameter-free authenticated GETs in this tag.
 ---
+
+## 2026-05-08 - API-0438
+- Implemented coverage for `user-getServerMetrics` (GET /user.getServerMetrics).
+- Files changed:
+  - `internal/cli/api_coverage_test.go`: appended twelfth `coveredAPIOperations` entry for API-0438. Parameter-free, body-less authenticated GET; success leg uses the `{}` empty-object response cohort and the failure leg falls through to harness defaults (401 → CodeAuth) per the per-tag failure-leg precedent set at API-0427/API-0429/API-0433/API-0434/API-0436/API-0437.
+  - `ralph/prd.json`: flipped `passes: true` for API-0438.
+- Verification (run from repo root):
+  - `gofmt -w .` — no diff.
+  - `go mod tidy` — no diff.
+  - `go vet ./...` — clean.
+  - `go test ./...` — pass.
+  - `go test -race ./...` — pass.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser` — not installed locally; documented as missing per the Codebase Patterns rule.
+- Results: registry/schema/manifest invariants and per-case fixture-isolation invariants all green; the embedded OpenAPI spec already exposes `/user.getServerMetrics`, so no spec bump or `EmbeddedSpecSHA256` change was required.
+- Remaining risks or follow-ups: none specific to this story. Next priority-2 user/* candidate is API-0439 `user-getUserByToken` — re-verify shape per the forward-reference lesson before assuming carry-over.
+- **Learnings for future iterations:**
+  - The `usr-cov-getServerMetrics-0438` slug is a comment-only namespace anchor; with no string body field to embed it into, the `slug-on-the-wire` convention does not apply — the slug stays inside the StoryID comment block.
+  - Despite sharing the `Metrics` slug stem with API-0435 `user-getContainerMetrics` and API-0437 `user-getMetricsToken`, this operation reverts to the parameter-free shape — the slug-stem-is-not-shape lesson now spans three sibling Metrics operations inside the same tag.
+  - Empty-success cohort (`{}` 200 with `additionalProperties: false`) keeps growing; the harness's `len(tc.SampleBody) > 0` short-circuit at `runAPICoverageSuccess` is now the reliable contract for any zero-parameter GET that returns an empty object.
+  - Twelfth user/* entry — re-asserting the `usr-cov-*` namespace seed established at API-0427 and unbroken across API-0428..API-0437.
+---
