@@ -7271,3 +7271,69 @@
     the wire-level body forwarding through the typed JSON
     decoder; no per-case runner logic is needed.
 ---
+
+## 2026-05-08 - API-0345 — Cover server-security (GET /server.security)
+- Added `apiCoverageCase` entry for `server-security` in
+  `internal/cli/api_coverage_test.go` immediately after the API-0344
+  `server-remove` entry. The new case is a single-required-query-param GET
+  mirroring the API-0339 `server-getDefaultCommand` shape, NOT the
+  parameter-free API-0343 `server-publicIp` shape that the API-0344
+  forward-reference comment had predicted.
+- Forward-reference correction: the API-0344 `server-remove` comment block
+  asserted that API-0345 should "mirror API-0343 verbatim" as the sixth
+  member of the parameter-free GET sub-cohort. Verifying against the
+  embedded spec (`internal/api/data/openapi.json > /server.security >
+  get`) showed a single REQUIRED `serverId` query parameter, so the
+  prediction was wrong. The new entry's design header explicitly calls
+  this out and re-anchors the rule that openapi.json — not narrative
+  cross-references — is the single source of truth.
+- Fixture: `serverId = "srv-cov-security-0345"` follows the per-tag
+  `<tag>-cov-<slug>-<storyID>` naming established at API-0339; verified
+  unique against every prior `srv-cov-*` slug, and orthogonal to the
+  cross-tag `proj-cov-*` / `org-cov-*` namespaces.
+- Failure leg: harness defaults (401 → CodeAuth) per the per-tag opener
+  convention reasserted from API-0335..API-0344. The 404 →
+  CodeNotFound override stays reserved for API-0342 `server-one` (the
+  by-id `*-one` peer); even though the spec lists 404 here, exercising
+  the documented universal failure remains the most informative
+  representative.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — +110 lines for the API-0345
+    case (1 entry appended to `coveredAPIOperations`).
+  - `ralph/prd.json` — `passes: true` for API-0345.
+  - `ralph/progress.txt` — this entry.
+- Verification run from repo root:
+  - `gofmt -w .` — clean (no diff produced).
+  - `go mod tidy` — clean.
+  - `go vet ./...` — pass.
+  - `go test ./...` — pass (`internal/cli` 1.094s).
+  - `go test -race ./...` — pass (`internal/cli` 2.569s).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — not installed locally; baseline unchanged from prior
+    iterations.
+- Remaining risks / follow-ups:
+  - API-0349 `server-validate` is the next single-required-`serverId`-
+    query-param GET on the server/* roster and should mirror this entry
+    verbatim — only StoryID / OperationID / Path / fixture-slug change.
+  - API-0346 `server-setup`, API-0347 `server-setupMonitoring`, and
+    API-0348 `server-update` remain pending and follow the API-0344
+    body-mutation shape.
+- **Learnings for future iterations:**
+  - **Always re-verify forward-reference comments against
+    `internal/api/data/openapi.json` before copying.** A prior commit's
+    "should mirror X verbatim" prediction can be wrong when the future
+    operation's spec turns out to differ; the embedded openapi.json is
+    the single source of truth, narrative cross-references are not.
+  - The single-required-query-param GET shape is sufficiently load-
+    bearing across the server/* roster (API-0339, API-0342, API-0345,
+    API-0349) that the API-0339 entry can serve as the canonical
+    template; new peers only need to update StoryID / OperationID /
+    Path / fixture-slug and re-confirm whether the `*-one` 404 override
+    applies (it does NOT for filter-by-`serverId` GETs).
+  - When the spec lists 404 on a non-`*-one` GET, **do not**
+    pre-emptively override `FailureStatus` / `FailureCode` — the per-tag
+    opener convention reserves the 404 → CodeNotFound failure-leg for
+    the canonical by-id `*-one` peer only. The `server-security`
+    operation could plausibly 404 on a missing `serverId` in production
+    yet keeps the harness default 401/CodeAuth here for representativeness.
+---
