@@ -22488,3 +22488,92 @@ forward-reference lesson before assuming any field shape.
     eight-param shape, same representative-subset choice, same
     family-choice rationale) — never via fixture-literal copy.
 ---
+
+## 2026-05-09 - API-0283 - Cover postgres-start (POST /postgres.start)
+- What was implemented:
+  - Added a new `apiCoverageCase` entry for `postgres-start`
+    (POST /postgres.start, tag postgres) in
+    `internal/cli/api_coverage_test.go`, immediately after API-0282
+    `postgres-search` and before the API-0290 `project-all` boundary
+    that opens the next-tag arc. Twelfth entry on the postgres/*
+    coverage roster, completing the forward reference embedded in
+    API-0282's closing block.
+  - **Spec re-verified** against
+    `internal/api/data/openapi.json` > `/postgres.start` > `post`:
+    method POST, tag postgres, no parameters, requestBody REQUIRED
+    with `application/json` and **one REQUIRED top-level field**
+    (`postgresId` plain string, no `anyOf` / `nullable` / enum
+    constraints, no optional siblings). Responses 200/400/401/403/500
+    with the 200 body `{}` (`additionalProperties: false`). **No 404**
+    declared — mirroring the action-on-known-id POST precedent across
+    every prior body-bearing imperative-action postgres POST and the
+    cross-tag `*-start` family (API-0173 `mariadb-start`, API-0187
+    `mongo-start`, API-0207 `mysql-start`).
+  - **Shape — single-required-string POST imperative-action lifecycle
+    mutation, body REQUIRED.** Cardinality- and type-identical to
+    API-0274 `postgres-deploy`, API-0277 `postgres-rebuild`, and
+    API-0279 `postgres-remove` (single REQUIRED `postgresId` plain
+    string). Direct cross-tag analog of API-0173 `mariadb-start`,
+    API-0187 `mongo-start`, API-0207 `mysql-start`.
+  - **Family choice — harness-default 401→CodeAuth retained.** Spec
+    omits 404, so the 404→CodeNotFound override is structurally
+    inapplicable; the override slot for the postgres/* roster was
+    already consumed by API-0276 `postgres-one`.
+  - **Fixture token base** `postgres-cov-start-0283` follows the
+    `<tag>-cov-<slug>-<storyID>` rule and is verified non-colliding
+    with API-0272..API-0282 literals and with cross-tag
+    `mariadb-cov-start-0173` / `mongo-cov-start-0187` /
+    `mysql-cov-start-0207` namespaces.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (added API-0283 case +
+    rationale comment block, ~134 lines).
+  - `ralph/prd.json` (set `passes: true` for API-0283).
+  - `ralph/progress.txt` (this entry).
+- Verification run from repo root:
+  - `gofmt -w .` — clean
+  - `go mod tidy` — clean (no diff)
+  - `go vet ./...` — pass
+  - `go test ./... -count=1` — pass (cli 2.570s; all packages PASS)
+  - `go test -race ./... -count=1` — pass (cli 3.265s; all packages PASS)
+  - Targeted: `go test ./internal/cli -run 'TestAPICoverage/API-0283' -v`
+    — all five legs PASS (RegistryInvariants, SchemaCommandWorks,
+    ManifestListsOperation, SuccessRoundTrip, RepresentativeFailure).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, and
+    `goreleaser` are still not installed locally and remain documented
+    as missing per the Codebase Patterns note rather than silently
+    skipped.
+- Remaining risks / follow-ups: API-0284 `postgres-stop` is the next
+  priority-4 story on the postgres/* arc — the structural twin of
+  `postgres-start` (declared a POST per spec preview, expected to be
+  the same single-required-string `postgresId` body). The next
+  contributor must re-verify against `internal/api/data/openapi.json
+  > /postgres.stop` per the forward-reference lesson before assuming
+  any field shape, and will continue inside the `postgres-cov-*`
+  per-tag fixture-isolation namespace opened by API-0272.
+- **Learnings for future iterations:**
+  - The `*-start` lifecycle-action POST shape is now established on
+    **four** tags (`mariadb-start`, `mongo-start`, `mysql-start`,
+    `postgres-start`) with byte-for-byte identical single-required-
+    `<tag>Id`-string surfaces. Future contributors covering the next
+    `*-start` peer (e.g. when a new database tag is introduced) should
+    mirror the same single-field fixture and the same 401→CodeAuth
+    family choice rather than re-deriving them — both are now de-facto
+    invariants for the lifecycle-action `*-start` POST cluster.
+  - **Tab-vs-space gotcha when editing api_coverage_test.go via Edit
+    tool.** The Edit tool's `old_string` matching can be fooled by
+    tab/space disagreement when the source is read into context with
+    spaces but the on-disk file is tab-indented. If a normal Edit
+    fails with "String to replace not found", drop into a Python
+    `ctx_execute` snippet and write the file via raw-bytes
+    `read → bytes.replace(anchor_bytes, replacement_bytes) → write`
+    using literal `\t` characters in the anchor — the file uses
+    `\t\t` (2 tabs) at the outer struct-element level and `\t\t\t`
+    (3 tabs) at the field level. This is a recurring pattern when
+    appending coverage entries to the very long
+    `internal/cli/api_coverage_test.go` file.
+  - The structural invariant "outer struct list elements use 2-tab
+    indent, struct fields use 3-tab indent" is now confirmed via raw-
+    bytes inspection at the API-0290 boundary; future contributors
+    inserting between API-0283..API-0290 should preserve this so
+    `gofmt` stays a no-op on the inserted block.
+---
