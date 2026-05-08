@@ -2686,3 +2686,47 @@
   - The `application-readTraefikConfig` op shares the exact same shape as API-0021 (`application-one`): single required `applicationId` query parameter, empty `{}` 200 body. Reused the same SampleQuery slug convention (`app-cov-read-traefik-config-0023`) so future schema validators see a clearly-fake but well-formed value.
   - Pattern reaffirmed: GET application/* operations only need a one-struct append to `coveredAPIOperations` — no command/registry/manifest code change is required because the embedded OpenAPI spec already lists every operation and the harness drives schema/manifest/success/failure assertions in a loop.
 ---
+## 2026-05-08 - API-0024 (application-redeploy, POST /application.redeploy)
+- Added the per-operation contract entry for `application-redeploy` to
+  `coveredAPIOperations` in `internal/cli/api_coverage_test.go`. Same minimal
+  POST shape as API-0013/API-0015/API-0017/API-0018/API-0019: only
+  `applicationId` is required (the optional `title` and `description` fields
+  in the spec are intentionally omitted from the fixture so the body stays
+  minimal-but-valid for any future schema validator wired into the harness).
+  Empty `{}` 200 response, matching every prior application/* peer. The
+  shared harness (registry/schema/manifest/success/failure sub-tests) picks
+  the entry up automatically with no production-code changes.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (+25 lines, one struct literal).
+  - `ralph/prd.json` (`API-0024.passes` → `true`).
+  - `ralph/progress.txt` (this entry).
+- Verification run (from repo root):
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — no diff.
+  - `go vet ./...` — clean.
+  - `go test ./internal/cli -run 'TestAPICoverage' -count=1` — PASS.
+  - `go test ./...` — PASS (cli 0.886s, all other packages cached).
+  - `go test -race ./...` — PASS (cli 2.397s, all other packages cached).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`
+    not installed locally — documented per the Codebase Patterns baseline
+    rather than silently skipped. No new imports introduced.
+- Remaining risks / follow-ups: none. Next pending API story by priority
+  is API-0025 (`application-refreshToken`, POST /application.refreshToken),
+  still `passes: false`. Per the spec spot-check convention, re-confirm
+  its required-field shape via
+  `jq '.paths["/application.refreshToken"]' internal/api/data/openapi.json`
+  before copy-pasting this fixture.
+- **Learnings for future iterations:**
+  - `application-redeploy` is the FIRST application/* coverage entry whose
+    spec exposes *optional* request fields (`title`, `description`) alongside
+    the required `applicationId`. The harness has no opinion about optional
+    fields — the success-leg comparator round-trips through `encoding/json`,
+    so omitting them keeps the fixture minimal and avoids coupling the test
+    to optional-field behavior the spec may evolve.
+  - The `applicationId`-only minimal POST pattern now spans
+    cancelDeployment, cleanQueues, clearDeployments, delete,
+    disconnectGitProvider, killBuild, markRunning, and redeploy — eight
+    operations sharing a single fixture template. The next likely peers
+    in the application/* tag are reload (API-0026) and start/stop
+    (API-0036/0037), which the spec spot-check should confirm before each.
+---

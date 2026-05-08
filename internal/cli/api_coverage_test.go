@@ -492,6 +492,30 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0024",
+		OperationID: "application-redeploy",
+		Method:      http.MethodPost,
+		Path:        "/application.redeploy",
+		Tag:         "application",
+		// Mirrors the schema in `data/openapi.json` for
+		// /application.redeploy: the only *required* field is
+		// `applicationId` (string); `title` and `description` are
+		// optional. We keep the fixture minimal-but-valid (matching
+		// API-0013/API-0015/API-0017/API-0018/API-0019) so a future
+		// schema validator wired into the harness still accepts it
+		// without depending on optional-field handling. Deterministic-
+		// but-clearly-fake slug follows the established
+		// `app-cov-<slug>-<storyID>` convention.
+		SampleBody: json.RawMessage(`{
+			"applicationId": "app-cov-redeploy-0024"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching every prior application/* peer. Empty-object body keeps
+		// the success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
