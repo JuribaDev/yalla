@@ -2785,6 +2785,67 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.method` / `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0251",
+		OperationID: "organization-one",
+		Method:      http.MethodGet,
+		Path:        "/organization.one",
+		Tag:         "organization",
+		// First single-query-param GET in the organization/* roster,
+		// breaking the parameter-free streak established by API-0246
+		// `organization-active`, API-0247 `organization-all`, and
+		// API-0248 `organization-allInvitations`. Spec source
+		// `data/openapi.json > /organization.one > get` declares no
+		// request body and exactly one required query parameter
+		// `organizationId` (string) — the canonical "fetch a single
+		// resource by ID" GET shape that mirrors API-0008 (`ai-one`)
+		// and API-0021 (`application-one`) byte-for-byte at the wire
+		// level. The API-0246 forecast block flagged this entry as a
+		// future organization/* peer; the parameter-free framing in
+		// that block was intentionally aspirational — `organization-
+		// one`'s spec ships with a required `organizationId` scalar
+		// because the principal can be a member of more than one org
+		// and must disambiguate, whereas `organization-active`
+		// resolves implicitly from the bearer token.
+		//
+		// The harness forwards SampleQuery via the `--input` JSON
+		// `query` field, and `runAPICoverageSuccess` re-reads
+		// `r.URL.Query()` to confirm the CLI propagated the param
+		// verbatim — exactly the assertion path exercised by the
+		// API-0008 / API-0021 / API-0022 single-required-query-param
+		// peers. Per the established `<tag>-cov-<slug>-<storyID>`
+		// deterministic-but-clearly-fake naming convention shared
+		// across the ai/* and application/* GET rosters, the fixture
+		// token `org-cov-one-0251` keeps `git grep` traceable to this
+		// PRD story without colliding with the API-0250 mutation
+		// fixture (`yalla-coverage-org-delete-0250`).
+		//
+		// Responses 200/400/401/403/404/500 mirror every other
+		// organization/* peer — the 200 schema is `{}` with
+		// `additionalProperties: false`, identical to API-0246/0247/
+		// 0248/0249/0250 above. The representative-failure leg keeps
+		// the harness default (401 → CodeAuth) because auth is the
+		// universal failure mode every organization/* peer must re-
+		// prove; 404 (the `organizationId` resolves to no record) is
+		// not asserted per-case here because the registry-driven
+		// invariants test already covers the response-code surface.
+		//
+		// Future contributors picking up the next mutation in the
+		// arc (API-0252 `*-removeInvitation`, API-0253 `*-setDefault`,
+		// API-0254 `*-update`, API-0255 `*-updateMemberRole`) should
+		// continue grepping API-0249 first for the design-rationale
+		// header and API-0250 for the `{single-required-scalar}`
+		// fixture pattern — those are POST mutations and inherit a
+		// different code path from this single-query-param GET.
+		SampleQuery: map[string][]string{
+			"organizationId": {"org-cov-one-0251"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior organization/* peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

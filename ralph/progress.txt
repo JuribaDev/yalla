@@ -5874,3 +5874,47 @@
     deltas (here: closed-shape single-required-scalar instead of
     `{name, logo}`).
 ---
+
+## 2026-05-08 - API-0251
+- Added coverage entry for `organization-one` (GET /organization.one) to
+  `internal/cli/api_coverage_test.go`. Single required query parameter
+  `organizationId` (string), no request body, response schema `{}`. The
+  entry mirrors the API-0008 (`ai-one`) / API-0021 (`application-one`)
+  single-required-query-param GET pattern: `SampleQuery: {"organizationId":
+  {"org-cov-one-0251"}}`, `SuccessResponse: "{}"`, default 401 → CodeAuth
+  representative failure leg.
+- Files changed:
+  - internal/cli/api_coverage_test.go (added API-0251 case after API-0250)
+  - ralph/prd.json (flipped passes: false → true for API-0251)
+- Verification run:
+  - gofmt -w .
+  - go vet ./... (PASS)
+  - go test ./... (PASS, all packages)
+  - go test -race ./... (PASS, all packages)
+  - go test ./internal/cli/ -run "TestAPICoverage" -v (5 new subtests pass:
+    RegistryInvariants, SchemaCommandWorks, ManifestListsOperation,
+    SuccessRoundTrip, RepresentativeFailure — all under
+    API-0251/organization-one).
+- Remaining risks or follow-ups: none. The API-0246 forecast block
+  flagged API-0251 as a "parameter-free GET cohort" peer, but the spec
+  ships a required `organizationId` scalar — the new entry's header
+  block clarifies this divergence so future contributors do not re-
+  derive it from `data/openapi.json`.
+- **Learnings for future iterations:**
+  - The `apiCoverageCase` harness exposes `SampleQuery map[string][]string`
+    for query-bearing GETs; values are forwarded via the `--input` JSON
+    `query` field and re-asserted at `runAPICoverageSuccess` via
+    `r.URL.Query()`. No additional plumbing is needed beyond setting the
+    field.
+  - The forecast comment in API-0246 grouped `*-one` with the parameter-
+    free GET cohort, but spec inspection is still required per story —
+    `*-one` resolves a specific record by ID and therefore carries a
+    required query param, unlike `*-active` which derives identity from
+    the bearer token.
+  - The deterministic-but-clearly-fake fixture token convention is
+    `<tag>-cov-<slug>-<storyID>` (e.g. `org-cov-one-0251`), distinct from
+    the mutation-side `yalla-coverage-<slug>-<storyID>` token used by
+    API-0250. Pick the GET-side prefix for query fixtures to keep
+    `git grep` traceable without colliding with mutation fixtures on the
+    same tag.
+---
