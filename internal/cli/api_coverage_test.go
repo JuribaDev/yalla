@@ -14343,6 +14343,270 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0397",
+		OperationID: "settings-updateTraefikPorts",
+		Method:      http.MethodPost,
+		Path:        "/settings.updateTraefikPorts",
+		Tag:         "settings",
+		// Forty-seventh entry on the settings/* coverage roster,
+		// inheriting the `set-cov-*` per-tag fixture-isolation
+		// namespace established by API-0351
+		// `settings-assignDomainServer` and extended through API-0396
+		// `settings-updateTraefikFile` (must not back-reference the
+		// closed `srv-cov-*`, `proj-cov-*`, `org-cov-*`,
+		// `compose-cov-*`, `app-cov-*`, `ai-cov-*`, `admin-cov-*`,
+		// `backup-cov-*`, `bb-cov-*`, `cert-cov-*`, `clu-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, or any other prior tag's
+		// namespace, per the per-tag isolation rule reasserted at
+		// API-0335..API-0396 and originally established at API-0246
+		// `organization-active`).
+		//
+		// **Spec re-verified per the API-0345..API-0396
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json >
+		// /settings.updateTraefikPorts > post`: a **POST** with a
+		// **REQUIRED** `requestBody` (`requestBody.required = true`)
+		// carrying a JSON object with **two** declared outer
+		// properties — `serverId` (**plain string**, OPTIONAL —
+		// present in `properties` but absent from outer `required`)
+		// and `additionalPorts` (**array of objects**, REQUIRED via
+		// the outer `required: ["additionalPorts"]` array). The
+		// inner item schema for `additionalPorts` declares **three**
+		// REQUIRED inner-inner properties — `targetPort` (**number**),
+		// `publishedPort` (**number**), and `protocol` (**string**
+		// constrained by `enum: ["tcp", "udp", "sctp"]`) — via the
+		// item schema's `required: ["targetPort", "publishedPort",
+		// "protocol"]` array. **Zero parameters** (no query, no path,
+		// no header). Responses 200/400/401/403/500 — note the
+		// **absence of 404**, matching the canonical settings/*
+		// mutating-POST cohort. The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the settings/* roster.
+		//
+		// **Forward-reference confirmation — first non-string
+		// inner-property-type pivot in the settings/* `update*`
+		// sub-roster.** API-0396 `updateTraefikFile`'s hand-off
+		// comment correctly forecast this entry's potential to break
+		// from the multi-string shape: "`updateTraefikPorts` may well
+		// declare an array-of-port-objects shape, an integer-tuple
+		// shape, or even a single nested-object shape rather than
+		// this entry's multi-string shape — the `Ports` slug-stem
+		// strongly suggests numeric port data which would be the
+		// first non-string inner-property-type pivot within the
+		// settings/* `update*` sub-roster." Direct inspection of the
+		// spec confirms the **array-of-port-objects** branch of that
+		// forecast: the outer body carries an array property whose
+		// items are nested objects with two `number` fields and one
+		// string-enum field. Pivots versus API-0396 on the eight
+		// shape-defining axes: (a) the verb axis is **POST**
+		// (matches), (b) the outer-body axis is **REQUIRED**
+		// (matches), (c) the outer-property-count axis pivots from
+		// **three** (`{path, traefikConfig, serverId}`) to **two**
+		// (`{additionalPorts, serverId}`), (d) the
+		// outer-property-type axis pivots from **all plain strings**
+		// to **mixed array-of-objects + plain string** — the
+		// **first array-of-objects field on the entire settings/*
+		// roster** and the first since the broader catalogue's prior
+		// array-bearing precedents in non-settings tags, (e) the
+		// outer-required-field-count axis pivots from **two**
+		// (`path` and `traefikConfig`) to **one**
+		// (`additionalPorts`), (f) the parameter axis is **zero**
+		// (matches), (g) the response-set axis is
+		// **200/400/401/403/500, no 404** (matches), and (h) the
+		// 200-response-shape axis is `{}` with
+		// `additionalProperties: false` (matches). The
+		// outer-property-type and outer-required-field-count pivots
+		// are the **first array-bearing structural pivots within
+		// the `update*` sub-roster on settings/*** since API-0392
+		// opened it and break the structural precedent of every
+		// prior `update*` peer carrying only string and/or boolean
+		// scalars at the outer level. The slug-stem-is-not-shape
+		// lesson reasserted at API-0371..API-0396 is reaffirmed:
+		// even the closest possible slug-stem match short of
+		// operationId equality (`Traefik` shared with API-0392/
+		// API-0395/API-0396) does not pre-determine the
+		// outer-property-type, inner-item-type, or
+		// inner-inner-required-field axes — the `Ports` slug-suffix
+		// alone signalled the array-of-numeric-port-objects shape
+		// rather than any prior peer's string-only shape.
+		//
+		// **Body-axis flip-flop continues at fifteen.** The
+		// body-axis flip-flop across API-0383..API-0397 is now
+		// fifteen entries deep within the same tag (no-body /
+		// no-body / optional-body / required-body+inner-required /
+		// required-body+inner-optional-string-only / required-body+
+		// inner-optional-mixed-boolean+string / required-body+
+		// inner-required-boolean-only / required-body+
+		// inner-required-mixed-boolean+string / required-body+
+		// inner-required-nullable-string-only / required-body+
+		// inner-required-plain-string-only / no-body-at-all /
+		// required-body+inner-required-plain-string-only /
+		// required-body+inner-required-plain-string-only /
+		// required-body+inner-multi-required-plain-string /
+		// required-body+inner-required-array-of-objects+optional-string —
+		// **new family**); per-operation re-verification stays
+		// mandatory across every family transition.
+		//
+		// **Family continuation — eighth `update*` slug-prefix peer
+		// in settings/*.** The `update*` slug sub-roster opened by
+		// API-0390 continues here. The PRD ordering forecasts the
+		// remaining contiguous run of `update*` peers (API-0398:
+		// `updateWebServerTraefikConfig`, plus API-0399:
+		// `writeTraefikEnv` which exits the `update*` prefix but
+		// stays on the Traefik slug-stem). Per the
+		// slug-prefix-is-not-shape rule reasserted at
+		// API-0371..API-0396, future `update*` peers must re-verify
+		// per-operation rather than inherit any axis from this entry
+		// — the next `update*` peer (`updateWebServerTraefikConfig`)
+		// shares the `Traefik` slug-stem with this entry and the
+		// prior API-0392/API-0395/API-0396 Traefik-flavoured peers,
+		// but the slug-stem-is-not-shape lesson reasserted at
+		// API-0371..API-0396 means even that shared slug match
+		// cannot pre-determine the inner-property-count,
+		// inner-property-type, or inner-required-field axes —
+		// `updateWebServerTraefikConfig` may well declare a
+		// single-string shape (matching API-0395
+		// `updateTraefikConfig`'s lone `traefikConfig` field), a
+		// multi-string shape (matching API-0396
+		// `updateTraefikFile`), an array-of-objects shape (matching
+		// this entry), or an entirely orthogonal shape.
+		//
+		// **First array-of-objects field on the settings/* roster.**
+		// The outer schema declares `additionalPorts` as an array
+		// whose items are objects with three REQUIRED inner-inner
+		// properties: two `number` fields (`targetPort`,
+		// `publishedPort`) and one string-enum field (`protocol`,
+		// constrained to `tcp`/`udp`/`sctp`). This is the first
+		// occurrence within the entire settings/* roster of an
+		// array-of-objects body field; on the broader catalogue the
+		// prior array precedents live in non-settings tags. The
+		// `targetPort` field conventionally addresses the container
+		// port the Traefik service forwards to; `publishedPort`
+		// addresses the host-side port the Traefik service binds and
+		// listens on; the `protocol` enum names the Layer-4 transport
+		// the port forwards (Stream Control Transmission Protocol is
+		// rare but listed for completeness alongside the TCP/UDP
+		// canonicals). The optional outer `serverId` scopes the
+		// operation to a remote Dokploy worker server when present
+		// (and falls back to the local Dokploy server when absent —
+		// same convention as `serverId` in API-0394
+		// `settings-updateServerIp` and across the broader settings
+		// catalogue).
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `set-cov-updateTraefikPorts-0397` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared across
+		//     every per-tag roster and is unique (verified against
+		//     API-0351..API-0396's `set-cov-*` slugs and orthogonal
+		//     to every prior tag's `srv-cov-*`, `proj-cov-*`,
+		//     `org-cov-*`, `compose-cov-*`, `app-cov-*`, `ai-cov-*`,
+		//     `admin-cov-*`, `backup-cov-*`, `cert-cov-*`,
+		//     `clu-cov-*`, `deployment-cov-*`, `dest-cov-*`, etc.
+		//     namespaces).
+		//   * **Populating the REQUIRED outer field** is mandatory:
+		//     leaving `additionalPorts` out would produce a
+		//     structurally invalid request (the outer schema's
+		//     `required: ["additionalPorts"]` array names it). The
+		//     fixture provides a **single-element array** carrying
+		//     one fully-populated port-object — the
+		//     structurally-minimal valid array body that exercises
+		//     every REQUIRED inner-inner field (`targetPort`,
+		//     `publishedPort`, `protocol`) without expanding to a
+		//     multi-element array (which would shift the fixture
+		//     toward an orthogonal multi-port-mapping coverage axis
+		//     that is not part of this story's acceptance criteria).
+		//   * The fixture chooses `targetPort: 8443`,
+		//     `publishedPort: 8443`, and `protocol: "tcp"` — three
+		//     spec-conformant values: 8443 is a valid IANA-registered
+		//     port number within the 1..65535 range carried by the
+		//     `number` type, matches the conventional Traefik
+		//     dashboard / metrics port, and `tcp` is one of the
+		//     three enum-permitted protocols (`tcp`/`udp`/`sctp`).
+		//     No slug embedding is possible here because all three
+		//     inner-inner fields are typed `number` or
+		//     `string`-enum-constrained — the slug-on-the-wire
+		//     convention does not apply to numeric or enum-bounded
+		//     fields, only to free-form string fields.
+		//   * The OPTIONAL outer `serverId` field is **deliberately
+		//     omitted** from the fixture body so the success-leg
+		//     exercise stays focused on the structurally-minimal
+		//     valid payload (REQUIRED fields populated, OPTIONAL
+		//     fields absent). Mirrors the API-0396
+		//     `updateTraefikFile` fixture choice for the same
+		//     OPTIONAL `serverId` field — populating `serverId`
+		//     would shift the fixture toward an orthogonal "scoped
+		//     to remote worker" code path that is not part of this
+		//     story's acceptance criteria.
+		//
+		// **Failure-leg fields are intentionally omitted.** The spec
+		// does not declare 404 on this operation (the
+		// `updateTraefikPorts` verb mutates the Traefik service's
+		// port-mapping configuration rather than performing a by-id
+		// resource lookup — even the optional `serverId` scopes a
+		// configuration mutation rather than addressing a unique
+		// resource by primary key), so the per-tag opener convention
+		// reasserted at API-0335..API-0396 that reserves 404 →
+		// CodeNotFound for canonical `*-one` peers does not apply
+		// here. Auth is the universal failure mode every Dokploy
+		// operation must re-prove, so 401 → CodeAuth via the harness
+		// default (`tc.FailureStatus == 0` → 401, `tc.FailureCode ==
+		// ""` → CodeAuth) stays the most informative representative.
+		// 400 → CodeInvalidInput is *technically* available here
+		// (the inner-item schema's `required: ["targetPort",
+		// "publishedPort", "protocol"]` array means a missing inner
+		// field would fail server-side validation, and the
+		// string-enum constraint on `protocol` adds a second
+		// validation axis — payloads passing `protocol: "icmp"`
+		// would fail enum validation), but it remains reserved for
+		// stories where payload validation is the operation's
+		// *uniquely distinguishing* failure mode (e.g. multi-field
+		// cross-validation, conditional `oneOf`/`anyOf` between
+		// distinct shapes, or length-bounded strings). An
+		// array-of-objects body with three inner-inner REQUIRED
+		// fields and one string-enum is still routine multi-field
+		// validation; auth therefore remains the canonical
+		// representative failure for this entry per the precedent
+		// reasserted across API-0386 and API-0396.
+		//
+		// The next case in the settings/* roster per PRD ordering is
+		// API-0398 `settings-updateWebServerTraefikConfig` (declared
+		// a **POST** in the PRD with `requestBody.required = true`).
+		// The next contributor must re-verify against
+		// `internal/api/data/openapi.json >
+		// /settings.updateWebServerTraefikConfig > post` per the
+		// forward-reference lesson before assuming any field is
+		// identical to this entry — per the slug-prefix-is-not-shape
+		// lesson reasserted at API-0371..API-0396, even sharing the
+		// `update*` slug prefix and the `Traefik` slug-stem (the
+		// closest possible match short of the operation's own
+		// operationId) does not imply the outer-property-count,
+		// outer-property-type, or inner-required-field axes carry
+		// over. `updateWebServerTraefikConfig` may well declare a
+		// single-string-content shape (matching API-0395
+		// `updateTraefikConfig`'s lone `traefikConfig` field), a
+		// multi-string shape (matching API-0396
+		// `updateTraefikFile`'s `path`+`traefikConfig`+`serverId`),
+		// an array-of-objects shape (matching this entry's
+		// `additionalPorts`+`serverId`), or an entirely orthogonal
+		// shape.
+		SampleBody: json.RawMessage(`{
+			"additionalPorts": [
+				{
+					"targetPort": 8443,
+					"publishedPort": 8443,
+					"protocol": "tcp"
+				}
+			]
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

@@ -12777,3 +12777,93 @@ Learnings for future iterations:
   - The `dst-cov-*` token shape inside backup/* `destinationId` payloads is a *value* from the backup tag namespace; the destination/* tag namespace itself uses `dest-cov-*`. These prefixes look similar but the per-tag isolation rule keeps them strictly orthogonal.
   - 404 cannot be claimed for the failure leg here — it is not declared in the spec for `destination-create`. The harness contract requires the failure status to be a declared response, so 401 → CodeAuth (default) is the only safe representative until a richer-payload destination/* story (e.g. API-0107 `destination-update` or API-0106 `destination-testConnection`) takes the canonical 400 → CodeInvalidInput slot.
 ---
+
+## 2026-05-08 - API-0397
+- Implemented per-operation coverage for `settings-updateTraefikPorts`
+  (POST /settings.updateTraefikPorts).
+- Files changed:
+  - internal/cli/api_coverage_test.go — appended `apiCoverageCase`
+    literal for API-0397 immediately after API-0396. Inner-axis pivot
+    versus the prior settings/* `update*` peer: the body is
+    `{additionalPorts: [{targetPort:number, publishedPort:number,
+    protocol: "tcp"|"udp"|"sctp"}], serverId?: string}` — the **first
+    array-of-objects body field on the entire settings/* roster** and
+    the first non-string outer-property-type pivot within the
+    settings/* `update*` sub-roster. `additionalPorts` REQUIRED;
+    `serverId` OPTIONAL. The fixture provides a structurally-minimal
+    one-element array carrying a fully-populated port-object
+    (`targetPort:8443, publishedPort:8443, protocol:"tcp"`) and omits
+    the OPTIONAL outer `serverId`. Failure-leg fields intentionally
+    omitted so the harness default (401 → CodeAuth) supplies the
+    representative failure leg (404 not declared on this op; 400 is
+    technically available but reserved for stories where payload
+    validation is the *uniquely* distinguishing failure mode).
+  - ralph/prd.json — flipped `API-0397.passes` from `false` to `true`.
+    266 of 462 stories remain failing; next pending entry by priority
+    is API-0398 `settings-updateWebServerTraefikConfig`.
+- Verification run (from repository root):
+  - `gofmt -w .` — clean.
+  - `goimports -w .` — not installed in this environment; gofmt
+    handled formatting; documented as missing rather than silently
+    skipped.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass (internal/cli 1.308s).
+  - `go test -race ./...` — all packages pass (internal/cli 2.776s).
+  - `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser` — not
+    installed locally; documented rather than silently skipped.
+- Results: registry, schema, manifest, success-leg, and
+  representative-failure assertions all green for
+  `settings-updateTraefikPorts` via the existing `TestAPICoverage_*`
+  harness. `expectedOperationCount = 450` in
+  `internal/api/registry_test.go` already includes this op (the
+  count is locked against the embedded openapi.json, not the
+  coverage test).
+- Remaining risks or follow-ups:
+  - The settings/* `update*` sub-roster continues at API-0398
+    `settings-updateWebServerTraefikConfig` (POST with required body).
+    Per the slug-prefix-is-not-shape lesson reasserted at
+    API-0371..API-0397, sharing the `update*` slug prefix and the
+    `Traefik` slug-stem with API-0392/API-0395/API-0396/API-0397 does
+    NOT pre-determine the inner-property-count, inner-property-type,
+    or inner-required-field axes — the next contributor MUST
+    re-verify against `internal/api/data/openapi.json >
+    /settings.updateWebServerTraefikConfig > post` before assuming
+    any field carries over. `updateWebServerTraefikConfig` may declare
+    a single-string-content shape (matching API-0395
+    `updateTraefikConfig`), a multi-string shape (matching API-0396
+    `updateTraefikFile`), an array-of-objects shape (matching this
+    entry), or an entirely orthogonal shape.
+- **Learnings for future iterations:**
+  - **Array-of-objects body fields are coverage-axis-distinct from
+    scalar-only bodies.** The fixture exercises the inner-item schema
+    by populating one fully-formed item (every REQUIRED inner-inner
+    field set, no OPTIONAL ones). Multi-element arrays would shift
+    coverage toward an orthogonal "multi-port-mapping" axis that is
+    not part of the per-operation acceptance criteria.
+  - **Slug-on-the-wire convention does NOT apply to numeric or
+    enum-bounded fields.** The `set-cov-updateTraefikPorts-0397`
+    fixture-token base is established for namespace tracking but
+    cannot be embedded in the body anywhere because every inner-inner
+    field is `number` or `string`-enum-constrained. The convention
+    only applies to free-form string fields (cf. the precedent across
+    API-0386/API-0387/API-0388/API-0390/API-0391/API-0392/API-0394/
+    API-0395/API-0396 where `path`-shaped or YAML-content-shaped
+    free-form strings carry the slug).
+  - **Enum-constrained string fields must take a value from the enum
+    list.** The `protocol` field's `enum: ["tcp", "udp", "sctp"]`
+    means the fixture must pick one of those literal values; using a
+    slug-embedded string like `set-cov-updateTraefikPorts-0397` would
+    fail enum validation server-side.
+  - **`number`-typed fields accept integers in JSON.** Both
+    `targetPort` and `publishedPort` are typed `number` (not
+    `integer`) in the spec, and JSON-RFC-8259 number literals like
+    `8443` parse cleanly into either. The fixture uses bare integers
+    rather than fractional notation to match the conventional port-
+    number on-the-wire shape.
+  - **Body-axis flip-flop now fifteen entries deep within settings/*.**
+    The continuous flip-flop across API-0383..API-0397 reaffirms that
+    per-operation re-verification is mandatory across every family
+    transition; no body-axis assumption can be safely inherited even
+    within a single tag.
+---
