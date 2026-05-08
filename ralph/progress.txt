@@ -10023,3 +10023,55 @@ Learnings for future iterations:
     and `SampleBody` entirely; the harness defaults to GET-with-empty-query
     and asserts the wire-level invariants on its own.
 ---
+
+## 2026-05-08 - API-0375
+- Implemented coverage for `settings-isCloud` (GET /settings.isCloud).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended the API-0375 entry to
+    `coveredAPIOperations`. Per direct re-verification of
+    `internal/api/data/openapi.json > /settings.isCloud > get` the operation
+    is a parameter-free GET (no query, no path, no header) with no request
+    body and responses 200/400/401/403/404/500. The 200 schema is `{}` with
+    `additionalProperties: false`. The entry uses the canonical empty-`{}`
+    `SuccessResponse` and inherits the harness 401 → CodeAuth failure
+    default. No per-case fixture token because there is no payload field
+    to namespace.
+  - `ralph/prd.json` — flipped API-0375 `passes` from `false` to `true`.
+  - `ralph/progress.txt` — this entry.
+- Verification run:
+  - `gofmt -w .`
+  - `go mod tidy`
+  - `go vet ./...`
+  - `go test ./... -count=1` → all packages OK
+  - `go test -race ./... -count=1` → all packages OK
+- Results: green across the board.
+- Tools NOT available locally (unchanged from prior stories):
+  `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`.
+- Remaining risks or follow-ups:
+  - 299 PRD stories still have `passes: false`. Next in PRD priority-2
+    settings/* ordering is API-0376 `settings-isUserSubscribed` (declared
+    GET in the PRD). Per the forward-reference lesson, the next contributor
+    must re-verify the parameter axis, request-body axis, and response-set
+    axis (presence/absence of 404) against the spec before assuming any
+    field carries over from API-0375.
+- **Learnings for future iterations:**
+  - The `is*` slug prefix joins the parameter-free GET sub-roster on the
+    same side of the parameter axis as `have*` when the underlying probe is
+    platform-wide rather than server-scoped. The slug-prefix family map
+    grows: `get*`, `have*`, and `is*` can each split across the
+    parameter-free / parameter-bearing axis depending purely on whether
+    the endpoint is a platform-wide query (param-free) or a per-server
+    query (one OPTIONAL `serverId`). Slug-prefix matching alone remains
+    unreliable; per-operation spec re-verification is mandatory.
+  - The parameter-free GET settings/* sub-roster pattern is now stable
+    across nine entries (API-0363, API-0364, API-0365, API-0366, API-0367,
+    API-0368, API-0371, API-0372, API-0374, API-0375). Diff against the
+    prior entry remains purely the StoryID, OperationID, Path,
+    sub-roster ordinal, and the design-rationale comments naming the
+    right preceding peers and the right next operation.
+  - The append-only fixture insertion point (the closing `}` of
+    `coveredAPIOperations` followed by `// TestAPICoverage_RegistryInvariants`)
+    plus the prior entry's forward-reference comment as the `Edit` tool's
+    `old_string` anchor continues to be the safest insertion strategy —
+    no risk of mis-matching a duplicate string elsewhere in the file.
+---

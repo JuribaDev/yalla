@@ -9404,6 +9404,136 @@ var coveredAPIOperations = []apiCoverageCase{
 		// Per-operation re-verification stays mandatory across
 		// every family transition.
 	},
+	{
+		StoryID:     "API-0375",
+		OperationID: "settings-isCloud",
+		Method:      http.MethodGet,
+		Path:        "/settings.isCloud",
+		Tag:         "settings",
+		// Twenty-fifth entry on the settings/* coverage roster,
+		// inheriting the `set-cov-*` per-tag fixture-isolation
+		// namespace established by API-0351
+		// `settings-assignDomainServer` and extended through
+		// API-0374 `settings-health` (must not back-reference
+		// the closed `srv-cov-*`, `proj-cov-*`, `org-cov-*`,
+		// `compose-cov-*`, `app-cov-*`, `ai-cov-*`, or any other
+		// prior tag's namespace, per the per-tag isolation rule
+		// reasserted at API-0335..API-0374 and originally
+		// established at API-0246 `organization-active`). This
+		// entry carries **no per-case fixture token** because the
+		// operation is parameter-free with no request body —
+		// there is no payload field to namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0374
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /settings.isCloud >
+		// get`: a **GET** with **zero parameters** (no query,
+		// no path, no header) and **no request body** (GETs in
+		// this OpenAPI document never carry a `requestBody`
+		// field). Responses 200/400/401/403/404/500 — the
+		// **404 stays present**, matching the parameter-free
+		// GET sub-roster opened at API-0363
+		// `settings-getDokployCloudIps` and extended through
+		// API-0368 `settings-getReleaseTag`, API-0371
+		// `settings-getWebServerSettings`, API-0372
+		// `settings-haveActivateRequests`, and API-0374
+		// `settings-health`, as well as the parameter-bearing
+		// GET peers API-0369 `settings-getTraefikPorts` and
+		// API-0373 `settings-haveTraefikDashboardPortEnabled`.
+		// The 200 schema is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// settings/* GET cohort.
+		//
+		// **Forward-reference correction.** The API-0374
+		// hand-off comment hedged that the parameter axis
+		// (zero vs one optional query) had to be re-verified
+		// per-operation. Direct inspection of the spec at
+		// `/settings.isCloud > get` confirmed the entry sits on
+		// the parameter-free side of the axis: this operation
+		// is a platform-wide cloud-mode probe (whether the
+		// running Dokploy instance is the hosted cloud build vs
+		// self-hosted), not scoped per server, so it tracks the
+		// parameter-free GET shape canonicalised at
+		// API-0363..API-0368/API-0371/API-0372/API-0374 rather
+		// than the parameter-bearing shape at
+		// API-0369/API-0373. The per-operation re-verification
+		// rule kept the contributor from accidentally inheriting
+		// the API-0373 `SampleQuery` field by slug-pattern
+		// matching alone.
+		//
+		// **Family continuation — twelfth entry of the
+		// settings/* GET cohort, tenth of the parameter-free
+		// GET sub-roster.** API-0363 opened the parameter-free
+		// sub-family by pivoting off the eleven-entry POST
+		// cohort (API-0353..API-0362); API-0364..API-0368
+		// extended the parameter-free shape across five
+		// consecutive entries; API-0369 pivoted to a single
+		// OPTIONAL `serverId` query (the first
+		// parameter-bearing GET in the settings/* roster);
+		// API-0370 pivoted the verb axis to POST while
+		// keeping the no-body, no-parameter shape; API-0371
+		// reverted to the parameter-free GET shape; API-0372
+		// stayed parameter-free with the falsified no-404
+		// prediction settled in favour of the 404-bearing
+		// canonical shape; API-0373 pivoted back to the
+		// OPTIONAL `serverId` query shape mirroring API-0369;
+		// API-0374 reverted to the parameter-free shape;
+		// API-0375 continues the parameter-free shape: zero
+		// parameters, no body, 404-bearing response set. The
+		// `is*` slug prefix (a boolean platform-state probe)
+		// joins the `have*` slug prefix on the parameter-free
+		// side of the axis when the underlying probe is
+		// platform-wide (cf. `haveActivateRequests`,
+		// `haveTraefikDashboardPortEnabled` on the
+		// parameter-bearing side).
+		//
+		// 200 response in the spec is `{}` with
+		// `additionalProperties: false`, matching the
+		// empty-success convention shared by every prior
+		// settings/* GET peer (API-0363..API-0374). Empty-object
+		// body keeps the success-leg envelope assertion focused
+		// on `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+		//
+		// **Failure-leg fields are intentionally omitted.** Even
+		// though the spec declares 404 on this operation, the
+		// per-tag opener convention reasserted at
+		// API-0335..API-0374 reserves 404 → CodeNotFound for the
+		// canonical by-id `*-one` peer, not for parameter-free
+		// platform-state probes like `isCloud` (which returns
+		// the running Dokploy instance's deployment mode, not a
+		// single resource keyed by id). Auth is the universal
+		// failure mode every Dokploy operation must re-prove,
+		// so 401 → CodeAuth via the harness default
+		// (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""`
+		// → CodeAuth) stays the most informative representative.
+		// 400 → CodeInvalidInput stays reserved for stories
+		// where payload validation is the operation's
+		// distinguishing failure mode; this entry uses the
+		// canonical 401.
+		//
+		// The next case in the settings/* roster per PRD
+		// ordering is API-0376 `settings-isUserSubscribed`
+		// (declared a **GET** in the PRD). The next contributor
+		// must re-verify against `internal/api/data/openapi.json
+		// > /settings.isUserSubscribed > get` per the
+		// forward-reference lesson before assuming any field is
+		// identical to this entry — the response-set axis
+		// (presence vs absence of 404), the parameter axis (zero
+		// vs one optional query vs other), and the request-body
+		// axis (none vs JSON) must each be re-verified
+		// per-operation. Do not assume the parameter list,
+		// request body, or response set carries over solely
+		// because the verb is GET and the adjacent slug matches;
+		// the parameter-axis flip-flop across
+		// API-0371..API-0375 (parameter-free → parameter-bearing
+		// → parameter-free → parameter-free) demonstrates that
+		// two adjacent entries with the same slug prefix can sit
+		// on opposite sides of the parameter axis.
+		// Per-operation re-verification stays mandatory across
+		// every family transition.
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
