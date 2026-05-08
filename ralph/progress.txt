@@ -19650,3 +19650,94 @@ forward-reference lesson before assuming any field shape.
     vs the non-race 1.197s — both well within reasonable
     iteration budget.
 ---
+
+## 2026-05-08 - API-0184 - Cover mongo-search (GET /mongo.search)
+- Added the API-0184 `mongo-search` test case to the
+  `coveredAPIOperations` table at `internal/cli/api_coverage_test.go`,
+  inserted between API-0183 `mongo-saveExternalPort` (the immediately
+  preceding mongo/* roster entry) and API-0188
+  `mounts-allNamedByApplicationId` (the kickoff for the next tag).
+  The case declares `Tag: "mongo"`, `Method: http.MethodGet`,
+  `Path: "/mongo.search"`, no SampleBody (GETs in this OpenAPI
+  document never carry a `requestBody`), and a four-key SampleQuery
+  (`q`, `projectId`, `limit`, `offset`) covering the three semantic
+  axes (free-text search, scoped filter, numeric pagination) per the
+  cross-tag precedent locked in by API-0170 `mariadb-search`.
+- Numeric `limit` / `offset` use the canonical decimal grammar
+  (`"5"` / `"0"`) so a future schema validator that re-coerces query
+  strings to numbers still accepts them.
+- The empty-success cohort `SuccessResponse: {}` matches every prior
+  covered peer, and the harness-default 401→CodeAuth failure leg
+  applies. The 404→CodeNotFound override is *technically* declared on
+  the spec but stays reserved for the canonical by-id `*-one` GET peer
+  (already consumed by API-0178 `mongo-one`); a `*-search` GET returns
+  an empty result set rather than 404 when no records match its
+  filters, so 401→CodeAuth remains the most informative
+  representative-failure leg, mirroring API-0170 `mariadb-search`.
+- The harness covers everything else automatically:
+  `TestAPICoverage_Successful_RoundTrip` re-reads `r.URL.Query()` and
+  proves the CLI propagated every populated param verbatim; the
+  registry/tag/method/path triple is asserted by `TestRegistryCovers`
+  and `TestManifestListsOperation`; secret redaction and the JSON
+  error envelope are exercised by the failure leg
+  (`runAPICoverageFailure`).
+- Updated `ralph/prd.json` to set `passes: true` on API-0184.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — added API-0184 entry
+  - `ralph/prd.json` — flipped API-0184 passes
+  - `ralph/progress.txt` — this entry
+- Verification run (from repo root):
+  - `gofmt -w .` — clean
+  - `goimports` — not installed (documented; not required because the
+    new entry uses only already-imported packages: `http`, `json` raw
+    via prior usage, and `yerr` is unused in this entry).
+  - `go mod tidy` — clean (no dependency change)
+  - `go vet ./...` — passes
+  - `go test ./...` — passes (full suite, all 9 packages green)
+  - `go test -race ./...` — passes (full suite, all 9 packages green)
+  - `golangci-lint` / `staticcheck` / `govulncheck` / `goreleaser` —
+    not installed in this environment (documented).
+- Remaining risks / follow-ups: mongo/* tag is now eleven of fifteen
+  done at priority 4 (changeStatus, create, deploy, move, one,
+  rebuild, reload, remove, saveEnvironment, saveExternalPort, search).
+  Four remain: API-0185 `mongo-start`, API-0186 `mongo-stop`,
+  API-0187 `mongo-update`. The next contributor should re-verify
+  `internal/api/data/openapi.json` per the forward-reference lesson
+  and continue inside the `mongo-cov-*` per-tag fixture-isolation
+  namespace opened at API-0174.
+- **Learnings for future iterations:**
+  - **Cross-tag `*-search` shape is byte-for-byte identical across
+    database tags**: mongo-search, mariadb-search, postgres-search,
+    mysql-search, redis-search all declare the same eight optional
+    query params (`q`, `name`, `appName`, `description`, `projectId`,
+    `environmentId`, `limit`, `offset`). The API-0170 mariadb-search
+    fixture is the canonical template; the next priority-4 `*-search`
+    GETs (mysql/postgres/redis) should mirror it 1:1 with only the tag
+    prefix and storyID swapped.
+  - **Numeric query params travel as decimal-grammar strings**.
+    `limit: "5"` / `offset: "0"` (not `"5.0"` / `"00"`) so a future
+    schema validator that re-coerces query strings into the spec's
+    `type: number` still accepts them. Stick to canonical decimal.
+  - **Representative-subset rule for 8+ optional params**: populate
+    one from each semantic axis (free-text, scoped filter, numeric
+    pagination) rather than all eight — extra string filters of
+    identical shape do not exercise any new code path on the round-
+    trip and only inflate the diff.
+  - **404→CodeNotFound is the canonical-by-id-GET reservation, NOT a
+    catch-all for spec-declared 404**: the family-choice rule
+    re-asserted at API-0170 — and re-applied here — keeps 404 →
+    CodeNotFound exclusive to the per-tag `*-one` peer (where missing
+    resource is the dominant failure mode). A `*-search` GET's
+    primary failure is unauthenticated access, not missing resource;
+    401 → CodeAuth is the right representative-failure leg even when
+    the spec lists 404 alongside 401.
+  - **Slug-style lock-in (mongo/* preserves camelCase) is moot for
+    single-segment slugs**: `mongo-cov-search-0184` is wire-equivalent
+    in either convention; the kebab-vs-camel decision only matters for
+    multi-segment slugs like `mongo-cov-saveExternalPort-0183` vs
+    `mariadb-cov-save-external-port-0169`.
+  - **`go test ./...` cache behaviour**: only `internal/cli`
+    re-compiled / re-ran because that is the only package the patch
+    touched. Sibling packages remained cached green. This pattern
+    holds for every future API-coverage table addition.
+---

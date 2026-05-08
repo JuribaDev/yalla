@@ -12687,6 +12687,169 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0184",
+		OperationID: "mongo-search",
+		Method:      http.MethodGet,
+		Path:        "/mongo.search",
+		Tag:         "mongo",
+		// Eleventh entry on the priority-4 mongo/* coverage roster,
+		// immediately following API-0183 `mongo-saveExternalPort` and
+		// completing the forward reference embedded in that entry's
+		// comment block ("The next case in the PRD-ordered priority-4
+		// backlog is API-0184 `mongo-search` (declared a **GET** per
+		// the spec preview — the first GET on the mongo/* roster
+		// since API-0178 `mongo-one`)"). Continues inside the
+		// `mongo-cov-*` per-tag fixture-isolation namespace opened by
+		// API-0174 `mongo-changeStatus` and **must not** back-reference
+		// any closed prior-tag namespace (`set-cov-*`, `srv-cov-*`,
+		// `proj-cov-*`, `org-cov-*`, `compose-cov-*`, `app-cov-*`,
+		// `ai-cov-*`, `admin-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		// `cert-cov-*`, `clu-cov-*`, `deployment-cov-*`, `dest-cov-*`,
+		// `docker-cov-*`, `domain-cov-*`, `environment-cov-*`,
+		// `gitea-cov-*`, `github-cov-*`, `gitlab-cov-*`,
+		// `mariadb-cov-*`, `mounts-cov-*`, `swarm-cov-*`,
+		// `usr-cov-*`, etc.) per the per-tag isolation rule
+		// reasserted at API-0335..API-0444 and originally established
+		// at API-0246 `organization-active`.
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json` > `/mongo.search` >
+		// `get`: method GET, tag mongo, **no request body** (GETs in
+		// this OpenAPI document never carry a `requestBody` field),
+		// and **eight OPTIONAL query parameters** — `q` (string),
+		// `name` (string), `appName` (string), `description` (string),
+		// `projectId` (string), `environmentId` (string), `limit`
+		// (number, default 20), `offset` (number, default 0).
+		// Responses 200/400/401/403/404/500. The 200 response is `{}`
+		// with `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort.
+		//
+		// **Shape positioning — all-optional query GET, no body.**
+		// STRUCTURAL FIRST for the mongo/* roster: every query
+		// parameter is OPTIONAL (`required: false`). The prior mongo/*
+		// GET (API-0178 `mongo-one`) gated on a single REQUIRED
+		// `mongoId` string param, so this is the first case in the
+		// tag where a fully-empty query is wire-valid — and the second
+		// mongo/* GET overall (`mongo-one` was the first). The wire
+		// shape is byte-for-byte identical to the cross-tag
+		// `*-search` precedent set by API-0170 `mariadb-search`
+		// (the immediate cross-tag analog: same eight optional query
+		// params with identical names and types, only the tag /
+		// path differ), and continues the broader cross-tag
+		// all-optional `*-search` GET chain at API-0035
+		// `application-search` (11 params), API-0089 `compose-search`
+		// (8 params), API-0129 `environment-search` (6 params), and
+		// API-0296 `project-search` (5 params). Per that precedent,
+		// the fixture nevertheless populates a representative subset
+		// so `runAPICoverageSuccess` can re-read `r.URL.Query()` and
+		// prove the CLI propagated every param verbatim — including
+		// the two numeric-typed params (`limit` / `offset`, both
+		// `number` per the spec) which travel through the `--input`
+		// JSON `query` field as strings (HTTP query strings are
+		// untyped on the wire). We exercise (a) free-text search
+		// (`q`), (b) a scoped filter (`projectId`), and (c) numeric
+		// pagination (`limit` / `offset`) — the same representative
+		// slice locked in at API-0170 `mariadb-search` and originally
+		// at API-0129 `environment-search` — without bloating the
+		// fixture into a noisy 8-key map. Numeric values use the
+		// canonical decimal grammar (`"5"` / `"0"`) so a future
+		// schema validator that re-coerces query strings to numbers
+		// still accepts them. The harness's `len(tc.SampleBody) > 0`
+		// gate stays inert so no content-type / body byte-comparison
+		// legs activate, exactly as on prior all-optional `*-search`
+		// GET peers.
+		//
+		// **Family choice — 404→CodeNotFound representative
+		// available but harness-default 401→CodeAuth retained.**
+		// The spec declares 404 on this operation, so the
+		// 404→CodeNotFound override is *technically* applicable.
+		// We deliberately stick with the harness-default
+		// 401→CodeAuth representative-failure leg per the precedent
+		// locked in at API-0170 `mariadb-search` (the immediate
+		// cross-tag analog): the 404 → CodeNotFound override is
+		// reserved for the **canonical by-id `*-one` GET peer** of
+		// each tag, which the mongo/* roster already consumed at
+		// API-0178 `mongo-one`. A `*-search` GET's primary failure
+		// mode is unauthenticated access (an agent without a valid
+		// token), not a missing resource — search returns an empty
+		// result set when no records match its filters, never a 404.
+		// 401 → CodeAuth therefore remains the most informative
+		// failure leg to re-prove for this call site, mirroring
+		// every prior all-optional `*-search` GET peer.
+		//
+		// Fixture conventions:
+		//   * Per the API-0010 / API-0014 / API-0249 / API-0292 /
+		//     API-0297 / API-0052 / API-0053
+		//     every-optional-populated rule, this entry has eight
+		//     optional parameters; populating a representative
+		//     subset of four (`q`, `projectId`, `limit`, `offset`)
+		//     follows the API-0170 `mariadb-search` precedent for
+		//     the structurally identical eight-optional-param
+		//     `*-search` GET — three covering the distinct semantic
+		//     axes (free-text, scoped filter, pagination) plus a
+		//     paired numeric `offset` so the canonical decimal
+		//     grammar is exercised on both sides of the limit/offset
+		//     pair. The remaining four optional string filters
+		//     (`name`, `appName`, `description`, `environmentId`)
+		//     are byte-for-byte identical in shape to `q` /
+		//     `projectId` so populating them too would only inflate
+		//     the fixture without exercising any new code path on
+		//     the CLI → API client → httptest server round-trip.
+		//   * Per-case fixture token base
+		//     `mongo-cov-search-0184` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared
+		//     across every prior mongo/* peer (API-0174..API-0183).
+		//     The mongo/* tag's slug-style lock-in (camelCase
+		//     preserved per API-0182 `mongo-cov-saveEnvironment-0182`
+		//     and API-0183 `mongo-cov-saveExternalPort-0183`) is
+		//     trivially satisfied here because `search` is a single
+		//     lowercase segment with no internal capitalisation —
+		//     the kebab-vs-camel choice is moot for single-segment
+		//     slugs. Verified non-colliding with API-0174's
+		//     `mongo-cov-changeStatus-0174` literal, API-0175's
+		//     `mongo-cov-create-0175` literals, API-0176's
+		//     `mongo-cov-deploy-0176-mongoId` literal, API-0177's
+		//     `mongo-cov-move-0177-{mongoId,targetEnvironmentId}`
+		//     literals, API-0178's
+		//     `mongo-cov-one-0178-mongoId-fixture` literal, API-0179's
+		//     `mongo-cov-rebuild-0179-mongoId` literal, API-0180's
+		//     `mongo-cov-reload-0180-{mongoId,appName}` literals,
+		//     API-0181's `mongo-cov-remove-0181-mongoId` literal,
+		//     API-0182's `mongo-cov-saveEnvironment-0182-{mongoId,env}`
+		//     literals, and API-0183's
+		//     `mongo-cov-saveExternalPort-0183-mongoId` literal,
+		//     and non-colliding with the cross-tag `bb-cov-*` /
+		//     `gitea-cov-*` / `gitlab-cov-*` / `mariadb-cov-*` /
+		//     `proj-cov-*` / `srv-cov-*` / `set-cov-*` /
+		//     `org-cov-*` namespaces. The cross-tag analog
+		//     `mariadb-cov-search-0170` is intentionally similar in
+		//     shape — same `<tag>-cov-search-<storyID>` skeleton —
+		//     but the `mariadb` vs `mongo` tag prefix and the
+		//     `0170` vs `0184` storyID suffix make every literal
+		//     distinguishable.
+		//
+		// The next case in the PRD-ordered priority-4 backlog is
+		// API-0185 `mongo-start` (declared a **POST** per the spec
+		// preview; the next contributor must re-verify the spec
+		// against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will continue inside the `mongo-cov-*` per-tag
+		// fixture-isolation namespace opened by API-0174).
+		SampleQuery: map[string][]string{
+			"q":         {"mongo-cov-search-0184"},
+			"projectId": {"mongo-cov-search-project-0184"},
+			"limit":     {"5"},
+			"offset":    {"0"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0188",
 		OperationID: "mounts-allNamedByApplicationId",
 		Method:      http.MethodGet,
