@@ -18632,3 +18632,51 @@ forward-reference lesson before assuming any field shape.
   - Any `*-deploy`-style POST whose only input is the by-id resource scalar collapses to the canonical `single-required-string-scalar POST imperative-action mutation` shape (precedent: API-0162 `mariadb-deploy`). Reuse the family choice (harness-default 401→CodeAuth) and the comment skeleton verbatim — the comment block's structural-identity callouts are load-bearing for future shape-positioning audits.
   - When inserting between two existing entries, use the boundary `\t\tSuccessResponse: \`{}\`,\n\t},\n\t{\n\t\tStoryID:     "<next-id>",` as the Edit anchor — it's 1-tab + 1-tab + 2-tab on the structural lines and is unique by next-StoryID. The `replace_all=false` Edit tool is unreliable when whitespace assumptions don't match; use a Python `str.replace` via `ctx_execute` for byte-accurate insertions when the anchor uses tabs.
 ---
+
+## 2026-05-08 - API-0139 - Cover github-getGithubBranches (GET /github.getGithubBranches)
+- Appended a new `apiCoverageCase` literal to `coveredAPIOperations`
+  in `internal/cli/api_coverage_test.go`, sorted between API-0138
+  `gitea-update` and API-0160 `mariadb-changeStatus`. Story locks the
+  registry/method/path/tag invariants, schema reachability, manifest
+  inclusion, an httptest-backed success exchange, and a representative
+  401→CodeAuth failure leg via the shared harness.
+- Spec re-verified against `internal/api/data/openapi.json >
+  /github.getGithubBranches > get`: GET, tag github, two REQUIRED query
+  parameters (`repo`, `owner`), one OPTIONAL query parameter
+  (`githubId`), no requestBody, responses 200/400/401/403/404/500. 200
+  schema is `{}` with `additionalProperties: false`.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (+1 case literal)
+  - `ralph/prd.json` (set `passes: true` for API-0139)
+  - `ralph/progress.txt` (this entry)
+- Verification run from repo root:
+  - `gofmt -l .` → clean
+  - `go vet ./...` → clean
+  - `go test ./...` → all packages pass
+  - `go test -race ./...` → all packages pass
+  - `go mod tidy` → no changes
+- Results: all required quality gates green; full coverage harness
+  exercises the new entry alongside the prior 276 cases.
+- Remaining risks or follow-ups: priority-5 github/* roster has six
+  more peers (API-0140..API-0144) plus repos/providers/one/test/update
+  yet to ship; per-tag fixture-isolation namespace `github-cov-*` is
+  now opened and reserved.
+- **Learnings for future iterations:**
+  - Multi-query GETs follow the every-optional-populated rule when no
+    optional field is credential-shaped — populate the optional query
+    keys so the success-leg query-comparison assertion exercises the
+    full multi-key wire surface.
+  - The 404→CodeNotFound override is structurally available for
+    parameter-bearing GETs but the harness-default 401→CodeAuth is
+    retained as the per-tag opener default, mirroring API-0005
+    `ai-get`, API-0124 `environment-byProjectId`, API-0188
+    `mounts-allNamedByApplicationId`, and the gitea/* GET peers.
+  - Per-tag opener entries must explicitly enumerate every closed
+    prior-tag fixture-namespace (`admin-cov-*`..`usr-cov-*`) in the
+    isolation comment so future contributors do not accidentally
+    back-reference a closed slug.
+  - The `coveredAPIOperations` slice is sorted by StoryID, not by tag
+    or PRD priority — sandwich an out-of-order story (API-0139 lands
+    between API-0138 and API-0160) into the right slot rather than
+    appending at the end.
+---
