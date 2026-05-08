@@ -13032,3 +13032,75 @@ Learnings for future iterations:
   - The slug-prefix-is-not-shape lesson holds even within the same tag: API-0427 `user-all` (parameter-free GET) and this entry (POST with fifteen required body fields) share the `user-` operation-stem but have entirely orthogonal shape signatures. Future user/* contributors must continue per-operation re-verification.
   - Single-required-string slug fields accept the sentinel `usr-cov-assignPermissions-0428` directly (no length, pattern, or format constraint on `id`); array-of-strings fields embed the same sentinel as the lone element so the per-case fixture token base remains uniformly traceable across every populated string surface.
 ---
+
+## 2026-05-08 - API-0429 - Cover user-checkUserOrganizations (GET /user.checkUserOrganizations)
+
+What was implemented:
+- Appended a new `apiCoverageCase` struct literal for API-0429
+  (`user-checkUserOrganizations`) to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go`. Third entry on the user/* coverage
+  roster, slotted in StoryID order between API-0428 `user-assignPermissions`
+  (POST) and the next priority-2 entry API-0430 `user-createApiKey` (POST).
+- Spec re-verified against `internal/api/data/openapi.json
+  > /user.checkUserOrganizations > get`: GET, no request body, exactly one
+  required query parameter (`userId`, string), responses
+  200/400/401/403/404/500. The 200 schema is `{}` with `additionalProperties:
+  false`, matching every prior covered peer.
+- Fixture token base `usr-cov-checkUserOrganizations-0429` follows the
+  inherited `<tag>-cov-<slug>-<storyID>` convention. SampleQuery populates
+  the single required `userId` slot; no body, no path params.
+- Failure-leg fields are intentionally omitted so the harness defaults
+  (`FailureStatus == 0` → 401, `FailureCode == ""` → CodeAuth) supply the
+  most informative representative for an authenticated GET. Although the
+  spec declares 404 here, the per-tag opener convention reasserted at
+  API-0335..API-0428 reserves 404 → CodeNotFound for canonical `*-one`
+  peers; within user/* that role is reserved for API-0433 `user-get`.
+
+Files changed:
+- internal/cli/api_coverage_test.go (+109 lines: one new struct literal)
+- ralph/prd.json (passes flipped false → true on API-0429)
+- ralph/progress.txt (this entry)
+
+Verification run:
+- gofmt -w .                       → clean
+- go mod tidy                      → clean
+- go vet ./...                     → clean
+- go test ./...                    → ok
+- go test -race ./...              → ok (internal/cli 2.768s)
+- goimports / golangci-lint / staticcheck / govulncheck / goreleaser
+  remain not installed locally; documented per the existing
+  "Verification baseline" pattern at the top of this file.
+
+Results:
+- All five harness assertions for API-0429 pass via the
+  `coveredAPIOperations` fixture: registry presence, schema reachability,
+  manifest inclusion, success exchange (httptest with `userId` echo
+  assertion through `runAPICoverageSuccess`), and the default 401 →
+  CodeAuth failure path through `runAPICoverageFailure`.
+
+Remaining risks or follow-ups:
+- 404 → CodeNotFound coverage for the user/* roster is still pending and
+  is reserved for API-0433 `user-get` per the API-0427 hand-off forecast.
+- API-0430 `user-createApiKey` is the next priority-2 backlog entry; per
+  the slug-prefix-is-not-shape lesson its body shape MUST be re-verified
+  per-operation against `internal/api/data/openapi.json
+  > /user.createApiKey > post` before any field is assumed to carry over
+  from API-0427/0428/0429.
+
+Learnings for future iterations:
+- The `apiCoverageCase` harness already covers GET-with-single-required-
+  query-parameter operations end-to-end via SampleQuery; no command-layer
+  or registry-layer code change is needed for a parameter-only GET that
+  fits the canonical shape (cf. API-0008 `ai-one`, API-0005 `ai-get`).
+- `coveredAPIOperations` MUST stay sorted by StoryID for diff-friendliness
+  (line 84 docstring). Insert new entries immediately before the closing
+  `}` of the slice — never reshuffle existing entries.
+- Per the per-tag opener convention reasserted at API-0335..API-0428,
+  even when the spec declares 404 on a non-`*-one` GET (as here for
+  `checkUserOrganizations`, where a missing `userId` *would* semantically
+  trigger 404), the failure leg defaults to 401 → CodeAuth because the
+  by-id resource-fetch role is reserved for the canonical `*-one` peer
+  in the same tag. This keeps the 404 → CodeNotFound assertion concentrated
+  in the one place where it most informatively gates spec drift.
+
+---
