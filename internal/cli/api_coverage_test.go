@@ -5814,6 +5814,115 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0112",
+		OperationID: "docker-getServiceContainersByAppName",
+		Method:      http.MethodGet,
+		Path:        "/docker.getServiceContainersByAppName",
+		Tag:         "docker",
+		// **Fifth entry in the docker/* roster** following API-0108
+		// `docker-getConfig`, API-0109 `docker-getContainers`,
+		// API-0110 `docker-getContainersByAppLabel`, and API-0111
+		// `docker-getContainersByAppNameMatch`. Stays inside the
+		// `docker-cov-*` per-tag fixture-isolation namespace opened
+		// at API-0108 and **must not** back-reference any closed
+		// `admin-cov-*`, `ai-cov-*`, `app-cov-*`, `backup-cov-*`,
+		// `bb-cov-*`, `cert-cov-*`, `clu-cov-*`, `compose-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `org-cov-*`, `proj-cov-*`,
+		// `set-cov-*`, or `srv-cov-*` namespace. The `server-cov-*`
+		// fixture-token literal seen inside backup/* `serverId`
+		// payloads (API-0041) is a *value* shape from the cross-tag
+		// optional-serverId axis and is reused here verbatim for the
+		// optional `serverId` query parameter — that cross-tag
+		// convention is orthogonal to the per-tag namespace and is
+		// honoured by every operation that exposes an optional
+		// `serverId`.
+		//
+		// **Spec re-verified per the API-0345..API-0396
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json >
+		// /docker.getServiceContainersByAppName > get`: a **GET**
+		// with **two query parameters** — `appName` (string,
+		// REQUIRED — the Docker Swarm service application name used
+		// to enumerate the running task containers backing the
+		// service) and `serverId` (string, OPTIONAL — scopes the
+		// lookup to a specific Dokploy worker server when the
+		// service is replicated across the swarm). No request body.
+		// Responses 200/400/401/403/404/500. The 200 schema is `{}`
+		// with `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort. The
+		// slug-prefix-is-not-shape lesson is honoured: this
+		// re-verification is a per-operation OpenAPI lookup, not an
+		// inheritance from API-0108 `docker-getConfig` (REQUIRED +
+		// OPTIONAL, two params), API-0109 `docker-getContainers`
+		// (OPTIONAL-only, one param), API-0110
+		// `docker-getContainersByAppLabel` (REQUIRED + REQUIRED +
+		// OPTIONAL, three params), or API-0111
+		// `docker-getContainersByAppNameMatch` (REQUIRED + OPTIONAL
+		// + OPTIONAL, three params with one enum-constrained
+		// OPTIONAL). This entry is REQUIRED + OPTIONAL (two
+		// params) — a fifth distinct sub-shape inside the docker/*
+		// roster that re-uses the API-0108 parameter-count of two
+		// but inverts the REQUIRED/OPTIONAL split (API-0108 had the
+		// OPTIONAL `appName` first; this entry promotes `appName`
+		// to REQUIRED and drops the second REQUIRED parameter
+		// entirely).
+		//
+		// **Shape positioning — REQUIRED + OPTIONAL GET, two query
+		// parameters.** The harness does not gate on
+		// `required`-ness — every declared parameter is forwarded
+		// via `--input` JSON `query` and the success-leg
+		// `r.URL.Query()` re-read at `runAPICoverageSuccess`
+		// exercises end-to-end forwarding for both. The harness
+		// forwards SampleQuery via the `--input` JSON `query` field,
+		// and `runAPICoverageSuccess` re-reads `r.URL.Query()` to
+		// confirm the CLI propagated all params verbatim.
+		//
+		// **Family choice — harness-default 401 → CodeAuth failure
+		// leg.** The spec declares 404 for this operation (the
+		// `appName` may not match any running swarm service), but
+		// per the per-tag opener convention re-affirmed at
+		// API-0108..API-0111, the docker/* 404→CodeNotFound
+		// representative is reserved for a peer where the spec
+		// re-verification confirms 404 is exercisable from a
+		// legitimate `--input` document AND the operation's failure
+		// semantics make the missing-row case the most
+		// representative leg. `appName`-keyed list endpoints surface
+		// `E_AUTH` before any service lookup runs when the bearer
+		// is missing/invalid, so 401→CodeAuth remains the universal
+		// failure mode every authenticated Dokploy operation must
+		// re-prove. A future docker/* id-bearing GET (API-0113
+		// `docker-getStackContainersByAppName`) is the natural home
+		// for the docker/* roster's 404→CodeNotFound representative
+		// when the spec re-verification at that story confirms 404
+		// exercisability. Per the established
+		// `<tag>-cov-<slug>-<storyID>` deterministic-but-clearly-
+		// fake naming convention, the fixture token base
+		// `docker-cov-get-service-containers-by-app-name-0112` keeps
+		// `git grep` traceable to this PRD story without colliding
+		// with API-0108 (`docker-cov-get-config-0108`), API-0109
+		// (`docker-cov-get-containers-0109`), API-0110
+		// (`docker-cov-get-containers-by-app-label-0110`), or
+		// API-0111 (`docker-cov-get-containers-by-app-name-match-0111`).
+		//
+		// The next case in the docker/* roster per PRD ordering is
+		// API-0113 `docker-getStackContainersByAppName` (declared a
+		// **GET** per the spec preview; the next contributor must
+		// re-verify the spec against `internal/api/data/openapi.json`
+		// per the forward-reference lesson before assuming any field
+		// shape is identical to this entry — slug-prefix-is-not-shape
+		// applies even within the docker/* roster).
+		SampleQuery: map[string][]string{
+			"appName":  {"docker-cov-get-service-containers-by-app-name-0112"},
+			"serverId": {"server-cov-docker-get-service-containers-by-app-name-0112"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,

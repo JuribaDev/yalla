@@ -14274,3 +14274,64 @@ Learnings for future iterations:
     open `internal/api/data/openapi.json` and look up the operation
     before copying a peer's structure.
 ---
+
+## 2026-05-08 - API-0112
+- Implemented coverage for `docker-getServiceContainersByAppName`
+  (GET `/docker.getServiceContainersByAppName`).
+- Added a new entry to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go` immediately after the API-0111
+  block and before the API-0246 organization opener. Spec
+  re-verified against `internal/api/data/openapi.json` per the
+  forward-reference lesson: GET with two query parameters —
+  `appName` (string, REQUIRED) and `serverId` (string, OPTIONAL) —
+  no request body, 200/400/401/403/404/500 responses, 200 schema
+  is `{}` with `additionalProperties: false`.
+- Fixture tokens use the established
+  `<tag>-cov-<slug>-<storyID>` convention:
+  - `appName`: `docker-cov-get-service-containers-by-app-name-0112`
+  - `serverId`: `server-cov-docker-get-service-containers-by-app-name-0112`
+- Failure leg: harness-default 401→CodeAuth (per the per-tag opener
+  convention re-affirmed at API-0108..API-0111; the docker/* roster's
+  404→CodeNotFound representative remains reserved for a peer where
+  the spec re-verification confirms 404 exercisability — most likely
+  API-0113 `docker-getStackContainersByAppName`).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (added API-0112 case)
+  - `ralph/prd.json` (passes: true for API-0112)
+  - `ralph/progress.txt` (this entry)
+- Verification run from repo root:
+  - `gofmt -w .` — clean
+  - `go mod tidy` — no changes
+  - `go vet ./...` — pass
+  - `go test ./...` — pass (all packages green)
+  - `go test -race ./...` — pass
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — not installed locally; documented previously,
+    skipped here per established practice.
+- Remaining risks/follow-ups:
+  - API-0113 `docker-getStackContainersByAppName` is the natural next
+    candidate for the docker/* roster's 404→CodeNotFound representative
+    leg, but only if the spec re-verification at that story confirms
+    404 exercisability from a legitimate `--input` document. The
+    next contributor must perform the per-operation OpenAPI lookup
+    and not assume shape from the slug prefix.
+- **Learnings for future iterations:**
+  - The harness happily accepts more `--input` `query` keys than the
+    spec marks REQUIRED — every declared parameter, REQUIRED or
+    OPTIONAL, must be in `SampleQuery` so the success-leg
+    `r.URL.Query()` re-read at `runAPICoverageSuccess` exercises
+    end-to-end forwarding for all of them.
+  - Within a single tag's roster (here docker/*), every operation
+    can carry a *distinct* parameter sub-shape — this fifth docker/*
+    entry shares the parameter-count of two with API-0108 but
+    inverts the REQUIRED/OPTIONAL split. Slug-prefix-is-not-shape
+    applies even within a tag.
+  - The `<tag>-cov-<slug>-<storyID>` fixture token convention is
+    fully deterministic and `git grep`-traceable; collisions across
+    sibling docker/* entries are avoided automatically by the
+    `-<storyID>` suffix.
+  - Per the established convention, the per-tag 404→CodeNotFound
+    representative is *reserved*, not *required* — it is fine for
+    multiple consecutive entries in the same tag to default to
+    401→CodeAuth until the right peer with exercisable 404 surfaces.
+---
