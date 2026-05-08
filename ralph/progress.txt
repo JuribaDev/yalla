@@ -9516,3 +9516,78 @@ Learnings for future iterations:
     as missing rather than silently skipped — same status
     as every prior coverage story.
 ---
+
+## 2026-05-08 - API-0053 (bitbucket-getBitbucketBranches)
+- Implemented contract coverage for GET /bitbucket.getBitbucketBranches —
+  the third bitbucket/* roster entry and the **first query-bearing GET**
+  in the bitbucket/* tag. Appended one struct literal to
+  `internal/cli/api_coverage_test.go`'s `coveredAPIOperations` table; no
+  registry/manifest/output code changes were required because the
+  Dokploy OpenAPI spec already declares the operation and the harness
+  loops over `coveredAPIOperations` to drive registry, schema,
+  manifest, success round-trip, and representative-failure subtests.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (+API-0053 entry, alpha-sorted
+    between API-0052 `bitbucket-create` and API-0066
+    `compose-cancelDeployment`).
+  - `ralph/prd.json` (`API-0053.passes` flipped to `true`).
+  - `ralph/progress.txt` (this entry).
+- Verification run from repo root:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean (no go.sum drift).
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass.
+  - `go test -race ./...` — all packages pass.
+  - Focused `go test -run "TestAPICoverage/API-0053" -v
+    ./internal/cli/...` — all five harness subtests
+    (registry, schema, manifest, success, failure) pass.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, and
+    `goreleaser` remain not installed locally; documented as missing
+    rather than silently skipped, matching the convention reasserted
+    on every preceding API-XXXX coverage commit.
+- API coverage advances from 149 to 150 passing / 462 total.
+- Remaining risks / follow-ups:
+  - The next bitbucket/* roster entry is API-0054
+    `bitbucket-getBitbucketRepositories` — a single-required-query-param
+    GET per the PRD (params: `owner` required, `bitbucketId` optional).
+    Future contributor must re-verify the spec against
+    `internal/api/data/openapi.json > /bitbucket.getBitbucketRepositories
+    > get` per the API-0345..API-0364 forward-reference lesson before
+    assuming any field carries over from API-0053; the eleven-flip
+    body-axis history of the settings/* `clean*` sub-roster
+    (API-0353..API-0362) demonstrates why per-operation re-verification
+    stays mandatory across every family transition. Slug
+    `bb-cov-getRepos-0054` is reserved per the API-0052 namespace plan.
+- **Learnings for future iterations:**
+  - **bitbucket/* high-arity-first ordering.** The bitbucket/* tag's
+    PRD ordering ships the highest-arity query GET
+    (`getBitbucketBranches`, 3 params) before the single-param peers
+    (`getBitbucketRepositories`, `bitbucket-one`). This inverts the
+    application/* roster ordering precedent (API-0021 `application-one`
+    single-param preceded API-0035 `application-search` 11-optional
+    params). Either ordering is acceptable per the harness contract:
+    `runAPICoverageSuccess` re-reads `r.URL.Query()` and asserts every
+    `SampleQuery` key/value pair survives verbatim, so multi-param
+    propagation is proven independently of arrival order.
+  - **Every-optional-populated rule on query-shaped GETs.** The
+    convention previously asserted on POST bodies (API-0010 / API-0014
+    / API-0249 / API-0292 / API-0297 / API-0052) extends naturally to
+    `SampleQuery`: populating the optional `bitbucketId` alongside the
+    two required `owner` / `repo` scalars exercises the full envelope
+    on the wire. The harness's `r.URL.Query()` re-read at
+    `runAPICoverageSuccess` observes this end-to-end without any new
+    helper.
+  - **`bb-cov-*` namespace expansion.** API-0051 reserved
+    `bb-cov-providers-0051` (no fixture), API-0052 consumed
+    `bb-cov-create-0052-*-fixture` for body fields, and API-0053 now
+    consumes `bb-cov-getBranches-0053-*` for query values.
+    Forthcoming bitbucket/* peers (API-0054..API-0057) inherit the
+    `bb-cov-*` namespace per the per-tag fixture-isolation rule
+    established at API-0246 `organization-active`.
+  - **No new harness code needed.** Confirms the API-XXXX coverage
+    pattern: every Dokploy OpenAPI operation is a one-struct-literal
+    append. Spec changes (registry, schema, manifest) flow from the
+    embedded OpenAPI document; harness coverage flows from the
+    `coveredAPIOperations` table. Adding a new story never requires
+    touching the runner.
+---

@@ -1919,6 +1919,148 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0053",
+		OperationID: "bitbucket-getBitbucketBranches",
+		Method:      http.MethodGet,
+		Path:        "/bitbucket.getBitbucketBranches",
+		Tag:         "bitbucket",
+		// Third entry on the bitbucket/* coverage roster and the
+		// **first GET-shaped query-bearing** operation in the
+		// bitbucket/* tag — succeeds the parameter-free GET kickoff
+		// at API-0051 `bitbucket-bitbucketProviders` and the
+		// flat-scalar-only POST mutation at API-0052
+		// `bitbucket-create`. Inherits the `bb-cov-*` per-tag
+		// fixture-isolation namespace opened by API-0051's
+		// design-rationale header and consumed by API-0052
+		// (`bb-cov-create-*-0052`). Per the per-tag isolation rule
+		// established at API-0246 `organization-active`, reasserted
+		// at API-0290 `project-all`, API-0335 `server-all`, API-0351
+		// `settings-assignDomainServer`, and re-asserted at API-0051's
+		// bitbucket/* kickoff: this entry **must not** back-reference
+		// the closed `admin-cov-*`, `ai-cov-*`, `app-cov-*`,
+		// `backup-cov-*`, `compose-cov-*`, `deployment-cov-*`,
+		// `org-cov-*`, `proj-cov-*`, `srv-cov-*`, or `set-cov-*`
+		// namespaces, even though the nearest cross-tag
+		// query-shaped GET precedents are API-0021 `application-one`,
+		// API-0022 `application-readAppMonitoring`, and API-0023
+		// `application-readTraefikConfig` (each carrying a single
+		// required string param).
+		//
+		// **Spec re-verified per the API-0345..API-0364
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json >
+		// /bitbucket.getBitbucketBranches > get`: a **GET** with
+		// **three query parameters** and **no request body**
+		// (GETs in this OpenAPI document never carry a `requestBody`
+		// field). Parameters per the spec:
+		//   - REQUIRED scalars: `owner` (plain string), `repo`
+		//     (plain string).
+		//   - OPTIONAL scalar: `bitbucketId` (plain string).
+		// All three are typed `string` with no `anyOf` /
+		// `nullable` / enum constraints — the simplest query-shape
+		// observed across the bitbucket/* tag and a structural
+		// counterpoint to API-0035 `application-search`'s
+		// 11-parameter optional-only fixture. Responses
+		// 200/400/401/403/404/500 — the **404 stays present**,
+		// matching the by-id retrieval pattern of API-0021
+		// `application-one` and the platform-info getter cohort
+		// (API-0363/0364/0365). The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer; the success-leg envelope assertion stays
+		// focused on `data.method` / `data.status` rather than
+		// payload projection.
+		//
+		// **Family choice — first query-bearing GET in
+		// bitbucket/*.** Of the three remaining bitbucket/* GETs
+		// (`getBitbucketBranches` 3 params, `getBitbucketRepositories`
+		// 1 param, `one` 1 param), API-0053 ships the
+		// **highest-arity** query shape first so the harness
+		// proves multi-param query propagation through the
+		// CLI → API client → httptest server path before the
+		// single-param peers (API-0054, API-0055) lean on it.
+		// This mirrors the application/* roster ordering precedent
+		// where API-0021 `application-one` (single required param)
+		// preceded API-0035 `application-search` (11 optional
+		// params), but here the bitbucket/* PRD ordering forces
+		// the inverse: high-arity first. Either ordering is
+		// acceptable per the harness contract — `runAPICoverageSuccess`
+		// re-reads `r.URL.Query()` and asserts every populated
+		// `SampleQuery` key/value pair survives verbatim, so an
+		// agent calling `yalla api call bitbucket-getBitbucketBranches
+		// --input request.json --json` with all three params in the
+		// `query` field gets deterministic forwarding. Future
+		// bitbucket/* peers (API-0054 `getBitbucketRepositories`,
+		// API-0055 `bitbucket-one`) must each re-verify their own
+		// spec shapes per the API-0345..API-0364 forward-reference
+		// lesson; the eleven-flip body-axis history of the
+		// settings/* `clean*` sub-roster (API-0353..API-0362)
+		// demonstrates why per-operation re-verification stays
+		// mandatory across every family transition.
+		//
+		// Fixture conventions:
+		//   * Per the API-0010 / API-0014 / API-0249 / API-0292 /
+		//     API-0297 / API-0052 every-optional-populated rule,
+		//     the optional `bitbucketId` is populated alongside
+		//     the two required scalars so the wire query string
+		//     exercises the entire envelope — not just the
+		//     minimum-required `owner` + `repo` pair. The
+		//     harness's success-leg `r.URL.Query()` round-trip
+		//     observes this end-to-end through the
+		//     CLI → API client → httptest server path.
+		//   * Per-case fixture token base `bb-cov-getBranches-0053`
+		//     follows the `<tag>-cov-<slug>-<storyID>` convention
+		//     and consumes the slot reserved by API-0052's
+		//     design-rationale header (verified: no collisions
+		//     with API-0051's `bb-cov-providers-0051` reservation,
+		//     API-0052's `bb-cov-create-0052-*` literals, the
+		//     forthcoming `bb-cov-getRepos-0054` /
+		//     `bb-cov-one-0055` / `bb-cov-testConn-0056` /
+		//     `bb-cov-update-0057` slugs reserved for upcoming
+		//     bitbucket/* peers, and no collisions with the
+		//     cross-tag `proj-cov-*` / `srv-cov-*` / `set-cov-*` /
+		//     `org-cov-*` namespaces).
+		//   * Deterministic-but-clearly-fake values (`-fixture`
+		//     suffix on the optional `bitbucketId`) keep diffs
+		//     readable and let any future schema validator's
+		//     failure messages point at the offending field.
+		//     `owner` / `repo` carry plain `<base>-<field>-0053`
+		//     literals consistent with the API-0021..API-0023
+		//     query-shaped GET precedent.
+		SampleQuery: map[string][]string{
+			"owner":       {"bb-cov-getBranches-0053-owner"},
+			"repo":        {"bb-cov-getBranches-0053-repo"},
+			"bitbucketId": {"bb-cov-getBranches-0053-bitbucketId-fixture"},
+		},
+		// 200 response in the spec is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		//
+		// **Failure-leg fields are intentionally omitted.** Even
+		// though the spec declares 404 on this operation, the
+		// per-tag opener convention reasserted at API-0246
+		// `organization-active`, API-0290 `project-all`, API-0335
+		// `server-all`, API-0351 `settings-assignDomainServer`,
+		// and API-0051's bitbucket/* kickoff reserves
+		// 404 → CodeNotFound for the canonical by-id peer
+		// (here API-0055 `bitbucket-one`), not for fleet-wide
+		// list-style getters like `getBitbucketBranches` (which
+		// returns the branch catalogue keyed by repository, not
+		// a single resource keyed by id). Auth is the universal
+		// failure mode every Dokploy operation must re-prove, so
+		// 401 → CodeAuth via the harness default
+		// (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""`
+		// → CodeAuth) stays the most informative representative.
+		// 400 → CodeInvalidInput stays reserved for stories where
+		// payload validation is the operation's distinguishing
+		// failure mode; this entry's three-string-param query
+		// surface is too generic to claim that distinguishing
+		// shape, so it uses the canonical 401, same as
+		// API-0051's kickoff and API-0052's mutation.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0066",
 		OperationID: "compose-cancelDeployment",
 		Method:      http.MethodPost,
