@@ -273,7 +273,7 @@
       ],
       "type": "foundation",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Keep HTTP behavior testable without a live Dokploy server."
     },
     {

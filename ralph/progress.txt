@@ -131,6 +131,30 @@
   `streams.ErrOut` to `output.Renderer.Error`). On any error path stdout
   must remain empty even when `--json` is set; tests assert
   `stdout == ""` and `strings.Contains(stderr, "yalla.error.v1")`.
+- HTTP client (US-0006): `internal/api.NewClient(api.ClientConfig)` is
+  the **only** way to talk to Dokploy. The package never imports
+  `internal/config` or `internal/cli`; the CLI layer translates
+  `*config.Config` into a `ClientConfig` so `internal/api` stays a
+  pure library.
+- Client contract (US-0006): `Client.Do(ctx, *Request) (*Result, error)`
+  returns `(*Result, nil)` for **any** completed HTTP transaction —
+  including 4xx/5xx — so callers pick the policy. Transport-level
+  failures (timeout, cancel, dns, dial, TLS) are typed `*yerr.Error`
+  values with `CodeTimeout`/`CodeCanceled`/`CodeNetwork`. Use
+  `Result.AsError()` for the canonical HTTP-status to error-code
+  mapping (400/422→`InvalidInput`, 401→`Auth`, 403→`Forbidden`,
+  404→`NotFound`, 409/412→`Conflict`, 429→`RateLimited`, 5xx→`Server`).
+- Retry policy (US-0006): retries fire only when `Request.Idempotent`
+  is true AND `ClientConfig.MaxRetries > 0`. Triggers are
+  network/timeout errors and HTTP 502/503/504 (500 is treated as a
+  deterministic application bug and never retried). Backoff is
+  context-aware — `<-ctx.Done()` during a retry sleep returns
+  `CodeCanceled` rather than waiting out the timer.
+- HTTP client tests (US-0006): always use `httptest.Server` or a stub
+  `http.RoundTripper` (`roundTripperFunc` in `client_test.go`); never
+  point a test at a live host. Set `RetryBase: 0` so the retry loop
+  runs without sleeping. `t.Context()` (Go 1.24) is the canonical
+  request-scoped context for these tests.
 
 ---
 
@@ -609,4 +633,92 @@
     parse cost is paid exactly once per process, even when both
     `api.operations` and `schema list` run in the same CLI invocation
     (they don't today, but documentation generators will).
+---
+
+## 2026-05-08 - US-0006
+- **Implemented**: Dokploy HTTP client with auth, timeouts, and typed
+  responses. New `internal/api/client.go` exposes `Client`, `ClientConfig`,
+  `Request`, and `Result` types. The client embeds the bearer token as
+  `Authorization: Bearer …`, captures observability headers (request id,
+  trace id), enforces a per-attempt timeout, classifies transport failures
+  into stable `*yerr.Error` values (CodeTimeout / CodeCanceled / CodeNetwork)
+  and offers `Result.AsError()` for the canonical HTTP-status mapping. The
+  retry loop is bounded to idempotent requests and only fires on
+  network/timeout failures or HTTP 502/503/504.
+- **Files changed**:
+  - `internal/api/client.go` (new) — `Client`, `ClientConfig`, `Request`,
+    `Result`, `NewClient`, `Do`, `resolvePath`, `doOnce`, `backoff`,
+    transport- and status-classifiers. Documents the contract that
+    transport failures return `(nil, *yerr.Error)` while any completed
+    HTTP response returns `(*Result, nil)`.
+  - `internal/api/client_test.go` (new) — httptest.Server fixtures plus a
+    `roundTripperFunc` stub for transport-error tests. Coverage:
+    auth header attached / overridable / omitted-when-empty,
+    method/path/query/body forwarded, observability headers captured,
+    HTTP 400/401/403/404/409/422/429/500/502/503/504/418 → status mapping,
+    body hint truncation + multi-line collapse, idempotent retry succeeds
+    after 503/network errors, non-idempotent never retries, 500 never
+    retried, retry budget exhaustion, per-attempt Timeout → CodeTimeout,
+    context cancel → CodeCanceled, transport refused → CodeNetwork,
+    secret redaction via `internal/output.Redactor`, base URL with
+    /api prefix joined correctly, missing method/path returns CodeInternal.
+  - `internal/api/AGENTS.md` — added a `## HTTP client (US-0006)` section
+    documenting the package boundary, the `(*Result, nil)` for any
+    completed HTTP response contract, retry policy, observability header
+    capture, and the `RetryBase: 0` testing convention.
+  - `ralph/prd.json` — set US-0006 `passes: true`.
+- **Verification run**:
+  - `gofmt -w .` — clean (gofmt pass after author write reflowed
+    `client_test.go`'s var block).
+  - `go mod tidy` — clean (no new deps).
+  - `go vet ./...` — clean.
+  - `go test ./...` — `ok internal/api 1.205s` plus the previously-passing
+    cli/config/output/errors packages.
+  - `go test -race ./...` — `ok internal/api 2.005s` plus all previously
+    passing packages.
+- **Tools NOT available locally** (per the verification policy): `goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`. Future
+  stories should install them or document their absence the same way.
+- **Remaining risks / follow-ups**:
+  - The client deliberately does not parse Dokploy's response envelopes
+    into a typed Go shape — that responsibility lands in US-0005's raw API
+    executor (it knows the per-operation response schema from the registry)
+    and in US-0012's curated commands. The client only ever returns the
+    raw bytes plus headers.
+  - There is no `Result.AsError()` integration into a CLI command yet; the
+    raw `yalla api call` executor (US-0005) is the first consumer.
+  - Connection pooling falls back to `net/http` defaults (`DefaultTransport`).
+    A future story can add per-host idle limits if Dokploy ever needs it,
+    but the current OpenAPI surface does not warrant tuning.
+  - URL `userinfo` is not stripped from base URLs (config validates only
+    scheme+host). The output redactor scrubs `?token=…` patterns but not
+    `https://user:pass@host`. If Dokploy ever supports basic auth via URL,
+    add a stripping pass to `NewClient` and a regression test.
+- **Learnings for future iterations**:
+  - `t.Context()` (Go 1.24) is the right test helper for request contexts;
+    it is automatically cancelled on test cleanup so leaked goroutines from
+    a misbehaving handler die with the test instead of the suite.
+  - `httptest.NewServer` runs handlers concurrently with the test, so
+    races between handler-side state assignment and the test's read are
+    not exposed by `-race` UNLESS the test reads after the handler has
+    completed its single request. The current tests rely on `Do()`'s
+    return as the synchronisation point — handler writes happen-before
+    `Do()` returns because the body is fully read on the server side
+    before the response completes. For multi-request races, switch to
+    `sync/atomic` (already used for retry-counter assertions).
+  - For transport-error tests, prefer a stub `http.RoundTripper` over
+    pointing the client at an unreachable host: it sidesteps platform-
+    specific dial timeouts (Linux ~127s, macOS varies) and keeps the
+    suite under a second.
+  - Cobra's `SilenceErrors` / `SilenceUsage` pattern from US-0001 keeps
+    the renderer in charge of error output, which means `*yerr.Error`
+    values returned from `client.Do` flow through the same redactor as
+    a typed config error. No new error-rendering code was needed for
+    this story.
+  - The retry policy distinguishes 502/503/504 from 500 because 500 is
+    almost always a deterministic application bug that re-running won't
+    fix; 502/503/504 are upstream/gateway failures that often clear on
+    a single retry. Document the distinction in the AGENTS.md so US-0005
+    inherits it.
+
 ---
