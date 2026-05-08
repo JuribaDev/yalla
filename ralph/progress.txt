@@ -17086,3 +17086,57 @@ Learnings for future iterations:
     `0131` to confirm a single new fixture's subtests, exactly as on
     every prior single-story contract addition.
 ---
+
+## 2026-05-08 - API-0425 — Cover swarm-getNodes (GET /swarm.getNodes)
+- Added swarm-getNodes (priority-3) to the canonical apiCoverageCase
+  table at internal/cli/api_coverage_test.go, completing the swarm/*
+  roster (API-0423/0424/0425). Spec re-verified against
+  internal/api/data/openapi.json > /swarm.getNodes > get: GET, no
+  request body, single OPTIONAL query param `serverId` (string),
+  responses 200/400/401/403/404/500 with 200 = {} +
+  additionalProperties:false. Shape coincidence with API-0423
+  swarm-getNodeApps (single OPTIONAL serverId only) — call-out in
+  the case comment that the coincidence is a property of the spec,
+  not an inheritance from the shared `swarm-getNode` slug-stem (per
+  the slug-prefix-/slug-stem-is-not-shape lessons reasserted at
+  API-0371..API-0444).
+- Fixture token base `swarm-cov-getNodes-0425` follows the
+  `<tag>-cov-<slug>-<storyID>` convention; OPTIONAL `serverId` is
+  deliberately populated to exercise the OPTIONAL axis.
+- Failure leg uses harness defaults (FailureStatus=0 → 401,
+  FailureCode="" → CodeAuth) — 404 → CodeNotFound stays reserved
+  for canonical `*-one` peers (none exist in swarm/*); 400 →
+  CodeInvalidInput is unreachable (no required parameters, no body).
+- Files changed: internal/cli/api_coverage_test.go (new
+  apiCoverageCase entry), ralph/prd.json (passes:true), ralph/
+  progress.txt (this entry).
+- Verification: gofmt -w internal/cli/api_coverage_test.go; go vet
+  ./... clean; go test ./... pass; go test -race ./... pass; go mod
+  tidy clean. goimports/golangci-lint/staticcheck/govulncheck/
+  goreleaser still not installed locally — documented at the top of
+  this file; CI re-asserts these.
+- Remaining risks: none for this story. Priority-3 swarm/* roster
+  is fully covered. Next backlog: priority-4 mariadb/* opener
+  (API-0160 mariadb-changeStatus, declared POST in the PRD).
+- **Learnings for future iterations:**
+  - The forward-reference comment in API-0424 already pre-named
+    API-0425 as the next priority-3 case and pre-named the spec
+    file path for re-verification — the convention works as a
+    machine-checkable hand-off and saved a round of grepping.
+  - Spec shape coincidences (API-0425 = API-0423 single-OPTIONAL-
+    serverId) MUST be called out as coincidences, not inheritances.
+    The slug-prefix-/slug-stem-is-not-shape lessons require every
+    peer to be re-verified against the spec; copy-pasting fields
+    from a same-slug peer without re-verification is the failure
+    mode the lesson exists to prevent.
+  - When a tag's roster has no canonical `*-one` peer, every member
+    has to opt out of the 404 → CodeNotFound override. The swarm/*
+    roster (getNodeApps/getNodeInfo/getNodes) is entirely node-
+    listing/node-attribute probes, so 404 was opted out at every
+    entry; the harness default (401 → CodeAuth) is the most
+    informative failure leg for this shape of operation.
+  - Closing a per-tag roster requires a forward-reference to the
+    NEXT priority bucket's opener. API-0425 closes priority-3 and
+    forecasts priority-4 mariadb/* (API-0160) so the next iteration
+    has a machine-readable starting point.
+---

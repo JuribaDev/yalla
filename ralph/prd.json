@@ -19268,7 +19268,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "swarm",
         "operationId": "swarm-getNodes",

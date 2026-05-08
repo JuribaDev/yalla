@@ -19998,6 +19998,138 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0425",
+		OperationID: "swarm-getNodes",
+		Method:      http.MethodGet,
+		Path:        "/swarm.getNodes",
+		Tag:         "swarm",
+		// Third entry on the swarm/* coverage roster, inheriting the
+		// `swarm-cov-*` per-tag fixture-isolation namespace established
+		// at API-0423 `swarm-getNodeApps` and continued at API-0424
+		// `swarm-getNodeInfo`. Per the per-tag isolation rule
+		// reasserted at API-0335..API-0444 and originally established
+		// at API-0246 `organization-active`, the `swarm-cov-*`
+		// namespace stays orthogonal to every prior tag's namespace
+		// (`set-cov-*`, `srv-cov-*`, `proj-cov-*`, `org-cov-*`,
+		// `compose-cov-*`, `app-cov-*`, `ai-cov-*`, `admin-cov-*`,
+		// `backup-cov-*`, `bb-cov-*`, `cert-cov-*`, `clu-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `usr-cov-*`, etc.).
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /swarm.getNodes > get`:
+		// a **GET** with **no request body** (the spec omits
+		// `requestBody` entirely on this operation) and **exactly one
+		// declared parameter** — `serverId` (string, query,
+		// **OPTIONAL**; the spec omits the `required` flag on this
+		// parameter, defaulting to `false`). Responses
+		// 200/400/401/403/404/500. The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer. The spec declares 404 on this operation, but the
+		// swarm/* roster has no canonical `*-one` (by-id resource
+		// lookup) peer to anchor a 404 → CodeNotFound override to —
+		// `getNodes` is a node-listing probe scoped by the OPTIONAL
+		// `serverId` rather than a by-id resource fetch, so the
+		// 404 → CodeNotFound override stays reserved for canonical
+		// `*-one` peers per the convention reasserted at
+		// API-0335..API-0444.
+		//
+		// **Single-OPTIONAL-query-param GET shape — structurally
+		// identical to API-0423 `swarm-getNodeApps` and structurally
+		// distinct from API-0424 `swarm-getNodeInfo`'s composite
+		// REQUIRED+OPTIONAL shape.** Per the slug-prefix-is-not-shape
+		// and slug-stem-is-not-shape lessons reasserted at
+		// API-0371..API-0444, the shared `swarm-getNode` operation-
+		// stem and the shared `swarm/*` tag-prefix do NOT pre-determine
+		// the parameter shape — every swarm/* peer must be re-verified
+		// against the spec. In this case the spec re-verification
+		// confirms a shape coincidence with API-0423 (single OPTIONAL
+		// `serverId`, no body, no path placeholders, no headers); the
+		// shape coincidence is a property of the spec, not an
+		// inheritance from the slug. The OPTIONAL `serverId` mirrors
+		// the swarm/* opener (API-0423) and the settings/* `serverId`
+		// precedent (API-0396 `updateTraefikFile`, API-0397
+		// `updateTraefikPorts`, API-0399 `writeTraefikEnv`).
+		//
+		// **Parameter semantics (per OpenAPI schema):**
+		//   * `serverId` — OPTIONAL string, query parameter. Scopes
+		//     the swarm node listing to a remote worker when present;
+		//     absent it returns the global view. The spec imposes no
+		//     length, pattern, or format constraint, so the
+		//     slug-on-the-wire sentinel `swarm-cov-getNodes-0425`
+		//     populates this field directly per the convention
+		//     reasserted at API-0351..API-0444 for free-form string
+		//     fields. The harness forwards SampleQuery via the
+		//     `--input` JSON `query` field, and `runAPICoverageSuccess`
+		//     re-reads `r.URL.Query()` to confirm the CLI propagated
+		//     the param verbatim from the originating fixture.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `swarm-cov-getNodes-0425` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared across
+		//     every per-tag roster and is unique by construction
+		//     (the `swarm-cov-getNodes-*` slug differs from the
+		//     API-0423 `swarm-cov-getNodeApps-*` and the API-0424
+		//     `swarm-cov-getNodeInfo-*` slugs — verified at the slug
+		//     level here, namespace level above).
+		//   * **OPTIONAL `serverId` is deliberately populated.** Per
+		//     the API-0423 and API-0424 precedents and the API-0399
+		//     `settings-writeTraefikEnv` precedent for OPTIONAL
+		//     `serverId` handling, populating an OPTIONAL field is
+		//     always safe (the spec accepts both present-and-absent),
+		//     and never populating either branch would leave the
+		//     OPTIONAL axis unverified across this swarm/* peer.
+		//
+		// **Failure-leg fields are intentionally omitted.** Even
+		// though the spec declares 404 on this operation, the swarm/*
+		// roster has no canonical `*-one` (by-id resource lookup) peer
+		// to anchor 404 → CodeNotFound to — every swarm/* operation
+		// (`getNodeApps`, `getNodeInfo`, `getNodes`) is a node-listing
+		// or node-attribute probe rather than a by-id resource fetch.
+		// Per the per-tag opener convention reasserted at
+		// API-0335..API-0444, the 404 override stays reserved for
+		// canonical by-id retrievals and has no canonical home in the
+		// swarm/* roster. Auth is the universal failure mode every
+		// Dokploy operation must re-prove, so 401 → CodeAuth via the
+		// harness default (`tc.FailureStatus == 0` → 401,
+		// `tc.FailureCode == ""` → CodeAuth) stays the most informative
+		// representative for this swarm/* peer. 400 → CodeInvalidInput
+		// is **not available** here at all — the spec declares 400 in
+		// the response set but the operation has no required parameters
+		// and no request body, so no payload can be syntactically
+		// invalid; the 400 in the spec exists only as a defensive
+		// declaration and cannot be exercised through any input the
+		// CLI can supply.
+		//
+		// **Priority-3 swarm/* roster closes here.** With API-0423,
+		// API-0424, and API-0425 covered, every swarm/* tag operation
+		// declared in the PRD is complete. The next case in the
+		// PRD-ordered backlog is the priority-4 mariadb/* opener
+		// (API-0160 `mariadb-changeStatus`, declared a **POST** in the
+		// PRD). The next contributor must re-verify against
+		// `internal/api/data/openapi.json > /mariadb.changeStatus > post`
+		// per the forward-reference lesson before assuming any field
+		// carries over from this entry — per the slug-prefix-is-not-
+		// shape and slug-stem-is-not-shape lessons reasserted at
+		// API-0371..API-0444, neither the swarm/* tag-prefix nor any
+		// shared method shape pre-determines the next peer's parameter
+		// shape, and the priority-3-to-priority-4 transition nullifies
+		// any inheritable axis from the swarm/* roster. The mariadb/*
+		// opener will establish a brand-new `mar-cov-*` (or similar)
+		// per-tag fixture-isolation namespace orthogonal to every
+		// prior tag's namespace.
+		SampleQuery: map[string][]string{
+			"serverId": {"swarm-cov-getNodes-0425"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0427",
 		OperationID: "user-all",
 		Method:      http.MethodGet,
