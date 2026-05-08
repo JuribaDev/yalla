@@ -5436,6 +5436,114 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0352",
+		OperationID: "settings-checkGPUStatus",
+		Method:      http.MethodGet,
+		Path:        "/settings.checkGPUStatus",
+		Tag:         "settings",
+		// Second entry on the settings/* coverage roster, inheriting
+		// the `set-cov-*` per-tag fixture-isolation namespace
+		// established by API-0351 `settings-assignDomainServer`
+		// (must not back-reference the closed `srv-cov-*`,
+		// `proj-cov-*`, `org-cov-*`, `compose-cov-*`, `app-cov-*`,
+		// `ai-cov-*`, or any other prior tag's namespace, per the
+		// per-tag isolation rule reasserted at API-0335..API-0351
+		// and originally established at API-0246
+		// `organization-active`).
+		//
+		// **Spec re-verified per the API-0345 / API-0347 / API-0348 /
+		// API-0349 / API-0350 / API-0351 forward-reference lesson**
+		// against
+		// `internal/api/data/openapi.json > /settings.checkGPUStatus
+		// > get`: zero request body, a single **OPTIONAL** query
+		// parameter `serverId` (string, **no `required: true`**),
+		// no path parameters. Responses 200/400/401/403/404/500.
+		// The structural shape is byte-identical to
+		// `/server.validate > get` modulo the `tag` array and the
+		// `serverId` `required` flag, verified at story authoring
+		// time via
+		// `diff <(jq -S '.paths["/server.validate"].get | del(.operationId)' …)
+		// <(jq -S '.paths["/settings.checkGPUStatus"].get | del(.operationId)' …)`,
+		// which produced exactly two-line drift: the `required:
+		// true` line absent here, and `"server"` → `"settings"` in
+		// the `tag` array. The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer.
+		//
+		// **Forward-reference correction.** API-0351's comment
+		// predicted this entry would be a parameter-free GET
+		// (cf. API-0006 `ai-getAll`, API-0350 `server-withSSHKey`).
+		// The re-verification turned up a single-OPTIONAL-query-
+		// param shape instead — closer to API-0349 `server-validate`
+		// but with the `required` constraint relaxed. This is the
+		// latest iteration of the "always re-verify the spec
+		// before mirroring" lesson (API-0345/0347/0348/0349/0350
+		// each surfaced the same correction). Future settings/*
+		// peers should grep this entry first when encountering a
+		// single-query-param GET, but must not assume `serverId`
+		// is required — the optional/required distinction is
+		// per-operation and a no-op on the wire when populated
+		// (the `required` flag drives the OpenAPI client's
+		// pre-flight validation, not the HTTP handshake).
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `set-cov-checkGPUStatus-0352` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared
+		//     across every per-tag roster and is unique (verified:
+		//     no collisions with API-0351
+		//     `settings-assignDomainServer`'s
+		//     `set-cov-assignDomainServer-0351` slug, and
+		//     orthogonal to every prior tag's `srv-cov-*`,
+		//     `proj-cov-*`, `org-cov-*`, `compose-cov-*`,
+		//     `app-cov-*`, `ai-cov-*`, etc. namespaces).
+		//   * `serverId` carries the fixture-shaped literal
+		//     `set-cov-checkGPUStatus-0352` rather than a real
+		//     UUID so the wire payload cannot be mistaken for a
+		//     real production server identifier. Even though the
+		//     parameter is optional in the spec, populating it
+		//     exercises the query-string wire path through the
+		//     raw API executor — leaving it unset would degrade
+		//     this case to the parameter-free GET cohort
+		//     (API-0006 `ai-getAll`, API-0350 `server-withSSHKey`)
+		//     and lose the query-forwarding round-trip assertion
+		//     that distinguishes this shape.
+		//
+		// **Failure-leg fields are intentionally omitted.** Even
+		// though the spec also declares 404 on this operation,
+		// the per-tag opener convention reasserted at
+		// API-0335..API-0351 reserves 404 → CodeNotFound for the
+		// canonical by-id `*-one` peer, not for filter-by-serverId
+		// GETs like this one. Auth is the universal failure mode
+		// every Dokploy operation must re-prove, so 401 → CodeAuth
+		// via the harness default (`tc.FailureStatus == 0` → 401,
+		// `tc.FailureCode == ""` → CodeAuth) stays the most
+		// informative representative.
+		//
+		// The next case in the settings/* roster, API-0353
+		// `settings-cleanAll`, is a POST with `requestBody.required
+		// = false` and an optional `serverId` body field (zero
+		// parameters, responses 200/400/401/403/500 — note the
+		// **absence of 404**, matching the API-0351 opener's
+		// response set, not this entry's). Future contributors
+		// authoring API-0353 should grep this entry first for the
+		// `set-cov-*` namespace inheritance pattern, then
+		// re-verify the spec against
+		// `internal/api/data/openapi.json > /settings.cleanAll >
+		// post` per the forward-reference lesson — the body shape
+		// is materially different (POST with optional body, not
+		// GET with optional query).
+		SampleQuery: map[string][]string{
+			"serverId": {"set-cov-checkGPUStatus-0352"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

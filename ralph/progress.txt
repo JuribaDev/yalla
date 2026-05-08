@@ -7848,3 +7848,107 @@
     side effects the fixture cannot honour. This generalises: when
     a required enum has a "no-op" member, pick it.
 ---
+
+## 2026-05-08 - API-0352 — Cover settings-checkGPUStatus (GET /settings.checkGPUStatus)
+- **Implemented**: Added the canonical `apiCoverageCase` entry for
+  `settings-checkGPUStatus` (GET /settings.checkGPUStatus, tag
+  `settings`) to `internal/cli/api_coverage_test.go`. This is the
+  **second** settings/* story; it inherits the `set-cov-*` per-tag
+  fixture-isolation namespace established at API-0351
+  `settings-assignDomainServer` (must not back-reference the closed
+  `srv-cov-*`, `proj-cov-*`, `org-cov-*`, `compose-cov-*`,
+  `app-cov-*`, `ai-cov-*`, etc. namespaces). The shared harness
+  (`TestAPICoverage_RegistryInvariants`, `_SchemaCommandWorks`,
+  `_ManifestListsOperation`, `_SuccessRoundTrip`,
+  `_RepresentativeFailure`) drives registry, schema, manifest,
+  success, and 401 → CodeAuth failure assertions for this operation
+  automatically; all five subtests pass for `API-0352`.
+- Spec re-verified against
+  `internal/api/data/openapi.json > /settings.checkGPUStatus > get`
+  per the API-0345..API-0351 forward-reference lesson:
+  zero request body, a single **OPTIONAL** query parameter
+  `serverId` (string, **no `required: true`**), no path parameters.
+  Responses 200/400/401/403/404/500. Structurally byte-identical to
+  `/server.validate > get` modulo (a) the `tag` array and (b) the
+  `serverId` `required` flag, verified at story authoring time via
+  `diff <(jq -S '.paths["/server.validate"].get | del(.operationId)' …)
+  <(jq -S '.paths["/settings.checkGPUStatus"].get | del(.operationId)' …)`,
+  which produced exactly two-line drift. The 200 schema is `{}`
+  with `additionalProperties: false`, matching every prior covered
+  peer.
+- **Forward-reference correction surfaced.** API-0351's comment had
+  predicted API-0352 would be a parameter-free GET (cf. API-0006
+  `ai-getAll`, API-0350 `server-withSSHKey`). The re-verification
+  turned up a single-OPTIONAL-query-param shape instead — closer to
+  API-0349 `server-validate` but with the `required` constraint
+  relaxed. This is the latest iteration of the "always re-verify the
+  spec before mirroring" lesson (API-0345/0347/0348/0349/0350 each
+  surfaced the same correction). The new entry's "Forward-reference
+  correction" comment block records this in-place so future
+  contributors see the trail.
+- Fixture decisions:
+  - `serverId`: `"set-cov-checkGPUStatus-0352"` (per-case fixture
+    token, deterministic-but-clearly-fake; populating the optional
+    parameter exercises the query-string wire path through the raw
+    API executor and keeps this case distinct from the parameter-
+    free GET cohort).
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended the API-0352 case
+    after the API-0351 entry. The block forward-references API-0353
+    `settings-cleanAll` (the next pending settings/* peer, a POST
+    with `requestBody.required = false` and an optional `serverId`
+    body field — materially different shape, NOT a copy-and-rename
+    of this single-query-param GET), flagging the namespace-
+    inheritance rule and the spec re-verification requirement.
+  - `ralph/prd.json` — set API-0352 `passes: true`.
+  - `ralph/progress.txt` — this entry.
+- **Verification run** from repo root:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass.
+  - `go test -race ./...` — all packages pass (`internal/cli` 2.606s).
+  - `go test ./internal/cli/ -run 'TestAPICoverage_.*/API-0352' -v` —
+    all five harness subtests pass for API-0352.
+- Tools NOT installed locally (per Codebase Patterns): `goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`. Skipped
+  silently per the existing convention; `internal/cli/AGENTS.md`
+  documents this.
+- Remaining risks / follow-ups: none specific to API-0352. The next
+  pending settings/* story is API-0353 `settings-cleanAll`. Per the
+  forward-reference lesson, do NOT mirror this single-query-param GET
+  shape — re-verify against
+  `internal/api/data/openapi.json > /settings.cleanAll > post` and
+  inherit the `set-cov-*` namespace established at API-0351.
+- **Learnings for future iterations:**
+  - **The `required` flag is metadata, not wire shape.** OpenAPI's
+    `required: true` on a parameter only tells the client whether
+    pre-flight validation should reject a missing input — it does not
+    change the HTTP handshake when the parameter IS supplied. So
+    `/server.validate` (required serverId) and
+    `/settings.checkGPUStatus` (optional serverId) are byte-identical
+    on the wire when both fixtures populate `serverId`. The harness's
+    success-leg round trip exercises the populated path either way;
+    the distinction matters only for human contributors deciding
+    whether to populate the fixture (always populate for query
+    parameters — leaving them unset would degrade the case to the
+    parameter-free GET cohort and lose the query-forwarding wire
+    assertion).
+  - **Forward-reference predictions can be wrong; the comments must
+    record both the prediction AND the correction.** API-0351
+    confidently predicted "parameter-free GET" but the spec showed a
+    single-optional-query-param GET. The new entry documents the
+    correction inline in a "Forward-reference correction" block so
+    the next contributor sees both the original guess and the
+    verified shape — this preserves the lesson without erasing the
+    history of how it was found.
+  - **`apiCoverageCase` literals use 2-tab indentation, NOT 3.**
+    A file-bytes inspection (`od -c`) confirmed each case body
+    indents fields at `\t\t`, the closing `},` at `\t`, and the
+    slice's outer `}` is flush left. An earlier Edit attempt with
+    3-tab indentation failed to match because the Read tool's
+    line-number prefix can visually inflate apparent indentation
+    depth — when in doubt, run
+    `awk 'NR>=L1 && NR<=L2' FILE | od -c` to confirm raw bytes
+    before authoring the Edit `old_string`.
+---
