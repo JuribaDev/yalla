@@ -11917,3 +11917,95 @@ Learnings for future iterations:
     under the routine settings/* coverage cohort where 401 →
     CodeAuth is the canonical representative failure.
 ---
+
+## 2026-05-08 - API-0392
+- Implemented coverage for settings-updateMiddlewareTraefikConfig
+  (POST /settings.updateMiddlewareTraefikConfig) via the table-driven
+  apiCoverageCase entry pattern in
+  internal/cli/api_coverage_test.go. The harness exercises
+  registry invariants (method/path/tag), the raw `yalla api
+  call <op> --input <file> --json` success leg with an
+  httptest.Server fixture, the representative auth failure
+  leg (401 → CodeAuth via the harness default), the
+  `yalla schema get <op> --json` envelope, and the
+  manifest entry — satisfying every PRD acceptance
+  criterion (registry presence, api call, schema get,
+  --no-input safety, success envelope, failure envelope,
+  contract tests, manifest coverage) in one fixture.
+- Files changed:
+  - internal/cli/api_coverage_test.go (added the
+    forty-second settings/* entry; third entry in the
+    `update*` slug sub-roster opening at API-0390 and
+    continuing through API-0397)
+  - ralph/prd.json (flipped passes:false → passes:true
+    for API-0392; the rest of the entry is untouched)
+  - ralph/progress.txt (this report)
+- Verification run from repo root:
+  - gofmt -w . — clean (no diff)
+  - go mod tidy — clean
+  - go vet ./... — pass
+  - go test ./... — pass (full suite green)
+  - go test -race ./... — pass (full suite green
+    under the race detector)
+  - goimports / golangci-lint / staticcheck /
+    govulncheck / goreleaser — not installed locally,
+    documented per Codebase Patterns.
+- Results: all four mandatory checks (gofmt, go test,
+  go test -race, go vet) pass. The new entry slots into
+  the existing apiCoverageCase array consumed by the
+  shared TestAPICoverage_RegistryInvariants /
+  TestAPICoverage_RawAPICall /
+  TestAPICoverage_SchemaGet / TestAPICoverage_Manifest
+  harnesses — no new test functions, no new fixtures
+  beyond the table entry.
+- Spec axes verified directly against
+  `internal/api/data/openapi.json >
+  /settings.updateMiddlewareTraefikConfig > post`:
+  POST verb, REQUIRED requestBody, ONE inner property
+  (`traefikConfig`, plain string via `type: "string"`),
+  REQUIRED via `required: ["traefikConfig"]`, zero
+  parameters, responses 200/400/401/403/500 (no 404),
+  200 schema is `{}` with `additionalProperties: false`.
+- Remaining risks or follow-ups: none for this story.
+  Forward-reference recorded in the new entry's hand-off
+  comment for API-0393 `settings-updateServer` — per
+  the slug-prefix-is-not-shape rule, the next contributor
+  must re-verify all axes against the spec before
+  assuming any axis carries over.
+- **Learnings for future iterations:**
+  - The single pivot from API-0391 to API-0392 was the
+    inner-property-type axis (nullable string via
+    `anyOf: [{type: "string"}, {type: "null"}]` → plain
+    string via the bare `type: "string"`). All other
+    axes (slug-prefix, verb, outer-body, inner-property-
+    count, inner-required-field, parameter, response-
+    set) were shared. This is the *cleanest single-axis
+    pivot* observed in the recent settings/* run; future
+    contributors should expect occasional clean
+    single-axis pivots as well as the more common
+    multi-axis pivots.
+  - The plain-string `traefikConfig` field accepts any
+    string content. Embedding the per-case slug as a
+    YAML/TOML/JSON-style trailing comment
+    (`"# set-cov-updateMiddlewareTraefikConfig-0392\n"`)
+    preserves the slug-on-the-wire convention while
+    keeping the payload semantically meaningful for a
+    Traefik middleware update operation.
+  - The `update*` slug sub-roster in settings/* is now
+    three entries deep (API-0390, API-0391, API-0392)
+    with five more contiguous peers forecast
+    (API-0393..API-0397). Per the slug-prefix-is-not-
+    shape rule, future `update*` peers must re-verify
+    per-operation rather than inherit any axis from
+    prior entries.
+  - The body-axis flip-flop within the settings/* tag
+    is now ten entries deep (no-body / no-body /
+    optional-body / required-body+inner-required /
+    required-body+inner-optional-string-only /
+    required-body+inner-optional-mixed-boolean+string /
+    required-body+inner-required-boolean-only /
+    required-body+inner-required-mixed-boolean+string /
+    required-body+inner-required-nullable-string-only /
+    required-body+inner-required-plain-string-only).
+    Per-operation re-verification stays mandatory.
+---
