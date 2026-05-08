@@ -17839,3 +17839,52 @@ None specific to this story. Next PRD priority-4 entry is API-0166
   (this entry) → API-0188 mounts-* (following). No struct-literal sort
   key beyond StoryID order is enforced.
 ---
+## 2026-05-08 - API-0166
+- Implemented coverage for `mariadb-reload` (POST /mariadb.reload) by
+  appending an `apiCoverageCase` literal between API-0165 (mariadb-rebuild)
+  and API-0188 (mounts-allNamedByApplicationId) in
+  `internal/cli/api_coverage_test.go`, preserving the StoryID-sorted
+  insertion contract.
+- Spec re-verified directly against `internal/api/data/openapi.json`:
+  POST, tag `mariadb`, **no parameters**, requestBody REQUIRED with two
+  required string scalars (`mariadbId`, `appName`),
+  responses 200/400/401/403/500 (no 404). Empty-success body `{}`
+  with `additionalProperties:false`.
+- Fixture token base `mariadb-cov-reload-0166`, suffixed per-field for
+  `git grep` traceability. Continues the open `mariadb-cov-*` per-tag
+  namespace opened at API-0160 and joined by API-0161/API-0162/API-0163/
+  API-0164/API-0165; verified non-colliding with prior mariadb literals.
+- Failure leg: harness-default 401 -> CodeAuth retained (action POST has
+  no uniquely distinguishing 4xx surface; 404 inapplicable per spec).
+- Forward reference satisfied: API-0165 entry's "next case is API-0166"
+  comment is consumed; new entry forwards to API-0167 `mariadb-remove`.
+- Files changed:
+  - internal/cli/api_coverage_test.go (insertion only)
+  - ralph/prd.json (passes:false -> true for API-0166)
+- Verification run: `gofmt -w .`, `go mod tidy`, `go vet ./...`,
+  `go test ./...`, `go test -race ./...` all pass. The
+  `coveredAPIOperations` harness automatically asserts the five
+  invariants (registry presence, schema get, manifest listing,
+  httptest success round-trip with body forwarding, 401 failure leg).
+- Remaining risks / follow-ups: none specific to this story. Next PRD
+  priority-4 entry is API-0167 `mariadb-remove` (POST per the spec
+  preview; re-verify against `internal/api/data/openapi.json` before
+  assuming any field shape).
+- **Learnings for future iterations:**
+  - The mariadb roster's two-required-string-scalar shape recurs across
+    `*-move` (API-0163: `mariadbId`+`targetEnvironmentId`) and `*-reload`
+    (API-0166: `mariadbId`+`appName`). Both are body-bearing
+    imperative-action POSTs whose missing-target failure mode collapses
+    to 400/validation, so 401->CodeAuth remains the canonical failure
+    leg. The two-scalar fixture must supply BOTH fields verbatim to
+    activate the harness body-equality check at `runAPICoverageSuccess`.
+  - `appName` is a deployment-name companion scalar that recurs across
+    Dokploy reload/restart-shape operations on service-bearing tags
+    (mariadb here, expected at mongo/mysql/postgres/redis reload peers).
+    Pairing it with the resource id scalar is the canonical reload body
+    shape — no parameters, no optional fields, no enum constraints.
+  - The 404->CodeNotFound override remains pinned to API-0164 `mariadb-one`
+    as the sole canonical activation site for the mariadb/* roster. Every
+    other mariadb POST omits 404 from its declared response set, matching
+    the action-on-known-id POST precedent.
+---

@@ -9092,6 +9092,130 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0166",
+		OperationID: "mariadb-reload",
+		Method:      http.MethodPost,
+		Path:        "/mariadb.reload",
+		Tag:         "mariadb",
+		// Seventh entry on the mariadb/* coverage roster, immediately
+		// following API-0165 `mariadb-rebuild` and completing the
+		// forward reference embedded in that entry's comment block
+		// ("The next case in the PRD-ordered priority-4 backlog is
+		// API-0166 `mariadb-reload`"). Continues inside the
+		// `mariadb-cov-*` per-tag fixture-isolation namespace opened by
+		// API-0160 `mariadb-changeStatus` and **must not** back-reference
+		// any closed prior-tag namespace (`set-cov-*`, `srv-cov-*`,
+		// `proj-cov-*`, `org-cov-*`, `compose-cov-*`, `app-cov-*`,
+		// `ai-cov-*`, `admin-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		// `cert-cov-*`, `clu-cov-*`, `deployment-cov-*`, `dest-cov-*`,
+		// `docker-cov-*`, `domain-cov-*`, `environment-cov-*`,
+		// `gitea-cov-*`, `mounts-cov-*`, `swarm-cov-*`, `usr-cov-*`,
+		// etc.) per the per-tag isolation rule reasserted at
+		// API-0335..API-0444 and originally established at API-0246
+		// `organization-active`.
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json` > `/mariadb.reload` >
+		// `post`: method POST, tag mariadb, **no parameters**,
+		// requestBody REQUIRED with `application/json` and TWO
+		// REQUIRED top-level scalars `mariadbId` (string) and
+		// `appName` (string), responses 200/400/401/403/500. The 200
+		// response is `{}` with `additionalProperties: false`,
+		// matching every prior covered peer in the empty-success
+		// cohort. **No 404** is declared on this operation, mirroring
+		// the action-on-known-id POST precedent reasserted at
+		// API-0160 `mariadb-changeStatus`, API-0162 `mariadb-deploy`,
+		// API-0163 `mariadb-move`, and API-0165 `mariadb-rebuild`
+		// (every body-bearing imperative-action mariadb POST whose
+		// missing-target failure mode collapses into 400/validation
+		// under Dokploy's tRPC convention rather than a dedicated 404
+		// leg). The 404 override therefore reverts to inapplicable
+		// here — its sole activation site for the mariadb/* roster
+		// remains API-0164 `mariadb-one`, the canonical by-id GET
+		// peer.
+		//
+		// **Request body schema (REQUIRED top-level fields):**
+		//   - REQUIRED `mariadbId` (string) — resource id scalar; the
+		//     fixture below supplies a deterministic-but-clearly-fake
+		//     `mariadb-cov-reload-0166-mariadbId` literal carrying the
+		//     `<tag>-cov-<slug>-<storyID>-<field>` suffix for `git grep`
+		//     traceability.
+		//   - REQUIRED `appName` (string) — companion deployment-name
+		//     scalar; the fixture supplies a clearly-fake
+		//     `mariadb-cov-reload-0166-appName` literal under the same
+		//     suffix convention.
+		//   - **No OPTIONAL fields declared.** The schema is a strict
+		//     two-scalar request, byte-for-byte cardinality-identical
+		//     to the API-0163 `mariadb-move` request shape (which
+		//     paired `mariadbId` with `targetEnvironmentId`) and
+		//     narrower than the five-required-scalar API-0161
+		//     `mariadb-create`. This `mariadbId` + `appName` companion
+		//     pairing is the canonical reload/restart-shape recurrence
+		//     for service-bearing imperative-action POSTs across the
+		//     Dokploy database tags.
+		//
+		// **Shape positioning — two-required-string-scalar POST
+		// imperative-action mutation, body REQUIRED.** Both REQUIRED
+		// slots are plain non-nullable `type: string` (no `anyOf` /
+		// `nullable` / enum constraints), structurally identical to
+		// the two-scalar `mariadb-move` body. The harness's
+		// `len(tc.SampleBody) > 0` gate at `runAPICoverageSuccess`
+		// activates the JSON content-type and byte-for-byte body
+		// comparison legs; this fixture supplies BOTH REQUIRED fields
+		// verbatim so the success path verifies the CLI propagated
+		// the multi-field body without reordering, dropping, or
+		// mutating either scalar. Omitting either field would weaken
+		// the success leg without any compensating signal, per the
+		// API-0163 `mariadb-move` two-required-scalar lesson.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so the
+		// 404→CodeNotFound override is structurally inapplicable and
+		// remains pinned to API-0164 `mariadb-one` for the mariadb/*
+		// roster. 400→CodeInvalidInput is *technically* available — a
+		// payload that omits either REQUIRED scalar would fail
+		// server-side validation — but the harness reserves 400
+		// representatives for stories where payload validation is the
+		// operation's *uniquely distinguishing* failure mode. A
+		// conventional imperative-action POST collapses to
+		// type-checking, so the harness-default 401→CodeAuth failure
+		// leg remains the most representative single failure mode every
+		// authenticated Dokploy operation must re-prove, and is
+		// consistent with the 401→CodeAuth choice locked in by the
+		// mariadb/* kickoff at API-0160 `mariadb-changeStatus` and
+		// continued at API-0161 `mariadb-create`, API-0162
+		// `mariadb-deploy`, API-0163 `mariadb-move`, and API-0165
+		// `mariadb-rebuild`.
+		//
+		// **Fixture token base** `mariadb-cov-reload-0166` follows the
+		// established `<tag>-cov-<slug>-<storyID>` deterministic-but-
+		// clearly-fake naming convention and is verified non-colliding
+		// with API-0160's `mariadb-cov-changeStatus-0160`, API-0161's
+		// `mariadb-cov-create-0161`, API-0162's `mariadb-cov-deploy-0162`,
+		// API-0163's `mariadb-cov-move-0163`, API-0164's
+		// `mariadb-cov-one-0164`, and API-0165's
+		// `mariadb-cov-rebuild-0165` literals.
+		//
+		// The next case in the PRD-ordered priority-4 backlog is
+		// API-0167 `mariadb-remove` (declared a **POST** per the
+		// spec preview; the next contributor must re-verify the
+		// spec against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will continue inside the `mariadb-cov-*` per-tag
+		// fixture-isolation namespace opened by API-0160).
+		SampleBody: json.RawMessage(`{
+			"mariadbId": "mariadb-cov-reload-0166-mariadbId",
+			"appName": "mariadb-cov-reload-0166-appName"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0188",
 		OperationID: "mounts-allNamedByApplicationId",
 		Method:      http.MethodGet,
