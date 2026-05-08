@@ -20435,3 +20435,75 @@ forward-reference lesson before assuming any field shape.
     new entries between the immediately-preceding and immediately-
     following StoryIDs in numeric order, not at the end.
 ---
+
+## 2026-05-09 - API-0151 — Cover gitlab-update (POST /gitlab.update)
+- Added the seventh and final priority-5 gitlab/* coverage entry to
+  `internal/cli/api_coverage_test.go::apiCoverageCases`, sandwiched
+  between API-0150 `gitlab-testConnection` and API-0160
+  `mariadb-changeStatus` per the StoryID-sorted slice rule. This entry
+  closes the priority-5 gitlab/* tag arc opened by API-0145.
+- Spec re-verified against `internal/api/data/openapi.json` >
+  `/gitlab.update` > `post`:
+    * **POST** with **zero parameters**.
+    * **REQUIRED** `application/json` request body — flat object.
+    * **Four REQUIRED string fields**: `name`, `gitlabId`, `gitlabUrl`,
+      `gitProviderId`.
+    * **Five OPTIONAL fields**: `applicationId` (string), `secret`
+      (string), `groupName` (string), `redirectUri` (string), and
+      `gitlabInternalUrl` (`anyOf: [string, null]` — nullable string).
+    * Responses 200/400/401/403/500 — **no 404** declared (matching
+      API-0150's response set).
+    * 200 schema is `{}` with `additionalProperties: false`, the
+      empty-success cohort.
+- Fixture supplies all nine declared fields under the
+  `gitlab-cov-update-0151` per-case fixture-token base, honouring the
+  every-optional-populated rule. The nullable-string optional
+  `gitlabInternalUrl` is populated with a concrete string value (the
+  `null` leg is trivially reachable by omission and isn't what a
+  fixture template needs to demonstrate).
+- Failure leg uses harness defaults (`tc.FailureStatus == 0` → 401,
+  `tc.FailureCode == ""` → CodeAuth) since the 404 → CodeNotFound
+  override slot for the gitlab/* tag was already consumed at API-0149
+  `gitlab-one`, and 404 is not declared on this operation regardless.
+- Files changed:
+    * `internal/cli/api_coverage_test.go` (+182 lines, one new struct
+      literal entry).
+    * `ralph/prd.json` (`API-0151.passes`: false → true).
+    * `ralph/progress.txt` (this block).
+- Verification:
+    * `gofmt -w .` — clean.
+    * `go vet ./...` — clean.
+    * `go mod tidy` — no diff.
+    * `go test ./...` — pass.
+    * `go test -race ./...` — pass.
+    * Targeted contract subtests for API-0151 — all five pass:
+      RegistryInvariants, SchemaCommandWorks, ManifestListsOperation,
+      SuccessRoundTrip, RepresentativeFailure.
+- Remaining risks / follow-ups: priority-5 gitlab/* roster is now
+  closed; next priority-5 work shifts to gitProvider/* (API-0152..0153)
+  and licenseKey/* (API-0154..0159) per the PRD passes-false ordering.
+- **Learnings for future iterations:**
+  - The `update` slug is **not transitive** across tags: API-0138
+    `gitea-update`, API-0144 `github-update`, and API-0151
+    `gitlab-update` each have their own per-tag required/optional split.
+    Always re-verify the body shape against
+    `internal/api/data/openapi.json` per the slug-prefix-is-not-shape
+    lesson reasserted at API-0371..API-0375.
+  - Nullable-string optionals (`anyOf: [string, null]`) under the
+    every-optional-populated rule should be populated with a concrete
+    string value, not JSON `null`. The `null` leg is trivially
+    reachable by omitting the field; the fixture's job is to
+    demonstrate the populated wire-valid leg so future contributors
+    inherit a faithful template.
+  - When the per-tag opener convention's 404 → CodeNotFound override
+    has already been consumed by the canonical `*-one` by-id GET peer
+    (here API-0149), all subsequent peers in the same tag — including
+    the closing `*-update` POST — fall back to the harness-default 401
+    → CodeAuth representative failure unless the operation has a
+    uniquely distinguishing 400 → CodeInvalidInput payload-shape
+    failure surface to claim (a generic update POST with flat string
+    scalars does not).
+  - `gitProviderId` and `gitlabId` are distinct identifiers in the
+    spec and must use distinct fixture literals so byte-for-byte body
+    equality observes the two fields independently.
+---
