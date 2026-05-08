@@ -5110,3 +5110,21 @@
   - For "single id-only POST" operations, the closest precedents (compose API-0066/0067/0068, application API-0011/0012/0013/0015/0024/0036/0037, plus API-0040/0041 backup peers) all reuse the same minimal `SampleBody` shape and `SuccessResponse: \`{}\`` — there is no need to override `FailureStatus`/`FailureCode` because every Dokploy op today gates on bearer auth (default 401 → E_AUTH).
   - The harness in `internal/cli/api_coverage_test.go` is fully generic: appending a single `apiCoverageCase` is the entire deliverable for a per-operation API-XXXX story. Operation registry presence is automatic because `internal/api/data/openapi.json` already contains every Dokploy operation.
 ---
+
+## 2026-05-08 - API-0090
+- Implemented coverage for `compose-start` (POST /compose.start).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended `apiCoverageCase` literal after API-0089. Single required `composeId` field, no optional siblings, no params. Body fixture: `{"composeId":"compose-cov-start-0090"}`. Empty-object 200 response.
+  - `ralph/prd.json` — flipped API-0090 `passes` to true.
+- Verification run (clean tree):
+  - `gofmt -w .` → no diff.
+  - `go mod tidy` → no diff.
+  - `go vet ./...` → ok.
+  - `go test ./... -count=1` → all packages ok.
+  - `go test -race ./... -count=1` → all packages ok.
+- Results: harness asserts the five invariants — registry presence, `yalla schema get`, `yalla manifest`, success round-trip, default 401→E_AUTH failure leg — automatically through `coveredAPIOperations`.
+- Remaining risks / follow-ups: none. API-0090 is the ninth member of the `minimal-composeId-only POST` family and a near-verbatim twin of API-0088 (compose-refreshToken). API-0091 (compose-stop) is the next sibling and should mirror this entry verbatim with slug `compose-cov-stop-0091`.
+- **Learnings for future iterations:**
+  - The `minimal-composeId-only POST` family in compose/* now has nine members (API-0066/0067/0068/0073/0074/0080/0088/0090, plus the upcoming API-0091 stop). The schema is byte-identical: one required `composeId` string, empty 200 response. Cross-story grep with the `compose-cov-<slug>-<storyID>` slug convention finds every member.
+  - For lifecycle ops (start/stop/restart/deploy), Dokploy reuses the exact same minimal-id POST shape. Do not over-engineer the fixture — copy the precedent and rotate the slug.
+---
