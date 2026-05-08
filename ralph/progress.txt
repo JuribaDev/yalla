@@ -20587,3 +20587,52 @@ forward-reference lesson before assuming any field shape.
     per-tag opener's reservation rule snap cleanly onto whichever
     StoryID first lands on the canonical `*-one`.
 ---
+
+## 2026-05-09 - API-0199
+- Cover mysql-rebuild (POST /mysql.rebuild) by appending one
+  apiCoverageCase struct literal to internal/cli/api_coverage_test.go
+  (sixth entry on the mysql/* roster, after API-0198 mysql-one).
+- Spec re-verified against internal/api/data/openapi.json: POST,
+  tag mysql, no parameters, requestBody REQUIRED with single
+  REQUIRED string scalar `mysqlId`, responses 200/400/401/403/500.
+  No 404 declared, so harness-default 401→CodeAuth representative
+  failure leg retained (matches API-0196 mysql-deploy, API-0162
+  mariadb-deploy, API-0176 mongo-deploy).
+- Body schema is byte-for-byte identical to API-0196 mysql-deploy,
+  so the entry models its rationale block on API-0196 and uses
+  fixture token `mysql-cov-rebuild-0199-mysqlId`.
+- Files changed:
+  - internal/cli/api_coverage_test.go (+125 lines, one struct literal)
+  - ralph/prd.json (passes: true for API-0199)
+  - ralph/progress.txt (this entry)
+- Verification run from repo root:
+  - gofmt -w . — clean
+  - go mod tidy — clean
+  - go vet ./... — clean
+  - go test ./... — PASS (all 9 packages)
+  - go test -race ./... — PASS (all 9 packages)
+  - goimports / golangci-lint / staticcheck / govulncheck /
+    goreleaser — not installed locally (pre-existing per
+    Codebase Patterns).
+- Remaining risks / follow-ups: none specific to this story. Next
+  PRD-ordered priority-4 entry is API-0200 mysql-reload (POST per
+  spec preview); contributor must re-verify the spec per the
+  forward-reference lesson.
+- **Learnings for future iterations:**
+  - mysql-rebuild and mysql-deploy share an identical wire shape
+    in the Dokploy spec (single REQUIRED `mysqlId` string body,
+    no optional fields, responses 200/400/401/403/500, no 404).
+    The `*-rebuild` / `*-deploy` semantic pair generally collapses
+    to "act on this service id" with no extra inputs.
+  - The mysql/* per-tag fixture-isolation namespace `mysql-cov-*`
+    opened at API-0194 continues for every mysql/* coverage
+    entry. Token literals follow `<tag>-cov-<slug>-<storyID>` /
+    `<tag>-cov-<slug>-<storyID>-<field>` for git-grep traceability.
+  - The 404→CodeNotFound failure-leg override is reserved for
+    canonical by-id GETs whose specs declare 404. Body-bearing
+    POSTs with no 404 in the spec keep harness-default
+    401→CodeAuth, regardless of whether the prior peer in the
+    same tag overrode (API-0198 mysql-one used 404 because *its*
+    spec declared it; API-0199 mysql-rebuild does not regress
+    that override because *its* spec omits 404).
+---
