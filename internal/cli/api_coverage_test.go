@@ -2260,6 +2260,39 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0094",
+		OperationID: "deployment-all",
+		Method:      http.MethodGet,
+		Path:        "/deployment.all",
+		Tag:         "deployment",
+		// First deployment/* roster member. The spec at
+		// `data/openapi.json > /deployment.all > get` declares no
+		// request body and a SINGLE REQUIRED query parameter
+		// `applicationId` (string, `required: true`). This is the
+		// minimal-shape GET-with-required-query precedent for the
+		// deployment/* tag — every subsequent `deployment.allBy*`
+		// peer (API-0095/0096/0097/0098) follows the same one-required-
+		// query-id shape, just rotating the discriminator field name
+		// (`composeId`/`serverId`/`type`). We populate SampleQuery so
+		// the harness exercises end-to-end query propagation; the
+		// harness simply forwards what we hand it via the `--input`
+		// JSON `query` field, and `runAPICoverageSuccess` re-reads
+		// `r.URL.Query()` to confirm the CLI propagated the param
+		// verbatim. Slug convention `deployment-cov-<slug>-<storyID>`
+		// opens the deployment/* cross-story grep contract.
+		SampleQuery: map[string][]string{
+			"applicationId": {"deployment-cov-all-0094"},
+		},
+		// 200 response in the spec is `{}` with
+		// `additionalProperties: false`, matching the empty-success
+		// convention shared by the cross-tag GET-list precedent
+		// API-0033 (application-readTraefikConfig) and the bulk of
+		// the compose/* roster. Empty-object body keeps the success-
+		// leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

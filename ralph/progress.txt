@@ -5235,3 +5235,40 @@
     API-0035 (application-search) and API-0089 (compose-search) for
     the all-optional query-param precedent if applicable.
 ---
+
+## 2026-05-08 - API-0094
+- Implemented per-operation contract coverage for Dokploy operation
+  `deployment-all` (`GET /deployment.all`).
+- Files changed:
+  - `internal/cli/api_coverage_test.go`: appended one `apiCoverageCase`
+    literal opening the deployment/* roster (single REQUIRED query
+    `applicationId`, no body, empty `{}` 200).
+  - `ralph/prd.json`: flipped `passes: true` for API-0094.
+- Verification:
+  - `gofmt -w .`
+  - `go mod tidy`
+  - `go vet ./...`
+  - `go test ./...`
+  - `go test -race ./...`
+- Results: all green.
+- Remaining risks / follow-ups: none — the harness-driven five-part
+  invariant (registry/schema/manifest/success/failure) is automatically
+  enforced by `coveredAPIOperations`. The next deployment/* peers
+  (API-0095 `allByCompose`, API-0096 `allByServer`,
+  API-0097 `allByType`, API-0098 `allCentralized`) are byte-for-byte
+  twins of this entry — same shape, just rotate the discriminator
+  query field name (`composeId`, `serverId`, `type`, no params for
+  `allCentralized`).
+- **Learnings for future iterations:**
+  - The deployment/* tag opens with the same one-required-query-id
+    pattern that the application/* tag uses; mirror this entry for
+    API-0095/0096/0097 by swapping the param name.
+  - `deployment-allCentralized` has no parameters — drop SampleQuery
+    entirely when implementing API-0098.
+  - `deployment-killProcess` and `deployment-removeDeployment` are
+    POSTs with bodies; check the spec for required fields before
+    fixturing.
+  - The slug convention `deployment-cov-<slug>-<storyID>` is now
+    established for the deployment/* roster; keep it for grep
+    cohesion.
+---
