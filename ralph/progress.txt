@@ -18337,3 +18337,38 @@ forward-reference lesson before assuming any field shape.
   fully exercised at every arity from 0..4.
 
 ---
+
+## 2026-05-08 - API-0171 mariadb-start
+- Added apiCoverageCase entry for `mariadb-start` (POST /mariadb.start)
+  immediately after API-0170 `mariadb-search` in
+  `internal/cli/api_coverage_test.go`. Shape: single-required-string-scalar
+  POST imperative-action mutation, structurally identical to API-0162
+  `mariadb-deploy`. Body fixture supplies the lone REQUIRED `mariadbId`
+  scalar inside the `mariadb-cov-start-0171` namespace; success leg uses
+  empty `{}` 200 response per the empty-success cohort. 401→CodeAuth
+  failure leg retained per the action-on-known-id POST precedent (no 404
+  declared on this op; the 404 override stays pinned to API-0164
+  `mariadb-one`).
+- Files changed:
+  - internal/cli/api_coverage_test.go (+~130 lines, new case block)
+  - ralph/prd.json (passes: true on API-0171)
+  - ralph/progress.txt (this entry)
+- Verification: `gofmt -w .`, `go vet ./...`, `go test ./...`, `go test -race ./...`, `go mod tidy` all clean.
+- Remaining risks/follow-ups: API-0172 `mariadb-stop` is the next
+  priority-4 case; spec preview shows the same single-required-`mariadbId`
+  POST shape, so the next iteration can mirror this entry verbatim with
+  the fixture base swapped to `mariadb-cov-stop-0172`.
+- **Learnings for future iterations:**
+  - Each tag's coverage roster forms a chain: every entry's trailing
+    forward-reference comment names the next storyID, fixture base, and
+    method, so the next contributor can spec-verify and slot it in
+    without re-reading earlier entries.
+  - The `mariadb-cov-*` namespace's body-bearing imperative POSTs all
+    skip the 404 override because Dokploy collapses missing-target into
+    400; only the by-id GET (API-0164 `mariadb-one`) carries the 404
+    representative for the tag.
+  - The `<tag>-cov-<slug>-<storyID>` fixture-base naming convention
+    survives the slug normalization for camelCase ops by lowercasing the
+    suffix (e.g. `save-environment`, `save-external-port`); single-word
+    ops keep the literal suffix (`start`, `stop`, `deploy`).
+---
