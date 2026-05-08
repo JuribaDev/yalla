@@ -5773,3 +5773,47 @@
     `go test -race ./...` confirmed no shared-state regressions across
     the three concurrent sub-table entries.
 ---
+
+## 2026-05-08 - API-0249
+- **Implemented**: Coverage for Dokploy operation `organization-create`
+  (POST /organization.create). First mutation in the organization/* roster;
+  appended a single `apiCoverageCase` literal — all five legs (registry
+  invariants, schema reachability, manifest inclusion, httptest success,
+  representative 401 failure) are driven by the existing harness.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — new entry between API-0248 and
+    the closing `}` of `coveredAPIOperations`. `SampleBody` carries a
+    closed `{name, logo}` object — `name` is the only required field per
+    the spec, `logo` is supplied to honour the API-0010/API-0014
+    "every-optional-populated" convention so the wire payload exercises
+    the full envelope. `SuccessResponse: {}` matches the spec's
+    `additionalProperties: false` 200 schema. `FailureStatus`/`FailureCode`
+    rely on the 401→CodeAuth defaults documented in the harness header.
+  - `ralph/prd.json` — flipped API-0249 `passes` to `true`.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./... -count=1` — all packages OK.
+  - `go test -race ./... -count=1` — all packages OK.
+- **Tools NOT available locally**: `goimports`, `golangci-lint`,
+  `staticcheck`, `govulncheck`, `goreleaser` (consistent with prior
+  iterations).
+- **Remaining risks / follow-ups**: none for this story. The next
+  organization/* peer (API-0250 `organization-delete`) is the natural
+  follow-up — it is a single-required-string POST (`organizationId`) that
+  can copy this entry's pattern verbatim with the field name swapped and
+  the optional `logo` line dropped.
+- **Learnings for future iterations**:
+  - The `apiCoverageCase` harness already does all the heavy lifting for
+    minimum-required-body POSTs — adding a new mutation is a one-literal
+    diff once you mirror the spec's request schema. The
+    `every-optional-populated` convention from API-0010/0014 is worth
+    keeping even when the optional surface is a single string field
+    (`logo` here): it costs one extra JSON line and proves the wire
+    forwarding does not silently drop optional keys.
+  - The forward-reference comment style established at API-0246/0248
+    pays off again: API-0249 explicitly names API-0250→API-0255 and the
+    closed `{name, logo}` shape so the next contributor lands on the
+    right precedent without re-deriving it.
+---
