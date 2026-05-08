@@ -710,6 +710,40 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0029",
+		OperationID: "application-saveDockerProvider",
+		Method:      http.MethodPost,
+		Path:        "/application.saveDockerProvider",
+		Tag:         "application",
+		// Mirrors the schema in `data/openapi.json` for
+		// /application.saveDockerProvider: five required fields
+		// (`dockerImage`, `applicationId`, `username`, `password`,
+		// `registryUrl`), each declared as `anyOf:[string,null]`. We
+		// populate every required field with a dedicated
+		// `app-cov-docker-<slug>-0029` placeholder following the
+		// API-0027 (saveBitbucketProvider) precedent for many-required-
+		// nullable-string bodies — distinct values keep diffs readable
+		// and let any future schema validator's failure messages point
+		// at the offending field. The `password` placeholder is
+		// deterministic-but-clearly-fake; the redactor still scrubs
+		// `--token` / Authorization-header bleed-through, but body
+		// fields are not auto-redacted, so reviewers should rely on the
+		// `app-cov-*` prefix to recognise it as test fixture data
+		// rather than a real secret.
+		SampleBody: json.RawMessage(`{
+			"dockerImage": "app-cov-docker-image-0029",
+			"applicationId": "app-cov-docker-application-id-0029",
+			"username": "app-cov-docker-username-0029",
+			"password": "app-cov-docker-password-0029",
+			"registryUrl": "app-cov-docker-registry-url-0029"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching every prior application/* peer. Empty-object body keeps
+		// the success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

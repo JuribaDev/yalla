@@ -3006,3 +3006,53 @@
     bleed-through, but the placeholder makes secret-shaped fixtures
     visually obvious to a reviewer.
 ---
+
+## 2026-05-08 - API-0029
+- **Implemented**: Per-operation contract coverage for
+  `application-saveDockerProvider` (POST `/application.saveDockerProvider`).
+  Extends the append-only `coveredAPIOperations` registry in
+  `internal/cli/api_coverage_test.go` so the existing harness exercises
+  registry presence (method/path/tag), schema reachability, manifest
+  inclusion, the httptest-backed success exchange, and a representative
+  401 failure path with no new boilerplate.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended the API-0029 case
+    after API-0028. Sample body populates the five required fields
+    (`dockerImage`, `applicationId`, `username`, `password`,
+    `registryUrl`), each declared `anyOf:[string,null]` in the spec,
+    using distinct deterministic `app-cov-docker-<slug>-0029`
+    placeholders following the API-0027 (saveBitbucketProvider)
+    many-required-nullable-string precedent.
+  - `ralph/prd.json` — set API-0029 `passes: true`.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean (no diff).
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass (cli 1.118s).
+  - `go test -race ./...` — all packages pass (cli 2.574s).
+- **Tools NOT available locally**: `goimports`, `golangci-lint`,
+  `staticcheck`, `govulncheck`, `goreleaser` (per the verification
+  policy documented in the Codebase Patterns section).
+- **Remaining risks / follow-ups**: none specific to this story. The
+  next priority-2 backlog entry (API-0030, application-saveEnvironment)
+  is the natural next pickup. The remaining `application-save*Provider`
+  family (gitea, github, gitlab, generic git) likely shares the same
+  many-required-nullable-string shape — confirm each via the spec
+  spot-check (`jq '.paths[...]'`) before duplicating the fixture.
+- **Learnings for future iterations**:
+  - The `application-saveDockerProvider` body is the SECOND
+    application/* entry (after saveBitbucketProvider, API-0027) where
+    every required field is `anyOf:[string,null]` with no
+    discriminator or enum. Distinct `app-cov-docker-<slug>-0029`
+    placeholders per field continue to pay off in failure-message
+    readability if any future schema validator rejects one — a
+    blanket placeholder would conflate which field tripped the
+    validator.
+  - Body-field secrets (`password`, `apiKey`) are NOT auto-redacted
+    by `output.NewRedactor` — only `--token` and Authorization /
+    cookie / query-param patterns are. The `app-cov-*` prefix is the
+    convention reviewers should rely on to recognise these as fixture
+    placeholders rather than real credentials. A future story could
+    extend the redactor to scrub configurable body-field keys, but
+    that would be a public-API change and is out of scope here.
+---
