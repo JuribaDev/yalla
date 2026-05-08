@@ -1200,6 +1200,39 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.method` / `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0069",
+		OperationID: "compose-create",
+		Method:      http.MethodPost,
+		Path:        "/compose.create",
+		Tag:         "compose",
+		// Mirrors the schema in `data/openapi.json` for /compose.create:
+		// the required top-level fields are `name` and `environmentId`.
+		// Optional fields `appName`, `composeFile`, `composeType` (enum:
+		// docker-compose|stack), `description`, and `serverId` are also
+		// supplied with deterministic-but-clearly-fake values so the wire
+		// fixture exercises the full create payload, not just the minimum.
+		// `description` and `serverId` use anyOf [string, null]; we send
+		// the string variant so the fixture remains valid against either
+		// branch once a future schema validator is wired into the harness.
+		// Direct precedent: API-0014 (application-create) — same
+		// "create" shape, swapped tag namespace.
+		SampleBody: json.RawMessage(`{
+			"name": "yalla-coverage-compose-create-0069",
+			"appName": "yalla-cov-compose-create-0069",
+			"composeFile": "version: \"3\"\nservices:\n  web:\n    image: nginx",
+			"composeType": "docker-compose",
+			"description": "API-0069 fixture for compose-create coverage",
+			"environmentId": "env-cov-compose-create-0069",
+			"serverId": "srv-cov-compose-create-0069"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the empty-success convention shared by every prior
+		// application/* and compose/* mutation peer. Empty-object body
+		// keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

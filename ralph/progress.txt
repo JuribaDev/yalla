@@ -3877,3 +3877,49 @@
     Multi-word verbs are kebab-cased (clear-deployments, clean-queues,
     cancel-deployment) to keep the slug grep-friendly.
 ---
+
+## 2026-05-08 - API-0069 - Cover compose-create (POST /compose.create)
+- Appended a single `apiCoverageCase` entry for `compose-create` to
+  `coveredAPIOperations` in `internal/cli/api_coverage_test.go`. This is
+  the fourth entry in the `compose/*` roster.
+- Unlike the prior three compose entries (cancelDeployment / cleanQueues /
+  clearDeployments), `compose-create` is NOT in the minimal-id-only POST
+  family. Its required body fields are `name` and `environmentId` per
+  `internal/api/data/openapi.json`, with optional `appName`, `composeFile`,
+  `composeType` (enum docker-compose|stack), `description` (anyOf
+  [string,null]), and `serverId` (anyOf [string,null]).
+- Direct precedent: API-0014 (application-create) — same "create" shape
+  with same anyOf [string,null] handling. Fixture sends the string variant
+  for description/serverId and exercises the full payload (all 7 fields)
+  so a future schema validator wired into the harness still accepts it.
+- 200 response per spec is `{}` (additionalProperties: false), matching
+  the empty-success convention shared by every prior application/* and
+  compose/* mutation peer; SuccessResponse stays `{}`.
+- The shared harness derives registry / schema get / manifest inclusion /
+  httptest success round-trip / 401 -> E_AUTH failure assertions from
+  the entry alone, so no production-code change was required.
+- Files changed: `internal/cli/api_coverage_test.go`, `ralph/prd.json`,
+  `ralph/progress.txt`.
+- Verification: `gofmt -w .`, `go mod tidy`, `go vet ./...`,
+  `go test ./...`, `go test -race ./...` — all pass.
+- Remaining risks / follow-ups: none specific to this story. Future
+  compose/* entries (API-0070+) will continue the roster; many will
+  also follow the minimal-composeId POST shape, but a few (delete,
+  deploy, redeploy, refreshToken, etc.) will need their own per-spec
+  fixtures the way create does.
+- **Learnings for future iterations:**
+  - The `coveredAPIOperations` registry handles the entire compose-create
+    coverage with one struct literal — no production code changes
+    needed. The shared harness in `internal/cli/api_coverage_test.go`
+    is the single point of contract enforcement.
+  - For "create" operations across tags, look first to the
+    application-create precedent (API-0014). The compose-create payload
+    is structurally identical except for the `composeType` enum and the
+    `composeFile` string, both of which are optional.
+  - When a field uses `anyOf: [string, null]`, send the string variant
+    in the fixture so it stays valid against either branch once a
+    schema validator is added.
+  - Use deterministic-but-clearly-fake values (`yalla-coverage-*`,
+    `env-cov-*`, `srv-cov-*`) so the fixture is greppable to its
+    story ID and never collides with another case.
+---
