@@ -5466,3 +5466,53 @@
     cross-story greps cohesive when debugging server fixture
     output.
 ---
+
+## 2026-05-08 - API-0100 (deployment-queueList)
+- Covered Dokploy operation `deployment-queueList` (GET
+  /deployment.queueList) by appending one `apiCoverageCase` entry to
+  the `coveredAPIOperations` table in
+  `internal/cli/api_coverage_test.go`. Seventh deployment/* roster
+  member and the second parameter-free GET in the tag (twin of
+  API-0098 `deployment-allCentralized`).
+- Spec source `internal/api/data/openapi.json >
+  /deployment.queueList > get`: `parameters: null`, no request body,
+  200 response is `{}` with `additionalProperties: false`. No
+  SampleQuery/SamplePathParams/SampleBody set — the parameter-free
+  GET precedent established by API-0006 (`ai-getAll`) and re-used by
+  API-0098 makes empty fields the canonical "agent sends `--input
+  '{}'`" invocation under the harness.
+- Files changed:
+  - internal/cli/api_coverage_test.go (added API-0100 case)
+  - ralph/prd.json (flipped passes:true for API-0100)
+  - ralph/progress.txt (this entry)
+- Verification run from repo root:
+  - gofmt -w . — clean
+  - go mod tidy — clean
+  - go vet ./... — clean
+  - go test ./... — all packages pass (cli 1.053s)
+  - go test -race ./... — all packages pass (cli 2.538s)
+- Optional tooling not invoked this iteration (golangci-lint,
+  staticcheck, govulncheck, goreleaser, goimports): not installed
+  locally, documented baseline since US-0001.
+- Remaining risks / follow-ups: none for API-0100. The deployment/*
+  tag now has six covered (API-0094..0100) of seven; API-0101
+  (`deployment-removeDeployment`, POST) is the final pending peer
+  and will be a byte-for-byte slug-rotated twin of API-0099
+  (`deployment-killProcess`) — same single required `deploymentId`
+  body, same empty-`{}` 200.
+- **Learnings for future iterations:**
+  - The deployment/* tag's parameter-free GET cohort is now a
+    two-member precedent (API-0098 `*-allCentralized`, API-0100
+    `*-queueList`). Both share the cross-tag template set by
+    API-0006 (`ai-getAll`): no SampleQuery/SamplePathParams/
+    SampleBody, `SuccessResponse: "{}"`. Future zero-param GETs
+    in any tag should grep these three entries first.
+  - Spec drift quick-check: `jq '.paths."/deployment.queueList".get
+    | {parameters, requestBody, responses: (.responses | keys)}'`
+    against `internal/api/data/openapi.json` validates parameter
+    shape before writing the comment block.
+  - Slug convention `deployment-cov-<slug>-<storyID>` continues to
+    apply for any deployment/* fixture that DOES need a sample value;
+    parameter-free GETs need none and should leave the field unset
+    rather than invent a no-op slug.
+---

@@ -2471,6 +2471,31 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0100",
+		OperationID: "deployment-queueList",
+		Method:      http.MethodGet,
+		Path:        "/deployment.queueList",
+		Tag:         "deployment",
+		// Seventh deployment/* coverage entry and the second parameter-free
+		// GET in the tag (alongside API-0098 `deployment-allCentralized`).
+		// Spec source: `data/openapi.json > /deployment.queueList > get`
+		// declares `parameters: null` and no request body — the endpoint
+		// returns the entire queued-deployment view scoped purely by the
+		// bearer token, mirroring the cross-tag parameter-free GET
+		// precedent set by API-0006 (`ai-getAll`) and re-used by API-0098.
+		// Leaving SampleQuery/SamplePathParams/SampleBody unset is therefore
+		// intentional — the harness still asserts the wire-level invariants
+		// (method, path, Authorization header, empty query string) at
+		// runAPICoverageSuccess, and the canonical agent invocation is
+		// `yalla api call deployment-queueList --input '{}' --json`.
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// identical to API-0094..0099 and the cross-tag GET-list precedent
+		// API-0033 (application-readTraefikConfig). Empty-object body keeps
+		// the success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
