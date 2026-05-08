@@ -19741,3 +19741,66 @@ forward-reference lesson before assuming any field shape.
     touched. Sibling packages remained cached green. This pattern
     holds for every future API-coverage table addition.
 ---
+
+## 2026-05-08 - API-0185
+- Added the API-0185 `mongo-start` apiCoverageCase entry in
+  `internal/cli/api_coverage_test.go`, inserted between API-0184
+  `mongo-search` and API-0188 `mounts-allNamedByApplicationId` to
+  preserve the operationId-sorted slice order. POST /mongo.start with a
+  REQUIRED single top-level `mongoId` (string) request body, 200 = `{}`
+  with `additionalProperties: false`, no 404 declared. Wire shape is
+  byte-for-byte identical to API-0171 `mariadb-start` (immediate cross-
+  tag analog) and to within-tag peers API-0176 `mongo-deploy`,
+  API-0179 `mongo-rebuild`, and API-0181 `mongo-remove`.
+- SampleBody supplies `{"mongoId": "mongo-cov-start-0185-mongoId"}`,
+  exercising the harness's `len(tc.SampleBody) > 0` gate so the
+  success leg verifies content-type + byte-for-byte body propagation
+  to the httptest server.
+- SuccessResponse `{}` (empty-success cohort). Failure leg uses the
+  harness-default 401→CodeAuth representative; the spec omits 404 so
+  the 404→CodeNotFound override is structurally inapplicable for this
+  call site (override remains pinned to API-0178 `mongo-one` for the
+  mongo/* roster).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — new entry for API-0185.
+  - `ralph/prd.json` — flipped `passes: false` → `passes: true` for
+    API-0185.
+  - `ralph/progress.txt` — this entry.
+- Verification run from repository root:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — no diff.
+  - `go vet ./...` — pass.
+  - `go test ./...` — pass (`internal/cli` 1.331s, all other packages
+    cached).
+  - `go test -race ./...` — pass (`internal/cli` 3.122s, all other
+    packages cached).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, and
+    `goreleaser` not installed in this environment (documented in the
+    earlier progress entries).
+- Remaining risks / follow-ups:
+  - API-0186 `mongo-stop` is the next case in the PRD-ordered
+    priority-4 backlog. Per the API-0345..API-0444 forward-reference
+    lesson, the next contributor must re-verify
+    `internal/api/data/openapi.json` > `/mongo.stop` before assuming
+    the request shape mirrors `mongo-start`. The forward-reference
+    comment block in the new API-0185 entry calls this out explicitly.
+- **Learnings for future iterations:**
+  - The mongo/* lifecycle-quartet (start / stop / deploy / rebuild /
+    remove) all converge on a single REQUIRED `mongoId` string body
+    plus an empty-`{}` 200 response per the
+    `additionalProperties: false` strict-empty cohort. New entries on
+    this shape only need to update the storyID, slug, and forward-
+    reference text — no new harness paths fire.
+  - The cross-tag analog table is now well-populated: mariadb-start
+    (API-0171) maps 1:1 to mongo-start (API-0185), and a future
+    mysql-start / postgres-start / redis-start will re-use this
+    skeleton verbatim with only tag/path/scalar-id renamed. When
+    drafting those entries, copy this comment block, swap the tag
+    prefix, swap the `<tag>Id` field name, and re-verify the spec
+    response set (some database tags do declare 404 on certain ops —
+    do not assume).
+  - The `mongo-cov-<slug>-<storyID>` fixture token convention is the
+    primary `git grep` traceability anchor across the mongo/* roster.
+    Keep fixtures within this skeleton; the per-tag isolation rule
+    enforces no back-reference to closed prior-tag namespaces.
+---
