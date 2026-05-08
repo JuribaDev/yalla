@@ -16548,3 +16548,69 @@ Learnings for future iterations:
     (API-0119, API-0192, API-0269) live in the shape-positioning paragraph,
     not the namespace paragraph.
 ---
+
+## 2026-05-08T18:05Z - API-0300
+- Cover redirects-one (GET /redirects.one). Third entry on the
+  redirects/* roster, continuing inside the `redirects-cov-*` per-tag
+  fixture-isolation namespace opened by API-0298 `redirects-create` and
+  continued by API-0299 `redirects-delete`. Single-required-string-
+  query GET shape with the `redirectId` query parameter, 200 schema is
+  `{}` with `additionalProperties:false`, and the harness-default
+  401→CodeAuth representative failure leg is retained (matching the
+  cross-tag GET-by-id precedent on API-0005, API-0113, API-0115..API-
+  0117, API-0121, API-0124, API-0127, API-0188, API-0191, API-0270).
+- Files changed:
+  - internal/cli/api_coverage_test.go (new struct entry, sorted insert
+    after API-0299 redirects-delete, before API-0335 server-all)
+  - ralph/prd.json (passes=true for API-0300)
+  - ralph/progress.txt (this entry)
+- Verification:
+  - gofmt -w internal/cli/api_coverage_test.go (clean)
+  - go vet ./... (clean)
+  - go test ./... (all packages pass, cli 1.384s)
+  - go test -race ./... (all packages pass race-clean, cli 2.935s)
+  - go mod tidy (clean, no diff)
+  - goimports, golangci-lint, staticcheck, govulncheck, goreleaser
+    not installed locally; documented as missing per the established
+    convention (no silent skip).
+- Results: PRD progress 256/462 stories passing.
+- Remaining risks/follow-ups: next pending priority-3 backlog entry is
+  API-0301 `redirects-update`, which closes the redirects/* roster and
+  inherits the `redirects-cov-*` namespace established by API-0298.
+  The next contributor must re-verify the spec against
+  `internal/api/data/openapi.json > /redirects.update > post` per the
+  forward-reference lesson before assuming any field shape, and must
+  NOT back-reference the closed `port-cov-*` namespace.
+- **Learnings for future iterations:**
+  - The single-required-string-query GET shape continues to scale as
+    the most replicated cross-tag fixture pattern (now 11+ peers from
+    API-0005 through API-0300). The diff for each new instance is
+    purely the operationId, path, query-param name, and fixture slug —
+    grep `port-cov-one-0270` or `redirects-cov-one-0300` to locate the
+    canonical template.
+  - Per-tag fixture-isolation namespaces continue to fill in the
+    canonical CRUD order: API-0298 (create POST) → API-0299 (delete
+    POST) → API-0300 (one GET) → API-0301 (update POST) covers all
+    four classic shapes inside the redirects/* tag, exactly mirroring
+    the port/* sequence at API-0268..API-0271. When a tag exposes a
+    `*-create`/`*-delete`/`*-one`/`*-update` quartet, the
+    PRD-priority-ordered backlog naturally walks through them in this
+    order, so future contributors can confidently predict the next
+    three peers from any new tag opener.
+  - 404→CodeNotFound override remains *technically* applicable on
+    every `*-one` GET (the spec consistently declares 404 for unknown
+    ids) but the harness-default 401→CodeAuth is consistently retained
+    across every covered `*-one` peer. The inertia is intentional:
+    bearer-token enforcement runs **before** any id lookup in the
+    Dokploy stack, so `E_AUTH` is the universally-reproducible failure
+    leg every authenticated peer must re-prove. Future `*-one` entries
+    should inherit this precedent unless they have a *uniquely
+    distinguishing* failure mode that 401 cannot represent.
+  - The fixture id base `redirects-cov-one-0300` collides with neither
+    API-0298 (`redirects-cov-create-0298-app`) nor API-0299
+    (`redirects-cov-delete-0299`); a `git grep redirects-cov-one-0300`
+    traces back to this PRD story uniquely, sustaining the
+    `<tag>-cov-<slug>-<storyID>` deterministic-but-clearly-fake
+    naming convention that the harness has now applied across 11+
+    tag namespaces without collision.
+---
