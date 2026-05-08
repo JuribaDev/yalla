@@ -19245,6 +19245,122 @@ var coveredAPIOperations = []apiCoverageCase{
 		FailureCode:   yerr.CodeNotFound,
 	},
 	{
+		StoryID:     "API-0277",
+		OperationID: "postgres-rebuild",
+		Method:      http.MethodPost,
+		Path:        "/postgres.rebuild",
+		Tag:         "postgres",
+		// Sixth entry on the postgres/* coverage roster, immediately
+		// following API-0276 `postgres-one` and completing the
+		// forward reference embedded in that entry's comment block
+		// ("The next case in the PRD-ordered priority-4 backlog is
+		// API-0277 `postgres-rebuild`"). Continues inside the
+		// `postgres-cov-*` per-tag fixture-isolation namespace opened
+		// by API-0272 `postgres-changeStatus` and **must not**
+		// back-reference any closed prior-tag namespace (`admin-cov-*`,
+		// `ai-cov-*`, `app-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		// `cert-cov-*`, `clu-cov-*`, `compose-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `docker-cov-*`,
+		// `domain-cov-*`, `environment-cov-*`, `gitea-cov-*`,
+		// `github-cov-*`, `gitlab-cov-*`, `mariadb-cov-*`,
+		// `mongo-cov-*`, `mounts-cov-*`, `mysql-cov-*`, `org-cov-*`,
+		// `port-cov-*`, `proj-cov-*`, `set-cov-*`, `srv-cov-*`,
+		// `swarm-cov-*`, `usr-cov-*`, etc.) per the per-tag isolation
+		// rule reasserted at API-0335..API-0444 and originally
+		// established at API-0246 `organization-active`.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-reference
+		// lesson** against `internal/api/data/openapi.json` >
+		// `/postgres.rebuild` > `post`: method POST, tag postgres, **no
+		// parameters**, requestBody REQUIRED with `application/json`
+		// and a single REQUIRED top-level scalar `postgresId` (string),
+		// responses 200/400/401/403/500. The 200 response is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort. **No 404** is declared on
+		// this operation, mirroring the action-on-known-id POST
+		// precedent reasserted at API-0162 `mariadb-deploy`,
+		// API-0196 `mysql-deploy`, API-0272 `postgres-changeStatus`,
+		// and API-0274 `postgres-deploy` (a body-bearing imperative-
+		// action POST whose missing-target failure mode collapses into
+		// 400/validation under Dokploy's tRPC convention rather than a
+		// dedicated 404 leg).
+		//
+		// **Request body schema (REQUIRED top-level fields):**
+		//   - REQUIRED `postgresId` (string) — resource id scalar; the
+		//     fixture below supplies a deterministic-but-clearly-fake
+		//     `postgres-cov-rebuild-0277-postgresId` literal carrying
+		//     the `<tag>-cov-<slug>-<storyID>-<field>` suffix for
+		//     `git grep` traceability.
+		//   - **No OPTIONAL fields declared.** The schema is a strict
+		//     single-scalar request, byte-for-byte identical to the
+		//     API-0274 `postgres-deploy` body shape and structurally
+		//     identical to every prior covered single-required-id POST
+		//     imperative-action mutation across the database tags.
+		//
+		// **Shape positioning — single-required-string-scalar POST
+		// imperative-action mutation, body REQUIRED.** This is the
+		// same wire shape as API-0274 `postgres-deploy` and the
+		// canonical cross-tag `*-rebuild`/`*-deploy`/`*-reload`/
+		// `*-start`/`*-stop` POST imperative-action peer chain. The
+		// lone REQUIRED slot is a plain non-nullable `type: string`
+		// (no `anyOf` / `nullable` / enum constraints), and the
+		// harness's `len(tc.SampleBody) > 0` gate at
+		// `runAPICoverageSuccess` activates the JSON content-type and
+		// byte-for-byte body comparison legs; the fixture supplies the
+		// single REQUIRED field so the success path verifies the CLI
+		// propagated the body verbatim.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so the
+		// 404→CodeNotFound override is structurally inapplicable. The
+		// 404→CodeNotFound override slot was already consumed for the
+		// postgres/* roster by API-0276 `postgres-one` per the per-tag
+		// opener design header which reserves 404 representatives
+		// **specifically for the canonical by-id `*-one` peer**;
+		// `*-rebuild` is an imperative-action POST and stays on the
+		// 401→CodeAuth invariant locked by the kickoff at API-0272
+		// `postgres-changeStatus` and reasserted at API-0273
+		// `postgres-create`, API-0274 `postgres-deploy`, and API-0275
+		// `postgres-move`. 400→CodeInvalidInput is *technically*
+		// available — a payload that omits the REQUIRED `postgresId`
+		// would fail server-side validation — but the harness reserves
+		// 400 representatives for stories where payload validation is
+		// the operation's *uniquely distinguishing* failure mode. A
+		// conventional imperative-action POST collapses to
+		// type-checking, so the harness-default 401→CodeAuth failure
+		// leg remains the most representative single failure mode
+		// every authenticated Dokploy operation must re-prove.
+		//
+		// **Fixture token base** `postgres-cov-rebuild-0277` follows
+		// the established `<tag>-cov-<slug>-<storyID>` deterministic-
+		// but-clearly-fake naming convention and is verified non-
+		// colliding with API-0272's `postgres-cov-changeStatus-0272`,
+		// API-0273's `postgres-cov-create-0273`, API-0274's
+		// `postgres-cov-deploy-0274-postgresId`, API-0275's
+		// `postgres-cov-move-0275-postgresId` /
+		// `postgres-cov-move-0275-targetEnvironmentId`, and API-0276's
+		// `postgres-cov-one-0276-postgresId-fixture` literals
+		// (different slug + storyID → unique under the
+		// `<tag>-cov-<slug>-<storyID>` rule).
+		//
+		// The next case in the PRD-ordered priority-4 backlog is
+		// API-0278 `postgres-reload` (declared a **POST** per the spec
+		// preview; the next contributor must re-verify the spec
+		// against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will continue inside the `postgres-cov-*` per-tag
+		// fixture-isolation namespace opened by API-0272).
+		SampleBody: json.RawMessage(`{
+			"postgresId": "postgres-cov-rebuild-0277-postgresId"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the empty-success
+		// cohort. Empty-object body keeps the success-leg envelope
+		// assertion focused on `data.method` / `data.status` rather than
+		// payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0290",
 		OperationID: "project-all",
 		Method:      http.MethodGet,

@@ -21933,3 +21933,86 @@ forward-reference lesson before assuming any field shape.
     `*-one` peers, and the success-leg assertion focuses on
     `r.URL.Query()` round-trip rather than payload byte comparison.
 ---
+
+## 2026-05-09 - API-0277 - Cover postgres-rebuild (POST /postgres.rebuild)
+- What was implemented:
+  - Added a new `apiCoverageCase` entry for API-0277
+    `postgres-rebuild` to `coveredAPIOperations` in
+    `internal/cli/api_coverage_test.go`, inserted in StoryID-sorted
+    order between API-0276 `postgres-one` and API-0290
+    `project-all`.
+  - **Sixth entry on the postgres/* coverage roster**, continuing
+    the `postgres-cov-*` per-tag fixture-isolation namespace opened
+    by API-0272 `postgres-changeStatus`. Closes the forward
+    reference embedded in API-0276 `postgres-one`'s comment block.
+  - **Spec re-verified against `internal/api/data/openapi.json` >
+    `/postgres.rebuild` > `post`:** method POST, tag postgres, no
+    parameters, requestBody REQUIRED with `application/json` and a
+    single REQUIRED top-level scalar `postgresId` (string),
+    responses 200/400/401/403/500 with the 200 body `{}`
+    (`additionalProperties: false`). No 404 declared.
+  - **Shape — single-required-string-scalar POST imperative-action
+    mutation, body REQUIRED.** Byte-for-byte identical to API-0274
+    `postgres-deploy`. Fixture supplies the lone REQUIRED
+    `postgresId` as `postgres-cov-rebuild-0277-postgresId` so the
+    success-leg's byte-for-byte body-comparison gate exercises the
+    body-forwarding contract.
+  - **Family choice — harness-default 401→CodeAuth retained**
+    because no 404 is declared in the spec and the 404→CodeNotFound
+    override slot for the postgres/* roster was already consumed by
+    API-0276 `postgres-one` per the per-tag opener design header
+    that reserves 404 representatives specifically for the canonical
+    by-id `*-one` peer.
+  - **Fixture token base** `postgres-cov-rebuild-0277` is verified
+    non-colliding with API-0272's `postgres-cov-changeStatus-0272`,
+    API-0273's `postgres-cov-create-0273`, API-0274's
+    `postgres-cov-deploy-0274-postgresId`, API-0275's
+    `postgres-cov-move-0275-postgresId` /
+    `postgres-cov-move-0275-targetEnvironmentId`, and API-0276's
+    `postgres-cov-one-0276-postgresId-fixture` literals under the
+    `<tag>-cov-<slug>-<storyID>` rule.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (added API-0277 case +
+    comment block)
+  - `ralph/prd.json` (set `passes: true` for API-0277)
+  - `ralph/progress.txt` (this entry)
+- Verification run from repo root:
+  - `gofmt -w .` — clean
+  - `go mod tidy` — clean
+  - `go vet ./...` — pass
+  - `go test ./...` — pass (cli 1.260s; all packages PASS)
+  - `go test -race ./...` — pass (cli 3.157s; all packages PASS)
+  - Targeted: `go test ./internal/cli -run 'TestAPICoverage/API-0277' -v`
+    — all five API-0277/postgres-rebuild subtests PASS (Registry,
+    Schema, Manifest, SuccessRoundTrip, RepresentativeFailure).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — not installed locally, deferred per
+    Codebase-Patterns guidance.
+- Remaining risks or follow-ups: none — coverage matches the
+  established `*-deploy`/`*-rebuild` peer pattern. Next priority-4
+  backlog case is API-0278 `postgres-reload` (continues the
+  `postgres-cov-*` per-tag fixture-isolation namespace; spec must be
+  re-verified before assuming any field shape).
+- **Learnings for future iterations:**
+  - **`*-rebuild` peer is structurally identical to `*-deploy`**
+    across the relational database tags: a single REQUIRED
+    `<tag>Id` string scalar, body REQUIRED, responses
+    200/400/401/403/500 (no 404), 200 body `{}`. The mariadb-deploy
+    / mysql-deploy / postgres-deploy template at API-0274 is the
+    canonical reference for any priority-4 `*-rebuild` POST — only
+    the slug (`deploy` → `rebuild`) and the `postgres-cov-…` fixture
+    token base change.
+  - **404 representative slot is single-use per tag.** The per-tag
+    opener design header reserves 404→CodeNotFound for the canonical
+    by-id `*-one` peer (consumed in postgres/* by API-0276). Once
+    consumed, every later `*-rebuild`/`*-reload`/`*-remove`/
+    `*-start`/`*-stop` POST in the same tag's roster falls back to
+    the 401→CodeAuth invariant locked by the kickoff. No tag has
+    yet exercised a 404 override on a non-`*-one` peer.
+  - **postgres/* roster forward-reference chain remains intact.**
+    API-0276's closing block correctly forward-referenced API-0277
+    `postgres-rebuild`, and this entry now forward-references
+    API-0278 `postgres-reload` (declared POST per spec preview;
+    must be re-verified). The `postgres-cov-*` namespace stays open
+    and is owned by API-0272→API-0285 (all postgres/* peers).
+---
