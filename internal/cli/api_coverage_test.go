@@ -623,6 +623,42 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0028",
+		OperationID: "application-saveBuildType",
+		Method:      http.MethodPost,
+		Path:        "/application.saveBuildType",
+		Tag:         "application",
+		// Mirrors the schema in `data/openapi.json` for
+		// /application.saveBuildType: seven required fields
+		// (`applicationId`, `buildType`, `dockerfile`,
+		// `dockerContextPath`, `dockerBuildStage`, `herokuVersion`,
+		// `railpackVersion`) plus optional `publishDirectory`
+		// (nullable string) and `isStaticSpa` (nullable bool).
+		// `buildType` is a closed enum — we pick `dockerfile` because
+		// it is the most established build path and keeps the fixture
+		// closest to a realistic happy-path call. The remaining six
+		// required fields are nullable strings; we use the
+		// deterministic `app-cov-<slug>-0028` placeholder so the
+		// fixture stays schema-valid while remaining clearly fake for
+		// any future validator. Optional fields are intentionally
+		// omitted to match the minimal-but-valid pattern of prior
+		// application/* peers.
+		SampleBody: json.RawMessage(`{
+			"applicationId": "app-cov-save-build-type-0028",
+			"buildType": "dockerfile",
+			"dockerfile": "app-cov-build-type-dockerfile-0028",
+			"dockerContextPath": "app-cov-build-type-context-0028",
+			"dockerBuildStage": "app-cov-build-type-stage-0028",
+			"herokuVersion": "app-cov-build-type-heroku-0028",
+			"railpackVersion": "app-cov-build-type-railpack-0028"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching every prior application/* peer. Empty-object body keeps
+		// the success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

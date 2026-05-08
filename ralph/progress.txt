@@ -2867,3 +2867,54 @@
     required-only payload, so the smaller surface area lowers
     maintenance whenever the spec evolves.
 ---
+
+## 2026-05-08 - API-0028
+- **Implemented**: Per-operation contract coverage for
+  `application-saveBuildType` (POST `/application.saveBuildType`).
+  Extends the append-only `coveredAPIOperations` registry in
+  `internal/cli/api_coverage_test.go` so the existing harness exercises
+  registry presence (method/path/tag), schema reachability, manifest
+  inclusion, the httptest-backed success exchange, and a representative
+  401 failure path with no new boilerplate.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended the API-0028 case
+    after API-0027. Sample body populates the seven required fields:
+    `applicationId`, the closed `buildType` enum (set to
+    `"dockerfile"`, the most established build path), and the five
+    nullable-string fields (`dockerfile`, `dockerContextPath`,
+    `dockerBuildStage`, `herokuVersion`, `railpackVersion`) using the
+    deterministic `app-cov-build-type-*-0028` placeholder so the
+    fixture stays schema-valid while remaining clearly fake. Optional
+    `publishDirectory` (nullable string) and `isStaticSpa` (nullable
+    bool) are intentionally omitted to match the minimal-but-valid
+    pattern of prior application/* peers.
+  - `ralph/prd.json` — set API-0028 `passes: true`.
+- **Verification run**:
+  - `gofmt -l .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass.
+  - `go test -race ./...` — all packages pass.
+- **Tools NOT available locally**: `goimports`, `golangci-lint`,
+  `staticcheck`, `govulncheck`, `goreleaser` (per the verification
+  policy documented in the Codebase Patterns section).
+- **Remaining risks / follow-ups**: none specific to this story. The
+  next priority-2 backlog entry (API-0029, application-saveDockerProvider)
+  is the natural next pickup.
+- **Learnings for future iterations**:
+  - When a Dokploy save* endpoint mixes a closed-enum discriminator
+    (here `buildType`) with mode-specific string fields that are all
+    marked required, picking a single representative enum value and
+    populating every required string with the deterministic
+    `app-cov-<sub-slug>-<storyID>` placeholder keeps the fixture
+    schema-valid without expanding the failure-leg surface area. The
+    optional booleans / arrays stay omitted to match the minimal-but-
+    valid pattern that prior application/* peers established.
+  - Spec note: `/application.saveBuildType` requires *all* of the
+    legacy build-mode fields even when `buildType` selects only one
+    of them (e.g. `herokuVersion` and `railpackVersion` are required
+    even when `buildType: "dockerfile"`). This is a Dokploy schema
+    quirk worth flagging — the registry/contract test happily
+    accepts our placeholders, but a future schema validator will too,
+    so don't be tempted to omit the "irrelevant" mode-specific fields.
+---
