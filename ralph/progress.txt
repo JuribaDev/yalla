@@ -2324,3 +2324,47 @@
   - Coverage entries stay sorted by StoryID; appending at the end of
     the slice keeps diffs minimal and the harness output deterministic.
 ---
+
+## 2026-05-08 - API-0017
+- **Implemented**: API coverage for `application-disconnectGitProvider`
+  (POST /application.disconnectGitProvider). Pattern follows
+  API-0013/API-0015: appended one `apiCoverageCase{...}` literal to
+  `coveredAPIOperations` in `internal/cli/api_coverage_test.go`. The
+  five-part harness (registry invariants, `yalla schema get`,
+  `yalla manifest`, httptest success round-trip, default 401 → CodeAuth
+  representative failure) now also gates `application-disconnectGitProvider`.
+  No production-code changes; the operation is already wired through
+  the embedded OpenAPI spec, the `api.Default()` registry, and the raw
+  `yalla api call` executor.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended one `apiCoverageCase`
+    entry for `API-0017 / application-disconnectGitProvider`. Fixture
+    supplies the only required field (`applicationId`) with a
+    deterministic-but-clearly-fake value (`app-cov-disconnect-git-0017`).
+    Same minimal shape as API-0013/0015 (clearDeployments / delete).
+  - `ralph/prd.json` — `API-0017.passes` flipped to `true`.
+- **Verification run**: `gofmt -w .`, `go mod tidy`, `go vet ./...`,
+  `go test ./...`, `go test -race ./...`, plus a focused
+  `go test ./internal/cli -run 'TestAPICoverage' -count=1`. All green;
+  the new `API-0017/application-disconnectGitProvider` subtests pass.
+- **Tools not installed locally** (documented per the Codebase Patterns
+  baseline rather than silently skipped): `goimports`, `golangci-lint`,
+  `staticcheck`, `govulncheck`, `goreleaser`. CI still runs the
+  security/lint matrix on push.
+- **Results**: All required gates pass. `application-disconnectGitProvider`
+  is now registry-checked, schema-reachable, manifest-listed,
+  success-round-tripped through `httptest.Server`, and failure-mapped to
+  `CodeAuth` on 401.
+- **Remaining risks / follow-ups**: None for this story. The next
+  pending API story by priority is API-0018
+  (`application-getReloadCheckCommand` or successor), still
+  `passes: false`.
+- **Learnings for future iterations**:
+  - The `applicationId`-only minimal pattern now spans
+    cancelDeployment, cleanQueues, clearDeployments, delete, and
+    disconnectGitProvider. Each is a one-line struct literal with a
+    unique `app-cov-<verb>-<storyNumber>` placeholder so a leaked
+    fixture is instantly traceable to its PRD entry.
+  - Coverage entries stay sorted by StoryID; appending at the end of
+    the slice keeps diffs minimal and the harness output deterministic.
+---

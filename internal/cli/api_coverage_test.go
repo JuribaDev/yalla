@@ -290,6 +290,27 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.method` / `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0017",
+		OperationID: "application-disconnectGitProvider",
+		Method:      http.MethodPost,
+		Path:        "/application.disconnectGitProvider",
+		Tag:         "application",
+		// Mirrors the schema in `data/openapi.json` for
+		// /application.disconnectGitProvider: the only required field is
+		// `applicationId` (string). Same minimal shape as API-0013 /
+		// API-0015 (clearDeployments / delete) — keep the fixture
+		// minimal-but-valid so a future schema validator wired into the
+		// harness still accepts it.
+		SampleBody: json.RawMessage(`{
+			"applicationId": "app-cov-disconnect-git-0017"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the other application/* peers. We keep an empty-object
+		// body so the success-leg envelope assertion stays focused on
+		// `data.method` / `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
