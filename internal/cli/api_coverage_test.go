@@ -1554,6 +1554,42 @@ var coveredAPIOperations = []apiCoverageCase{
 		// payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0079",
+		OperationID: "compose-isolatedDeployment",
+		Method:      http.MethodPost,
+		Path:        "/compose.isolatedDeployment",
+		Tag:         "compose",
+		// Mirrors the schema in `data/openapi.json` for
+		// /compose.isolatedDeployment: the request body is REQUIRED and
+		// declares one required string field — `composeId` (the target
+		// record) — plus a single OPTIONAL sibling, `suffix` (string,
+		// appended to the isolated deployment's resource names so the
+		// caller can run multiple isolated copies side-by-side without
+		// collision). This is structurally a near-twin of the
+		// minimal-composeId-only POST family (API-0066/0067/0068/0073/
+		// 0074) with one extra optional field; the API-0078 (compose-
+		// import) entry is the closest analogue with two required fields
+		// (`base64`, `composeId`) but does not exercise the
+		// required+optional split. We populate `suffix` deterministically
+		// so the harness round-trips both fields verbatim and a future
+		// schema validator wired into the harness still accepts the
+		// fixture (`suffix` is well-typed and the only required field is
+		// satisfied). The harness forwards SampleBody via the `--input`
+		// JSON `body` field, and `runAPICoverageSuccess` re-reads the
+		// request body to confirm the CLI propagated the payload
+		// verbatim.
+		SampleBody: json.RawMessage(`{
+			"composeId": "compose-cov-isolated-deployment-0079",
+			"suffix": "cov-0079"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the empty-success convention shared by every prior
+		// compose/* peer. Empty-object body keeps the success-leg envelope
+		// assertion focused on `data.method` / `data.status` rather than
+		// payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

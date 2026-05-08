@@ -4388,3 +4388,25 @@
     registry/schema/manifest code change is required when the
     operation already lives in the embedded spec.
 ---
+
+## 2026-05-08 - API-0079
+- Implemented coverage for compose-isolatedDeployment (POST /compose.isolatedDeployment).
+- Files changed:
+  - internal/cli/api_coverage_test.go — appended one apiCoverageCase entry between API-0078 (compose-import) and the closing brace of coveredAPIOperations. Mirrors the spec at data/openapi.json > /compose.isolatedDeployment > post: required `composeId`, optional `suffix`, empty {} success body. Comment cross-links the closest analogues (the API-0066/0067/0068/0073/0074 minimal-composeId-only POST family and API-0078 as the two-required-fields neighbour) and explains why we still populate `suffix` (deterministic round-trip + future schema-validator compatibility).
+  - ralph/prd.json — flipped API-0079.passes from false to true.
+- Verification run (from repo root):
+  - gofmt -w . — clean.
+  - goimports -w . — NOT INSTALLED on this host (`goimports: command not found`); gofmt covered formatting.
+  - go mod tidy — clean.
+  - go test ./... — all packages PASS (internal/cli ran in 1.145s including the 5 new TestAPICoverage_* subtests for API-0079).
+  - go test -race ./... — all packages PASS (internal/cli 2.478s).
+  - go vet ./... — clean.
+  - golangci-lint, staticcheck, govulncheck, goreleaser — not invoked this iteration; no source changes outside the test file + PRD bump.
+- Results: API-0079 acceptance criteria all green via the existing five-test harness (RegistryInvariants, SchemaCommandWorks, ManifestListsOperation, SuccessRoundTrip, RepresentativeFailure). 397 user stories remain with passes=false.
+- Remaining risks or follow-ups:
+  - None new. Pattern continues to fully reuse the harness; no production-code changes needed because the operation was already in the embedded OpenAPI registry — coverage was the only gap.
+- **Learnings for future iterations:**
+  - For compose-* (and likely future) operations whose request body has the shape `{required: composeId, optional: <one extra string field>}`, populate the optional field in SampleBody. The harness only forwards the body verbatim and the upstream Dokploy schema declares the field well-typed, so deterministic exercise of the optional path costs nothing and pre-empts a future schema-validator wiring.
+  - The OpenAPI spec lives at `internal/api/data/openapi.json` (NOT `data/openapi.json` from repo root, even though every prior progress entry's comment text refers to it as `data/openapi.json` because that is the embed-relative path). Use `find . -name openapi.json` if a `jq` invocation 404s.
+  - `goimports` is intentionally optional on this host; gofmt alone has been sufficient for every API-XXXX coverage story to date because the new entries never introduce a new import (json, http, etc. are already in scope at api_coverage_test.go's file header).
+---
