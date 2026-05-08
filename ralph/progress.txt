@@ -19349,3 +19349,67 @@ forward-reference lesson before assuming any field shape.
     structurally identical to API-0177 `mongo-move`'s two-scalar
     body.
 ---
+
+## 2026-05-08 - API-0181 - Cover mongo-remove (POST /mongo.remove)
+- Added apiCoverageCases entry for mongo-remove in
+  internal/cli/api_coverage_test.go between API-0180 mongo-reload and
+  API-0188 mounts-allNamedByApplicationId per the StoryID-sorted slice
+  rule (the mongo/* tag's eighth entry).
+- Spec re-verified against internal/api/data/openapi.json >
+  /mongo.remove > post:
+  * Method POST, tag `mongo`
+  * Zero parameters
+  * REQUIRED `application/json` request body with ONE REQUIRED string
+    scalar (`mongoId`) and NO optional fields
+  * Responses 200/400/401/403/500 (no 404)
+  * 200 schema is `{}` with `additionalProperties: false`
+- Fixture token base `mongo-cov-remove-0181` continues the per-tag
+  `mongo-cov-*` namespace; the lone REQUIRED scalar is populated inline
+  with the `<tag>-cov-<slug>-<storyID>-<field>` literal convention.
+- Failure leg uses harness defaults (401 -> CodeAuth) since 404 is
+  not declared on this operation. Override slot for the mongo/* tag
+  was already consumed by API-0178 `mongo-one`. Consistent with the
+  imperative-action POST precedent at API-0162 `mariadb-deploy`,
+  API-0174 `mongo-changeStatus`, API-0176 `mongo-deploy`, API-0179
+  `mongo-rebuild`, and API-0180 `mongo-reload`.
+- Files changed:
+  * `internal/cli/api_coverage_test.go` (+1 case literal, ~140 lines)
+  * `ralph/prd.json` (passes: true for API-0181)
+  * `ralph/progress.txt` (this entry)
+- Verification (all from repo root):
+  * `gofmt -l .` -> clean
+  * `go mod tidy` -> no diff
+  * `go vet ./...` -> clean
+  * `go test ./...` -> all packages PASS
+  * `go test -race ./...` -> all packages PASS
+  * Targeted `go test -v -run TestAPICoverage ./internal/cli/...`
+    confirms all five contract subtests (RegistryInvariants,
+    SchemaCommandWorks, ManifestListsOperation, SuccessRoundTrip,
+    RepresentativeFailure) PASS for API-0181/mongo-remove.
+- Tools NOT available locally (per documented policy): `goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`.
+- Remaining risks / follow-ups: API-0182 `mongo-saveEnvironment` is
+  the next pending priority-4 mongo/* peer; the forward-reference
+  comment in this entry reserves the `mongo-cov-saveEnvironment-0182`
+  slug for it. The next contributor must re-verify the spec
+  per-operation per the slug-prefix-is-not-shape lesson.
+- **Learnings for future iterations:**
+  - **Single-required-`mongoId` POST shape is shared by `mongo-remove`,
+    `mongo-rebuild` (API-0179), and `mongo-deploy` (API-0176)** under
+    Dokploy's tRPC convention — three sibling imperative-action
+    mutations on the same resource id with byte-for-byte identical
+    request schemas. The slug-prefix-is-not-shape rule still requires
+    re-verification per-operation; the convergence here is incidental,
+    not transitive.
+  - **`mongo-remove` is structurally narrower than `mongo-reload`**
+    (API-0180): `*-reload` carries an additional `appName` companion
+    descriptor, while `*-remove` is the canonical single-scalar
+    teardown. Do not assume slug families share shape across the
+    `*-deploy`/`*-rebuild`/`*-reload`/`*-remove` cohort.
+  - **The mongo/* 404 override remains exclusive to API-0178
+    `mongo-one`.** Every other roster member (changeStatus, create,
+    deploy, move, rebuild, reload, remove) declares only
+    200/400/401/403/500 — missing-target collapses to validation-leg
+    400 under tRPC, so 401 -> CodeAuth stays the most representative
+    failure mode.
+---
