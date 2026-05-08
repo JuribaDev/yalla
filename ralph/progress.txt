@@ -17770,3 +17770,72 @@ API-0160..API-0163's mariadb-cov-changeStatus-0160 / -create-0161 /
   API-0163 mariadb-move (preceding) and API-0188 mounts-* (following);
   no struct-literal sort key beyond StoryID order is enforced.
 ---
+
+## 2026-05-08 - API-0165 - Cover mariadb-rebuild (POST /mariadb.rebuild)
+
+Sixth entry on the mariadb/* coverage roster, immediately following
+API-0164 `mariadb-one`. Reverts to the body-bearing imperative-action POST
+shape after the canonical by-id GET peer at API-0164. Structurally
+byte-for-byte identical to API-0162 `mariadb-deploy`: single REQUIRED
+`mariadbId` string body, responses 200/400/401/403/500 (no 404),
+empty-object `{}` success body with `additionalProperties:false`.
+
+Spec re-verified directly against `internal/api/data/openapi.json` >
+`/mariadb.rebuild` > `post`: POST, tag `mariadb`, no parameters,
+requestBody REQUIRED with one required string scalar, response set
+matches every prior mariadb/* peer except the API-0164 `mariadb-one`
+canonical-by-id-GET (which uniquely declares 404).
+
+Failure leg: harness-default 401 → CodeAuth retained. The 404 → CodeNotFound
+override pinned at API-0164 `mariadb-one` is structurally inapplicable
+here (404 absent from the response set), and 400 → CodeInvalidInput is not
+the *uniquely distinguishing* failure mode for an imperative-action POST.
+
+Per-case fixture base `mariadb-cov-rebuild-0165` verified non-colliding
+with API-0160..API-0164 mariadb-cov-* slugs and every cross-tag covered
+namespace.
+
+Forward reference satisfied: API-0164 `mariadb-one`'s comment already
+promised "API-0165 `mariadb-rebuild`". New entry forwards to API-0166
+`mariadb-reload` (next priority-4 backlog item).
+
+### Files changed
+- internal/cli/api_coverage_test.go: appended new apiCoverageCase entry
+  for API-0165 mariadb-rebuild between API-0164 mariadb-one and API-0188
+  mounts-allNamedByApplicationId, preserving the StoryID-sorted insertion
+  contract.
+- ralph/prd.json: set passes:true for API-0165.
+- ralph/progress.txt: this entry.
+
+### Verification run
+- gofmt -w . (clean)
+- go mod tidy (clean)
+- go vet ./... (pass)
+- go test ./... (pass, all packages OK)
+- go test -race ./... (pass, internal/cli 3.290s)
+- goimports, golangci-lint, staticcheck, govulncheck, goreleaser remain
+  unavailable locally and are documented as missing rather than silently
+  skipped.
+
+### Remaining risks or follow-ups
+None specific to this story. Next PRD priority-4 entry is API-0166
+`mariadb-reload` (POST per the spec preview; re-verify against
+`internal/api/data/openapi.json` before assuming any field shape).
+
+### Learnings for future iterations
+- The mariadb/* roster's stable shape is now: kickoff at API-0160
+  changeStatus (no body in this spec), multi-required POST at create
+  (API-0161), single-required POST at deploy (API-0162), two-required
+  POST at move (API-0163), canonical by-id GET at one (API-0164,
+  404→CodeNotFound override site), single-required POST at rebuild
+  (API-0165, harness-default failure leg). The `*-rebuild` slot is the
+  byte-for-byte twin of `*-deploy` for tags whose imperative-action
+  surface is shaped this way; copying the deploy comment block and
+  re-pointing the cross-references is the cheapest correct path.
+- The 404 → CodeNotFound override for the mariadb/* roster has now been
+  consumed by API-0164 `mariadb-one`. Subsequent mariadb/* entries cannot
+  re-claim it: the spec only declares 404 on the by-id GET peer.
+- Insertion-site lexical ordering held: API-0164 (preceding) → API-0165
+  (this entry) → API-0188 mounts-* (following). No struct-literal sort
+  key beyond StoryID order is enforced.
+---
