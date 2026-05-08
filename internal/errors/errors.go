@@ -45,6 +45,63 @@ const (
 	CodeUnsupported  Code = "E_UNSUPPORTED"
 )
 
+// CodeDoc is a single entry in the canonical error-code table emitted by
+// `yalla manifest --json`. It pairs a stable code with its exit code and a
+// short, agent-readable description so consumers can render diagnostic
+// tables without scraping help text.
+type CodeDoc struct {
+	Code        string `json:"code"`
+	ExitCode    int    `json:"exit_code"`
+	Description string `json:"description"`
+}
+
+// codeDescriptions maps every stable Code to a one-line description. It is
+// the source of truth for the manifest's error-code table; adding a new
+// Code constant requires adding an entry here so the manifest stays
+// complete (the manifest test enforces parity).
+var codeDescriptions = map[Code]string{
+	CodeUnknown:      "uncategorised internal failure",
+	CodeInternal:     "internal error in yalla itself",
+	CodeUsage:        "command-line usage error (unknown flag, bad subcommand, etc.)",
+	CodeInvalidInput: "request payload, flag value, or registry filter rejected",
+	CodeConfig:       "configuration is missing, malformed, or incomplete",
+	CodeAuth:         "authentication failed or no credentials supplied",
+	CodeForbidden:    "credentials are valid but not authorised for the action",
+	CodeNotFound:     "resource, operationId, or schema does not exist",
+	CodeConflict:     "request rejected because of a precondition or state conflict",
+	CodeRateLimited:  "upstream rate limit hit; back off and retry",
+	CodeServer:       "upstream Dokploy server returned an error",
+	CodeNetwork:      "transport-level network failure reaching Dokploy",
+	CodeTimeout:      "request exceeded the configured timeout",
+	CodeCanceled:     "context canceled (e.g. SIGINT)",
+	CodeNoInput:      "interactive prompt required but --no-input was set",
+	CodeUnsupported:  "operation not supported by the current build or transport",
+}
+
+// AllCodes returns the canonical, sorted list of every stable error code
+// shipped by yalla together with its exit code and description. Used by
+// `yalla manifest --json` to publish the table agents must switch on.
+//
+// The returned slice is freshly allocated on every call; callers may
+// mutate it without bleeding back into the registry.
+func AllCodes() []CodeDoc {
+	codes := []Code{
+		CodeUnknown, CodeInternal, CodeUsage, CodeInvalidInput,
+		CodeConfig, CodeAuth, CodeForbidden, CodeNotFound,
+		CodeConflict, CodeRateLimited, CodeServer, CodeNetwork,
+		CodeTimeout, CodeCanceled, CodeNoInput, CodeUnsupported,
+	}
+	out := make([]CodeDoc, 0, len(codes))
+	for _, c := range codes {
+		out = append(out, CodeDoc{
+			Code:        string(c),
+			ExitCode:    c.ExitCode(),
+			Description: codeDescriptions[c],
+		})
+	}
+	return out
+}
+
 // ExitCode returns the stable POSIX-style exit code the CLI uses for this
 // error code. Scripts and agents may rely on these values; changing the map
 // is a public-API change.

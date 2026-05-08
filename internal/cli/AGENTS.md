@@ -115,6 +115,47 @@ Conventions for the Cobra command tree.
   deterministically without a wire call. Both checks are skipped in
   `--dry-run` so an agent can validate request construction offline.
 
+## Manifest, docs, and completion (US-0007)
+
+- `yalla manifest`, `yalla docs`, and `yalla completion` are introspection
+  commands: they read the live `*cobra.Command` tree and the embedded
+  `api.Default()` registry; none of them touches the network.
+- The manifest's inner payload carries its own `manifest_schema`
+  (`yalla.manifest.v1`) **inside** the standard `yalla.output.v1`
+  envelope. Bumping either constant is a public-API change.
+- `collectCommandTree` and `collectFlagSet` are the canonical projections
+  for any command/flag introspection; reuse them rather than re-walking
+  pflag yourself. Both are deterministic (alphabetical) so JSON diffs
+  stay clean across yalla versions.
+- `isInternalCobraCmd` filters Cobra's auto-added `help` and
+  `__complete*` helpers out of every introspection surface (manifest,
+  docs, future tooling). The auto-added `completion` is suppressed
+  earlier via `cmd.CompletionOptions.DisableDefaultCmd = true` in
+  `buildRoot`; do **not** re-enable it without coordinating with
+  `newCompletionCommand()`.
+- `yalla docs markdown` writes either to `--output-dir` (one file per
+  command, file names join the path with underscores) or to stdout (a
+  single combined document). With `--json` the file-output path emits
+  the file list and the stdout path wraps the combined Markdown in the
+  envelope's `data.content` field. The stdout-human path writes
+  Markdown through `Renderer.Human` (so the redactor still scrubs any
+  accidental token reference); per-file writes go through `os.WriteFile`
+  with mode `0o644` because the tree is meant to be world-readable.
+- `yalla completion <shell>` reuses Cobra's built-in generators
+  (`GenBashCompletionV2`, `GenZshCompletion`, `GenFishCompletion`,
+  `GenPowerShellCompletionWithDesc`). Adding a new shell means
+  appending to `supportedShells` AND extending `generateCompletion`;
+  the manifest test (`TestManifest_JSONListsAllSubcommands`) will fail
+  if the two diverge.
+- The completion script is the one and only place outside the redactor
+  that writes raw bytes to `Renderer.Out()` in human mode. Shell scripts
+  cannot tolerate substring substitution and yalla never embeds tokens
+  in generated completions, so the redaction bypass is sound.
+- Adding any new top-level command requires updating the
+  `wantTopLevel` slice in `TestManifest_JSONListsAllSubcommands` so
+  the manifest contract stays explicit (the same friction as
+  `TestRoot_RegistersAllRequiredGlobalFlags` for global flags).
+
 ## Tests
 
 - `TestMain` in `main_test.go` unsets every `YALLA_*` env var and pins

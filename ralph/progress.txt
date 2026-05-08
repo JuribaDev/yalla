@@ -191,6 +191,48 @@
   emission so a dry-run envelope is safe to log or paste. The
   output redactor still scrubs the literal token value as a
   defence-in-depth.
+- Manifest contract (US-0007): `yalla manifest --json` is the single
+  introspection surface for agents. The envelope is the standard
+  `yalla.output.v1`; the inner payload carries its own
+  `manifest_schema` (`yalla.manifest.v1`). It bundles binary
+  metadata, the resolved spec digest, persistent global flags, the
+  full command tree (with per-command flags + examples), the
+  canonical error-code table from `errors.AllCodes()`, and the
+  registry coverage (`operations.{total,tags,ids}`). Adding any
+  new top-level command requires updating
+  `TestManifest_JSONListsAllSubcommands` so the manifest contract
+  stays explicit.
+- Error-code catalogue (US-0007): `internal/errors.AllCodes()` is the
+  source of truth for the `(Code, ExitCode, Description)` triples
+  exposed by the manifest. Adding a new `Code` constant requires
+  adding a description to `codeDescriptions` in the same file —
+  `TestManifest_JSONListsAllErrorCodes` enforces parity.
+- Cobra introspection (US-0007): `collectCommandTree` and
+  `collectFlagSet` (in `internal/cli/manifest_cmd.go`) are the
+  canonical projections for any command/flag introspection.
+  `isInternalCobraCmd` filters Cobra's `help` and `__complete*`
+  helpers; the auto-added `completion` subcommand is suppressed in
+  `buildRoot` via `cmd.CompletionOptions.DisableDefaultCmd = true`
+  so yalla's own `completion` tree is the sole owner of that
+  surface.
+- Docs generator (US-0007): `yalla docs markdown` emits one Markdown
+  file per command into `--output-dir` (file names join the path
+  with underscores), or a single combined doc to stdout when the
+  flag is omitted. With `--json`, the file path returns
+  `{format,command_count,output_dir,files}`; the stdout path returns
+  `{format,command_count,content}`. Future formats (man, html) plug
+  in as new subcommands of `yalla docs`.
+- Completion generator (US-0007): `yalla completion <shell>` reuses
+  Cobra's built-in generators (`GenBashCompletionV2`,
+  `GenZshCompletion`, `GenFishCompletion`,
+  `GenPowerShellCompletionWithDesc`). Adding a shell means appending
+  to `supportedShells` AND extending `generateCompletion`. Scripts
+  go to stdout verbatim; with `--json` they wrap in
+  `{shell,script}`. The completion path is the only command that
+  legitimately writes raw bytes to `Renderer.Out()` because shell
+  scripts cannot tolerate substring redaction (and yalla never
+  embeds tokens in completion output).
+
 
 ---
 
@@ -894,4 +936,138 @@
     subcommand-local `--input`/`--dry-run` are bound after the
     positional arg. Tests that stitch the args slice manually must
     keep the positional first.
+---
+
+
+## 2026-05-08 - US-0007
+- **Implemented**: Manifest, docs, and completion command trees
+  giving agents and humans a stable introspection surface for the
+  entire CLI. `yalla manifest` returns the binary metadata + spec
+  digest + global flag set + full command tree + error-code table +
+  OpenAPI operation coverage in one envelope. `yalla docs markdown`
+  generates per-command Markdown files (or a combined doc to
+  stdout). `yalla completion {bash,zsh,fish,powershell}` emits the
+  matching shell completion script through Cobra's built-in
+  generators.
+- **Files changed**:
+  - `internal/errors/errors.go` — new `CodeDoc` type, the
+    `codeDescriptions` table, and `AllCodes()` helper. The table is
+    the source of truth for the manifest's error-code catalogue.
+  - `internal/cli/manifest_cmd.go` (new) — `manifestDoc`,
+    `manifestCommand`, `manifestFlag`, `manifestOperations`,
+    `collectCommandTree`, `collectFlagSet`, `isInternalCobraCmd`,
+    plus the JSON + human renderers. Defines the public
+    `ManifestSchema = "yalla.manifest.v1"` constant.
+  - `internal/cli/manifest_cmd_test.go` (new) — locks the contract:
+    every API operationId appears in `operations.ids`; every public
+    error code appears in `error_codes`; every persistent global flag
+    appears in `global_flags`; the top-level command set is
+    `[api,auth,completion,config,docs,manifest,schema]`; commands are
+    sorted; cobra's `help`/`__complete*` helpers do not leak.
+  - `internal/cli/docs_cmd.go` (new) — `yalla docs markdown` with
+    `--output-dir` for per-file output and stdout fallback for a
+    combined doc. Hand-rolled renderer so we don't depend on
+    `cobra/doc` (no new dependency). Uses `0o700` for the parent dir
+    and `0o644` for the rendered files.
+  - `internal/cli/docs_cmd_test.go` (new) — covers stdout combined
+    output, file-output JSON envelope, JSON stdout content wrapping,
+    and the human-mode "wrote N files to <dir>" stderr line.
+  - `internal/cli/completion_cmd.go` (new) — `supportedShells`,
+    `newCompletionCommand`, `runCompletion`, `generateCompletion`.
+    Reuses Cobra generators verbatim; with `--json` wraps the script
+    in `{shell,script}`.
+  - `internal/cli/completion_cmd_test.go` (new) — every supported
+    shell emits a non-empty script with the expected anchor; the
+    JSON envelope round-trips; bare `yalla completion` prints help;
+    `yalla completion tcsh` returns `E_USAGE`.
+  - `internal/cli/root.go` — registers `manifest`, `docs`,
+    `completion` and disables Cobra's auto-added `completion`
+    subcommand via `cmd.CompletionOptions.DisableDefaultCmd = true`.
+  - `internal/cli/AGENTS.md` — new "Manifest, docs, and completion
+    (US-0007)" section documenting the introspection helpers, the
+    `isInternalCobraCmd` filter rule, the docs file layout, and the
+    redactor bypass for completion scripts.
+  - `ralph/progress.txt` — Codebase Patterns gained the manifest /
+    docs / completion rules; this dated entry appended.
+  - `ralph/prd.json` — set US-0007 `passes: true`.
+- **Verification run**:
+  - `gofmt -w .` — clean (one struct alignment fix in
+    `manifest_cmd.go` after the initial Write).
+  - `go mod tidy` — clean (no new deps; `pflag` and `cobra` already
+    pulled in by the existing tree).
+  - `go vet ./...` — clean.
+  - `go build ./...` — clean.
+  - `go test ./...` — `ok` across all packages.
+  - `go test -race ./...` — `ok` across all packages.
+  - Smoke (binary): `yalla --json manifest` returns the envelope with
+    `manifest_schema=yalla.manifest.v1`, `spec.sha256` matching
+    `EmbeddedSpecSHA256`, 7 top-level commands, 16 error codes, 6
+    persistent flags, and 450 operationIds. `yalla completion bash`
+    starts with `# bash completion V2 for yalla`. `yalla docs
+    markdown --output-dir /tmp/yalla-docs` writes 20 .md files (one
+    per command in the tree).
+- **Tools NOT available locally** (unchanged from US-0005/0006):
+  `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+  `goreleaser`. Documented per the verification policy.
+- **Remaining risks / follow-ups**:
+  - The manifest deliberately includes hidden subcommands so an
+    operator can discover them, but the `Hidden` flag is preserved
+    so consumers can filter. We currently expose zero hidden
+    commands; introducing one will need an explicit decision on
+    whether the manifest should still surface it.
+  - `yalla docs markdown` does not generate man pages or HTML yet.
+    The subtree is in place so a future `yalla docs man` slots in
+    without breaking the public command surface.
+  - Cobra's default `help` template still lists the auto-added
+    `help` subcommand; only the manifest filter strips it. That is
+    the right tradeoff because `help` is a real cobra command users
+    can invoke, but it is NOT part of yalla's public agent contract.
+  - The completion script writes raw bytes to stdout (bypassing the
+    redactor in human mode). This is the documented exception in
+    `internal/cli/AGENTS.md`; revisit if completion ever embeds
+    user-supplied values.
+- **Learnings for future iterations:**
+  - **Disable cobra's default completion before adding your own.**
+    `cmd.CompletionOptions.DisableDefaultCmd = true` MUST be set in
+    `buildRoot` before `cmd.AddCommand(newCompletionCommand())` or
+    cobra silently shadows one of them. The pattern lives in
+    `root.go` next to `SetVersionTemplate` so it stays grouped with
+    other Cobra-tree configuration.
+  - **`cmd.Root()` works inside RunE.** The manifest, docs, and
+    completion commands all call `c.Root()` to get a tree handle
+    without threading the root pointer through dependency injection.
+    This is safe because `PersistentPreRunE` has already run when
+    RunE fires, so the tree is fully wired.
+  - **`isInternalCobraCmd` filter is a single-source-of-truth.** The
+    same helper is reused by `collectCommandTree` (manifest) and
+    `collectMarkdownPages` (docs). Re-walking the tree without this
+    filter would leak `help` and `__complete*` into the public
+    surface.
+  - **The fish completion anchor is `# fish completion for yalla`,
+    NOT `fish-shell`.** Cobra's fish generator does not emit the
+    word "fish-shell" anywhere; the test had to be reset to
+    `# fish completion for yalla`. Use the actual generator output
+    when picking anchor strings — read the cobra source if needed,
+    not the test you wrote yesterday.
+  - **Sort tree projections deterministically before emitting JSON.**
+    Cobra's `Commands()` returns insertion order; without an explicit
+    `sort.Slice`, the JSON manifest would diff differently every time
+    a new subcommand was added in a different position. The pattern
+    is `collectFlagSet` and `collectCommandTree` — both sort by
+    `Name`.
+  - **`pflag.FlagSet.VisitAll` is the right iterator for the manifest.**
+    `Visit` only visits flags that have been changed; `VisitAll`
+    visits every registered flag whether or not it was set. The
+    manifest needs the full registered set to describe the public
+    surface.
+  - **Use `os.WriteFile` with explicit modes (`0o700` for the dir,
+    `0o644` for files) when generating docs.** The dir is owner-only
+    because `--output-dir` may live under a user home that should
+    not be world-readable; the rendered .md files are world-readable
+    so a static-site build pipeline can pick them up without a chmod.
+  - **Cobra's `IsAdditionalHelpTopicCommand` is NOT the same as our
+    filter.** It returns true when a command is non-runnable AND has
+    no runnable children — that would also exclude our `auth` and
+    `schema` umbrella commands which we DO want in the manifest.
+    Hand-rolling `isInternalCobraCmd` keeps the filter precise.
 ---

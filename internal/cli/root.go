@@ -192,6 +192,12 @@ while logs, prompts, warnings, and errors are written to stderr.`,
 	// future `yalla version --json` subcommand.
 	cmd.SetVersionTemplate(build.String() + "\n")
 
+	// Disable Cobra's auto-generated `completion` subcommand so yalla's own
+	// `yalla completion` (US-0007) is the single owner of that surface.
+	// Without this, registering newCompletionCommand() would race the
+	// auto-added one and one of them would be silently shadowed.
+	cmd.CompletionOptions.DisableDefaultCmd = true
+
 	pf := cmd.PersistentFlags()
 	pf.BoolVar(&flags.JSON, "json", false, "emit machine-readable JSON output to stdout")
 	pf.BoolVar(&flags.NoInput, "no-input", false, "never prompt; fail with a stable error code if input is required")
@@ -207,6 +213,9 @@ while logs, prompts, warnings, and errors are written to stderr.`,
 	cmd.AddCommand(newAuthCommand())
 	cmd.AddCommand(newAPICommand())
 	cmd.AddCommand(newSchemaCommand())
+	cmd.AddCommand(newManifestCommand())
+	cmd.AddCommand(newDocsCommand())
+	cmd.AddCommand(newCompletionCommand())
 
 	return cmd, flags
 }

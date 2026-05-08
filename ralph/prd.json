@@ -289,7 +289,7 @@
       ],
       "type": "foundation",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "AI agents should be able to inspect capabilities without scraping help text."
     },
     {
