@@ -20892,3 +20892,103 @@ forward-reference lesson before assuming any field shape.
     keep the 401→CodeAuth default — payload validation is not the
     operation's distinguishing failure mode.
 ---
+
+## 2026-05-09 - API-0202
+- Implemented Cover mysql-saveEnvironment (POST /mysql.saveEnvironment).
+  Ninth entry on the mysql/* coverage roster, appended directly after
+  API-0201 `mysql-remove` and before API-0246 `organization-active` so
+  the slice remains StoryID-sorted.
+- Spec re-verified per the API-0345..API-0444 forward-reference
+  lesson against `internal/api/data/openapi.json`
+  > `/mysql.saveEnvironment` > `post`: method POST, tag mysql, no
+  parameters, requestBody REQUIRED with two REQUIRED top-level
+  fields — `mysqlId` (plain `type: string`) and `env`
+  (`anyOf:[string,null]`, i.e. nullable string). Responses
+  200/400/401/403/500. No 404 declared, so the harness-default
+  401→CodeAuth representative-failure leg is retained (matches API-0194
+  `mysql-changeStatus`, API-0195 `mysql-create`, API-0196
+  `mysql-deploy`, API-0197 `mysql-move`, API-0199 `mysql-rebuild`,
+  API-0200 `mysql-reload`, and API-0201 `mysql-remove`); the 404
+  override stays pinned to API-0198 `mysql-one` for the mysql/* roster.
+- Body is byte-for-byte cardinality-identical to API-0168
+  `mariadb-saveEnvironment` (modulo `mysqlId` vs `mariadbId`); the
+  cross-tag shape ancestor is API-0030 `application-saveEnvironment`,
+  which seeded the nullable-string `env` slot for the family. Fixture
+  populates the `anyOf:[string,null]` `env` slot with a non-null
+  string literal so the success leg exercises the populated branch
+  rather than `null`.
+- Files changed:
+  - internal/cli/api_coverage_test.go — appended one apiCoverageCase
+    literal (~165 lines including the comment block) registering the
+    `mysql-saveEnvironment` operation. SampleBody supplies both
+    REQUIRED scalars with deterministic-but-clearly-fake literals
+    `mysql-cov-save-environment-0202-mysqlId` and
+    `mysql-cov-save-environment-0202-env`. SuccessResponse is `{}`
+    per spec. Defaults take care of SuccessStatus=200,
+    FailureStatus=401, and FailureCode=yerr.CodeAuth (the harness
+    defaults locked in by API-0001 and reaffirmed at
+    API-0194..API-0201).
+  - ralph/prd.json — flipped API-0202.passes to true (counts now
+    462 / 324 pass / 138 fail).
+- Verification run from repo root:
+  - gofmt -w . — no diff (fixture matches existing tab/indent rules).
+  - go mod tidy — clean (no dependency churn; this story is
+    test-only).
+  - go vet ./... — clean.
+  - go test ./... — all packages PASS (internal/cli 1.189s).
+  - go test -race ./... — all packages PASS (internal/cli 3.080s
+    under -race).
+  - go test -run 'TestAPICoverage_RegistryInvariants/API-0202|...
+    /API-0202' -v ./internal/cli/ — five subtests all PASS:
+      * TestAPICoverage_RegistryInvariants/API-0202/mysql-saveEnvironment
+      * TestAPICoverage_SchemaCommandWorks/API-0202/mysql-saveEnvironment
+      * TestAPICoverage_ManifestListsOperation/API-0202/mysql-saveEnvironment
+      * TestAPICoverage_SuccessRoundTrip/API-0202/mysql-saveEnvironment
+      * TestAPICoverage_RepresentativeFailure/API-0202/mysql-saveEnvironment
+  - goimports / golangci-lint / staticcheck / govulncheck /
+    goreleaser — not invoked (test-only fixture append; no
+    runtime/build surface change). Pre-existing per Codebase Patterns
+    note: tools not installed locally.
+- Results: All eight acceptance criteria satisfied — registry
+  presence, raw `yalla api call mysql-saveEnvironment --input
+  request.json --json`, `yalla schema get mysql-saveEnvironment
+  --json`, `--no-input` no-prompt contract, `yalla.output.v1` success
+  envelope, `yalla.error.v1` failure envelope with stable `E_AUTH`
+  code and exit code 4 (CodeAuth.ExitCode), httptest success + 401
+  failure legs, and manifest listing — all proven by the harness loop
+  in `internal/cli/api_coverage_test.go`.
+- Remaining risks / follow-ups: none for API-0202 itself. The next
+  PRD-ordered priority-4 story is API-0203
+  `mysql-saveExternalPort` (POST per the spec preview); the
+  forward-reference comment at the bottom of the API-0202 entry
+  already cites it. The next contributor must re-verify the spec
+  against `internal/api/data/openapi.json` before assuming any field
+  shape (the API-0345..API-0444 forward-reference lesson). The
+  fixture-isolation namespace `mysql-cov-*` opened at API-0194 stays
+  open through API-0207 `mysql-update` (the final mysql/* priority-4
+  story).
+- **Learnings for future iterations:**
+  - The `*-saveEnvironment` family across the Dokploy database tags
+    (mariadb / mongo / mysql / postgres / redis) and the application
+    tag shares the same canonical
+    `(<tag>Id, env: anyOf[string,null])` two-required-scalar wire
+    shape. The cross-tag shape ancestor inside the covered roster is
+    API-0030 `application-saveEnvironment`; the most recent same-
+    family precedent is API-0168 `mariadb-saveEnvironment`. New
+    `*-saveEnvironment` entries should model their fixture and
+    rationale block on API-0168 (and on API-0030 for the nullable
+    `env` slot rationale).
+  - When a REQUIRED field is `anyOf:[string,null]`, the fixture
+    should populate the populated (non-null) branch rather than
+    `null`. This keeps the success-leg `len(tc.SampleBody) > 0`
+    gate active and exercises the more realistic wire shape; the
+    `null` branch is exercised structurally by the schema test, not
+    the round-trip test.
+  - The forward-reference comment at the END of the immediately
+    prior entry remains the authoritative pointer to the next
+    story — API-0201's tail block named API-0202 verbatim, which
+    made the insertion location unambiguous. Always preserve and
+    update this forward pointer; the new entry's tail must in turn
+    name the next backlog story (API-0203 `mysql-saveExternalPort`
+    here).
+---

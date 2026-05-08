@@ -16157,6 +16157,170 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0202",
+		OperationID: "mysql-saveEnvironment",
+		Method:      http.MethodPost,
+		Path:        "/mysql.saveEnvironment",
+		Tag:         "mysql",
+		// Ninth entry on the mysql/* coverage roster, immediately
+		// following API-0201 `mysql-remove` and completing the
+		// forward reference embedded in that entry's comment block
+		// ("The next case in the PRD-ordered priority-4 backlog is
+		// API-0202 `mysql-saveEnvironment`"). Continues inside the
+		// `mysql-cov-*` per-tag fixture-isolation namespace opened by
+		// API-0194 `mysql-changeStatus` and **must not** back-reference
+		// any closed prior-tag namespace (`set-cov-*`, `srv-cov-*`,
+		// `proj-cov-*`, `org-cov-*`, `compose-cov-*`, `app-cov-*`,
+		// `ai-cov-*`, `admin-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		// `cert-cov-*`, `clu-cov-*`, `deployment-cov-*`, `dest-cov-*`,
+		// `docker-cov-*`, `domain-cov-*`, `environment-cov-*`,
+		// `gitea-cov-*`, `github-cov-*`, `gitlab-cov-*`,
+		// `mariadb-cov-*`, `mongo-cov-*`, `mounts-cov-*`,
+		// `swarm-cov-*`, `usr-cov-*`, etc.) per the per-tag isolation
+		// rule reasserted at API-0335..API-0444 and originally
+		// established at API-0246 `organization-active`.
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json` >
+		// `/mysql.saveEnvironment` > `post`: method POST, tag mysql,
+		// **no parameters**, requestBody REQUIRED with
+		// `application/json` and **two REQUIRED top-level fields** —
+		// `mysqlId` (plain string) and `env`
+		// (`anyOf:[string,null]`, i.e. nullable string). Responses
+		// 200/400/401/403/500. The 200 response is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort. **No 404** is declared on
+		// this operation, mirroring the action-on-known-id POST
+		// precedent reasserted at API-0194 `mysql-changeStatus`,
+		// API-0195 `mysql-create`, API-0196 `mysql-deploy`, API-0197
+		// `mysql-move`, API-0199 `mysql-rebuild`, API-0200
+		// `mysql-reload`, and API-0201 `mysql-remove` (every
+		// body-bearing imperative-action mysql POST whose
+		// missing-target failure mode collapses into 400/validation
+		// under Dokploy's tRPC convention rather than a dedicated
+		// 404 leg). The 404 override therefore reverts to inapplicable
+		// here — its sole activation site for the mysql/* roster
+		// remains API-0198 `mysql-one`, the canonical by-id GET peer.
+		//
+		// **Cross-tag wire-shape lineage.** The
+		// `(<tag>Id, env:anyOf[string,null])` two-required-scalar
+		// environment-save mutation is the canonical
+		// `*-saveEnvironment` recurrence across the Dokploy database
+		// tags — verified against the OpenAPI spec to be present on
+		// `/mariadb.saveEnvironment` (`mariadbId, env`),
+		// `/mongo.saveEnvironment` (`mongoId, env`),
+		// `/postgres.saveEnvironment` (`postgresId, env`), and
+		// `/redis.saveEnvironment` (`redisId, env`). Within the
+		// covered roster the direct precedent is API-0168
+		// `mariadb-saveEnvironment`, byte-for-byte cardinality-
+		// identical (two REQUIRED top-level fields, the second being
+		// `anyOf:[string,null]`) modulo the resource-id field name
+		// (`mysqlId` instead of `mariadbId`). The cross-tag shape
+		// ancestor is API-0030 `application-saveEnvironment`, which
+		// seeded the nullable-string `env` slot for the family.
+		//
+		// **Request body schema (REQUIRED top-level fields):**
+		//   - REQUIRED `mysqlId` (string) — resource id scalar; the
+		//     fixture below supplies a deterministic-but-clearly-fake
+		//     `mysql-cov-save-environment-0202-mysqlId` literal
+		//     carrying the `<tag>-cov-<slug>-<storyID>-<field>`
+		//     suffix for `git grep` traceability.
+		//   - REQUIRED `env` (`anyOf:[string,null]`) — env-vars blob
+		//     scalar; the fixture supplies a non-null string literal
+		//     `mysql-cov-save-environment-0202-env` so the success
+		//     leg exercises the populated branch of the `anyOf`
+		//     rather than relying on `null`. This mirrors the
+		//     API-0030 `application-saveEnvironment` precedent and
+		//     the API-0168 `mariadb-saveEnvironment` precedent for
+		//     the analogous nullable-string `env` field shape (where
+		//     every required `anyOf:[string,null]` slot is populated
+		//     with a real string to keep the wire body close to a
+		//     realistic call).
+		//   - **No OPTIONAL fields declared.** The schema is a strict
+		//     two-required-scalar request, byte-for-byte cardinality-
+		//     identical to the API-0168 `mariadb-saveEnvironment`
+		//     request shape and to the API-0197 `mysql-move` /
+		//     API-0200 `mysql-reload` two-required-scalar mysql/*
+		//     peers (modulo the `anyOf:[string,null]` `env` slot,
+		//     which differs from the two-plain-string `mysql-move`
+		//     and `mysql-reload` pairs and matches the wire-shape
+		//     positioning of the `*-saveEnvironment` family).
+		//
+		// **Shape positioning — two-required-scalar POST environment-
+		// save mutation, body REQUIRED.** The first REQUIRED slot is
+		// a plain non-nullable `type: string` (no `anyOf` /
+		// `nullable` / enum constraints), structurally identical to
+		// the `mysqlId` slot on API-0194 `mysql-changeStatus`,
+		// API-0196 `mysql-deploy`, API-0197 `mysql-move`, API-0199
+		// `mysql-rebuild`, API-0200 `mysql-reload`, and API-0201
+		// `mysql-remove`. The second REQUIRED slot is
+		// `anyOf:[string,null]`, matching the API-0030
+		// `application-saveEnvironment` and API-0168
+		// `mariadb-saveEnvironment` `env` precedents. The harness's
+		// `len(tc.SampleBody) > 0` gate at `runAPICoverageSuccess`
+		// activates the JSON content-type and byte-for-byte body
+		// comparison legs; this fixture supplies both REQUIRED fields
+		// so the success path verifies the CLI propagated the body
+		// verbatim.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so
+		// the 404→CodeNotFound override is structurally inapplicable
+		// and remains pinned to API-0198 `mysql-one` for the mysql/*
+		// roster. 400→CodeInvalidInput is *technically* available — a
+		// payload that omits either REQUIRED field would fail
+		// server-side validation — but the harness reserves 400
+		// representatives for stories where payload validation is
+		// the operation's *uniquely distinguishing* failure mode. A
+		// conventional environment-save POST collapses to
+		// type-checking, so the harness-default 401→CodeAuth failure
+		// leg remains the most representative single failure mode
+		// every authenticated Dokploy operation must re-prove, and
+		// is consistent with the 401→CodeAuth choice locked in by
+		// the mysql/* kickoff at API-0194 `mysql-changeStatus` and
+		// continued at API-0195 `mysql-create`, API-0196
+		// `mysql-deploy`, API-0197 `mysql-move`, API-0199
+		// `mysql-rebuild`, API-0200 `mysql-reload`, and API-0201
+		// `mysql-remove`. (API-0198 `mysql-one` overrode to
+		// 404→CodeNotFound because the spec itself first declared
+		// 404 on the canonical by-id GET; that override does not
+		// generalise to body-bearing POSTs whose specs omit 404.)
+		//
+		// **Fixture token base** `mysql-cov-save-environment-0202`
+		// follows the established `<tag>-cov-<slug>-<storyID>`
+		// deterministic-but-clearly-fake naming convention and is
+		// verified non-colliding with API-0194's
+		// `mysql-cov-changeStatus-0194`, API-0195's
+		// `mysql-cov-create-0195`, API-0196's
+		// `mysql-cov-deploy-0196-mysqlId`, API-0197's
+		// `mysql-cov-move-0197-mysqlId` /
+		// `mysql-cov-move-0197-targetEnvironmentId`, API-0198's
+		// `mysql-cov-one-0198-mysqlId-fixture`, API-0199's
+		// `mysql-cov-rebuild-0199-mysqlId`, API-0200's
+		// `mysql-cov-reload-0200-mysqlId` /
+		// `mysql-cov-reload-0200-appName`, and API-0201's
+		// `mysql-cov-remove-0201-mysqlId` literals.
+		//
+		// The next case in the PRD-ordered priority-4 backlog is
+		// API-0203 `mysql-saveExternalPort` (declared a **POST** per
+		// the spec preview; the next contributor must re-verify the
+		// spec against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will continue inside the `mysql-cov-*` per-tag
+		// fixture-isolation namespace opened by API-0194).
+		SampleBody: json.RawMessage(`{
+			"mysqlId": "mysql-cov-save-environment-0202-mysqlId",
+			"env": "mysql-cov-save-environment-0202-env"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,
