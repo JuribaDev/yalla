@@ -5643,3 +5643,84 @@
     parameter/body/response shape before writing the comment block.
     Same one-liner shape used by API-0100 and API-0101.
 ---
+## 2026-05-08 - API-0247 (organization-all)
+- Covered Dokploy operation `organization-all` (GET /organization.all)
+  by appending one `apiCoverageCase` entry to `coveredAPIOperations`
+  in `internal/cli/api_coverage_test.go`. Second entry in the
+  organization/* roster, completing the forward reference embedded
+  in the API-0246 comment block (which named "API-0247 `*-all`" by
+  story ID before the story landed).
+- Spec source `internal/api/data/openapi.json > /organization.all >
+  get`: `parameters: []`, no request body, responses 200/400/401/
+  403/404/500. The 200 schema is `{}` with
+  `additionalProperties: false` — byte-for-byte identical wire
+  shape to API-0246 (`organization-active`). The semantic
+  difference is scope: `*-all` returns every organization the
+  bearer principal can see (membership-scoped list) vs. `*-active`
+  returning the single currently-selected one. Both are
+  parameter-free GETs from the harness's perspective, so
+  SampleQuery/SamplePathParams/SampleBody stay unset and the
+  canonical agent invocation is `yalla api call organization-all
+  --input '{}' --json`.
+- Representative-failure leg keeps the harness default of
+  401→CodeAuth: auth is the universal failure mode every
+  organization/* peer must re-prove. The spec's 404 exists for
+  filter-shaped peers like the future API-0251 (`*-one`) rather
+  than this list endpoint; story-specific FailureStatus/FailureCode
+  overrides are reserved for entries where 404 is the canonical
+  miss (id-shaped lookups).
+- Comment block establishes the *intra-tag* twin GET precedent for
+  organization/*: `*-active` (singular, principal-scoped) vs.
+  `*-all` (plural, membership-scoped). This is analogous to the
+  cross-tag pair API-0098 (`deployment-allCentralized`) and
+  API-0100 (`deployment-queueList`) but inside one tag rather than
+  across two operations sharing a path stem. Future organization/*
+  peers introducing a third parameter-free GET (e.g. API-0248
+  `*-allInvitations`) should grep API-0246 → API-0247 first to
+  inherit the empty-fixture invariant.
+- Files changed:
+  - internal/cli/api_coverage_test.go (added API-0247 case)
+  - ralph/prd.json (flipped passes:true for API-0247)
+  - ralph/progress.txt (this entry)
+- Verification run from repo root:
+  - gofmt -w . — clean
+  - go mod tidy — clean
+  - go vet ./... — clean
+  - go test ./... — PASS (internal/cli 1.203s)
+  - go test -race ./... — PASS (internal/cli 2.529s)
+- Optional tooling not invoked this iteration (golangci-lint,
+  staticcheck, govulncheck, goreleaser, goimports): not installed
+  locally, documented baseline since US-0001.
+- Remaining risks / follow-ups: none for API-0247. The
+  organization/* tag now has 2/10 covered (API-0246, API-0247).
+  Eight peers remain (API-0248..0255). API-0248
+  (`*-allInvitations`) is the next parameter-free GET and will
+  inherit the empty-fixture pattern; API-0249 (`organization-
+  create`) opens the tag's POST family and will introduce the
+  `organization-cov-<slug>-<storyID>` body-fixture convention
+  reserved by the API-0246 entry.
+- **Learnings for future iterations:**
+  - Forward-reference completion across a single tag works the
+    same way as across tag boundaries: API-0246's comment named
+    "API-0247 `*-all`" by ID before that story landed; API-0247
+    closes the loop by referencing API-0246 explicitly in its
+    comment block. This makes the test file readable as a
+    narrative and lets future readers grep a tag's first two
+    entries to recover the harness conventions for that roster.
+  - The "intra-tag twin GET" pattern (singular-scoped vs.
+    plural-scoped with identical wire shape) is now distinct from
+    the cross-tag twin precedent set by API-0098/API-0100.
+    Documenting both in the API-0247 comment block gives future
+    iterations two parallel precedents to grep when a tag
+    exposes both a list endpoint and a principal-scoped lookup
+    that share the empty-body 200 envelope.
+  - Spec drift smoke test (re-confirmed for this story):
+    `jq '.paths."/organization.all" | {get_method:
+    (.get.operationId), parameters: (.get.parameters // []),
+    responses: (.get.responses | keys)}'` against
+    `internal/api/data/openapi.json` — empty parameters, no body,
+    responses 200/400/401/403/404/500. Same one-liner used for
+    API-0246, API-0100, and API-0101. Continuing to use this as
+    the standard pre-comment validation step keeps spec-drift
+    surprises out of the test file.
+---

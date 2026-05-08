@@ -2580,6 +2580,48 @@ var coveredAPIOperations = []apiCoverageCase{
 		// first when extending the parameter-free GET cohort.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0247",
+		OperationID: "organization-all",
+		Method:      http.MethodGet,
+		Path:        "/organization.all",
+		Tag:         "organization",
+		// Second entry in the organization/* roster, completing the
+		// forward reference embedded in the API-0246 comment block
+		// ("Future organization/* peers (API-0247 `*-all`, …) should
+		// grep this entry first"). Spec source `data/openapi.json >
+		// /organization.all > get` is byte-for-byte the same wire
+		// shape as `/organization.active`: `parameters: []`, no
+		// request body, responses 200/400/401/403/404/500 where the
+		// 200 schema is `{}` with `additionalProperties: false`. The
+		// only semantic difference is scope — `organization-all`
+		// returns *every* organization the bearer principal can see
+		// (membership-scoped list), while `organization-active`
+		// returns the single currently-selected one. From the
+		// harness's perspective both are parameter-free GETs whose
+		// canonical agent invocation is `yalla api call <id>
+		// --input '{}' --json`, so SampleQuery / SamplePathParams /
+		// SampleBody stay unset and the representative-failure leg
+		// keeps the harness default of 401→CodeAuth (auth is the
+		// universal failure mode every organization/* peer must
+		// re-prove; 404 in the spec exists for filter-shaped peers
+		// like `*-one` rather than this list endpoint).
+		//
+		// This is also the canonical *intra-tag* twin GET precedent
+		// for the organization/* roster: `*-active` (singular,
+		// principal-scoped) vs. `*-all` (plural, membership-scoped)
+		// — analogous to deployment-allCentralized (API-0098) /
+		// deployment-queueList (API-0100) but inside one tag rather
+		// than across two operations of the same tag. Future
+		// organization/* peers that introduce a third
+		// parameter-free GET (e.g. API-0248 `*-allInvitations`)
+		// should grep API-0246 → API-0247 first to inherit the
+		// empty-fixture invariant; peers that introduce a path or
+		// query parameter (none expected in the organization/*
+		// roster) should fall back to the cross-tag list precedent
+		// API-0033 (application-readTraefikConfig).
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
