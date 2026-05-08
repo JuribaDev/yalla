@@ -7746,6 +7746,118 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0190",
+		OperationID: "mounts-listByServiceId",
+		Method:      http.MethodGet,
+		Path:        "/mounts.listByServiceId",
+		Tag:         "mounts",
+		// Third entry in the mounts/* roster, immediately following
+		// API-0189 `mounts-create` and completing the forward
+		// reference embedded in that entry's comment block ("The
+		// next case in the PRD-ordered priority-3 backlog is
+		// API-0190 `mounts-listByServiceId`"). Continues inside the
+		// `mounts-cov-*` per-tag fixture-isolation namespace opened
+		// by API-0188 `mounts-allNamedByApplicationId` and **must
+		// not** back-reference any closed `admin-cov-*`,
+		// `ai-cov-*`, `app-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		// `cert-cov-*`, `clu-cov-*`, `compose-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `docker-cov-*`,
+		// `domain-cov-*`, `environment-cov-*`, `org-cov-*`,
+		// `proj-cov-*`, `set-cov-*`, `srv-cov-*`, `usr-cov-*`,
+		// etc. namespaces.
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json >
+		// /mounts.listByServiceId > get`: a **GET** with **two
+		// REQUIRED query parameters** — `serviceId` (string) and
+		// `serviceType` (string-enum:
+		// `application`/`postgres`/`mysql`/`mariadb`/`mongo`/
+		// `redis`/`compose`) — **no request body**, and responses
+		// 200/400/401/403/404/500. The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort.
+		//
+		// **Shape positioning — two-required-query GET (one plain
+		// string + one string-enum), no body.** First multi-query
+		// GET in the mounts/* roster, and the **first covered
+		// id-bearing GET whose required-parameter set spans two
+		// distinct query keys** rather than a single foreign-id
+		// scalar. Distinct from the prior covered single-required-
+		// query GET cohort (API-0005 `ai-get`, API-0113
+		// `docker-getStackContainersByAppName`, API-0115
+		// `domain-byApplicationId`, API-0116 `domain-byComposeId`,
+		// API-0117 `domain-canGenerateTraefikMeDomains`, API-0121
+		// `domain-one`, API-0124 `environment-byProjectId`, API-0127
+		// `environment-one`, API-0188
+		// `mounts-allNamedByApplicationId`) — those each forward a
+		// single foreign-id query, while this entry forwards both
+		// `serviceId` and the discriminator `serviceType`. The
+		// harness's `SampleQuery: map[string][]string` field
+		// already supports multi-key forwarding (each key/value pair
+		// is rendered into the `--input` JSON `query` object
+		// verbatim), so no harness extension is required to cover
+		// the new shape. The success-leg assertion at
+		// `runAPICoverageSuccess` re-reads `r.URL.Query()` to
+		// confirm the CLI propagated **both** keys verbatim. The
+		// `len(tc.SampleBody) > 0` gate stays inert so no
+		// content-type / body byte-comparison legs activate, exactly
+		// as on prior id-bearing GET peers.
+		//
+		// The harness's byte-level wire-comparison treats
+		// `serviceType` as a plain query string on the wire (the
+		// fixture supplies a literal enum member — `application` —
+		// rather than the schema's enum metadata), matching the
+		// API-0189 `mounts-create` precedent for treating
+		// string-enum values as plain strings on the wire.
+		//
+		// **Family choice — 404→CodeNotFound representative
+		// available but harness-default 401→CodeAuth retained.**
+		// The spec declares 404 on this operation (an unknown
+		// `serviceId` is a structurally valid not-found case), so
+		// the 404→CodeNotFound override is *technically*
+		// applicable. We deliberately stick with the harness-default
+		// 401→CodeAuth failure leg, however, to mirror the
+		// API-0115/API-0116/API-0117/API-0121/API-0124/API-0127/
+		// API-0188 precedent (and through them API-0005 `ai-get`
+		// and API-0113 `docker-getStackContainersByAppName`) —
+		// bearer-token enforcement runs before any service lookup,
+		// so the universal `E_AUTH` mode is the most representative
+		// single failure leg, and additionally re-proves the auth
+		// invariant inside the `mounts-cov-*` namespace for the
+		// new multi-required-query shape. 400→CodeInvalidInput is
+		// also *technically* available (omitting either required
+		// query key, or supplying an out-of-enum `serviceType`,
+		// would fail server-side validation), but the harness
+		// reserves 400 representatives for stories where parameter
+		// validation is the operation's uniquely distinguishing
+		// failure mode. Per the established
+		// `<tag>-cov-<slug>-<storyID>` deterministic-but-clearly-fake
+		// naming convention, the fixture id base
+		// `mounts-cov-list-by-service-id-0190` keeps `git grep`
+		// traceable to this PRD story without colliding with
+		// API-0188 (`mounts-cov-all-named-by-application-id-0188`)
+		// or API-0189 (`mounts-cov-create-0189`).
+		//
+		// The next case in the PRD-ordered priority-3 backlog is
+		// API-0191 `mounts-one` (declared a **GET** per the spec
+		// preview; the next contributor must re-verify the spec
+		// against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will continue inside the `mounts-cov-*` per-tag
+		// fixture-isolation namespace opened by API-0188).
+		SampleQuery: map[string][]string{
+			"serviceId":   {"mounts-cov-list-by-service-id-0190"},
+			"serviceType": {"application"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,

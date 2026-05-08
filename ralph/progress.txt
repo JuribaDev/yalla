@@ -15899,3 +15899,81 @@ Learnings for future iterations:
     target into 400/validation. The 401→CodeAuth harness default is
     therefore the most representative single failure leg.
 ---
+
+## 2026-05-08 - API-0190 Cover mounts-listByServiceId (GET /mounts.listByServiceId)
+- Third entry in the priority-3 mounts/* roster, immediately following
+  API-0189 `mounts-create`. Continues inside the `mounts-cov-*` per-tag
+  fixture-isolation namespace opened by API-0188.
+- Spec re-verified directly against `internal/api/data/openapi.json >
+  /mounts.listByServiceId > get`: GET, **two REQUIRED query parameters**
+  (`serviceId` string, `serviceType` string-enum
+  application|postgres|mysql|mariadb|mongo|redis|compose), no request
+  body, responses 200/400/401/403/404/500. The 200 schema is `{}` with
+  `additionalProperties: false` (empty-success cohort).
+- Wire shape: **first multi-required-query GET in the entire covered
+  set** — prior id-bearing GETs (API-0005, API-0113, API-0115, API-0116,
+  API-0117, API-0121, API-0124, API-0127, API-0188) all forwarded a
+  single foreign-id query. The harness `SampleQuery: map[string][]string`
+  field already supports multi-key forwarding without extension; the
+  success-leg assertion at `runAPICoverageSuccess` re-reads
+  `r.URL.Query()` to verify both keys propagate verbatim.
+- Failure family: harness-default 401→CodeAuth retained. Spec declares
+  404 (so the 404→CodeNotFound override is technically applicable) and
+  400 is also technically available (omitting either required key, or
+  out-of-enum `serviceType`, would fail validation), but the auth-first
+  leg mirrors every prior single/multi-required-query GET opener and
+  re-proves the auth invariant for the new multi-required-query shape
+  inside the `mounts-cov-*` namespace.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended one
+    `apiCoverageCase` literal (StoryID API-0190) under
+    `coveredAPIOperations` between the API-0189 `mounts-create` block
+    and the API-0246 `organization-active` block. Fixture base
+    `mounts-cov-list-by-service-id-0190`.
+  - `ralph/prd.json` — flipped `API-0190.passes` from `false` → `true`.
+  - `ralph/progress.txt` — this entry.
+- Verification run from repo root:
+  - `gofmt -w .`        — clean (gofmt -l reported no diffs).
+  - `go mod tidy`       — no diff.
+  - `go vet ./...`      — pass.
+  - `go test ./...`     — all 9 packages PASS (`internal/cli` 1.121s).
+  - `go test -race ./...` — all 9 packages PASS (`internal/cli` 2.908s).
+  - `go test ./internal/cli/ -run 'TestAPICoverage/API-0190' -v` — all
+    five API-0190 subtests (RegistryInvariants, SchemaCommandWorks,
+    ManifestListsOperation, SuccessRoundTrip, RepresentativeFailure)
+    PASS.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser`: not installed in this environment; documented
+    missing per the iteration runbook fallback.
+- Remaining risks / follow-ups:
+  - 216 priority-3+ stories still pending. Next PRD-ordered priority-3
+    entry is API-0191 `mounts-one` (declared a GET in the spec
+    preview); next contributor must re-verify against
+    `internal/api/data/openapi.json` per the forward-reference lesson
+    and continue inside the `mounts-cov-*` namespace opened by
+    API-0188.
+- **Learnings for future iterations:**
+  - **First multi-required-query GET ever covered.** The harness
+    `SampleQuery: map[string][]string` already supports forwarding
+    multiple distinct query keys without any harness extension — each
+    key/value pair is rendered into the `--input` JSON `query` object
+    verbatim, and `runAPICoverageSuccess` re-reads `r.URL.Query()` to
+    verify. Future multi-required-query GET stories should follow the
+    API-0190 template byte-for-byte: list each required parameter as
+    its own key in `SampleQuery`, supply a literal enum member (not
+    schema metadata) for any string-enum, and retain the
+    auth-first failure leg unless the operation has a uniquely
+    distinguishing 400/404 mode.
+  - **String-enum query parameters are forwarded as plain strings on
+    the wire.** Mirrors the API-0189 `mounts-create` precedent where
+    enum body fields were forwarded as plain strings. The fixture
+    must supply a literal enum member (`application` here) — the
+    harness does not validate against the schema's enum metadata at
+    fixture-construction time.
+  - The append-only `coveredAPIOperations` slice in
+    `internal/cli/api_coverage_test.go` remains the *only* surface
+    that needs touching for an API-XXXX story when the operation
+    already lives in `internal/api/data/openapi.json`. No registry,
+    schema, or manifest edits required (built at runtime from the
+    embedded spec).
+---
