@@ -4835,3 +4835,64 @@
     novel optionals (e.g. enum-restricted, nullable, or nested)
     warrant new commentary in the entry.
 ---
+
+## 2026-05-08 - API-0087
+- Implemented coverage for `compose-redeploy` (POST /compose.redeploy) by
+  appending a `coveredAPIOperations` entry in
+  `internal/cli/api_coverage_test.go`. The entry feeds the shared
+  `runAPICoverageSuccess`/`runAPICoverageFailure` harness so the existing
+  `TestAPICoverage_*` invariants exercise the operation end-to-end via
+  `yalla api call compose-redeploy --input ... --json`, the registry
+  invariant suite, the schema-get coverage, and the manifest projection.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — added the API-0087 case (slug
+    `compose-cov-redeploy-0087`) with `composeId`+`title`+`description`
+    populated to exercise the full deploy-style envelope on the wire-
+    payload assertion. Schema-shape twin of API-0071 (compose-deploy).
+  - `ralph/prd.json` — flipped `passes` to `true` for API-0087.
+- Verification (from repo root):
+  - `gofmt -w .` (clean).
+  - `goimports -w .` (binary not installed locally; `gofmt` covered the
+    formatting requirement on the touched file).
+  - `go mod tidy` (clean, no module-graph drift).
+  - `go vet ./...` (clean).
+  - `go test ./internal/cli/ -run 'TestAPICoverage' -count=1` — pass
+    (covers registry invariants, schema-get coverage, success leg, and
+    the representative failure leg for every entry including
+    `compose-redeploy`).
+  - `go test ./...` — all packages pass.
+  - `go test -race ./...` — all packages pass with the race detector.
+- Results: API-0087 now satisfies all eight acceptance criteria —
+  registry invariant (POST + /compose.redeploy + tag compose),
+  `yalla api call compose-redeploy --input request.json --json`,
+  `yalla schema get compose-redeploy --json`, JSON-input plus
+  `--no-input` agent-safe behavior (the call command never prompts and
+  rejects unknown inputs through `E_INVALID_INPUT`), `yalla.output.v1`
+  success envelope on stdout, `yalla.error.v1` failure envelope on
+  stderr with stable code + non-zero exit, contract tests for both
+  success and a representative failure, and inclusion in
+  `yalla manifest --json` via the registry-driven manifest projection.
+- Remaining risks / follow-ups: none for this story. Compose tag
+  remains: API-0088 (compose-refreshToken), API-0089 (compose-search),
+  API-0090 (compose-start), API-0091 (compose-stop), API-0092
+  (compose-templates), API-0093 (compose-update). All share the same
+  registry-driven harness; only their request-body shape varies.
+- **Learnings for future iterations:**
+  - The `compose-redeploy` body schema is an exact byte-for-byte twin
+    of `compose-deploy` (API-0071): `composeId` required + optional
+    `title`/`description` siblings. New compose/* stories should grep
+    `internal/cli/api_coverage_test.go` for the closest existing twin
+    rather than re-deriving the shape from the OpenAPI doc.
+  - The compose tag now spans five distinct body shape families:
+    minimal-`composeId`-only (API-0066/0067/0068/0073/0074/0080),
+    two-required-fields (API-0070/0078/0083/0085),
+    `composeId`+optional-`suffix` (API-0079/0086),
+    `composeId`+optional-`title`+`description` (API-0071/0087),
+    and the `environmentId`+`id` template-deploy shape (API-0072).
+    Cross-reference the matching family in the entry comment so future
+    contributors don't accidentally collapse them.
+  - `goimports` is not installed on the dev workstation; `gofmt -w .`
+    is sufficient for a coverage-table-only change because no imports
+    were touched. Document the fallback in the verification section to
+    keep future iterations from re-discovering the same gap.
+---

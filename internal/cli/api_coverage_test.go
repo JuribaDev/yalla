@@ -1839,6 +1839,48 @@ var coveredAPIOperations = []apiCoverageCase{
 		// payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0087",
+		OperationID: "compose-redeploy",
+		Method:      http.MethodPost,
+		Path:        "/compose.redeploy",
+		Tag:         "compose",
+		// Mirrors the schema in `data/openapi.json` for /compose.redeploy:
+		// the request body is REQUIRED, the only required string field is
+		// `composeId`, and `title`+`description` are optional string
+		// siblings. That schema is byte-for-byte identical to API-0071
+		// (compose-deploy) — same property names, same `required`
+		// projection — so this entry is the slug-rotated twin of the
+		// compose-deploy fixture, exercising the redeploy variant of the
+		// same envelope. Distinct from the minimal-composeId-only POST
+		// family (API-0066/0067/0068/0073/0074/0080) which omits the
+		// optional siblings entirely, from the two-required-body-fields
+		// family (API-0078/0083/0085) which makes the second field
+		// required, from the `composeId`+`suffix` shape (API-0079/0086)
+		// whose optional sibling is a single `suffix`, and from API-0072
+		// (compose-deployTemplate) whose required pair is
+		// `environmentId`+`id` rather than `composeId`. All three fields
+		// are populated with deterministic-but-clearly-fake values so the
+		// wire-payload assertion exercises the full redeploy envelope
+		// rather than just the minimum, matching the *-create / *-deploy
+		// convention recorded in internal/cli/AGENTS.md. The harness
+		// forwards SampleBody via the `--input` JSON `body` field, and
+		// `runAPICoverageSuccess` re-reads the request body to confirm
+		// the CLI propagated the payload verbatim. Slug convention
+		// `compose-cov-<slug>-<storyID>` continues the cross-story grep
+		// contract from every prior compose/* case.
+		SampleBody: json.RawMessage(`{
+			"composeId": "compose-cov-redeploy-0087",
+			"title": "API-0087 redeploy fixture",
+			"description": "API-0087 fixture for compose-redeploy coverage"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the empty-success convention shared by every prior
+		// compose/* peer. Empty-object body keeps the success-leg envelope
+		// assertion focused on `data.method` / `data.status` rather than
+		// payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
