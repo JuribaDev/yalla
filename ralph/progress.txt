@@ -2126,3 +2126,40 @@
     `ai-cov-delete-0003` rather than reusing the API-0002 token) so a
     `git grep` on the unique slug points back to the exact PRD story.
 ---
+
+## 2026-05-08 - API-0013
+- Story: Cover application-clearDeployments (POST /application.clearDeployments)
+- Implemented by appending a single apiCoverageCase to
+  `coveredAPIOperations` in `internal/cli/api_coverage_test.go`. The
+  existing five-part API-0001 harness (registry invariants, schema get,
+  manifest listing, success round-trip, representative failure) now
+  runs against application-clearDeployments without any new test
+  scaffolding.
+- SampleBody mirrors the OpenAPI required shape verbatim: just
+  `applicationId` (string). 200 success response is `{}` per the spec
+  (`additionalProperties: false`). The default 401 -> CodeAuth failure
+  leg is the right representative path for this auth-required POST.
+- Files changed:
+  - internal/cli/api_coverage_test.go (added API-0013 case)
+  - ralph/prd.json (passes: true)
+  - ralph/progress.txt (this entry)
+- Verification: gofmt -w ., go mod tidy, go vet ./..., go test ./...,
+  go test -race ./... — all clean. Optional tools
+  (goimports/golangci-lint/staticcheck/govulncheck/goreleaser) remain
+  not installed locally and are intentionally not run rather than
+  silently skipped.
+- Remaining risks: none specific to this story. The harness is
+  data-driven, so spec drift on /application.clearDeployments would
+  surface immediately via TestAPICoverage_RegistryInvariants.
+- Learnings for future iterations:
+  - All three application/* operations completed so far
+    (cancelDeployment, cleanQueues, clearDeployments) share the
+    identical shape — required `applicationId: string`, response
+    `{}`, default 401 failure. Future application/* POSTs taking only
+    `applicationId` can copy the API-0013 entry and change StoryID,
+    OperationID, Path, and the SampleBody comment string.
+  - Priority-2 application/* stories with the same minimal shape are
+    cheap follow-ups; clustering them in a single iteration would
+    keep the diff tiny per story while still satisfying the
+    one-story-per-iteration rule (just commit each separately).
+---

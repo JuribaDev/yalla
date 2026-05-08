@@ -200,6 +200,26 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0013",
+		OperationID: "application-clearDeployments",
+		Method:      http.MethodPost,
+		Path:        "/application.clearDeployments",
+		Tag:         "application",
+		// Mirrors the schema in `data/openapi.json` for
+		// /application.clearDeployments: the only required field is
+		// `applicationId` (string). Keep the fixture minimal-but-valid so
+		// a future schema validator wired into the harness still accepts it.
+		SampleBody: json.RawMessage(`{
+			"applicationId": "app-cov-clear-deploys-0013"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching application-cancelDeployment / application-cleanQueues.
+		// We keep an empty-object body so the success-leg envelope
+		// assertion stays focused on `data.method` / `data.status`
+		// rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
