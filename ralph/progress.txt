@@ -17436,3 +17436,75 @@ Learnings for future iterations:
     work for API-0160. This entry forecasts API-0162
     `mariadb-deploy` to keep the chain unbroken.
 ---
+
+## 2026-05-08 - API-0134
+- Implemented contract coverage for `gitea-getGiteaUrl`
+  (GET /gitea.getGiteaUrl), the fourth entry on the gitea/* roster
+  and the second single-param GET in that tag (twin shape of
+  API-0133 `gitea-getGiteaRepositories`).
+- Files changed:
+  - `internal/cli/api_coverage_test.go`: appended a single
+    `apiCoverageCase` literal to `coveredAPIOperations` between the
+    API-0133 entry and the API-0160 entry. The literal sets
+    `Method: http.MethodGet`, `Path: /gitea.getGiteaUrl`,
+    `Tag: gitea`, populates `SampleQuery` with the single REQUIRED
+    `giteaId` scalar (fixture token
+    `gitea-cov-getUrl-0134-giteaId-fixture`), uses the empty-object
+    `SuccessResponse: {}` matching every prior covered peer in the
+    empty-success cohort, and lets `FailureStatus` / `FailureCode`
+    fall back to the harness defaults (401 → CodeAuth) per the
+    per-tag opener convention reasserted at API-0246
+    `organization-active`, API-0290 `project-all`, API-0335
+    `server-all`, API-0351 `settings-assignDomainServer`, and
+    API-0131..API-0133's gitea/* run.
+  - `ralph/prd.json`: flipped `passes` to `true` for API-0134
+    only — every other story stays at its current value.
+  - `ralph/progress.txt`: this report.
+- Verification: `gofmt -w .`, `go mod tidy`, `go vet ./...`,
+  `go test ./...`, `go test -race ./...` all green from the repo
+  root. `goimports`, `golangci-lint`, `staticcheck`,
+  `govulncheck`, and `goreleaser` are not installed locally, per
+  project convention.
+- Remaining risks / follow-ups: none specific to this story; the
+  per-tag `gitea-cov-*` namespace continues to expand. The next
+  pending PRD-ordered priority-5 backlog entry is API-0135
+  `gitea-giteaProviders` (declared a **GET** per the spec preview;
+  the next contributor must re-verify the spec against
+  `internal/api/data/openapi.json` per the forward-reference lesson
+  before assuming any field shape).
+- **Learnings for future iterations:**
+  - The `gitea-getGiteaUrl` GET is the **identical wire shape** as
+    `gitea-getGiteaRepositories` (both: one REQUIRED `giteaId`
+    string, no body, empty-object 200, responses
+    200/400/401/403/404/500). Despite this, **per-operationId
+    coverage is non-fungible**: the manifest invariant and registry
+    presence assertion run at the operationId granularity, so each
+    twin needs its own `apiCoverageCase` literal — collapsing
+    siblings with shared shape would forfeit the per-PRD-story
+    coverage proof.
+  - When a per-tag namespace's first entry (API-0131 here) opens a
+    forward-reference list reserving slugs (`gitea-cov-create-0131`
+    / `gitea-cov-getBranches-0132` / `gitea-cov-getRepos-0133` /
+    `gitea-cov-one-0136` / `gitea-cov-testConn-0137` /
+    `gitea-cov-update-0138`), this story's slug
+    (`gitea-cov-getUrl-0134`) must follow the same
+    `<tag>-cov-<slug>-<storyID>` convention even when the opener's
+    list did not pre-reserve it explicitly — the convention is
+    inferred from the operationId's identifying verb (`getUrl`),
+    matching the API-0132/0133 precedent.
+  - The harness-default failure leg (401 → CodeAuth, set when
+    `FailureStatus == 0` and `FailureCode == ""`) remains the
+    canonical representative for every non-`<tag>-one` GET in the
+    gitea/* roster; 404 → CodeNotFound stays reserved for the
+    canonical by-id `gitea-one` peer at API-0136 even when the
+    spec lists 404 in the response set, because every authenticated
+    Dokploy GET lists 404 — only the by-id `<tag>-one` peers earn
+    the 404 → CodeNotFound representative.
+  - The mariadb/* roster (API-0160 onward, priority-4) was inserted
+    after the gitea/* (priority-5) roster in the registry, so when
+    appending priority-5 gitea/* entries, the insertion point is
+    **before** the API-0160 mariadb-changeStatus entry — the
+    "Keep entries sorted by StoryID" rule places API-0134 between
+    API-0133 and API-0160, not at the bottom of the slice.
+
+---
