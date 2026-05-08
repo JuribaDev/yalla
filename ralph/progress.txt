@@ -21446,3 +21446,71 @@ forward-reference lesson before assuming any field shape.
     per the per-tag isolation rule reasserted at API-0335..API-0444
     and originally established at API-0246 `organization-active`.
 ---
+
+## 2026-05-09 - API-0155 - Cover licenseKey-deactivate (POST /licenseKey.deactivate)
+- Added apiCoverageCase entry for API-0155 in
+  `internal/cli/api_coverage_test.go`, sandwiched between API-0154
+  `licenseKey-activate` and API-0160 `mariadb-changeStatus` per the
+  StoryID-sorted slice rule. Inherits the `licenseKey-cov-*` per-tag
+  fixture-isolation namespace opened by API-0154.
+- Spec re-verified against `internal/api/data/openapi.json >
+  /licenseKey.deactivate > post`: POST, **no `requestBody` field at
+  all**, **zero parameters**, responses 200/400/401/403/500 (no 404).
+  This is structurally identical to API-0354
+  `settings-cleanAllDeploymentQueue` — the canonical no-body POST
+  harness pattern — and is the second member of that cohort and the
+  first no-body POST inside the licenseKey/* roster.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (added API-0155 case + comment block)
+  - `ralph/prd.json` (set `passes: true` for API-0155)
+  - `ralph/progress.txt` (this entry)
+- Verification run from repo root:
+  - `gofmt -w .` — clean
+  - `go mod tidy` — clean
+  - `go vet ./...` — pass
+  - `go test ./...` — pass (cli 1.306s)
+  - `go test -race ./...` — pass (cli 3.088s)
+  - Targeted: `go test ./internal/cli -run 'TestAPICoverage' -v` — all
+    five API-0155/licenseKey-deactivate subtests PASS (Registry,
+    Schema, Manifest, SuccessRoundTrip, RepresentativeFailure).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` not installed locally; skipped per documented policy.
+- Remaining risks / follow-ups:
+  - None for this story. Next priority-5 case is API-0156
+    `licenseKey-getEnterpriseSettings` (a GET per spec preview);
+    contributor must re-verify the spec before assuming field shape.
+- **Learnings for future iterations:**
+  - **Empty-body POST cohort canonical pattern.** When an OpenAPI
+    operation declares method POST with **no `requestBody` field at
+    all** and **zero parameters**, the apiCoverageCase entry must
+    leave `SampleBody`, `SampleQuery`, and `SamplePathParams` all
+    nil. The harness's `len(tc.SampleBody) > 0` guard at
+    `runAPICoverageSuccess` (line 31424) skips the Content-Type and
+    body round-trip assertions; everything else (method, path,
+    Authorization, schema_version, data.operation_id, data.method,
+    data.status) is still asserted. API-0354
+    `settings-cleanAllDeploymentQueue` was the first such case;
+    API-0155 `licenseKey-deactivate` is the second. Future
+    contributors hitting a no-body POST should grep for either entry.
+  - **Spec re-verification is mandatory.** Even when the prior
+    entry's forward-reference comment claims to know the shape (e.g.
+    API-0154 said "the next contributor must re-verify the spec"),
+    always read `internal/api/data/openapi.json` directly. Here the
+    re-verification confirmed `licenseKey-deactivate` has *no*
+    request body at all (degenerated from API-0154's
+    single-required-string-scalar shape).
+  - **Per-tag fixture-isolation namespace continuity.** A non-kickoff
+    entry in a tag's roster inherits the namespace opened by the
+    kickoff entry (here `licenseKey-cov-*` opened by API-0154). It
+    must NOT back-reference any closed prior-tag namespace
+    (`set-cov-*`, `gitProvider-cov-*`, etc.). The slug
+    `licenseKey-cov-deactivate-0155` is reserved for `git grep`
+    traceability even when no fixture literal is materialised on the
+    wire (no body, no params).
+  - **Failure-leg defaults.** Imperative-action POSTs without 404 in
+    their response set retain the harness defaults (401 → CodeAuth
+    via `tc.FailureStatus == 0` and `tc.FailureCode == ""`).
+    400→CodeInvalidInput stays reserved for stories where payload
+    validation is the operation's distinguishing failure mode; no
+    payload to validate ⇒ no 400 representative is justified.
+---
