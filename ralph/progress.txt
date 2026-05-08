@@ -20384,3 +20384,54 @@ forward-reference lesson before assuming any field shape.
     `openapi.json` entry rather than trusting the forward-reference
     comment from the previous case.
 ---
+
+## 2026-05-09 - API-0150
+- Implemented contract coverage for `gitlab-testConnection` (POST /gitlab.testConnection).
+- Added a new entry to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go`, sandwiched between API-0149
+  `gitlab-one` and API-0160 `mariadb-changeStatus` per the StoryID-sorted
+  slice rule.
+- Spec re-verified against `internal/api/data/openapi.json`:
+  * POST /gitlab.testConnection
+  * Zero parameters; REQUIRED application/json body
+  * Body: REQUIRED string `gitlabId` + OPTIONAL string `groupName`
+  * Responses 200/400/401/403/500 (no 404)
+  * 200 schema is `{}` with `additionalProperties: false`
+- Fixture supplies BOTH the required `gitlabId` and the optional `groupName`
+  per the every-optional-populated rule. Fixture-token base
+  `gitlab-cov-testConn-0150` continues the `gitlab-cov-*` per-tag
+  isolation namespace opened at API-0145 `gitlab-create`.
+- Failure-leg uses harness defaults (401 -> CodeAuth) since the 404 ->
+  CodeNotFound override slot was already consumed by API-0149 `gitlab-one`
+  and 404 is not declared on this operation.
+- Files changed:
+  * internal/cli/api_coverage_test.go
+  * ralph/prd.json (passes -> true)
+  * ralph/progress.txt
+- Verification run:
+  * gofmt -w .                 -> clean
+  * go mod tidy                -> no diff
+  * go vet ./...               -> clean
+  * go test ./... -count=1     -> all packages PASS
+  * go test -race ./... -count=1 -> all packages PASS
+- All 5 contract subtests for API-0150 PASS:
+  RegistryInvariants, SchemaCommandWorks, ManifestListsOperation,
+  SuccessRoundTrip, RepresentativeFailure.
+- Remaining risks/follow-ups:
+  * goimports/golangci-lint/staticcheck/govulncheck/goreleaser remain
+    not installed locally; baseline tooling unchanged.
+- **Learnings for future iterations:**
+  - Connection-probe operations (`*-testConnection`) have *non-transitive*
+    body shapes across tags: gitea/* uses two optional strings (no
+    requireds), github/* uses one required string (no optionals), gitlab/*
+    uses one required + one optional. Always re-read the spec for the
+    exact operationId rather than copying the prior tag's slug shape.
+  - The harness defaults to 401 -> CodeAuth on the failure leg when
+    `FailureStatus`/`FailureCode` are zero; the 404 -> CodeNotFound
+    override is reserved for the per-tag canonical `*-one` by-id GET and
+    is consumed exactly once per tag (see API-0149 for gitlab/*).
+  - `internal/cli/api_coverage_test.go` is the SINGLE source of truth
+    for new API-coverage stories. The slice is StoryID-sorted; insert
+    new entries between the immediately-preceding and immediately-
+    following StoryIDs in numeric order, not at the end.
+---

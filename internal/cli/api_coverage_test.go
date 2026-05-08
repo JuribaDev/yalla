@@ -10201,6 +10201,166 @@ var coveredAPIOperations = []apiCoverageCase{
 		FailureCode:   yerr.CodeNotFound,
 	},
 	{
+		StoryID:     "API-0150",
+		OperationID: "gitlab-testConnection",
+		Method:      http.MethodPost,
+		Path:        "/gitlab.testConnection",
+		Tag:         "gitlab",
+		// Sixth entry on the priority-5 gitlab/* coverage roster and
+		// the **first POST after** the canonical by-id GET peer at
+		// API-0149 `gitlab-one`. Continues inside the `gitlab-cov-*`
+		// per-tag fixture-isolation namespace opened by API-0145
+		// `gitlab-create` and extended through API-0146
+		// `gitlab-getGitlabBranches`, API-0147
+		// `gitlab-getGitlabRepositories`, API-0148
+		// `gitlab-gitlabProviders`, and API-0149 `gitlab-one`. Per
+		// the per-tag isolation rule established at API-0246
+		// `organization-active` and reasserted at API-0290
+		// `project-all`, API-0335 `server-all`, API-0351
+		// `settings-assignDomainServer`, API-0051's bitbucket/*
+		// kickoff, API-0131's gitea/* kickoff, API-0139's github/*
+		// kickoff, API-0145's gitlab/* kickoff, API-0160's mariadb/*
+		// kickoff, and API-0174's mongo/* kickoff: this entry
+		// **must not** back-reference any closed prior-tag namespace
+		// (`set-cov-*`, `srv-cov-*`, `proj-cov-*`, `org-cov-*`,
+		// `compose-cov-*`, `app-cov-*`, `ai-cov-*`, `admin-cov-*`,
+		// `backup-cov-*`, `bb-cov-*`, `cert-cov-*`, `clu-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `docker-cov-*`,
+		// `domain-cov-*`, `environment-cov-*`, `gitea-cov-*`,
+		// `github-cov-*`, `mariadb-cov-*`, `mongo-cov-*`,
+		// `mounts-cov-*`, `swarm-cov-*`, `usr-cov-*`, etc.).
+		// Sandwiched between API-0149 and API-0160
+		// `mariadb-changeStatus` (the priority-4 mariadb/* tag
+		// kickoff) per the StoryID-sorted slice rule. One priority-5
+		// gitlab/* peer remains reserved for an upcoming story
+		// (API-0151 `gitlab-update`). Completes the forward
+		// reference embedded in API-0149 `gitlab-one`'s comment
+		// block ("API-0150 `gitlab-testConnection` … the next
+		// contributor must re-verify the spec against
+		// `internal/api/data/openapi.json` per the forward-reference
+		// lesson before assuming any field shape").
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json` > `/gitlab.testConnection`
+		// > `post`: a **POST** with **zero parameters** and a
+		// **REQUIRED** `application/json` request body. The body
+		// schema is a flat object with **one REQUIRED string field**
+		// (`gitlabId`) and **one OPTIONAL string field**
+		// (`groupName`) — distinct from both API-0143
+		// `github-testConnection` (one required `githubId`, zero
+		// optionals) and API-0137 `gitea-testConnection` (zero
+		// required, two optional `giteaId`/`organizationName`).
+		// Responses 200/400/401/403/500 — **no 404** declared,
+		// matching every prior covered connection-probe operation.
+		// The 200 schema is `{}` with `additionalProperties: false`,
+		// matching every prior covered peer in the empty-success
+		// cohort.
+		//
+		// **Slug-prefix-is-not-shape vindicated again.** Per the
+		// lesson reasserted at API-0371..API-0375 and again at
+		// API-0143 `github-testConnection`, the `testConnection`
+		// slug shape is **not** transitive across tags. gitea/*'s
+		// is two optional strings; github/*'s is one required
+		// string; gitlab/*'s is one required + one optional. Each
+		// per-tag spec must be re-verified per-operation; the
+		// fixture must reflect the wire-valid Dokploy request shape
+		// for *this* operationId so future contributors inherit a
+		// faithful template.
+		//
+		// **Shape positioning — connection-probe POST with one
+		// required + one optional body scalar.** The harness's
+		// `len(tc.SampleBody) > 0` gate at `runAPICoverageSuccess`
+		// activates the JSON content-type and byte-for-byte body
+		// comparison legs because the requestBody envelope is
+		// required. The byte-for-byte body equality leg therefore
+		// observes both the required `gitlabId` and the optional
+		// `groupName` end-to-end through the CLI -> API client ->
+		// httptest server path.
+		//
+		// **Every-optional-populated rule applies and is honoured.**
+		// Per the API-0010 / API-0014 / API-0249 / API-0292 /
+		// API-0297 / API-0052 / API-0053 every-optional-populated
+		// rule, the fixture must supply every OPTIONAL field. This
+		// entry has **one optional field** (`groupName`) so the
+		// fixture supplies it alongside the required `gitlabId`.
+		// This is the same posture taken by API-0137
+		// `gitea-testConnection` (whose two optional fields were
+		// both populated) and is distinct from API-0143
+		// `github-testConnection` (where the rule was trivially
+		// satisfied with zero optionals).
+		//
+		// **Family choice — harness-default 401 → CodeAuth
+		// retained.** The per-tag opener convention reserved 404 →
+		// CodeNotFound for the canonical `gitlab-one` by-id peer at
+		// API-0149 (already shipped — see the immediately preceding
+		// entry's failure-leg override block). 400 → CodeInvalidInput
+		// is reachable in principle (a malformed body would fail
+		// server-side validation) but the harness reserves 400
+		// representatives for stories where payload validation is
+		// the operation's *uniquely distinguishing* failure mode;
+		// a connection-probe whose body is one required + one
+		// optional flat string has no distinguishing payload-shape
+		// failure surface to claim, exactly mirroring the rationale
+		// already laid down at API-0137 `gitea-testConnection` and
+		// API-0143 `github-testConnection`. The harness-default
+		// 401 → CodeAuth failure leg therefore remains the most
+		// representative single failure mode every authenticated
+		// Dokploy operation must re-prove.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `gitlab-cov-testConn-0150` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared
+		//     across every prior gitlab/* peer
+		//     (API-0145..API-0149) and is verified non-colliding
+		//     with API-0145's `gitlab-cov-create-0145` literals,
+		//     API-0146's `gitlab-cov-getBranches-0146` literals,
+		//     API-0147's `gitlab-cov-getRepositories-0147-gitlabId`
+		//     literal, API-0148's no-fixture-token entry,
+		//     API-0149's `gitlab-cov-one-0149-gitlabId-fixture`
+		//     literal, and the forthcoming `gitlab-cov-update-0151`
+		//     slug reserved for the next gitlab/* peer, and
+		//     non-colliding with the cross-tag `bb-cov-*` /
+		//     `gitea-cov-*` / `github-cov-*` / `mariadb-cov-*` /
+		//     `mongo-cov-*` / `proj-cov-*` / `srv-cov-*` /
+		//     `set-cov-*` / `org-cov-*` namespaces.
+		//   * Deterministic-but-clearly-fake `<base>-<field>`
+		//     literals keep diffs readable and let any future
+		//     schema validator's failure messages point at the
+		//     offending field. The bare `<base>-<field>` form
+		//     (no `-fixture` suffix) matches the API-0137
+		//     `gitea-testConnection` and API-0143
+		//     `github-testConnection` precedent for body-scalar
+		//     POSTs (distinct from the `-fixture`-suffixed form
+		//     used on canonical `*-one` by-id GETs at API-0149).
+		//
+		// The next case in the PRD-ordered priority-5 backlog is
+		// API-0151 `gitlab-update` (declared a **POST** per the
+		// spec preview; the next contributor must re-verify the
+		// spec against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field
+		// shape, and will continue inside the `gitlab-cov-*`
+		// per-tag fixture-isolation namespace opened by API-0145).
+		// The `update` slug historically pivots off a body that
+		// mirrors the create payload (cf. API-0138 `gitea-update`
+		// vs. API-0131 `gitea-create`, and API-0144 `github-update`
+		// vs. API-0145 `gitlab-create`'s peer ordering) but per
+		// the slug-prefix-is-not-shape lesson the parameter list,
+		// request body, and response set must each be re-verified
+		// per-operation.
+		SampleBody: json.RawMessage(`{
+			"gitlabId": "gitlab-cov-testConn-0150-gitlabId",
+			"groupName": "gitlab-cov-testConn-0150-groupName"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0160",
 		OperationID: "mariadb-changeStatus",
 		Method:      http.MethodPost,
