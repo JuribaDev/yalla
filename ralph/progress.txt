@@ -10490,3 +10490,89 @@ Learnings for future iterations:
     semantic-shape correlation as a *prediction* but always
     confirm against the spec.
 ---
+
+## 2026-05-08 - API-0381
+- **Implemented**: Per-operation contract coverage for the
+  `settings-readTraefikFile` Dokploy API operation (GET
+  /settings.readTraefikFile, tag settings). Added a single
+  `apiCoverageCase` entry to `coveredAPIOperations` so the
+  registry-presence, schema-reachability, manifest-inclusion,
+  httptest success-leg, and 401 -> CodeAuth failure-leg subtests
+  fire automatically. The operation declares **two query
+  parameters** -- REQUIRED `path` (string, the Traefik
+  configuration filename) and OPTIONAL `serverId` (string,
+  multi-node scope) -- and no request body. Both are populated in
+  `SampleQuery` with unique `set-cov-readTraefikFile-0381-*`
+  fixture slugs so the success leg's `r.URL.Query()` re-read
+  exercises end-to-end forwarding for the full parameter surface.
+  This is the **first settings/* GET to declare a REQUIRED query
+  parameter** -- every prior parameter-bearing peer in the
+  settings/* GET cohort (API-0369, API-0373, API-0377, API-0380)
+  carried only an OPTIONAL `serverId`.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` -- appended the API-0381
+    case literal to the `coveredAPIOperations` slice.
+  - `ralph/prd.json` -- set API-0381 `passes: true`.
+  - `ralph/progress.txt` -- this entry.
+- **Verification run**:
+  - `gofmt -w .` -- clean.
+  - `go mod tidy` -- clean.
+  - `go vet ./...` -- clean.
+  - `go test ./...` -- all packages pass; `internal/cli` runs the
+    new `API-0381/settings-readTraefikFile` success and failure
+    subtests end-to-end through the production exit-code path.
+  - `go test -race ./...` -- all packages pass.
+- **Tools NOT available locally** (unchanged): `goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`.
+- **Remaining risks / follow-ups**:
+  - The harness still does not gate on `required`-ness -- it
+    forwards whatever `SampleQuery` carries. That is the
+    intentional contract (the executor is a thin pass-through and
+    Dokploy's upstream handler enforces required-ness), but a
+    future story that wants to assert REQUIRED-parameter
+    enforcement at the executor layer will need a dedicated
+    sub-suite outside the coverage harness.
+  - 400 (CodeInvalidInput) is the operation's most distinguishing
+    failure mode given the REQUIRED `path` parameter (Dokploy
+    rejects malformed paths or paths that escape the allowed
+    Traefik configuration directory), but the coverage harness
+    keeps the canonical 401 -> CodeAuth representative for parity
+    with every prior settings/* GET entry. A future story that
+    wants 400-specific assertions for this operation can override
+    `FailureStatus`/`FailureCode` explicitly without touching
+    the harness.
+- **Learnings for future iterations**:
+  - The `required` axis is its own dimension on the parameter
+    sub-axis -- even when two adjacent parameter-bearing settings/*
+    GETs both declare a single query parameter, one can be
+    REQUIRED and the other OPTIONAL. API-0381 is the first
+    settings/* GET to carry a REQUIRED query parameter; the
+    immediately preceding peer API-0380 carried only an OPTIONAL
+    `serverId`. Direct spec inspection at
+    `/settings.readTraefikFile > get > parameters` is the only
+    way to surface this -- slug-prefix and parameter-count
+    similarity are not sufficient signals.
+  - When an operation declares MULTIPLE query parameters,
+    populate ALL of them in `SampleQuery` (not just the
+    REQUIRED ones) so the success-leg `r.URL.Query()` re-read
+    exercises end-to-end forwarding for the full parameter
+    surface. The harness ignores empty maps but does iterate
+    every key the case provides, so a partial `SampleQuery`
+    silently skips the missing-key forwarding assertion.
+  - The fixture slug convention extends naturally to
+    multi-parameter cases: append a `-<param>` suffix to the
+    canonical `<tag-prefix>-cov-<opID>-<storyID>` slug
+    (`set-cov-readTraefikFile-0381-path` and
+    `set-cov-readTraefikFile-0381-server`) so each parameter
+    has its own unique literal. The hyphenated suffix keeps the
+    fixture-namespace lookup grep-friendly across the test file.
+  - The next case in the settings/* roster per PRD ordering is
+    API-0382 `settings-readWebServerTraefikConfig`. The
+    forward-reference lesson (parameter axis, response-set axis,
+    request-body axis) reasserted at API-0345..API-0381 still
+    applies -- the next contributor must re-verify against
+    `internal/api/data/openapi.json >
+    /settings.readWebServerTraefikConfig > get` before assuming
+    any field is identical to this entry. The `read*` slug
+    family continues to straddle every sub-axis.
+---
