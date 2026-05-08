@@ -7946,6 +7946,117 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0192",
+		OperationID: "mounts-remove",
+		Method:      http.MethodPost,
+		Path:        "/mounts.remove",
+		Tag:         "mounts",
+		// Fifth entry in the mounts/* roster, immediately following
+		// API-0191 `mounts-one` and completing the forward
+		// reference embedded in that entry's comment block ("The
+		// next case in the PRD-ordered priority-3 backlog is
+		// API-0192 `mounts-remove`"). Continues inside the
+		// `mounts-cov-*` per-tag fixture-isolation namespace opened
+		// by API-0188 `mounts-allNamedByApplicationId` and **must
+		// not** back-reference any closed `admin-cov-*`,
+		// `ai-cov-*`, `app-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		// `cert-cov-*`, `clu-cov-*`, `compose-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `docker-cov-*`,
+		// `domain-cov-*`, `environment-cov-*`, `org-cov-*`,
+		// `proj-cov-*`, `set-cov-*`, `srv-cov-*`, `usr-cov-*`,
+		// etc. namespaces.
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /mounts.remove > post`:
+		// a **POST** with **no parameters** and a **REQUIRED
+		// request body** whose schema is the closed-shape
+		// single-string-scalar `{mountId}` (required, no
+		// optionals). Responses 200/400/401/403/500 — note the
+		// spec does **not** declare 404 on this operation,
+		// matching the cross-tag `*-delete`/`*-remove` mutation
+		// precedent on API-0119 `domain-delete` (closed
+		// `{domainId}` body) where missing-target collapses into
+		// 400/validation per Dokploy's tRPC conventions, exactly
+		// as documented for the API-0118/API-0125/API-0249/
+		// API-0189 `*-create` cohort. The 200 schema is `{}`
+		// with `additionalProperties: false`, matching every
+		// prior covered peer in the empty-success cohort.
+		//
+		// **Shape positioning — single-required-scalar POST
+		// mutation, body REQUIRED.** First `*-remove` mutation
+		// in the mounts/* roster and second request-body POST
+		// in this tag (after API-0189 `mounts-create`'s
+		// three-required-field create). Aligns directly with
+		// the prior cross-tag single-required-string-scalar
+		// POST cohort:
+		//   * API-0119 `domain-delete` — closed `{domainId}`
+		//     body (the canonical single-required-scalar POST
+		//     mutation precedent).
+		//   * API-0249 `organization-create` — single-required-
+		//     string (`name`) body with one OPTIONAL string;
+		//     this entry omits any optional fields entirely
+		//     since the spec declares none.
+		// Distinct from API-0189 `mounts-create`'s three-
+		// required-field POST (enum + two scalars) and from the
+		// API-0118/API-0122/API-0125 two-required-string POST
+		// cohort. The harness's `len(tc.SampleBody) > 0` gate at
+		// `runAPICoverageSuccess` activates the JSON content-type
+		// and byte-for-byte body comparison legs; this fixture
+		// supplies the single REQUIRED `mountId` field so the
+		// success path verifies the CLI propagated the body
+		// verbatim. No optional fields exist on the spec, so
+		// the closed-shape body matches the schema exactly,
+		// mirroring the API-0119 `domain-delete` closed-shape
+		// precedent.
+		//
+		// **Family choice — harness-default 401→CodeAuth
+		// retained.** The spec omits 404 from the response set
+		// (per above), so the 404→CodeNotFound override is
+		// structurally inapplicable (matching the cross-tag
+		// `*-delete`/`*-remove`/`*-create` mutation precedent
+		// on API-0119, API-0118, API-0125, API-0249, and
+		// API-0189). 400→CodeInvalidInput is *technically*
+		// available — a payload that omits the REQUIRED
+		// `mountId` field would fail server-side validation —
+		// but the harness reserves 400 representatives for
+		// stories where payload validation is the operation's
+		// *uniquely distinguishing* failure mode. A conventional
+		// `*-remove` mutation collapses to type-checking, so
+		// the harness-default 401→CodeAuth failure leg remains
+		// the most representative single failure mode every
+		// authenticated Dokploy operation must re-prove, and
+		// additionally re-proves the auth invariant inside the
+		// `mounts-cov-*` namespace for the single-required-
+		// scalar POST mutation shape. Per the established
+		// `<tag>-cov-<slug>-<storyID>` deterministic-but-clearly-
+		// fake naming convention, the fixture id base
+		// `mounts-cov-remove-0192` keeps `git grep` traceable
+		// to this PRD story without colliding with API-0188
+		// (`mounts-cov-all-named-by-application-id-0188`),
+		// API-0189 (`mounts-cov-create-0189`), API-0190
+		// (`mounts-cov-list-by-service-id-0190`), or API-0191
+		// (`mounts-cov-one-0191`).
+		//
+		// The next case in the PRD-ordered priority-3 backlog is
+		// API-0193 `mounts-update` (declared a **POST** per the
+		// spec preview; the next contributor must re-verify the
+		// spec against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field
+		// shape, and will continue inside the `mounts-cov-*`
+		// per-tag fixture-isolation namespace opened by
+		// API-0188).
+		SampleBody: json.RawMessage(`{
+			"mountId": "mounts-cov-remove-0192"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,

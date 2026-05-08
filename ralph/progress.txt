@@ -16056,3 +16056,85 @@ Learnings for future iterations:
     schema, or manifest edits required (built at runtime from the
     embedded spec).
 ---
+
+## 2026-05-08 - API-0192 Cover mounts-remove (POST /mounts.remove)
+- Fifth entry in the priority-3 mounts/* roster, immediately following
+  API-0191 `mounts-one`. Continues inside the `mounts-cov-*` per-tag
+  fixture-isolation namespace opened by API-0188.
+- Spec re-verified directly against `internal/api/data/openapi.json >
+  /mounts.remove > post`: POST, **no parameters**, **REQUIRED request
+  body** with closed-shape single-required-string `{mountId}` (no
+  optionals), responses 200/400/401/403/500. The 200 body schema is
+  `{}` with `additionalProperties: false`, matching every prior covered
+  peer in the empty-success cohort. **404 is NOT declared** on this
+  operation, mirroring the cross-tag `*-delete`/`*-remove`/`*-create`
+  mutation precedent (API-0119 `domain-delete`, API-0118
+  `domain-create`, API-0125 `environment-create`, API-0249
+  `organization-create`, API-0189 `mounts-create`).
+- Shape positioning: single-required-scalar POST mutation, body
+  REQUIRED. First `*-remove` in the mounts/* roster and second
+  request-body POST in this tag (after API-0189 `mounts-create`'s
+  three-required-field create). Direct precedent is API-0119
+  `domain-delete` (closed `{domainId}` body — the canonical
+  single-required-scalar POST mutation precedent).
+- Family choice: harness-default 401→CodeAuth retained. 404 is
+  structurally inapplicable; 400 is technically available but
+  reserved for stories where payload validation is the operation's
+  uniquely distinguishing failure mode. The conventional `*-remove`
+  mutation collapses to type-checking, so the universal `E_AUTH`
+  mode remains the most representative single failure leg.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended one
+    `apiCoverageCase` literal (StoryID API-0192) under
+    `coveredAPIOperations` between the API-0191 `mounts-one`
+    block and the API-0246 `organization-active` block.
+  - `ralph/prd.json` — flipped `API-0192.passes` from `false` →
+    `true` (single-line diff confirmed via `git diff --stat`).
+  - `ralph/progress.txt` — this entry.
+- Verification run from repo root:
+  - `gofmt -l .`        — clean (no diffs).
+  - `go mod tidy`       — no diff.
+  - `go vet ./...`      — pass.
+  - `go test ./...`     — all 9 packages PASS (`internal/cli` 1.121s).
+  - `go test -race ./...` — all 9 packages PASS (`internal/cli` 2.931s).
+  - `go test ./internal/cli/ -run TestAPICoverage/API-0192 -v`
+    (RegistryInvariants, SchemaCommandWorks, ManifestListsOperation,
+    SuccessRoundTrip, RepresentativeFailure) all 5 sub-tests PASS.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` not installed in this environment — documented as
+    skipped per prompt.md guidance.
+- Remaining risks/follow-ups: none. Forward-references to API-0193
+  `mounts-update` (declared a POST per the spec preview) are
+  embedded in the API-0192 entry's comment block; the next
+  contributor must re-verify the spec against
+  `internal/api/data/openapi.json` per the established
+  forward-reference lesson before assuming any field shape, and
+  must continue inside the `mounts-cov-*` per-tag fixture-isolation
+  namespace opened by API-0188.
+- **Learnings for future iterations:**
+  - **`/mounts.remove` is the canonical mounts/* `*-remove`
+    mutation** — closed-shape single-required-string body
+    `{mountId}`, no parameters, 404 NOT declared. Lines up
+    directly with API-0119 `domain-delete`'s closed `{domainId}`
+    body (the canonical cross-tag single-required-scalar POST
+    mutation precedent).
+  - **The mounts/* tag now contains TWO request-body POSTs**:
+    API-0189 `mounts-create` (three required fields: enum +
+    two scalars) and API-0192 `mounts-remove` (single required
+    scalar). Future POST stories in this tag should position
+    against both anchors rather than only the create.
+  - **The `*-delete`/`*-remove`/`*-create` mutation cohort
+    consistently omits 404 from the spec** (Dokploy's tRPC
+    convention collapses missing-target into 400/validation).
+    Confirmed across API-0118, API-0119, API-0125, API-0189,
+    API-0192, and API-0249. Future contributors covering any
+    `*-delete`, `*-remove`, or `*-create` operation should
+    expect this pattern and default to 401→CodeAuth without
+    re-litigating the 404 question.
+  - The append-only `coveredAPIOperations` slice in
+    `internal/cli/api_coverage_test.go` remains the *only*
+    surface that needs touching for an API-XXXX story when the
+    operation already lives in `internal/api/data/openapi.json`.
+    No registry, schema, or manifest edits required (built at
+    runtime from the embedded spec).
+---
