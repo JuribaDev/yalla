@@ -17233,3 +17233,52 @@ Learnings for future iterations:
     `additionalProperties: false` invariant on the response) will
     accept the fixture.
 ---
+
+## 2026-05-08 - API-0132
+- Implemented contract coverage for `gitea-getGiteaBranches` (GET
+  /gitea.getGiteaBranches), the second entry on the gitea/* roster and
+  the first GET-shaped query-bearing operation in the gitea/* tag.
+- Spec re-verified directly against
+  `internal/api/data/openapi.json > /gitea.getGiteaBranches > get`:
+  GET, three query parameters (REQUIRED `owner` (string), REQUIRED
+  `repositoryName` (string), OPTIONAL `giteaId` (string)), no request
+  body, responses 200/400/401/403/404/500. The 200 schema is `{}` with
+  `additionalProperties: false`, matching every prior covered peer in
+  the empty-success cohort.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended one
+    `apiCoverageCase` literal between API-0131 and API-0160 (sorted by
+    StoryID). Sets `Method: http.MethodGet`, `Path:
+    /gitea.getGiteaBranches`, `Tag: gitea`, populates all three
+    `SampleQuery` keys (every-optional-populated rule), and leaves
+    failure-leg fields empty so the harness defaults to
+    401 → CodeAuth.
+  - `ralph/prd.json` — flipped `passes` to `true` for API-0132.
+- Verification: `gofmt -w`, `go vet ./...`, `go test ./...`, and
+  `go test -race ./...` — all green. `go mod tidy` left the module
+  state untouched.
+- Remaining risks / follow-ups: none specific to this story; the
+  per-tag `gitea-cov-*` namespace continues to expand. The next
+  pending PRD-ordered priority-5 backlog entry is API-0133
+  `gitea-getGiteaRepositories` (declared a **GET** per the spec
+  preview; the next contributor must re-verify the spec against
+  `internal/api/data/openapi.json` per the forward-reference lesson
+  before assuming any field shape).
+- **Learnings for future iterations:**
+  - The harness's `runAPICoverageSuccess` round-trips every populated
+    `SampleQuery` entry through `r.URL.Query()` so the optional
+    `giteaId` slot is exercised end-to-end as soon as it is populated.
+    No additional per-case wiring is needed.
+  - `getXxxBranches` is a recurring cross-tag list-style getter shape
+    (bitbucket → gitea → github → gitlab); the API-0053 entry is the
+    canonical structural precedent. Even though the spec declares 404
+    on these operations, the per-tag opener convention reserves
+    404 → CodeNotFound for the canonical by-id `*-one` peer, so the
+    harness-default 401 → CodeAuth stays the right representative
+    failure on the `getXxxBranches` shape.
+  - When a query parameter name diverges between similar operations
+    (`repo` for bitbucket vs `repositoryName` for gitea), copy the
+    spec field name verbatim into the `SampleQuery` key — the harness
+    asserts wire-string equality, not semantic equivalence.
+
+---
