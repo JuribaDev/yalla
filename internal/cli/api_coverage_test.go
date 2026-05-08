@@ -6392,6 +6392,136 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0358",
+		OperationID: "settings-cleanRedis",
+		Method:      http.MethodPost,
+		Path:        "/settings.cleanRedis",
+		Tag:         "settings",
+		// Eighth entry on the settings/* coverage roster, inheriting
+		// the `set-cov-*` per-tag fixture-isolation namespace
+		// established by API-0351 `settings-assignDomainServer`
+		// (must not back-reference the closed `srv-cov-*`,
+		// `proj-cov-*`, `org-cov-*`, `compose-cov-*`, `app-cov-*`,
+		// `ai-cov-*`, or any other prior tag's namespace, per the
+		// per-tag isolation rule reasserted at API-0335..API-0357
+		// and originally established at API-0246
+		// `organization-active`).
+		//
+		// **Spec re-verified per the API-0345..API-0357
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /settings.cleanRedis >
+		// post`: **no `requestBody` field at all** (matches API-0354
+		// `settings-cleanAllDeploymentQueue` and API-0357
+		// `settings-cleanMonitoring`; structurally stronger than
+		// API-0353 `settings-cleanAll` / API-0355
+		// `settings-cleanDockerBuilder` / API-0356
+		// `settings-cleanDockerPrune`'s `requestBody.required = false`
+		// carrying an optional `serverId` body — here the spec
+		// declares no request body schema whatsoever, so the
+		// operation is a true no-input POST), **zero parameters**
+		// (no query, no path, no header). Responses
+		// 200/400/401/403/500 — note the **absence of 404**, mirroring
+		// the API-0351 opener / API-0353 / API-0354 / API-0355 /
+		// API-0356 / API-0357 response sets rather than API-0352's
+		// by-id-flavoured 404-bearing response set. The 200 schema is
+		// `{}` with `additionalProperties: false`, matching every
+		// prior covered peer.
+		//
+		// **Forward-reference confirmation.** API-0357's comment
+		// predicted this entry would carry **no** `requestBody` at
+		// all — i.e. continue the no-body sub-cohort seeded by
+		// API-0354 `settings-cleanAllDeploymentQueue` and re-asserted
+		// by API-0357 `settings-cleanMonitoring`. Direct inspection
+		// of `internal/api/data/openapi.json > /settings.cleanRedis >
+		// post` confirms the prediction: the operation has no
+		// `requestBody` key whatsoever, exactly the API-0354 /
+		// API-0357 shape. The `clean*` family in settings/* therefore
+		// continues to split into two sub-cohorts on the wire:
+		// (a) optional-body POSTs with an optional `serverId`
+		// (API-0353 cleanAll, API-0355 cleanDockerBuilder, API-0356
+		// cleanDockerPrune), and (b) no-body POSTs (API-0354
+		// cleanAllDeploymentQueue, API-0357 cleanMonitoring, and now
+		// API-0358 cleanRedis; API-0359 cleanSSHPrivateKey is also in
+		// this sub-cohort per the verified spec). The
+		// optional/required distinction is per-operation; future
+		// settings/* peers must always re-verify the spec before
+		// authoring the fixture, the `clean*` verb prefix alone is
+		// not authoritative.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `set-cov-cleanRedis-0358` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared
+		//     across every per-tag roster and is unique (verified:
+		//     no collisions with API-0351
+		//     `set-cov-assignDomainServer-0351`, API-0352
+		//     `set-cov-checkGPUStatus-0352`, API-0353
+		//     `set-cov-cleanAll-0353`, API-0354
+		//     `set-cov-cleanAllDeploymentQueue-0354`, API-0355
+		//     `set-cov-cleanDockerBuilder-0355`, API-0356
+		//     `set-cov-cleanDockerPrune-0356`, or API-0357
+		//     `set-cov-cleanMonitoring-0357` slugs, and orthogonal
+		//     to every prior tag's `srv-cov-*`, `proj-cov-*`,
+		//     `org-cov-*`, `compose-cov-*`, `app-cov-*`, `ai-cov-*`,
+		//     etc. namespaces). Even though no fixture-token literal
+		//     is materialised on the wire (the operation has no body
+		//     and no parameters), the slug is reserved for this
+		//     story to keep the per-tag cross-reference grep useful
+		//     for future contributors.
+		//   * **Neither `SampleBody`, `SampleQuery`, nor
+		//     `SamplePathParams` are populated** — the spec
+		//     declares no body and no parameters, and inventing a
+		//     fictional body would (a) violate the
+		//     re-verify-the-spec rule reasserted across
+		//     API-0345..API-0357, (b) cause `runAPICoverageSuccess`
+		//     to assert a body round-trip the CLI would never
+		//     send, and (c) waste the no-body branch coverage this
+		//     entry shares with API-0354 / API-0357. The harness
+		//     still asserts the wire-level invariants (method, path,
+		//     Authorization header) — the no-body POST cohort is
+		//     not a coverage gap. See API-0354's narration for the
+		//     canonical no-body POST harness handling.
+		//
+		// **Failure-leg fields are intentionally omitted.** The
+		// spec does not declare 404 on this operation (the
+		// `cleanRedis` verb is a fleet-wide Redis-cache purge, not
+		// a by-id resource lookup), so the per-tag opener convention
+		// reasserted at API-0335..API-0357 that reserves 404 →
+		// CodeNotFound for canonical `*-one` peers does not even
+		// apply here. Auth is the universal failure mode every
+		// Dokploy operation must re-prove, so 401 → CodeAuth via
+		// the harness default (`tc.FailureStatus == 0` → 401,
+		// `tc.FailureCode == ""` → CodeAuth) stays the most
+		// informative representative. 400 → CodeInvalidInput stays
+		// reserved for stories where payload validation is the
+		// operation's distinguishing failure mode; this entry uses
+		// the canonical 401.
+		//
+		// The next case in the settings/* roster, API-0359
+		// `settings-cleanSSHPrivateKey`, is also a POST per the
+		// verb's `clean*` family pattern and per direct spec
+		// inspection also carries **no** `requestBody` — i.e.
+		// continues the no-body sub-cohort with this entry / API-0354
+		// / API-0357. Future contributors authoring API-0359 should
+		// grep this entry first for the `set-cov-*` namespace
+		// inheritance pattern and the no-body POST harness handling,
+		// then re-verify the spec against
+		// `internal/api/data/openapi.json >
+		// /settings.cleanSSHPrivateKey > post` per the
+		// forward-reference lesson — do **not** assume the body
+		// shape mirrors this entry's no-body schema solely because
+		// the verb prefix matches; API-0354 → API-0355 already
+		// established that two `clean*` siblings can diverge on the
+		// body axis in either direction.
+		//
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

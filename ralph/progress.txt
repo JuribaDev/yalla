@@ -8676,3 +8676,64 @@ Learnings for future iterations:
     fixture-token literal lands on the wire — keeps cross-story grep
     convention working for future contributors.
 ---
+
+## 2026-05-08 - API-0358
+- **Implemented**: Full Dokploy API coverage for settings-cleanRedis
+  (POST /settings.cleanRedis), the eighth entry on the settings/* coverage
+  roster (after API-0351..API-0357) and the third member of the settings/*
+  no-body POST sub-cohort (sharing the wire shape with API-0354
+  cleanAllDeploymentQueue and API-0357 cleanMonitoring).
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — added the API-0358 entry
+    between API-0357 (settings-cleanMonitoring) and the slice's closing
+    brace. Spec re-verified directly against
+    `internal/api/data/openapi.json > /settings.cleanRedis > post`:
+    no `requestBody` field at all, zero parameters, responses
+    200/400/401/403/500 (no 404). Fixture sets only StoryID/OperationID/
+    Method/Path/Tag/SuccessResponse — neither `SampleBody`,
+    `SampleQuery`, nor `SamplePathParams` are populated. Failure leg
+    uses the harness default (401 → CodeAuth).
+  - `ralph/prd.json` — set API-0358 `passes: true` (139 → 140 / 462).
+- **Verification run** (all from repo root):
+  - `gofmt -l .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./... -count=1` — all packages `ok`.
+  - `go test -race ./... -count=1` — all packages `ok` (no races).
+  - `go test -run 'TestAPICoverage_.*/API-0358' ./internal/cli/ -count=1 -v` —
+    all five subtests PASS (RegistryInvariants, SchemaCommandWorks,
+    ManifestListsOperation, SuccessRoundTrip, RepresentativeFailure).
+- **Tools NOT available locally** (unchanged from prior iterations):
+  `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`.
+- **Remaining risks / follow-ups**: none. settings/* roster continues
+  with API-0359 cleanSSHPrivateKey, also a no-body POST per direct spec
+  inspection of `/settings.cleanSSHPrivateKey > post` (no requestBody,
+  zero parameters). The author of API-0359 should mirror this entry's
+  fixture shape (only StoryID/OperationID/Method/Path/Tag/SuccessResponse
+  populated) but **must re-verify the spec first** — the verb prefix
+  alone is not authoritative, per the API-0345..API-0357 lesson chain.
+- **Learnings for future iterations**:
+  - The settings/* `clean*` no-body POST sub-cohort now has three
+    confirmed members on the wire (API-0354 cleanAllDeploymentQueue,
+    API-0357 cleanMonitoring, API-0358 cleanRedis), versus three
+    optional-body members (API-0353 cleanAll, API-0355
+    cleanDockerBuilder, API-0356 cleanDockerPrune). The split is stable
+    enough that authoring a new `clean*` entry is essentially picking
+    the right sub-cohort template after a one-line spec re-verification
+    against `internal/api/data/openapi.json`.
+  - The harness default-failure mapping (`tc.FailureStatus == 0` → 401,
+    `tc.FailureCode == ""` → CodeAuth) covers every settings/* `clean*`
+    entry without per-entry override, because none of these operations
+    declare 404 and all share the same 400/401/403/500 response set.
+    Customising the failure leg only buys coverage when the spec
+    declares a *distinguishing* failure mode (e.g. by-id 404, payload
+    400 as the canonical-failure-by-design); generic
+    400/401/403/500 sets degrade to the harness default.
+  - Cross-story comment forward references continue to pay off: the
+    "API-0358 cleanRedis is also a no-body POST" prediction in API-0357
+    let this entry's narration cite "Forward-reference confirmation"
+    instead of re-authoring the whole sub-cohort taxonomy from scratch.
+    Future entries should keep predicting the next peer's body shape so
+    the chain self-documents the verb-prefix-is-not-authoritative
+    lesson without copy-pasting.
+---
