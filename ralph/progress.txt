@@ -10301,3 +10301,118 @@ Learnings for future iterations:
     continues to be the safest way to extend the registry without
     risking a mis-matching duplicate string elsewhere in the file.
 ---
+
+## 2026-05-08 - API-0379
+- Implemented: Added settings-readTraefikConfig (GET
+  /settings.readTraefikConfig) to the append-only
+  `coveredAPIOperations` slice in `internal/cli/api_coverage_test.go`.
+  Spec re-verified per the API-0345..API-0378 forward-reference
+  lesson against `internal/api/data/openapi.json >
+  /settings.readTraefikConfig > get`: a GET with **zero parameters**
+  (`parameters: null` in the embedded spec, materialized as
+  `[]` in the PRD) and **no request body** (GETs in this OpenAPI
+  document never carry a `requestBody` field). Responses
+  200/400/401/403/404/500 — the 404 stays present, matching the
+  parameter-free GET sub-roster opened at API-0363
+  `settings-getDokployCloudIps` and extended through
+  API-0364..API-0368, API-0371, API-0372, API-0374, API-0375,
+  API-0376, and API-0378. The 200 schema is `{}` with
+  `additionalProperties: false`, matching every prior covered peer
+  in the settings/* GET cohort.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended a single
+    `apiCoverageCase` literal (sixteenth entry of the settings/*
+    GET cohort, thirteenth of the parameter-free GET sub-roster,
+    twenty-ninth entry overall on the settings/* coverage
+    roster). No production code changes — the case carries
+    `StoryID`, `OperationID`, `Method`, `Path`, `Tag`, and
+    `SuccessResponse: '{}'` only. `SampleQuery`,
+    `SamplePathParams`, and `SampleBody` are intentionally
+    omitted because `parameters: []` plus the no-body GET shape
+    means there is zero fixture-bearing payload — the harness's
+    `buildCoverageInputArgs` returns no `--input` flags and the
+    success-leg path-method-status-only assertion remains
+    exhaustive. Failure-leg fields are intentionally omitted: the
+    per-tag opener convention reasserted at API-0335..API-0378
+    reserves 404 → CodeNotFound for the canonical by-id `*-one`
+    peer (which `readTraefikConfig` is not — it returns the
+    controller-owned base Traefik configuration, no resource id
+    to miss against). 401 → CodeAuth via the harness default
+    (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""` →
+    CodeAuth) is the universal-failure-mode representative.
+  - `ralph/prd.json` — flipped `API-0379` `passes` to `true`.
+- Verification run:
+  - `gofmt -w .` → clean.
+  - `go mod tidy` → clean.
+  - `go vet ./...` → clean.
+  - `go test ./...` → all packages pass.
+  - `go test -race ./...` → all packages pass.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    and `goreleaser` remain not installed locally (unchanged from
+    prior iterations).
+- Results: All five required checks pass. The append-only coverage
+  registry fired the registry-presence, schema-reachability,
+  manifest-inclusion, success-leg, and failure-leg subtests for
+  API-0379 with no extra production code required — Dokploy's
+  parameter-free GET with the empty-object 200 schema is fully
+  exercised by the generic httptest harness.
+- Remaining risks/follow-ups:
+  - 295 PRD stories still have `passes: false`. Next in PRD
+    priority-2 settings/* ordering is API-0380
+    `settings-readTraefikEnv` (declared a GET in the PRD). Per
+    the slug-prefix-is-not-shape lesson reasserted at
+    API-0371..API-0378, four consecutive `read*` entries
+    (API-0377, API-0378, API-0379, and the upcoming API-0380)
+    can still sit on different sides of the parameter axis or
+    carry different response sets. The next contributor must
+    re-verify the parameter axis, request-body axis, and
+    response-set axis (presence/absence of 404) against
+    `internal/api/data/openapi.json > /settings.readTraefikEnv >
+    get` before assuming any field carries over from API-0379.
+- **Learnings for future iterations:**
+  - The `read*` slug-prefix family has now been observed three
+    times consecutively (API-0377 `readDirectories`, API-0378
+    `readMiddlewareTraefikConfig`, API-0379 `readTraefikConfig`)
+    and the parameter axis has flipped within the family —
+    parameter-bearing → parameter-free → parameter-free. This
+    confirms the slug-prefix-is-not-shape lesson is **not** just
+    an across-family rule; it applies **within** the same slug
+    prefix. Two consecutive same-prefix alignments
+    (API-0378→API-0379, both parameter-free) are NOT a
+    substitute for per-operation spec re-verification — the rule
+    still mandates inspection at every transition.
+  - The base-Traefik-config family inside the settings/* roster
+    (`readTraefikConfig`, `readMiddlewareTraefikConfig`, and the
+    upcoming `readTraefikEnv`/`readTraefikFile`/
+    `readWebServerTraefikConfig`) reads platform-wide
+    controller-owned configuration, which structurally explains
+    why these are parameter-free GETs: the controller is the
+    sole authority on Traefik config, so no per-server scoping
+    is needed (unlike `readDirectories` which probes a host
+    filesystem and therefore optionally accepts `serverId`). The
+    structural prediction does NOT obviate spec verification —
+    `readTraefikEnv` etc. could still carry an OPTIONAL
+    `serverId` if Dokploy decides to scope env reads
+    per-worker. Direct spec inspection remains mandatory.
+  - Diff against the prior parameter-free GET entry (API-0378)
+    remains purely the StoryID, OperationID, Path, sub-roster
+    ordinal, the design-rationale comments naming the right
+    preceding peers, and the forward-reference comment naming
+    the next operation. The append-only `coveredAPIOperations`
+    slice plus the harness's
+    `TestAPICoverage_RegistryInvariants`,
+    `TestAPICoverage_SchemaCommandWorks`,
+    `TestAPICoverage_ManifestListsOperation`,
+    `TestAPICoverage_SuccessRoundTrip`, and
+    `TestAPICoverage_RepresentativeFailure` mean a single struct
+    literal exercises all eight acceptance criteria
+    automatically.
+  - The `Edit` tool's `old_string` anchor on the prior entry's
+    forward-reference comment block (specifically the unique
+    `API-0371..API-0378` parameter-axis flip-flop summary line)
+    plus the closing `},\n}` of the slice continues to be the
+    safest insertion strategy — the closing `},` of the prior
+    entry is non-unique earlier in the file, but the
+    forward-reference comment naming the next-but-one
+    operation's PRD ID range is unique per story.
+---
