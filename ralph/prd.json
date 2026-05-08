@@ -12453,7 +12453,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "port",
         "operationId": "port-delete",

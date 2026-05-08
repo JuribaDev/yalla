@@ -16270,3 +16270,44 @@ Learnings for future iterations:
     (API-0160 `mariadb-changeStatus`) to land on API-0268 because all
     priority-3 prior entries (API-0246..API-0297) were already covered.
 ---
+
+## 2026-05-08 - API-0269 (port-delete)
+- Added api_coverage_test.go entry for `port-delete` (POST /port.delete) inside
+  the `port-cov-*` per-tag fixture-isolation namespace opened by API-0268.
+- Verified spec against `internal/api/data/openapi.json > /port.delete > post`:
+  POST, no parameters, REQUIRED body with closed shape `{portId: string}`
+  (single REQUIRED string scalar, zero optionals), responses 200/400/401/403/500
+  (no 404 — matches the cross-tag delete-mutation precedent on API-0119
+  `domain-delete` and API-0192 `mounts-remove`).
+- Fixture body uses the deterministic `port-cov-delete-0269` slug, the harness-
+  default 401→CodeAuth failure leg, and the `{}` empty-success response that
+  every prior peer in the empty-success cohort uses.
+- Files changed:
+  - internal/cli/api_coverage_test.go  (added API-0269 case)
+  - ralph/prd.json                     (passes: false → true)
+  - ralph/progress.txt                 (this entry)
+- Verification:
+  - gofmt -w .                                                  ✅
+  - go vet ./...                                                ✅
+  - go test ./... -count=1                                      ✅
+  - go test -race ./... -count=1                                ✅
+  - go mod tidy                                                 ✅
+- Remaining risks/follow-ups:
+  - Next pending priority-3 story is API-0270 `port-one` — a GET with a single
+    REQUIRED `portId` query parameter; the 404 response code IS declared on
+    that op so the contributor should consider the 404→CodeNotFound override
+    family. Continues inside the `port-cov-*` per-tag namespace.
+- Learnings for future iterations:
+  - The `apiCoverageCase` registry in `internal/cli/api_coverage_test.go` is
+    the single source of truth for raw-API coverage; new operations slot in
+    in PRD-id order between existing cases. The harness drives manifest,
+    schema, success, and 401 failure assertions automatically.
+  - `*-delete`/`*-remove` POST mutations in Dokploy do NOT declare 404 in the
+    OpenAPI response set — missing-target collapses into 400/validation per
+    tRPC conventions, matching API-0119 `domain-delete` and API-0192
+    `mounts-remove`. Stick to the harness-default 401→CodeAuth failure leg.
+  - Per-tag fixture-isolation: each tag opens its own `<tag>-cov-*` slug
+    namespace; never back-reference a closed namespace across the tag
+    boundary. `port-cov-*` opened at API-0268, continues here, closes when
+    API-0271 ships.
+---
