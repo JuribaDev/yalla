@@ -6837,3 +6837,78 @@
     already advertises the operation. The four parameterised tests in
     `api_coverage_test.go` extend automatically.
 ---
+
+## 2026-05-08 - API-0340
+- What was implemented: Coverage for `server-getServerMetrics` (GET
+  /server.getServerMetrics, tag `server`, three required query
+  parameters `url` / `token` / `dataPoints`, all string per the spec).
+  Added a single `apiCoverageCase` struct literal to
+  `internal/cli/api_coverage_test.go` with a `SampleQuery` that
+  populates all three keys; the existing harness derives registry
+  invariants, schema reachability, manifest inclusion, the
+  httptest-backed success exchange (per-key `r.URL.Query()`
+  re-assertion), and the default 401 → CodeAuth failure leg from
+  that single literal.
+- Files changed:
+  * `internal/cli/api_coverage_test.go` (new struct literal)
+  * `ralph/prd.json` (flipped `API-0340.passes` to `true`)
+  * `ralph/progress.txt` (this entry)
+- Verification run:
+  * `gofmt -w .` → clean
+  * `goimports` → not installed (consistent with prior iterations)
+  * `go mod tidy` → no changes
+  * `go vet ./...` → exit 0
+  * `go test ./...` → all 9 packages PASS
+  * `go test -race ./...` → all 9 packages PASS
+  * `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser` →
+    not installed (documented in prior progress entries; no change
+    this iteration)
+- Results: 114/462 PRD stories now passing; CI-equivalent local
+  checks all green.
+- Remaining risks or follow-ups: None specific to this story. The
+  multi-query-param shape is now first-classed in the coverage
+  harness; future `*-getServerMetrics`-style peers in other tags
+  and any other multi-required-query GET should mirror this entry.
+- **Learnings for future iterations:**
+  - **API-0340 was the FIRST multi-key SampleQuery case in the
+    entire coverage roster.** I ran a regex sweep before adding
+    the entry — every prior `SampleQuery` block (24 cases across
+    ai/*, organization/*, project/*, and the API-0339
+    `server-getDefaultCommand` opener) declared exactly one key.
+    The harness already supports multi-key maps natively
+    (`for k, want := range tc.SampleQuery { … seenQuery[k] … }`)
+    so no harness change was needed — but document the milestone
+    in the case comment so future grep-driven discovery works.
+  - **Per-key fixture token slug pattern.** When a single case
+    has multiple secrets/values, prefix every value with the
+    same `<tag>-cov-<slug>-<storyID>` base so a leaked value is
+    traceable to one story. I used:
+      * `url`        → `https://srv-cov-getServerMetrics-0340.example.test`
+      * `token`      → `srv-cov-getServerMetrics-0340-token`
+      * `dataPoints` → `50`
+    The `.example.test` reserved domain (RFC 2606) means even an
+    accidental real-world fetch can never escape the test sandbox.
+  - **`token` query param is NOT a Dokploy auth credential.** It
+    is a *target-server* token that Dokploy forwards downstream to
+    a remote agent host — orthogonal to the redaction security
+    suite's bearer-token sentinel checks. Picking a fixture-shaped
+    value (no `Bearer` prefix, no base64-looking entropy) keeps
+    the security suite clean. The success envelope's `URL` field
+    will be redacted by `output.RedactURL` per the existing
+    `redaction_security_test.go::?token=` test, but the harness
+    does not assert on the `URL` field — only on
+    `OperationID`/`Method`/`Status`/`SchemaVersion` — so no
+    interaction.
+  - **`schemaType: string` for numeric values.** The spec declares
+    `dataPoints` as `string` even though it is conceptually a
+    count; the `--input` JSON's `query` field is `map[string][]string`,
+    so the value goes in as `"50"` not `50`. Mirroring the spec
+    type verbatim is the safe default for any future query param
+    that "looks numeric but is declared string".
+  - **API-0339 commentary forward-referenced API-0340.** The
+    `server-getDefaultCommand` case explicitly named
+    `server-getServerMetrics` as "API-0340 with three query params"
+    in its forward-peer list. Future iterations should keep this
+    forward-reference convention so each new case both grounds
+    itself in priors and seeds the next one.
+---

@@ -4112,6 +4112,75 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0340",
+		OperationID: "server-getServerMetrics",
+		Method:      http.MethodGet,
+		Path:        "/server.getServerMetrics",
+		Tag:         "server",
+		// Sixth entry on the server/* coverage roster and the **first
+		// multi-required-query-param GET** anywhere in the coverage
+		// suite (verified: every prior SampleQuery block — 24 cases
+		// across ai/*, organization/*, project/*, and the API-0339
+		// `server-getDefaultCommand` opener — declared exactly one
+		// query key). Succeeds the parameter-free GET cohort
+		// (API-0335 `server-all`, API-0336 `server-buildServers`,
+		// API-0337 `server-count`), the API-0338 `server-create`
+		// body mutation, and the API-0339 `server-getDefaultCommand`
+		// single-required-query-param GET that established the
+		// `srv-cov-*` fixture-isolation namespace.
+		//
+		// Spec source `internal/api/data/openapi.json >
+		// /server.getServerMetrics > get`: zero request body, three
+		// REQUIRED query parameters — `url` (string), `token`
+		// (string), `dataPoints` (string) — no path parameters.
+		// Responses 200/400/401/403/404/500. Per the harness contract
+		// at `runAPICoverageSuccess`, every key declared in
+		// SampleQuery is independently re-read from `r.URL.Query()`
+		// and compared to the fixture, so a regression where the
+		// CLI dropped or reordered one of three params would surface
+		// as a per-key `query[%q] = ...` assertion failure (not a
+		// catch-all body mismatch). This is the canonical shape
+		// future multi-query GET peers should grep for.
+		//
+		// Fixture conventions:
+		//   * Per-key fixture token bases all share the
+		//     `srv-cov-getServerMetrics-0340` slug, suffixed by the
+		//     query key, so a leak in any single key is traceable
+		//     back to this story.
+		//   * `url` uses the RFC 2606 `.example.test` reserved
+		//     domain so even an accidental real-world fetch can
+		//     never escape the test sandbox.
+		//   * `token` is fixture-shaped (no `Bearer` prefix, no
+		//     base64-looking entropy) to keep the redaction
+		//     security suite's bearer-token sentinel checks
+		//     orthogonal — this is a *target-server* token the
+		//     Dokploy API forwards downstream, not a Dokploy auth
+		//     credential.
+		//   * `dataPoints` is the string form of an integer, which
+		//     is what the spec declares (`schemaType: string`)
+		//     even though the value is numeric in practice.
+		//
+		// Failure leg: keeps the harness default (401 → CodeAuth)
+		// per the per-tag opener convention reasserted at
+		// API-0335..API-0339; the 404 → CodeNotFound override is
+		// reserved for the canonical by-id `*-one` peer
+		// (API-0342 `server-one`).
+		SampleQuery: map[string][]string{
+			"url":        {"https://srv-cov-getServerMetrics-0340.example.test"},
+			"token":      {"srv-cov-getServerMetrics-0340-token"},
+			"dataPoints": {"50"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior server/* peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection — even though this operation conceptually
+		// returns time-series metrics in production, the spec
+		// schema does not enumerate the payload fields, so the
+		// fixture stays minimal.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
