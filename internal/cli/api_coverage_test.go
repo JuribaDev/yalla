@@ -2650,6 +2650,150 @@ var coveredAPIOperations = []apiCoverageCase{
 		// API-0383 `settings-reloadRedis`.
 	},
 	{
+		StoryID:     "API-0059",
+		OperationID: "certificates-create",
+		Method:      http.MethodPost,
+		Path:        "/certificates.create",
+		Tag:         "certificates",
+		// Second entry on the certificates/* coverage roster,
+		// inheriting the `cert-cov-*` per-tag fixture-isolation
+		// namespace opened by API-0058 `certificates-all`. Per
+		// the per-tag isolation rule originally established at
+		// API-0246 `organization-active`, reasserted at
+		// API-0290 `project-all`, API-0335 `server-all`,
+		// API-0351 `settings-assignDomainServer`, and most
+		// recently at API-0051 `bitbucket-bitbucketProviders`,
+		// this entry **must not** back-reference any closed
+		// `admin-cov-*`, `ai-cov-*`, `app-cov-*`, `backup-cov-*`,
+		// `bb-cov-*`, `compose-cov-*`, `deployment-cov-*`,
+		// `org-cov-*`, `proj-cov-*`, `srv-cov-*`, or
+		// `set-cov-*` namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0383
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /certificates.create
+		// > post`: a **POST** with **zero parameters** (no path,
+		// no query, no header) and a **required JSON request
+		// body**. The body schema fields per the spec:
+		//   - REQUIRED scalars: `name`, `certificateData`,
+		//     `privateKey`, `organizationId` (all plain strings).
+		//   - OPTIONAL scalars: `certificateId`,
+		//     `certificatePath` (plain strings, no `anyOf` /
+		//     `nullable`).
+		//   - OPTIONAL `anyOf [boolean, null]`: `autoRenew` —
+		//     populated as a boolean literal `true` to exercise
+		//     the non-null branch (the harness's JSON
+		//     round-trip preserves both branches; the boolean
+		//     branch keeps the fixture deterministic and avoids
+		//     the dedicated `null` path that would shadow a
+		//     "field absent" representation).
+		//   - OPTIONAL `anyOf [string, null]`: `serverId` —
+		//     populated as a plain string literal to exercise
+		//     the non-null branch, matching how prior covered
+		//     `serverId`-bearing operations (e.g.
+		//     `application-readTraefikConfig`,
+		//     `settings-reloadTraefik`-style optional scoping)
+		//     have handled the same axis.
+		// Responses 200/400/401/403/500 — **no 404** is
+		// declared, matching the canonical mutation response
+		// set already exercised by every prior `*-create` peer
+		// (API-0002 `ai-create`, API-0040 `backup-create`,
+		// API-0052 `bitbucket-create`, API-0292 `project-create`,
+		// API-0338 `server-create`). Per the per-tag opener
+		// convention reasserted at API-0058's certificates/*
+		// design header, 404 → CodeNotFound stays reserved for
+		// the canonical by-id peer API-0060 `certificates-one`,
+		// not for this create mutation. The 200 schema is `{}`
+		// with `additionalProperties: false`, matching every
+		// prior covered peer; the success-leg envelope assertion
+		// stays focused on `data.method` / `data.status` rather
+		// than payload projection.
+		//
+		// **Family choice — create POST, harness-default failure
+		// leg.** Per the forward-reference at API-0058's
+		// design-rationale header ("API-0059 `certificates-create`
+		// and API-0061 `certificates-remove` are mutating POSTs
+		// and are expected to follow the harness-default 401 →
+		// CodeAuth slot"), this entry consumes that reservation
+		// — 401 → CodeAuth via the harness default
+		// (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""`
+		// → CodeAuth) stays the most informative representative
+		// failure for a create mutation whose own 4xx vocabulary
+		// (400 invalid input / 403 forbidden) is too generic to
+		// claim a distinguishing failure shape. 400 →
+		// CodeInvalidInput stays reserved for stories where
+		// payload validation is the operation's distinguishing
+		// failure mode.
+		//
+		// Fixture conventions:
+		//   * Every-optional-populated rule (API-0010 / API-0014
+		//     / API-0249 / API-0292 / API-0297 / API-0052 /
+		//     API-0053 / API-0056 / API-0057): populate every
+		//     optional sibling alongside the required quartet.
+		//     The `autoRenew` boolean and the nullable
+		//     `serverId` string both exercise their non-null
+		//     branches so the JSON round-trip covers the
+		//     populated path; future contributors who want to
+		//     exercise the `null` branch should add a dedicated
+		//     case rather than mutate this one (the per-case
+		//     fixture pattern keeps each leg independently
+		//     debuggable).
+		//   * Per-case fixture token base
+		//     `cert-cov-create-0059` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared
+		//     across every per-tag roster and consumes the slot
+		//     pre-reserved by API-0058's design-rationale header
+		//     (verified: no collisions with the cross-tag
+		//     `bb-cov-*`, `proj-cov-*`, `srv-cov-*`,
+		//     `set-cov-*`, `org-cov-*`, etc. namespaces, and no
+		//     collisions inside the `cert-cov-*` namespace
+		//     opened nominally by API-0058).
+		//   * `certificateData` and `privateKey` carry
+		//     deterministic fixture literals (no real PEM
+		//     payload) — the harness never wires real secrets
+		//     and the output redactor's defence-in-depth path
+		//     scrubs credential-shaped substrings regardless.
+		//     Keeping the fixture body string-only (rather than
+		//     pasting a fake PEM block) keeps diffs readable and
+		//     avoids any risk of the literal being mistaken for
+		//     real key material.
+		//
+		// Future contributor on API-0060 `certificates-one`
+		// should consume the 404 → CodeNotFound representative-
+		// failure slot reserved at API-0058 (the canonical by-id
+		// reader for the certificates/* tag arc, mirroring
+		// API-0055 `bitbucket-one`'s claim of that slot in the
+		// bitbucket/* tag arc). Per-operation re-verification
+		// against `/certificates.one > get` is mandatory before
+		// inheriting the reservation — preliminary spec
+		// inspection at hand-off time shows API-0060 declares a
+		// single required `certificateId` query parameter, which
+		// the contributor must materialise as a `SamplePathParams`
+		// or `SampleQuery` literal (the operationId convention
+		// across Dokploy is `query`, but the field axis must
+		// still be re-verified per the API-0053 / API-0054 /
+		// API-0055 precedent on `/bitbucket.*` `*-one` peers).
+		// API-0061 `certificates-remove` (POST) is then expected
+		// to follow the harness-default 401 → CodeAuth slot per
+		// the create/remove mutation cohort.
+		SampleBody: json.RawMessage(`{
+			"name": "yalla-coverage-cert-create-0059",
+			"certificateData": "cert-cov-create-0059-certificateData",
+			"privateKey": "cert-cov-create-0059-privateKey-fixture",
+			"organizationId": "cert-cov-create-0059-organizationId",
+			"certificateId": "cert-cov-create-0059-certificateId",
+			"certificatePath": "cert-cov-create-0059-certificatePath",
+			"autoRenew": true,
+			"serverId": "cert-cov-create-0059-serverId"
+		}`),
+		// 200 response in the spec is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0066",
 		OperationID: "compose-cancelDeployment",
 		Method:      http.MethodPost,

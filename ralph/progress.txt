@@ -11015,3 +11015,59 @@ Learnings for future iterations:
     cross-references) rather than on case-specific fixture
     plumbing.
 ---
+
+## 2026-05-08 - API-0059
+- **Implemented**: Coverage entry for `certificates-create` (POST /certificates.create),
+  the second peer in the certificates/* tag arc opened by API-0058
+  `certificates-all`. The harness drives the operation end-to-end via
+  `coveredAPIOperations[StoryID="API-0059"]` — `yalla api call
+  certificates-create --input <file> --json` exercised against an
+  `httptest.Server` fixture for the success leg, the harness-default
+  401 → CodeAuth representative for the failure leg, and the registry/
+  schema/manifest invariants asserted by `TestAPICoverage_*`.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended API-0059 case literal
+    populating every required field (`name`, `certificateData`,
+    `privateKey`, `organizationId`) and every optional sibling
+    (`certificateId`, `certificatePath`, `autoRenew`, `serverId`),
+    inheriting the `cert-cov-*` fixture-isolation namespace opened
+    by API-0058. `SuccessResponse: "{}"` matches the spec's empty
+    200 body; `FailureStatus`/`FailureCode` left zero-valued so the
+    harness defaults to 401 → CodeAuth (the canonical representative
+    failure for an authenticated mutation whose own 4xx vocabulary
+    is too generic to claim a distinguishing shape).
+  - `ralph/prd.json` — set API-0059 `passes: true`.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages OK.
+  - `go test -race ./...` — all packages OK.
+- **Tools NOT available locally** (per project policy): `goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`.
+- **Remaining risks / follow-ups**:
+  - API-0060 `certificates-one` (canonical by-id GET → CodeNotFound
+    representative) and API-0061 `certificates-remove` (mutation POST
+    → harness-default CodeAuth) are next in the certificates/* tag
+    arc. The 404 → CodeNotFound slot was reserved for API-0060 by
+    API-0058's design header; this entry honours that reservation by
+    keeping the harness-default failure leg.
+  - `autoRenew` and `serverId` are exercised on their non-null
+    branches. A future story could add a dedicated
+    `null`-branch case rather than mutate this one.
+- **Learnings for future iterations**:
+  - The certificates/* tag is a shallow arc (4 stories total —
+    `all`/`create`/`one`/`remove`) so the every-optional-populated
+    rule plus the canonical 404-reservation-for-`*-one` pattern is
+    the entire shape of the tag's coverage. Mirror the bitbucket/*
+    arc closed at API-0057 if questions arise.
+  - The OpenAPI spec uses `anyOf [<scalar>, null]` rather than
+    `nullable: true` for nullable fields. The harness's JSON
+    round-trip preserves either branch — pick the populated branch
+    by default to exercise the full byte path; the absent / `null`
+    branch is implicitly covered by the field being optional.
+  - Body-only POSTs (no path/query parameters) are the simplest
+    POST shape — no `SamplePathParams` / `SampleQuery` literal is
+    needed; the harness's POST branch picks up the body via
+    `--input`'s JSON `body` field.
+---
