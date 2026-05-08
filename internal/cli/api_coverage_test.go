@@ -3828,6 +3828,50 @@ var coveredAPIOperations = []apiCoverageCase{
 		// scalar-only mutation body).
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0336",
+		OperationID: "server-buildServers",
+		Method:      http.MethodGet,
+		Path:        "/server.buildServers",
+		Tag:         "server",
+		// Second entry on the server/* coverage roster, immediately
+		// following the API-0335 `server-all` kickoff. Inherits the
+		// `srv-cov-*` per-tag fixture-isolation namespace opened there
+		// (no fixture-data is required for this parameter-free GET, but
+		// any future peers that *do* need fixtures must keep the
+		// `srv-cov-*` namespace and never back-reference the
+		// `proj-cov-*` namespace from API-0290..API-0297, per the rule
+		// established at API-0246 `organization-active`).
+		//
+		// Spec source `internal/api/data/openapi.json >
+		// /server.buildServers > get`: zero parameters, no request
+		// body, responses 200/400/401/403/404/500 where the 200 schema
+		// is `{}` with `additionalProperties: false`. This is
+		// byte-for-byte the same wire shape as the parameter-free GET
+		// cohort opened by API-0006 `ai-getAll`, continued by API-0246
+		// `organization-active`, API-0247 `organization-all`, API-0290
+		// `project-all`, and the immediately preceding API-0335
+		// `server-all`. The canonical agent invocation stays
+		// `yalla api call server-buildServers --input '{}' --json`.
+		//
+		// Leaving SampleQuery / SamplePathParams / SampleBody unset is
+		// intentional: the harness asserts the wire-level invariants
+		// (method, path, Authorization header, empty query string,
+		// empty body) at runAPICoverageSuccess. Empty-object body keeps
+		// the success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection, matching every
+		// prior parameter-free GET peer.
+		//
+		// The representative-failure leg keeps the harness default
+		// (401 -> CodeAuth) because auth is the universal failure mode
+		// every Dokploy operation must re-prove. The spec also declares
+		// 404, but per the per-tag opener convention reasserted at
+		// API-0335, 404 -> CodeNotFound is reserved for filter-shaped
+		// peers like the upcoming API-0342 `server-one`; this
+		// `*-buildServers` endpoint is a membership-scoped list, not a
+		// by-id lookup, so 401 remains the correct representative.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

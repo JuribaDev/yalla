@@ -6591,3 +6591,56 @@
     canonical UTF-8 JSON; the standard library preserves Unicode without
     re-escaping (which would alter the file's public-API string content).
 ---
+
+## 2026-05-08 - API-0336 (server-buildServers)
+- Implemented coverage for `server-buildServers` (GET /server.buildServers)
+  by appending one `apiCoverageCase` entry to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go`. Second entry on the server/* roster
+  after API-0335 `server-all`; inherits the `srv-cov-*` per-tag
+  fixture-isolation namespace opened there.
+- Wire shape is byte-for-byte identical to API-0335: parameter-free GET,
+  no request body, responses 200/400/401/403/404/500 with `{}` /
+  `additionalProperties: false` on the 200 schema. Same canonical agent
+  invocation pattern (`yalla api call <op> --input '{}' --json`) and
+  default 401 -> CodeAuth representative-failure leg as the rest of the
+  parameter-free GET cohort (API-0006 `ai-getAll`, API-0246
+  `organization-active`, API-0247 `organization-all`, API-0290
+  `project-all`, API-0335 `server-all`).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (one new struct literal, parameter-
+    free GET shape, `SuccessResponse: '{}'`, defaults inherit
+    401 -> CodeAuth failure leg).
+  - `ralph/prd.json` (`API-0336.passes: true`).
+- Verification run: `gofmt -w .`, `go mod tidy`, `go vet ./...`,
+  `go test ./...`, `go test -race ./...` — all green. (`goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser` still not
+  installed locally.)
+- Results: TestAPICoverage suite (registry-invariants + per-operation
+  success/failure subtests) green; full repo test suite green under both
+  the default runner and `-race`.
+- Remaining risks/follow-ups: none for this story. Next server/* peers
+  (API-0337 `server-count`, API-0338 `server-create`, API-0339
+  `server-getDefaultCommand`, API-0340 `server-getServerMetrics`, …) keep
+  the `srv-cov-*` namespace and pick the appropriate precedent — most are
+  parameter-free GETs that mirror this entry, while the create/update
+  peers will need a sample body, the by-id peers (API-0342 `server-one`)
+  will reserve 404 -> CodeNotFound, and the metrics peers may reuse the
+  query-shaped GET precedent at API-0033.
+- **Learnings for future iterations:**
+  - For server/* coverage stories whose OpenAPI spec is a parameter-free
+    GET with `200: {}` and `additionalProperties: false`, the entire
+    implementation is one `apiCoverageCase` literal with `StoryID`,
+    `OperationID`, `Method: http.MethodGet`, `Path`, `Tag: "server"`,
+    and `SuccessResponse: '{}'`. Sample fields stay unset; default
+    failure leg (401 -> CodeAuth) is correct.
+  - The PRD-listed response code 404 does NOT translate to a
+    `FailureStatus`/`FailureCode` override on list endpoints. Per the
+    convention reasserted at API-0335, 404 -> CodeNotFound is reserved
+    for filter-shaped by-id peers (API-0342 `server-one`). Membership-
+    scoped lists keep the auth-default failure leg.
+  - The `coveredAPIOperations` slice is the only edit point — there is
+    no separate registry, manifest, or schema file to touch for these
+    parameter-free GET stories. The embedded openapi.json already
+    declares the operation, and the registry-invariants subtest cross-
+    checks method/path/tag against the spec at every test run.
+---
