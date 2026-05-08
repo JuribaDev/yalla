@@ -2070,3 +2070,59 @@
     `git blame` on a single line points back to the right commit even
     when later stories add unrelated entries above or below.
 ---
+
+## 2026-05-08 - API-0003
+
+- **Story:** Cover ai-delete (POST /ai.delete), tag `ai`, priority 5.
+- **What shipped:** Appended one `apiCoverageCase{...}` literal to
+  `coveredAPIOperations` in `internal/cli/api_coverage_test.go` so the
+  existing five-part harness (registry invariants, `yalla schema get`,
+  `yalla manifest`, `httptest`-driven success round-trip, default
+  401 → `E_AUTH` failure leg) now also gates `ai-delete`. No new
+  production code: the operation is already wired through the embedded
+  OpenAPI spec, the singleton `api.Default()` registry, and the raw
+  `yalla api call` executor.
+- **Sample body:** The spec declares one required field, `aiId` (string).
+  The fixture (`ai-cov-delete-0003`) is unique per case so a grep through
+  the test file leads back to the exact PRD story.
+- **Files changed:**
+  - `internal/cli/api_coverage_test.go` (+19 lines, sorted-by-StoryID insert
+    between API-0002 and API-0011).
+  - `ralph/prd.json` (`API-0003.passes` flipped `false` → `true`).
+  - `ralph/progress.txt` (this entry).
+- **Verification:**
+  - `gofmt -l .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./internal/cli/ -run 'TestAPICoverage' -count=1 -v` — five
+    `TestAPICoverage_*/API-0003/ai-delete` subtests PASS alongside
+    API-0001 / API-0002 / API-0011 / API-0012.
+  - `go test ./...` — all packages PASS.
+  - `go test -race ./...` — all packages PASS.
+  - `bash scripts/verify.sh --quiet` — `all checks passed`.
+  - Optional tools (`govulncheck`, `staticcheck`, `golangci-lint`,
+    `goreleaser`) remain not installed locally; `verify.sh` documents the
+    skip list explicitly per CONTRIBUTING.md (not silently skipped).
+- **Remaining risks / follow-ups:** None for this story. The 200 response
+  is `{}` with `additionalProperties: false`, identical to ai-create and
+  the application-* peers, so the success-leg envelope assertion stays
+  focused on `data.method` / `data.status` rather than payload projection.
+  The default 401 → `CodeAuth` representative failure is appropriate; the
+  spec also declares 400/403/500, but those broader status-mapping
+  invariants are already covered cross-cuttingly by
+  `internal/api/client_test.go`.
+- **Learnings for future iterations:**
+  - **The harness still scales**: a fifth API story is again a single
+    sorted-by-StoryID struct literal, no harness changes. The remaining
+    441 stories should follow the same single-line-of-cost pattern.
+  - **`ai-delete` is structurally identical to `application-cancelDeployment` /
+    `application-cleanQueues`**: one required ID-shaped string field, an
+    empty-object 200 body, the 400/401/403/500 failure surface. Future
+    delete-shaped operations (`*-remove`, `*-clear`, `*-cancel`) can copy
+    the fixture pattern verbatim — only `StoryID`, `OperationID`, `Path`,
+    the required field name (`aiId` vs `applicationId` vs …), and the
+    fixture token need to change.
+  - **Always vary the fixture token per case** (e.g.
+    `ai-cov-delete-0003` rather than reusing the API-0002 token) so a
+    `git grep` on the unique slug points back to the exact PRD story.
+---

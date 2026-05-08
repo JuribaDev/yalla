@@ -142,6 +142,26 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0003",
+		OperationID: "ai-delete",
+		Method:      http.MethodPost,
+		Path:        "/ai.delete",
+		Tag:         "ai",
+		// Mirrors the schema in `data/openapi.json` for /ai.delete: the
+		// only required field is `aiId` (string). Keep the fixture
+		// minimal-but-valid so a future schema validator wired into the
+		// harness still accepts it.
+		SampleBody: json.RawMessage(`{
+			"aiId": "ai-cov-delete-0003"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the other ai/* and application/* peers. We keep an
+		// empty-object body so the success-leg envelope assertion stays
+		// focused on `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0011",
 		OperationID: "application-cancelDeployment",
 		Method:      http.MethodPost,
