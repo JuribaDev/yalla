@@ -15302,3 +15302,100 @@ Learnings for future iterations:
     minimal positive case is still SampleBody only the REQUIRED field,
     deferring optional-field coverage to follow-up stories.
 ---
+## 2026-05-08 - API-0124 (environment-byProjectId)
+- Added covered-operation fixture for `environment-byProjectId` (GET
+  `/environment.byProjectId`) to `internal/cli/api_coverage_test.go >
+  coveredAPIOperations`. **First** entry in the environment/* roster and
+  the kickoff for a brand-new `environment-cov-*` per-tag
+  fixture-isolation namespace, inserted immediately after the closed
+  `domain-cov-*` namespace (last entry API-0123 `domain-validateDomain`)
+  and before the existing API-0246 `organization-active` block. The
+  surrounding domain-cov-* namespace is now closed; this entry must
+  not back-reference any closed namespace, and any future
+  environment/* peers (API-0125..API-0130) must continue inside
+  `environment-cov-*`.
+- Spec re-verified directly against
+  `internal/api/data/openapi.json > /environment.byProjectId > get`:
+  GET, one REQUIRED query parameter `projectId` (string), no request
+  body, responses 200/400/401/403/404/500. 200 schema is `{}` with
+  `additionalProperties: false`, matching the empty-success cohort.
+  Wire shape is structurally identical to API-0121 `domain-one` —
+  single-required-query GET, no body — so the closest precedent is
+  API-0121 with the parameter name swapped from `domainId` →
+  `projectId`.
+- Wire shape: single-required-query GET, no body. Harness forwards
+  `SampleQuery` via the `--input` JSON `query` field; the success
+  leg re-reads `r.URL.Query()` for byte-equal `projectId`
+  propagation. The `len(tc.SampleBody) > 0` gate stays inert so no
+  content-type or body byte-comparison legs activate, matching
+  API-0121 `domain-one` and the broader id-bearing GET cohort
+  (API-0005 `ai-get`, API-0113 `docker-getStackContainersByAppName`,
+  API-0115 `domain-byApplicationId`, API-0116 `domain-byComposeId`,
+  API-0117 `domain-canGenerateTraefikMeDomains`).
+- Failure leg: harness-default 401→CodeAuth retained even though the
+  spec declares 404 (an unknown projectId is a structurally valid
+  not-found case, so the 404→CodeNotFound override is *technically*
+  applicable). Mirrors API-0121 `domain-one`'s identical decision —
+  bearer-token enforcement runs before any project lookup, the
+  universal `E_AUTH` mode is the most representative single failure
+  leg, and it guarantees that this opening entry of the new
+  `environment-cov-*` namespace re-proves the auth invariant every
+  per-tag kickoff should certify.
+- Per-case fixture token base `environment-cov-by-project-id-0124`
+  keeps `git grep` traceable to this PRD story without colliding
+  with any prior `<tag>-cov-<slug>-<storyID>` token base.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — new `coveredAPIOperations`
+    entry for `environment-byProjectId` appended after API-0123
+    `domain-validateDomain` (last domain/* entry) and before
+    API-0246 `organization-active`.
+  - `ralph/prd.json` — flipped `API-0124.passes` from `false` →
+    `true`.
+  - `ralph/progress.txt` — this entry.
+- Verification:
+  - `gofmt -l .` — clean.
+  - `go mod tidy` — no diff.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all 10 packages PASS (`internal/cli` 1.218s).
+  - `go test -race ./...` — all 10 packages PASS
+    (`internal/cli` 2.857s).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — still not installed locally; documented missing
+    rather than silently skipped (per Codebase Patterns).
+- Remaining risks / follow-ups:
+  - None for this story. The next environment/* coverage gap in the
+    PRD-ordered priority-3 backlog is API-0125 `environment-create`
+    (declared a **POST** per the spec preview). The next
+    contributor MUST re-verify the spec directly against
+    `internal/api/data/openapi.json` per the forward-reference
+    lesson and continue inside the `environment-cov-*` per-tag
+    fixture-isolation namespace opened here.
+- Learnings for future iterations:
+  - The new `environment-cov-*` namespace is now open. Six more
+    environment/* stories follow in the priority-3 backlog
+    (API-0125 `environment-create`, API-0126 `environment-duplicate`,
+    API-0127 `environment-one`, API-0128 `environment-remove`,
+    API-0129 `environment-search`, API-0130 `environment-update`),
+    after which the namespace will close before the priority-5
+    gitea/* roster begins at API-0131.
+  - For per-tag namespace **openers**, prefer the harness-default
+    401→CodeAuth even when the spec declares 404. The opener
+    re-proves the universal auth invariant for the new namespace,
+    while peer 404→CodeNotFound coverage can be added later in
+    a follow-up story without disturbing this entry. This is the
+    consistent precedent set by every prior namespace opener
+    (API-0001 admin/*, API-0005 ai/*, API-0023 application/*,
+    API-0094 backup/*, API-0102 bitbucket/*, API-0107 certificate/*,
+    API-0108 cluster/*, API-0080 compose/*, API-0098 deployment/*,
+    API-0110 destination/*, API-0111 docker/*, API-0115 domain/*,
+    API-0246 organization/*, API-0265 project/*, API-0291
+    settings/*, API-0276 server/*).
+  - Cross-tag wire-shape inheritance works cleanly across namespace
+    boundaries: API-0124's structural twin is API-0121 `domain-one`
+    in the just-closed `domain-cov-*` namespace, despite living in
+    a different per-tag namespace. The `<tag>-cov-<slug>-<storyID>`
+    naming convention scopes fixture *tokens* per-tag while still
+    permitting comment back-references across closed namespaces for
+    spec-shape precedent (which is what the API-0345..API-0441
+    forward-reference lesson canonicalised).
+---
