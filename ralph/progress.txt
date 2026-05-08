@@ -2584,3 +2584,45 @@
     exclusive in practice; do not populate both unless an operation
     declares query params alongside a body.
 ---
+## 2026-05-08 - API-0021 (application-one, GET /application.one)
+- Added the per-operation contract entry for `application-one` to
+  `coveredAPIOperations` in `internal/cli/api_coverage_test.go`. This is
+  the **first** GET-shaped entry in the application/* coverage roster:
+  no request body, a single required query parameter `applicationId`
+  (string), expressed via `SampleQuery: map[string][]string{"applicationId":
+  {"app-cov-one-0021"}}`. The shared harness (success/failure/registry/
+  schema/manifest sub-tests) picks the entry up automatically.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (+24 lines, one struct literal).
+  - `ralph/prd.json` (`API-0021.passes` → `true`).
+  - `ralph/progress.txt` (this entry).
+- Verification run (from repo root):
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — no diff.
+  - `go vet ./...` — clean.
+  - `go test ./...` — PASS, including the new
+    `TestAPICoverage_*/API-0021/application-one` sub-tests across registry,
+    schema, manifest, success-leg, and failure-leg checks.
+  - `go test -race ./...` — PASS.
+  - `goimports` not installed locally — skipped (documented in earlier
+    progress entries; no new imports introduced by this change).
+- Remaining risks / follow-ups: none specific to this story. The `coveredAPIOperations`
+  list now exercises the `SampleQuery` branch of `runAPICoverageSuccess`
+  end-to-end for the first time, so any future regression in query-string
+  forwarding will surface here as well as in the dedicated CLI tests.
+- **Learnings for future iterations:**
+  - The existing harness already supports GET operations via `SampleQuery`
+    and `SamplePathParams` — no harness change is needed when adding a
+    GET-with-query coverage story. `runAPICoverageSuccess` re-reads
+    `r.URL.Query()` and the comparator at line ~644 enforces verbatim
+    propagation of every key the case declares.
+  - `buildCoverageInputArgs` writes a `query` field (and/or
+    `path_params` / `body`) into a tempfile and returns `--input <path>`
+    so the CLI exercises the same `--input` JSON shape end-to-end. New
+    GET stories should populate `SampleQuery` rather than synthesising
+    URL strings.
+  - Operations whose 200 response is the spec's `{}` empty-object can
+    safely keep `SuccessResponse: \`{}\`` — the success-leg envelope
+    assertion focuses on `data.method` / `data.status`, not payload
+    projection, matching every prior application/* peer.
+---
