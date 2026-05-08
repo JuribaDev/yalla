@@ -3923,3 +3923,56 @@
     `env-cov-*`, `srv-cov-*`) so the fixture is greppable to its
     story ID and never collides with another case.
 ---
+## 2026-05-08 - API-0070 (compose-delete)
+- Implemented per-operation contract coverage for compose-delete
+  (POST /compose.delete) — fourth compose/* entry in
+  coveredAPIOperations, sorted directly after API-0069.
+- Files changed:
+  - internal/cli/api_coverage_test.go (+30 lines, single appended
+    apiCoverageCase literal sorted after API-0069)
+  - ralph/prd.json (passes: false -> true for API-0070)
+  - ralph/progress.txt (this entry)
+- Implementation: NOT a member of the minimal-composeId-only POST
+  family. Confirmed in internal/api/data/openapi.json that
+  /compose.delete required surface is BOTH `composeId` (string) AND
+  `deleteVolumes` (boolean) — the application/* twin
+  (application-delete @ API-0015) only required `applicationId`, so
+  compose-delete is a distinct shape rather than a copy. Sent
+  `deleteVolumes: false` to keep the fixture a non-mutating shape.
+  200 response is `{}` with `additionalProperties: false`, matching the
+  empty-success convention. Shared harness in
+  internal/cli/api_coverage_test.go derives all five contract assertions
+  (registry / schema get / manifest inclusion / httptest success / 401
+  -> E_AUTH failure) from the entry alone, so no production-code change
+  is required.
+- Verification (from /Users/juribadev/projects/poc/yalla-claude):
+  - gofmt -w .   (clean)
+  - go mod tidy  (no module changes)
+  - go vet ./... (PASS)
+  - go test ./... (PASS — internal/cli 1.236s)
+  - go test -race ./... (PASS — internal/cli 2.538s)
+  - goimports / golangci-lint / staticcheck / govulncheck / goreleaser:
+    not installed locally; documented in the existing baseline note from
+    earlier iterations.
+- Remaining risks / follow-ups: none specific to this story. 409 stories
+  remain failing. The next priority-2 compose/* story is API-0071
+  (compose-deploy), which per typical Dokploy "deploy" verbs takes a
+  minimal composeId body — re-entering the minimal-id-only family with
+  API-0066/0067/0068 as direct precedents.
+- **Learnings for future iterations:**
+  - Do NOT assume compose-delete shares shape with application-delete:
+    Dokploy added a `deleteVolumes` boolean ONLY to compose-delete.
+    Always re-read internal/api/data/openapi.json's `requestBody.content
+    .application/json.schema.required` array even for "obvious-looking"
+    twins — the kebab-case operationId match does not imply identical
+    bodies.
+  - Boolean-flag fixtures should default to the non-destructive value
+    (`false` for delete-confirmation flags, `false` for force flags)
+    so the fixture stays semantically safe against any future
+    side-effect-aware test double, while still satisfying the
+    `required` invariant.
+  - The compose/* family up through API-0070 alternates between
+    minimal-composeId-only (0066/0067/0068/0070-with-extra-bool) and
+    multi-field bodies (0069). API-0071+ will continue to mix these
+    shapes; do not pattern-match on "compose-XXX" alone.
+---

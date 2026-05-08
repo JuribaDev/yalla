@@ -1233,6 +1233,35 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.method` / `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0070",
+		OperationID: "compose-delete",
+		Method:      http.MethodPost,
+		Path:        "/compose.delete",
+		Tag:         "compose",
+		// Mirrors the schema in `data/openapi.json` for /compose.delete:
+		// `composeId` (string) and `deleteVolumes` (boolean) are BOTH
+		// required — this is NOT a minimal-id-only POST despite living
+		// next to API-0066/0067/0068. The compose/* twin of
+		// application-delete (API-0015) is *not* a direct shape copy:
+		// application-delete only requires `applicationId`, while
+		// compose-delete adds the `deleteVolumes` flag. We send
+		// `deleteVolumes: false` so the wire fixture stays a non-mutating
+		// shape against any future side-effect-aware test double, while
+		// still satisfying the `required` invariant. Keep the fixture
+		// minimal-but-valid so a future schema validator wired into the
+		// harness still accepts it.
+		SampleBody: json.RawMessage(`{
+			"composeId": "compose-cov-delete-0070",
+			"deleteVolumes": false
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the empty-success convention shared by every prior
+		// application/* and compose/* mutation peer. Empty-object body
+		// keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
