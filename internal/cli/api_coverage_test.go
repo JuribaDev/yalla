@@ -8765,6 +8765,101 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0140",
+		OperationID: "github-getGithubRepositories",
+		Method:      http.MethodGet,
+		Path:        "/github.getGithubRepositories",
+		Tag:         "github",
+		// Second entry on the priority-5 github/* coverage roster:
+		// continues inside the `github-cov-*` per-tag fixture-isolation
+		// namespace opened by API-0139 `github-getGithubBranches`.
+		// Sandwiched between API-0139 and API-0160
+		// `mariadb-changeStatus` per the StoryID-sorted slice rule.
+		// Five priority-5 github/* peers remain reserved for upcoming
+		// stories (API-0141 `github-githubProviders`, API-0142
+		// `github-one`, API-0143 `github-testConnection`, API-0144
+		// `github-update`).
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json >
+		// /github.getGithubRepositories > get`: a **GET** with **a
+		// single REQUIRED query parameter** `githubId` (string), **no
+		// optional query parameters**, **no request body**, and
+		// responses 200/400/401/403/404/500. The 200 schema is `{}`
+		// with `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort. Wire shape is the
+		// canonical single-required-query GET — narrower than the
+		// two-required + one-optional API-0139
+		// `github-getGithubBranches` and structurally identical to
+		// API-0005 `ai-get`, API-0124 `environment-byProjectId`,
+		// API-0188 `mounts-allNamedByApplicationId`, API-0132
+		// `gitea-getGiteaBranches` (`giteaId`-only), and API-0133
+		// `gitea-getGiteaRepositories` (`giteaId`-only).
+		//
+		// **Shape positioning — single-required-query GET, no body.**
+		// The harness forwards `SampleQuery` via the `--input` JSON
+		// `query` field and the success-leg assertion at
+		// `runAPICoverageSuccess` re-reads `r.URL.Query()` to confirm
+		// the CLI propagated `githubId` verbatim. The
+		// `len(tc.SampleBody) > 0` gate stays inert so no
+		// content-type / body byte-comparison legs activate, exactly
+		// as on every prior id-bearing GET peer.
+		//
+		// **Every-optional-populated rule is structurally
+		// inapplicable.** The spec declares zero optional query
+		// parameters, so the rule codified at API-0137
+		// `gitea-testConnection` and reasserted at API-0139
+		// `github-getGithubBranches` has nothing to populate here —
+		// the lone REQUIRED `githubId` slot is the entire
+		// query-parameter surface and the success-leg
+		// query-comparison assertion exercises it on the only key
+		// available.
+		//
+		// **Family choice — 404 → CodeNotFound representative
+		// available but harness-default 401 → CodeAuth retained.**
+		// The spec declares 404 on this operation (an unknown
+		// `githubId` is a structurally valid not-found case), so the
+		// 404 → CodeNotFound override is *technically* applicable. We
+		// deliberately stick with the harness-default 401 → CodeAuth
+		// failure leg to mirror the API-0005 `ai-get`, API-0124
+		// `environment-byProjectId`, API-0188
+		// `mounts-allNamedByApplicationId`, API-0132
+		// `gitea-getGiteaBranches`, API-0133
+		// `gitea-getGiteaRepositories`, and API-0139
+		// `github-getGithubBranches` precedent — bearer-token
+		// enforcement runs before any GitHub provider lookup, so the
+		// universal `E_AUTH` mode is the most representative single
+		// failure leg every authenticated Dokploy operation must
+		// re-prove, and continues the per-tag opener-default
+		// 401 → CodeAuth locked in by the API-0139 github/* kickoff.
+		//
+		// **Fixture token base** `github-cov-getRepositories-0140`
+		// follows the established `<tag>-cov-<slug>-<storyID>`
+		// deterministic-but-clearly-fake naming convention shared
+		// with every covered case and is verified non-colliding with
+		// API-0139's `github-cov-getBranches-0139` literal and every
+		// prior covered tag's fixture-token namespace.
+		//
+		// The next case in the PRD-ordered priority-5 backlog is
+		// API-0141 `github-githubProviders` (declared a **GET** per
+		// the spec preview; the next contributor must re-verify the
+		// spec against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will continue inside the `github-cov-*` per-tag
+		// fixture-isolation namespace opened by API-0139).
+		SampleQuery: map[string][]string{
+			"githubId": {"github-cov-getRepositories-0140-githubId"},
+		},
+		// 200 response in the spec is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0160",
 		OperationID: "mariadb-changeStatus",
 		Method:      http.MethodPost,

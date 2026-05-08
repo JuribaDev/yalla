@@ -18838,3 +18838,93 @@ forward-reference lesson before assuming any field shape.
     distinction to keep grep traceability disjoint between query
     and body fixture sites.
 ---
+
+## 2026-05-08 - API-0140 - Cover github-getGithubRepositories (GET /github.getGithubRepositories)
+- Second entry on the priority-5 github/* coverage roster: appended an
+  apiCoverageCase for `github-getGithubRepositories` (GET
+  /github.getGithubRepositories) to
+  `internal/cli/api_coverage_test.go`, sandwiched between API-0139
+  `github-getGithubBranches` and API-0160 `mariadb-changeStatus` per
+  the StoryID-sorted slice rule. Continues inside the `github-cov-*`
+  per-tag fixture-isolation namespace opened at API-0139.
+- Spec re-verified per the API-0345..API-0444 forward-reference lesson
+  against `internal/api/data/openapi.json` >
+  `/github.getGithubRepositories` > `get`: tag github, **single
+  REQUIRED query parameter** `githubId` (string), **no optional query
+  parameters**, **no requestBody**, responses 200/400/401/403/404/500.
+  200 schema is `{}` with `additionalProperties: false`.
+- Shape positioning: **single-required-query GET, no body.**
+  Structurally identical to API-0005 `ai-get`, API-0124
+  `environment-byProjectId`, API-0188
+  `mounts-allNamedByApplicationId`, API-0132
+  `gitea-getGiteaBranches`, and API-0133
+  `gitea-getGiteaRepositories`. Narrower than the two-required +
+  one-optional API-0139 `github-getGithubBranches`. Every-optional-
+  populated rule is structurally inapplicable — the spec declares
+  zero optional query slots so the lone REQUIRED `githubId` is the
+  entire query surface.
+- Failure leg: harness-default 401 → CodeAuth retained per the
+  github/* namespace convention locked in by API-0139. The 404
+  override is structurally available (an unknown `githubId` is a
+  valid not-found case) but deliberately not used — bearer-token
+  enforcement runs before any GitHub provider lookup, so E_AUTH is
+  the most representative single failure leg every authenticated
+  Dokploy operation must re-prove.
+- Fixture token base `github-cov-getRepositories-0140` follows the
+  established `<tag>-cov-<slug>-<storyID>` deterministic-but-clearly-
+  fake naming convention. Verified non-colliding against API-0139's
+  `github-cov-getBranches-0139` literal.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (insert API-0140 case
+    between API-0139 `github-getGithubBranches` and API-0160
+    `mariadb-changeStatus`).
+  - `ralph/prd.json` (mark API-0140 passes=true).
+  - `ralph/progress.txt` (this entry).
+- Verification run from repo root: `gofmt -l .` clean, `gofmt -w .`,
+  `go mod tidy` no changes, `go vet ./...` clean,
+  `go test ./... -count=1` all packages pass,
+  `go test -race ./... -count=1` all packages pass.
+  `TestAPICoverage_RegistryInvariants/API-0140/github-getGithubRepositories`,
+  `TestAPICoverage_SchemaCommandWorks/API-0140/github-getGithubRepositories`,
+  `TestAPICoverage_ManifestListsOperation/API-0140/github-getGithubRepositories`,
+  `TestAPICoverage_SuccessRoundTrip/API-0140/github-getGithubRepositories`, and
+  `TestAPICoverage_RepresentativeFailure/API-0140/github-getGithubRepositories`
+  all PASS. Optional tooling not installed locally: goimports,
+  golangci-lint, staticcheck, govulncheck, goreleaser.
+- Results: 293/462 stories passing (63.4%).
+- Remaining risks / follow-ups: none specific to this story. The next
+  PRD-ordered priority-5 case is API-0141 `github-githubProviders`
+  (declared GET per spec preview). The next contributor must
+  re-verify the spec at `internal/api/data/openapi.json` per the
+  forward-reference lesson before assuming any field shape, and
+  should continue inside the `github-cov-*` per-tag fixture-
+  isolation namespace.
+- **Learnings for future iterations:**
+  - The single-required-query GET shape (one REQUIRED string-typed
+    query parameter, no body, 200=`{}`) now has SIX covered
+    instances — API-0005 `ai-get`, API-0124
+    `environment-byProjectId`, API-0188
+    `mounts-allNamedByApplicationId`, API-0132
+    `gitea-getGiteaBranches`, API-0133
+    `gitea-getGiteaRepositories`, and now API-0140
+    `github-getGithubRepositories`. Future similar shapes are
+    safe to model on this cohort verbatim.
+  - When an OpenAPI operation declares zero optional query
+    parameters, the every-optional-populated rule (API-0137,
+    API-0139) is structurally inapplicable — do NOT invent
+    optional fields just to satisfy the rule. The success-leg
+    query-comparison assertion still exercises every key the spec
+    declares.
+  - Per-tag fixture-isolation namespaces are *opened* exactly once
+    by the first story to ship for a tag (the kickoff comment
+    enumerates every prior closed namespace) and then *continued*
+    by subsequent same-tag stories with a much shorter comment
+    that simply references the opener. Do not repeat the full
+    closed-namespace enumeration on every continuing entry.
+  - The 404 → CodeNotFound override remains structurally available
+    on parameter-bearing GETs but the harness-default
+    401 → CodeAuth continues to be the per-tag opener default —
+    the github/* roster's API-0139 kickoff locked it in, and
+    API-0140 continues that choice. Family-choice consistency
+    inside a tag's fixture namespace is part of the contract.
+---
