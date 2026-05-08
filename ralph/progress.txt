@@ -19109,3 +19109,64 @@ forward-reference lesson before assuming any field shape.
     positioning block; the failure-axis distinction is justified in
     the family-choice block.
 ---
+
+## 2026-05-08 - API-0143 (github-testConnection)
+- Added `apiCoverageCases` entry for API-0143 `github-testConnection` in
+  `internal/cli/api_coverage_test.go`, sandwiched between API-0142
+  `github-one` and API-0160 `mariadb-changeStatus` per the
+  StoryID-sorted slice rule.
+- Spec re-verified against `internal/api/data/openapi.json` >
+  `/github.testConnection` > `post`: POST, zero parameters, REQUIRED
+  application/json body with **one REQUIRED string field** (`githubId`)
+  and **no optional fields**. Responses 200/400/401/403/500 (no 404).
+  200 response is `{}` with `additionalProperties: false`. Strictly
+  simpler than API-0137 `gitea-testConnection`'s two-optional shape.
+- Fixture token base `github-cov-testConn-0143`; sole literal
+  `github-cov-testConn-0143-githubId` placed inline in the body. No
+  `--input` query, no path params. Empty-success `SuccessResponse: "{}"`.
+- Failure leg uses harness defaults (401 → CodeAuth) — the 404 →
+  CodeNotFound override slot was already consumed by API-0142
+  `github-one` per the per-tag opener convention; no 404 is even
+  declared on `github-testConnection`.
+- Files changed: `internal/cli/api_coverage_test.go`, `ralph/prd.json`
+  (passes flipped to true), `ralph/progress.txt`.
+- Verification: `gofmt -w .` (no diff), `go vet ./...` (clean),
+  `go test ./...` (all packages pass), `go test -race ./...` (clean),
+  `go mod tidy` (no diff). Targeted run of
+  `go test -v -run TestAPICoverage ./internal/cli/...` shows all five
+  contract subtests for API-0143/github-testConnection PASS:
+  RegistryInvariants, SchemaCommandWorks, ManifestListsOperation,
+  SuccessRoundTrip, RepresentativeFailure.
+- Remaining risks / follow-ups: API-0144 `github-update` is the next
+  pending github/* peer; the forward-reference comment in this entry
+  reserves the `github-cov-update-0144` slug for it. The next
+  contributor must re-verify the spec per-operation per the slug-
+  prefix-is-not-shape lesson reasserted at API-0371..API-0375.
+- **Learnings for future iterations:**
+  - **Slug-prefix-is-not-shape vindicated again.** API-0137
+    `gitea-testConnection` body = 2 optional strings (zero required);
+    API-0143 `github-testConnection` body = 1 required string (zero
+    optional). Same `testConnection` slug, completely different
+    required/optional split. Always re-verify against
+    `internal/api/data/openapi.json` per-operation; never lift a
+    fixture from a same-slug peer.
+  - **Empty-fixture-suffix convention split.** Body-scalar POSTs use
+    bare `<base>-<field>` literals (no `-fixture` suffix) to match the
+    API-0137 `gitea-testConnection` precedent; canonical `*-one` by-id
+    GETs (e.g. API-0142) use `<base>-<field>-fixture`. Mixing the two
+    forms inside the same per-tag namespace is harmless but breaks the
+    per-tag readability convention.
+  - **Failure-leg override slot is one-per-tag.** The 404 →
+    CodeNotFound override is reserved for the canonical `*-one` by-id
+    GET peer of each tag. Once consumed (here at API-0142
+    `github-one`), every subsequent github/* entry should fall back to
+    the harness default 401 → CodeAuth unless a stronger
+    distinguishing failure mode exists. `testConnection`'s
+    single-required-string body is too generic to claim 400 →
+    CodeInvalidInput, mirroring the rationale already laid down at
+    API-0137.
+  - The `apiCoverageCases` table-driven harness covers all five
+    invariants (registry, schema, manifest, success round-trip,
+    representative failure) automatically; adding a new operation is
+    purely a struct-literal append + spec re-verification.
+---
