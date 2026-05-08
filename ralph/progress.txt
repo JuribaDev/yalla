@@ -19008,3 +19008,104 @@ forward-reference lesson before assuming any field shape.
     Account-wide / platform-wide listings stick with the harness-
     default 401 → CodeAuth leg even when the spec declares 404.
 ---
+
+## 2026-05-08 - API-0142 - Cover github-one (GET /github.one)
+- Fourth entry on the priority-5 github/* coverage roster and the
+  **canonical by-id GET peer** for the github tag. Appended one new
+  `apiCoverageCase` literal to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go`, sandwiched between API-0141
+  `github-githubProviders` and API-0160 `mariadb-changeStatus` per
+  the StoryID-sorted slice rule. Continues inside the `github-cov-*`
+  per-tag fixture-isolation namespace opened by API-0139 and extended
+  through API-0140/API-0141.
+- Spec re-verified per the API-0345..API-0444 forward-reference lesson
+  against `internal/api/data/openapi.json` > `/github.one` > `get`:
+  tag github, **single REQUIRED query parameter** `githubId` (string),
+  **no optional query parameters**, **no requestBody**, responses
+  200/400/401/403/404/500. 200 schema is `{}` with
+  `additionalProperties: false`.
+- Shape positioning: **canonical `*-one` by-id GET, no body.**
+  Byte-for-byte identical to the cross-tag canonical-by-id-GET
+  precedent chain at API-0008 `ai-one`, API-0021 `application-one`,
+  API-0084 `compose-one`, API-0136 `gitea-one`, API-0164
+  `mariadb-one`, API-0178 `mongo-one`, API-0251 `organization-one`,
+  API-0294 `project-one`, and API-0342 `server-one`. Every-optional-
+  populated rule structurally inapplicable — zero optional slots, the
+  lone REQUIRED `githubId` is the entire query surface.
+- Failure leg: **404 -> CodeNotFound override applied.** This is the
+  fifth roster-level act on the reserved override (after API-0342
+  `server-one` opened it, API-0136 `gitea-one` extended it, API-0164
+  `mariadb-one` re-asserted it, and API-0178 `mongo-one` re-asserted
+  it again). The 404 code-path was reserved at API-0139..API-0141
+  for `github-one` per the per-tag opener convention; API-0141's
+  hand-off comment explicitly identified API-0142 as the candidate.
+  Auth (401) was already proved by every prior github/* peer, so
+  resource-not-found is the most informative failure to re-prove for
+  this specific peer's call site.
+- Fixture token base `github-cov-one-0142` follows the established
+  `<tag>-cov-<slug>-<storyID>` convention. The literal
+  `github-cov-one-0142-githubId-fixture` carries the `-fixture`
+  suffix that matches API-0136 `gitea-one`, API-0164 `mariadb-one`,
+  and API-0178 `mongo-one` precedent for the analogous `<id>` field
+  name on canonical `*-one` by-id GETs (distinct from the bare
+  `<base>-<field>` form used in body-scalar POSTs). Verified
+  non-colliding against API-0139's `github-cov-getBranches-0139`
+  literals, API-0140's `github-cov-getRepositories-0140-githubId`,
+  and API-0141's no-fixture-token entry, plus every prior tag's
+  namespace.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (insert API-0142 case
+    between API-0141 `github-githubProviders` and API-0160
+    `mariadb-changeStatus`).
+  - `ralph/prd.json` (mark API-0142 passes=true).
+  - `ralph/progress.txt` (this entry).
+- Verification run from repo root: `gofmt -l .` clean, `gofmt -w .`,
+  `go mod tidy` no changes, `go vet ./...` clean,
+  `go test ./... -count=1` all packages pass (cli 2.127s),
+  `go test -race ./... -count=1` all packages pass (cli 3.112s).
+  `TestAPICoverage_RegistryInvariants/API-0142/github-one`,
+  `TestAPICoverage_SchemaCommandWorks/API-0142/github-one`,
+  `TestAPICoverage_ManifestListsOperation/API-0142/github-one`,
+  `TestAPICoverage_SuccessRoundTrip/API-0142/github-one`, and
+  `TestAPICoverage_RepresentativeFailure/API-0142/github-one`
+  all PASS. Optional tooling not installed locally: `goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`.
+- Results: 295/462 stories passing (63.9%).
+- Remaining risks / follow-ups: none specific to this story. The next
+  PRD-ordered priority-5 case is API-0143 `github-testConnection`
+  (declared a POST per the spec preview). The next contributor must
+  re-verify the spec at `internal/api/data/openapi.json` per the
+  forward-reference lesson before assuming any field shape, and
+  should continue inside the `github-cov-*` per-tag fixture-isolation
+  namespace.
+- **Learnings for future iterations:**
+  - The `*-one` by-id GET pattern is now well-established across
+    10 tags (ai/application/compose/gitea/github/mariadb/mongo/
+    organization/project/server). When implementing the by-id GET
+    peer for a new tag, mirror API-0142 `github-one` verbatim with
+    the resource-id field renamed and the prior namespaces enumerated
+    in the orthogonality block. The 404 -> CodeNotFound override is
+    the per-tag-roster-reserved failure leg for this peer.
+  - 404 appears on the canonical `*-one` GETs across both the github/*
+    and mongo/* / mariadb/* rosters, but the tRPC convention collapses
+    missing-target into 400/validation for action-on-known-id POSTs
+    (e.g. github/* will likely follow the same pattern when
+    `github-update` and `github-testConnection` ship). This pattern
+    is consistent across mariadb/mongo/github and is expected to
+    repeat in mysql/postgres/redis/compose `*-one` GETs.
+  - The `-fixture` suffix on single-id-scalar query fixtures
+    (`<base>-<field>-fixture`) is the cross-tag convention for
+    canonical `*-one` GETs across at least four tags now (gitea,
+    mariadb, mongo, github). Preserve this distinction to keep grep
+    traceability disjoint between query and body fixture sites.
+  - **When two adjacent github/* peers share the same parameter
+    shape but only one is the canonical `*-one` by-id GET (e.g.
+    API-0140 `github-getGithubRepositories` vs API-0142
+    `github-one`, both `githubId`-only), distinguish them on the
+    failure axis instead of the parameter axis.** API-0140 retained
+    401 -> CodeAuth (auth invariant for the namespace); API-0142
+    overrides to 404 -> CodeNotFound (canonical *-one peer). The
+    parameter-axis equivalence is documented in API-0142's shape-
+    positioning block; the failure-axis distinction is justified in
+    the family-choice block.
+---
