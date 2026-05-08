@@ -3724,3 +3724,50 @@
     smoke test for the encoder path — the harness sends bytes verbatim,
     but a future validator hook would reject improperly escaped values.
 ---
+
+## 2026-05-08 - API-0066 (compose-cancelDeployment)
+- Implemented per-operation contract coverage for compose-cancelDeployment
+  (POST /compose.cancelDeployment), the FIRST entry in the compose/* roster
+  inside coveredAPIOperations.
+- Files changed:
+  - internal/cli/api_coverage_test.go (+25 lines, single appended apiCoverageCase
+    sorted after API-0039 / application-updateTraefikConfig)
+  - ralph/prd.json (passes: false -> true for API-0066)
+  - ralph/progress.txt (this entry)
+- Implementation: identical shape to the minimal-applicationId POST family
+  (API-0011 / 0012 / 0013 / 0015 / 0024 / 0036 / 0037) with the single
+  required string field renamed to composeId per the OpenAPI schema. The
+  shared harness in internal/cli/api_coverage_test.go already derives
+  registry / schema get / manifest inclusion / httptest success / 401 ->
+  E_AUTH failure assertions from the entry alone, so no production-code
+  change is required to ship this story.
+- Verification (from /Users/juribadev/projects/poc/yalla-claude):
+  - gofmt -w .   (clean)
+  - go mod tidy  (clean)
+  - go vet ./... (PASS)
+  - go test ./... (PASS — includes the five new compose-cancelDeployment subtests
+    inside TestAPICoverage_RegistryInvariants / SchemaGet / Manifest /
+    Success / Failure)
+  - go test -race ./... (PASS)
+  - goimports / golangci-lint / staticcheck / govulncheck / goreleaser:
+    not installed locally; documented in the existing baseline note from
+    earlier iterations.
+- Remaining risks / follow-ups: none specific to this story. 412 stories
+  remain failing. The next priority-2 compose/* story is API-0067
+  (compose-cleanQueues), which is the same minimal-composeId POST shape.
+- **Learnings for future iterations:**
+  - The compose/* roster is structurally a copy of the application/* roster
+    with applicationId renamed to composeId. Most P2 compose/* POSTs that
+    take a single id (cancelDeployment / cleanQueues / clearDeployments /
+    delete / redeploy / start / stop / etc.) collapse to the same
+    minimal-but-valid SampleBody shape: {"composeId": "compose-cov-<slug>-<storyID>"}.
+    Future iterations can batch-add these entries with confidence so long
+    as the OpenAPI spec confirms the single-required-field shape.
+  - Insertion order in coveredAPIOperations is by StoryID. Since the slice
+    is currently dense up to API-0039 and then jumps to API-0066, the new
+    entry slots at the END of the slice. Once API-0040..0065 (backup/* and
+    bitbucket/*) land they will need to be inserted ABOVE the compose/*
+    entries to preserve the sort.
+  - The OpenAPI source of truth is internal/api/data/openapi.json (NOT
+    data/openapi.json — that path does not exist at the repo root).
+---
