@@ -4459,3 +4459,53 @@
     and avoids whitespace churn that would obscure the intent in
     `git diff ralph/prd.json`.
 ---
+## 2026-05-08 - API-0081
+- Implemented coverage for compose-loadMountsByService
+  (GET /compose.loadMountsByService).
+- Files changed:
+  - internal/cli/api_coverage_test.go — appended one apiCoverageCase
+    entry between API-0080 (compose-killBuild) and the closing brace of
+    coveredAPIOperations. Mirrors `data/openapi.json >
+    /compose.loadMountsByService > get`: no body, TWO required query
+    parameters (`composeId`, `serviceName`), 200 = `{}` with
+    additionalProperties:false. First compose/* GET to exercise the
+    multi-required-query-param path; comment cross-links the prior
+    compose/* GET trio (API-0075/0076/0077) and notes API-0078 as the
+    closest two-required-fields analogue (POST body, not query).
+  - ralph/prd.json — flipped API-0081.passes from false to true.
+- Verification run (from repo root):
+  - gofmt -l . — clean (no diffs).
+  - go mod tidy — clean.
+  - go vet ./... — clean.
+  - go test ./... — all 9 packages PASS (internal/cli 1.015s including
+    the 5 new TestAPICoverage_* subtests for API-0081).
+  - go test -race ./... — all 9 packages PASS (internal/cli 2.530s).
+  - goimports / golangci-lint / staticcheck / govulncheck / goreleaser
+    not installed locally; documented as missing per project convention.
+- Results: API-0081 acceptance criteria all green via the existing
+  five-test harness (RegistryInvariants, SchemaCommandWorks,
+  ManifestListsOperation, SuccessRoundTrip, RepresentativeFailure).
+  395 user stories remain with passes=false.
+- Remaining risks or follow-ups:
+  - None. The compose/* GET roster is now four entries strong
+    (API-0075/0076/0077/0081). Next compose/* candidate is API-0082
+    (compose-loadServices, GET) per priority-then-id ordering.
+- **Learnings for future iterations:**
+  - The harness `SampleQuery map[string][]string` field already supports
+    multiple keys with no harness change — `runAPICoverageSuccess`
+    re-reads `r.URL.Query()` and the `--input` JSON `query` field is
+    forwarded verbatim. So a multi-required-query-param GET is just a
+    multi-key SampleQuery; no production code touched.
+  - The slug convention scales naturally to compound keys: each
+    distinct query value gets the same `compose-cov-<verb>-<storyID>`
+    prefix with a per-key suffix (`-svc` for serviceName here). This
+    keeps cross-story grep working while preserving uniqueness so a
+    future server-side validator that checks distinctness still
+    accepts the fixture.
+  - The PRD priority field is numeric where LOWER = higher priority.
+    API-0040..API-0080 had priority 4; the next pending block
+    (API-0081 onward) is priority 2, so it correctly sorts ahead of
+    every priority-3/4/5 story even though its numeric ID is larger.
+    Sort by `(priority, id)` — never by ID alone — when picking the
+    next story.
+---

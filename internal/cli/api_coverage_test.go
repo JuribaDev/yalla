@@ -1620,6 +1620,39 @@ var coveredAPIOperations = []apiCoverageCase{
 		// payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0081",
+		OperationID: "compose-loadMountsByService",
+		Method:      http.MethodGet,
+		Path:        "/compose.loadMountsByService",
+		Tag:         "compose",
+		// Fourth GET-shaped entry in the compose/* coverage roster after
+		// API-0075 (getConvertedCompose), API-0076 (getDefaultCommand), and
+		// API-0077 (getTags). The spec at `data/openapi.json >
+		// /compose.loadMountsByService > get` declares no request body and
+		// TWO REQUIRED query parameters — `composeId` (string, the target
+		// compose record) and `serviceName` (string, the service inside that
+		// compose whose mount entries should be enumerated). This is the
+		// first compose/* GET that exercises the multi-required-query-param
+		// path; the closest structural analogue is API-0078 (compose-import)
+		// which carries two required fields but as a POST body. The harness
+		// forwards SampleQuery via the `--input` JSON `query` field, and
+		// `runAPICoverageSuccess` re-reads `r.URL.Query()` to confirm the
+		// CLI propagated both params verbatim. We keep the slug convention
+		// `compose-cov-<slug>-<storyID>` consistent with every prior
+		// compose/* GET (API-0075/0076/0077) so cross-story grep continues
+		// to find every fixture.
+		SampleQuery: map[string][]string{
+			"composeId":   {"compose-cov-load-mounts-by-service-0081"},
+			"serviceName": {"compose-cov-load-mounts-by-service-0081-svc"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the empty-success convention shared by every prior
+		// compose/* peer. Empty-object body keeps the success-leg envelope
+		// assertion focused on `data.method` / `data.status` rather than
+		// payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
