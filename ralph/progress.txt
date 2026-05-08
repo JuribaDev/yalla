@@ -16728,3 +16728,49 @@ Learnings for future iterations:
     representative failure leg unless validation is uniquely
     distinguishing.
 ---
+
+## 2026-05-08 - API-0333
+- Implemented contract coverage for security-one (GET /security.one) by
+  adding a fixture to internal/cli/api_coverage_test.go with the third
+  security/* operation in the security-cov-* per-tag namespace opened by
+  API-0331.
+- Files changed:
+  - internal/cli/api_coverage_test.go (new fixture between API-0332 and
+    API-0335 — single-required-string-query GET, 200 `{}` empty-success,
+    fixture id `security-cov-one-0333`)
+  - ralph/prd.json (passes: true on API-0333)
+  - ralph/progress.txt (this entry)
+- Verification:
+  - gofmt -w . (clean)
+  - go vet ./... (clean)
+  - go test ./... (all packages passing)
+  - go test -race ./... (all packages passing, including
+    internal/cli 3.4s)
+  - go mod tidy (no changes)
+  - goimports / golangci-lint / staticcheck / govulncheck / goreleaser
+    not installed locally — documented as missing per the existing
+    Codebase Patterns rule, never silently skipped.
+- Remaining risks / follow-ups:
+  - API-0334 `security-update` is the next priority-3 backlog story; the
+    next contributor must re-verify the spec against
+    internal/api/data/openapi.json per the forward-reference lesson and
+    will continue inside the `security-cov-*` namespace.
+- Learnings for future iterations:
+  - The spec for /security.one declares 404 (unknown securityId) but the
+    cross-tag id-bearing GET cohort (API-0005, API-0113, API-0115..0117,
+    API-0121, API-0124, API-0127, API-0188, API-0190, API-0191, API-0270,
+    API-0300) consistently retains the harness-default 401→CodeAuth
+    failure leg because bearer-token enforcement runs before the security
+    lookup. Stay on this default for security/* GETs where credential
+    gating is the entire purpose of the operation — auth invariant is
+    always the most representative single failure mode.
+  - API-0300 `redirects-one` is the freshest cross-tag direct shape peer
+    (single-required-string-query GET, `{}` empty-success). Mirror its
+    `SampleQuery: map[string][]string{...}` pattern verbatim and let the
+    `len(tc.SampleBody) > 0` gate stay inert.
+  - The forward-reference pointer in API-0332's closing block (which
+    pre-named API-0333 `security-one` as a GET) was correct and confirmed
+    by the spec — but the rule still applies: every new story must
+    re-verify against `internal/api/data/openapi.json` itself before
+    assuming any field shape, because forward references can drift.
+---
