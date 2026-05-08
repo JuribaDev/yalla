@@ -5330,6 +5330,112 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0351",
+		OperationID: "settings-assignDomainServer",
+		Method:      http.MethodPost,
+		Path:        "/settings.assignDomainServer",
+		Tag:         "settings",
+		// **First** entry on the settings/* coverage roster, opening
+		// the tag in the same way API-0335 `server-create` opened
+		// server/* and API-0246 `organization-active` opened
+		// organization/*. As a tag-opener it **establishes a fresh
+		// per-tag fixture-isolation namespace** (`set-cov-*`)
+		// orthogonal to every prior tag's namespace. Subsequent
+		// settings/* peers (API-0352 `settings-checkGPUStatus`,
+		// API-0353 `settings-cleanAll`, API-0354
+		// `settings-cleanAllDeploymentQueue`, API-0355
+		// `settings-cleanDockerBuilder`, etc.) must inherit
+		// `set-cov-*` and never back-reference the closed
+		// `srv-cov-*` (server/*), `proj-cov-*` (project/*),
+		// `org-cov-*` (organization/*), `compose-cov-*`,
+		// `app-cov-*`, `ai-cov-*`, or any other prior namespace —
+		// per the per-tag isolation rule reasserted at
+		// API-0335..API-0350 and originally established at
+		// API-0246 `organization-active`.
+		//
+		// **Spec re-verified per the API-0345 / API-0347 / API-0348 /
+		// API-0349 / API-0350 forward-reference lesson** against
+		// `internal/api/data/openapi.json > /settings.assignDomainServer
+		// > post`: requestBody.required = true, content
+		// `application/json` with object schema declaring four
+		// properties — `host` (string, **required**),
+		// `certificateType` (string enum
+		// `letsencrypt|none|custom`, **required**),
+		// `letsEncryptEmail` (anyOf string-or-empty-string-or-null,
+		// optional), `https` (boolean, optional). Zero parameters
+		// (no query, no path, no header). Responses
+		// 200/400/401/403/500 — note the **absence of 404**
+		// (settings is a singleton, not a by-id resource), which
+		// confirms the per-tag opener convention that 404 →
+		// CodeNotFound is reserved for `*-one` peers, not the
+		// settings opener. The 200 schema is `{}` with
+		// `additionalProperties: false`, matching the cross-tag
+		// success-shape precedent set by API-0001
+		// `admin-setupMonitoring`, API-0335 `server-create`, etc.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base `set-cov-assignDomainServer-0351`,
+		//     suffixed by the field role for collision safety:
+		//     `set-cov-assignDomainServer-0351.example.test` for the
+		//     `host` slot (a fully-qualified DNS-shaped string the
+		//     server expects), and
+		//     `set-cov-assignDomainServer-0351@example.test` for the
+		//     `letsEncryptEmail` slot (an email-shaped string).
+		//     Both are **deterministic-but-clearly-fake** and live
+		//     only in a per-test `t.TempDir()` `--input` JSON file
+		//     so the values cannot leak across cases. Future
+		//     settings/* peers needing fixtures must keep the
+		//     `set-cov-*` namespace and never back-reference any
+		//     prior tag's namespace.
+		//   * `certificateType` is fixed to `"none"` (the safest
+		//     enum member — the literal `"letsencrypt"` would imply
+		//     the fixture wanted to provision a cert, and
+		//     `"custom"` would imply the fixture supplied a custom
+		//     cert payload; `"none"` keeps the wire shape minimal
+		//     while still satisfying the required-enum constraint).
+		//   * `https` is set to `false` to keep the fixture in the
+		//     no-TLS branch, mirroring the `"none"` certificate
+		//     choice.
+		//   * Optional `letsEncryptEmail` is supplied even though
+		//     the field is optional, per the API-0004
+		//     `ai-deploy` convention reasserted across server/* —
+		//     populating optionals with deterministic-but-clearly-fake
+		//     values exercises the JSON serialiser's optional-field
+		//     branch on the wire.
+		//
+		// **Failure-leg fields are intentionally omitted.** Auth is
+		// the universal failure mode every Dokploy operation must
+		// re-prove, so 401 → CodeAuth via the harness default
+		// (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""`
+		// → CodeAuth) stays the most informative representative.
+		// 400 → CodeInvalidInput stays reserved for stories where
+		// payload validation is the operation's distinguishing
+		// failure mode; this opener uses the canonical 401.
+		//
+		// This entry **opens the settings/* tag**. Future
+		// contributors authoring API-0352 `settings-checkGPUStatus`
+		// (the next settings/* peer, a parameter-free GET) should
+		// grep this entry first for the
+		// `set-cov-assignDomainServer-0351` fixture-token namespace
+		// pattern and re-verify the spec per the forward-reference
+		// lesson — `settings-checkGPUStatus` is shaped like a
+		// parameter-free GET (cf. API-0006 `ai-getAll`, API-0350
+		// `server-withSSHKey`) and not like this POST-with-body
+		// opener.
+		SampleBody: json.RawMessage(`{
+			"host": "set-cov-assignDomainServer-0351.example.test",
+			"certificateType": "none",
+			"letsEncryptEmail": "set-cov-assignDomainServer-0351@example.test",
+			"https": false
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior tag-opener peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

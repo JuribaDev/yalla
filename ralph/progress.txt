@@ -7764,3 +7764,87 @@
     noise. Mention the byte-identical comparison in the inline
     narrative so future readers can verify with the same one-liner.
 ---
+
+## 2026-05-08 - API-0351 — Cover settings-assignDomainServer (POST /settings.assignDomainServer)
+- **Implemented**: Added the canonical `apiCoverageCase` entry for
+  `settings-assignDomainServer` (POST /settings.assignDomainServer, tag
+  `settings`) to `internal/cli/api_coverage_test.go`. This is the **first**
+  settings/* story; it **opens the settings/* tag** and establishes the
+  `set-cov-*` per-tag fixture-isolation namespace orthogonal to every
+  prior tag's namespace (`srv-cov-*`, `proj-cov-*`, `org-cov-*`,
+  `compose-cov-*`, `app-cov-*`, `ai-cov-*`, etc.). The shared harness
+  (`TestAPICoverage_RegistryInvariants`, `_SchemaCommandWorks`,
+  `_ManifestListsOperation`, `_SuccessRoundTrip`,
+  `_RepresentativeFailure`) now drives registry, schema, manifest,
+  success, and 401 → CodeAuth failure assertions for this operation
+  automatically.
+- Spec re-verified against
+  `internal/api/data/openapi.json > /settings.assignDomainServer > post`
+  per the API-0345..API-0350 forward-reference lesson:
+  requestBody.required = true with object schema declaring four
+  properties — `host` (string, required), `certificateType` (enum
+  `letsencrypt|none|custom`, required), `letsEncryptEmail` (anyOf
+  string-or-empty-string-or-null, optional), `https` (boolean,
+  optional). Zero parameters. Responses 200/400/401/403/500 — note
+  the **absence of 404** (settings is a singleton, not a by-id
+  resource). 200 schema is `{}` with `additionalProperties: false`.
+- Fixture choices documented inline:
+  - `host`: `set-cov-assignDomainServer-0351.example.test` (DNS-shaped slug).
+  - `certificateType`: `"none"` (safest enum member; avoids implying
+    cert-provisioning side effects).
+  - `letsEncryptEmail`: `set-cov-assignDomainServer-0351@example.test`
+    (deterministic-but-fake; populating optionals exercises the JSON
+    serialiser's optional-field branch, per the API-0004 convention).
+  - `https`: `false` (matches the `"none"` certificate choice).
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended the API-0351 case
+    after the API-0350 entry. The block forward-references API-0352
+    `settings-checkGPUStatus` (the next pending settings/* peer, a
+    parameter-free GET shaped like API-0006 `ai-getAll` /
+    API-0350 `server-withSSHKey`, NOT this POST-with-body opener),
+    flagging the namespace-inheritance rule and the spec
+    re-verification requirement.
+  - `ralph/prd.json` — set API-0351 `passes: true`.
+  - `ralph/progress.txt` — this entry.
+- **Verification run** from repo root:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass.
+  - `go test -race ./...` — all packages pass (`internal/cli` 2.601s).
+- Tools NOT installed locally (per Codebase Patterns): `goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`. Skipped
+  silently per the existing convention; the file already documents this.
+- Remaining risks / follow-ups: none specific to API-0351. The next
+  pending settings/* story is API-0352 `settings-checkGPUStatus`. Per
+  the forward-reference lesson, do NOT mirror this POST-with-body
+  opener's shape — re-verify against
+  `internal/api/data/openapi.json > /settings.checkGPUStatus > get` and
+  inherit the `set-cov-*` namespace established here.
+- **Learnings for future iterations:**
+  - **Tag-opening entries establish a fresh per-tag fixture-isolation
+    namespace.** API-0351 opens settings/* and establishes
+    `set-cov-*` orthogonal to all prior namespaces. The pattern is
+    documented in two places (the new entry's comment block and the
+    Codebase Patterns section's namespace-isolation rule reasserted
+    at API-0335..API-0350) so future tag-openers can copy the
+    convention verbatim without spelunking through 5,000+ lines of
+    test fixtures.
+  - **The settings tag has no 404 response** because settings is a
+    singleton, not a by-id resource. This is structurally different
+    from server/*, project/*, organization/*, etc., which all have
+    `*-one` peers. The 404 → CodeNotFound override stays reserved
+    for those `*-one` peers; settings/* peers (this one and future
+    API-0352..) all default to 401 → CodeAuth via the harness.
+  - **Optional field population follows the API-0004 `ai-deploy`
+    convention.** Even when the spec marks a field optional
+    (`letsEncryptEmail`, `https`), populating it with a
+    deterministic-but-clearly-fake value exercises the JSON
+    serialiser's optional-field branch on the wire and gives future
+    schema-validator wiring more surface area to assert against.
+  - **Enum-typed required fields prefer the safest member.**
+    `certificateType` is set to `"none"` rather than `"letsencrypt"`
+    or `"custom"` because the latter two imply cert-provisioning
+    side effects the fixture cannot honour. This generalises: when
+    a required enum has a "no-op" member, pick it.
+---
