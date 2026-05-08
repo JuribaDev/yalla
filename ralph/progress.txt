@@ -15837,3 +15837,65 @@ Learnings for future iterations:
     schema, and manifest are all built at runtime from the embedded
     spec — no extra registration/manifest edits required.
 ---
+
+## 2026-05-08 19:15 UTC - API-0189
+- Added coveredAPIOperations entry for mounts-create (POST /mounts.create)
+  in internal/cli/api_coverage_test.go, slotted in StoryID order
+  immediately after API-0188 mounts-allNamedByApplicationId so the
+  mounts/* roster opens with its parameter-bearing GET (API-0188) and
+  follows with its first request-body POST (API-0189).
+- Spec re-verified against internal/api/data/openapi.json > /mounts.create
+  > post: POST, no parameters, requestBody REQUIRED, three REQUIRED fields
+  (type string-enum bind|volume|file, mountPath string, serviceId string),
+  five OPTIONAL anyOf [string, null] / string-enum fields (hostPath,
+  volumeName, content, filePath, serviceType). Responses 200/400/401/403/500
+  (no 404 — *-create mutation has no by-id read leg, matching cross-tag
+  precedent on API-0118 domain-create, API-0125 environment-create,
+  API-0249 organization-create).
+- Fixture base "mounts-cov-create-0189" continues the mounts-cov-*
+  per-tag fixture-isolation namespace opened by API-0188. SampleBody
+  populates only the three REQUIRED fields (type=bind, mountPath, serviceId)
+  — minimal positive case, optional fields deferred per established
+  precedent. 401→CodeAuth failure leg retained per harness default
+  (404 unavailable; 400 reserved for validation-distinguished operations).
+- Files changed:
+  - internal/cli/api_coverage_test.go — appended one apiCoverageCase entry
+    (StoryID API-0189) between the API-0188 close and the API-0246
+    block.
+  - ralph/prd.json — flipped userStories[id=API-0189].passes to true.
+  - ralph/progress.txt — this entry.
+- Verification (all green):
+  - gofmt -w .
+  - go mod tidy
+  - go vet ./...
+  - go test ./...
+  - go test -race ./...
+  - go test ./internal/cli/ -run TestAPICoverage -v (API-0189 subtest PASS)
+- Remaining risks / follow-ups: none. mounts/* roster continues with
+  API-0190 mounts-listByServiceId (GET) per the forward-reference embedded
+  in API-0189's comment block. The next contributor must re-verify the
+  spec for that operation per the forward-reference lesson before
+  assuming any field carries over.
+- **Learnings for future iterations:**
+  - The "highest priority" PRD ordering uses LOWER number = HIGHER
+    priority (priority 1, 2 fully done; priority 3 has 20 remaining and
+    is the current head; priority 4 and 5 are deeper backlog). Do not
+    sort descending by priority value — that picks priority-5 work
+    while priority-3 is open.
+  - mounts/* is the second per-tag roster (after environment/*) on
+    the priority-3 backlog. The mounts-cov-* fixture namespace was
+    opened by API-0188 and continues here; mountains of closed
+    namespaces (admin/ai/app/backup/bb/cert/clu/compose/deployment/
+    dest/docker/domain/environment/org/proj/set/srv/usr-cov-*) must be
+    listed in the comment block per the per-tag isolation rule.
+  - Three-required-field mixed-type body shape (string-enum + two
+    plain strings) is a NEW shape on the covered-POST roster — prior
+    POST cohort was either two-required-string (API-0118/0122/0125)
+    or single-required-string (API-0249). The harness's byte-level
+    body assertion treats enums as plain strings on the wire, so no
+    harness extension is required.
+  - As with every prior *-create entry on closed tags, the spec
+    omits 404 because Dokploy's tRPC convention collapses missing-
+    target into 400/validation. The 401→CodeAuth harness default is
+    therefore the most representative single failure leg.
+---
