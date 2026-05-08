@@ -21098,3 +21098,127 @@ forward-reference lesson before assuming any field shape.
     `mysql-one`).
 ---
 
+## 2026-05-09 - API-0204
+- Story: Cover `mysql-search` (GET /mysql.search) through the API
+  coverage harness in `internal/cli/api_coverage_test.go`. Operation
+  already lives in the embedded OpenAPI spec at `/mysql.search` >
+  `get` (no requestBody; eight OPTIONAL query parameters: `q`,
+  `name`, `appName`, `description`, `projectId`, `environmentId`,
+  `limit` (number, default 20), `offset` (number, default 0);
+  responses 200/400/401/403/404/500; empty-object 200 body); only
+  the per-tag harness fixture entry was missing. Forward reference
+  at the tail of the API-0203 `mysql-saveExternalPort` entry already
+  named API-0204 verbatim, which pinned the insertion point
+  unambiguously.
+- Implementation followed the API-0170 `mariadb-search` and API-0184
+  `mongo-search` precedents (the cross-tag shape ancestors for the
+  eight-optional-param `*-search` GET family with byte-for-byte
+  identical query parameter list), reusing the representative-subset
+  fixture pattern (`q` for free-text, `projectId` for scoped filter,
+  `limit`/`offset` for paginated numerics) so the success leg
+  exercises three distinct semantic axes without inflating the
+  fixture into a noisy 8-key map. SuccessResponse is `{}` per spec.
+  Defaults take SuccessStatus=200, FailureStatus=401,
+  FailureCode=yerr.CodeAuth — the harness defaults locked in by
+  API-0001 and reaffirmed across the entire mysql/* roster
+  (API-0194..API-0203). The 404→CodeNotFound override is
+  technically applicable per the spec but reserved for the
+  canonical by-id `*-one` GET peer, which the mysql/* roster
+  already consumed at API-0198 `mysql-one`; sticking with the
+  401→CodeAuth default mirrors API-0170 `mariadb-search` and
+  API-0184 `mongo-search`.
+- Files changed:
+  - internal/cli/api_coverage_test.go — appended one apiCoverageCase
+    literal (~190 lines including the comment block) registering
+    the `mysql-search` operation. SampleQuery supplies four of the
+    eight optional params with deterministic-but-clearly-fake
+    literals (`mysql-cov-search-0204` for `q`,
+    `mysql-cov-search-project-0204` for `projectId`, `"5"` for
+    `limit`, `"0"` for `offset`). Comment block re-verifies the
+    spec, names every prior mysql/* sibling fixture token to
+    prove non-collision, names every prior closed per-tag namespace
+    to prove non-back-reference, and forward-references the next
+    backlog story API-0205 `mysql-start` (a POST per the spec
+    preview).
+  - ralph/prd.json — flipped API-0204.passes to true (counts now
+    462 / 326 pass / 136 fail).
+- Verification run from repo root:
+  - gofmt -w . — no diff (fixture matches existing tab/indent rules).
+  - go mod tidy — clean (no dependency churn; this story is
+    test-only).
+  - go vet ./... — clean.
+  - go test ./... — all packages PASS (internal/cli 1.217s).
+  - go test -race ./... — all packages PASS (internal/cli 3.112s
+    under -race).
+  - go test -run 'TestAPICoverage_(RegistryInvariants|SchemaCommandWorks|ManifestListsOperation|SuccessRoundTrip|RepresentativeFailure)/API-0204' -v ./internal/cli/ — five subtests all PASS:
+      * TestAPICoverage_RegistryInvariants/API-0204/mysql-search
+      * TestAPICoverage_SchemaCommandWorks/API-0204/mysql-search
+      * TestAPICoverage_ManifestListsOperation/API-0204/mysql-search
+      * TestAPICoverage_SuccessRoundTrip/API-0204/mysql-search
+      * TestAPICoverage_RepresentativeFailure/API-0204/mysql-search
+  - goimports / golangci-lint / staticcheck / govulncheck /
+    goreleaser — not invoked (test-only fixture append; no
+    runtime/build surface change). Pre-existing per Codebase Patterns
+    note: tools not installed locally.
+- Results: All eight acceptance criteria satisfied — registry
+  presence, raw `yalla api call mysql-search --input request.json
+  --json`, `yalla schema get mysql-search --json`, `--no-input`
+  no-prompt contract, `yalla.output.v1` success envelope,
+  `yalla.error.v1` failure envelope with stable `E_AUTH` code and
+  exit code 4 (CodeAuth.ExitCode), httptest success + 401 failure
+  legs, and manifest listing — all proven by the harness loop in
+  `internal/cli/api_coverage_test.go`.
+- Remaining risks / follow-ups: none for API-0204 itself. The next
+  PRD-ordered priority-4 story is API-0205 `mysql-start` — a POST
+  per the spec preview; the forward-reference comment at the
+  bottom of the API-0204 entry already cites it. The next
+  contributor must re-verify the spec against
+  `internal/api/data/openapi.json` before assuming any field shape
+  (the API-0345..API-0444 forward-reference lesson). The
+  fixture-isolation namespace `mysql-cov-*` opened at API-0194
+  stays open through API-0207 `mysql-update` (the final mysql/*
+  priority-4 story).
+- **Learnings for future iterations:**
+  - The all-optional eight-parameter `*-search` GET family across
+    the Dokploy database tags (mariadb / mongo / mysql / postgres /
+    redis) shares the byte-for-byte identical parameter list:
+    `q` (string), `name` (string), `appName` (string),
+    `description` (string), `projectId` (string), `environmentId`
+    (string), `limit` (number, default 20), `offset` (number,
+    default 0). The cross-tag shape ancestor inside the covered
+    roster is API-0170 `mariadb-search`; the most recent same-shape
+    precedent is API-0184 `mongo-search`. New `*-search` entries
+    on this 8-param shape should model their fixture and rationale
+    block on API-0170 (and on API-0184 for any cross-database
+    nuances like the 404→CodeNotFound override decision, which
+    stays parked on the canonical `*-one` peer of each tag).
+  - For all-optional `*-search` GETs, the established convention
+    is to populate a representative subset of four params covering
+    the three distinct semantic axes (free-text via `q`, scoped
+    filter via `projectId`, paginated numerics via `limit` /
+    `offset`) rather than all eight. Populating the remaining four
+    optional string filters (`name`, `appName`, `description`,
+    `environmentId`) is byte-for-byte redundant with `q` /
+    `projectId` from the harness round-trip's perspective, so it
+    only inflates the fixture without exercising any new code
+    path. Numeric values use the canonical decimal grammar
+    (`"5"` / `"0"`) so a future schema validator that re-coerces
+    query strings to numbers still accepts them.
+  - The 404→CodeNotFound failure-leg override is reserved for the
+    canonical by-id `*-one` GET peer of each tag, NOT for the
+    `*-search` GET. Even when the spec declares 404 on a `*-search`
+    GET (as it does for mysql-search per the spec), the harness
+    default 401→CodeAuth stays the most representative failure
+    mode because search returns an empty result set on no-match,
+    never 404. Sticking with the harness default also preserves
+    the per-tag 401→CodeAuth invariant locked in by the kickoff
+    operation (API-0194 `mysql-changeStatus` for the mysql/*
+    roster).
+  - The forward-reference comment at the END of the immediately
+    prior entry remains the authoritative pointer to the next
+    story — API-0203's tail block named API-0204 verbatim, which
+    made the insertion location unambiguous. Always preserve and
+    update this forward pointer; the new entry's tail must in
+    turn name the next backlog story (API-0205 `mysql-start`
+    here, a POST per the spec preview).
+---
