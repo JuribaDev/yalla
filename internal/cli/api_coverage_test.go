@@ -15044,6 +15044,126 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0427",
+		OperationID: "user-all",
+		Method:      http.MethodGet,
+		Path:        "/user.all",
+		Tag:         "user",
+		// First entry on the user/* coverage roster, opening the
+		// `usr-cov-*` per-tag fixture-isolation namespace orthogonal
+		// to every prior tag's namespace (`set-cov-*`, `srv-cov-*`,
+		// `proj-cov-*`, `org-cov-*`, `compose-cov-*`, `app-cov-*`,
+		// `ai-cov-*`, `admin-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		// `cert-cov-*`, `clu-cov-*`, `deployment-cov-*`,
+		// `dest-cov-*`, etc.) per the per-tag isolation rule
+		// reasserted at API-0335..API-0399 and originally established
+		// at API-0246 `organization-active`. Per the API-0399
+		// hand-off forecast, this entry establishes the canonical
+		// `usr-cov-*` prefix for the user/* roster — every
+		// subsequent user/* story (API-0428..) inherits this
+		// per-tag fixture-isolation namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0399
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /user.all > get`: a
+		// **GET** with **no request body** (the spec omits
+		// `requestBody` entirely on this operation) and **zero
+		// declared parameters** (no query, no path, no header).
+		// Responses 200/400/401/403/404/500 — note the **presence of
+		// 404** in the spec, an unusual property for a list-shaped
+		// `*-all` GET; per the convention reasserted at
+		// API-0335..API-0399 the per-tag opener convention reserves
+		// 404 → CodeNotFound for canonical `*-one` (by-id resource
+		// lookup) peers, not for list-shaped GETs even when the spec
+		// declares the response. The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer.
+		//
+		// **Cross-tag transition — settings/* roster closed at
+		// API-0399, user/* roster opens here.** The slug-prefix-is-
+		// not-shape and slug-stem-is-not-shape lessons reasserted at
+		// API-0371..API-0399 nullify any inheritable axis from the
+		// prior settings/* roster. The user/* roster opens with a
+		// parameter-free list-shaped GET, structurally aligning with
+		// the prior per-tag openers in tags whose first entries were
+		// also parameter-free GETs (e.g. API-0006 `ai-getAll` opens
+		// the parameter-free GET cohort within ai/*); future user/*
+		// peers (API-0428 `user-assignPermissions`, API-0429
+		// `user-checkUserOrganizations`, API-0430 `user-createApiKey`,
+		// API-0431 `user-deleteApiKey`, API-0432 `user-generateToken`,
+		// API-0433 `user-get`, API-0434 `user-getBackups`, API-0435
+		// `user-getContainerMetrics`, API-0436 `user-getInvitations`,
+		// …) must re-verify per-operation rather than inherit any
+		// axis from this entry.
+		//
+		// **Family choice — opens with a parameter-free GET.** The
+		// list-shaped `*-all` opener pivots the user/* roster onto
+		// the same parameter-free-GET kickoff family as ai/*
+		// (API-0006 `ai-getAll`) and bitbucket/* (API-0051
+		// `bitbucket-bitbucketProviders`). Neither `SampleBody` nor
+		// `SampleQuery` nor `SamplePathParams` is populated — the
+		// spec declares zero parameters and no request body, so
+		// populating any of them would forge synthetic wire payload
+		// the spec does not authorise. The harness's GET branch
+		// asserts the wire-level invariants (method, path,
+		// `Authorization` header, empty query string) at
+		// `runAPICoverageSuccess` without any per-case fixture
+		// override needed.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base `usr-cov-all-0427` follows
+		//     the `<tag>-cov-<slug>-<storyID>` convention shared
+		//     across every per-tag roster and is unique by
+		//     construction (the `usr-cov-*` namespace is brand-new
+		//     to the catalogue — verified against every prior tag's
+		//     `set-cov-*`, `srv-cov-*`, `proj-cov-*`, `org-cov-*`,
+		//     `compose-cov-*`, `app-cov-*`, `ai-cov-*`, `admin-cov-*`,
+		//     `backup-cov-*`, `bb-cov-*`, `cert-cov-*`, `clu-cov-*`,
+		//     `deployment-cov-*`, `dest-cov-*`, etc. namespaces).
+		//     The slug-on-the-wire convention does not apply here
+		//     because the operation declares no string fields the
+		//     fixture could embed the sentinel into; the slug
+		//     therefore lives only in this comment as the namespace
+		//     anchor for the opening user/* entry.
+		//   * **No `SampleBody` / `SampleQuery` / `SamplePathParams`
+		//     populated.** Mirrors the parameter-free-GET precedent
+		//     established at API-0006 `ai-getAll` and reasserted at
+		//     API-0051 `bitbucket-bitbucketProviders` — the spec
+		//     authorises no input axis, so the canonical agent
+		//     invocation is `yalla api call user-all --input '{}'
+		//     --json` with an empty closed-shape `--input` document.
+		//
+		// **Failure-leg fields are intentionally omitted.** Even
+		// though the spec declares 404 on this operation (an
+		// unusual choice for a list-shaped `*-all` GET — list-shaped
+		// GETs typically return an empty array on absent results
+		// rather than 404), the per-tag opener convention reasserted
+		// at API-0335..API-0399 reserves 404 → CodeNotFound for
+		// canonical `*-one` (by-id resource lookup) peers, not for
+		// list-shaped GETs. Within the user/* roster the future
+		// canonical `*-one` peer is API-0433 `user-get` (the
+		// by-id user lookup); 404 → CodeNotFound coverage is
+		// reserved for that entry per the convention. Auth is the
+		// universal failure mode every Dokploy operation must
+		// re-prove, so 401 → CodeAuth via the harness default
+		// (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""` →
+		// CodeAuth) stays the most informative representative for
+		// the user/* roster opener. 400 → CodeInvalidInput is **not
+		// available** here at all — the spec declares 400 in the
+		// response set but the operation has zero parameters and no
+		// request body, so no payload can be syntactically invalid;
+		// the 400 in the spec exists only as a defensive declaration
+		// and cannot be exercised through any input the CLI can
+		// supply.
+		//
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

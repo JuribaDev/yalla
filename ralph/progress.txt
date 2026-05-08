@@ -13002,3 +13002,18 @@ Learnings for future iterations:
   - The settings/* roster (49 stories, API-0351..API-0399) is now closed. The user/* roster (API-0427+) opens next at priority-2 and will need a fresh `usr-cov-*` (or equivalent) fixture-isolation namespace per the per-tag rule from API-0246.
   - When an OPTIONAL field is the canonical cross-cutting `serverId` carried by multiple peers in the same tag (API-0396 / API-0397 / API-0399), populate it in the fixture rather than omit it — keeps the OPTIONAL axis verified and matches per-tag precedent.
 ---
+
+## 2026-05-08 - API-0427
+- Implemented Cover user-all (GET /user.all)
+- Files changed: internal/cli/api_coverage_test.go (new fixture entry), ralph/prd.json (passes:true), ralph/progress.txt (this entry)
+- Verification run: gofmt -w, go mod tidy, go vet ./..., go test ./..., go test -race ./...
+- Results: all green; api_coverage_test contract suite picks up the new entry under the existing TestAPICoverage_RegistryInvariants / TestAPICoverage_*Success / TestAPICoverage_*Failure framework, no new test plumbing required.
+- Opens the user/* roster (API-0427..API-0476 per PRD ordering) and establishes the canonical `usr-cov-*` per-tag fixture-isolation namespace.
+- Remaining risks: none specific to this entry — fixture follows the parameter-free-GET precedent established at API-0006 `ai-getAll` and API-0051 `bitbucket-bitbucketProviders`, and the harness-default 401→CodeAuth failure leg.
+- **Learnings for future iterations:**
+  - `user.all` is a parameter-free GET — no request body, no query, no path params. The spec declares 200/400/401/403/404/500 in the response set but only 401 is exercisable from the CLI: 400 has no input axis to fail on, and 404 is reserved for the canonical `*-one` peer (API-0433 `user-get`) per the per-tag-opener convention reasserted at API-0335..API-0399.
+  - The `usr-cov-*` namespace is now established as the user/* per-tag fixture-isolation prefix — every subsequent user/* entry (API-0428 `user-assignPermissions`, API-0429 `user-checkUserOrganizations`, API-0430 `user-createApiKey`, API-0431 `user-deleteApiKey`, API-0432 `user-generateToken`, API-0433 `user-get`, API-0434 `user-getBackups`, API-0435 `user-getContainerMetrics`, API-0436 `user-getInvitations`, …) inherits this prefix and must verify uniqueness against API-0427's `usr-cov-all-0427` slug going forward.
+  - Slug-on-the-wire convention does NOT apply to parameter-free GETs because there is no string field to embed the sentinel into. The slug lives only in the fixture comment as the namespace anchor; that is sufficient for `git grep`-traceability and per-test isolation, since the harness asserts the wire-level invariants (method, path, Authorization header, empty query string, no body) without requiring any per-case body bytes.
+  - List-shaped `*-all` GETs that declare 404 in the spec are an unusual property worth noting — most Dokploy `*-all` endpoints return an empty array on absent results rather than 404. The 404-in-spec declaration here does not unlock 404→CodeNotFound coverage at this entry; it remains reserved for the by-id `*-one` peer per the per-tag opener convention.
+  - The cross-tag transition from settings/* to user/* nullifies every inheritable axis per the slug-prefix-is-not-shape and slug-stem-is-not-shape lessons. Even though the prior tag's terminal entry (API-0399 `settings-writeTraefikEnv`) was a POST with a one-required-string + one-optional-string body, the user/* opener is a parameter-free GET — confirming once more that PRD ordering is not shape-preserving across tag boundaries.
+---
