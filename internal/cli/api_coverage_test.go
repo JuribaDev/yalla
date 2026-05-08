@@ -565,6 +565,30 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0026",
+		OperationID: "application-reload",
+		Method:      http.MethodPost,
+		Path:        "/application.reload",
+		Tag:         "application",
+		// Mirrors the schema in `data/openapi.json` for
+		// /application.reload: two required string fields
+		// (`appName`, `applicationId`) and no optional fields.
+		// This is the first application/* peer so far that
+		// requires a *second* string alongside `applicationId`,
+		// so we follow the existing `app-cov-<slug>-<storyID>`
+		// convention for both values to stay deterministic and
+		// clearly-fake for a future schema validator.
+		SampleBody: json.RawMessage(`{
+			"appName": "app-cov-reload-0026",
+			"applicationId": "app-cov-reload-0026"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching every prior application/* peer. Empty-object body keeps
+		// the success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

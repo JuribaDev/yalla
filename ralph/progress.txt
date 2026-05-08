@@ -2790,3 +2790,37 @@
   - The `<tag>-cov-<slug>-<storyID>` naming convention from the application/* roster carries over cleanly to ai/* — reuse it for grep-friendly cross-tag fixtures (e.g. `ai-cov-get-0005`).
   - The previous worker had skipped API-0005..API-0010 (priority 5) in favour of completing the application/* priority 2 block. Pick AI stories next; the `coveredAPIOperations` slice is sorted by StoryID, so the API-0005 entry slots cleanly between API-0004 (ai-deploy) and API-0011 (application-cancelDeployment).
 ---
+
+## 2026-05-08 - API-0026
+- Implemented Cover application-reload (POST /application.reload).
+- Added one struct literal to coveredAPIOperations in
+  `internal/cli/api_coverage_test.go`. The harness auto-extends success +
+  failure assertions, so no other code change was required: the OpenAPI
+  registry, schema command, and manifest already enumerate every operation
+  from `internal/api/data/openapi.json`.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (append API-0026 case)
+  - `ralph/prd.json` (passes: true for API-0026)
+  - `ralph/progress.txt` (this entry)
+- Verification:
+  - `gofmt -w .` clean
+  - `go mod tidy` clean
+  - `go vet ./...` clean
+  - `go test ./...` ok
+  - `go test -race ./...` ok
+- Results: all suites green, including the new API-0026 subtests under
+  `TestAPIOperationStoryCoverage` (registry, schema, manifest, success,
+  failure).
+- Remaining risks / follow-ups: none specific to this story; the broader
+  application/* coverage backlog continues with API-0027 onward.
+- **Learnings for future iterations:**
+  - First application/* operation seen so far that requires *two* required
+    string fields (`appName` + `applicationId`) instead of just
+    `applicationId`. The fixture pattern stays the same — supply both
+    fields with the same `app-cov-<slug>-<storyID>` deterministic value.
+    Future application stories with multi-field bodies should follow this
+    template rather than reverting to single-field minimal bodies.
+  - The `coveredAPIOperations` slice is documented as "sorted by StoryID
+    for diff-friendliness" — append new entries at the *end* (after the
+    highest-numbered prior entry), not interleaved by topic.
+---
