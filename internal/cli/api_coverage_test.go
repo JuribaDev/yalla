@@ -9734,6 +9734,124 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0170",
+		OperationID: "mariadb-search",
+		Method:      http.MethodGet,
+		Path:        "/mariadb.search",
+		Tag:         "mariadb",
+		// Eleventh entry on the mariadb/* coverage roster, immediately
+		// following API-0169 `mariadb-saveExternalPort` and completing
+		// the forward reference embedded in that entry's comment block
+		// ("The next case in the PRD-ordered priority-4 backlog is
+		// API-0170 `mariadb-search` ... declared a **GET** per the spec
+		// preview — the first GET on the mariadb/* roster since
+		// API-0164 `mariadb-one`"). Continues inside the
+		// `mariadb-cov-*` per-tag fixture-isolation namespace opened by
+		// API-0160 `mariadb-changeStatus` and **must not** back-reference
+		// any closed prior-tag namespace (`set-cov-*`, `srv-cov-*`,
+		// `proj-cov-*`, `org-cov-*`, `compose-cov-*`, `app-cov-*`,
+		// `ai-cov-*`, `admin-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		// `cert-cov-*`, `clu-cov-*`, `deployment-cov-*`, `dest-cov-*`,
+		// `docker-cov-*`, `domain-cov-*`, `environment-cov-*`,
+		// `gitea-cov-*`, `mounts-cov-*`, `swarm-cov-*`, `usr-cov-*`,
+		// etc.) per the per-tag isolation rule reasserted at
+		// API-0335..API-0444 and originally established at API-0246
+		// `organization-active`.
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json` > `/mariadb.search` >
+		// `get`: method GET, tag mariadb, **no request body** (GETs in
+		// this OpenAPI document never carry a `requestBody` field),
+		// and **eight OPTIONAL query parameters** — `q` (string),
+		// `name` (string), `appName` (string), `description` (string),
+		// `projectId` (string), `environmentId` (string), `limit`
+		// (number, default 20), `offset` (number, default 0).
+		// Responses 200/400/401/403/404/500. The 200 response is `{}`
+		// with `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort.
+		//
+		// **Shape positioning — all-optional query GET, no body.**
+		// STRUCTURAL FIRST for the mariadb/* roster: every query
+		// parameter is OPTIONAL (`required: false`). Prior mariadb/*
+		// GET (API-0164 `mariadb-one`) gated on a single REQUIRED
+		// `mariadbId` string param, so this is the first case in the
+		// tag where a fully-empty query is wire-valid. The wire shape
+		// mirrors the cross-tag all-optional `*-search` GET precedent
+		// set by API-0035 `application-search` (11 params), API-0089
+		// `compose-search` (8 params), API-0129 `environment-search`
+		// (6 params), and API-0296 `project-search` (5 params). Per
+		// that precedent, the fixture nevertheless populates a
+		// representative subset so `runAPICoverageSuccess` can re-read
+		// `r.URL.Query()` and prove the CLI propagated every param
+		// verbatim — including the two numeric-typed params (`limit`
+		// / `offset`, both `number` per the spec) which travel through
+		// the `--input` JSON `query` field as strings (HTTP query
+		// strings are untyped on the wire). We exercise (a) free-text
+		// search (`q`), (b) a scoped filter (`projectId`), and (c)
+		// numeric pagination (`limit` / `offset`) — the same
+		// representative slice locked in at API-0129
+		// `environment-search` — without bloating the fixture into a
+		// noisy 8-key map. Numeric values use the canonical decimal
+		// grammar (`"5"` / `"0"`) so a future schema validator that
+		// re-coerces query strings to numbers still accepts them. The
+		// harness's `len(tc.SampleBody) > 0` gate stays inert so no
+		// content-type / body byte-comparison legs activate, exactly
+		// as on prior all-optional `*-search` GET peers.
+		//
+		// **Family choice — 404→CodeNotFound representative
+		// available but harness-default 401→CodeAuth retained.**
+		// The spec declares 404 on this operation, so the
+		// 404→CodeNotFound override is *technically* applicable. We
+		// deliberately stick with the harness-default
+		// 401→CodeAuth failure leg, however, to mirror the
+		// API-0035 / API-0089 / API-0129 / API-0296 cross-tag
+		// `*-search` precedent (and through them the broader id-bearing
+		// GET precedent chain) — bearer-token enforcement runs before
+		// any query interpretation, so the universal `E_AUTH` mode is
+		// the most representative single failure leg, and is also
+		// consistent with the 401→CodeAuth choice locked in by the
+		// mariadb/* kickoff at API-0160 `mariadb-changeStatus` and
+		// continued at API-0161..API-0169. The 404 override therefore
+		// remains pinned to API-0164 `mariadb-one` for the mariadb/*
+		// roster.
+		//
+		// **Fixture token base** `mariadb-cov-search-0170` follows the
+		// established `<tag>-cov-<slug>-<storyID>`
+		// deterministic-but-clearly-fake naming convention (slug
+		// derived from `search` per the cross-tag `*-cov-search-XXXX`
+		// style established at API-0035, API-0089, API-0129, and
+		// API-0296) and is verified non-colliding with API-0160's
+		// `mariadb-cov-changeStatus-0160`, API-0161's
+		// `mariadb-cov-create-0161`, API-0162's `mariadb-cov-deploy-0162`,
+		// API-0163's `mariadb-cov-move-0163`, API-0164's
+		// `mariadb-cov-one-0164`, API-0165's `mariadb-cov-rebuild-0165`,
+		// API-0166's `mariadb-cov-reload-0166`, API-0167's
+		// `mariadb-cov-remove-0167`, API-0168's
+		// `mariadb-cov-save-environment-0168`, and API-0169's
+		// `mariadb-cov-save-external-port-0169` literals.
+		//
+		// The next case in the PRD-ordered priority-4 backlog is
+		// API-0171 `mariadb-start` (declared a **POST** per the spec
+		// preview; the next contributor must re-verify the spec
+		// against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will continue inside the `mariadb-cov-*` per-tag
+		// fixture-isolation namespace opened by API-0160).
+		SampleQuery: map[string][]string{
+			"q":         {"mariadb-cov-search-0170"},
+			"projectId": {"mariadb-cov-search-project-0170"},
+			"limit":     {"5"},
+			"offset":    {"0"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0188",
 		OperationID: "mounts-allNamedByApplicationId",
 		Method:      http.MethodGet,

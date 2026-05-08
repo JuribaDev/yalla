@@ -18157,3 +18157,81 @@ mariadb/* roster since API-0164 `mariadb-one`; re-verify against
   story may need re-evaluation (404→CodeNotFound is typically
   reactivated on by-id GETs).
 ---
+
+## 2026-05-08 - API-0170
+### What was implemented
+Coverage entry for `mariadb-search` (GET /mariadb.search). The harness
+automatically derives `runAPICoverageSuccess` and `runAPICoverageFailure`
+legs from the single `apiCoverageCase` literal:
+  - success leg: 200 with `{}` body, `r.URL.Query()` round-trip on the
+    GET request URL, and full `yalla.output.v1` envelope assertion.
+  - failure leg: 401 → CodeAuth (harness default), `yalla.error.v1`
+    envelope, non-zero exit code.
+
+### Files changed
+- internal/cli/api_coverage_test.go — inserted API-0170 case between
+  API-0169 (`mariadb-saveExternalPort`) and API-0188
+  (`mounts-allNamedByApplicationId`), preserving StoryID-sorted order.
+- ralph/prd.json — flipped API-0170.passes to true.
+- ralph/progress.txt — this entry.
+
+### Spec verification
+Re-verified against `internal/api/data/openapi.json` >
+`/mariadb.search` > `get`: method GET, tag mariadb, **no request
+body** (GETs in this OpenAPI document never carry a `requestBody`
+field), and **eight OPTIONAL query parameters** — `q`, `name`,
+`appName`, `description`, `projectId`, `environmentId` (all string),
+`limit`/`offset` (number, defaults 20/0). Responses
+200/400/401/403/404/500. The 200 response is `{}` with
+`additionalProperties: false`, matching the empty-success cohort.
+404 IS declared, but the harness-default 401→CodeAuth failure leg
+is retained per the cross-tag `*-search` precedent (API-0035 /
+API-0089 / API-0129 / API-0296). The 404 override therefore remains
+pinned to API-0164 `mariadb-one` for the mariadb/* roster.
+
+### Verification run
+- gofmt -w .                         OK
+- go mod tidy                         OK (no changes)
+- go vet ./...                        OK
+- go test ./internal/cli/ -run TestAPICoverage  ok 0.715s
+- go test ./...                       all packages OK
+- go test -race ./...                 all packages OK 3.938s
+- golangci-lint, staticcheck, govulncheck, goreleaser: not installed
+  (per baseline documented in Codebase Patterns).
+
+### Results
+All checks pass. 282/462 stories passing (61.0%). API-0170 is the
+eleventh entry on the mariadb/* coverage roster and the FIRST
+all-optional-query GET on the mariadb/* tag (prior mariadb GET at
+API-0164 `mariadb-one` gated on a single REQUIRED `mariadbId`).
+
+### Remaining risks or follow-ups
+None specific to this story. Next PRD priority-4 entry is API-0171
+`mariadb-start` (declared a POST per the spec preview — must
+re-verify against `internal/api/data/openapi.json` before assuming
+any field shape).
+
+### Learnings for future iterations
+- API-0170 mariadb-search is the FIFTH `*-search` operation covered
+  across the entire roster, after API-0035 `application-search`
+  (11 params), API-0089 `compose-search` (8 params), API-0129
+  `environment-search` (6 params), and API-0296 `project-search`
+  (5 params). The fixture pattern is now stable: populate exactly
+  the four representative slices `q` (free-text), `projectId`
+  (scoped filter), `limit` / `offset` (numeric pagination as decimal
+  strings) regardless of how many extra optional params the spec
+  declares — this keeps the diff narrow and the success-leg
+  `r.URL.Query()` round-trip focused on the high-signal slots.
+- Numeric query params (`limit` / `offset`) travel through the
+  `--input` JSON `query` field as canonical decimal strings (`"5"` /
+  `"0"`); HTTP query strings are untyped on the wire so this is
+  forward-compatible with a future schema validator that re-coerces
+  to numbers.
+- 404 declared on a `*-search` GET is structurally permissive — the
+  harness-default 401→CodeAuth override is retained, and the 404
+  override stays pinned to the canonical by-id GET (API-0164
+  `mariadb-one` for this tag) per the cross-tag precedent. This
+  discipline keeps a single, predictable failure mode per tag and
+  avoids burning the 404 leg on operations where it is not the
+  uniquely-distinguishing failure shape.
+---
