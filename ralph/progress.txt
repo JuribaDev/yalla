@@ -12867,3 +12867,124 @@ Learnings for future iterations:
     transition; no body-axis assumption can be safely inherited even
     within a single tag.
 ---
+
+## 2026-05-08 - API-0398
+- Implemented coverage for `settings-updateWebServerTraefikConfig`
+  (POST `/settings.updateWebServerTraefikConfig`) by appending a
+  single struct entry to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go`. The harness automatically
+  exercises registry presence, schema reachability, manifest inclusion,
+  the success round-trip via httptest, and the representative failure
+  leg (401 → CodeAuth via the harness default).
+- Files changed:
+    * `internal/cli/api_coverage_test.go` (one new struct literal,
+      forty-eighth entry on the settings/* roster).
+    * `ralph/prd.json` (`passes: true` on the API-0398 story).
+    * `ralph/progress.txt` (this entry).
+- Verification run from repo root:
+    * `gofmt -w .` — clean.
+    * `go mod tidy` — no changes.
+    * `go vet ./...` — clean.
+    * `go test ./...` — PASS (internal/cli `1.270s`, all other
+      packages cached PASS).
+    * `go test -race ./...` — PASS (internal/cli `2.765s`, others
+      cached PASS).
+    * `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+      `goreleaser` — not installed locally; documented as missing
+      rather than skipped silently per the project convention.
+- Spec re-verification (per the forward-reference lesson reasserted
+  at API-0345..API-0397) against `internal/api/data/openapi.json >
+  /settings.updateWebServerTraefikConfig > post`:
+    * Method **POST**, tag **settings**, **zero parameters**.
+    * `requestBody.required = true`, content-type
+      `application/json`, schema `{type: "object", properties:
+      {traefikConfig: {type: "string"}}, required: ["traefikConfig"]}`
+      — a **single REQUIRED plain-string outer property**.
+    * Responses **200/400/401/403/500**, **no 404**. The 200 schema
+      is `{}` with `additionalProperties: false`, matching every
+      prior covered settings/* peer.
+- Shape collision with API-0395 `settings-updateTraefikConfig`. On
+  all eight shape-defining axes (verb, outer-body required-bit,
+  outer-property-count, outer-property-type, outer-required-field-
+  count, parameter-count, response-set, 200-shape) this entry is
+  identical to API-0395. The only discriminator is the operationId
+  itself — the `WebServer` slug-segment narrows the operation to the
+  web-server-flavoured Traefik instance rather than the edge-router-
+  flavoured Traefik instance addressed by API-0395, but the JSON
+  schema layer treats both identically. This is the second
+  shape-collision precedent within the settings/* `update*`
+  sub-roster (the first was API-0392 / API-0395 sharing aspects of
+  the single-required-string body); it does NOT relax the per-
+  operation re-verification rule — the spec is still the authority,
+  and slug-stem `Traefik` (shared with API-0392/API-0395/API-0396/
+  API-0397) does not pre-determine shape (cf. API-0397's array-of-
+  objects pivot away from API-0396's multi-string shape).
+- Forty-eighth entry on the settings/* roster, inheriting the
+  `set-cov-*` per-tag fixture-isolation namespace established by
+  API-0351 and extended through API-0397. Per-case fixture token
+  `set-cov-updateWebServerTraefikConfig-0398` is unique within the
+  `set-cov-*` namespace and orthogonal to every prior tag's
+  namespace.
+- Fixture body: `{"traefikConfig": "set-cov-updateWebServerTraefik
+  Config-0398"}`. The slug-on-the-wire convention applies cleanly
+  here because `traefikConfig` is a free-form plain string with no
+  enum, format, length, or pattern constraint — restoring the
+  convention temporarily suspended at API-0397 where every inner-
+  inner field was numeric or enum-bounded.
+- Failure leg: harness default (401 → CodeAuth). The spec does not
+  declare 404, and the operation has no by-id resource lookup or
+  optional `serverId` scoping that could resolve to a missing
+  worker. 400 → CodeInvalidInput is technically available (a missing
+  `traefikConfig` would fail server-side validation) but reserved
+  per the precedent at API-0395..API-0397 for stories where payload
+  validation is the operation's *uniquely distinguishing* failure
+  mode.
+- Forward reference: the next case in the settings/* roster per PRD
+  ordering is API-0399 `settings-writeTraefikEnv` (declared a POST
+  with `requestBody.required = true`). The next contributor must
+  re-verify against `internal/api/data/openapi.json >
+  /settings.writeTraefikEnv > post` before assuming any field
+  carries over. `writeTraefikEnv` exits the `update*` slug-prefix
+  but stays on the `Traefik` slug-stem; per the slug-stem-is-not-
+  shape lesson it may declare a single-string shape (matching this
+  entry / API-0395), a multi-string shape (matching API-0396), an
+  array-of-objects shape (matching API-0397), or an orthogonal
+  key/value-pair shape consistent with the `Env` slug-suffix
+  conventionally addressing environment-variable data.
+- API-0399 will close out the settings/* roster (forty-ninth and
+  final entry); after that the user/* roster opens at API-0427 with
+  `user-all`.
+- **Learnings for future iterations:**
+  - **Shape-collision with a prior peer is a permitted outcome, not
+    a violation of slug-stem-is-not-shape.** API-0398 collides with
+    API-0395 on every shape-defining axis because the spec authors
+    chose to use the same single-string body for both Traefik
+    config update operations (one for the edge router, one for the
+    web server). The slug-stem-is-not-shape rule says the
+    contributor cannot ASSUME shape inheritance; it does not say
+    the spec cannot DECLARE shape collision. The contributor still
+    re-verifies the spec; if collision occurs, the `// Forward-
+    reference confirmation` comment names the colliding peer
+    explicitly and lists the matching axes so the next reader can
+    diff cleanly.
+  - **Slug-on-the-wire convention restored after the API-0397
+    suspension.** API-0397's body had only numeric and enum-bounded
+    inner fields, so the slug could not be embedded. API-0398's
+    single free-form string field restores the convention. Future
+    peers should expect the convention to apply field-by-field
+    based on type, not entry-by-entry.
+  - **No OPTIONAL outer fields → no carve-out comment needed.**
+    Unlike API-0396/API-0397 which both carry an OPTIONAL `serverId`
+    and required a "deliberately omitted" carve-out, API-0398 has
+    only the single REQUIRED `traefikConfig` field. The
+    structurally-minimal valid body and the maximal valid body are
+    identical, so the fixture-conventions section is shorter by one
+    bullet.
+  - **Body-axis flip-flop now sixteen entries deep within
+    settings/*.** The continuous flip-flop across API-0383..API-0398
+    reaffirms that per-operation re-verification is mandatory; the
+    shape-collision with API-0395 is the first repeat-shape entry in
+    the settings/* `update*` sub-roster but does NOT establish a
+    pattern — the next entry (API-0399 `writeTraefikEnv`) must still
+    be re-verified per the slug-prefix-is-not-shape rule.
+---
