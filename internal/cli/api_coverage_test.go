@@ -9074,6 +9074,143 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0271",
+		OperationID: "port-update",
+		Method:      http.MethodPost,
+		Path:        "/port.update",
+		Tag:         "port",
+		// Fourth and final entry in the port/* roster, immediately
+		// following API-0268 `port-create`, API-0269 `port-delete`,
+		// and API-0270 `port-one`, and continuing inside the
+		// `port-cov-*` per-tag fixture-isolation namespace opened by
+		// API-0268 `port-create`. Per the per-tag fixture-isolation
+		// rule this entry **must not** back-reference any closed
+		// prior-tag namespace (`admin-cov-*`, `ai-cov-*`, `app-cov-*`,
+		// `backup-cov-*`, `bb-cov-*`, `cert-cov-*`, `clu-cov-*`,
+		// `compose-cov-*`, `deployment-cov-*`, `dest-cov-*`,
+		// `docker-cov-*`, `domain-cov-*`, `environment-cov-*`,
+		// `mounts-cov-*`, `org-cov-*`, `set-cov-*`, `srv-cov-*`,
+		// `usr-cov-*`, etc.); per the API-0270 closing block's
+		// forward reference, this entry was the next pending
+		// PRD-ordered priority-3 backlog entry on the port/* roster.
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /port.update > post`: a
+		// **POST** with **no parameters** and a **REQUIRED request
+		// body** whose schema declares **five REQUIRED fields** —
+		// one non-nullable plain string (`portId`), two non-nullable
+		// numbers (`publishedPort`, `targetPort`), and two
+		// non-nullable string-with-enum scalars (`publishMode` ∈
+		// {`ingress`, `host`} default `ingress`, `protocol` ∈
+		// {`tcp`, `udp`} default `tcp`). The schema declares zero
+		// optional fields, so the closed-shape body is exactly the
+		// five-required-scalar surface — no every-optional-populated
+		// expansion applies here, exactly as on API-0268
+		// `port-create`. Responses 200/400/401/403/500 — the spec
+		// does **not** declare 404 on this operation, matching the
+		// cross-tag update-by-id mutation precedent on API-0122
+		// `domain-update` and API-0130 `environment-update`
+		// (Dokploy's tRPC convention collapses missing-target into
+		// 400/validation rather than surfacing a 404 leg even when
+		// the body carries an id-shaped scalar). The 200 schema is
+		// `{}` with `additionalProperties: false`, matching every
+		// prior covered peer in the empty-success cohort.
+		//
+		// **Shape positioning — five-required-scalar update-by-id
+		// POST mutation, body REQUIRED, all fields required, no
+		// optional surface.** Second request-body POST in the
+		// port/* roster (after API-0268 `port-create`'s
+		// five-required-scalar create) and structurally a
+		// near-clone of that create-mutation shape with the
+		// `applicationId` foreign-key swapped for the by-id target
+		// `portId`: the wire surface is identical numbers
+		// (`publishedPort`, `targetPort`), identical enum scalars
+		// (`publishMode`, `protocol`), and the single id-shaped
+		// string differs only in its referent (creating a port for
+		// an application vs. updating a port by its own id). That
+		// "create-shape with id swapped in" pattern places this
+		// entry in a third sub-cohort of the broader `*-update`
+		// roster: distinct from the cross-tag minimal
+		// single-required-scalar update template at API-0122
+		// `domain-update` and API-0130 `environment-update` (which
+		// supply only the id and rely entirely on optional fields
+		// for the settable surface), this operation makes the full
+		// settable surface REQUIRED on every call so the closed
+		// shape exercises every wire-typed leg (numeric, enum,
+		// plain string) on every update. The harness's
+		// `len(tc.SampleBody) > 0` gate at `runAPICoverageSuccess`
+		// activates the JSON content-type and byte-for-byte body
+		// comparison legs; this fixture supplies all five REQUIRED
+		// fields so the success path verifies the CLI propagated
+		// the body verbatim.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (update-by-id
+		// actions collapse missing-target into 400/validation per
+		// Dokploy's tRPC conventions, exactly as documented for
+		// API-0122 `domain-update` and API-0130
+		// `environment-update`), so the 404→CodeNotFound override
+		// is structurally inapplicable here. 400→CodeInvalidInput
+		// is *technically* available — a payload that omits any of
+		// the five REQUIRED fields, supplies an out-of-enum
+		// `publishMode`/`protocol` value, or sends a non-numeric
+		// `publishedPort`/`targetPort` would fail server-side
+		// validation — but the harness reserves 400 representatives
+		// for stories where payload validation is the operation's
+		// *uniquely distinguishing* failure mode. A conventional
+		// update-by-id POST collapses to type-checking, so the
+		// harness-default 401→CodeAuth failure leg remains the
+		// most representative single failure mode every
+		// authenticated Dokploy operation must re-prove, and
+		// additionally re-proves the auth invariant inside the
+		// `port-cov-*` namespace for the five-required-scalar
+		// update-by-id mutation shape. Per the established
+		// `<tag>-cov-<slug>-<storyID>` deterministic-but-clearly-
+		// fake naming convention, the fixture id base
+		// `port-cov-update-0271` keeps `git grep` traceable to
+		// this PRD story without colliding with API-0268
+		// (`port-cov-create-0268-app`), API-0269
+		// (`port-cov-delete-0269`), or API-0270
+		// (`port-cov-one-0270`). Numeric port slots reuse the
+		// API-0268 encoding convention — `publishedPort: 8271` and
+		// `targetPort: 3271` both encode the story ID `0271` so a
+		// `git grep 8271` or `3271` traces back here without
+		// colliding with the conventional 80/443/8080/3000 service
+		// ports or the API-0268 fixture's `8268`/`3268`. Enum
+		// scalars are pinned to their spec defaults (`publishMode:
+		// "ingress"`, `protocol: "tcp"`) so the wire payload
+		// exercises the most representative configuration without
+		// selecting a non-default branch that would tilt the case
+		// toward a specific failure-mode story, mirroring the
+		// API-0268 `port-create` precedent.
+		//
+		// API-0271 closes the priority-3 port/* roster (all four
+		// port/* operations are now covered: `port-create`,
+		// `port-delete`, `port-one`, `port-update`). The next
+		// pending PRD-ordered priority-3 backlog entry is API-0298
+		// `redirects-create`, which opens a new tag fixture-
+		// isolation namespace `redirects-cov-*`; the next
+		// contributor must re-verify the spec against
+		// `internal/api/data/openapi.json` per the forward-
+		// reference lesson before assuming any field shape, and
+		// **must not** back-reference the `port-cov-*` namespace
+		// closed here.
+		SampleBody: json.RawMessage(`{
+			"portId": "port-cov-update-0271",
+			"publishedPort": 8271,
+			"publishMode": "ingress",
+			"targetPort": 3271,
+			"protocol": "tcp"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0290",
 		OperationID: "project-all",
 		Method:      http.MethodGet,

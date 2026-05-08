@@ -16386,3 +16386,47 @@ Learnings for future iterations:
     inherit this precedent unless they have a *uniquely distinguishing*
     failure mode that 401 cannot represent.
 ---
+
+## 2026-05-08T16:47Z - API-0271
+- Cover port-update (POST /port.update). Closes the priority-3 port/* roster
+  (4/4 entries: create, delete, one, update).
+- Files changed:
+  - internal/cli/api_coverage_test.go (new struct entry, sorted insert
+    after API-0270 port-one, before API-0290 project-all)
+  - ralph/prd.json (passes=true for API-0271)
+  - ralph/progress.txt (this entry)
+- Verification:
+  - gofmt -w internal/cli/api_coverage_test.go (clean)
+  - go vet ./... (clean)
+  - go test ./... (all packages pass)
+  - go test -race ./... (all packages pass, including internal/cli 2.937s)
+  - go mod tidy (clean, no diff)
+- Results: PRD progress 253/462 stories passing.
+- Remaining risks/follow-ups: none. Next pending priority-3 backlog entry is
+  API-0298 redirects-create, which opens a new tag fixture-isolation namespace
+  `redirects-cov-*`. The next contributor must re-verify the spec against
+  internal/api/data/openapi.json before assuming any field shape and must NOT
+  back-reference the closed `port-cov-*` namespace.
+- **Learnings for future iterations:**
+  - The PRD's `priority` field is a numeric int (1=highest). Earlier iterations'
+    pending-story sort scripts that mapped string priorities like P0/P1 mis-
+    bucketed integer priorities into the default 99 slot, causing them to fall
+    back to document-order ID sort. When picking "highest priority pending",
+    sort by `s.get('priority', 99)` directly — do not assume strings.
+  - `/port.update` is a five-required-scalar update-by-id POST: same wire shape
+    as `/port.create` with `applicationId` swapped for `portId`. Unlike the
+    minimal `/domain.update` and `/environment.update` (single-required-id with
+    optional settable fields), port-update makes the FULL settable surface
+    REQUIRED — every call exercises every numeric/enum/string leg.
+  - Numeric port slots in `port-cov-*` fixtures should encode the story ID
+    (e.g. 8268/3268 for API-0268, 8271/3271 for API-0271) so `git grep` of the
+    raw integer traces back to a unique story without colliding with the
+    conventional 80/443/8080/3000 service ports. This convention was opened by
+    API-0268 port-create and continues to apply to any future port/* peers.
+  - When closing the last entry in a per-tag fixture-isolation namespace, the
+    closing comment block must (a) declare the roster closed, (b) name the next
+    pending priority-3 backlog entry by ID, and (c) explicitly forbid future
+    contributors from back-referencing the now-closed namespace. This is the
+    convention established by API-0130 environment-update (closing
+    environment/*) and API-0255 (closing organization/*).
+---
