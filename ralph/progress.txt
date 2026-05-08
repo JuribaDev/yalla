@@ -1960,3 +1960,58 @@
     value; everything else (path-param plumbing, query plumbing) the
     harness ignores when the corresponding map is empty.
 ---
+
+## 2026-05-08 - API-0012
+- **Implemented**: Per-operation API coverage for `application-cleanQueues`
+  (POST /application.cleanQueues) — appended a single `apiCoverageCase` to
+  `coveredAPIOperations` so the existing API-0001 harness in
+  `internal/cli/api_coverage_test.go` runs the full five-part contract
+  (registry invariants, `yalla schema get` envelope, `yalla manifest`
+  inclusion, httptest-driven success round-trip, and the default 401 →
+  `CodeAuth` representative failure leg) against the new operation.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended the API-0012 entry
+    to `coveredAPIOperations`. `SampleBody` mirrors the OpenAPI required
+    shape verbatim (`{"applicationId": "..."}`) and `SuccessResponse`
+    is `{}` to match the spec's `200` body
+    (`additionalProperties: false`). Defaults (`SuccessStatus = 200`,
+    `FailureStatus = 401`, `FailureCode = CodeAuth`) cover the success
+    and representative-failure legs without per-case overrides.
+  - `ralph/prd.json` — flipped `API-0012.passes` to `true`.
+- **Verification run**:
+  - `gofmt -l .` — clean.
+  - `go mod tidy` — clean (no new deps).
+  - `go vet ./...` — clean.
+  - `go test ./internal/cli/ -run 'TestAPICoverage' -count=1` — `ok` (the
+    five `TestAPICoverage_*/API-0012/application-cleanQueues` subtests
+    all pass alongside API-0001 / API-0011).
+  - `go test ./...` — every package `ok` (api, cli, config, curated,
+    errors, output, release, testutil, upgrade).
+  - `go test -race ./...` — every package `ok`.
+  - `bash scripts/verify.sh --quiet` — passed; optional tools
+    (`govulncheck`, `staticcheck`, `golangci-lint`, `goreleaser`)
+    reported as not installed locally per the documented policy.
+- **Tools NOT available locally** (unchanged): `goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`.
+- **Remaining risks / follow-ups**:
+  - Same as API-0011: spec drift in Dokploy renaming or restructuring
+    `/application.cleanQueues` would surface as a registry-invariant
+    failure, which is the desired behaviour.
+  - The harness exercises the default 401 → `CodeAuth` failure leg.
+    The spec also documents 400/403/500 — those broader status-mapping
+    invariants are already covered by the cross-cutting client tests in
+    `internal/api/client_test.go`, so adding a per-operation 400/403/500
+    leg here would be redundant.
+- **Learnings for future iterations**:
+  - The harness keeps these stories O(1) — adding coverage is a single
+    sorted-by-StoryID struct literal, no new tests, no new test helpers.
+  - `application-cleanQueues` is structurally identical to
+    `application-cancelDeployment` (same body shape, same empty-object
+    `200`, same 4xx/5xx surface). Future `application-*` operations
+    that follow this shape can copy the same fixture pattern verbatim
+    — only the StoryID, OperationID, Path, and the `applicationId`
+    fixture token need to change.
+  - Always change the `applicationId` fixture token between cases
+    (`app-cov-cancel-deploy-0011` → `app-cov-clean-queues-0012`) so a
+    grep through the test file leads back to the exact PRD story.
+---
