@@ -18483,3 +18483,58 @@ forward-reference lesson before assuming any field shape.
     trailing newline manually — the round-trip strips it and a clean
     diff matters for review.
 ---
+
+## 2026-05-08 - API-0174 mongo-changeStatus
+- Added apiCoverageCase entry for `mongo-changeStatus` (POST
+  /mongo.changeStatus) immediately after API-0173 `mariadb-update` in
+  `internal/cli/api_coverage_test.go`. Opens a brand-new `mongo-cov-*`
+  per-tag fixture-isolation namespace (mariadb/* roster closed at
+  API-0173). Shape: two-required-string-scalar POST imperative-action
+  status-mutation, structurally identical to API-0160
+  `mariadb-changeStatus`. Body fixture supplies the two REQUIRED scalars
+  (`mongoId` literal `mongo-cov-changeStatus-0174`,
+  `applicationStatus: "idle"` from the spec-declared enum
+  idle/running/done/error); success leg uses empty `{}` 200 response per
+  the empty-success cohort. 401→CodeAuth failure leg retained per the
+  `*-changeStatus` precedent (no 404 declared on this op; status-
+  mutations gate on body-supplied id, collapsing missing-target into
+  400/RBAC).
+- Files changed:
+  - internal/cli/api_coverage_test.go (+~120 lines, new case block)
+  - ralph/prd.json (passes: true on API-0174)
+  - ralph/progress.txt (this entry)
+- Verification: `gofmt -w .`, `go vet ./...`, `go test ./...`,
+  `go test -race ./...`, `go mod tidy` all clean.
+  `TestAPICoverage_RegistryInvariants/API-0174/mongo-changeStatus`,
+  `TestAPICoverage_SchemaCommandWorks/API-0174/mongo-changeStatus`,
+  `TestAPICoverage_ManifestListsOperation/API-0174/mongo-changeStatus`,
+  `TestAPICoverage_SuccessRoundTrip/API-0174/mongo-changeStatus`, and
+  `TestAPICoverage_RepresentativeFailure/API-0174/mongo-changeStatus`
+  all PASS.
+- Results: 287/462 stories passing (62.1%). API-0174 is the kickoff
+  entry on the priority-4 mongo/* roster.
+- Remaining risks / follow-ups: none specific to this story. Next
+  priority-4 case is API-0175 `mongo-create` (POST per spec preview;
+  next contributor must re-verify spec at
+  `internal/api/data/openapi.json` per the forward-reference lesson and
+  continue inside the `mongo-cov-*` namespace opened here).
+- **Learnings for future iterations:**
+  - `*-changeStatus` POST operations across tags share the canonical
+    two-required-string-scalar body shape: `<resource>Id` (string) +
+    `applicationStatus` (string enum: idle/running/done/error). API-0160
+    `mariadb-changeStatus` was the precedent; API-0174
+    `mongo-changeStatus` is byte-for-byte cardinality-identical except
+    for the resource-id field name. Future `*-changeStatus` entries
+    (e.g. mysql/postgres/redis/compose if present) can mirror this
+    fixture verbatim with the resource-id renamed.
+  - When opening a new tag's `<tag>-cov-*` namespace, the comment block
+    must explicitly enumerate the newly closed prior-tag namespace in
+    the orthogonality list; future contributors copy this list when
+    opening the next tag and must add the just-closed namespace.
+  - The `*-changeStatus` family lacks a 404 in its spec response set
+    (status-mutations model missing-target as 400/validation or
+    403/RBAC), so the 404→CodeNotFound override is structurally
+    inapplicable for the entire family. Locks the harness-default
+    401→CodeAuth failure leg as the kickoff representative for the
+    new tag's auth invariant.
+---

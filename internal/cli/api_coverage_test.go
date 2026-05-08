@@ -10386,6 +10386,121 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0174",
+		OperationID: "mongo-changeStatus",
+		Method:      http.MethodPost,
+		Path:        "/mongo.changeStatus",
+		Tag:         "mongo",
+		// Kickoff entry for the mongo/* coverage roster — this is the
+		// first mongo-tagged operation to ship contract coverage and
+		// opens a brand-new `mongo-cov-*` per-tag fixture-isolation
+		// namespace. Per the per-tag isolation rule reasserted at
+		// API-0335..API-0444 and originally established at API-0246
+		// `organization-active`, the `mongo-cov-*` namespace stays
+		// orthogonal to every prior tag's namespace (`set-cov-*`,
+		// `srv-cov-*`, `proj-cov-*`, `org-cov-*`, `compose-cov-*`,
+		// `app-cov-*`, `ai-cov-*`, `admin-cov-*`, `backup-cov-*`,
+		// `bb-cov-*`, `cert-cov-*`, `clu-cov-*`, `deployment-cov-*`,
+		// `dest-cov-*`, `docker-cov-*`, `domain-cov-*`,
+		// `environment-cov-*`, `gitea-cov-*`, `mariadb-cov-*`,
+		// `mounts-cov-*`, `swarm-cov-*`, `usr-cov-*`, etc.) — the
+		// newly closed `mariadb-cov-*` namespace (closed at API-0173
+		// `mariadb-update`) is explicitly enumerated here per the
+		// per-tag isolation rule.
+		//
+		// **First mongo/* case to land.** The priority-4 mariadb/*
+		// roster closed at API-0173 `mariadb-update`; this entry kicks
+		// off the next priority-4 tag (mongo/*) per the PRD-ordered
+		// next-bucket forward reference left by API-0173.
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json` > `/mongo.changeStatus` >
+		// `post`: method POST, tag mongo, **no parameters**,
+		// requestBody REQUIRED with `application/json`, responses
+		// 200/400/401/403/500. The 200 response is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort. **No 404** is declared —
+		// status-mutation operations gate on the *body-supplied*
+		// resource id (`mongoId`) which the spec models through 400
+		// (validation) and 403 (RBAC) rather than 404, so 404 →
+		// CodeNotFound coverage has no canonical home in the
+		// `mongo-changeStatus` failure surface (mirroring the
+		// precedent locked in by API-0160 `mariadb-changeStatus`, the
+		// structurally identical mariadb/* peer).
+		//
+		// **Request body schema (REQUIRED top-level fields):**
+		//   - REQUIRED `mongoId` (string)
+		//   - REQUIRED `applicationStatus` (string, enum:
+		//     `idle` | `running` | `done` | `error`)
+		//   - **No optional fields.** Like API-0160
+		//     `mariadb-changeStatus`, mongo-changeStatus has zero
+		//     optional fields, so the API-0131 `gitea-create`
+		//     minimal-required-only fixture rule is trivially
+		//     satisfied. The fixture supplies exactly the two
+		//     REQUIRED fields and nothing else; the harness's
+		//     `len(tc.SampleBody) > 0` gate at
+		//     `runAPICoverageSuccess` activates the JSON content-type
+		//     and byte-for-byte body comparison legs.
+		//
+		// **Enum value pick.** `applicationStatus: "idle"` is one of
+		// the four spec-declared enum values and is the safest
+		// representative for a no-op status transition; the harness
+		// only asserts byte-for-byte body propagation, so the choice
+		// is orthogonal to the contract leg but must remain a member
+		// of the spec-declared enum. Identical pick to API-0160
+		// `mariadb-changeStatus` for cross-tag consistency on the
+		// `*-changeStatus` family.
+		//
+		// **Shape positioning — two-required-string-scalar POST
+		// imperative-action status-mutation, body REQUIRED.** The two
+		// REQUIRED slots are a plain non-nullable `type: string`
+		// (`mongoId`) plus an enum-constrained string
+		// (`applicationStatus`). Structurally identical to the
+		// API-0160 `mariadb-changeStatus` body (`mariadbId` +
+		// `applicationStatus`); the only wire-shape distinction is
+		// the resource-id field name.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so
+		// the 404→CodeNotFound override is structurally inapplicable.
+		// 400→CodeInvalidInput is *technically* available — a payload
+		// that omits one of the two REQUIRED fields would fail
+		// server-side validation — but the harness reserves 400
+		// representatives for stories where payload validation is the
+		// operation's *uniquely distinguishing* failure mode. A
+		// status-mutation that gates on a body-supplied id collapses
+		// to type-checking, so the harness-default 401 → CodeAuth
+		// failure leg remains the most representative single failure
+		// mode every authenticated Dokploy operation must re-prove.
+		// Pinning the bearer-token check at the kickoff entry locks
+		// the auth invariant for the entire `mongo-cov-*` namespace.
+		//
+		// **Fixture token base** `mongo-cov-changeStatus-0174` follows
+		// the established `<tag>-cov-<slug>-<storyID>` deterministic-
+		// but-clearly-fake naming convention. No prior mongo/*
+		// fixture exists, so there are no same-tag collision
+		// constraints to avoid (the namespace opens here).
+		//
+		// The next case in the PRD-ordered priority-4 backlog is
+		// API-0175 `mongo-create` (declared a **POST** per the spec
+		// preview; the next contributor must re-verify the spec
+		// against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will continue inside the `mongo-cov-*` per-tag
+		// fixture-isolation namespace opened here).
+		SampleBody: json.RawMessage(`{
+			"mongoId": "mongo-cov-changeStatus-0174",
+			"applicationStatus": "idle"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0188",
 		OperationID: "mounts-allNamedByApplicationId",
 		Method:      http.MethodGet,
