@@ -15273,6 +15273,176 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0198",
+		OperationID: "mysql-one",
+		Method:      http.MethodGet,
+		Path:        "/mysql.one",
+		Tag:         "mysql",
+		// Fifth entry on the priority-4 mysql/* coverage roster and the
+		// **canonical by-id GET peer** for the tag — the mysql/* analogue
+		// of API-0008 `ai-one`, API-0021 `application-one`, API-0084
+		// `compose-one`, API-0136 `gitea-one`, API-0142 `github-one`,
+		// API-0149 `gitlab-one`, API-0164 `mariadb-one`, API-0178
+		// `mongo-one`, API-0251 `organization-one`, API-0294
+		// `project-one`, and API-0342 `server-one`. Continues inside the
+		// `mysql-cov-*` per-tag fixture-isolation namespace opened by
+		// API-0194 `mysql-changeStatus` and **must not** back-reference
+		// any closed prior-tag namespace (`set-cov-*`, `srv-cov-*`,
+		// `proj-cov-*`, `org-cov-*`, `compose-cov-*`, `app-cov-*`,
+		// `ai-cov-*`, `admin-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		// `cert-cov-*`, `clu-cov-*`, `deployment-cov-*`, `dest-cov-*`,
+		// `docker-cov-*`, `domain-cov-*`, `environment-cov-*`,
+		// `gitea-cov-*`, `github-cov-*`, `gitlab-cov-*`,
+		// `mariadb-cov-*`, `mongo-cov-*`, `mounts-cov-*`,
+		// `swarm-cov-*`, `usr-cov-*`, etc.) per the per-tag isolation
+		// rule reasserted at API-0335..API-0444 and originally
+		// established at API-0246 `organization-active`. Completes the
+		// forward reference embedded in API-0197 `mysql-move`'s comment
+		// block ("The next case in the PRD-ordered priority-4 backlog
+		// is API-0198 `mysql-one`").
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json` > `/mysql.one` > `get`: a
+		// **GET** with **one required query parameter** and **no
+		// request body** (GETs in this OpenAPI document never carry a
+		// `requestBody` field). Parameters per the spec:
+		//   - REQUIRED scalar: `mysqlId` (plain string).
+		//   - **No optional parameters.**
+		// The single param is typed `string` with no `anyOf` /
+		// `nullable` / enum constraints — byte-for-byte identical to
+		// the `mysqlId` field on API-0194 `mysql-changeStatus`,
+		// API-0196 `mysql-deploy`, and API-0197 `mysql-move` (where
+		// it appeared as a body scalar rather than a query scalar).
+		// Responses 200/400/401/403/404/500 — the 200 schema is `{}`
+		// with `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort. **Note** the
+		// appearance of 404 here, in contrast to every prior mysql/*
+		// peer (API-0194 `mysql-changeStatus`, API-0195 `mysql-create`,
+		// API-0196 `mysql-deploy`, and API-0197 `mysql-move`) where
+		// the spec omits 404; the canonical by-id GET is the natural
+		// home for the resource-not-found failure mode under Dokploy's
+		// tRPC convention, exactly as observed in the mariadb/* roster
+		// at API-0164 `mariadb-one` and the mongo/* roster at API-0178
+		// `mongo-one`.
+		//
+		// **Shape positioning — canonical `*-one` by-id GET.** This is
+		// byte-for-byte the same wire shape as the cross-tag canonical-
+		// by-id-GET precedent chain at API-0008 `ai-one` (`aiId`),
+		// API-0021 `application-one` (`applicationId`), API-0084
+		// `compose-one` (`composeId`), API-0136 `gitea-one` (`giteaId`),
+		// API-0142 `github-one` (`githubId`), API-0149 `gitlab-one`
+		// (`gitlabId`), API-0164 `mariadb-one` (`mariadbId`), API-0178
+		// `mongo-one` (`mongoId`), API-0251 `organization-one`
+		// (`organizationId`), API-0294 `project-one` (`projectId`), and
+		// API-0342 `server-one` (`serverId`). The harness forwards
+		// SampleQuery via the `--input` JSON `query` field, and
+		// `runAPICoverageSuccess` re-reads `r.URL.Query()` to confirm
+		// the CLI propagated the param verbatim — exactly the
+		// assertion path every prior `*-one` peer exercises. The
+		// wire-equality round-trip through `r.URL.Query().Get("mysqlId")`
+		// proves the CLI → API client → httptest server path
+		// independently for this operationId, which is the per-PRD-
+		// story granularity the manifest invariant demands.
+		//
+		// **Family choice — failure leg overridden to 404 →
+		// CodeNotFound.** Every prior mysql/* covered case
+		// (API-0194..API-0197) kept the harness default 401 →
+		// CodeAuth representative failure because auth is the
+		// universal failure mode every Dokploy operation must re-prove.
+		// The per-tag opener design header (re-asserted at API-0290
+		// `project-all`, API-0335 `server-all`, the mariadb/* kickoff
+		// at API-0160 `mariadb-changeStatus`, the mongo/* kickoff at
+		// API-0174 `mongo-changeStatus`, and the mysql/* kickoff at
+		// API-0194 `mysql-changeStatus`) reserves 404 → CodeNotFound
+		// as the representative-failure leg for **the canonical by-id
+		// `*-one` peer**, and the spec itself first declares 404 on
+		// this operation (the prior four mysql/* peers' specs omit 404
+		// entirely). API-0198 is that peer: the mysql/* tag's
+		// `mysqlId` is a strong semantic match for "by-id GET whose
+		// primary failure mode is the resource not existing" — a
+		// Dokploy-managed MySQL service record is pinned to long-lived
+		// UUIDs that an agent will frequently fetch by ID on cold-cache
+		// restart, where 404 (the service was deleted between cache
+		// fill and fetch, or the agent learned the ID from a stale
+		// source) is a far more common failure than 401 (the process
+		// already proved auth on every prior call in the mysql/* arc,
+		// including the kickoff at API-0194 which locked the
+		// 401 → CodeAuth invariant for the namespace). The 404 leg is
+		// therefore the most informative failure to re-prove for this
+		// specific peer's call site. The harness already supports the
+		// override natively (`runAPICoverageFailure` reads
+		// tc.FailureStatus / tc.FailureCode and falls back to
+		// 401 / CodeAuth when either is zero) so no harness change is
+		// needed; we simply opt in via the two struct fields. This is
+		// the **fifth** roster-level act on the reserved override,
+		// after API-0342 `server-one` opened it, API-0136 `gitea-one`
+		// extended it, API-0164 `mariadb-one` re-asserted it, and
+		// API-0178 `mongo-one` re-asserted it again. 400 →
+		// CodeInvalidInput stays reserved for stories where payload
+		// validation is the operation's distinguishing failure mode;
+		// this entry's single-string-param query surface is too generic
+		// to claim that distinguishing shape.
+		//
+		// Fixture conventions:
+		//   * Per the API-0010 / API-0014 / API-0249 / API-0292 /
+		//     API-0297 / API-0052 / API-0053
+		//     every-optional-populated rule, this entry has **zero
+		//     optional parameters** so the rule is trivially satisfied
+		//     — the fixture supplies exactly the single REQUIRED scalar
+		//     `mysqlId` and nothing else. The harness's success-leg
+		//     `r.URL.Query()` round-trip observes this end-to-end
+		//     through the CLI → API client → httptest server path.
+		//   * Per-case fixture token base `mysql-cov-one-0198` follows
+		//     the `<tag>-cov-<slug>-<storyID>` convention shared across
+		//     every prior mysql/* peer (API-0194..API-0197) and the
+		//     cross-tag `*-cov-one-XXXX` slug used at API-0008,
+		//     API-0021, API-0084, API-0136, API-0142, API-0149,
+		//     API-0164, API-0178, API-0251, API-0294, and API-0342.
+		//     Verified non-colliding with API-0194's
+		//     `mysql-cov-changeStatus-0194`, API-0195's
+		//     `mysql-cov-create-0195`, API-0196's
+		//     `mysql-cov-deploy-0196-mysqlId`, and API-0197's
+		//     `mysql-cov-move-0197-mysqlId` /
+		//     `mysql-cov-move-0197-targetEnvironmentId` literals, and
+		//     non-colliding with the cross-tag `bb-cov-*` /
+		//     `gitea-cov-*` / `github-cov-*` / `gitlab-cov-*` /
+		//     `mariadb-cov-*` / `mongo-cov-*` / `proj-cov-*` /
+		//     `srv-cov-*` / `set-cov-*` / `org-cov-*` namespaces.
+		//   * Deterministic-but-clearly-fake `<base>-mysqlId-fixture`
+		//     literal keeps diffs readable and lets any future schema
+		//     validator's failure messages point at the offending
+		//     field. The `-fixture` suffix matches the API-0136
+		//     `gitea-one`, API-0164 `mariadb-one`, and API-0178
+		//     `mongo-one` precedent for the analogous `<id>` field
+		//     name.
+		//
+		// The next case in the PRD-ordered priority-4 backlog is
+		// API-0199 `mysql-rebuild` (declared a **POST** per the spec
+		// preview; the next contributor must re-verify the spec
+		// against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will continue inside the `mysql-cov-*` per-tag
+		// fixture-isolation namespace opened by API-0194).
+		SampleQuery: map[string][]string{
+			"mysqlId": {"mysql-cov-one-0198-mysqlId-fixture"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+		// Failure-leg override: this is the canonical home for the
+		// 404 → CodeNotFound representative-failure assertion reserved
+		// at API-0194..API-0197 for `mysql-one`, and follows the
+		// precedent set by API-0342 `server-one`, API-0136 `gitea-one`,
+		// API-0164 `mariadb-one`, and API-0178 `mongo-one`. See the
+		// design-rationale block above for the full justification.
+		FailureStatus: http.StatusNotFound,
+		FailureCode:   yerr.CodeNotFound,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,

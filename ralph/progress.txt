@@ -20507,3 +20507,83 @@ forward-reference lesson before assuming any field shape.
     spec and must use distinct fixture literals so byte-for-byte body
     equality observes the two fields independently.
 ---
+
+## 2026-05-09 - API-0198 — Cover mysql-one (GET /mysql.one)
+- Implemented contract coverage for `mysql-one` (GET /mysql.one) — the
+  canonical by-id GET peer for the mysql/* tag and the **fifth**
+  roster-level act on the reserved 404 → CodeNotFound override slot
+  after API-0342 `server-one`, API-0136 `gitea-one`, API-0164
+  `mariadb-one`, and API-0178 `mongo-one`.
+- Spec re-verified against `internal/api/data/openapi.json` >
+  `/mysql.one` > `get`:
+    * **GET** with **zero requestBody** (GETs in this OpenAPI doc never
+      carry a body).
+    * **One REQUIRED query parameter** `mysqlId` (plain `type: string`,
+      no `anyOf` / `nullable` / enum constraints).
+    * **No optional parameters.**
+    * Responses 200/400/401/403/**404**/500 — note 404 appears here in
+      contrast to every prior mysql/* peer (API-0194..API-0197) where
+      the spec omits 404. This is the first 404-bearing entry on the
+      mysql/* roster.
+    * 200 schema is `{}` with `additionalProperties: false`, the
+      empty-success cohort.
+- Inserted one struct literal into `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go`, sandwiched between API-0197
+  `mysql-move` and API-0246 `organization-active` per the StoryID-
+  sorted slice rule. Closes the forward reference embedded in
+  API-0197's trailing comment.
+- Failure-leg override: `FailureStatus: http.StatusNotFound`,
+  `FailureCode: yerr.CodeNotFound` — opt-in to the canonical-`*-one`
+  404 → CodeNotFound representative-failure slot reserved at the
+  mysql/* kickoff (API-0194 `mysql-changeStatus`). Harness already
+  supports the override natively via `runAPICoverageFailure`'s
+  `tc.FailureStatus`/`tc.FailureCode` reads, no harness change needed.
+- Fixture token base `mysql-cov-one-0198` follows the established
+  `<tag>-cov-<slug>-<storyID>` deterministic-but-clearly-fake naming
+  convention; the literal `mysql-cov-one-0198-mysqlId-fixture` carries
+  the `-fixture` suffix per the API-0136/API-0164/API-0178 precedent
+  for the analogous `<id>` field name. Verified non-colliding with the
+  prior mysql/* literals (API-0194..API-0197) and all closed prior-tag
+  namespaces.
+- Files changed:
+    * `internal/cli/api_coverage_test.go` (one new apiCoverageCase
+      struct literal entry).
+    * `ralph/prd.json` (`API-0198.passes`: false → true).
+    * `ralph/progress.txt` (this block).
+- Verification run from repo root:
+    * `gofmt -w .` — clean.
+    * `go mod tidy` — no diff.
+    * `go vet ./...` — clean.
+    * `go test ./... -count=1` — all packages PASS.
+    * `go test -race ./... -count=1` — all packages PASS.
+    * Targeted contract subtests for API-0198 — all five pass:
+      RegistryInvariants, SchemaCommandWorks, ManifestListsOperation,
+      SuccessRoundTrip, RepresentativeFailure.
+- goimports / golangci-lint / staticcheck / govulncheck / goreleaser
+  remain not installed locally per the standing baseline.
+- Remaining risks / follow-ups: next PRD-ordered priority-4 case is
+  API-0199 `mysql-rebuild` (declared POST per spec preview) — re-verify
+  the spec against `internal/api/data/openapi.json` per the forward-
+  reference lesson before assuming any field shape.
+- **Learnings for future iterations:**
+  - The canonical `*-one` by-id GET is the natural home for the
+    404 → CodeNotFound representative-failure assertion under Dokploy's
+    tRPC convention. The mysql/* roster now follows the same pattern
+    as gitea/* (API-0136), github/* (API-0142), gitlab/* (API-0149),
+    mariadb/* (API-0164), mongo/* (API-0178), and server/* (API-0342).
+    Every per-tag opener (here API-0194 `mysql-changeStatus`) reserves
+    this slot for the tag's `*-one` peer.
+  - The `*-one` by-id GET shape is byte-for-byte transitive across
+    tags: a single REQUIRED string query parameter named `<tag>Id`,
+    no body, empty-`{}` 200 response. Unlike `*-create` / `*-update`
+    where required/optional splits diverge per tag, the `*-one` shape
+    is structurally identical and the only meaningful per-tag
+    distinction is the resource-id field name.
+  - The mysql/* tag's spec includes 404 only on the canonical `*-one`
+    peer — the prior four mysql/* entries (changeStatus/create/deploy/
+    move) all collapse missing-target into 400/validation under
+    Dokploy's tRPC convention. This pattern (404 declared first on
+    `*-one`) repeats across mongo/* and mariadb/* and lets the
+    per-tag opener's reservation rule snap cleanly onto whichever
+    StoryID first lands on the canonical `*-one`.
+---
