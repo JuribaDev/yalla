@@ -12501,6 +12501,192 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0183",
+		OperationID: "mongo-saveExternalPort",
+		Method:      http.MethodPost,
+		Path:        "/mongo.saveExternalPort",
+		Tag:         "mongo",
+		// Tenth entry on the priority-4 mongo/* coverage roster,
+		// immediately following API-0182 `mongo-saveEnvironment` and
+		// completing the forward reference embedded in that entry's
+		// comment block ("The next case in the PRD-ordered priority-4
+		// backlog is API-0183 `mongo-saveExternalPort`"). Continues
+		// inside the `mongo-cov-*` per-tag fixture-isolation namespace
+		// opened at API-0174 `mongo-changeStatus` and **must not**
+		// back-reference any closed prior-tag namespace (`set-cov-*`,
+		// `srv-cov-*`, `proj-cov-*`, `org-cov-*`, `compose-cov-*`,
+		// `app-cov-*`, `ai-cov-*`, `admin-cov-*`, `backup-cov-*`,
+		// `bb-cov-*`, `cert-cov-*`, `clu-cov-*`, `deployment-cov-*`,
+		// `dest-cov-*`, `docker-cov-*`, `domain-cov-*`,
+		// `environment-cov-*`, `gitea-cov-*`, `github-cov-*`,
+		// `gitlab-cov-*`, `mariadb-cov-*`, `mounts-cov-*`,
+		// `swarm-cov-*`, `usr-cov-*`, etc.) per the per-tag isolation
+		// rule reasserted at API-0335..API-0444 and originally
+		// established at API-0246 `organization-active`. (The
+		// `gitlab-cov-*` namespace was opened at API-0145
+		// `gitlab-create` between this entry and the immediately
+		// preceding API-0182 `mongo-saveEnvironment`; the API-0182
+		// closure list predated that opening and should be read as
+		// authoritative-up-to-its-time only.)
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json` > `/mongo.saveExternalPort` >
+		// `post`: method POST, tag mongo, **no parameters**,
+		// requestBody REQUIRED with `application/json` and **two
+		// REQUIRED top-level fields** — `mongoId` (plain `type:
+		// string`) and `externalPort` (`anyOf:[number,null]`, i.e.
+		// nullable number). **No optional fields.** Responses
+		// 200/400/401/403/500. The 200 response is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort. **No 404** is declared on
+		// this operation, mirroring the action-on-known-id POST
+		// precedent reasserted at API-0162 `mariadb-deploy`, API-0174
+		// `mongo-changeStatus`, API-0176 `mongo-deploy`, API-0179
+		// `mongo-rebuild`, API-0180 `mongo-reload`, API-0181
+		// `mongo-remove`, and API-0182 `mongo-saveEnvironment` (every
+		// body-bearing imperative-action mongo POST whose
+		// missing-target failure mode collapses into 400/validation
+		// under Dokploy's tRPC convention rather than a dedicated 404
+		// leg). 404 remains exclusive to the canonical by-id `*-one`
+		// GET peer covered at API-0178 `mongo-one` for this tag.
+		//
+		// **Request body schema (REQUIRED top-level fields):**
+		//   - REQUIRED `mongoId` (string) — resource id scalar; the
+		//     fixture below supplies a deterministic-but-clearly-fake
+		//     `mongo-cov-saveExternalPort-0183-mongoId` literal
+		//     carrying the `<tag>-cov-<slug>-<storyID>-<field>`
+		//     suffix for `git grep` traceability. Slug
+		//     `saveExternalPort` preserves the operationId's
+		//     camelCase suffix per the mongo/* tag convention
+		//     (matching API-0182 `mongo-cov-saveEnvironment-0182`);
+		//     this **diverges** from the mariadb/* tag convention
+		//     which kebab-cased the slug at API-0169
+		//     `mariadb-cov-save-external-port-0169`. The
+		//     slug-style-is-per-tag rule was implicitly established
+		//     at API-0182 (mongo's first multi-camel-segment slug)
+		//     and is reasserted here.
+		//   - REQUIRED `externalPort` (`anyOf:[number,null]`) — TCP
+		//     port scalar; the fixture supplies a non-null integer
+		//     literal `25183` so the success leg exercises the
+		//     populated branch of the `anyOf` rather than relying on
+		//     `null`. The value is a valid TCP port (1..65535) with
+		//     the storyID `0183` embedded in the low digits,
+		//     mirroring the API-0169 `mariadb-saveExternalPort`
+		//     precedent (`25169`) for the `anyOf:[number,null]` slot
+		//     — a pure string-suffix token is not applicable here
+		//     because the slot's populated branch is `type: number`,
+		//     not `type: string`. This is the **first
+		//     `anyOf:[number,null]` slot covered on the mongo/*
+		//     coverage roster** (API-0182 `mongo-saveEnvironment`
+		//     introduced the first `anyOf:[string,null]` slot for
+		//     the tag); the integer-with-embedded-storyID convention
+		//     established cross-tag at API-0169 carries forward
+		//     unchanged.
+		//   - **No OPTIONAL fields declared.** The schema is a
+		//     strict two-required-field request, structurally
+		//     **identical** to API-0169 `mariadb-saveExternalPort`
+		//     modulo the resource id field name (`mariadbId` →
+		//     `mongoId`) and structurally **distinct** from every
+		//     prior mongo/* peer: API-0179 `mongo-rebuild` and
+		//     API-0181 `mongo-remove` are single-`mongoId` strict
+		//     scalars; API-0180 `mongo-reload` is two plain strings
+		//     (`mongoId`, `appName`) without any `anyOf`/`nullable`
+		//     branch; API-0174 `mongo-changeStatus` is two plain
+		//     strings with the second slot constrained by an enum
+		//     (`applicationStatus`); API-0177 `mongo-move` is two
+		//     plain strings (`mongoId`, `targetEnvironmentId`);
+		//     API-0182 `mongo-saveEnvironment` is two-required-fields
+		//     with `anyOf:[string,null]` on the second slot (NOT
+		//     `anyOf:[number,null]`); API-0175 `mongo-create` is a
+		//     four-required-scalar create. The
+		//     slug-prefix-is-not-shape rule continues to dictate
+		//     re-verification per-operation rather than transitive
+		//     shape inheritance from any of the prior mongo peers.
+		//
+		// **Shape positioning — two-required-scalar POST external-
+		// port-save mutation, body REQUIRED.** The first REQUIRED
+		// slot is a plain non-nullable `type: string` (no `anyOf` /
+		// `nullable` / enum constraints), structurally identical to
+		// the `mongoId` slot on API-0174 `mongo-changeStatus`,
+		// API-0176 `mongo-deploy`, API-0177 `mongo-move`, API-0179
+		// `mongo-rebuild`, API-0180 `mongo-reload`, API-0181
+		// `mongo-remove`, and API-0182 `mongo-saveEnvironment`. The
+		// second REQUIRED slot is `anyOf:[number,null]`, **first
+		// occurrence on the mongo/* roster** (precedent established
+		// cross-tag at API-0169 `mariadb-saveExternalPort`). The
+		// harness's `len(tc.SampleBody) > 0` gate at
+		// `runAPICoverageSuccess` activates the JSON content-type
+		// and byte-for-byte body comparison legs; this fixture
+		// supplies both REQUIRED fields so the success path verifies
+		// the CLI propagated the body verbatim, including the
+		// unquoted JSON number `25183` (the raw-API path is
+		// type-agnostic at the CLI level — the body is forwarded as
+		// opaque bytes).
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so
+		// the 404→CodeNotFound override is structurally inapplicable
+		// (matching API-0162 `mariadb-deploy`, API-0174
+		// `mongo-changeStatus`, API-0176 `mongo-deploy`, API-0179
+		// `mongo-rebuild`, API-0180 `mongo-reload`, API-0181
+		// `mongo-remove`, and API-0182 `mongo-saveEnvironment`).
+		// 400→CodeInvalidInput is *technically* available — a
+		// payload that omits a REQUIRED field, or supplies a
+		// non-number non-null value for `externalPort`, would fail
+		// server-side validation — but the harness reserves 400
+		// representatives for stories where payload validation is
+		// the operation's *uniquely distinguishing* failure mode. A
+		// conventional imperative-action POST collapses to
+		// type-checking, so the harness-default 401→CodeAuth failure
+		// leg remains the most representative single failure mode
+		// every authenticated Dokploy operation must re-prove, and
+		// is consistent with the 401→CodeAuth choice locked in by
+		// the mongo/* kickoff at API-0174 `mongo-changeStatus` and
+		// continued at API-0175 `mongo-create`, API-0176
+		// `mongo-deploy`, API-0177 `mongo-move`, API-0179
+		// `mongo-rebuild`, API-0180 `mongo-reload`, API-0181
+		// `mongo-remove`, and API-0182 `mongo-saveEnvironment`
+		// (API-0178 `mongo-one` was the lone roster-level override
+		// to 404, which was structurally restricted to the by-id
+		// GET peer).
+		//
+		// **Fixture token base** `mongo-cov-saveExternalPort-0183`
+		// follows the established `<tag>-cov-<slug>-<storyID>`
+		// deterministic-but-clearly-fake naming convention (slug
+		// `saveExternalPort` preserves the operationId's camelCase
+		// suffix per the mongo/* tag convention established at
+		// API-0182 `mongo-cov-saveEnvironment-0182`) and is verified
+		// non-colliding with API-0174's `mongo-cov-changeStatus-0174`,
+		// API-0175's `mongo-cov-create-0175`, API-0176's
+		// `mongo-cov-deploy-0176-mongoId`, API-0177's
+		// `mongo-cov-move-0177-{mongoId,targetEnvironmentId}`,
+		// API-0178's `mongo-cov-one-0178-mongoId-fixture`, API-0179's
+		// `mongo-cov-rebuild-0179-mongoId`, API-0180's
+		// `mongo-cov-reload-0180-{mongoId,appName}`, API-0181's
+		// `mongo-cov-remove-0181-mongoId`, and API-0182's
+		// `mongo-cov-saveEnvironment-0182-{mongoId,env}` literals.
+		//
+		// The next case in the PRD-ordered priority-4 backlog is
+		// API-0184 `mongo-search` (declared a **GET** per the spec
+		// preview — the first GET on the mongo/* roster since
+		// API-0178 `mongo-one`; the next contributor must re-verify
+		// the spec against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will continue inside the `mongo-cov-*` per-tag
+		// fixture-isolation namespace opened by API-0174).
+		SampleBody: json.RawMessage(`{
+			"mongoId": "mongo-cov-saveExternalPort-0183-mongoId",
+			"externalPort": 25183
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0188",
 		OperationID: "mounts-allNamedByApplicationId",
 		Method:      http.MethodGet,

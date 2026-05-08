@@ -220,6 +220,25 @@ Conventions for the Cobra command tree.
   branches, exercises real serialisation, and keeps fixtures
   grep-friendly. A `null` fixture would skip body-forwarding on the
   field and weaken the success-leg round-trip.
+- For OpenAPI fields declared as `anyOf [number, null]` (the
+  `*-saveExternalPort` family across the database tags — mariadb, mongo,
+  mysql, postgres, redis), supply the **number** branch in `SampleBody`
+  as an unquoted integer with the storyID embedded in the low digits
+  (e.g. `25169` for API-0169 mariadb, `25183` for API-0183 mongo). The
+  populated branch exercises the JSON-encoding pipeline and keeps the
+  byte-for-byte body-comparison leg meaningful; the value must stay in
+  the valid TCP-port range (1..65535). A pure string-suffix token does
+  not apply because the populated branch is `type: number`, not
+  `type: string`.
+- Per-tag fixture-namespace slug style is locked in by the FIRST
+  multi-camel-segment slug landed on each tag and must stay consistent
+  within that tag thereafter. The mongo/* tag preserves the operationId's
+  camelCase suffix verbatim (`mongo-cov-saveEnvironment-0182`,
+  `mongo-cov-saveExternalPort-0183`); the mariadb/* tag kebab-cases the
+  same family (`mariadb-cov-save-environment-0168`,
+  `mariadb-cov-save-external-port-0169`). When opening a new tag, decide
+  the slug style on the first multi-segment fixture and document the
+  choice in the entry's comment block so subsequent peers re-apply it.
 - Override `FailureStatus` / `FailureCode` when an operation's
   representative failure is not authentication (e.g. quota → 429,
   conflict → 409). The default is intentional: every Dokploy operation

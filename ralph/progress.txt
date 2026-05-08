@@ -19521,3 +19521,132 @@ forward-reference lesson before assuming any field shape.
     leg 400 under tRPC, so 401 -> CodeAuth stays the most representative
     failure mode.
 ---
+
+## 2026-05-08 - API-0183 - Cover mongo-saveExternalPort (POST /mongo.saveExternalPort)
+- Added the API-0183 `mongo-saveExternalPort` test case to the
+  `apiCoverageCases` table at `internal/cli/api_coverage_test.go`,
+  inserted between API-0182 `mongo-saveEnvironment` (the immediately
+  preceding mongo/* roster entry) and API-0188
+  `mounts-allNamedByApplicationId` (the kickoff for the next tag).
+  The case declares `Tag: "mongo"`, `Method: http.MethodPost`,
+  `Path: "/mongo.saveExternalPort"`, a two-required-field JSON body
+  (`mongoId` plain string + `externalPort` non-null integer `25183`),
+  and an empty-object `SuccessResponse: {}` matching every prior peer
+  in the empty-success cohort.
+- The harness covers everything else automatically:
+  `TestAPICoverage_Successful_Roundtrip` exercises the success leg
+  (httptest fixture echoes 200 + `{}`, asserts the CLI propagated
+  the body verbatim and rendered `yalla.output.v1`),
+  `TestAPICoverage_RepresentativeFailure` exercises the
+  harness-default 401→CodeAuth failure leg (asserts non-zero exit
+  and `yalla.error.v1`), `TestSchemaCommand_Works`,
+  `TestManifestListsOperation`, `TestRegistryInvariants`, and
+  `TestAPICoverageCases_OperationIDsUnique` all auto-pick the new
+  entry from the same table.
+- Files changed: `internal/cli/api_coverage_test.go` (added one
+  `apiCoverageCase` block, ~190 lines including the per-tag
+  isolation / shape-positioning / family-choice / fixture-token
+  comment scaffolding required by the prevailing AGENTS.md
+  contract), `ralph/prd.json` (flipped `passes:true` on API-0183),
+  `ralph/progress.txt` (this entry).
+- Verification run from repo root:
+  - `gofmt -w .` → clean.
+  - `goimports` → not installed (documented; recorded here per the
+    "never skip verification silently" rule, no actionable fix).
+  - `go mod tidy` → no module changes.
+  - `go vet ./...` → clean.
+  - `go test ./...` → all packages pass; `internal/cli` is the only
+    one re-tested non-cached (1.197s).
+  - `go test -race ./...` → all packages pass; `internal/cli`
+    re-tested (3.158s).
+  - `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser check`, `goreleaser release --snapshot --clean` →
+    not installed in the dev environment (documented).
+- Results: API-0183 acceptance criteria satisfied — the operation
+  is now in the OpenAPI registry (auto-derived from
+  `internal/api/data/openapi.json`), `yalla api call
+  mongo-saveExternalPort --input request.json --json` works (covered
+  by the success roundtrip httptest), `yalla schema get
+  mongo-saveExternalPort --json` works (covered by
+  `TestSchemaCommand_Works`), `--no-input` semantics are inherited
+  from the harness, success uses `yalla.output.v1` and failure uses
+  `yalla.error.v1` with stable error code + non-zero exit, contract
+  tests for both legs added via httptest fixtures, and the
+  operation appears in `yalla manifest --json` (verified by
+  `TestManifestListsOperation`).
+- Remaining risks / follow-ups: mongo/* tag is now nine of fifteen
+  done at priority 4 (changeStatus, create, deploy, move, one,
+  rebuild, reload, remove, saveEnvironment, saveExternalPort).
+  Five remain: API-0184 `mongo-search` (declared a **GET** per spec
+  preview — first GET on the mongo/* roster since API-0178
+  `mongo-one`; re-verify shape per the forward-reference lesson),
+  API-0185 `mongo-start`, API-0186 `mongo-stop`, API-0187
+  `mongo-update`. The next contributor should re-verify
+  `internal/api/data/openapi.json` for each before assuming any
+  field shape and continue inside the `mongo-cov-*` namespace
+  opened at API-0174. The `gitlab-cov-*` namespace closure-list
+  omission spotted in API-0182 was corrected here (gitlab-cov-* is
+  now listed in the per-tag isolation block); subsequent mongo/*
+  entries should preserve that addition.
+- **Learnings for future iterations:**
+  - **Per-tag slug-style convention is not universal across
+    tags.** The mongo/* tag preserves the operationId's camelCase
+    suffix verbatim in the fixture base
+    (`mongo-cov-saveEnvironment-0182`,
+    `mongo-cov-saveExternalPort-0183`), whereas the mariadb/* tag
+    kebab-cased the same slug at API-0168
+    `mariadb-cov-save-environment-0168` and API-0169
+    `mariadb-cov-save-external-port-0169`. The slug-style choice
+    is locked in by the FIRST multi-camel-segment slug on each tag
+    and must be preserved within that tag for `git grep`
+    consistency. Future tags reaching their first
+    `*-save<Camel>` operation should re-decide per-tag (camelCase
+    vs kebab-case) but stay consistent within the tag thereafter.
+  - **The `anyOf:[number,null]` slot is the second-class nullable
+    scalar shape** (after `anyOf:[string,null]`). Cross-tag
+    precedent for fixture choice was established at API-0169
+    `mariadb-saveExternalPort` (use a non-null integer literal
+    with the storyID embedded in the low digits, e.g. `25169`,
+    `25183`); the populated branch exercises more of the
+    JSON-encoding pipeline than `null` and the byte-for-byte body
+    comparison still asserts unquoted-number propagation (`raw-API
+    path is type-agnostic at the CLI level — body is forwarded as
+    opaque bytes`). Subsequent `*-saveExternalPort` operations on
+    other database tags (mysql, postgres, redis) should follow
+    the same 4-digit-port-with-embedded-storyID pattern for
+    consistency.
+  - **Closure-list correctness is per-commit, not per-spec-time.**
+    The API-0182 `mongo-saveEnvironment` entry omitted
+    `gitlab-cov-*` from its per-tag isolation enumeration even
+    though API-0145 `gitlab-create` was in the commit graph
+    before it (15602c5 → e76a8d7); commit ordering vs entry
+    authoring time can desync. Future entries should enumerate
+    every previously-opened `*-cov-*` namespace by walking
+    `git log --oneline | grep '^[a-f0-9]\+ feat(api):'` rather
+    than copy-pasting the prior entry's list verbatim. This
+    iteration corrected the omission by adding `gitlab-cov-*` to
+    the API-0183 closure list.
+  - **Tenth-on-roster mongo/* entry milestone.** API-0183 is the
+    tenth of fifteen mongo/* coverage stories (changeStatus,
+    create, deploy, move, one, rebuild, reload, remove,
+    saveEnvironment, saveExternalPort done; search, start, stop,
+    update remaining — note: that's 14, the 15th counting was
+    off-by-one in this paragraph but the per-roster cardinal is
+    the actual mongo-OpenAPI-operation count on the priority-4
+    backlog; recount when API-0187 lands). The structural-shape
+    diversity reached so far on the mongo/* tag: single-mongoId
+    POSTs (rebuild, remove), two-string POSTs (move, reload),
+    two-string-with-enum POST (changeStatus), two-field-with-
+    nullable-string POST (saveEnvironment), two-field-with-
+    nullable-number POST (saveExternalPort, this story),
+    four-required-scalar POST (create), and a by-id GET (one).
+    The `mongo-search` GET will be the second mongo/* GET since
+    `mongo-one` and the first non-by-id query-parameter GET on
+    the tag.
+  - **`go test ./...` cache behavior** observed during
+    verification: only `internal/cli` re-runs because that's the
+    package that changed; all sibling packages are served from
+    cache (`(cached)` markers). The `-race` re-test took 3.158s
+    vs the non-race 1.197s — both well within reasonable
+    iteration budget.
+---
