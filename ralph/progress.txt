@@ -13926,3 +13926,39 @@ Learnings for future iterations:
     404→CodeNotFound representative is reserved for an id-bearing
     peer where the spec re-verification confirms 404 exercisability.
 ---
+
+## 2026-05-08 - API-0436
+- Implemented coverage for `user-getInvitations` (GET /user.getInvitations).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended the API-0436 case to
+    `coveredAPIOperations`. Tenth entry in the user/* roster, structurally
+    identical to API-0427/API-0433/API-0434 (parameter-free GET, empty
+    `{}` 200 body). No `SampleBody` / `SampleQuery` / `SamplePathParams`
+    populated; failure leg defaults to 401 → CodeAuth (the harness
+    default) because 400/404 are structurally inapplicable to a
+    parameter-free GET that derives its principal from the bearer.
+  - `ralph/prd.json` — flipped `passes` to true for API-0436.
+- Verification run from repo root:
+  - `gofmt -w .` — clean
+  - `go vet ./...` — clean
+  - `go mod tidy` — no changes
+  - `go test ./...` — all packages pass
+  - `go test -race ./...` — all packages pass (internal/cli ran 2.823s)
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — not installed locally; documented per the
+    Codebase Patterns "Verification baseline" rule.
+- Remaining risks: none introduced by this change. The next case in the
+  PRD-ordered priority-2 backlog is API-0437 `user-getMetricsToken`.
+- **Learnings for future iterations:**
+  - The forward-reference verification rule held: re-checking
+    `internal/api/data/openapi.json > /user.getInvitations > get`
+    confirmed the parameter-free GET shape, even though the prior
+    entry (API-0435 `user-getContainerMetrics`) carried four
+    required query parameters. Same tag, completely different shape
+    — slug-prefix-is-not-shape stays the load-bearing lesson.
+  - Inserting at the end of `coveredAPIOperations` (just before the
+    closing `}` and the `TestAPICoverage_RegistryInvariants`
+    function) keeps the StoryID-ordered append-only invariant the
+    harness relies on. The test loop is registry-invariant only —
+    no per-case wiring required beyond the struct literal.
+---
