@@ -2496,6 +2496,53 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0101",
+		OperationID: "deployment-removeDeployment",
+		Method:      http.MethodPost,
+		Path:        "/deployment.removeDeployment",
+		Tag:         "deployment",
+		// Eighth deployment/* coverage entry and the second POST in the
+		// tag (twin of API-0099 `deployment-killProcess`). Spec source:
+		// `data/openapi.json > /deployment.removeDeployment > post`
+		// declares no parameters and a REQUIRED request body whose schema
+		// is byte-for-byte identical to `deployment.killProcess` — a
+		// single required string field `deploymentId` identifying the
+		// deployment record to delete from the registry. The forward
+		// reference embedded in the API-0099 comment block ("the same
+		// `deploymentId` field the registry will use for future
+		// deployment lifecycle peers such as `removeDeployment` covered
+		// by API-0101") materialises here. Identical response shape too:
+		// 200 returns `{}` with `additionalProperties: false`, plus the
+		// 400/401/403/500 error envelopes.
+		//
+		// `removeDeployment` and `killProcess` differ only in semantics
+		// (terminate worker vs. delete record) and in the lifecycle stage
+		// they target — they do NOT differ on the wire. Keeping the
+		// fixture shape aligned with API-0099 therefore preserves the
+		// minimal-required-id POST family precedent established by
+		// API-0066/0067/0068/0073/0074/0080/0088/0090/0091 in the
+		// compose/* roster and now mirrored across deployment/* by
+		// API-0099 + API-0101. Future deployment lifecycle peers should
+		// grep these two entries first. The fixture is deliberately
+		// minimal-but-valid: only the required field is populated so a
+		// future schema validator wired into the harness still accepts
+		// it, and the success leg's body-equality check inside
+		// `runAPICoverageSuccess` confirms the CLI propagated the single
+		// required field verbatim through the `--input` JSON `body`
+		// envelope. Slug convention `deployment-cov-<slug>-<storyID>`
+		// continues the cross-story grep contract opened by API-0094.
+		SampleBody: json.RawMessage(`{
+			"deploymentId": "deployment-cov-removedeployment-0101"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// identical to API-0094..0100 and the wider empty-success
+		// convention shared by every minimal-id POST family member.
+		// Empty-object body keeps the success-leg envelope assertion
+		// focused on `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

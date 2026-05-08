@@ -5516,3 +5516,66 @@
     parameter-free GETs need none and should leave the field unset
     rather than invent a no-op slug.
 ---
+
+## 2026-05-08 - API-0101 (deployment-removeDeployment)
+- Covered Dokploy operation `deployment-removeDeployment` (POST
+  /deployment.removeDeployment) by appending one `apiCoverageCase`
+  entry to the `coveredAPIOperations` table in
+  `internal/cli/api_coverage_test.go`. Eighth deployment/* roster
+  member and the second POST in the tag (twin of API-0099
+  `deployment-killProcess`).
+- Spec source `internal/api/data/openapi.json >
+  /deployment.removeDeployment > post`: `parameters: []`, REQUIRED
+  request body with one required string field `deploymentId`,
+  responses 200 (empty `{}`), 400, 401, 403, 500. Body shape is
+  byte-for-byte identical to `deployment-killProcess` (API-0099),
+  realising the forward reference embedded in the API-0099 comment
+  block ("the same `deploymentId` field … future deployment
+  lifecycle peers such as `removeDeployment` covered by API-0101").
+- SampleBody uses the canonical
+  `deployment-cov-removedeployment-0101` slug, keeping the
+  `deployment-cov-<slug>-<storyID>` cross-story grep contract opened
+  by API-0094 alive across the deployment/* roster.
+- Files changed:
+  - internal/cli/api_coverage_test.go (added API-0101 case)
+  - ralph/prd.json (flipped passes:true for API-0101)
+  - ralph/progress.txt (this entry)
+- Verification run from repo root:
+  - gofmt -w . — clean
+  - go mod tidy — clean
+  - go vet ./... — clean
+  - go test ./... — PASS (internal/cli 1.193s)
+  - go test -race ./... — PASS (internal/cli 2.531s)
+  - goimports / golangci-lint / staticcheck / govulncheck /
+    goreleaser remain uninstalled locally (documented in the
+    repo-wide Codebase Patterns block).
+- Remaining risks / follow-ups:
+  - 372 API-coverage stories still failing; deployment/* tag has
+    8/N members in (one tag-wide audit pending when the last
+    deployment-* story lands).
+- **Learnings for future iterations:**
+  - The deployment-killProcess (API-0099) and
+    deployment-removeDeployment (API-0101) pair is now the
+    canonical *intra-tag* twin POST precedent: same wire shape
+    (`{"deploymentId": "..."}`), different semantics (terminate
+    worker vs. delete record). Future tag-internal POST twins
+    (e.g. when a tag exposes both a `kill*` and a `remove*` peer)
+    should grep these two entries first — the comment block in
+    API-0101 explicitly cross-links to API-0099 and to the
+    upstream compose/* minimal-id POST family
+    (API-0066/0067/0068/0073/0074/0080/0088/0090/0091).
+  - Forward references work: the API-0099 comment named
+    "API-0101 (`removeDeployment`)" before that story existed.
+    Honouring those references when the story finally lands
+    keeps grep cohesion strong and makes the test file readable
+    as a narrative. When writing comments for early entries in a
+    family, name future siblings with their PRD story IDs so
+    later iterations can complete the loop.
+  - Spec drift quick-check: `jq '.paths."/deployment.removeDeployment".post
+    | {parameters, requestBody, responses: (.responses | keys)}'`
+    against `internal/api/data/openapi.json` validated the
+    parameter/body/response shape before writing the comment
+    block — same one-liner used for API-0100. Recommend keeping
+    this as the standard spec-drift smoke test for any
+    api-operation story.
+---
