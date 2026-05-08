@@ -1287,6 +1287,33 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.method` / `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0071",
+		OperationID: "compose-deploy",
+		Method:      http.MethodPost,
+		Path:        "/compose.deploy",
+		Tag:         "compose",
+		// Mirrors the schema in `data/openapi.json` for /compose.deploy:
+		// the only required field is `composeId` (string); `title` and
+		// `description` are optional strings. Direct shape twin of
+		// API-0016 (application-deploy) — same `*-deploy` envelope, just
+		// the compose/* tag namespace. The fixture supplies all three
+		// with deterministic-but-clearly-fake values so the wire payload
+		// assertion exercises the full deploy envelope rather than just
+		// the minimum, matching the *-create / *-update convention
+		// recorded in internal/cli/AGENTS.md.
+		SampleBody: json.RawMessage(`{
+			"composeId": "compose-cov-deploy-0071",
+			"title": "API-0071 deploy fixture",
+			"description": "API-0071 fixture for compose-deploy coverage"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the empty-success convention shared by every prior
+		// application/* and compose/* mutation peer. Empty-object body
+		// keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

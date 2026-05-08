@@ -4010,3 +4010,48 @@
     so envelope assertions stay focused on `data.method` /
     `data.status`.
 ---
+
+## 2026-05-08 - API-0071
+- Implemented coverage for compose-deploy (POST /compose.deploy) by appending
+  a new `apiCoverageCase` entry to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go`. The fixture mirrors the spec exactly:
+  required `composeId` plus optional `title` / `description` strings, with
+  deterministic-but-clearly-fake values that exercise the full deploy
+  envelope (matching the *-create / *-update payload-exercise convention
+  recorded in `internal/cli/AGENTS.md` and the direct application/* twin
+  established by API-0016 application-deploy).
+- Files changed:
+  - internal/cli/api_coverage_test.go (added API-0071 case)
+  - ralph/prd.json (flipped passes:true for API-0071)
+  - ralph/progress.txt (this entry)
+- Verification run (all green):
+  - gofmt -w . — clean
+  - go mod tidy — no changes
+  - go vet ./... — clean
+  - go test ./... — all packages pass
+  - go test -race ./... — all packages pass
+  - goimports / golangci-lint / staticcheck / govulncheck / goreleaser:
+    not installed locally; documented as missing per repo convention.
+- Remaining risks / follow-ups: none for this story; the coverage harness
+  drives the registry, schema, manifest, and httptest contract assertions
+  uniformly off the registered case, so adding the row alone closes the
+  PRD's eight acceptance criteria.
+- **Learnings for future iterations:**
+  - compose-deploy is the direct shape twin of application-deploy
+    (API-0016): same `{id, title?, description?}` payload, swapped tag
+    namespace (`compose` vs `application`). The compose/* tag now has
+    seven canonical shape templates already covered in
+    `internal/cli/api_coverage_test.go`:
+      - minimal-composeId-only POST: API-0066 (cancelDeployment),
+        API-0067 (cleanQueues), API-0068 (clearDeployments).
+      - composeId + deleteVolumes (both required): API-0070 (delete).
+      - composeId + optional title/description: API-0071 (deploy) — new.
+      - full create envelope (name + environmentId required, plus
+        appName/composeFile/composeType/description/serverId optional):
+        API-0069 (create).
+    Future compose/* stories should pattern-match against these rows
+    rather than re-deriving the schema from `data/openapi.json`.
+  - Numeric `priority` in `ralph/prd.json` is ascending (lower = higher
+    priority). The next pending P2 batch after API-0071 is API-0072
+    (compose-deployTemplate) through API-0093+ — all compose/* operations.
+---
