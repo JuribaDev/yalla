@@ -22942,3 +22942,45 @@ forward-reference lesson before assuming any field shape.
     rolls forward unchanged — only the `<slug>` and `<storyID>`
     segments change between sibling entries within the same tag.
 ---
+
+## 2026-05-09 - API-0288
+- Implemented per-operation contract coverage for `previewDeployment-one`
+  (GET /previewDeployment.one, tag previewDeployment).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended new
+    `apiCoverageCase` entry for API-0288 (single REQUIRED string query
+    parameter `previewDeploymentId`, empty-object 200, 404→CodeNotFound
+    representative-failure override activated as the canonical by-id
+    `*-one` GET peer of the previewDeployment/* roster).
+  - `ralph/prd.json` — flipped `API-0288.passes` to `true`.
+- Verification:
+  - `gofmt -w .` (clean)
+  - `go vet ./...` (clean)
+  - `go test ./...` (all packages pass, including
+    `github.com/JuribaDev/yalla/internal/cli` 1.325s).
+  - `go test -race ./...` (all packages pass, internal/cli 3.232s).
+  - `go mod tidy` (no changes).
+  - `goimports` not installed locally (unchanged from prior iterations).
+- Remaining risks / follow-ups: none for this story. Next priority-4
+  case is API-0289 `previewDeployment-redeploy` (POST). Per the per-tag
+  opener convention reasserted at API-0290 `project-all`, the
+  404→CodeNotFound override is now spent for the previewDeployment/*
+  roster — API-0289 must revert to harness-default 401→CodeAuth even
+  if 404 appears in its spec response set.
+- **Learnings for future iterations:**
+  - The 404→CodeNotFound representative-failure override is reserved
+    **exclusively** for the canonical by-id `*-one` GET peer of each
+    tag (cross-tag precedent: API-0055 `bitbucket-one`,
+    API-0294 `project-one`, API-0342 `server-one`, API-0444 ...).
+    `*-all` openers and body-bearing imperative POSTs keep the
+    harness-default 401→CodeAuth even when 404 is in their spec
+    response set.
+  - The `apiCoverageCase` harness gate `len(tc.SampleBody) > 0`
+    activates the JSON content-type and body byte-comparison legs;
+    GET peers therefore omit `SampleBody` and use `SampleQuery` to
+    exercise the query-propagation leg via `r.URL.Query()`.
+  - Per-tag fixture-isolation namespace `preview-cov-*` opened by
+    API-0286 continues unchanged through API-0287 / API-0288 and
+    must be inherited verbatim by API-0289 `previewDeployment-redeploy`
+    without back-referencing any closed prior-tag namespace.
+---

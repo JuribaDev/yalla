@@ -20815,6 +20815,137 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0288",
+		OperationID: "previewDeployment-one",
+		Method:      http.MethodGet,
+		Path:        "/previewDeployment.one",
+		Tag:         "previewDeployment",
+		// Third entry in the previewDeployment/* roster, immediately
+		// following API-0286 `previewDeployment-all` (the opener that
+		// established the `preview-cov-*` per-tag fixture-isolation
+		// namespace) and API-0287 `previewDeployment-delete` (the
+		// body-bearing imperative-action POST that continued inside
+		// that namespace). The API-0287 closing block forward-
+		// referenced this entry verbatim ("API-0288
+		// `previewDeployment-one` declared a GET per the spec
+		// preview ... will continue inside the `preview-cov-*`
+		// per-tag fixture-isolation namespace. Importantly, API-0288
+		// is the canonical by-id `*-one` GET peer for the
+		// previewDeployment/* roster and therefore the structurally-
+		// correct activation site for the 404→CodeNotFound
+		// representative-failure override per the per-tag opener
+		// convention reasserted at API-0290 `project-all` and
+		// originally established at API-0246 `organization-active`").
+		// Per that per-tag fixture rule, this entry continues inside
+		// the `preview-cov-*` namespace and **must not** back-
+		// reference any closed prior-tag namespace (`admin-cov-*`,
+		// `ai-cov-*`, `app-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		// `cert-cov-*`, `clu-cov-*`, `compose-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `docker-cov-*`,
+		// `domain-cov-*`, `environment-cov-*`, `gitea-cov-*`,
+		// `github-cov-*`, `gitlab-cov-*`, `mariadb-cov-*`,
+		// `mongo-cov-*`, `mounts-cov-*`, `mysql-cov-*`, `org-cov-*`,
+		// `postgres-cov-*`, `proj-cov-*`, `set-cov-*`, `srv-cov-*`,
+		// `swarm-cov-*`, `usr-cov-*`).
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against `internal/api/data/openapi.json` >
+		// `/previewDeployment.one` > `get`: method GET, tag
+		// previewDeployment, **no request body** (GETs in this OpenAPI
+		// document never carry a `requestBody` field), and **one
+		// REQUIRED query parameter** — `previewDeploymentId`
+		// (plain string, no `anyOf` / `nullable` / enum constraints).
+		// Responses 200/400/401/403/404/500 where the 200 schema is
+		// `{}` with `additionalProperties: false`, matching every
+		// prior covered peer in the empty-success cohort. The wire
+		// shape (single REQUIRED string query parameter, empty-object
+		// 200) is the canonical by-id `*-one` GET pattern, identical
+		// in cardinality to API-0286 `previewDeployment-all` (which
+		// however scopes by `applicationId` parent rather than
+		// terminal `previewDeploymentId`).
+		//
+		// **Shape positioning — single REQUIRED string query GET, no
+		// body, by-id retrieval.** Cardinality- and type-identical to
+		// the cross-tag `*-one` GET family that has consistently
+		// activated the 404→CodeNotFound override since
+		// API-0055 `bitbucket-one`, including API-0342 `server-one`,
+		// API-0294 `project-one`, etc. The harness's
+		// `len(tc.SampleBody) > 0` gate stays inert so no content-
+		// type / body byte-comparison legs activate, exactly as on
+		// every prior parameter-only GET peer.
+		//
+		// **Family choice — 404→CodeNotFound representative
+		// override ACTIVATED.** This is the canonical by-id `*-one`
+		// GET peer for the previewDeployment/* roster, and the
+		// per-tag opener convention reasserted at API-0290
+		// `project-all` and originally established at API-0246
+		// `organization-active` reserves the 404→CodeNotFound
+		// override **exclusively** for this call site. A by-id
+		// retrieval's primary failure mode is a missing resource (an
+		// agent passing a `previewDeploymentId` that no longer
+		// exists or that the bearer-token's tenant cannot see),
+		// which the spec explicitly enumerates as a 404 response.
+		// 404 → CodeNotFound is therefore the most informative
+		// failure leg to re-prove for this call site, mirroring the
+		// API-0055 / API-0294 / API-0342 / API-0444 cross-tag
+		// `*-one`-with-404 precedent. Auth failures stay covered
+		// fleet-wide by the cross-tag default 401 → CodeAuth path
+		// activated by every other previewDeployment/* peer
+		// (API-0286, API-0287) and by the upcoming
+		// API-0289 `previewDeployment-redeploy`.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base `preview-cov-one-0288`
+		//     follows the established `<tag>-cov-<slug>-<storyID>`
+		//     deterministic-but-clearly-fake naming convention shared
+		//     across every prior covered peer and verified non-
+		//     colliding with API-0286 `preview-cov-all-0286` and
+		//     API-0287 `preview-cov-delete-0287` literals. Single-
+		//     segment slug `one` has no internal capitalisation so
+		//     the kebab-vs-camel choice is moot here. The `preview-`
+		//     slug prefix is the same shortening of the
+		//     `previewDeployment` tag used by API-0286 and API-0287
+		//     (consistent with `proj-` for `project`, `org-` for
+		//     `organization`, `srv-` for `server`, `usr-` for `user`,
+		//     `set-` for `settings`).
+		//   * The required `previewDeploymentId` value uses the
+		//     appended-field-name suffix
+		//     `preview-cov-one-0288-previewDeploymentId` so a future
+		//     cross-fixture audit can grep the field name and the
+		//     storyID independently.
+		//
+		// The next case in the PRD-ordered priority-4 backlog is
+		// API-0289 `previewDeployment-redeploy` (declared a **POST**
+		// per the spec preview; the next contributor must re-verify
+		// the spec against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will continue inside the `preview-cov-*` per-tag
+		// fixture-isolation namespace. Per the per-tag opener
+		// convention, the 404→CodeNotFound override is now spent for
+		// the previewDeployment/* roster — API-0289 must revert to
+		// the harness-default 401→CodeAuth representative-failure
+		// leg even if 404 appears in its spec response set).
+		SampleQuery: map[string][]string{
+			"previewDeploymentId": {"preview-cov-one-0288-previewDeploymentId"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+		// 404 → CodeNotFound override ACTIVATED per the design-
+		// rationale block above: this is the canonical by-id
+		// `*-one` GET peer for the previewDeployment/* roster and
+		// the structurally-correct activation site for the
+		// missing-resource representative-failure leg, mirroring the
+		// cross-tag `*-one`-with-404 precedent (API-0055
+		// `bitbucket-one`, API-0294 `project-one`, API-0342
+		// `server-one`, ...).
+		FailureStatus: http.StatusNotFound,
+		FailureCode:   yerr.CodeNotFound,
+	},
+	{
 		StoryID:     "API-0290",
 		OperationID: "project-all",
 		Method:      http.MethodGet,
