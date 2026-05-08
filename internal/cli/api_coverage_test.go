@@ -8818,6 +8818,170 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0164",
+		OperationID: "mariadb-one",
+		Method:      http.MethodGet,
+		Path:        "/mariadb.one",
+		Tag:         "mariadb",
+		// Fifth entry on the mariadb/* coverage roster and the
+		// **canonical by-id GET peer** for the tag — the mariadb/*
+		// analogue of API-0008 `ai-one`, API-0021 `application-one`,
+		// API-0084 `compose-one`, API-0251 `organization-one`,
+		// API-0294 `project-one`, API-0342 `server-one`, and most
+		// directly API-0136 `gitea-one` (the second roster to act on
+		// the reserved 404 → CodeNotFound override). Continues inside
+		// the `mariadb-cov-*` per-tag fixture-isolation namespace
+		// opened by API-0160 `mariadb-changeStatus` and **must not**
+		// back-reference any closed prior-tag namespace
+		// (`set-cov-*`, `srv-cov-*`, `proj-cov-*`, `org-cov-*`,
+		// `compose-cov-*`, `app-cov-*`, `ai-cov-*`, `admin-cov-*`,
+		// `backup-cov-*`, `bb-cov-*`, `cert-cov-*`, `clu-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `docker-cov-*`,
+		// `domain-cov-*`, `environment-cov-*`, `gitea-cov-*`,
+		// `mounts-cov-*`, `swarm-cov-*`, `usr-cov-*`, etc.) per the
+		// per-tag isolation rule reasserted at API-0335..API-0444 and
+		// originally established at API-0246 `organization-active`.
+		// Completes the forward reference embedded in API-0163
+		// `mariadb-move`'s comment block ("The next case in the
+		// PRD-ordered priority-4 backlog is API-0164 `mariadb-one`").
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /mariadb.one > get`: a
+		// **GET** with **one required query parameter** and **no
+		// request body** (GETs in this OpenAPI document never carry
+		// a `requestBody` field). Parameters per the spec:
+		//   - REQUIRED scalar: `mariadbId` (plain string).
+		//   - **No optional parameters.**
+		// The single param is typed `string` with no `anyOf` /
+		// `nullable` / enum constraints — byte-for-byte identical
+		// to the `mariadbId` field on API-0160 `mariadb-changeStatus`,
+		// API-0162 `mariadb-deploy`, and API-0163 `mariadb-move`
+		// (where it appeared as a body scalar rather than a query
+		// scalar). Responses 200/400/401/403/404/500 — the 200
+		// schema is `{}` with `additionalProperties: false`, matching
+		// every prior covered peer in the empty-success cohort.
+		// **Note** the appearance of 404 here, in contrast to every
+		// prior mariadb/* peer (API-0160 `mariadb-changeStatus`,
+		// API-0161 `mariadb-create`, API-0162 `mariadb-deploy`, and
+		// API-0163 `mariadb-move`) where the spec omits 404; the
+		// canonical by-id GET is the natural home for the
+		// resource-not-found failure mode under Dokploy's tRPC
+		// convention.
+		//
+		// **Shape positioning — canonical `*-one` by-id GET.** This
+		// is byte-for-byte the same wire shape as the cross-tag
+		// canonical-by-id-GET precedent chain at API-0008 `ai-one`
+		// (`aiId`), API-0021 `application-one` (`applicationId`),
+		// API-0084 `compose-one` (`composeId`), API-0251
+		// `organization-one` (`organizationId`), API-0294
+		// `project-one` (`projectId`), API-0342 `server-one`
+		// (`serverId`), and API-0136 `gitea-one` (`giteaId`). The
+		// harness forwards SampleQuery via the `--input` JSON `query`
+		// field, and `runAPICoverageSuccess` re-reads `r.URL.Query()`
+		// to confirm the CLI propagated the param verbatim — exactly
+		// the assertion path every prior `*-one` peer exercises. The
+		// wire-equality round-trip through
+		// `r.URL.Query().Get("mariadbId")` proves the CLI → API
+		// client → httptest server path independently for this
+		// operationId, which is the per-PRD-story granularity the
+		// manifest invariant demands.
+		//
+		// **Family choice — failure leg overridden to 404 →
+		// CodeNotFound.** Every prior mariadb/* covered case
+		// (API-0160..API-0163) kept the harness default 401 →
+		// CodeAuth representative failure because auth is the
+		// universal failure mode every Dokploy operation must
+		// re-prove. The per-tag opener design header (re-asserted
+		// at API-0290 `project-all`, API-0335 `server-all`, and the
+		// mariadb/* kickoff at API-0160 `mariadb-changeStatus`)
+		// reserves 404 → CodeNotFound as the representative-failure
+		// leg for **the canonical by-id `*-one` peer**, and the spec
+		// itself first declares 404 on this operation (the prior
+		// four mariadb/* peers' specs omit 404 entirely). API-0164
+		// is that peer: the mariadb/* tag's `mariadbId` is a strong
+		// semantic match for "by-id GET whose primary failure mode
+		// is the resource not existing" — a Dokploy-managed MariaDB
+		// service record is pinned to long-lived UUIDs that an agent
+		// will frequently fetch by ID on cold-cache restart, where
+		// 404 (the service was deleted between cache fill and
+		// fetch, or the agent learned the ID from a stale source)
+		// is a far more common failure than 401 (the process
+		// already proved auth on every prior call in the mariadb/*
+		// arc, including the kickoff at API-0160 which locked the
+		// 401 → CodeAuth invariant for the namespace). The 404 leg
+		// is therefore the most informative failure to re-prove for
+		// this specific peer's call site. The harness already
+		// supports the override natively (`runAPICoverageFailure`
+		// reads tc.FailureStatus / tc.FailureCode and falls back to
+		// 401 / CodeAuth when either is zero) so no harness change
+		// is needed; we simply opt in via the two struct fields.
+		// This is the **third** roster-level act on the reserved
+		// override, after API-0342 `server-one` opened it and
+		// API-0136 `gitea-one` extended it. 400 → CodeInvalidInput
+		// stays reserved for stories where payload validation is
+		// the operation's distinguishing failure mode; this entry's
+		// single-string-param query surface is too generic to
+		// claim that distinguishing shape.
+		//
+		// Fixture conventions:
+		//   * Per the API-0010 / API-0014 / API-0249 / API-0292 /
+		//     API-0297 / API-0052 / API-0053
+		//     every-optional-populated rule, this entry has **zero
+		//     optional parameters** so the rule is trivially
+		//     satisfied — the fixture supplies exactly the single
+		//     REQUIRED scalar `mariadbId` and nothing else. The
+		//     harness's success-leg `r.URL.Query()` round-trip
+		//     observes this end-to-end through the CLI → API
+		//     client → httptest server path.
+		//   * Per-case fixture token base
+		//     `mariadb-cov-one-0164` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared
+		//     across every prior mariadb/* peer (API-0160..API-0163)
+		//     and the cross-tag `*-cov-one-XXXX` slug used at
+		//     API-0008, API-0021, API-0084, API-0136, API-0251,
+		//     API-0294, and API-0342. Verified non-colliding with
+		//     API-0160's `mariadb-cov-changeStatus-0160` literal,
+		//     API-0161's `mariadb-cov-create-0161` literals,
+		//     API-0162's `mariadb-cov-deploy-0162` literal, and
+		//     API-0163's `mariadb-cov-move-0163-mariadbId` /
+		//     `mariadb-cov-move-0163-targetEnvironmentId` literals,
+		//     and non-colliding with the cross-tag `bb-cov-*` /
+		//     `gitea-cov-*` / `proj-cov-*` / `srv-cov-*` /
+		//     `set-cov-*` / `org-cov-*` namespaces.
+		//   * Deterministic-but-clearly-fake
+		//     `<base>-mariadbId-fixture` literal keeps diffs
+		//     readable and lets any future schema validator's
+		//     failure messages point at the offending field. The
+		//     `-fixture` suffix matches the API-0136 `gitea-one`
+		//     precedent for the analogous `<id>` field name.
+		//
+		// The next case in the PRD-ordered priority-4 backlog is
+		// API-0165 `mariadb-rebuild` (declared a **POST** per the
+		// spec preview; the next contributor must re-verify the
+		// spec against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will continue inside the `mariadb-cov-*` per-tag
+		// fixture-isolation namespace opened by API-0160).
+		SampleQuery: map[string][]string{
+			"mariadbId": {"mariadb-cov-one-0164-mariadbId-fixture"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+		// Failure-leg override: this is the canonical home for
+		// the 404 → CodeNotFound representative-failure assertion
+		// reserved at API-0160..API-0163 for `mariadb-one`, and
+		// follows the precedent set by API-0342 `server-one` and
+		// API-0136 `gitea-one`. See the design-rationale block
+		// above for the full justification.
+		FailureStatus: http.StatusNotFound,
+		FailureCode:   yerr.CodeNotFound,
+	},
+	{
 		StoryID:     "API-0188",
 		OperationID: "mounts-allNamedByApplicationId",
 		Method:      http.MethodGet,

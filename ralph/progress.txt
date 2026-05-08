@@ -17705,3 +17705,68 @@ Learnings for future iterations:
   - The `next case` forward-reference paragraph in each entry is an
     enforced contract — the consuming entry must satisfy it explicitly.
 ---
+
+## 2026-05-08 - API-0164 - Cover mariadb-one (GET /mariadb.one)
+
+Fifth entry on the mariadb/* coverage roster and the canonical by-id GET
+peer for the tag — the mariadb/* analogue of API-0008 ai-one, API-0021
+application-one, API-0084 compose-one, API-0136 gitea-one, API-0251
+organization-one, API-0294 project-one, and API-0342 server-one.
+Structurally byte-for-byte identical wire shape to those peers (single
+REQUIRED mariadbId query string, no body, empty-object 200).
+
+Spec re-verified against internal/api/data/openapi.json > /mariadb.one >
+get: GET with one required string query parameter mariadbId, responses
+200/400/401/403/404/500. The 200 schema is the empty-success {} cohort.
+Note 404 is declared on this operation, in contrast to every prior
+mariadb/* peer (API-0160..API-0163) where the spec omits 404.
+
+**Acts on the 404 → CodeNotFound override** reserved across
+API-0160..API-0163 (every prior mariadb/* commit named mariadb-one by id
+as the failure-leg override site). Third roster-level act on the override
+after API-0342 server-one and API-0136 gitea-one. The two-line opt-in
+(FailureStatus: 404 / FailureCode: CodeNotFound) is the natural home for
+the by-id-GET representative failure assertion: MariaDB service records
+are pinned to long-lived UUIDs that an agent will fetch by ID on
+cold-cache restart, where 404 is far more common than 401 (auth already
+proved on every prior call in the mariadb/* arc, including the kickoff
+at API-0160 which locked the 401 → CodeAuth invariant for the namespace).
+
+Per-case fixture base mariadb-cov-one-0164 verified non-colliding with
+API-0160..API-0163's mariadb-cov-changeStatus-0160 / -create-0161 /
+-deploy-0162 / -move-0163 slugs and the cross-tag bb-cov-* / gitea-cov-*
+/ proj-cov-* / srv-cov-* / set-cov-* / org-cov-* namespaces.
+
+### Files changed
+- internal/cli/api_coverage_test.go: appended new apiCoverageCase entry for API-0164 mariadb-one between API-0163 mariadb-move and API-0188 mounts-allNamedByApplicationId.
+- ralph/prd.json: set passes:true for API-0164.
+- ralph/progress.txt: this entry.
+
+### Verification run
+- gofmt -w . (clean)
+- go mod tidy (clean)
+- go vet ./... (pass)
+- go test ./... (pass, all packages OK)
+- go test -race ./... (pass, all packages OK, internal/cli 3.027s)
+- goimports, golangci-lint, staticcheck, govulncheck, goreleaser remain unavailable locally and are documented as missing rather than silently skipped.
+
+### Remaining risks or follow-ups
+- API-0165..API-0169 mariadb/* roster continues; next is API-0165 mariadb-rebuild (POST per spec preview).
+
+### Learnings for future iterations
+- Canonical *-one by-id GET peers are the natural home for the
+  404 → CodeNotFound representative-failure override. The pattern was
+  reserved across every prior tag's earlier roster entries, opened by
+  API-0342 server-one, extended by API-0136 gitea-one, and now applied
+  for the third time by API-0164 mariadb-one. The override is a
+  two-line opt-in (FailureStatus + FailureCode) and requires no harness
+  change.
+- mariadb/* spec quirk: 404 is omitted from every prior peer's response
+  set (API-0160..API-0163) and *only* declared on the canonical by-id
+  GET (API-0164). This is consistent with Dokploy's tRPC convention
+  where mutation endpoints collapse missing-target into 400/validation
+  rather than declaring a 404 leg.
+- Insertion site followed the existing PRD-ID lexical ordering: between
+  API-0163 mariadb-move (preceding) and API-0188 mounts-* (following);
+  no struct-literal sort key beyond StoryID order is enforced.
+---
