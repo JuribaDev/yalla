@@ -18928,3 +18928,83 @@ forward-reference lesson before assuming any field shape.
     API-0140 continues that choice. Family-choice consistency
     inside a tag's fixture namespace is part of the contract.
 ---
+
+## 2026-05-08 - API-0141
+- Implemented contract coverage for the Dokploy API operation
+  `github-githubProviders` (GET /github.githubProviders) by appending
+  one new `apiCoverageCase` literal to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go`. The harness now exercises the
+  full agent contract for this operation: registry presence
+  (id/method/path/tag invariant), schema reachability via
+  `yalla schema get github-githubProviders --json`, manifest inclusion
+  via `yalla manifest --json`, an httptest-backed success exchange
+  (200 → empty-object envelope under `yalla.output.v1`), and the
+  401 → CodeAuth representative failure leg under `yalla.error.v1`.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended one struct literal
+    (StoryID API-0141) immediately after API-0140 and before
+    API-0160 per the StoryID-sorted slice rule. Zero-parameter GET
+    shape: no `SampleQuery`, no `SamplePathParams`, no `SampleBody`,
+    `SuccessResponse: '{}'` (matches the spec's empty-object 200
+    schema), harness defaults handle the 401 → CodeAuth failure leg.
+    The entry's leading comment block updates the per-tag fixture-
+    namespace inheritance trail (`github-cov-*` opened by API-0139
+    `github-getGithubBranches`, extended by API-0140
+    `github-getGithubRepositories`) and includes the spec
+    re-verification block, family-choice rationale, and forward-
+    reference hand-off comment for API-0142 `github-one`.
+  - `ralph/prd.json` — flipped `passes: true` for API-0141.
+- Verification run:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — no changes.
+  - `go vet ./...` — clean.
+  - `go test ./...` — PASS (all packages green, including the new
+    `TestAPICoverage_API0141_*` subtests).
+  - `go test -race ./...` — PASS (3.087s on the cli package, all
+    other packages cached).
+  - Optional tooling not installed locally: `goimports`,
+    `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`.
+- Results: 294/462 stories passing (63.6%).
+- Remaining risks / follow-ups: none specific to this story. The next
+  PRD-ordered priority-5 case is API-0142 `github-one` (declared GET
+  per the spec preview). Per the slug-prefix-is-not-shape lesson, the
+  next contributor must re-verify the spec at
+  `internal/api/data/openapi.json > /github.one > get` before
+  assuming the parameter axis or response set; the `*-one` slug
+  historically takes a single REQUIRED `<tag>Id` query and is the
+  canonical 404 → CodeNotFound failure-leg candidate, but neither
+  fact is portable until the spec is re-read at the source.
+- **Learnings for future iterations:**
+  - **Zero-parameter GET pattern is a one-line struct.** When the
+    spec declares zero parameters and no request body, the entry
+    needs only `StoryID`, `OperationID`, `Method` (`http.MethodGet`),
+    `Path`, `Tag`, and `SuccessResponse: '{}'` — every other field
+    defaults correctly. `buildCoverageInputArgs` short-circuits and
+    returns no extra args, so the CLI invocation is the terse
+    `--json api call <op>` form with no `--input` flag at all. The
+    `len(tc.SampleBody) > 0` content-type / body-byte comparison
+    gate stays inert and the `range tc.SampleQuery` query-comparison
+    loop iterates zero times. Reference peers: API-0058
+    `certificates-all`, API-0376 `settings-isUserSubscribed`.
+  - **No per-case fixture token when there are no payload fields to
+    namespace.** Zero-parameter operations skip the
+    `<tag>-cov-<slug>-<storyID>` fixture-token convention entirely
+    because there is no request payload field to insert one into.
+    This is codified at API-0376 `settings-isUserSubscribed` and now
+    re-applied at API-0141.
+  - **`*Providers` (collection-listing) slug stays parameter-free.**
+    The bare `<tag>Providers` slug returns the account-wide
+    collection of configured providers (e.g. every GitHub provider
+    against the authenticated Dokploy account) rather than a
+    specific provider keyed by id, so it pivots off the
+    single-required-query shape used by `get<Tag>Branches` and
+    `get<Tag>Repositories`. Useful prior-art when triaging
+    `gitlabProviders`, `bitbucketProviders`, etc. — but the
+    per-operation re-verification rule still applies.
+  - **404 → CodeNotFound failure-leg override stays reserved for the
+    by-id `*-one` peer.** The per-tag opener convention reasserted
+    at API-0335..API-0444 and again here treats 404 → CodeNotFound
+    as the canonical override for `*-one` resource probes only.
+    Account-wide / platform-wide listings stick with the harness-
+    default 401 → CodeAuth leg even when the spec declares 404.
+---
