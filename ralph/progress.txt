@@ -13555,3 +13555,63 @@ Learnings for future iterations:
   lesson dictates.
 
 ---
+
+## 2026-05-08 - API-0106
+- **Implemented**: Coverage entry for the Dokploy API operation
+  `destination-testConnection` (POST /destination.testConnection). Added the
+  fifth entry in the `destination/*` roster to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go`. The shared `runAPICoverageSuccess`
+  / `runAPICoverageFailure` harness now drives the operation through both
+  the success leg (200 empty-object body, asserts envelope, method, status,
+  and body propagation) and the representative auth-failure leg (401 →
+  `E_AUTH`, exit 4). Manifest, schema, and raw-call surfaces remain
+  populated automatically because they enumerate the embedded OpenAPI spec.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended an `apiCoverageCase` for
+    `API-0106 destination-testConnection` directly after the
+    `destination-remove` (API-0105) entry. The fixture body reuses the
+    `destination-create` (API-0103) multi-required-field shape (`name`,
+    `provider`, `accessKey`, `bucket`, `region`, `endpoint`,
+    `secretAccessKey`, plus the optional `serverId`) with the
+    `dest-cov-test-0106-*` fixture-token base so a `git grep` traces back
+    to this PRD story without colliding with the four prior destination/*
+    entries. `provider` uses the string variant of its `anyOf [string, null]`
+    schema. `SuccessResponse: {}` matches the spec's empty-object 200 schema;
+    no failure override means the harness falls back to the cross-tag
+    401 → CodeAuth invariant.
+  - `ralph/prd.json` — flipped `passes` to `true` for `API-0106`.
+- **Verification run** (from repo root):
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages green (`internal/cli` 1.049s).
+  - `go test -race ./...` — all packages green (`internal/cli` 2.819s).
+- **Tools NOT available locally** (per the verification policy): `goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`. Documented in
+  the US-0001 entry; no change here.
+- **Remaining risks / follow-ups**: none. The next destination/* story per
+  PRD ordering is `API-0107 destination-update` (POST), whose body schema
+  must be re-verified against `internal/api/data/openapi.json >
+  /destination.update > post` per the slug-prefix-is-not-shape lesson.
+- **Learnings for future iterations**:
+  - **Spec-shape twins are common across `*-create` / `*-testConnection`
+    pairs.** `destination-testConnection`'s required-field set and
+    response code surface are byte-for-byte identical to
+    `destination-create` (API-0103). The semantic difference (validate
+    credentials vs persist a record) is invisible at the wire level —
+    the entry therefore re-uses the API-0103 fixture conventions
+    verbatim, only swapping the slug into the fixture token base
+    (`dest-cov-test-0106-*`) and the `name` field
+    (`yalla-coverage-destination-test-0106`).
+  - **No 404 → no override.** Just like API-0103 and API-0105, this
+    operation declares no 404 response, so the API-0104 `destination-one`
+    404 → CodeNotFound override does not propagate. The harness-default
+    401 → CodeAuth path is the canonical mutation failure leg for the
+    destination/* tag — keep it explicit by **not** setting
+    `FailureStatus`/`FailureCode`.
+  - **The harness already enumerates the embedded spec** through
+    `api.Default()`, so adding a coverage entry is the only manual step
+    needed for `manifest`/`schema list`/`schema get`/`api operations`
+    surfaces to pick up the new operation. No registry, no manifest
+    test, no schema fixture changes required.
+---
