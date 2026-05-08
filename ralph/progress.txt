@@ -3104,3 +3104,66 @@
     slots are still pending), and the diff stays a contiguous
     block that future readers can pattern-match against.
 ---
+
+## 2026-05-08 - API-0030 - Cover application-saveEnvironment (POST /application.saveEnvironment)
+- Implemented per-operation contract coverage for
+  `application-saveEnvironment` by appending a single
+  `apiCoverageCase` literal (StoryID `API-0030`) to
+  `internal/cli/api_coverage_test.go`'s `coveredAPIOperations`
+  slice. The append-only harness automatically asserts all five
+  invariants: registry id/method/path/tag, `yalla schema get`,
+  `yalla manifest`, httptest success round-trip with body
+  forwarding, and a representative 401 → `E_AUTH` failure path.
+- Unlike API-0027 / API-0029 (all-required-nullable-string bodies)
+  and API-0028 (mixed required strings + closed enum), the
+  saveEnvironment body is a NEW shape: 1 plain required string
+  (`applicationId`), 3 required nullable strings (`env`,
+  `buildArgs`, `buildSecrets`), and 1 required boolean
+  (`createEnvFile`). Every required field is populated with a
+  distinct `app-cov-env-<slug>-0030` placeholder; the boolean is
+  set to `true` so the success-leg wire payload stays as close to
+  a realistic happy-path call as the harness allows.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended the API-0030
+    case after API-0029 (one contiguous block; no other touches).
+  - `ralph/prd.json` — flipped `passes: false` → `passes: true`
+    for `API-0030`.
+  - `ralph/progress.txt` — this entry.
+- Verification run from repo root:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — no module changes.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass; `internal/cli` 1.163s.
+  - `go test -race ./...` — all packages pass; `internal/cli` 2.417s.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — not installed locally, intentionally skipped per
+    Codebase Patterns guidance.
+- Remaining risks or follow-ups: none for this story. The next
+  application/* coverage gaps are API-0031 through API-0034 (the
+  remaining `save*Provider` family — gitea/github/gitlab/git). Spot-
+  checking the spec suggests they share API-0027/0029's
+  many-required-nullable-string shape; the API-0029 fixture skeleton
+  should transfer with only operationId and field-name swaps.
+- **Learnings for future iterations:**
+  - `application-saveEnvironment` is the FIRST application/*
+    operation whose required body mixes plain-string +
+    nullable-string + boolean shapes in one payload. Future
+    application/* stories with similar mixed-shape bodies should
+    pattern-match against API-0030's literal rather than against
+    API-0027 / API-0029 (whose bodies are uniform-nullable-string)
+    or API-0028 (whose `buildType` is a closed enum, not a
+    boolean). The contiguous, story-id-sorted ordering of
+    `coveredAPIOperations` makes this pattern-match a quick read.
+  - Booleans in required body fields don't need a placeholder
+    convention — pick the value that keeps the fixture closest to
+    a realistic happy-path call (here: `createEnvFile: true`).
+    Validators care about presence + type, and the wire payload
+    asserts only that the body round-trips intact.
+  - The `app-cov-<tag>-<slug>-<storyID>` placeholder convention
+    continues to pay off: distinct values per field make any future
+    schema-validator failure message unambiguously point at the
+    offending field, and the `app-cov-*` prefix doubles as a
+    grep-friendly marker that reviewers can use to recognise body-
+    field secrets (`buildSecrets` here, `password` in API-0029) as
+    fixture data rather than real credentials.
+---

@@ -767,6 +767,44 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0030",
+		OperationID: "application-saveEnvironment",
+		Method:      http.MethodPost,
+		Path:        "/application.saveEnvironment",
+		Tag:         "application",
+		// Mirrors the schema in `data/openapi.json` for
+		// /application.saveEnvironment: five required fields —
+		// `applicationId` (plain string), `env` / `buildArgs` /
+		// `buildSecrets` (each `anyOf:[string,null]`), and
+		// `createEnvFile` (boolean). This is the FIRST application/*
+		// coverage entry whose required set mixes string, nullable-
+		// string, AND boolean shapes; we populate every required field
+		// rather than relying on null defaults so the harness exercises
+		// the full happy-path body shape on the wire. Distinct
+		// `app-cov-env-<slug>-0030` placeholders keep diffs readable and
+		// let any future schema validator's failure messages identify
+		// which field tripped the check. `createEnvFile` is set to
+		// `true` to keep the fixture closest to a realistic call where
+		// the user wants Dokploy to materialise the env file alongside
+		// the build; the boolean is otherwise contract-orthogonal.
+		// As with API-0027 / API-0029, `buildSecrets` is a body-field
+		// secret that is NOT auto-redacted — the `app-cov-*` prefix is
+		// the convention reviewers should rely on to recognise it as
+		// fixture data rather than a real credential.
+		SampleBody: json.RawMessage(`{
+			"applicationId": "app-cov-env-application-id-0030",
+			"env": "app-cov-env-vars-0030",
+			"buildArgs": "app-cov-env-build-args-0030",
+			"buildSecrets": "app-cov-env-build-secrets-0030",
+			"createEnvFile": true
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching every prior application/* peer. Empty-object body keeps
+		// the success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
