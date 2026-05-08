@@ -20034,3 +20034,73 @@ forward-reference lesson before assuming any field shape.
     by-eye that future `*-one` fixtures keep both the
     `-cov-one-<id>` segment and the `-fixture` suffix.
 ---
+
+## 2026-05-09 - API-0186
+- Implemented: Added the `mongo-stop` (POST /mongo.stop) entry to
+  `coveredAPIOperations` in `internal/cli/api_coverage_test.go`,
+  positioned between API-0185 `mongo-start` and API-0188
+  `mounts-allNamedByApplicationId` to preserve operationId-sorted slice
+  order. Single REQUIRED top-level `mongoId` (string) request body, 200
+  response is `{}` with `additionalProperties: false`, no 404 declared
+  (matches mongo/* lifecycle imperative-action POST cohort). Wire shape
+  is byte-for-byte identical to API-0185 `mongo-start` (within-tag
+  start/stop pair completion) and to API-0172 `mariadb-stop` (immediate
+  cross-tag analog).
+- Files changed:
+  - internal/cli/api_coverage_test.go (+135 lines, one new
+    apiCoverageCase block)
+  - ralph/prd.json (passes: true on API-0186)
+  - ralph/progress.txt (this entry)
+- Verification run: gofmt -w ., go mod tidy, go vet ./..., go test
+  ./... (count=1), and go test -race ./... — all PASS. goimports,
+  golangci-lint, staticcheck, govulncheck, and goreleaser are NOT
+  INSTALLED in this environment and were skipped accordingly (no
+  silent omission — documented here as required).
+- Results: full test suite green; only the targeted package
+  (internal/cli) ran cold, every other package hit the test cache. The
+  api_coverage_test.go diff is purely additive — no existing
+  apiCoverageCase entries were modified, so the slice's
+  operationId-sorted invariant and every prior fixture token are
+  preserved verbatim.
+- Remaining risks / follow-ups: priority-4 mongo/* roster now
+  thirteen of fourteen done (changeStatus, create, deploy, move, one,
+  rebuild, reload, remove, saveEnvironment, saveExternalPort, search,
+  start, stop). One priority-4 mongo/* peer remains: API-0187
+  `mongo-update` (POST per spec preview, body shape will diverge from
+  the single-`mongoId`-scalar lifecycle cohort because update operations
+  on Dokploy database tags historically carry full mutable resource
+  bodies — see API-0163 `mariadb-update` for the canonical cross-tag
+  analog). Per the slug-prefix-is-not-shape lesson reasserted at
+  API-0371..API-0375 and re-affirmed at API-0184/API-0185, the next
+  contributor MUST re-verify `mongo-update`'s parameter list, request
+  body, and response set against `internal/api/data/openapi.json`
+  before assuming any field shape — do NOT mechanically clone the
+  start/stop body.
+- **Learnings for future iterations:**
+  - The within-tag start/stop pair on the Dokploy database lifecycle
+    tags (mariadb, mongo) is byte-for-byte identical at the wire
+    level: same single REQUIRED `<tag>Id` string scalar, same 200=`{}`
+    empty-success body, same response set with no 404. API-0172
+    `mariadb-stop` ↔ API-0186 `mongo-stop` mirrors API-0171
+    `mariadb-start` ↔ API-0185 `mongo-start`. This makes stop a clean
+    one-line-per-field clone of the immediately-preceding start case
+    once the spec has been re-verified — no shape divergence to
+    surface in the comment block beyond swapping the slug
+    (`start` → `stop`), the storyID (`0185` → `0186`), and updating the
+    cross-tag analog reference (`mariadb-start` → `mariadb-stop`).
+  - The per-tag `<tag>-cov-*` fixture-isolation namespace continues to
+    hold cleanly: the new `mongo-cov-stop-0186-mongoId` literal sits
+    inside the same `mongo-cov-*` namespace opened at API-0174 and
+    extended through every subsequent mongo/* story, with no
+    back-reference to any closed prior-tag namespace required.
+  - The harness-default 401→CodeAuth failure leg remains the right
+    choice for every body-bearing imperative-action POST on this tag.
+    The 404→CodeNotFound override stays pinned to the single by-id GET
+    peer (API-0178 `mongo-one`); the 400→CodeInvalidInput override is
+    technically applicable to any body-required POST but is reserved
+    for stories where payload validation is the *uniquely
+    distinguishing* failure mode, not the conventional default.
+  - Keep the forward-reference comment at the bottom of each entry —
+    it makes the next iteration's first scan cheap (one grep for the
+    next storyID lands directly on the pre-built scaffolding).
+---
