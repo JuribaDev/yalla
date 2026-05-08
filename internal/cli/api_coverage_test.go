@@ -1653,6 +1653,43 @@ var coveredAPIOperations = []apiCoverageCase{
 		// payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0082",
+		OperationID: "compose-loadServices",
+		Method:      http.MethodGet,
+		Path:        "/compose.loadServices",
+		Tag:         "compose",
+		// Fifth GET-shaped entry in the compose/* coverage roster after
+		// API-0075 (getConvertedCompose), API-0076 (getDefaultCommand),
+		// API-0077 (getTags), and API-0081 (loadMountsByService). The spec
+		// at `data/openapi.json > /compose.loadServices > get` declares no
+		// request body and TWO query parameters — `composeId` (string,
+		// REQUIRED) and `type` (string enum {"fetch", "cache"}, OPTIONAL,
+		// default "cache"). This is the first compose/* GET that mixes a
+		// REQUIRED query param with an OPTIONAL enum-restricted one; the
+		// closest precedent in the compose/* roster is API-0071
+		// (compose-deploy) which carries `composeId` REQUIRED plus optional
+		// title/description, but as a POST body rather than query string.
+		// We populate BOTH params so the success leg exercises the full
+		// envelope rather than relying on Dokploy's server-side default —
+		// this mirrors the API-0071 "exercise the optional path" pattern
+		// recorded in earlier compose/* learnings. Picking `fetch` (the
+		// non-default enum value) distinguishes the wire-level transmission
+		// from the default-applied behavior so a future schema validator
+		// wired into the harness can confirm the value is forwarded
+		// verbatim. Slug convention `compose-cov-<slug>-<storyID>` continues
+		// the cross-story grep contract from API-0075/0076/0077/0081.
+		SampleQuery: map[string][]string{
+			"composeId": {"compose-cov-load-services-0082"},
+			"type":      {"fetch"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the empty-success convention shared by every prior
+		// compose/* peer. Empty-object body keeps the success-leg envelope
+		// assertion focused on `data.method` / `data.status` rather than
+		// payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

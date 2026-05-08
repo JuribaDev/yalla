@@ -4509,3 +4509,65 @@
     Sort by `(priority, id)` — never by ID alone — when picking the
     next story.
 ---
+
+## 2026-05-08 - API-0082
+- Implemented coverage for compose-loadServices (GET /compose.loadServices)
+  by appending a new `apiCoverageCase` entry to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go`. Fifth GET-shaped entry in the
+  compose/* roster after API-0075/0076/0077/0081.
+- Files changed:
+  - internal/cli/api_coverage_test.go (+39 lines, single appended
+    apiCoverageCase literal sorted after API-0081)
+  - ralph/prd.json (passes: false -> true for API-0082)
+  - ralph/progress.txt (this entry)
+- Implementation: per `data/openapi.json > /compose.loadServices > get` the
+  request surface is no body and TWO query params — `composeId` (string,
+  REQUIRED) plus `type` (string enum {"fetch","cache"}, OPTIONAL,
+  default "cache"). 200 response is `{}` with `additionalProperties: false`,
+  matching the empty-success convention for compose/* peers. Fixture
+  populates BOTH params with deterministic values (composeId =
+  `compose-cov-load-services-0082`, type = `fetch`) so the success leg
+  exercises the full envelope rather than relying on Dokploy's server-
+  side default. The `fetch` value is intentionally the non-default enum
+  member so a future schema validator wired into the harness can confirm
+  the value flows through verbatim. Shared harness derives all five
+  contract assertions (registry / schema get / manifest inclusion /
+  httptest success / 401 -> E_AUTH failure) from the entry alone — no
+  production-code change required.
+- Verification (from /Users/juribadev/projects/poc/yalla-claude):
+  - gofmt -w .   (clean; gofmt -l . reports no diff)
+  - go mod tidy  (no module changes)
+  - go vet ./... (PASS)
+  - go test ./... (PASS — internal/cli 1.071s including the 5 new
+    TestAPICoverage_* subtests for API-0082)
+  - go test -race ./... (PASS — internal/cli 2.547s)
+  - goimports / golangci-lint / staticcheck / govulncheck / goreleaser:
+    not installed locally; documented in the existing baseline note.
+- Remaining risks / follow-ups: none specific to this story. 394 user
+  stories remain with passes=false. Next priority-2 compose/* candidate
+  is API-0083 (compose-move, POST) per `(priority, id)` sort order.
+- **Learnings for future iterations:**
+  - compose-loadServices is the first compose/* GET that mixes a REQUIRED
+    query param with an OPTIONAL enum-restricted one. The compose/* GET
+    roster now has two structural sub-shapes:
+      * single REQUIRED query string: API-0075/0076/0077.
+      * two REQUIRED query strings: API-0081 (loadMountsByService).
+      * one REQUIRED + one OPTIONAL enum query: API-0082 (loadServices) — new.
+  - For an OPTIONAL enum query parameter, populate the SampleQuery with
+    the NON-DEFAULT enum value. This makes the wire-level transmission
+    distinguishable from the server-side default-application behavior,
+    so a future schema validator (or even a `--verbose` log diff) can
+    confirm the CLI is forwarding the value verbatim. Default values
+    are a wire-invisibility hazard worth avoiding in fixtures.
+  - The compose/* tag now has 16 covered entries spanning the canonical
+    shape templates: minimal-composeId-only POST (API-0066/0067/0068/0073),
+    full create envelope (API-0069), composeId+deleteVolumes
+    (API-0070), composeId+optional-title/description POST (API-0071),
+    template envelope (API-0072), single-required-query GET
+    (API-0075/0076/0077), POST with two required body fields
+    (API-0078/0080), POST with required+optional split
+    (API-0079), POST with required composeId+suffix (API-0080),
+    multi-required-query GET (API-0081), and required+optional-enum
+    GET (API-0082). Future compose/* stories should pattern-match
+    against these rather than re-deriving from the spec.
+---
