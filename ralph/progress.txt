@@ -9414,3 +9414,105 @@ Learnings for future iterations:
     cargo-culting until the next contributor re-derives
     the spec shape.
 ---
+
+## 2026-05-08 - API-0365 (settings-getIp)
+- Added the parameter-free GET `settings-getIp`
+  (path `/settings.getIp`, tag `settings`,
+  responses 200/400/401/403/404/500) to the apiCoverageCases
+  table as the **fifteenth** entry in the settings/* roster
+  and the **third** member of the parameter-free GET
+  sub-family within settings/* — the first non-`getDokploy*`
+  prefixed member, generalising the sub-family beyond the
+  slug-prefix coincidence that API-0363
+  `settings-getDokployCloudIps` and API-0364
+  `settings-getDokployVersion` shared. Spec re-verified
+  against `internal/api/data/openapi.json > /settings.getIp >
+  get` per the API-0345..API-0364 forward-reference lesson:
+  zero parameters (no query, path, or header), no
+  `requestBody` (GETs in this OpenAPI doc never carry one),
+  200 schema `{}` with `additionalProperties: false`. Same
+  wire shape as API-0364: parameter-free GET, no body, 200 →
+  `{}`, 200/400/401/403/404/500 response set. `SampleBody`,
+  `SampleQuery`, and `SamplePathParams` deliberately omitted
+  (the GET branch of `runAPICoverageSuccess` ignores
+  `SampleBody` entirely, so carrying one would silently
+  encode dead code on the wire). Failure leg uses the
+  harness default 401 → CodeAuth — 404 is spec-declared but
+  the per-tag opener convention reserves CodeNotFound for
+  canonical by-id `*-one` peers, not for parameter-free
+  platform-info getters like `getIp` (which returns the
+  Dokploy host's public IP, not a single resource keyed by
+  id).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended a
+    ~125-line apiCoverageCase struct literal (entry #149,
+    sorted by StoryID immediately after API-0364
+    `settings-getDokployVersion` per the diff-friendliness
+    rule). The header comment forbids cargo-culting this
+    entry's shape onto the next case (API-0366
+    `settings-getLogCleanupStatus`) without re-verifying
+    against `openapi.json` first.
+  - `ralph/prd.json` — flipped `passes: false` →
+    `passes: true` for the API-0365 story.
+  - `ralph/progress.txt` — this entry.
+- Verification run:
+  - `gofmt -w .` — clean.
+  - `goimports -w .` — not installed locally; documented.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass.
+  - `go test -race ./...` — all packages pass.
+  - `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — not installed locally; documented as
+    missing rather than silently skipped.
+- Results: All required quality checks pass. Manifest,
+  schema, and registry coverage flow inherit automatically
+  from `internal/api/data/openapi.json` (the OpenAPI
+  registry is the single source of truth — adding a
+  coverage case does not require touching the registry,
+  manifest emitter, or schema emitter).
+- Remaining risks or follow-ups:
+  - None for this story. API-0366
+    `settings-getLogCleanupStatus` (GET) is the next story
+    by PRD ordering. It is **also** declared a GET in the
+    PRD with responses 200/400/401/403/404/500, so on shape
+    it appears to continue the parameter-free GET
+    sub-family — but the next contributor must re-verify
+    against `internal/api/data/openapi.json >
+    /settings.getLogCleanupStatus > get` per the
+    forward-reference lesson before assuming any field is
+    identical to this entry. Do not assume the parameter
+    list, request body, or response set carries over solely
+    because the verb prefix and adjacent slug match.
+- **Learnings for future iterations:**
+  - The parameter-free GET sub-roster within settings/*
+    now spans three entries (API-0363, API-0364, API-0365)
+    and has crossed a slug-prefix boundary: the first two
+    shared the `getDokploy*` prefix, but API-0365
+    `settings-getIp` does not, while keeping the wire shape
+    identical. This generalises the sub-family from "shared
+    slug prefix" to "shared wire shape" — future
+    parameter-free GETs in settings/* (API-0366
+    `getLogCleanupStatus` is next in line by PRD ordering)
+    can grep API-0365 for the canonical handling without
+    being misled by slug-prefix coincidences.
+  - The forward-reference lesson (API-0345..API-0364) holds
+    again: per-operation re-verification against
+    `internal/api/data/openapi.json` stays mandatory across
+    every family transition, even when the PRD and the
+    previous entry agree on shape on paper. Verb prefix and
+    adjacent slug similarity is **not** a substitute for
+    re-reading the spec.
+  - The `set-cov-*` per-tag fixture-isolation namespace
+    continues unbroken across API-0351..API-0365. A
+    reservation slot `set-cov-getIp-0365` is left open for
+    any future regression test that needs a unique literal
+    tied to this story; orthogonal to every prior tag's
+    namespace.
+  - Verification baseline holds: `gofmt`, `go mod tidy`,
+    `go vet`, `go test`, `go test -race` all pass.
+    `goimports`, `golangci-lint`, `staticcheck`,
+    `govulncheck`, `goreleaser` continue to be documented
+    as missing rather than silently skipped — same status
+    as every prior coverage story.
+---
