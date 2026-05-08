@@ -19858,3 +19858,41 @@ forward-reference lesson before assuming any field shape.
     variant is the only one exposing a secondary numeric `id`
     selector in addition to the string-typed `<provider>Id` scalar.
 ---
+
+## 2026-05-08 - API-0147
+- Implemented contract coverage for `gitlab-getGitlabRepositories`
+  (GET /gitlab.getGitlabRepositories), the third entry on the
+  priority-5 gitlab/* roster, sandwiched between API-0146
+  `gitlab-getGitlabBranches` and API-0160 `mariadb-changeStatus` per
+  the StoryID-sorted slice rule.
+- Files changed:
+  - internal/cli/api_coverage_test.go — added apiCoverageCase entry
+    for API-0147 (single REQUIRED query parameter `gitlabId` only;
+    fixture base `gitlab-cov-getRepositories-0147`; harness-default
+    401 → CodeAuth retained; SuccessResponse `{}`).
+  - ralph/prd.json — flipped API-0147.passes to true.
+- Verification: gofmt -w ., go mod tidy, go vet ./..., go test ./...,
+  go test -race ./... — all green. goimports / golangci-lint /
+  staticcheck / govulncheck / goreleaser still not installed in this
+  environment (documented in earlier entries).
+- Remaining risks / follow-ups: none — the case follows the
+  established single-required-query GET shape (precedents API-0005
+  ai-get, API-0124 environment-byProjectId, API-0188
+  mounts-allNamedByApplicationId, API-0132 gitea-getGiteaBranches,
+  API-0133 gitea-getGiteaRepositories, API-0139
+  github-getGithubBranches, API-0140 github-getGithubRepositories).
+- **Learnings for future iterations:**
+  - The gitea/github/gitlab repository-enumeration cohort
+    (`*-getProvider Repositories`) is structurally uniform: a single
+    REQUIRED `<provider>Id` (string) query parameter, no body, 200
+    `{}`+additionalProperties:false. Distinct from the
+    *-getProviderBranches cohort (which adds owner/repo + an optional
+    secondary id).
+  - The 404 → CodeNotFound representative-failure slot for the
+    gitlab/* tag remains reserved for API-0149 `gitlab-one`, mirroring
+    the gitea/github reservation pattern at API-0136 / API-0142.
+  - When indentation looks 3-tab in editor view, the actual file is
+    1-tab struct fields + 2-tab inner-map content; the Read tool
+    prefixes a tab-line-number that must be stripped for Edit
+    matching. Always anchor edits on a verified byte-level snippet.
+---
