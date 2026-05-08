@@ -14564,6 +14564,145 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0195",
+		OperationID: "mysql-create",
+		Method:      http.MethodPost,
+		Path:        "/mysql.create",
+		Tag:         "mysql",
+		// Second entry on the mysql/* coverage roster, immediately
+		// following API-0194 `mysql-changeStatus` and completing the
+		// forward reference embedded in that entry's comment block
+		// ("The next case in the PRD-ordered priority-4 backlog is
+		// API-0195 `mysql-create`"). Continues inside the
+		// `mysql-cov-*` per-tag fixture-isolation namespace opened by
+		// API-0194 and **must not** back-reference any closed prior-tag
+		// namespace (`set-cov-*`, `srv-cov-*`, `proj-cov-*`,
+		// `org-cov-*`, `compose-cov-*`, `app-cov-*`, `ai-cov-*`,
+		// `admin-cov-*`, `backup-cov-*`, `bb-cov-*`, `cert-cov-*`,
+		// `clu-cov-*`, `deployment-cov-*`, `dest-cov-*`, `docker-cov-*`,
+		// `domain-cov-*`, `environment-cov-*`, `gitea-cov-*`,
+		// `github-cov-*`, `gitlab-cov-*`, `mariadb-cov-*`,
+		// `mongo-cov-*`, `mounts-cov-*`, `swarm-cov-*`, `usr-cov-*`,
+		// etc.) per the per-tag isolation rule reasserted at
+		// API-0335..API-0444 and originally established at API-0246
+		// `organization-active`.
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json` > `/mysql.create` >
+		// `post`: method POST, tag mysql, **no parameters**,
+		// requestBody REQUIRED with `application/json`, responses
+		// 200/400/401/403/500. The 200 response is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort. **No 404** is declared on
+		// this operation, mirroring the precedent on every prior
+		// covered `*-create` mutation — API-0118 `domain-create`,
+		// API-0125 `environment-create`, API-0131 `gitea-create`,
+		// API-0161 `mariadb-create`, API-0175 `mongo-create`,
+		// API-0298 `redirects-create`, and API-0331 `security-create`
+		// (a `*-create` mutation has no by-id read leg, so missing-
+		// target collapses into 400/validation under Dokploy's tRPC
+		// convention).
+		//
+		// **Request body schema (REQUIRED top-level fields):**
+		//   - REQUIRED `name` (string)
+		//   - REQUIRED `environmentId` (string)
+		//   - REQUIRED `databaseName` (string)
+		//   - REQUIRED `databaseUser` (string)
+		//   - REQUIRED `databasePassword` (string) — credential-shaped
+		//     scalar; the fixture below supplies a deterministic-but-
+		//     clearly-fake `mysql-cov-create-0195-databasePassword`
+		//     literal so a future credential-redaction audit reads the
+		//     value as a *fixture token*, never a real secret. The
+		//     literal carries the `<tag>-cov-<slug>-<storyID>-<field>`
+		//     suffix for `git grep` traceability and so the redactor
+		//     test family at `internal/cli/redaction_security_test.go`
+		//     can extend coverage onto this case without re-deriving
+		//     the literal.
+		//   - **OPTIONAL fields deliberately omitted** (`appName`
+		//     (string), `dockerImage` (string, default `mysql:8`),
+		//     `databaseRootPassword` (string), `description` (anyOf
+		//     [string, null]), `serverId` (anyOf [string, null])).
+		//     Per the API-0131 `gitea-create` / API-0161
+		//     `mariadb-create` / API-0175 `mongo-create` minimal-
+		//     required-only fixture rule (load-bearing for credential-
+		//     redaction safety), the OPTIONAL `databaseRootPassword`
+		//     credential is **intentionally omitted** so a future
+		//     credential-redaction audit cannot regress on a fixture
+		//     that hard-codes a second secret-shaped value beyond the
+		//     REQUIRED `databasePassword` slot. The same minimal-
+		//     required-only rule applies to API-0118 `domain-create`,
+		//     API-0122 `domain-update`, API-0125 `environment-create`,
+		//     API-0131 `gitea-create`, API-0161 `mariadb-create`,
+		//     API-0175 `mongo-create`, and API-0331 `security-create`.
+		//     Future contributors adding optional-field coverage
+		//     should do so in a follow-up story rather than expanding
+		//     this minimal positive case.
+		//
+		// **Shape positioning — five-required-string-scalar POST
+		// create-mutation with optional extension fields, body
+		// REQUIRED.** The five REQUIRED slots are all plain
+		// non-nullable `type: string` (no `anyOf` / `nullable` / enum
+		// constraints). Structurally identical to the API-0161
+		// `mariadb-create` body (`name` + `environmentId` +
+		// `databaseName` + `databaseUser` + `databasePassword`); one
+		// wider than the four-required-scalar API-0175 `mongo-create`
+		// body (mongo's non-relational document model omits the
+		// `databaseName` slot that mysql, like mariadb and the rest
+		// of the relational database-engine cluster, requires). The
+		// harness's `len(tc.SampleBody) > 0` gate at
+		// `runAPICoverageSuccess` activates the JSON content-type and
+		// byte-for-byte body comparison legs; this fixture supplies
+		// all five REQUIRED fields so the success path verifies the
+		// CLI propagated the body verbatim.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so
+		// the 404→CodeNotFound override is structurally inapplicable
+		// (matching every prior covered `*-create` mutation —
+		// API-0118 `domain-create`, API-0125 `environment-create`,
+		// API-0131 `gitea-create`, API-0161 `mariadb-create`,
+		// API-0175 `mongo-create`, API-0298 `redirects-create`,
+		// API-0331 `security-create`). 400→CodeInvalidInput is
+		// *technically* available — a payload that omits one of the
+		// five REQUIRED fields would fail server-side validation —
+		// but the harness reserves 400 representatives for stories
+		// where payload validation is the operation's *uniquely
+		// distinguishing* failure mode. A conventional `*-create`
+		// mutation collapses to type-checking, so the harness-default
+		// 401→CodeAuth failure leg remains the most representative
+		// single failure mode every authenticated Dokploy operation
+		// must re-prove, and is consistent with the 401→CodeAuth
+		// choice locked in by the mysql/* kickoff at API-0194
+		// `mysql-changeStatus`.
+		//
+		// **Fixture token base** `mysql-cov-create-0195` follows the
+		// established `<tag>-cov-<slug>-<storyID>` deterministic-but-
+		// clearly-fake naming convention and is verified non-colliding
+		// with API-0194's `mysql-cov-changeStatus-0194` literals.
+		//
+		// The next case in the PRD-ordered priority-4 backlog is
+		// API-0196 `mysql-deploy` (declared a **POST** per the spec
+		// preview; the next contributor must re-verify the spec
+		// against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will continue inside the `mysql-cov-*` per-tag
+		// fixture-isolation namespace opened by API-0194).
+		SampleBody: json.RawMessage(`{
+			"name": "mysql-cov-create-0195",
+			"environmentId": "mysql-cov-create-0195-environmentId",
+			"databaseName": "mysql-cov-create-0195-databaseName",
+			"databaseUser": "mysql-cov-create-0195-databaseUser",
+			"databasePassword": "mysql-cov-create-0195-databasePassword"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,

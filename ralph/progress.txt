@@ -20236,3 +20236,62 @@ forward-reference lesson before assuming any field shape.
     (which also coincides with operationId-alphabetical for
     contiguous tag clusters).
 ---
+
+## 2026-05-09 - API-0195
+- Added apiCoverageCase block for `mysql-create` (POST /mysql.create) at the
+  StoryID-sorted insertion site between API-0194 `mysql-changeStatus` and
+  API-0246 `organization-active` in `internal/cli/api_coverage_test.go`.
+- Body shape mirrors API-0161 `mariadb-create` exactly: five REQUIRED string
+  scalars (`name`, `environmentId`, `databaseName`, `databaseUser`,
+  `databasePassword`). One slot wider than API-0175 `mongo-create` (mongo
+  omits `databaseName` because document model creates DBs lazily). Optional
+  fields (`appName`, `dockerImage` default `mysql:8`, `databaseRootPassword`,
+  `description`, `serverId`) **deliberately omitted** per the
+  minimal-required-only / credential-redaction-safety rule first locked at
+  API-0131 `gitea-create`.
+- Spec re-verified against `internal/api/data/openapi.json` >
+  `/mysql.create` > `post`: method POST, tag mysql, no parameters,
+  requestBody REQUIRED, responses 200/400/401/403/500. 200 is `{}` with
+  `additionalProperties: false`. **No 404** declared, matching every prior
+  covered `*-create` mutation — harness-default 401→CodeAuth failure leg
+  retained.
+- Fixture token base `mysql-cov-create-0195` — verified non-colliding with
+  API-0194's `mysql-cov-changeStatus-0194` literals; continues inside the
+  `mysql-cov-*` per-tag fixture-isolation namespace opened by API-0194.
+- Files changed:
+  - internal/cli/api_coverage_test.go (+~140 lines, one new
+    apiCoverageCase block at the API-0195 insertion site)
+  - ralph/prd.json (passes: true on API-0195)
+  - ralph/progress.txt (this entry)
+- Verification run from repo root:
+  - `gofmt -w .` — clean.
+  - `goimports -w .` — not installed, documented (matches prior iterations).
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./... -count=1` — all packages pass.
+  - `go test -race ./... -count=1` — all packages pass.
+  - `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser` — not
+    installed locally; see prior progress entries documenting this.
+- Remaining risks / follow-ups: none. Next PRD-ordered priority-4 backlog
+  case is API-0196 `mysql-deploy` (POST), continuing inside the
+  `mysql-cov-*` namespace opened at API-0194.
+- **Learnings for future iterations:**
+  - The `*-create` family comment scaffold is now the canonical template
+    across mariadb/mongo/mysql. When adding a new relational-database
+    `*-create` peer, copy the API-0161 `mariadb-create` block verbatim and
+    swap (a) the resource-id field name in the optional-omission list (here
+    none — relational creates have no `<tag>Id` field), (b) the
+    `dockerImage` default literal, (c) the fixture token base, and
+    (d) the forward-reference to the next story.
+  - Mongo-vs-relational asymmetry recap: `mongo-create` has FOUR required
+    scalars (no `databaseName`), while `mariadb-create` and `mysql-create`
+    both have FIVE. Cross-reference this distinction in any future
+    relational-vs-document database commentary so the asymmetry stays
+    documented in-tree rather than rediscovered.
+  - The PRD `priority` field is the canonical sort key for picking the
+    next false story. Within a priority bucket, `id` lexical order matches
+    the comment-scaffold's "next case" forward references — the
+    api_coverage_test.go slice is StoryID-sorted by construction and any
+    out-of-order insertion would break the slice invariant that surrounds
+    every coverage case.
+---
