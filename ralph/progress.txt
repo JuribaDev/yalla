@@ -20727,3 +20727,82 @@ forward-reference lesson before assuming any field shape.
     field name and response set per-operation. Both held: one required
     `gitProviderId`, no 404.
 ---
+
+## 2026-05-09 - API-0200 - Cover mysql-reload (POST /mysql.reload)
+- Implemented: added `coveredAPIOperations` entry for `mysql-reload`
+  (`POST /mysql.reload`, tag `mysql`) immediately after API-0199
+  `mysql-rebuild` and before API-0246 `organization-active` in
+  `internal/cli/api_coverage_test.go`. Entry inherits the harness's
+  default 401→CodeAuth failure leg; success leg uses an empty-object
+  `{}` 200 body matching the spec.
+- Spec re-verified against `internal/api/data/openapi.json` >
+  `/mysql.reload` > `post`: method POST, tag mysql, 0 parameters,
+  requestBody REQUIRED with **two** required string scalars
+  (`mysqlId`, `appName`), responses 200/400/401/403/500 (no 404).
+  This is the **dual-required `<tag>Id + appName`** reload pairing
+  shared across `/application.reload`, `/mariadb.reload`,
+  `/mongo.reload`, `/postgres.reload`, and `/redis.reload`. The
+  precedent inside the covered roster is API-0166 `mariadb-reload`
+  (the canonical two-required-scalar reload entry).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — single new
+    `apiCoverageCase` between API-0199 and API-0246; preserves
+    spec-declared `(mysqlId, appName)` property order in the fixture
+    body for diff hygiene.
+  - `ralph/prd.json` — flipped `API-0200.passes` from `false` to
+    `true`.
+  - `ralph/progress.txt` — appended this entry.
+- Verification run:
+  - `gofmt -w .` (no diff)
+  - `go mod tidy` (no diff)
+  - `go vet ./...` (clean)
+  - `go test ./...` -count=1 (all 9 packages PASS)
+  - `go test -race ./...` -count=1 (all 9 packages PASS)
+  - Focused: `go test ./internal/cli/ -run
+    'TestAPICoverage|TestManifest|TestSchema' -count=1` (PASS)
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — not installed locally; documented as missing,
+    not silently skipped.
+- Results: API-0200 now covered. The harness's per-tag manifest /
+  registry / schema / success / failure assertions all pass; mysql/*
+  roster is now seven entries deep (changeStatus, create, deploy,
+  move, one, rebuild, reload).
+- Remaining risks / follow-ups: the next mysql/* story is API-0201
+  `mysql-remove` (forward-referenced from API-0200's comment block).
+  The remaining mysql/* priority-4 backlog (per
+  `select id where tag=mysql and passes=false`) is API-0201
+  `mysql-remove`, API-0202 `mysql-saveEnvironment`, API-0203
+  `mysql-saveExternalPort`, API-0204 `mysql-search`, API-0205
+  `mysql-start`, API-0206 `mysql-stop`, and API-0207 `mysql-update`
+  — seven cases to close out the tag.
+- **Learnings for future iterations:**
+  - `*-reload` shape is the dual-required `<tag>Id + appName`
+    pairing across every database-tag reload across the spec
+    (`application`, `mariadb`, `mongo`, `mysql`, `postgres`,
+    `redis`); API-0166 `mariadb-reload` is the canonical template
+    inside the covered roster — keep it in mind whenever the next
+    `*-reload` lands.
+  - The forward-reference comment at the END of the immediately
+    prior entry is the authoritative pointer to the next story —
+    API-0199's tail block named API-0200 verbatim, which makes the
+    insertion location unambiguous and the cross-reference chain
+    self-documenting. **Always preserve and update this forward
+    pointer** when adding the next-in-sequence entry; the new
+    entry's tail must in turn name the next backlog story (API-0201
+    `mysql-remove` here).
+  - The OpenAPI spec lists `/mysql.reload` properties in
+    `(mysqlId, appName)` order, the *opposite* of
+    `/application.reload`'s `(appName, applicationId)` order. The
+    fixture preserves the spec-declared order so a contract-style
+    diff against the spec property table reads top-to-bottom; this
+    is the convention every reload entry has followed and is worth
+    re-noting because property-order divergence between the spec
+    pages and the request body is a real spec quirk, not a typo.
+  - The forward-reference lesson from API-0345..API-0444 keeps
+    paying off: the API-0199 `mysql-rebuild` comment claimed
+    mysql-reload was a POST but did NOT name the request body shape;
+    that was correct discipline because the actual body has TWO
+    required scalars, not the one mysql-rebuild has. Always
+    re-verify against `internal/api/data/openapi.json` even when
+    the prior entry's forward block looks plausible.
+---
