@@ -13104,3 +13104,101 @@ Learnings for future iterations:
   in the one place where it most informatively gates spec drift.
 
 ---
+
+## 2026-05-08 - API-0430 - Cover user-createApiKey (POST /user.createApiKey)
+
+What was implemented:
+- Appended a new `apiCoverageCase` struct literal for API-0430
+  (`user-createApiKey`) to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go`. Fourth entry on the user/* coverage
+  roster, slotted in StoryID order after API-0429
+  `user-checkUserOrganizations` (GET) and immediately before the existing
+  closing `}` of the slice literal.
+- Spec re-verified against `internal/api/data/openapi.json
+  > /user.createApiKey > post`: POST, `requestBody.required = true`,
+  zero declared parameters (no query, no path, no header). The body is
+  an object with ten properties of which exactly two are REQUIRED
+  (`name` string, `metadata` object); the remaining eight properties
+  (`prefix`, `expiresIn`, `rateLimitEnabled`, `rateLimitTimeWindow`,
+  `rateLimitMax`, `remaining`, `refillAmount`, `refillInterval`) are
+  optional rate-limit / lifecycle knobs. Responses 200/400/401/403/500 —
+  no 404 (creation, not lookup). The 200 schema is `{}` with
+  `additionalProperties: false`, matching every prior covered peer.
+- Fixture token base `usr-cov-createApiKey-0430` follows the inherited
+  `<tag>-cov-<slug>-<storyID>` convention. SampleBody populates only
+  the two REQUIRED fields (`name`, `metadata`) with the slug-on-the-wire
+  sentinel; every optional knob is intentionally left unset to keep the
+  shape signature minimal.
+- Failure-leg fields are intentionally omitted so the harness defaults
+  (`FailureStatus == 0` → 401, `FailureCode == ""` → CodeAuth) supply the
+  most informative representative for an authenticated POST. The spec
+  does not declare 404 here (no by-id lookup before write), matching the
+  response-code shape of API-0428 `user-assignPermissions`.
+
+Files changed:
+- internal/cli/api_coverage_test.go (one new struct literal appended after
+  API-0429)
+- ralph/prd.json (passes flipped false → true on API-0430)
+- ralph/progress.txt (this entry)
+
+Verification run:
+- gofmt -w .                       → clean
+- go mod tidy                      → clean
+- go vet ./...                     → clean
+- go test ./...                    → ok (internal/cli 1.077s)
+- go test -race ./...              → ok (internal/cli 2.786s)
+- targeted: TestAPICoverage_{RegistryInvariants,SchemaReachable,
+  ManifestIncludes,Success/API-0430,Failure/API-0430} → ok
+- goimports / golangci-lint / staticcheck / govulncheck / goreleaser
+  remain not installed locally; documented per the existing
+  "Verification baseline" pattern at the top of this file.
+
+Results:
+- All five harness assertions for API-0430 pass via the
+  `coveredAPIOperations` fixture: registry presence, schema reachability,
+  manifest inclusion, success exchange (httptest with required-body
+  forwarding through `runAPICoverageSuccess`), and the default 401 →
+  CodeAuth failure path through `runAPICoverageFailure`.
+
+Remaining risks or follow-ups:
+- Optional-field forwarding contract (eight unused rate-limit / lifecycle
+  knobs) is not exercised by this entry — the harness only proves required-
+  field forwarding. A future contract test could exercise the full payload
+  if optional-field forwarding ever regresses.
+- 400 → CodeInvalidInput coverage for body-shape validation on POSTs is
+  still pending across the user/* roster; the assignPermissions/createApiKey
+  pair would be natural fixtures for it but the harness currently only
+  provides the auth failure default.
+- 404 → CodeNotFound coverage for the user/* roster is still pending and
+  is reserved for API-0433 `user-get` per the API-0427/API-0429 hand-off
+  forecast.
+
+Learnings for future iterations:
+  - **Partially-required POST bodies are now a first-class shape signature
+    in the user/* roster.** Prior covered peers were either fully-required
+    (API-0428) or parameter-only (API-0427/0429). API-0430 establishes the
+    convention: when the spec marks only a subset of body properties
+    REQUIRED, the fixture populates only those required fields and leaves
+    every optional knob unset. This keeps the success-leg assertion
+    focused on the required-field forwarding contract and avoids
+    accidentally codifying the optional-field default behaviour as
+    contract.
+  - `metadata` declared as `type: object` with no `properties` is a
+    free-form bag — any JSON object structurally satisfies the contract.
+    The fixture supplies a single-key object whose value carries the
+    same per-case sentinel so the slug-on-the-wire token base remains
+    traceable across every populated string surface.
+  - The slug-prefix-is-not-shape lesson holds even within the same tag:
+    among user/* alone we now have a parameter-free GET (API-0427), a
+    fully-required-body POST (API-0428), a single-required-query GET
+    (API-0429), and a partially-required-body POST (API-0430) — four
+    orthogonal shape signatures sharing the `user-` operation-stem.
+    Future user/* contributors must continue per-operation re-verification.
+  - **404-absence cluster within user/* POSTs.** Both API-0428
+    `user-assignPermissions` and API-0430 `user-createApiKey` declare
+    response codes 200/400/401/403/500 with no 404. The structural
+    rationale is the same: neither operation performs a by-id lookup
+    before its write (assignPermissions scopes by body's `id` rather
+    than path; createApiKey mints a fresh resource), so CodeNotFound is
+    not an applicable failure representative for either entry.
+---

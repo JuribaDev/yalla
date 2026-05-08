@@ -15422,6 +15422,121 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0430",
+		OperationID: "user-createApiKey",
+		Method:      http.MethodPost,
+		Path:        "/user.createApiKey",
+		Tag:         "user",
+		// Fourth entry on the user/* coverage roster, inheriting the
+		// `usr-cov-*` per-tag fixture-isolation namespace established
+		// at API-0427 `user-all`, reasserted at API-0428
+		// `user-assignPermissions` and API-0429
+		// `user-checkUserOrganizations`. Per the per-tag isolation
+		// rule reasserted at API-0335..API-0429 and originally
+		// established at API-0246 `organization-active`, every user/*
+		// fixture token base remains orthogonal to every prior tag's
+		// namespace (`set-cov-*`, `srv-cov-*`, `proj-cov-*`,
+		// `org-cov-*`, `compose-cov-*`, `app-cov-*`, `ai-cov-*`,
+		// `admin-cov-*`, `backup-cov-*`, `bb-cov-*`, `cert-cov-*`,
+		// `clu-cov-*`, `deployment-cov-*`, `dest-cov-*`, etc.).
+		//
+		// **Spec re-verified per the API-0345..API-0429
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /user.createApiKey >
+		// post`: a **POST** with `requestBody.required = true`
+		// carrying a single `application/json` body schema and
+		// **zero declared parameters** (no query, no path, no
+		// header). Responses 200/400/401/403/500 — note the
+		// **absence of 404** in the spec: `createApiKey` is a
+		// resource-creation operation that mints a new key for the
+		// caller's session; no by-id lookup happens before the
+		// write, so the 404 trigger that would justify
+		// CodeNotFound is not part of the request shape (this
+		// matches the response-code shape of API-0428
+		// `user-assignPermissions`, the only prior user/* POST).
+		// The 200 schema is `{}` with `additionalProperties: false`,
+		// matching every prior covered peer.
+		//
+		// **Two-required-field body shape (the rest optional) —
+		// shape-distinct from every prior covered peer.** The outer
+		// schema's `required` array enumerates exactly two
+		// properties (`name`, `metadata`); the remaining eight
+		// properties (`prefix`, `expiresIn`, `rateLimitEnabled`,
+		// `rateLimitTimeWindow`, `rateLimitMax`, `remaining`,
+		// `refillAmount`, `refillInterval`) are all optional rate-
+		// limit / lifecycle knobs. Per the slug-prefix-is-not-shape
+		// and slug-stem-is-not-shape lessons reasserted at
+		// API-0371..API-0429, no axis from any prior user/* entry
+		// carries over — API-0428 `user-assignPermissions` was a
+		// fully-required fifteen-field permission-mutation body,
+		// API-0429 `user-checkUserOrganizations` was a
+		// parameter-only GET, and API-0427 `user-all` was a
+		// parameter-free GET. This entry is the user/* roster's
+		// first **partially-required** POST body shape, so the
+		// fixture only populates the two REQUIRED fields and leaves
+		// every optional knob unset to keep the shape signature
+		// minimal and the harness assertion focused on the
+		// required-field forwarding contract.
+		//
+		// **Body field semantics (per OpenAPI schema):**
+		//   * `name` — REQUIRED string. Human-friendly label for
+		//     the API key. The spec imposes no length, pattern, or
+		//     format constraint, so the slug-on-the-wire sentinel
+		//     `usr-cov-createApiKey-0430` populates this field
+		//     directly per the convention reasserted at
+		//     API-0351..API-0429 for free-form string fields.
+		//   * `metadata` — REQUIRED object. Free-form metadata
+		//     bag (the spec declares `type: object` with no
+		//     `properties`, so any JSON object structurally
+		//     satisfies the contract). The fixture supplies a
+		//     single-key object whose value carries the same
+		//     sentinel so the per-case fixture token base remains
+		//     traceable across every populated string surface, per
+		//     the convention API-0428 established for the user/*
+		//     roster's body fields.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `usr-cov-createApiKey-0430` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared with
+		//     every prior covered peer. The slug is the operationId
+		//     suffix (`createApiKey`) verbatim — per the
+		//     slug-stem-is-not-shape lesson the slug only carries
+		//     identifier semantics, not shape semantics.
+		//
+		// **Failure-leg fields are intentionally omitted.** The
+		// spec does not declare 404 on this operation (creation,
+		// not lookup), so the 404 → CodeNotFound representative
+		// is structurally inapplicable here. 400 → CodeInvalidInput
+		// would exercise the body-shape validation path, but auth
+		// is the universal failure mode every Dokploy operation
+		// must re-prove, so 401 → CodeAuth via the harness default
+		// (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""` →
+		// CodeAuth) stays the most informative representative for
+		// an authenticated POST.
+		//
+		// The next case in the PRD-ordered priority-2 backlog is
+		// the next user/* entry surfacing on the next pass; the
+		// next contributor must re-verify against
+		// `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field
+		// carries over from this entry — per the
+		// slug-prefix-is-not-shape lesson reasserted at
+		// API-0371..API-0429, even the shared `user-`
+		// operation-stem does not imply a carried-over body or
+		// parameter shape.
+		SampleBody: json.RawMessage(`{
+			"name": "usr-cov-createApiKey-0430",
+			"metadata": {"label": "usr-cov-createApiKey-0430"}
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
