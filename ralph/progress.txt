@@ -15575,3 +15575,85 @@ Learnings for future iterations:
     only four; the namespace closes at API-0130 with four entries
     still to go after this commit.
 ---
+
+## 2026-05-08 - API-0127 (environment-one)
+- Added covered-operation fixture for `environment-one` (GET
+  `/environment.one`) to `internal/cli/api_coverage_test.go >
+  coveredAPIOperations`. Fourth entry in the environment/* roster,
+  inserted immediately after API-0126 `environment-duplicate` and
+  before the existing API-0246 `organization-active` block.
+  Continues inside the `environment-cov-*` per-tag fixture-isolation
+  namespace opened by API-0124.
+- Spec re-verified directly against
+  `internal/api/data/openapi.json > /environment.one > get`: GET
+  with one REQUIRED query parameter `environmentId` (string), no
+  request body, responses 200/400/401/403/404/500. The 200 schema is
+  `{}` with `additionalProperties: false`, matching every prior
+  covered peer in the empty-success cohort.
+- Wire shape: single-required-query GET, no body. Structurally
+  identical to the immediate intra-tag predecessor API-0124
+  `environment-byProjectId` with the parameter name swapped from
+  `projectId` to `environmentId`. Continues the cross-tag id-bearing
+  GET precedent chain (API-0005, API-0113, API-0115, API-0116,
+  API-0117, API-0121, API-0124). Harness forwards `SampleQuery` via
+  the `--input` JSON `query` field; success leg re-reads
+  `r.URL.Query()` to confirm the CLI propagated `environmentId`
+  verbatim. The `len(tc.SampleBody) > 0` gate stays inert so no
+  content-type / body byte-comparison legs activate.
+- Family choice: harness-default 401→CodeAuth retained. Spec
+  declares 404 (so the 404→CodeNotFound override is technically
+  applicable), but the 401→CodeAuth leg mirrors the
+  API-0115/API-0116/API-0117/API-0121/API-0124 intra/cross-tag
+  precedent — bearer-token enforcement runs before any environment
+  lookup.
+- Per-case fixture base `environment-cov-one-0127` keeps `git grep`
+  traceable to this PRD story without colliding with API-0124
+  (`environment-cov-by-project-id-0124`), API-0125
+  (`environment-cov-create-0125`), or API-0126
+  (`environment-cov-duplicate-0126`).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — new `coveredAPIOperations`
+    entry for `environment-one` appended after API-0126
+    `environment-duplicate` and before API-0246 `organization-active`.
+  - `ralph/prd.json` — flipped `API-0127.passes` from `false` →
+    `true`.
+  - `ralph/progress.txt` — this entry.
+- Verification:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — no diff.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all 10 packages PASS (`internal/cli` 1.308s).
+  - `go test -race ./...` — all 10 packages PASS (`internal/cli`
+    2.886s).
+  - Focused: TestAPICoverage_{RegistryInvariants,SchemaCommandWorks,
+    ManifestListsOperation,SuccessRoundTrip,RepresentativeFailure}/
+    API-0127/environment-one all PASS.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — still not installed locally; documented missing
+    rather than silently skipped (per Codebase Patterns).
+- Remaining risks / follow-ups:
+  - None for this story. The next environment/* coverage gap in the
+    PRD-ordered priority-3 backlog is API-0128 `environment-remove`
+    (declared a **POST** per the spec preview). The next contributor
+    MUST re-verify the spec directly against
+    `internal/api/data/openapi.json` per the forward-reference
+    lesson and continue inside the `environment-cov-*` per-tag
+    fixture-isolation namespace.
+- Learnings for future iterations:
+  - When a tag's GET roster spans two parameter-bearing operations
+    that both take a single REQUIRED query string, the second is
+    almost a copy-paste: swap the path, swap the parameter name,
+    swap the fixture base. API-0124 `environment-byProjectId` and
+    API-0127 `environment-one` are both single-required-query GETs
+    inside the environment/* tag, structurally identical except for
+    the parameter (`projectId` → `environmentId`). The pattern
+    extends through the broader id-bearing GET cohort (`domain-one`,
+    `ai-get`, the docker container lookups) so future contributors
+    can lean on the precedent chain rather than reinventing the
+    fixture shape.
+  - Three environment/* stories remain in the priority-3 backlog
+    (API-0128 `environment-remove`, API-0129 `environment-search`,
+    API-0130 `environment-update`), after which the
+    `environment-cov-*` namespace will close before the next tag's
+    roster begins.
+---
