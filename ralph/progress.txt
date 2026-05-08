@@ -2918,3 +2918,38 @@
     accepts our placeholders, but a future schema validator will too,
     so don't be tempted to omit the "irrelevant" mode-specific fields.
 ---
+
+## 2026-05-08 - API-0006
+- **Implemented**: Coverage for Dokploy `ai-getAll` (GET /ai.getAll). Appended a
+  parameter-free entry to the `coveredAPIOperations` table in
+  `internal/cli/api_coverage_test.go`. The shared harness now exercises the
+  registry/method/path/tag invariants, schema reachability via
+  `yalla schema get ai-getAll`, manifest inclusion, an httptest-backed success
+  exchange (200 → empty-object body), and the canonical 401 → `E_AUTH` failure
+  leg. Because the operation declares zero parameters and no request body, the
+  entry omits SampleQuery/SamplePathParams/SampleBody — making it the first
+  truly no-input GET in the ai/* roster.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended one struct literal for
+    API-0006 between API-0005 and API-0011, sorted by StoryID.
+  - `ralph/prd.json` — set `API-0006.passes: true`.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass.
+  - `go test -race ./...` — all packages pass.
+- **Tools NOT available locally** (unchanged): `goimports`, `golangci-lint`,
+  `staticcheck`, `govulncheck`, `goreleaser`.
+- **Remaining risks / follow-ups**: none specific to this story; future stories
+  for the ai/* tag (API-0007 ai-getModels, API-0008 ai-one, …) follow the same
+  append-only pattern.
+- **Learnings for future iterations**:
+  - The coverage harness already supports parameter-free GETs: leaving
+    `SampleQuery`/`SamplePathParams`/`SampleBody` nil makes the harness send an
+    empty `--input '{}'` invocation, which is the canonical no-input shape an
+    agent uses for parameter-free operations. No harness changes were needed.
+  - Adding only an `apiCoverageCase` literal — not a new test, not a new
+    fixture file — is the minimal, idiomatic way to ship a coverage story when
+    the operation has no novel wire-shape requirements.
+---

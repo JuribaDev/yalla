@@ -230,6 +230,27 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0006",
+		OperationID: "ai-getAll",
+		Method:      http.MethodGet,
+		Path:        "/ai.getAll",
+		Tag:         "ai",
+		// Parameter-free GET in the ai/* coverage roster. The spec for
+		// /ai.getAll declares zero parameters and no request body, so
+		// neither SampleQuery, SamplePathParams, nor SampleBody are
+		// populated — the harness still asserts the wire-level
+		// invariants (method, path, Authorization header, empty query
+		// string) at runAPICoverageSuccess. Keeping the entry minimal
+		// matches the no-input shape the agent contract guarantees:
+		// `yalla api call ai-getAll --input '{}' --json` is the
+		// canonical invocation.
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching every prior ai/* peer. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0011",
 		OperationID: "application-cancelDeployment",
 		Method:      http.MethodPost,
