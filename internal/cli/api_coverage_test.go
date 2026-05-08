@@ -2398,6 +2398,36 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0098",
+		OperationID: "deployment-allCentralized",
+		Method:      http.MethodGet,
+		Path:        "/deployment.allCentralized",
+		Tag:         "deployment",
+		// Fifth deployment/* roster member and the family outlier — the
+		// only `deployment.all*` peer that takes ZERO parameters. The
+		// API-0094..0097 cohort each rotates a required query
+		// discriminator (`applicationId` / `composeId` / `serverId` /
+		// `id`+`type`); `allCentralized` instead returns the
+		// caller's centralised deployment view scoped purely by the
+		// bearer token. Spec source: `data/openapi.json >
+		// /deployment.allCentralized > get` declares
+		// `parameters: null` and no request body, matching the
+		// cross-tag parameter-free GET precedent set by API-0006
+		// (`ai-getAll`). Leaving SampleQuery/SamplePathParams/SampleBody
+		// unset is therefore intentional — the harness still asserts
+		// the wire-level invariants (method, path, Authorization
+		// header, empty query string) at runAPICoverageSuccess, and the
+		// canonical agent invocation is
+		// `yalla api call deployment-allCentralized --input '{}' --json`.
+		// 200 response in the spec is `{}` with
+		// `additionalProperties: false`, identical to API-0094..0097
+		// and the cross-tag GET-list precedent API-0033
+		// (application-readTraefikConfig). Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

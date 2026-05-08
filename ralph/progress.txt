@@ -5363,3 +5363,42 @@
   - When a parameter declares an `enum`, pick a canonical member (`application` here) — the harness forwards the value verbatim and the httptest server only re-reads the key, so any enum member would pass; staying canonical keeps cross-story greps clean.
   - The coverage-test entry pattern is now a byte-for-byte recipe: copy the previous deployment/* entry, swap `OperationID`/`Path`/`SampleQuery`, regenerate the comment block to cite the spec source and call out shape deltas, and re-flip the PRD `passes` field. No registry / schema / manifest / curated edits are needed because the embedded OpenAPI spec already lists every `deployment.*` operation.
 ---
+
+## 2026-05-08 - API-0098
+- **Implemented**: Per-operation contract coverage for `deployment-allCentralized`
+  (`GET /deployment.allCentralized`). Appended one `apiCoverageCase` literal to
+  the harness; the existing five-part check (registry presence, schema reachability,
+  manifest inclusion, httptest success exchange, representative failure path)
+  proves the acceptance criteria automatically.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — new entry sorted between API-0097 and
+    the next id. The op declares zero parameters and no request body in the
+    spec, so SampleQuery/SamplePathParams/SampleBody are intentionally unset
+    (matching the API-0006 `ai-getAll` parameter-free GET precedent).
+    SuccessResponse stays the canonical empty-object body.
+  - `ralph/prd.json` — flipped `passes: true` for API-0098.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages green (cli 0.950s).
+  - `go test -race ./...` — all packages green under race (cli 2.526s).
+  - `go mod tidy` — clean.
+- **Tools NOT available locally**: `goimports`, `golangci-lint`, `staticcheck`,
+  `govulncheck`, `goreleaser` (documented baseline since US-0001).
+- **Remaining risks / follow-ups**: none. The deployment/* sub-family now
+  covers the four shape variants (single-discriminator, twin-discriminator,
+  zero-param) plus the by-application/compose/server roster. Next deployment/*
+  stories (API-0099 killProcess, API-0100 queueList, API-0101 removeDeployment)
+  will introduce the POST/mutation legs of the same tag.
+- **Learnings for future iterations**:
+  - The harness already has a precedent for parameter-free GETs (API-0006
+    `ai-getAll`); future zero-param GETs in any tag should grep that entry
+    rather than re-discovering the convention.
+  - Spec drift check: `jq '.paths."/deployment.allCentralized".get |
+    {parameters, requestBody, responses: (.responses | keys)}'` against
+    `internal/api/data/openapi.json` is the fastest way to validate
+    a coverage entry's parameter shape before writing the comment block.
+  - `runAPICoverageSuccess` defaults a missing SampleQuery to an empty query
+    string assertion, so omitting the field is *active* coverage of the
+    "agent sends `--input '{}'`" canonical invocation — not just a no-op.
+---
