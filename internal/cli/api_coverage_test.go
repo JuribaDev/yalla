@@ -15813,6 +15813,120 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0432",
+		OperationID: "user-generateToken",
+		Method:      http.MethodPost,
+		Path:        "/user.generateToken",
+		Tag:         "user",
+		// Sixth entry on the user/* coverage roster, slotted in
+		// StoryID order after API-0431 `user-deleteApiKey`. The
+		// `usr-cov-*` per-tag fixture-isolation namespace was
+		// established at API-0427 `user-all` and reasserted at
+		// API-0428..API-0431. Per the per-tag isolation rule
+		// originally established at API-0246 `organization-active`,
+		// every user/* fixture token base remains orthogonal to
+		// every prior tag's namespace (`set-cov-*`, `srv-cov-*`,
+		// `proj-cov-*`, `org-cov-*`, `compose-cov-*`, `app-cov-*`,
+		// `ai-cov-*`, `admin-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		// `cert-cov-*`, `clu-cov-*`, `deployment-cov-*`,
+		// `dest-cov-*`, etc.).
+		//
+		// **Spec re-verified per the API-0345..API-0431
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /user.generateToken >
+		// post`: a **POST** with **no request body** (the spec
+		// omits `requestBody` entirely on this operation) and
+		// **zero declared parameters** (no query, no path, no
+		// header). Responses 200/400/401/403/500 — note the
+		// **absence of 404**, consistent with API-0428
+		// `user-assignPermissions`, API-0430 `user-createApiKey`,
+		// and API-0431 `user-deleteApiKey`: Dokploy's user/*
+		// mutations do not expose a discrete by-id lookup before
+		// the write. The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer.
+		//
+		// **Family choice — first parameter-free POST on the
+		// user/* roster.** Structurally novel for user/*: API-0427
+		// `user-all` was a parameter-free GET, API-0428
+		// `user-assignPermissions` was a fully-required
+		// fifteen-field permission-mutation POST, API-0429
+		// `user-checkUserOrganizations` was a parameter-only GET,
+		// API-0430 `user-createApiKey` was a two-required-of-ten
+		// partially-required POST, and API-0431 `user-deleteApiKey`
+		// was a single-required-string-only POST. This entry is the
+		// user/* roster's first **parameter-free POST** body shape —
+		// the spec authorises no input axis at all even though the
+		// verb is mutating (an authenticated session-bound action
+		// whose semantics are entirely server-side). Per the
+		// slug-prefix-is-not-shape and slug-stem-is-not-shape
+		// lessons reasserted at API-0371..API-0431, no axis from any
+		// prior user/* entry carries over.
+		//
+		// Cross-roster, parameter-free POSTs are precedented but
+		// rare; the harness's `len(tc.SampleBody) > 0` gate at
+		// `runAPICoverageSuccess` already short-circuits the body
+		// assertion when neither `SampleBody` nor any other fixture
+		// axis is populated, so the success-leg subtest reduces to
+		// the wire-level invariants (method = POST, path =
+		// `/user.generateToken`, `Authorization` header, empty
+		// query string) without forging synthetic wire payload the
+		// spec does not authorise.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `usr-cov-generateToken-0432` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared with
+		//     every prior covered peer. The slug is the operationId
+		//     suffix (`generateToken`) verbatim — per the
+		//     slug-stem-is-not-shape lesson the slug only carries
+		//     identifier semantics, not shape semantics. The
+		//     slug-on-the-wire convention does not apply here
+		//     because the operation declares no string fields the
+		//     fixture could embed the sentinel into; the slug
+		//     therefore lives only in this comment as the namespace
+		//     anchor for the API-0432 entry.
+		//   * **No `SampleBody` / `SampleQuery` / `SamplePathParams`
+		//     populated.** Mirrors the parameter-free precedent
+		//     established at API-0427 `user-all` (parameter-free
+		//     GET) and reasserted across cross-tag parameter-free
+		//     openers (e.g. API-0006 `ai-getAll`, API-0051
+		//     `bitbucket-bitbucketProviders`). The canonical agent
+		//     invocation is `yalla api call user-generateToken
+		//     --input '{}' --json` with an empty closed-shape
+		//     `--input` document.
+		//
+		// **Failure-leg fields are intentionally omitted.** The
+		// spec does not declare 404 on this operation, so the
+		// 404 → CodeNotFound representative is structurally
+		// inapplicable. 400 → CodeInvalidInput is **not available**
+		// here at all — the operation has zero parameters and no
+		// request body, so no payload can be syntactically invalid;
+		// the 400 in the spec exists only as a defensive
+		// declaration and cannot be exercised through any input the
+		// CLI can supply. 401 → CodeAuth via the harness default
+		// (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""` →
+		// CodeAuth) stays the most informative representative for
+		// an authenticated POST, matching API-0428..API-0431.
+		//
+		// The next case in the PRD-ordered priority-2 backlog is
+		// API-0433 `user-get`; the next contributor must re-verify
+		// against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field
+		// carries over from this entry — per the
+		// slug-prefix-is-not-shape lesson reasserted at
+		// API-0371..API-0431, even the shared `user-`
+		// operation-stem does not imply a carried-over body or
+		// parameter shape.
+		//
+		// 200 response in the spec is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

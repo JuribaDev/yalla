@@ -13443,3 +13443,115 @@ Learnings for future iterations:
   parameter-free POST — a shape no user/* entry has yet exhibited.
 
 ---
+
+## 2026-05-08 - API-0432 - Cover user-generateToken (POST /user.generateToken)
+
+What was implemented:
+- Appended a new `apiCoverageCase` struct literal for API-0432
+  (`user-generateToken`) to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go`. Sixth entry on the user/* coverage
+  roster, slotted in StoryID order after API-0431 `user-deleteApiKey` and
+  immediately before the existing closing `}` of the slice literal.
+- Spec re-verified against `internal/api/data/openapi.json
+  > /user.generateToken > post`: a POST with **no `requestBody`**
+  (omitted entirely from the spec) and **zero declared parameters**
+  (no query, no path, no header). Responses 200/400/401/403/500;
+  the absence of 404 is consistent with API-0428/0430/0431 — Dokploy's
+  user/* mutations do not expose a discrete by-id lookup before the
+  write. 200 schema is `{}` with `additionalProperties: false`.
+- Structurally novel for user/*: the roster's first **parameter-free
+  POST** body shape. Prior user/* entries were either parameter-free
+  GET (API-0427), parameter-only GET (API-0429), fully-required POST
+  (API-0428), partially-required POST (API-0430), or single-required-
+  string POST (API-0431). `SampleBody`, `SampleQuery`, and
+  `SamplePathParams` are all left zero — `buildCoverageInputArgs`
+  short-circuits to `nil` so the CLI is invoked without `--input`,
+  mirroring the parameter-free precedent at API-0427 `user-all`,
+  API-0006 `ai-getAll`, and API-0051 `bitbucket-bitbucketProviders`.
+- Fixture token base `usr-cov-generateToken-0432` follows the
+  `<tag>-cov-<slug>-<storyID>` convention shared with every prior peer
+  and stays orthogonal to every prior tag's per-tag namespace. The
+  slug-on-the-wire convention does not apply (no string fields to
+  embed the sentinel into); the slug lives only in the comment.
+- `SuccessResponse: \`{}\`` mirrors the spec's empty 200 envelope; the
+  success-leg envelope assertion focuses on `data.method` /
+  `data.status` rather than payload projection.
+- Failure-leg fields intentionally omitted: harness defaults
+  (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""` → CodeAuth)
+  exercise the 401 → CodeAuth representative. 400 → CodeInvalidInput
+  is structurally inapplicable here — with zero parameters and no
+  request body the CLI cannot construct a syntactically invalid
+  payload, so the spec's defensive 400 declaration is unreachable.
+- Flipped `passes: false → true` on the API-0432 entry in
+  `ralph/prd.json`.
+
+Files changed:
+- internal/cli/api_coverage_test.go (one new struct literal appended after
+  API-0431, plus the unrelated forward-reference comment in API-0427
+  was already correct from a prior pass)
+- ralph/prd.json (passes flipped false → true on API-0432)
+- ralph/progress.txt (this entry)
+
+Verification run:
+- `gofmt -w .` — clean
+- `go mod tidy` — clean
+- `go vet ./...` — clean
+- `go test ./...` — PASS (all packages)
+- `go test -race ./...` — PASS (all packages)
+- `go test ./internal/cli -run 'TestAPICoverage|TestManifest' -count=1 -v` —
+  observed PASS for `API-0432/user-generateToken` across all four
+  coverage subtests (`Success`, `RepresentativeFailure`,
+  `RegistryInvariants`, `SchemaCommandWorks`) and the aggregate
+  `TestManifest_JSONIncludesEveryAPIOperation`.
+
+Results:
+- All required quality checks green. Coverage-roster size grows by one
+  entry; no other code paths touched. The harness's existing parameter-
+  free branch (`len(tc.SampleBody) > 0` gate) handles the new POST
+  cleanly without harness changes.
+
+Remaining risks or follow-ups:
+- None for this story. The next priority-2 user/* entry is API-0433
+  `user-get` — per the forward-reference lesson the next contributor
+  must re-verify the spec against `internal/api/data/openapi.json`
+  before assuming any axis carries over from API-0432. Notably,
+  `user-get` is the canonical `*-one`-shaped by-id user lookup the
+  API-0427 comment forecasts as the natural home for the user/*
+  roster's 404 → CodeNotFound representative; the spec re-verification
+  must confirm whether the 404 declaration actually lands there.
+
+Learnings for future iterations:
+- **Parameter-free POSTs are a real shape category.** Prior user/*
+  POSTs all carried request bodies (API-0428/0430/0431). API-0432 is
+  the roster's first parameter-free POST: the spec omits `requestBody`
+  entirely and declares zero parameters. The harness handles this case
+  via `buildCoverageInputArgs` returning `nil` when all three fixture
+  axes are empty, so the CLI is invoked without `--input` and the
+  success-leg subtest reduces to wire-level invariants. No harness
+  change is needed — the parameter-free GET path at API-0427 already
+  exercises the same code branch.
+- **400 → CodeInvalidInput is structurally unreachable when the spec
+  declares zero input axes.** Even though the spec lists 400 in the
+  response set, with no parameters and no request body the CLI cannot
+  construct a syntactically invalid payload. Recording this as an
+  inline comment in the entry keeps the omission discoverable for
+  reviewers who might otherwise wonder why `FailureCode: CodeInvalidInput`
+  is not exercised. 401 → CodeAuth via the harness default stays the
+  most informative representative because authentication is the
+  universal failure mode every authenticated POST must re-prove.
+- **Cross-roster precedent for parameter-free POSTs is rare.** Most
+  prior parameter-free coverage stories were GETs (API-0006 `ai-getAll`,
+  API-0051 `bitbucket-bitbucketProviders`, API-0427 `user-all`). When
+  modelling future parameter-free POSTs, lean on the API-0432 entry
+  for the body-shape narrative rather than on those GET openers — the
+  GET cases share the no-fixture pattern but differ on the verb and
+  on the harness's body-assertion gate.
+- **The forward-reference comment in API-0427 already enumerates
+  API-0428..API-0436 by name** including API-0432 `user-generateToken`,
+  API-0433 `user-get`, API-0434 `user-getBackups`, etc. Future user/*
+  iterations can confirm the next slug at a glance without re-reading
+  the PRD index — but the spec axes (parameters, body, responses) must
+  always be re-verified per-operation as the slug-stem-is-not-shape
+  lesson dictates.
+
+---
