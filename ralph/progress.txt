@@ -8737,3 +8737,55 @@ Learnings for future iterations:
     the chain self-documents the verb-prefix-is-not-authoritative
     lesson without copy-pasting.
 ---
+## 2026-05-08 - API-0359
+- **Implemented**: Full Dokploy API coverage for settings-cleanSSHPrivateKey
+  (POST /settings.cleanSSHPrivateKey), the ninth entry on the settings/*
+  coverage roster (after API-0351..API-0358) and the third member of the
+  settings/* no-body POST sub-cohort (sharing the shape with API-0354
+  cleanAllDeploymentQueue, API-0357 cleanMonitoring, and API-0358
+  cleanRedis).
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — added the API-0359 entry between
+    API-0358 (settings-cleanRedis) and the slice's closing brace. Spec
+    re-verified directly against
+    `internal/api/data/openapi.json > /settings.cleanSSHPrivateKey > post`:
+    no `requestBody` field at all, zero parameters, responses
+    200/400/401/403/500. Fixture sets only StoryID/OperationID/Method/
+    Path/Tag/SuccessResponse — neither `SampleBody`, `SampleQuery`, nor
+    `SamplePathParams` are populated. Failure leg uses the harness
+    default (401 → CodeAuth).
+  - `ralph/prd.json` — set API-0359 `passes: true`.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./... -count=1` — all packages `ok`.
+  - `go test -race ./... -count=1` — all packages `ok`.
+- **Tools NOT available locally** (unchanged): `goimports`, `golangci-lint`,
+  `staticcheck`, `govulncheck`, `goreleaser`.
+- **Remaining risks / follow-ups**: none. settings/* roster continues with
+  API-0360 cleanStoppedContainers — re-verify spec before authoring; verb
+  prefix is not authoritative for body shape.
+- **Learnings for future iterations**:
+  - The settings/* `clean*` family is now confirmed to include four no-body
+    POST members (API-0354, API-0357, API-0358, API-0359) versus three
+    optional-body POST members (API-0353, API-0355, API-0356). The
+    no-body sub-cohort is now a stable plurality — but per the rule
+    re-asserted at every entry, future siblings (API-0360
+    cleanStoppedContainers, API-0361 cleanUnusedImages, API-0362
+    cleanUnusedVolumes, etc.) must still re-verify directly against
+    `internal/api/data/openapi.json` rather than assume the body shape
+    from sibling pattern.
+  - The `set-cov-cleanSSHPrivateKey-0359` fixture-token slug is reserved
+    even though no literal lands on the wire (no body, no params). This
+    keeps the per-tag cross-reference grep convention working for future
+    contributors.
+  - For a no-body POST whose only declared failures are 400/401/403/500
+    (no 404), the entry needs five fields plus narration: StoryID,
+    OperationID, Method, Path, Tag, plus optional SuccessResponse —
+    leaving all body/query/path-param fields zero hits the harness's
+    no-body branch (`runAPICoverageSuccess` skips Content-Type and body
+    round-trip assertions when `len(tc.SampleBody) == 0`) and the
+    harness defaults `tc.FailureStatus == 0` → 401, `tc.FailureCode == ""`
+    → CodeAuth deliver the canonical failure-leg mapping.
+---
