@@ -6361,3 +6361,38 @@
     schema-level assertions about which branch is exercised
     differ between the two peers.
 ---
+
+## 2026-05-08 - API-0294
+- Implemented coverage of project-one (GET /project.one) — first
+  filter-shaped GET in the project/* tag.
+- Files changed:
+  - internal/cli/api_coverage_test.go (new apiCoverageCase entry
+    for project-one, single required query param `projectId`)
+  - ralph/prd.json (passes:true for API-0294)
+- Verification (repo root):
+  - gofmt -w .
+  - go mod tidy (no changes)
+  - go vet ./...
+  - go test ./... -count=1
+  - go test -race ./... -count=1
+- Results: all green.
+- Remaining risks or follow-ups: none beyond the existing project/*
+  arc; API-0295 `*-remove` and API-0296 `*-search` continue the tag.
+- Learnings for future iterations:
+  - The fixture-isolation rule established at API-0290 carries through
+    every project/* peer: re-use only the project/* `proj-cov-*` slug
+    namespace, never back-reference organization/* `org-cov-*`
+    fixtures across the tag boundary even when the wire shape is
+    identical (e.g. organization-one vs project-one).
+  - 404 → CodeNotFound was reserved for "filter-shaped peers" by the
+    API-0290 design header, but staying consistent with the prior
+    ai-one / application-one / organization-one peers keeps the
+    representative-failure leg at the harness default (401 →
+    CodeAuth). Per-tag 404 assertions belong on `*-search` peers,
+    where 404 is semantically primary; `*-one` peers keep 404
+    coverage to the registry-driven invariants test.
+  - Single-required-query-param GETs are byte-for-byte identical
+    across tags at the wire level — the harness `SampleQuery` map
+    plus `r.URL.Query()` re-read in `runAPICoverageSuccess` is the
+    only assertion needed; no extra body or path-params plumbing.
+---

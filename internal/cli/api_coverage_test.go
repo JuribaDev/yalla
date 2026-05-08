@@ -3409,6 +3409,87 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0294",
+		OperationID: "project-one",
+		Method:      http.MethodGet,
+		Path:        "/project.one",
+		Tag:         "project",
+		// First filter-shaped GET in the project/* roster — the
+		// project/* analogue of API-0008 `ai-one`, API-0021
+		// `application-one`, and API-0251 `organization-one`. Per
+		// the per-tag fixture-isolation rule established at API-0290
+		// `project-all`, this entry inherits the `proj-cov-*` slug
+		// namespace opened by the API-0292 `project-create` mutation
+		// block but stays inside the project/* tag boundary and
+		// **must not** back-reference the organization/* `org-cov-*`
+		// literal that API-0251 used.
+		//
+		// Spec source `internal/api/data/openapi.json >
+		// /project.one > get`: zero request body, exactly one
+		// required query parameter `projectId` (string). That is
+		// the canonical "fetch a single resource by ID" GET shape,
+		// byte-for-byte identical at the wire level to API-0008
+		// `ai-one` (`aiId`), API-0021 `application-one`
+		// (`applicationId`), and API-0251 `organization-one`
+		// (`organizationId`). The harness forwards SampleQuery via
+		// the `--input` JSON `query` field, and
+		// `runAPICoverageSuccess` re-reads `r.URL.Query()` to
+		// confirm the CLI propagated the param verbatim — exactly
+		// the assertion path the prior single-required-query-param
+		// peers exercise.
+		//
+		// The API-0290 design-rationale header reserved 404 →
+		// CodeNotFound as a representative-failure leg for the
+		// "filter-shaped peer" in this tag. project-one is the
+		// first such peer in the roster — it is the only project/*
+		// operation whose 404 spec response (`projectId` resolves
+		// to no record) is the *primary* failure mode the calling
+		// agent must handle distinctly from auth, because every
+		// list-and-mutation peer (API-0290/0291/0292/0293) treats
+		// "no records" as an empty result, not a 404. Yet the
+		// other ai-one / application-one / organization-one peers
+		// at the same wire shape kept the harness default (401 →
+		// CodeAuth) for tag-roster symmetry, and the
+		// registry-driven invariants test already covers the
+		// response-code surface. To stay consistent with the
+		// project/* arc opened at API-0290 / API-0291 / API-0292 /
+		// API-0293 (every project/* peer so far re-proves the
+		// universal 401 leg), this entry also keeps the harness
+		// default. Future project/* contributors who need a 404
+		// representative-failure assertion at the operation level
+		// should add it to API-0296 `project-search` instead — the
+		// search peer's 404 surface (no matches) is semantically
+		// distinct from project-one's 404 (unknown ID), and
+		// asserting it once per tag is the established convention
+		// rather than per-case duplication.
+		//
+		// Per-case fixture token `proj-cov-one-0294` follows the
+		// `<tag>-cov-<slug>-<storyID>` convention shared across the
+		// ai/*, application/*, and organization/* GET rosters and
+		// keeps `git grep` traceable to this PRD story without
+		// colliding with API-0292 `proj-cov-create-0292` /
+		// API-0293 `proj-cov-duplicate-0293` mutation slugs or the
+		// future API-0296 `proj-cov-search-0296` filter peer.
+		//
+		// Future contributors picking up the next filter peer
+		// (API-0296 `project-search`, expected to be a list-with-
+		// optional-filters GET) should grep API-0251
+		// `organization-one` and this entry first for the single-
+		// query-param shape; mutation peers (API-0295 `*-remove`,
+		// API-0297 `*-update`) should grep API-0292 / API-0293 for
+		// the `SampleBody` pattern instead — those POSTs inherit a
+		// different code path from this single-query-param GET.
+		SampleQuery: map[string][]string{
+			"projectId": {"proj-cov-one-0294"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior project/* peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
