@@ -3682,3 +3682,45 @@
     reject extra keys; do not over-tighten the fixture for that
     reason alone.
 ---
+
+## 2026-05-08 - API-0039
+- **Implemented**: Coverage of Dokploy API operation
+  `application-updateTraefikConfig` (POST `/application.updateTraefikConfig`)
+  via the shared `apiCoverageCase` harness.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended a single
+    `apiCoverageCase` for API-0039. Unlike the broader minimal-applicationId
+    POST family, the OpenAPI schema requires *both* `applicationId` and
+    `traefikConfig` strings (no optional siblings), so the minimal-but-valid
+    fixture carries both. `traefikConfig` is a literal YAML snippet (with
+    embedded newlines + colon) so the success leg exercises real JSON
+    serialisation of an embedded raw-text payload through `yalla api call`.
+    Success response is `{}` per spec, matching every other application/*
+    mutation peer.
+  - `ralph/prd.json` — set API-0039 `passes: true`.
+- **Verification run**:
+  - `gofmt -l .` — clean.
+  - `go vet ./...` — clean.
+  - `go mod tidy` — clean.
+  - `go test ./...` — all packages `ok`.
+  - `go test -race ./...` — all packages `ok`.
+- **Tools NOT available locally** (unchanged): `goimports`, `golangci-lint`,
+  `staticcheck`, `govulncheck`, `goreleaser`.
+- **Remaining risks / follow-ups**:
+  - The fixture's `traefikConfig` value is syntactically YAML but the
+    Dokploy server is not exercised against a real Traefik validator in
+    the test (httptest server returns `{}` for any request). A future
+    contract-test layer that round-trips a known-bad Traefik string
+    against a stricter mock would catch validation regressions; out of
+    scope for raw API coverage stories.
+- **Learnings for future iterations**:
+  - When a request schema requires multiple top-level strings (not just
+    `applicationId`), keep the fixture minimal-but-valid by including
+    every required field. The harness forwards bytes verbatim, so an
+    incomplete body would still pass the success leg today (the httptest
+    server doesn't validate) but would mask schema drift if Dokploy ever
+    tightened its server-side validator.
+  - Embedding newlines and colons inside a JSON string field is a useful
+    smoke test for the encoder path — the harness sends bytes verbatim,
+    but a future validator hook would reject improperly escaped values.
+---

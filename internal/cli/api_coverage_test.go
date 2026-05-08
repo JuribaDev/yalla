@@ -1097,6 +1097,34 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.method` / `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0039",
+		OperationID: "application-updateTraefikConfig",
+		Method:      http.MethodPost,
+		Path:        "/application.updateTraefikConfig",
+		Tag:         "application",
+		// Mirrors the schema in `data/openapi.json` for
+		// /application.updateTraefikConfig: the request body declares two
+		// required string fields — `applicationId` and `traefikConfig` —
+		// with no optional siblings. Unlike the broader minimal-applicationId
+		// POST family (start/stop/update/…), this operation requires the
+		// raw Traefik router YAML alongside the id, so the minimal-but-valid
+		// fixture carries both fields. The harness forwards these bytes
+		// verbatim to the httptest server, exercising real JSON serialisation
+		// of an embedded YAML payload (newline + colon-bearing string),
+		// application/json content-type negotiation, and body forwarding
+		// through `yalla api call`.
+		SampleBody: json.RawMessage(`{
+			"applicationId": "app-cov-traefik-0039",
+			"traefikConfig": "http:\n  routers:\n    app: {}\n"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching every other application/* mutation peer (start, stop,
+		// update, reload, redeploy, delete, deploy, cancelDeployment, …).
+		// Empty-object body keeps the success-leg envelope assertion focused
+		// on `data.method` / `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
