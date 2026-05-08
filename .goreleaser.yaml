@@ -1,0 +1,176 @@
+# GoReleaser config for yalla.
+# Schema reference: https://goreleaser.com/customization/
+#
+# Verification:
+#   goreleaser check
+#   goreleaser release --snapshot --clean
+#
+# Build outputs land in ./dist/.
+
+version: 2
+
+project_name: yalla
+
+before:
+  hooks:
+    - go mod tidy
+    - go vet ./...
+
+builds:
+  - id: yalla
+    main: ./cmd/yalla
+    binary: yalla
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.Version={{ .Version }}
+      - -X main.Commit={{ .Commit }}
+      - -X main.Date={{ .CommitDate }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: default
+    ids:
+      - yalla
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_
+      {{- if eq .Os "darwin" }}darwin
+      {{- else if eq .Os "linux" }}linux
+      {{- else if eq .Os "windows" }}windows
+      {{- else }}{{ .Os }}{{ end }}_
+      {{- if eq .Arch "amd64" }}amd64
+      {{- else if eq .Arch "arm64" }}arm64
+      {{- else }}{{ .Arch }}{{ end }}
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot-{{ .ShortCommit }}"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+      - "Merge pull request"
+      - "Merge branch"
+  groups:
+    - title: "Features"
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: "Bug fixes"
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: "Other changes"
+      order: 999
+
+release:
+  github:
+    owner: JuribaDev
+    name: yalla
+  draft: false
+  prerelease: auto
+  name_template: "yalla {{ .Tag }}"
+  mode: replace
+
+# --- Package manager channels ------------------------------------------------
+#
+# Tap / bucket repositories must exist and the release workflow needs a token
+# (HOMEBREW_TAP_GITHUB_TOKEN, SCOOP_TAP_GITHUB_TOKEN, WINGET_GITHUB_TOKEN) with
+# `contents:write` on the relevant repository before these jobs do anything
+# more than a dry-run.
+
+brews:
+  - name: yalla
+    repository:
+      owner: JuribaDev
+      name: homebrew-yalla
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: "https://github.com/JuribaDev/yalla"
+    description: "Production-grade, AI-agent-first CLI for Dokploy."
+    license: MIT
+    commit_author:
+      name: yalla-release-bot
+      email: release-bot@juriba.dev
+    install: |
+      bin.install "yalla"
+    test: |
+      system "#{bin}/yalla --version"
+    skip_upload: auto
+
+scoops:
+  - name: yalla
+    repository:
+      owner: JuribaDev
+      name: scoop-yalla
+      branch: main
+      token: "{{ .Env.SCOOP_TAP_GITHUB_TOKEN }}"
+    homepage: "https://github.com/JuribaDev/yalla"
+    description: "Production-grade, AI-agent-first CLI for Dokploy."
+    license: MIT
+    commit_author:
+      name: yalla-release-bot
+      email: release-bot@juriba.dev
+    skip_upload: auto
+
+winget:
+  - name: yalla
+    publisher: JuribaDev
+    license: MIT
+    homepage: "https://github.com/JuribaDev/yalla"
+    short_description: "Production-grade, AI-agent-first CLI for Dokploy."
+    description: |
+      yalla is a production-grade, agent-first CLI for Dokploy. It exposes
+      the full Dokploy public API as deterministic, machine-readable
+      commands with stable exit codes, JSON envelopes, and OpenAPI-aware
+      schemas.
+    commit_author:
+      name: yalla-release-bot
+      email: release-bot@juriba.dev
+    repository:
+      owner: JuribaDev
+      name: winget-pkgs
+      branch: "yalla-{{ .Version }}"
+      token: "{{ .Env.WINGET_GITHUB_TOKEN }}"
+      pull_request:
+        enabled: true
+        draft: false
+        base:
+          owner: microsoft
+          name: winget-pkgs
+          branch: master
+    skip_upload: auto
+
+# When goreleaser is invoked outside the release workflow (snapshot, dry-run,
+# fork PRs without secrets) skip the package-manager publishers entirely so a
+# missing tap or token never aborts the run.
+env:
+  - HOMEBREW_TAP_GITHUB_TOKEN={{ if index .Env "HOMEBREW_TAP_GITHUB_TOKEN" }}{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}{{ else }}placeholder{{ end }}
+  - SCOOP_TAP_GITHUB_TOKEN={{ if index .Env "SCOOP_TAP_GITHUB_TOKEN" }}{{ .Env.SCOOP_TAP_GITHUB_TOKEN }}{{ else }}placeholder{{ end }}
+  - WINGET_GITHUB_TOKEN={{ if index .Env "WINGET_GITHUB_TOKEN" }}{{ .Env.WINGET_GITHUB_TOKEN }}{{ else }}placeholder{{ end }}

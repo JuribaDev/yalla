@@ -37,6 +37,35 @@
   `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, and `goreleaser`
   are not yet installed locally and should be documented as missing rather
   than silently skipped.
+- Release matrix (US-0009): `internal/release.SupportedTargets` is the canonical
+  list of `(GOOS, GOARCH)` pairs yalla ships — linux/darwin/windows ×
+  amd64/arm64. `Target.ArchiveName(version)` and `release.ChecksumsName(version)`
+  mirror `.goreleaser.yaml`'s `archives[0].name_template` and
+  `checksum.name_template`. Adding or removing a target is a public-API change
+  and must update `.goreleaser.yaml > builds`, `npm/lib/platform.js`'s `OS_MAP`
+  / `ARCH_MAP`, **and** `SupportedTargets` together. The tests in
+  `internal/release/release_test.go` enforce the three-way contract.
+- Distribution channels (US-0009): primary delivery is GoReleaser-built
+  archives on GitHub Releases (tar.gz everywhere except Windows where it's
+  zip). Channels layered on top: Homebrew tap (`JuribaDev/homebrew-yalla`),
+  Scoop bucket (`JuribaDev/scoop-yalla`), WinGet PRs into
+  `microsoft/winget-pkgs`, and the npm `yalla-cli` wrapper. Each channel is
+  marked `skip_upload: auto` so missing tokens never break a release; CI
+  runs `goreleaser check` and a `--snapshot --skip=publish` dry-run on
+  every PR.
+- npm wrapper contract (US-0009): the package is a *trampoline*. `bin/yalla.js`
+  uses `child_process.spawn(..., { stdio: 'inherit' })` with no rewriting of
+  argv, stdout, stderr, or exit codes. Postinstall failures must NOT abort
+  `npm install` — the bin script retries the download on first run. The
+  wrapper is intentionally zero-runtime-dependency; archive extraction uses
+  the system `tar` (Win10+ ships `tar.exe`) with a PowerShell `Expand-Archive`
+  fallback. Version resolution: `YALLA_VERSION` env first, then
+  `package.json#version`. Release URL prefix is configurable via
+  `YALLA_REPO` / `YALLA_RELEASE_BASE` for mirrors and tests.
+- Build stamping (US-0009): the `cmd/yalla/main.go` `Version`/`Commit`/`Date`
+  package vars are the *only* injection point. `.goreleaser.yaml > builds[0].
+  ldflags` writes `-X main.Version`, `-X main.Commit`, and `-X main.Date`;
+  do not add a parallel build-info location.
 - Typed-error contract (US-0002): every user-visible failure is a
   `*errors.Error` from `internal/errors` with a stable `Code` (e.g.
   `E_NOT_FOUND`, `E_AUTH`, `E_NETWORK`, `E_USAGE`, `E_NO_INPUT_REQUIRED`).
@@ -1229,4 +1258,135 @@
   - **Verification doc placement**: `ralph/VERIFICATION.md` lives
     next to the PRD so future iterations grep `ralph/` for guidance
     and find the focused-vs-full loop in one hop.
+---
+## 2026-05-08 - US-0009
+- **Implemented**: the production release pipeline. GoReleaser config covers
+  every supported target (linux/darwin/windows × amd64/arm64), publishes
+  GitHub Releases with sha256 checksums, generates a Homebrew tap formula,
+  Scoop manifest, and a WinGet PR, and ships an npm/npx wrapper that downloads
+  + verifies + execs the matching native binary while preserving argv, stdio,
+  and exit codes. Two GitHub Actions workflows (CI and Release) automate the
+  loop. A new `internal/release` Go package centralises the build matrix and
+  validates the goreleaser config, the npm wrapper, and the workflows agree
+  on the same `<os>_<arch>` coordinates.
+- **Files changed**:
+  - `LICENSE` (new) — MIT license referenced by goreleaser archive `files:`,
+    Homebrew formula, Scoop manifest, WinGet manifest, and npm package.json.
+  - `README.md` (new) — install matrix, usage examples, link to RELEASING.md.
+  - `.gitignore` (new) — ignore `dist/`, `npm/binaries/`, etc.
+  - `.goreleaser.yaml` (new) — schema v2 config with builds, archives,
+    checksums, snapshot template, GitHub Release config, brews, scoops, and
+    winget channels. Each package-manager channel uses `skip_upload: auto`
+    plus an env-default block so missing tokens or fork PRs never abort.
+  - `.github/workflows/ci.yml` (new) — gofmt + go mod tidy + go vet +
+    `go test` + `go test -race` matrix on ubuntu/macos/windows, plus
+    `goreleaser check` and `goreleaser release --snapshot --clean
+    --skip=publish` on Linux with snapshot artefact upload.
+  - `.github/workflows/release.yml` (new) — tag-driven `goreleaser release
+    --clean` followed by an npm publish job that stamps
+    `npm/package.json#version` from the tag (`vX.Y.Z` → `X.Y.Z`).
+  - `npm/package.json` (new) — wrapper manifest with `bin.yalla = bin/yalla.js`,
+    `postinstall = node install.js`, dependency-free contract.
+  - `npm/lib/platform.js` (new) — `OS_MAP`, `ARCH_MAP`, `detect`,
+    `archive(version)`, `checksumName`, `parseChecksum`. Source of truth for
+    the npm side of the build matrix.
+  - `npm/lib/install.js` (new) — zero-dep downloader: `https.get` with
+    redirect handling and 60s timeout, sha256 verification against the
+    GoReleaser checksums file, extraction via `tar -xf` with a
+    PowerShell `Expand-Archive` fallback for Windows. Version resolution:
+    `YALLA_VERSION` env > `package.json#version`.
+  - `npm/install.js` (new) — postinstall script. Honors
+    `YALLA_SKIP_DOWNLOAD=1`. Swallows network failures (exits 0) so the
+    wrapper retries on first run instead of breaking `npm install`.
+  - `npm/bin/yalla.js` (new) — the trampoline. `child_process.spawn(bin,
+    process.argv.slice(2), { stdio: 'inherit' })`, re-raises terminating
+    signals, exits with the binary's exit code.
+  - `npm/test/wrapper.test.js` (new) — `node --test` covers the platform
+    map, archive name builder, and `parseChecksum` (hex normalisation +
+    starred-binary lines + missing-filename error). All 8 tests pass under
+    Node 20.
+  - `npm/README.md`, `npm/AGENTS.md`, `npm/.npmignore` (new) — usage doc,
+    agent guidance, and publish hygiene.
+  - `internal/release/release.go` (new) — `SupportedTargets`, `Target`,
+    `Target.ArchiveExt`, `Target.BinaryName`, `Target.ArchiveName`,
+    `ChecksumsName`. Public API for downstream tooling (US-0010 will
+    consume this for upgrade detection).
+  - `internal/release/release_test.go` (new) — six tests:
+    `TestGoReleaserConfig_CoversEveryTarget`,
+    `TestGoReleaserConfig_ArchivesAndChecksums`,
+    `TestGoReleaserConfig_PackageManagerChannels`,
+    `TestArchiveNamesMatchGoReleaserTemplate`,
+    `TestNPMWrapperPackage`,
+    `TestNPMWrapperPlatformMappingMatchesGo`,
+    `TestReleaseWorkflowsExist`.
+    Walks up to `go.mod` via `runtime.Caller` to locate the project root,
+    so a future package move only fails one place.
+  - `internal/release/AGENTS.md` (new) — module-local conventions.
+  - `RELEASING.md` (new) — channel matrix, workflow map, secret table,
+    release checklist.
+  - `ralph/prd.json` — set US-0009 `passes: true`.
+- **Verification run**:
+  - `gofmt -l .` — clean (gofmt -w canonicalised release_test.go's struct
+    tag alignment on the first run).
+  - `go mod tidy` — clean (no module change; `internal/release` only
+    imports the existing `gopkg.in/yaml.v3` dependency).
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass: `internal/api`, `internal/cli`,
+    `internal/config`, `internal/errors`, `internal/output`,
+    `internal/release` (new, 6 tests), `internal/testutil`.
+  - `go test -race ./...` — same.
+  - `cd npm && node --test test` — 8/8 pass under Node 20.19.2.
+- **Tools NOT available locally**: `goreleaser`, `goimports`, `golangci-lint`,
+  `staticcheck`, `govulncheck`. The CI workflow invokes `goreleaser check`
+  and a `--snapshot --skip=publish` dry-run on every push/PR so the config
+  is exercised end-to-end before any release tag.
+- **Remaining risks / follow-ups**:
+  - The Homebrew tap (`JuribaDev/homebrew-yalla`), Scoop bucket
+    (`JuribaDev/scoop-yalla`), and WinGet token are not provisioned yet.
+    `skip_upload: auto` plus the env-default block makes this graceful, but
+    the first real release will need those repos created and the matching
+    secrets added to GitHub Actions.
+  - The npm `yalla-cli` package name is unclaimed — a release will fail at
+    publish time if someone squats it. We can pivot to a scoped name
+    (`@juribadev/yalla-cli`) by editing `npm/package.json#name` only; the
+    bin entry and trampoline contract stay identical.
+  - `YALLA_VERSION` env override is supported but undocumented in the main
+    CLI help. US-0010 (channel-aware upgrade) will probably surface it.
+  - The wrapper extracts archives using `tar -xf` (Windows tar.exe handles
+    zip via bsdtar). On older Windows builds without tar.exe, the
+    PowerShell fallback runs. There's no third-party JS unzip dep — keep
+    it that way.
+- **Learnings for future iterations**:
+  - **GoReleaser v2 schema**: archives use `formats: [tar.gz]` (plural,
+    array). `format` (singular) silently parses but produces no archive.
+    `format_overrides` follows the same shape. Modeling the YAML in a
+    Go test with `KnownFields(false)` lets us assert the keys we care
+    about without fighting the rest of the schema.
+  - **Token guards**: setting `skip_upload: auto` on every brew/scoop/winget
+    channel plus an `env:` block that defaults the token vars to
+    `placeholder` makes a fork PR's snapshot dry-run pass without secrets.
+    The release workflow still uses the real tokens via
+    `${{ secrets.* }}`.
+  - **Cross-platform extraction**: the Windows-10+ `tar.exe` accepts zip
+    archives transparently, so `tar -xf <archive> -C <dir>` is the single
+    extraction command for both `.tar.gz` and `.zip`. PowerShell
+    `Expand-Archive` only fires on the rare missing-tar.exe case.
+  - **Node child stdio**: `spawn(bin, args, { stdio: 'inherit' })` is the
+    only correct trampoline pattern. Anything that pipes through Node
+    (e.g. `spawnSync` returning buffers) silently breaks the
+    "stdout-is-data-only" agent contract on the first command that
+    emits binary or non-UTF8 bytes.
+  - **Project-root discovery in tests**: `runtime.Caller(0)` + walking
+    parents until `go.mod` is found beats hard-coding `../..`. Tests stay
+    valid through package moves and survive `go test ./...` invocations
+    from any working directory.
+  - **npm `os` / `cpu` fields**: declaring the supported tuples in
+    `package.json` lets npm refuse the install on truly unsupported
+    platforms before postinstall runs, so the user sees a clean error
+    instead of a wrapper-side "unsupported platform" crash. Keep it in
+    sync with `release.SupportedTargets`.
+  - **Checksum file format**: GoReleaser writes `<hex>  <filename>` per
+    line, sometimes with a leading `*` (binary mode flag from coreutils).
+    `parseChecksum` strips the `*` and lowercases the hex so the wrapper
+    survives both shapes.
 ---

@@ -322,7 +322,7 @@
       ],
       "type": "foundation",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Normal users and agents must not need Go installed."
     },
     {
