@@ -14798,3 +14798,43 @@ Learnings for future iterations:
     `<tag>-cov-<slug>-<storyID>` names keep `git grep` traceable
     without leaking shape information.
 ---
+
+## 2026-05-08 - API-0116
+- **Implemented**: Coverage of `domain-byComposeId` (GET /domain.byComposeId).
+  Added a single `apiCoverageCase` entry in `internal/cli/api_coverage_test.go`
+  immediately after the API-0115 `domain-byApplicationId` entry. The new case
+  drives both the success leg (verifying `composeId` propagation through
+  `--input` JSON `query`) and the harness-default 401→`CodeAuth` failure leg
+  via the shared `runAPICoverage*` runners.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — new `apiCoverageCase{StoryID:
+    "API-0116", OperationID: "domain-byComposeId", Method: GET, Path:
+    "/domain.byComposeId", Tag: "domain"}` with `SampleQuery: {composeId:
+    "domain-cov-by-compose-id-0116"}` and `SuccessResponse: \`{}\``.
+  - `ralph/prd.json` — set US `API-0116` `passes: true`.
+- **Verification run**:
+  - `gofmt -l .` — clean.
+  - `go vet ./...` — clean.
+  - `go mod tidy` — clean.
+  - `go test ./...` — all packages pass.
+  - `go test -race ./...` — all packages pass under the race detector.
+- **Tools NOT available locally**: `goimports`, `golangci-lint`,
+  `staticcheck`, `govulncheck`, `goreleaser` (unchanged from prior stories).
+- **Remaining risks / follow-ups**:
+  - None for this story. The next domain/* GET in the PRD-ordered backlog is
+    API-0117 `domain-canGenerateTraefikMeDomains` — also a single-required-
+    query GET (parameter name `serverId`), structurally a sibling of this
+    entry, and continues the `domain-cov-*` per-tag namespace.
+- **Learnings for future iterations**:
+  - The domain/* tag's id-bearing GET cohort is now a stable pattern: spec
+    declares one REQUIRED string query param + empty 200 body + standard
+    400/401/403/404/500 family. The harness-default 401→CodeAuth leg is the
+    correct failure representative (bearer-token enforcement runs before any
+    id lookup), matching the cross-tag precedent at API-0005, API-0113, and
+    API-0115. Future domain/* GET-by-id stories can copy this entry shape
+    verbatim and only change the query param name + fixture id slug.
+  - Re-verifying the next-in-line spec while writing the current entry's
+    forward-reference comment continues to pay off — API-0117's spec
+    confirmed the structural-sibling claim before the comment was committed,
+    keeping the PRD's "forward-reference lesson" honoured.
+---
