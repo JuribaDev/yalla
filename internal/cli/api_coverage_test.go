@@ -18439,6 +18439,149 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0272",
+		OperationID: "postgres-changeStatus",
+		Method:      http.MethodPost,
+		Path:        "/postgres.changeStatus",
+		Tag:         "postgres",
+		// Kickoff entry for the postgres/* coverage roster and the
+		// completion of the forward reference embedded in the
+		// API-0207 `mysql-update` closing block ("The next case in
+		// the PRD-ordered priority-4 backlog is API-0272
+		// `postgres-changeStatus`, which opens a new tag (postgres)
+		// and therefore a brand-new `postgres-cov-*` per-tag
+		// fixture-isolation namespace"). This is the first
+		// postgres-tagged operation to ship contract coverage and
+		// opens the `postgres-cov-*` namespace for postgres/*
+		// per-tag fixtures. Per the per-tag isolation rule
+		// reasserted at API-0335..API-0444 and originally
+		// established at API-0246 `organization-active`, the
+		// `postgres-cov-*` namespace stays orthogonal to every
+		// closed prior-tag namespace (`admin-cov-*`, `ai-cov-*`,
+		// `app-cov-*`, `backup-cov-*`, `bb-cov-*`, `cert-cov-*`,
+		// `clu-cov-*`, `compose-cov-*`, `deployment-cov-*`,
+		// `dest-cov-*`, `docker-cov-*`, `domain-cov-*`,
+		// `environment-cov-*`, `gitea-cov-*`, `github-cov-*`,
+		// `gitlab-cov-*`, `mariadb-cov-*`, `mongo-cov-*`,
+		// `mounts-cov-*`, `mysql-cov-*`, `org-cov-*`, `port-cov-*`,
+		// `proj-cov-*`, `set-cov-*`, `srv-cov-*`, `swarm-cov-*`,
+		// `usr-cov-*`, etc.) and **must not** back-reference any
+		// of those closed prior-tag literals. The just-closed
+		// priority-4 mysql/* namespace (closed at API-0207
+		// `mysql-update`) and the intervening priority-3 port/*
+		// namespace (closed at API-0271 `port-update`) are
+		// explicitly enumerated here per the per-tag isolation
+		// rule. Note that the literal `postgres-cov-backup-create-
+		// 0040` previously appeared at API-0040 as a foreign-key
+		// `postgresId` value supplied to a backup-tagged operation
+		// — that usage is structurally distinct (a cross-tag
+		// id-shaped scalar borrowed by the backup namespace, not a
+		// postgres-tagged fixture) and uses a different slug
+		// (`backup-create-0040`) plus storyID, so the
+		// `postgres-cov-changeStatus-0272` literal coined here is
+		// non-colliding under the `<tag>-cov-<slug>-<storyID>`
+		// uniqueness rule.
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json` > `/postgres.changeStatus`
+		// > `post`: method POST, tag postgres, **no parameters**,
+		// requestBody REQUIRED with `application/json`, responses
+		// 200/400/401/403/500. The 200 response is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort. **No 404** is
+		// declared — status-mutation operations gate on the
+		// *body-supplied* resource id (`postgresId`) which the spec
+		// models through 400 (validation) and 403 (RBAC) rather
+		// than 404, so 404→CodeNotFound coverage has no canonical
+		// home in the `postgres-changeStatus` failure surface
+		// (mirroring the precedent locked in by API-0160
+		// `mariadb-changeStatus`, API-0174 `mongo-changeStatus`,
+		// and API-0194 `mysql-changeStatus`, the structurally
+		// identical sibling-tag peers).
+		//
+		// **Request body schema (REQUIRED top-level fields):**
+		//   - REQUIRED `postgresId` (string)
+		//   - REQUIRED `applicationStatus` (string, enum:
+		//     `idle` | `running` | `done` | `error`)
+		//   - **No optional fields.** Like API-0160
+		//     `mariadb-changeStatus`, API-0174
+		//     `mongo-changeStatus`, and API-0194
+		//     `mysql-changeStatus`, postgres-changeStatus has zero
+		//     optional fields, so the API-0131 `gitea-create`
+		//     minimal-required-only fixture rule is trivially
+		//     satisfied. The fixture supplies exactly the two
+		//     REQUIRED fields and nothing else; the harness's
+		//     `len(tc.SampleBody) > 0` gate at
+		//     `runAPICoverageSuccess` activates the JSON
+		//     content-type and byte-for-byte body comparison legs.
+		//
+		// **Enum value pick.** `applicationStatus: "idle"` is one
+		// of the four spec-declared enum values and is the safest
+		// representative for a no-op status transition; the
+		// harness only asserts byte-for-byte body propagation, so
+		// the choice is orthogonal to the contract leg but must
+		// remain a member of the spec-declared enum. Identical
+		// pick to API-0160 `mariadb-changeStatus`, API-0174
+		// `mongo-changeStatus`, and API-0194 `mysql-changeStatus`
+		// for cross-tag consistency on the `*-changeStatus`
+		// family.
+		//
+		// **Shape positioning — two-required-string-scalar POST
+		// imperative-action status-mutation, body REQUIRED.** The
+		// two REQUIRED slots are a plain non-nullable
+		// `type: string` (`postgresId`) plus an enum-constrained
+		// string (`applicationStatus`). Structurally identical to
+		// the API-0160 / API-0174 / API-0194 `*-changeStatus`
+		// bodies; the only wire-shape distinction is the
+		// resource-id field name.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so
+		// the 404→CodeNotFound override is structurally
+		// inapplicable. 400→CodeInvalidInput is *technically*
+		// available — a payload that omits one of the two REQUIRED
+		// fields would fail server-side validation — but the
+		// harness reserves 400 representatives for stories where
+		// payload validation is the operation's *uniquely
+		// distinguishing* failure mode. A status-mutation that
+		// gates on a body-supplied id collapses to type-checking,
+		// so the harness-default 401→CodeAuth failure leg remains
+		// the most representative single failure mode every
+		// authenticated Dokploy operation must re-prove. Pinning
+		// the bearer-token check at the kickoff entry locks the
+		// auth invariant for the entire `postgres-cov-*`
+		// namespace.
+		//
+		// **Fixture token base** `postgres-cov-changeStatus-0272`
+		// follows the established `<tag>-cov-<slug>-<storyID>`
+		// deterministic-but-clearly-fake naming convention. No
+		// prior postgres-tagged fixture exists, so there are no
+		// same-tag collision constraints to avoid (the namespace
+		// opens here); the cross-tag literal
+		// `postgres-cov-backup-create-0040` documented above
+		// differs in slug and storyID and therefore satisfies the
+		// `<tag>-cov-<slug>-<storyID>` uniqueness rule.
+		//
+		// The next case in the PRD-ordered priority-4 backlog is
+		// API-0273 `postgres-create` (declared a **POST** per the
+		// spec preview; the next contributor must re-verify the
+		// spec against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field
+		// shape, and will continue inside the `postgres-cov-*`
+		// per-tag fixture-isolation namespace opened here).
+		SampleBody: json.RawMessage(`{
+			"postgresId": "postgres-cov-changeStatus-0272",
+			"applicationStatus": "idle"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0290",
 		OperationID: "project-all",
 		Method:      http.MethodGet,

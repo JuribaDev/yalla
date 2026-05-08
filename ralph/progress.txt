@@ -21514,3 +21514,90 @@ forward-reference lesson before assuming any field shape.
     validation is the operation's distinguishing failure mode; no
     payload to validate ⇒ no 400 representative is justified.
 ---
+
+## 2026-05-09 - API-0272 Cover postgres-changeStatus (POST /postgres.changeStatus)
+- What was implemented:
+  - Appended a new `apiCoverageCase` entry for API-0272
+    `postgres-changeStatus` to `coveredAPIOperations` in
+    `internal/cli/api_coverage_test.go`, inserted in StoryID-sorted
+    order between API-0271 `port-update` and API-0290 `project-all`.
+  - This story **opens the postgres/* coverage roster** and the
+    `postgres-cov-*` per-tag fixture-isolation namespace, completing
+    the forward reference embedded in the API-0207 `mysql-update`
+    closing block.
+  - Spec re-verified per the API-0345..API-0444 lesson against
+    `internal/api/data/openapi.json > /postgres.changeStatus > post`:
+    method POST, tag `postgres`, **no parameters**, requestBody
+    REQUIRED with `application/json`, responses 200/400/401/403/500
+    (no 404). Body schema declares two REQUIRED scalars: `postgresId`
+    (string) and `applicationStatus` (string enum
+    `idle|running|done|error`); zero optional fields. 200 schema is
+    `{}` with `additionalProperties: false`. Structurally
+    byte-for-byte identical to the cross-tag analogs API-0160
+    `mariadb-changeStatus`, API-0174 `mongo-changeStatus`, and
+    API-0194 `mysql-changeStatus` modulo the resource-id field name.
+  - Fixture token `postgres-cov-changeStatus-0272` follows the
+    `<tag>-cov-<slug>-<storyID>` deterministic-but-clearly-fake
+    naming convention. The pre-existing literal
+    `postgres-cov-backup-create-0040` (API-0040, backup tag) is
+    structurally distinct (cross-tag id-shaped foreign-key value, not
+    a postgres-tagged fixture) and differs in slug+storyID, so the
+    new literal is non-colliding. `applicationStatus: "idle"` matches
+    the cross-tag changeStatus picks for consistency.
+  - Failure leg keeps harness defaults (401 → CodeAuth) per the
+    `*-changeStatus` family precedent — the spec omits 404, payload
+    validation collapses to type-checking on a body-supplied id, and
+    the kickoff entry pins the bearer-token check for the entire
+    `postgres-cov-*` namespace.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (added API-0272 case + comment block)
+  - `ralph/prd.json` (set `passes: true` for API-0272)
+  - `ralph/progress.txt` (this entry)
+- Verification run from repo root:
+  - `gofmt -w .` — clean
+  - `go mod tidy` — clean
+  - `go vet ./...` — pass
+  - `go test ./...` — pass (cli 1.235s)
+  - `go test -race ./...` — pass (cli 3.262s)
+  - Targeted: `go test ./internal/cli -run 'TestAPI|APICoverage|Coverage|postgres'` — pass
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` not installed locally; skipped per documented policy.
+- Remaining risks / follow-ups:
+  - None for this story. Next priority-4 case is API-0273
+    `postgres-create` (POST per spec preview); contributor must
+    re-verify the spec before assuming field shape and continue
+    inside the `postgres-cov-*` namespace opened here.
+- **Learnings for future iterations:**
+  - **Cross-tag analog discovery for tag kickoffs.** When opening a
+    new tag's roster (here postgres/*), the fastest way to derive
+    the fixture shape is to grep prior `*-changeStatus` (or whichever
+    operation is first in the StoryID-sorted backlog for the tag)
+    entries. The mariadb/* (API-0160), mongo/* (API-0174), and
+    mysql/* (API-0194) `*-changeStatus` entries form a canonical
+    family with byte-for-byte identical shape modulo the resource-id
+    field name. Re-using their comment scaffolding (spec
+    re-verification, body-schema enumeration, enum pick rationale,
+    family-choice 401→CodeAuth justification, per-tag isolation
+    enumeration) keeps the kickoff entry consistent with priors and
+    cuts review surface dramatically.
+  - **Cross-tag id-shaped foreign-key fixtures don't open a tag
+    namespace.** The literal `postgres-cov-backup-create-0040`
+    appeared at API-0040 as a value supplied to backup-create's
+    `postgresId` field — i.e. a foreign-key reference to a postgres
+    resource from inside the *backup* tag's coverage entry. That
+    historical usage does NOT open the postgres/* fixture-isolation
+    namespace; the namespace officially opens only when the first
+    postgres-tagged operation lands its own coverage entry (here,
+    API-0272). The `<tag>-cov-<slug>-<storyID>` uniqueness rule is
+    satisfied because slug and storyID differ across the two
+    literals.
+  - **StoryID-sorted slice with mixed priorities.** The
+    `coveredAPIOperations` slice is StoryID-sorted, not
+    priority-sorted. So when a priority-4 backlog story (API-0272)
+    lands after a priority-3 story (API-0271 `port-update`), the new
+    entry inserts immediately between them in the slice even though
+    the priority-3 closing comment forward-references a *different*
+    priority-3 story (API-0298 `redirects-create`). Both forward
+    references are valid simultaneously because they refer to
+    different orderings (priority-bucket order vs slice order).
+---
