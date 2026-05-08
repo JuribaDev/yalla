@@ -22179,3 +22179,123 @@ forward-reference lesson before assuming any field shape.
     `git grep` for the new literal (`postgres-cov-remove-0279`)
     must return zero hits before the entry is committed.
 ---
+
+## 2026-05-09 - API-0280 - Cover postgres-saveEnvironment (POST /postgres.saveEnvironment)
+- What was implemented:
+  - Added a new `apiCoverageCase` entry for `postgres-saveEnvironment`
+    (POST /postgres.saveEnvironment, tag postgres) in
+    `internal/cli/api_coverage_test.go`, immediately after API-0279
+    `postgres-remove` and before the API-0290 `project-all`
+    boundary that opens the next-tag arc. Ninth entry on the
+    postgres/* coverage roster, completing the forward reference
+    embedded in API-0279's closing block.
+  - **Spec re-verified** against
+    `internal/api/data/openapi.json` > `/postgres.saveEnvironment` >
+    `post`: method POST, tag postgres, no parameters, requestBody
+    REQUIRED with `application/json` and **two REQUIRED top-level
+    fields** — `postgresId` (plain string) and `env`
+    (`anyOf:[string,null]`, i.e. nullable string) — and **no
+    optional fields**, responses 200/400/401/403/500 with the 200
+    body `{}` (`additionalProperties: false`). No 404 declared.
+  - **Shape — two-required-scalar POST environment-save mutation,
+    body REQUIRED.** Cardinality-identical to the
+    `<tag>Id + env` save-environment pairing on
+    `/application.saveEnvironment` (API-0030),
+    `/mariadb.saveEnvironment` (API-0168),
+    `/mongo.saveEnvironment` (API-0182), and
+    `/mysql.saveEnvironment` (API-0202). Fixture supplies both
+    REQUIRED scalars in the spec-declared property order
+    (`postgresId`, `env`) so the byte-for-byte body comparison leg
+    verifies the CLI propagated the multi-field body without
+    reordering, dropping, or mutating either scalar. The nullable
+    branch of `env` is intentionally not exercised on the success
+    leg — a non-null string literal better stress-tests body
+    pass-through and keeps parity with every prior covered
+    `*-saveEnvironment` peer.
+  - **Family choice — harness-default 401→CodeAuth retained.**
+    Spec omits 404 from the response set, so the 404→CodeNotFound
+    override is structurally inapplicable; the override slot for
+    the postgres/* roster was already consumed by API-0276
+    `postgres-one` per the per-tag opener design header that
+    reserves 404 representatives specifically for the canonical
+    by-id `*-one` peer.
+  - **Fixture token base** `postgres-cov-save-environment-0280` is
+    verified non-colliding with API-0272's
+    `postgres-cov-changeStatus-0272`, API-0273's
+    `postgres-cov-create-0273`, API-0274's
+    `postgres-cov-deploy-0274-postgresId`, API-0275's
+    `postgres-cov-move-0275-postgresId` /
+    `postgres-cov-move-0275-targetEnvironmentId`, API-0276's
+    `postgres-cov-one-0276-postgresId-fixture`, API-0277's
+    `postgres-cov-rebuild-0277-postgresId`, API-0278's
+    `postgres-cov-reload-0278-postgresId` /
+    `postgres-cov-reload-0278-appName`, and API-0279's
+    `postgres-cov-remove-0279-postgresId` literals under the
+    `<tag>-cov-<slug>-<storyID>` rule. Slug `save-environment`
+    follows the kebab-case style established at API-0168
+    `mariadb-cov-save-environment-0168` and reasserted at API-0202
+    `mysql-cov-save-environment-0202`.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (added API-0280 case +
+    comment block)
+  - `ralph/prd.json` (set `passes: true` for API-0280)
+  - `ralph/progress.txt` (this entry)
+- Verification run from repo root:
+  - `gofmt -w .` — clean
+  - `go mod tidy` — clean
+  - `go vet ./...` — pass
+  - `go test ./...` — pass (cli 1.236s; all packages PASS)
+  - `go test -race ./...` — pass (cli 3.197s; all packages PASS)
+  - Targeted: `go test ./internal/cli -run 'TestAPICoverage/API-0280' -v`
+    — all five API-0280/postgres-saveEnvironment subtests PASS
+    (Registry, Schema, Manifest, SuccessRoundTrip,
+    RepresentativeFailure).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — not installed locally, deferred per
+    Codebase-Patterns guidance.
+- Remaining risks or follow-ups: none — coverage matches the
+  established `*-saveEnvironment` two-required-scalar peer pattern
+  (application/mariadb/mongo/mysql). Next priority-4 backlog case
+  is API-0281 `postgres-saveExternalPort` (continues the
+  `postgres-cov-*` per-tag fixture-isolation namespace; spec must
+  be re-verified before assuming any field shape).
+- **Learnings for future iterations:**
+  - **`*-saveEnvironment` two-required-scalar peer template is now
+    re-asserted for postgres/*.** Across the application/relational
+    database tags the `<tag>Id + env` pairing is byte-for-byte
+    cardinality-identical: `application-saveEnvironment` (API-0030),
+    `mariadb-saveEnvironment` (API-0168), `mongo-saveEnvironment`
+    (API-0182), `mysql-saveEnvironment` (API-0202), and now
+    `postgres-saveEnvironment` (API-0280). The second slot is a
+    nullable string (`anyOf:[string,null]`), distinguishing this
+    family from the `*-reload` family (`<tag>Id + appName` where
+    appName is non-nullable). Future `redis-saveEnvironment`
+    (API-0310 in the priority-4 cohort) should grep
+    `OperationID: "mysql-saveEnvironment"` first as the canonical
+    template and re-verify the spec per-operation since the
+    nullable branch on `env` is consistent across the family but
+    must still be confirmed.
+  - **Slug `save-environment` is the kebab-case canonical form**
+    for the `*-saveEnvironment` family fixture token base, used
+    consistently at API-0168 (mariadb), API-0202 (mysql), and now
+    API-0280 (postgres). Future `redis-saveEnvironment` and any
+    `*-saveExternalPort` peers should follow the analogous slug
+    `save-external-port` (already established at API-0169 and
+    API-0203).
+  - **postgres/* roster forward-reference chain still intact.** The
+    API-0279 closing block correctly forward-referenced API-0280
+    `postgres-saveEnvironment`, and this entry now forward-
+    references API-0281 `postgres-saveExternalPort` (declared POST
+    per spec preview; must be re-verified). The `postgres-cov-*`
+    namespace stays open and is owned by API-0272→API-0285 (all
+    eleven postgres/* peers, with API-0280 marking 9/11 complete).
+  - **Nullable scalar on success leg — non-null is the canonical
+    fixture choice.** Even though the harness's
+    `len(tc.SampleBody) > 0` gate would still trigger with
+    `"env": null`, every `*-saveEnvironment` peer fixture supplies
+    a non-null string literal because the byte-for-byte body
+    pass-through assertion is more meaningful when both REQUIRED
+    slots carry distinguishable string values. Future contributors
+    covering operations with `anyOf:[T,null]` REQUIRED slots
+    should default to the non-null branch for the same reason.
+---
