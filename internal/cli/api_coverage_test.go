@@ -13188,6 +13188,226 @@ var coveredAPIOperations = []apiCoverageCase{
 		// inner-property-type, inner-required-field, parameter, or
 		// response-set axes carry over.
 	},
+	{
+		StoryID:     "API-0394",
+		OperationID: "settings-updateServerIp",
+		Method:      http.MethodPost,
+		Path:        "/settings.updateServerIp",
+		Tag:         "settings",
+		// Forty-fourth entry on the settings/* coverage roster,
+		// inheriting the `set-cov-*` per-tag fixture-isolation
+		// namespace established by API-0351
+		// `settings-assignDomainServer` and extended through API-0393
+		// `settings-updateServer` (must not back-reference the closed
+		// `srv-cov-*`, `proj-cov-*`, `org-cov-*`, `compose-cov-*`,
+		// `app-cov-*`, `ai-cov-*`, or any other prior tag's
+		// namespace, per the per-tag isolation rule reasserted at
+		// API-0335..API-0393 and originally established at API-0246
+		// `organization-active`).
+		//
+		// **Spec re-verified per the API-0345..API-0393
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /settings.updateServerIp
+		// > post`: a **POST** with a **REQUIRED** `requestBody`
+		// (`requestBody.required = true`) carrying a JSON object with
+		// **one** declared inner property — `serverIp` (**plain
+		// string**, declared via `type: "string"` with NO `anyOf`
+		// wrapper and NO `null` sentinel, **REQUIRED** via
+		// `required: ["serverIp"]`). **Zero parameters** (no query,
+		// no path, no header). Responses 200/400/401/403/500 — note
+		// the **absence of 404**, matching the canonical settings/*
+		// mutating-POST cohort and diverging from the by-id-flavoured
+		// 404-bearing response sets. The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the settings/* roster.
+		//
+		// **Forward-reference correction — API-0393's hand-off
+		// comment was right that per-operation re-verification is
+		// mandatory but conservative on the actual shape.** API-0393
+		// `updateServer`'s hand-off forecast that this entry would
+		// re-verify per-operation rather than inherit from the prior
+		// `updateServer*` slug-stem peer. Direct inspection of the
+		// spec yields a strong pivot back to the API-0392
+		// `updateMiddlewareTraefikConfig` shape, not API-0393's
+		// no-body-at-all shape: this entry's outer-body axis is
+		// **REQUIRED** (matching API-0392), not **ABSENT** (which
+		// would have continued API-0393). The settings/* `update*`
+		// slug-stem sub-roster therefore exhibits a **two-step
+		// outer-body oscillation**: API-0390 (REQUIRED) → API-0391
+		// (REQUIRED) → API-0392 (REQUIRED) → API-0393 (ABSENT) →
+		// API-0394 (REQUIRED). The body-axis flip-flop across
+		// API-0383..API-0394 is now twelve entries deep within the
+		// same tag (no-body / no-body / optional-body /
+		// required-body+inner-required / required-body+
+		// inner-optional-string-only / required-body+
+		// inner-optional-mixed-boolean+string / required-body+
+		// inner-required-boolean-only / required-body+
+		// inner-required-mixed-boolean+string / required-body+
+		// inner-required-nullable-string-only / required-body+
+		// inner-required-plain-string-only / no-body-at-all /
+		// required-body+inner-required-plain-string-only);
+		// per-operation re-verification stays mandatory across every
+		// family transition.
+		//
+		// **Structural twin of API-0392 on every axis except the
+		// inner field name.** Direct inspection of the spec yields
+		// **zero pivots** versus API-0392
+		// `settings-updateMiddlewareTraefikConfig` on the eight
+		// shape-defining axes: (a) the verb axis is **POST**
+		// (matches), (b) the outer-body axis is **REQUIRED**
+		// (matches), (c) the inner-property-count axis is **one**
+		// (matches), (d) the inner-property-type axis is **plain
+		// string** (matches), (e) the inner-required-field axis is
+		// **REQUIRED** (matches), (f) the parameter axis is **zero**
+		// (matches), (g) the response-set axis is
+		// **200/400/401/403/500, no 404** (matches), and (h) the
+		// 200-response-shape axis is `{}` with
+		// `additionalProperties: false` (matches). The lone surface
+		// pivot is the inner-property-name axis: API-0392's
+		// `traefikConfig` → this entry's `serverIp`. This is the
+		// first occurrence on the settings/* roster of two
+		// consecutive `update*`-prefixed entries (skipping the
+		// API-0393 ABSENT-body intermezzo) sharing **every**
+		// shape-defining axis — a useful baseline for future
+		// `update*` peers (API-0395..API-0397: `updateTraefikConfig`,
+		// `updateTraefikFile`, `updateTraefikPorts`) which may
+		// continue or break this twin pattern.
+		//
+		// **Family continuation — fifth `update*` slug-prefix peer
+		// in settings/*.** The `update*` slug sub-roster opened by
+		// API-0390 continues here. The PRD ordering forecasts the
+		// remaining contiguous run of `update*` peers
+		// (API-0395..API-0397: `updateTraefikConfig`,
+		// `updateTraefikFile`, `updateTraefikPorts`,
+		// API-0398: `updateWebServerTraefikConfig`). Per the
+		// slug-prefix-is-not-shape rule reasserted at
+		// API-0371..API-0393, future `update*` peers must re-verify
+		// per-operation rather than inherit any axis from this entry
+		// — the next `update*` peer (`updateTraefikConfig`) shares
+		// the `Traefik` slug-stem with API-0392
+		// `updateMiddlewareTraefikConfig` but the slug-stem-is-not-
+		// shape lesson reasserted at API-0371..API-0393 means even
+		// that closer slug match cannot pre-determine the
+		// inner-property-count, inner-property-type, or
+		// inner-required-field axes.
+		//
+		// **Second plain-string single-required-property axis on
+		// settings/*.** The inner `serverIp` property is the second
+		// occurrence on the settings/* roster of an inner schema with
+		// **exactly one** REQUIRED property whose type is a **plain
+		// string** (no `anyOf` nullability, no boolean neighbour),
+		// after API-0392 `updateMiddlewareTraefikConfig`'s
+		// `traefikConfig`. This is the cleanest possible "single
+		// REQUIRED string" shape — the simplest non-empty body shape
+		// the JSON serialiser branch exercises within settings/*.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `set-cov-updateServerIp-0394` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared across
+		//     every per-tag roster and is unique (verified against
+		//     API-0351..API-0393's `set-cov-*` slugs and orthogonal
+		//     to every prior tag's `srv-cov-*`, `proj-cov-*`,
+		//     `org-cov-*`, `compose-cov-*`, `app-cov-*`, `ai-cov-*`,
+		//     etc. namespaces). Unlike API-0392 where the slug had
+		//     to be embedded as a YAML/TOML comment fragment on a
+		//     Traefik-config-flavoured string (no constrained
+		//     dialect but the field is conventionally a config
+		//     blob), this entry's `serverIp` is conventionally an
+		//     IP-address-shaped string. The spec does not constrain
+		//     the string format (no `format: ipv4`, no `pattern`,
+		//     no `examples`), so any non-empty string is
+		//     structurally valid; the harness only asserts that the
+		//     request reached the server and returned 200, not that
+		//     the server semantically validated the IP. The fixture
+		//     therefore embeds the slug as the **whole value** of
+		//     `serverIp` (`"set-cov-updateServerIp-0394"`),
+		//     preserving both the per-case isolation convention and
+		//     the field's plain-string semantics. The Dokploy
+		//     server is free to either accept any string (the spec
+		//     contract this fixture exercises) or reject it on
+		//     IP-format grounds (a server-side concern outside the
+		//     spec's declarative shape) — the harness only asserts
+		//     spec-level structural validity.
+		//   * **Populating the only required field** is mandatory
+		//     here: leaving `serverIp` out would produce a
+		//     structurally invalid request (the inner schema has
+		//     `required: ["serverIp"]`). Re-asserts the
+		//     inner-required-field axis observed at API-0386
+		//     `settings-saveSSHPrivateKey` (`name`/`privateKey`
+		//     REQUIRED), API-0389 `settings-toggleRequests`
+		//     (`enable` REQUIRED), API-0390
+		//     `settings-updateDockerCleanup`
+		//     (`enableDockerCleanup` REQUIRED), API-0391
+		//     `settings-updateLogCleanup` (`cronExpression`
+		//     REQUIRED), and API-0392
+		//     `settings-updateMiddlewareTraefikConfig`
+		//     (`traefikConfig` REQUIRED) within the same tag.
+		//   * **Choosing the slug as the whole value** for
+		//     `serverIp` is a deliberate coverage choice. The
+		//     plain-string shape accepts any string content;
+		//     carrying the slug verbatim preserves the
+		//     slug-on-the-wire convention reaffirmed across
+		//     API-0386/API-0387/API-0388/API-0390/API-0391/
+		//     API-0392 while keeping the payload semantically
+		//     plausible-shaped for an IP-update operation. An empty
+		//     string `""` would be structurally valid but would
+		//     erase the slug-on-the-wire convention.
+		//
+		// **Failure-leg fields are intentionally omitted.** The
+		// spec does not declare 404 on this operation (the
+		// `updateServerIp` verb mutates the running Dokploy
+		// instance's own server-IP record rather than performing a
+		// by-id resource lookup), so the per-tag opener convention
+		// reasserted at API-0335..API-0393 that reserves 404 →
+		// CodeNotFound for canonical `*-one` peers does not apply
+		// here. Auth is the universal failure mode every Dokploy
+		// operation must re-prove, so 401 → CodeAuth via the
+		// harness default (`tc.FailureStatus == 0` → 401,
+		// `tc.FailureCode == ""` → CodeAuth) stays the most
+		// informative representative. 400 → CodeInvalidInput is
+		// *technically* available here (the inner schema's
+		// `required: ["serverIp"]` array means a missing-`serverIp`
+		// payload would fail server-side validation), but it
+		// remains reserved for stories where payload validation is
+		// the operation's *distinguishing* failure mode. Auth is
+		// shared with every operation in the catalogue and
+		// therefore the canonical representative failure for
+		// routine settings/* coverage entries; 400 stays reserved
+		// for stories whose coverage burden uniquely hinges on
+		// payload-shape validation (e.g. multi-field
+		// cross-validation, conditional `oneOf`/`anyOf` between
+		// distinct shapes, or length-bounded strings) — none of
+		// which apply to a single-field plain-string update.
+		//
+		// The next case in the settings/* roster per PRD ordering
+		// is API-0395 `settings-updateTraefikConfig` (declared a
+		// **POST** in the PRD with `requestBody.required = true`).
+		// The next contributor must re-verify against
+		// `internal/api/data/openapi.json >
+		// /settings.updateTraefikConfig > post` per the
+		// forward-reference lesson before assuming any field is
+		// identical to this entry — per the slug-prefix-is-not-shape
+		// lesson reasserted at API-0371..API-0393, even sharing
+		// the `update*` slug prefix and the `Traefik` slug-stem
+		// (closer than API-0392's `MiddlewareTraefik` stem and this
+		// entry's `Server` stem) does not imply the
+		// inner-property-count, inner-property-type, or
+		// inner-required-field axes carry over. The verb axis
+		// (POST), the outer-body axis (REQUIRED), the parameter
+		// axis (zero parameters), and the response-set axis
+		// (200/400/401/403/500, no 404) are likely shared, but
+		// per-operation re-verification is mandatory.
+		SampleBody: json.RawMessage(`{
+			"serverIp": "set-cov-updateServerIp-0394"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

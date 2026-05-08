@@ -12186,3 +12186,171 @@ Learnings for future iterations:
     re-verification stays mandatory across every
     family transition.
 ---
+
+## 2026-05-08 - API-0394
+- Implemented coverage for `settings-updateServerIp`
+  (POST /settings.updateServerIp) via the table-driven
+  `apiCoverageCase` entry pattern in
+  `internal/cli/api_coverage_test.go`. The harness
+  exercises registry invariants (method/path/tag), the
+  raw `yalla api call settings-updateServerIp --input
+  <file> --json` success leg with an httptest.Server
+  fixture, the representative auth failure leg
+  (401 → CodeAuth via the harness default), the
+  `yalla schema get settings-updateServerIp --json`
+  envelope, and the manifest entry — satisfying every
+  PRD acceptance criterion (registry presence, api
+  call, schema get, --no-input safety, success
+  envelope, failure envelope, contract tests, manifest
+  coverage) in one fixture.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended a
+    single `apiCoverageCase` entry for `API-0394 /
+    settings-updateServerIp`. `Method =
+    http.MethodPost`, `Path = /settings.updateServerIp`,
+    `Tag = settings`. `SampleBody` carries the minimal
+    REQUIRED inner shape `{"serverIp":
+    "set-cov-updateServerIp-0394"}` — a single REQUIRED
+    plain-string property whose value is the per-case
+    fixture slug, preserving the slug-on-the-wire
+    convention reaffirmed across
+    API-0386/API-0387/API-0388/API-0390/API-0391/
+    API-0392 while keeping the payload spec-valid
+    (the spec's inner schema declares only
+    `type: "string"` with no `format`/`pattern`
+    constraint, so any non-empty string is structurally
+    valid). `SuccessResponse = "{}"` matches the spec's
+    declared 200 body of `{}` with
+    `additionalProperties: false`. Failure-leg fields
+    are intentionally omitted, defaulting to
+    401 → CodeAuth via the harness default — auth is
+    the universal failure mode and the spec does not
+    declare 404 here (the verb mutates the running
+    Dokploy instance's own server-IP record, not a
+    by-id resource). The entry's leading comment block
+    re-verifies the spec axis-by-axis against
+    `internal/api/data/openapi.json >
+    /settings.updateServerIp > post`, documents the
+    structural-twin relationship to API-0392
+    `updateMiddlewareTraefikConfig` (zero pivots on
+    eight shape-defining axes; lone surface pivot is
+    the inner-property-name `traefikConfig` →
+    `serverIp`), records the API-0390..API-0394
+    outer-body oscillation
+    (REQ→REQ→REQ→ABSENT→REQ) within the `update*`
+    slug-stem sub-roster, re-asserts the per-tag
+    fixture-isolation namespace (`set-cov-*` opened by
+    API-0351 and extended through API-0393), keeps the
+    per-tag-isolation rule (no back-references to
+    closed `srv-cov-*`, `proj-cov-*`, `org-cov-*`,
+    `compose-cov-*`, `app-cov-*`, `ai-cov-*`
+    namespaces from API-0246..API-0350), confirms the
+    body-axis flip-flop is now twelve entries deep
+    within settings/*, and forecasts the next case
+    `API-0395 settings-updateTraefikConfig` with
+    explicit warning that even the closer `Traefik`
+    slug-stem (closer than API-0392's
+    `MiddlewareTraefik` and this entry's `Server`
+    stem) cannot pre-determine the inner-property-
+    count, inner-property-type, or inner-required-field
+    axes — only direct spec inspection settles them.
+  - `ralph/prd.json` — set US `API-0394.passes = true`.
+  - `ralph/progress.txt` — this report.
+- **Verification run** (from repository root):
+  - `gofmt -w .` — clean (no files reformatted beyond
+    the new entry).
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass; `internal/cli`
+    runs the expanded `TestAPICoverage_*` and
+    manifest-coverage suites green (~1.0s wall clock).
+  - `go test -race ./...` — all packages pass green
+    under the race detector (~2.8s wall clock for
+    `internal/cli`).
+  - `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser check`, and `goreleaser release
+    --snapshot --clean` — not run this iteration; not
+    in the project's standing required-checks list and
+    the repository CI does not enforce them yet (per
+    the precedent established at
+    API-0001..API-0393).
+- **Remaining risks or follow-ups**:
+  - None for this story. Future `update*` peers
+    (API-0395..API-0398: `updateTraefikConfig`,
+    `updateTraefikFile`, `updateTraefikPorts`,
+    `updateWebServerTraefikConfig`) must continue to
+    re-verify the outer-body axis per-operation —
+    the API-0392 → API-0393 → API-0394 oscillation
+    (REQ → ABSENT → REQ) demonstrates that PRD
+    `requestBody.required` flags remain insufficient
+    proxies for the spec's declarative shape and even
+    direct slug-stem matches on `Server` /
+    `Traefik` cannot pre-determine the body axis.
+- **Learnings for future iterations:**
+  - **Structural twins do exist on the settings/*
+    roster but require zero-pivot verification on
+    every axis.** API-0394 `updateServerIp` is the
+    first occurrence on the settings/* roster of an
+    entry that pivots from its predecessor on **only
+    the inner-property-name axis** (vs API-0392
+    `updateMiddlewareTraefikConfig`, skipping the
+    API-0393 ABSENT-body intermezzo). Eight
+    shape-defining axes match: verb (POST),
+    outer-body (REQUIRED), inner-property-count
+    (one), inner-property-type (plain string),
+    inner-required-field (REQUIRED), parameter (zero),
+    response-set (200/400/401/403/500, no 404), and
+    200-response-shape (`{}` with
+    `additionalProperties: false`). Per-operation
+    re-verification stays mandatory even when the
+    expected outcome is "twin of a prior entry" — the
+    forward-reference lesson reasserted at
+    API-0345..API-0393 makes the verification cheap
+    and the pivot-detection sharp.
+  - **The `update*` slug-stem sub-roster's
+    outer-body axis oscillates.** API-0390 (REQ) →
+    API-0391 (REQ) → API-0392 (REQ) → API-0393
+    (ABSENT) → API-0394 (REQ). This is the first
+    documented two-step oscillation within the same
+    tag's slug-stem sub-roster. The slug-prefix-is-
+    not-shape rule extends to the slug-stem axis:
+    even matching `updateServer*` (API-0393 vs
+    API-0394) does not pre-determine the outer-body
+    axis. The lesson generalises: PRD
+    `requestBody.required` is only one of three
+    possible outer-body states (REQUIRED / OPTIONAL /
+    ABSENT), and only direct inspection of
+    `internal/api/data/openapi.json` settles the
+    distinction between OPTIONAL (declared with
+    `required: false`) and ABSENT (no `requestBody`
+    field at all).
+  - **Slug-on-the-wire convention scales to plausibly-
+    typed string fields.** The `serverIp` field is
+    conventionally an IP-address-shaped string but
+    the spec declares no `format: ipv4`, no
+    `pattern`, and no `examples`, so any non-empty
+    string is structurally valid. Embedding the slug
+    as the whole value (`"set-cov-updateServerIp-0394"`)
+    rather than as a comment fragment on a
+    domain-typed value (e.g., `"127.0.0.1
+    # set-cov-updateServerIp-0394"` would be invalid
+    because comments are not part of JSON) preserves
+    the slug-on-the-wire convention without
+    introducing dialect-specific syntax. The
+    Dokploy server is free to either accept the
+    string (the spec contract this fixture
+    exercises) or reject it on IP-format grounds (a
+    server-side concern outside the spec's
+    declarative shape) — the harness only asserts
+    spec-level structural validity.
+  - **Forty-fourth entry on the settings/* roster
+    keeps the per-tag-isolation rule.** No
+    back-references to closed `srv-cov-*`,
+    `proj-cov-*`, `org-cov-*`, `compose-cov-*`,
+    `app-cov-*`, `ai-cov-*`, or any other prior
+    tag's namespace — the per-tag isolation rule
+    reasserted at API-0335..API-0393 holds. Each
+    new settings/* entry uses
+    `set-cov-<slug>-<storyID>` and is unique within
+    the tag.
+---
