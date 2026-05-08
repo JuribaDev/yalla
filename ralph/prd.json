@@ -239,7 +239,7 @@
       ],
       "type": "foundation",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "OpenAPI sha256: 09999cf46fa7504ca2bc7539d8b1e6817da3d612964a5f83fe404dd32c56c7c7"
     },
     {

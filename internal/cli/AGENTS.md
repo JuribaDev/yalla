@@ -59,6 +59,27 @@ Conventions for the Cobra command tree.
   current commands (`config`, `auth`) never prompt, so they ignore the flag
   by construction.
 
+## API & schema commands (US-0004)
+
+- `yalla api` and `yalla schema` are read-only inspection trees backed by
+  `internal/api.Default()` (the singleton parsed from the embedded
+  OpenAPI document). Never instantiate a fresh `api.Registry` inside a
+  `RunE`; reuse `api.Default()` so the parse cost is paid once.
+- Operations and schemas are emitted in **operationId-sorted** order. Any
+  command that needs a different order (e.g. group-by-tag) must build its
+  own slice from `Registry.Operations()` rather than mutate the registry.
+- Unknown `--tag` values map to `errors.CodeInvalidInput`; unknown
+  operationIds in `schema get <op>` map to `errors.CodeNotFound`. The two
+  codes diverge so scripts can distinguish "user mistyped a filter" (exit
+  2) from "operation removed upstream" (exit 5).
+- The JSON envelope for `api operations`, `schema list`, and `schema get`
+  always includes `spec_title`, `spec_version`, and `spec_sha256` so an
+  agent can verify which Dokploy revision yalla was built against without
+  a separate `--version` round trip.
+- Schema bodies (`json.RawMessage`) are emitted verbatim. Do **not**
+  re-serialize through `interface{}` — that breaks the canonical key order
+  and silently reflows numeric precision.
+
 ## Tests
 
 - `TestMain` in `main_test.go` unsets every `YALLA_*` env var and pins

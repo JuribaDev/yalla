@@ -104,6 +104,33 @@
   `renderTerminalError` so the captured stderr matches what the binary
   prints in production. Calling `cmd.Execute` alone hides the typed banner
   because of `SilenceErrors`.
+- API registry (US-0004): the Dokploy OpenAPI 3.1 document is embedded
+  via `//go:embed data/openapi.json` inside `internal/api`.
+  `api.EmbeddedSpecSHA256` pins the digest; bumping the spec is a public-
+  API change and must update that constant, `ralph/prd.json`'s
+  `sourceApi.sha256`, and the `expectedOperationCount` constant in both
+  `internal/api/registry_test.go` and `internal/cli/api_cmd_test.go`.
+- Registry access (US-0004): use `api.Default()` for the singleton
+  registry — it parses the embedded spec exactly once. Operations are
+  exposed in **operationId-sorted** order; never assume path or method
+  order. `Operation` fields use `json.RawMessage` for schemas so the
+  full OpenAPI/JSON Schema surface (oneOf, $defs, examples) survives
+  round-trip.
+- Schema extraction (US-0004): `Registry.Schema(opID)` returns a typed
+  `*SchemaDoc` with `Input` (parameters + body) and `Outputs` (per-status
+  responses). `Registry.AllSchemas()` materialises every schema for
+  manifest-style consumers. Both projections preserve raw JSON bodies.
+- Inspection commands (US-0004): `yalla api operations [--tag T]`,
+  `yalla schema list`, and `yalla schema get <opID>` are all read-only
+  and route through `rendererFromContext`. Their JSON envelopes always
+  include `spec_title`/`spec_version`/`spec_sha256` so agents can verify
+  the exact Dokploy revision the binary was built against. Unknown tags
+  map to `E_INVALID_INPUT` (exit 2); unknown operationIds map to
+  `E_NOT_FOUND` (exit 5).
+- Error envelopes go to **stderr** (`renderTerminalError` passes
+  `streams.ErrOut` to `output.Renderer.Error`). On any error path stdout
+  must remain empty even when `--json` is set; tests assert
+  `stdout == ""` and `strings.Contains(stderr, "yalla.error.v1")`.
 
 ---
 
@@ -440,3 +467,146 @@
     typed banner out of stderr otherwise.
 ---
 
+
+## 2026-05-08 - US-0004
+- **Implemented**: OpenAPI operation registry and schema extraction. The
+  Dokploy OpenAPI 3.1 document (450 operations) is embedded into the
+  binary, parsed once into a typed `api.Registry`, and exposed through
+  three new read-only commands: `yalla api operations [--tag <T>]`,
+  `yalla schema list`, and `yalla schema get <operationId>`. The
+  registry is the single source of truth that US-0005's raw API
+  executor and US-0007's manifest will consume.
+- **Files changed**:
+  - `internal/api/data/openapi.json` (new) — verbatim copy of the
+    upstream Dokploy spec; sha256 pinned to
+    `09999cf46fa7504ca2bc7539d8b1e6817da3d612964a5f83fe404dd32c56c7c7`
+    (matches `ralph/prd.json::sourceApi.sha256`).
+  - `internal/api/openapi.go` (new) — `//go:embed data/openapi.json`
+    pulls the spec into `EmbeddedSpec`; `EmbeddedSpecSHA256` pins the
+    digest as a public-API handle.
+  - `internal/api/registry.go` (new) — `Operation`, `Parameter`,
+    `RequestBody`, `Response`, `SecurityRequirement`, `Registry`.
+    `Load([]byte)` parses + validates (rejects duplicate / missing /
+    multi-tag operationIds); `Default()` returns the singleton built
+    from the embedded spec via `sync.Once`. Operations are
+    operationId-sorted; status codes inside each operation are
+    numeric-sorted via `statusLess`; `application/json` is preferred
+    when picking content. Schemas are preserved as `json.RawMessage`.
+  - `internal/api/schema.go` (new) — `SchemaDoc`/`InputSchema`/
+    `BodySchema`/`ParameterSchema`/`ResponseSchema`. `Registry.Schema(id)`
+    returns a single typed projection; `Registry.AllSchemas()` does it
+    for the whole registry. Parameters are sorted path > query > header
+    > cookie via `paramOrder`.
+  - `internal/api/registry_test.go` (new) — locks (1) sha256 of the
+    embedded spec, (2) operation count == 450, (3) operationIds are
+    sorted + unique, (4) every operation in the canonical sample is
+    present (`application-deploy`, `mysql-deploy`, `admin-setupMonitoring`,
+    …), (5) `Get`/`Operations` return defensive copies, (6) IDs slice
+    matches Operations slice, (7) Tags spot-check from PRD's
+    apiCoverageSummary, (8) every operation marks `RequiresAuth=true`
+    (matches the Dokploy spec's per-op security block), (9) every
+    method is in the canonical HTTP verb set, (10) Schema body parses
+    as valid JSON, (11) Schema outputs are numeric-sorted, (12) Load
+    rejects malformed specs (duplicate / missing / multi-tag opIds).
+  - `internal/api/AGENTS.md` (new) — registry conventions for future
+    contributors.
+  - `internal/cli/api_cmd.go` (new) — `yalla api` parent + `yalla api
+    operations` subcommand. JSON shape is `apiOperationsDoc` (envelope:
+    spec_title/spec_version/spec_sha256/total/tag_counts/tag/operations);
+    per-op shape is `apiOperationDoc` (operation_id/method/path/tag/
+    summary/description/requires_auth/has_request_body/parameter_count/
+    response_codes). Human render goes through `output.Table`.
+    `--tag` filters by OpenAPI tag and validates against the registry
+    (unknown tag → `E_INVALID_INPUT` with a hint listing known tags).
+  - `internal/cli/schema_cmd.go` (new) — `yalla schema` parent +
+    `schema list` (envelope `schemaListDoc` with per-op
+    `schemaListEntry`) + `schema get <opID>` (envelope is the api
+    package's `SchemaDoc`). Unknown opIDs map to `E_NOT_FOUND` with a
+    hint pointing at `schema list`. Human render of `schema get` is a
+    structured text block (header, parameters, body schema, responses).
+  - `internal/cli/api_cmd_test.go` (new) — JSON envelope correctness,
+    operation count = 450, sha256 propagation, sorted invariant,
+    `--tag application` filter correctness, unknown tag → E_INVALID_INPUT
+    on stderr (stdout empty), human table contains the expected
+    operation row, bare `yalla api` shows help.
+  - `internal/cli/schema_cmd_test.go` (new) — JSON envelope of `schema
+    list` includes 450 entries with the spec digest, `schema get
+    application-deploy` returns Input.Body and non-empty Outputs,
+    unknown operation → E_NOT_FOUND on stderr (stdout empty), missing
+    operation arg → E_USAGE, human render contains operationId / METHOD
+    / path / "auth: required", `schema list` human render shows
+    "OPERATION_ID" header and the summary banner.
+  - `internal/cli/root.go` — `buildRoot` now registers
+    `newAPICommand()` and `newSchemaCommand()` alongside the existing
+    `config` and `auth` trees.
+  - `internal/cli/AGENTS.md` — added "API & schema commands (US-0004)"
+    section covering the singleton-registry rule, deterministic
+    ordering, the E_INVALID_INPUT / E_NOT_FOUND split, and the
+    spec digest in every JSON envelope.
+  - `ralph/progress.txt` — Codebase Patterns section gained
+    registry / schema / inspection-command rules; this dated entry
+    appended.
+  - `ralph/prd.json` — set US-0004 `passes: true`.
+- **Verification run**:
+  - `gofmt -l .` — clean.
+  - `go mod tidy` — clean (no new deps; `embed` is stdlib).
+  - `go vet ./...` — clean.
+  - `go test ./...` — `ok` for api, cli, config, errors, output.
+  - `go test -race ./...` — `ok` across all packages.
+  - `go build ./...` — clean.
+  - Smoke (binary):
+    - `yalla api operations --tag admin` → 1 operation
+      (`admin-setupMonitoring  POST  /admin.setupMonitoring`).
+    - `yalla --json schema get application-deploy` → JSON envelope
+      with `schema_version=yalla.output.v1`,
+      `data.input.body.content_type=application/json`, 5 outputs.
+- **Tools NOT available locally** (unchanged from US-0001/US-0002/
+  US-0003): `goimports`, `golangci-lint`, `staticcheck`,
+  `govulncheck`, `goreleaser`.
+- **Remaining risks / follow-ups**:
+  - The 450-operation count is locked in three places
+    (`api.expectedOperationCount`, `cli.expectedOpCount`, the PRD
+    `sourceApi.operationCount`). A spec drop must update all three
+    deliberately. The sha256 is locked in two places (`EmbeddedSpecSHA256`
+    plus the PRD); bumping one without the other will fail the
+    `TestEmbeddedSpec_SHA256IsPinned` test loudly.
+  - Human render of `schema get` dumps the request body schema as raw
+    JSON. That is intentional — it keeps the agent contract ergonomic
+    (copy-paste into a JSON Schema validator) without a hand-rolled
+    pretty-printer. A future story may add `--pretty` if humans
+    complain.
+  - The registry rejects multi-tag operations because Dokploy never
+    uses more than one. If the spec ever does, lift the restriction in
+    `Load` and add `Tags []string` (plural) to `Operation` while
+    updating every consumer at once.
+  - The registry holds every schema in memory once. The 1.3 MB spec
+    decodes to roughly 5 MB of `json.RawMessage` slices; that is fine
+    for a CLI process but note it before promoting `Default()` into a
+    daemon-style use case.
+- **Learnings for future iterations**:
+  - `//go:embed` paths are relative to the .go file declaring the
+    directive, not the module root. Embedding `openapi.json` requires
+    placing the file at `internal/api/data/openapi.json` and writing
+    `//go:embed data/openapi.json` next to the var declaration.
+  - JSON error envelopes are part of the *diagnostic* stream and land
+    on stderr (via `renderTerminalError → output.Renderer.Error`).
+    Tests on the error path must assert `stdout == ""` and look for
+    the envelope on stderr; asserting on stdout is wrong and will
+    fail when the typed-error contract is correctly enforced.
+  - Go 1.21+ has builtin `min`/`max`. Test files cannot redeclare them
+    (`./schema_cmd_test.go: min redeclared`). Either drop the helper
+    or shadow with a different name.
+  - When writing tests that assert "every POST has a body", confirm
+    against the spec first. Dokploy has bodyless POSTs
+    (`licenseKey-deactivate`, `settings-cleanRedis`, …) so the
+    invariant must be relaxed — a `MethodsAreCanonical` check is more
+    useful and won't regress on spec edits.
+  - `json.Decoder.UseNumber()` plus per-field `json.RawMessage`
+    preservation gives the registry full OpenAPI fidelity without a
+    second-stage re-marshal. The schemas survive yalla → agent → JSON
+    Schema validator round-trips byte-for-byte.
+  - `sync.Once` makes `api.Default()` cheap to call from any RunE; the
+    parse cost is paid exactly once per process, even when both
+    `api.operations` and `schema list` run in the same CLI invocation
+    (they don't today, but documentation generators will).
+---

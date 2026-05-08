@@ -205,6 +205,8 @@ while logs, prompts, warnings, and errors are written to stderr.`,
 	// behaviour they need (today: nothing, but the seam is here for US-0007+).
 	cmd.AddCommand(newConfigCommand())
 	cmd.AddCommand(newAuthCommand())
+	cmd.AddCommand(newAPICommand())
+	cmd.AddCommand(newSchemaCommand())
 
 	return cmd, flags
 }
