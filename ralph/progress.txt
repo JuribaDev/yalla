@@ -10913,3 +10913,105 @@ Learnings for future iterations:
     fix was to verify the actual byte representation via
     `ctx_execute_file` + `repr(line)` before retrying.
 ---
+
+## 2026-05-08 - API-0384 `settings-reloadServer`
+- **What was implemented**: Per-operation contract coverage for
+  Dokploy's `POST /settings.reloadServer` (no-body, no-parameter
+  POST). Appended a single entry to the
+  `coveredAPIOperations` slice in
+  `internal/cli/api_coverage_test.go` between API-0383
+  `settings-reloadRedis` and the slice's closing brace, locking
+  in the registry-presence, schema, manifest, success-leg, and
+  failure-leg subtests in one shot via the existing harness.
+- **Spec-derived shape** (verified against
+  `internal/api/data/openapi.json > /settings.reloadServer >
+  post`):
+  - Method **POST**, tag **settings**, security
+    `Authorization: []` (RequiresAuth=true).
+  - **No `requestBody` field at all** — true no-input POST,
+    structurally identical to the immediately-prior
+    API-0383 `reloadRedis`, and to API-0354/0357/0358/0359/0370.
+  - **Zero parameters** (no query, no path, no header).
+  - Responses **200 / 400 / 401 / 403 / 500** — note **no
+    404**, matching every prior settings/* mutating-POST peer.
+  - 200 schema is `{}` with `additionalProperties: false`.
+- **Case literal** is minimal — only `StoryID`, `OperationID`,
+  `Method`, `Path`, `Tag` + comment block. All `Sample*` fields
+  omitted; harness defaults handle success (`200` / `{}`) and
+  failure (`401` -> `CodeAuth`).
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` -- appended the
+    API-0384 case literal to the `coveredAPIOperations` slice
+    immediately after API-0383, with a ~125-line
+    design-rationale comment block that records the
+    spec-re-verification trail, the second-consecutive
+    `reload*` no-body shape, the forward-reference
+    confirmation against API-0383's hand-off prediction, and
+    the forward-reference for API-0385 (verified at
+    write-time to declare an OPTIONAL `requestBody` carrying
+    an OPTIONAL `serverId` field — the first `reload*` peer
+    to break the no-body shape).
+  - `ralph/prd.json` -- flipped API-0384 `passes` to `true`.
+  - `ralph/progress.txt` -- this entry.
+- **Verification run** from repo root:
+  - `gofmt -w .` -- clean.
+  - `go mod tidy` -- clean.
+  - `go vet ./...` -- clean.
+  - `go test ./...` -- all packages pass; `internal/cli` runs
+    the new `API-0384/settings-reloadServer` registry,
+    schema, manifest, success-leg, and failure-leg subtests
+    end-to-end through the production exit-code path.
+  - `go test -race ./...` -- all packages pass (2.7s).
+- **Tools NOT available locally** (unchanged): `goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`.
+- **Remaining risks / follow-ups**:
+  - 288 PRD stories still have `passes: false` (down from
+    289). The next pending priority-2 story is API-0385
+    `settings-reloadTraefik` (POST /settings.reloadTraefik).
+  - API-0385 is the **first** `reload*` peer to break the
+    no-body shape: spec inspection at write-time shows it
+    declares an OPTIONAL `requestBody` (`required: false`)
+    carrying an OPTIONAL `serverId` string field. The
+    contributor must decide between leaving `SampleBody`
+    unset (relying on `required: false`) or materialising a
+    representative `{"serverId":"set-cov-reloadTraefik-0385"}`
+    payload to exercise the JSON round-trip — the latter is
+    preferred for parity with prior optional-body operations
+    covered by the harness.
+- **Learnings for future iterations**:
+  - **Two-entry no-body POST run inside `reload*`.** API-0383
+    and API-0384 both ship the canonical no-body, no-parameter
+    POST shape (the same minimal-literal pattern established
+    at API-0378/API-0379 for parameter-free GETs and most
+    recently consumed by API-0383). When two adjacent
+    entries share a slug-prefix family AND share the same
+    spec-level shape, the second entry's design-rationale
+    header should explicitly call out the structural identity
+    so the contributor of the third entry (API-0385) is on
+    notice that the no-body shape is *not* a slug-prefix
+    invariant — API-0385 breaks it. The slug-prefix-is-not-
+    shape rule earns its keep on every entry, not just on
+    family-boundary entries.
+  - **Forward-reference accuracy compounds.** API-0383's
+    hand-off comment correctly forecast that API-0385 would
+    diverge with an optional `requestBody`/`serverId` (a
+    claim re-verified at API-0384 write-time against
+    `/settings.reloadTraefik > post`). Forward-references
+    that survive multi-entry verification gaps are valuable
+    onboarding for the next contributor; they should always
+    cite the exact spec path (`paths > <op> > <verb>`) and
+    the specific axis (parameter / request-body /
+    response-set) that the prediction touches.
+  - **Zero-marginal-cost append for minimal-shape POSTs.**
+    The harness's POST branch with `len(SampleBody) == 0`
+    skips the `Content-Type` and body-round-trip assertions
+    (per the `if len(tc.SampleBody) > 0` guard inside
+    `runAPICoverageSuccess`). For no-body, no-parameter POSTs
+    the entire literal is just five fields plus the comment
+    block — the marginal cost of adding a new entry to the
+    slice is essentially zero. This keeps the per-entry
+    review burden focused on the comment block (which
+    captures the spec-re-verification trail and the
+    cross-references) rather than on case-specific fixture
+    plumbing.
+---
