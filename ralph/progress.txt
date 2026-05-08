@@ -16430,3 +16430,66 @@ Learnings for future iterations:
     convention established by API-0130 environment-update (closing
     environment/*) and API-0255 (closing organization/*).
 ---
+
+## 2026-05-08T17:15Z - API-0298 (redirects-create)
+- Cover redirects-create (POST /redirects.create). Opens the priority-3
+  redirects/* roster and a fresh `redirects-cov-*` per-tag fixture-
+  isolation namespace after API-0271 closed port/*.
+- Files changed:
+  - internal/cli/api_coverage_test.go (new struct entry, sorted insert
+    after API-0297 project-update, before API-0335 server-all)
+  - ralph/prd.json (passes=true for API-0298)
+  - ralph/progress.txt (this entry)
+- Verification:
+  - gofmt -w internal/cli/api_coverage_test.go (clean)
+  - go vet ./... (clean)
+  - go test ./internal/cli/ -run 'TestAPICoverage/API-0298' -v
+    (all five legs pass: RegistryInvariants, SchemaCommandWorks,
+     ManifestListsOperation, SuccessRoundTrip, RepresentativeFailure)
+  - go test ./... -count=1 (all packages pass)
+  - go test -race ./... -count=1 (all packages pass race-clean)
+  - go mod tidy (no diff)
+  - goimports, golangci-lint, staticcheck, govulncheck, goreleaser
+    not installed locally; documented as missing per the established
+    convention.
+- Results: PRD progress 254/462 stories passing.
+- Remaining risks/follow-ups: next pending priority-3 backlog entries are
+  API-0299 `redirects-delete`, API-0300 `redirects-one`, API-0301
+  `redirects-update`, all of which inherit the `redirects-cov-*`
+  namespace established here. Future contributors must re-verify each
+  spec against `internal/api/data/openapi.json` per the forward-
+  reference lesson before assuming any field shape, and **must not**
+  back-reference the `port-cov-*`, `proj-cov-*`, or any other prior-tag
+  namespace.
+- **Learnings for future iterations:**
+  - `/redirects.create` is a four-required-scalar create-mutation POST
+    with mixed string-and-boolean wire types (3 strings + 1 boolean).
+    No prior covered create POST mixes plain strings with a typed
+    boolean: API-0268 `port-create` mixes numbers + enum strings + a
+    plain string, API-0189 `mounts-create` declares a different
+    required-set, and API-0292 `project-create` has one required + two
+    optional scalars. This is a fresh shape; future redirects/* peers
+    should grep the API-0298 block first when shaping `SampleBody`
+    rather than back-referencing port/* or project/* literals.
+  - The harness's `len(tc.SampleBody) > 0` gate at
+    `runAPICoverageSuccess` activates the JSON content-type and
+    byte-for-byte body comparison legs; pinning `permanent: true`
+    (rather than `false`) into the fixture exercises the typed-boolean
+    wire leg and would catch any silent JSON coercion of `true` →
+    `"true"`.
+  - Pattern-shaped `regex`/`replacement` literals
+    (`^/redirects-cov-create-0298/(.*)$` →
+    `/redirects-cov-create-0298-target/$1`) keep the wire fixture
+    readably modeling a routing-redirect config while staying obviously
+    synthetic and `git grep`-traceable to this PRD story. Future
+    redirects/* peers (API-0299..API-0301) should follow the same
+    convention rather than picking arbitrary string literals.
+  - The PRD's `priority` field is a numeric int (1=highest) and the
+    canonical query for "next pending highest priority story" remains
+    `jq '[.userStories[] | select(.passes == false)] | sort_by(.priority,
+    .id) | .[0]'`. The picker correctly skipped over priority-5 entries
+    (API-0131..API-0159 gitea/github/gitlab/gitProvider/licenseKey) and
+    priority-4 entries (API-0160 mariadb-changeStatus) to land on
+    API-0298 because all priority-3 prior entries (API-0246..API-0297)
+    were already covered.
+---

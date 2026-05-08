@@ -9855,6 +9855,119 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0298",
+		OperationID: "redirects-create",
+		Method:      http.MethodPost,
+		Path:        "/redirects.create",
+		Tag:         "redirects",
+		// Kickoff entry for the redirects/* coverage roster — opens a
+		// fresh `redirects-cov-*` per-tag fixture-isolation namespace
+		// after API-0271 `port-update` closed the priority-3 port/*
+		// arc. Per the per-tag fixture-isolation rule established at
+		// API-0188 `mounts-allNamedByApplicationId`, API-0246
+		// `organization-active`, API-0268 `port-create`, and API-0290
+		// `project-all`, this entry deliberately stands alone and
+		// **must not** back-reference any closed prior-tag namespace
+		// (`port-cov-*`, `proj-cov-*`, `mounts-cov-*`, `org-cov-*`,
+		// etc.). Subsequent redirects/* peers (API-0299
+		// `redirects-delete`, API-0300 `redirects-one`, API-0301
+		// `redirects-update`) should grep this block first to inherit
+		// the redirects/* slug namespace rather than copying any
+		// other prior-tag fixtures across the tag boundary.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json > /redirects.create > post`:
+		// a **POST** with **no parameters** and a **REQUIRED request
+		// body** whose schema declares **four REQUIRED fields** —
+		// three non-nullable plain strings (`regex`, `replacement`,
+		// `applicationId`) and one non-nullable boolean
+		// (`permanent`). The schema declares zero optional fields, so
+		// the closed-shape body is exactly the four-required-scalar
+		// surface — no every-optional-populated expansion applies
+		// here, exactly as on API-0268 `port-create` and in contrast
+		// to API-0292 `project-create`'s one-required + two-optional
+		// shape. Responses 200/400/401/403/500 — the spec does
+		// **not** declare 404 on this operation, matching the cross-
+		// tag create-mutation precedent on API-0189 `mounts-create`,
+		// API-0268 `port-create`, and API-0292 `project-create`
+		// (Dokploy create POSTs do not surface missing-target legs
+		// because there is no target-by-id to miss). The 200 schema
+		// is `{}` with `additionalProperties: false`, matching every
+		// prior covered peer in the empty-success cohort.
+		//
+		// **Shape positioning — four-required-scalar POST create-
+		// mutation, body REQUIRED, all fields required, no optional
+		// surface, mixed string-and-boolean wire types.** First
+		// request-body POST in the redirects/* roster and a fresh
+		// shape with no exact peer in any prior tag: API-0268
+		// `port-create` declares five required fields mixing
+		// numbers + enum strings + a plain string, API-0189
+		// `mounts-create` declares a different required-set shape,
+		// API-0292 `project-create` has one required + two optional
+		// scalars, and no prior covered create POST mixes plain
+		// strings with a typed boolean the way redirects-create
+		// does. The fixture supplies all four required fields with
+		// deterministic-but-clearly-fake values: `regex` and
+		// `replacement` carry pattern-shaped string literals so the
+		// wire fixture readably models a routing-redirect config
+		// while still being obviously synthetic; `permanent` is
+		// pinned to `true` to exercise the typed-boolean wire leg
+		// (the harness's byte-for-byte body comparison would catch
+		// any silent JSON coercion of `true` → `"true"`); the
+		// `applicationId` scalar uses the per-case fixture token
+		// `redirects-cov-create-0298-app` per the established
+		// `<tag>-cov-<slug>-<storyID>[-<sub>]` deterministic-but-
+		// clearly-fake naming convention. The tokens are unique
+		// across the redirects/* roster (verified: no collisions
+		// with future `*-delete-0299` / `*-one-0300` /
+		// `*-update-0301` slugs) and across all prior `*-cov-*`
+		// namespaces.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (create-mutations
+		// have no by-id target to miss, exactly as documented for
+		// API-0189 `mounts-create`, API-0268 `port-create`, and
+		// API-0292 `project-create`), so the 404→CodeNotFound
+		// override is structurally inapplicable. 400→CodeInvalidInput
+		// is *technically* available — a payload that omits any of
+		// the four REQUIRED fields, supplies a non-string `regex`/
+		// `replacement`/`applicationId`, or sends a non-boolean
+		// `permanent` would fail server-side validation — but the
+		// harness reserves 400 representatives for stories where
+		// payload validation is the operation's *uniquely
+		// distinguishing* failure mode. A conventional create POST
+		// collapses to type-checking, so the harness-default
+		// 401→CodeAuth failure leg remains the most representative
+		// single failure mode every authenticated Dokploy operation
+		// must re-prove, and additionally re-proves the auth
+		// invariant inside the freshly opened `redirects-cov-*`
+		// namespace for the four-required-scalar create-mutation
+		// shape.
+		//
+		// API-0298 opens the priority-3 redirects/* roster; the next
+		// pending PRD-ordered priority-3 backlog entries are
+		// API-0299 `redirects-delete`, API-0300 `redirects-one`, and
+		// API-0301 `redirects-update`, all of which inherit the
+		// `redirects-cov-*` namespace established here and should
+		// grep this block first when shaping their `SampleBody`
+		// fixtures. The next contributor must re-verify the spec
+		// against `internal/api/data/openapi.json` per the forward-
+		// reference lesson before assuming any field shape.
+		SampleBody: json.RawMessage(`{
+			"regex": "^/redirects-cov-create-0298/(.*)$",
+			"replacement": "/redirects-cov-create-0298-target/$1",
+			"permanent": true,
+			"applicationId": "redirects-cov-create-0298-app"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0335",
 		OperationID: "server-all",
 		Method:      http.MethodGet,
