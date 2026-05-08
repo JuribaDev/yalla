@@ -20343,3 +20343,44 @@ forward-reference lesson before assuming any field shape.
     canonical home and the harness-default 401→CodeAuth failure leg
     remains the most representative single failure mode.
 ---
+
+## 2026-05-09 - API-0197 mysql-move
+- Implemented contract coverage for `mysql-move` (POST /mysql.move).
+- Spec re-verified against `internal/api/data/openapi.json`: tag `mysql`,
+  no parameters, requestBody REQUIRED with two REQUIRED top-level string
+  scalars (`mysqlId`, `targetEnvironmentId`), responses 200/400/401/403/500
+  (no 404). Empty-object 200 body matches the empty-success cohort.
+- Added one struct literal to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go` (between API-0196 mysql-deploy and
+  API-0246 organization-active). Fixture token base
+  `mysql-cov-move-0197` is non-colliding with the prior mysql/* literals.
+- Harness-default 401→CodeAuth failure leg retained (404 is structurally
+  inapplicable; 400 is reserved for stories where payload validation is
+  the uniquely distinguishing failure).
+- Files changed:
+  - internal/cli/api_coverage_test.go (one new apiCoverageCase entry)
+  - ralph/prd.json (API-0197.passes => true)
+- Verification run from repo root:
+  - gofmt -w .  → clean
+  - go mod tidy → clean
+  - go vet ./... → clean
+  - go test ./... → all packages PASS
+  - go test -race ./... → all packages PASS
+  - Targeted: `TestAPICoverage_RegistryInvariants/API-0197/mysql-move` PASS,
+    plus the schema/manifest/success/failure subtests run by the harness.
+- goimports / golangci-lint / staticcheck / govulncheck / goreleaser were
+  not invoked (not installed locally; documented in baseline).
+- Remaining risks / follow-ups: none specific to this story. The next
+  PRD-ordered priority-4 case is API-0198 `mysql-one` (GET /mysql.one) —
+  re-verify the spec before assuming any field shape.
+- **Learnings for future iterations:**
+  - mysql-move is the first two-required-string-scalar shape on the
+    mysql/* roster; the harness assertions are shape-agnostic so the
+    401→CodeAuth default applies as-is.
+  - The existing `<tag>-cov-<slug>-<storyID>-<field>` fixture-token
+    naming convention extends cleanly to multi-field bodies — one
+    literal per field, suffix the field name to keep grep traceability.
+  - Spec re-verification is cheap and mandatory: read the actual
+    `openapi.json` entry rather than trusting the forward-reference
+    comment from the previous case.
+---

@@ -14813,6 +14813,118 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0197",
+		OperationID: "mysql-move",
+		Method:      http.MethodPost,
+		Path:        "/mysql.move",
+		Tag:         "mysql",
+		// Fourth entry on the mysql/* coverage roster, immediately
+		// following API-0196 `mysql-deploy` and completing the
+		// forward reference embedded in that entry's comment block
+		// ("The next case in the PRD-ordered priority-4 backlog is
+		// API-0197 `mysql-move`"). Continues inside the
+		// `mysql-cov-*` per-tag fixture-isolation namespace opened by
+		// API-0194 `mysql-changeStatus` and **must not** back-reference
+		// any closed prior-tag namespace (`set-cov-*`, `srv-cov-*`,
+		// `proj-cov-*`, `org-cov-*`, `compose-cov-*`, `app-cov-*`,
+		// `ai-cov-*`, `admin-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		// `cert-cov-*`, `clu-cov-*`, `deployment-cov-*`, `dest-cov-*`,
+		// `docker-cov-*`, `domain-cov-*`, `environment-cov-*`,
+		// `gitea-cov-*`, `github-cov-*`, `gitlab-cov-*`,
+		// `mariadb-cov-*`, `mongo-cov-*`, `mounts-cov-*`,
+		// `swarm-cov-*`, `usr-cov-*`, etc.) per the per-tag isolation
+		// rule reasserted at API-0335..API-0444 and originally
+		// established at API-0246 `organization-active`.
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json` > `/mysql.move` >
+		// `post`: method POST, tag mysql, **no parameters**,
+		// requestBody REQUIRED with `application/json` and **two**
+		// REQUIRED top-level scalars `mysqlId` (string) and
+		// `targetEnvironmentId` (string), responses
+		// 200/400/401/403/500. The 200 response is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort. **No 404** is declared on
+		// this operation, mirroring the action-on-known-id POST
+		// precedent reasserted at API-0162 `mariadb-deploy`, API-0174
+		// `mongo-changeStatus`, API-0176 `mongo-deploy`, and
+		// API-0196 `mysql-deploy` (a body-bearing imperative-action
+		// POST whose missing-target failure mode collapses into
+		// 400/validation under Dokploy's tRPC convention rather than
+		// 404).
+		//
+		// **Request body schema (REQUIRED top-level fields):**
+		//   - REQUIRED `mysqlId` (string) — opaque, non-nullable,
+		//     non-enum scalar identifying the source mysql resource
+		//     to move.
+		//   - REQUIRED `targetEnvironmentId` (string) — opaque,
+		//     non-nullable, non-enum scalar identifying the
+		//     destination environment to move the resource into.
+		//   - **No optional fields.** mysql-move has zero optional
+		//     fields, so the API-0131 `gitea-create` minimal-required-
+		//     only fixture rule is trivially satisfied. The fixture
+		//     supplies exactly the two REQUIRED fields and nothing
+		//     else; the harness's `len(tc.SampleBody) > 0` gate at
+		//     `runAPICoverageSuccess` activates the JSON content-type
+		//     and byte-for-byte body comparison legs.
+		//
+		// **Shape positioning — two-required-string-scalar POST
+		// imperative-action move-mutation, body REQUIRED.** Both
+		// REQUIRED slots are plain non-nullable `type: string`. This
+		// is a *new* shape inside the mysql/* roster — the prior
+		// mysql/* entries (API-0194 `mysql-changeStatus`, API-0195
+		// `mysql-create`, API-0196 `mysql-deploy`) all carried either
+		// a single-id POST or a create-shaped POST. The two-required-
+		// string-scalar move shape is the resource-relocation
+		// signature shared with `application-move`, `compose-move`,
+		// and the other `*-move` peers; the harness assertions stay
+		// shape-agnostic so the 401→CodeAuth failure leg remains the
+		// representative single failure mode regardless.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so
+		// the 404→CodeNotFound override is structurally inapplicable.
+		// 400→CodeInvalidInput is *technically* available — a payload
+		// that omits either `mysqlId` or `targetEnvironmentId` would
+		// fail server-side validation — but the harness reserves 400
+		// representatives for stories where payload validation is the
+		// operation's *uniquely distinguishing* failure mode. A
+		// move-mutation that gates on body-supplied ids collapses to
+		// type-checking, so the harness-default 401→CodeAuth failure
+		// leg remains the most representative single failure mode
+		// every authenticated Dokploy operation must re-prove, and is
+		// consistent with the 401→CodeAuth choice locked in by the
+		// mysql/* kickoff at API-0194 `mysql-changeStatus` and
+		// extended through API-0195 `mysql-create` and API-0196
+		// `mysql-deploy`.
+		//
+		// **Fixture token base** `mysql-cov-move-0197` follows the
+		// established `<tag>-cov-<slug>-<storyID>` deterministic-but-
+		// clearly-fake naming convention and is verified non-colliding
+		// with API-0194's `mysql-cov-changeStatus-0194`, API-0195's
+		// `mysql-cov-create-0195`, and API-0196's
+		// `mysql-cov-deploy-0196` literals.
+		//
+		// The next case in the PRD-ordered priority-4 backlog is
+		// API-0198 `mysql-one` (declared a **GET** per the spec
+		// preview; the next contributor must re-verify the spec
+		// against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will continue inside the `mysql-cov-*` per-tag
+		// fixture-isolation namespace opened by API-0194).
+		SampleBody: json.RawMessage(`{
+			"mysqlId": "mysql-cov-move-0197-mysqlId",
+			"targetEnvironmentId": "mysql-cov-move-0197-targetEnvironmentId"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,
