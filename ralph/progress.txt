@@ -4571,3 +4571,68 @@
     GET (API-0082). Future compose/* stories should pattern-match
     against these rather than re-deriving from the spec.
 ---
+
+## 2026-05-08 - API-0083
+- Implemented coverage for compose-move (POST /compose.move) by appending a
+  new `apiCoverageCase` entry to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go`. Second POST-with-two-required-body-
+  fields entry in the compose/* roster after API-0078 (compose-import).
+- Files changed:
+  - internal/cli/api_coverage_test.go (+34 lines, single appended
+    apiCoverageCase literal sorted after API-0082)
+  - ralph/prd.json (passes: false -> true for API-0083)
+  - ralph/progress.txt (this entry)
+- Implementation: per `data/openapi.json > /compose.move > post` the request
+  body is REQUIRED with two required string fields — `composeId` (the
+  source record being moved) and `targetEnvironmentId` (the destination
+  environment FK). No optional siblings, no enums, no nested objects —
+  structural twin of API-0078 with a domain-specific second field. 200
+  response is `{}` with `additionalProperties: false`, matching the
+  empty-success convention. Fixture uses deterministic placeholder slugs
+  (`compose-cov-move-0083`, `env-cov-move-0083`) so the success leg
+  confirms the CLI propagates BOTH required fields verbatim through the
+  `--input` JSON `body` envelope. Shared harness derives all five
+  contract assertions (registry / schema get / manifest inclusion /
+  httptest success / 401 -> E_AUTH failure) from the entry alone — no
+  production-code change required.
+- Verification (from /Users/juribadev/projects/poc/yalla-claude):
+  - gofmt -w .   (clean; gofmt -l . reports no diff)
+  - go mod tidy  (no module changes)
+  - go vet ./... (clean)
+  - go test ./... (all packages PASS, including internal/cli with the new
+    TestAPICoverage_* subtests for API-0083)
+  - go test -race ./... (PASS — internal/cli 3.586s)
+  - goimports / golangci-lint / staticcheck / govulncheck / goreleaser:
+    not installed locally; documented in the existing baseline note.
+- Remaining risks / follow-ups: none specific to this story. 393 user
+  stories remain with passes=false out of 462. Next priority-2 compose/*
+  candidate is API-0084 (compose-one, GET) per `(priority, id)` sort
+  order.
+- **Learnings for future iterations:**
+  - compose-move is the second POST-with-two-required-body-fields entry
+    in the compose/* roster (after API-0078 compose-import). The compose/*
+    POST sub-shapes now codified in the harness:
+      * minimal-composeId-only POST (API-0066/0067/0068/0073/0074/0080) —
+        single required `composeId` field, six members.
+      * required+optional split POST (API-0079) — required `composeId`
+        plus optional siblings.
+      * two-required-fields POST (API-0078, 0083) — two non-overlapping
+        required string fields. API-0078 carries a base64 payload field;
+        API-0083 carries a target-environment FK. Future compose/* POST
+        stories that match this 2-required shape (e.g. potential
+        environment/project moves) should pattern-match against API-0083.
+  - The compose/* coverage roster has now been extended to:
+    GET trio (API-0075/0076/0077), single-required-query GET
+    (API-0075/0076/0077), POST with two required body fields
+    (API-0078, 0083), POST with required+optional split (API-0079),
+    minimal-composeId-only POST (API-0066/0067/0068/0073/0074/0080),
+    multi-required-query GET (API-0081), and required+optional-enum GET
+    (API-0082). Future compose/* stories should pattern-match against
+    these rather than re-deriving from the spec.
+  - When the second required field is a foreign key (FK) to another
+    domain entity (e.g. `targetEnvironmentId` -> environments), use a
+    distinct slug prefix in the fixture so cross-story grep can still
+    distinguish "the compose record being acted on" from "the related
+    entity referenced by FK" — here `compose-cov-move-0083` for the
+    compose FK and `env-cov-move-0083` for the environment FK.
+---

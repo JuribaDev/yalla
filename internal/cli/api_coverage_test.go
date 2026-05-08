@@ -1690,6 +1690,42 @@ var coveredAPIOperations = []apiCoverageCase{
 		// payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0083",
+		OperationID: "compose-move",
+		Method:      http.MethodPost,
+		Path:        "/compose.move",
+		Tag:         "compose",
+		// Second POST-with-two-required-body-fields entry in the compose/*
+		// roster after API-0078 (compose-import). The spec at
+		// `data/openapi.json > /compose.move > post` declares the request
+		// body is REQUIRED and carries two required string fields —
+		// `composeId` (the source record being moved) and
+		// `targetEnvironmentId` (the destination environment). No optional
+		// siblings, no enum restrictions, no nested objects — making this a
+		// near-verbatim structural twin of API-0078, but with a domain-
+		// specific second field (an environment FK rather than the base64
+		// payload). Distinct from the minimal-composeId-only POST family
+		// (API-0066/0067/0068/0073/0074/0080) which carries a single
+		// required field, and from API-0079 (compose-isolatedDeployment)
+		// which uses a required+optional split. Slug convention
+		// `compose-cov-<slug>-<storyID>` continues the cross-story grep
+		// contract from API-0075/0076/0077/0078/0080/0081/0082 — both FK
+		// values use deterministic placeholders so a future schema
+		// validator wired into the harness can still accept the fixture
+		// while the success leg confirms the CLI propagates BOTH required
+		// fields verbatim through the `--input` JSON `body` envelope.
+		SampleBody: json.RawMessage(`{
+			"composeId": "compose-cov-move-0083",
+			"targetEnvironmentId": "env-cov-move-0083"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching the empty-success convention shared by every prior
+		// compose/* peer. Empty-object body keeps the success-leg envelope
+		// assertion focused on `data.method` / `data.status` rather than
+		// payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
