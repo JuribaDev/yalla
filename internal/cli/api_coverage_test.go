@@ -15714,6 +15714,105 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0431",
+		OperationID: "user-deleteApiKey",
+		Method:      http.MethodPost,
+		Path:        "/user.deleteApiKey",
+		Tag:         "user",
+		// Fifth entry on the user/* coverage roster, slotted in
+		// StoryID order after API-0430 `user-createApiKey` (the
+		// roster's first partially-required POST). The
+		// `usr-cov-*` per-tag fixture-isolation namespace was
+		// established at API-0427 `user-all` and reasserted at
+		// API-0428..API-0430. Per the per-tag isolation rule
+		// originally established at API-0246 `organization-active`,
+		// every user/* fixture token base remains orthogonal to
+		// every prior tag's namespace (`set-cov-*`, `srv-cov-*`,
+		// `proj-cov-*`, `org-cov-*`, `compose-cov-*`, `app-cov-*`,
+		// `ai-cov-*`, `admin-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		// `cert-cov-*`, `clu-cov-*`, `deployment-cov-*`,
+		// `dest-cov-*`, etc.).
+		//
+		// **Spec re-verified per the API-0345..API-0430
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /user.deleteApiKey >
+		// post`: a **POST** with `requestBody.required = true`
+		// carrying a single `application/json` body schema and
+		// **zero declared parameters** (no query, no path, no
+		// header). Responses 200/400/401/403/500 — the
+		// **absence of 404** is consistent with API-0428
+		// `user-assignPermissions` and API-0430
+		// `user-createApiKey`: Dokploy's user/* mutations do not
+		// expose a discrete by-id lookup before the write.
+		// The 200 schema is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer.
+		//
+		// **Single-required-string-body POST — shape-distinct
+		// from every prior covered peer.** The body schema's
+		// `required` array enumerates exactly one property
+		// (`apiKeyId`, string) and declares no other properties.
+		// Per the slug-prefix-is-not-shape and
+		// slug-stem-is-not-shape lessons reasserted at
+		// API-0371..API-0430, no axis from any prior user/* entry
+		// carries over: API-0428 `user-assignPermissions` was a
+		// fully-required fifteen-field permission-mutation body,
+		// API-0429 `user-checkUserOrganizations` was a
+		// parameter-only GET, API-0427 `user-all` was a
+		// parameter-free GET, and API-0430 `user-createApiKey`
+		// was a two-required-of-ten partially-required POST.
+		// This entry is the user/* roster's first
+		// **single-required-string-only** POST body shape.
+		//
+		// **Body field semantics (per OpenAPI schema):**
+		//   * `apiKeyId` — REQUIRED string. Identifies the
+		//     existing API key to delete. The spec imposes no
+		//     length, pattern, or format constraint, so the
+		//     slug-on-the-wire sentinel
+		//     `usr-cov-deleteApiKey-0431` populates this field
+		//     directly per the convention reasserted at
+		//     API-0351..API-0430 for free-form string fields.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `usr-cov-deleteApiKey-0431` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared with
+		//     every prior covered peer. The slug is the operationId
+		//     suffix (`deleteApiKey`) verbatim — per the
+		//     slug-stem-is-not-shape lesson the slug only carries
+		//     identifier semantics, not shape semantics.
+		//
+		// **Failure-leg fields are intentionally omitted.** The
+		// spec does not declare 404 on this operation, so the
+		// 404 → CodeNotFound representative is structurally
+		// inapplicable here even though `deleteApiKey` is a
+		// by-id mutation (Dokploy returns 400 for an unknown
+		// `apiKeyId` per the catalogue's user/* convention rather
+		// than 404). 401 → CodeAuth via the harness default
+		// (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""` →
+		// CodeAuth) stays the most informative representative for
+		// an authenticated POST, matching API-0428..API-0430.
+		//
+		// The next case in the PRD-ordered priority-2 backlog is
+		// the next user/* entry surfacing on the next pass; the
+		// next contributor must re-verify against
+		// `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field
+		// carries over from this entry — per the
+		// slug-prefix-is-not-shape lesson reasserted at
+		// API-0371..API-0430, even the shared `user-`
+		// operation-stem does not imply a carried-over body or
+		// parameter shape.
+		SampleBody: json.RawMessage(`{
+			"apiKeyId": "usr-cov-deleteApiKey-0431"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

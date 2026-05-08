@@ -13365,3 +13365,81 @@ Learnings for future iterations:
     `internal/api/data/openapi.json > /<tag>.<op> > <method>`
     before constructing the SampleBody fixture.
 ---
+
+## 2026-05-08 - API-0431 - Cover user-deleteApiKey (POST /user.deleteApiKey)
+
+What was implemented:
+- Appended a new `apiCoverageCase` struct literal for API-0431
+  (`user-deleteApiKey`) to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go`. Fifth entry on the user/* coverage
+  roster, slotted in StoryID order after API-0430 `user-createApiKey` and
+  immediately before the existing closing `}` of the slice literal.
+- Spec re-verified against `internal/api/data/openapi.json
+  > /user.deleteApiKey > post`: POST, `requestBody.required = true`,
+  zero declared parameters (no query, no path, no header). Body schema
+  is `{ apiKeyId: string }` with `apiKeyId` as the sole REQUIRED field
+  and no other declared properties. Responses 200/400/401/403/500;
+  no 404 (consistent with API-0428/0430 — Dokploy returns 400 for an
+  unknown id rather than 404 on user/* mutations). 200 schema is `{}`
+  with `additionalProperties: false`.
+- Fixture token base `usr-cov-deleteApiKey-0431` follows the
+  `<tag>-cov-<slug>-<storyID>` convention shared with every prior peer
+  and stays orthogonal to every prior tag's per-tag namespace.
+- `SuccessResponse: \`{}\`` mirrors the spec's empty 200 envelope.
+- Failure-leg fields intentionally omitted: harness defaults
+  (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""` → CodeAuth)
+  exercise the 401 → CodeAuth representative, which is the universal
+  failure mode every authenticated POST must re-prove.
+
+Files changed:
+- internal/cli/api_coverage_test.go (one new struct literal appended after
+  API-0430)
+- ralph/prd.json (passes flipped false → true on API-0431)
+- ralph/progress.txt (this entry)
+
+Verification run:
+- gofmt -w .                       → clean
+- go mod tidy                      → clean
+- go vet ./...                     → clean
+- go test ./...                    → ok (internal/cli 1.329s)
+- go test -race ./...              → ok (internal/cli 2.830s)
+- targeted: TestAPICoverage_{RegistryInvariants,SchemaReachable,
+  ManifestIncludes,Success/API-0431,Failure/API-0431} → ok
+- goimports / golangci-lint / staticcheck / govulncheck / goreleaser
+  remain not installed locally; documented per the existing
+  "Verification baseline" pattern at the top of this file.
+
+Results:
+- All five harness assertions for API-0431 pass: registry invariants
+  (method/path/tag), schema reachability via `yalla schema get`,
+  manifest inclusion, success leg via httptest fixture (200 → JSON
+  envelope `yalla.output.v1` with `data.method`/`data.status`), and
+  failure leg via the harness default (401 → `yalla.error.v1` with
+  CodeAuth → exit code 4).
+- PRD `passes` flipped false → true on API-0431. Story closed.
+
+Remaining risks or follow-ups:
+- None for this story. The user/* roster now stands at five entries
+  (API-0427 `user-all`, API-0428 `user-assignPermissions`, API-0429
+  `user-checkUserOrganizations`, API-0430 `user-createApiKey`,
+  API-0431 `user-deleteApiKey`). API-0432 `user-generateToken` is the
+  next priority-2 user/* entry; the next contributor must re-verify
+  body/parameter shape against `internal/api/data/openapi.json` per
+  the forward-reference lesson before assuming any axis carries over.
+
+Learnings for future iterations:
+- The user/* roster's POST shapes have been notably divergent so far
+  (15-required-field assignPermissions, 2-of-10 createApiKey,
+  1-required-string deleteApiKey). The slug-prefix-is-not-shape
+  lesson reasserted at API-0371..API-0430 keeps proving itself —
+  the `user-` operationId stem carries no body shape signal.
+- The 404 absence on user/* mutations is now a consistent pattern
+  across API-0428/0430/0431. Dokploy's user/* surface returns 400 for
+  unknown ids, so 404 → CodeNotFound stays structurally inapplicable
+  for this tag and the harness 401 → CodeAuth default remains the
+  most informative failure-leg representative.
+- A single-required-string body is the minimum-shape POST signature.
+  Any further compression would drop the body entirely and become a
+  parameter-free POST — a shape no user/* entry has yet exhibited.
+
+---
