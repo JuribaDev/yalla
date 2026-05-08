@@ -2728,6 +2728,63 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.method` / `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0250",
+		OperationID: "organization-delete",
+		Method:      http.MethodPost,
+		Path:        "/organization.delete",
+		Tag:         "organization",
+		// Second mutation in the organization/* roster, immediately
+		// after API-0249 `organization-create`. Spec source
+		// `data/openapi.json > /organization.delete > post` declares
+		// zero parameters and a required `application/json` request
+		// body whose schema is the closed-shape single-string-scalar
+		// `{organizationId}` (required, no optionals) — the exact
+		// "single or two-field POST that can copy the closed-shape
+		// `{name, logo}` literal pattern verbatim with the field
+		// names swapped" forecast called out in the API-0249 future-
+		// contributors comment block above. Per the API-0010 / API-
+		// 0014 convention adopted across the ai/* and application/*
+		// mutation rosters and re-affirmed by API-0249, we still
+		// supply a deterministic-but-clearly-fake value for the lone
+		// required scalar so the wire payload exercises the full
+		// envelope; per-case fixture token `*-cov-org-delete-0250`
+		// keeps `git grep` traceable to this PRD story.
+		//
+		// Responses 200/400/401/403/500 mirror the rest of the
+		// organization/* tag — the 200 schema is `{}` with
+		// `additionalProperties: false`, identical to API-0246/0247/
+		// 0248/0249 above and to every ai/* and application/*
+		// mutation peer; the success-leg envelope assertion therefore
+		// stays focused on `data.method` / `data.status` rather than
+		// payload projection. The representative-failure leg keeps
+		// the harness default (401 → CodeAuth) because auth is the
+		// universal failure mode every organization/* peer must re-
+		// prove — 400 (validation) is exercised once at the package
+		// level by the API-0001 entry rather than re-asserted on
+		// every minimum-required-body POST in the roster.
+		//
+		// Future contributors picking up the next mutation in the
+		// arc (API-0252 `*-removeInvitation`, API-0253 `*-setDefault`,
+		// API-0254 `*-update`, API-0255 `*-updateMemberRole`) should
+		// grep API-0249 first for the design-rationale header and
+		// this entry second for the `{single-required-scalar}`
+		// fixture pattern — every successor remains a single or two-
+		// field POST that can copy the closed-shape literal verbatim
+		// with the field names swapped, and the API-0249 comment
+		// header keeps the every-optional-populated / per-case
+		// fixture token / default 401 failure leg invariants
+		// discoverable without re-deriving them from API-0010 /
+		// API-0014.
+		SampleBody: json.RawMessage(`{
+			"organizationId": "yalla-coverage-org-delete-0250"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior organization/* peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

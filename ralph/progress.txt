@@ -5817,3 +5817,60 @@
     closed `{name, logo}` shape so the next contributor lands on the
     right precedent without re-deriving it.
 ---
+
+## 2026-05-08 - API-0250 (organization-delete)
+- Added entry to `coveredAPIOperations` in `internal/cli/api_coverage_test.go`
+  for `organization-delete` (POST /organization.delete, tag organization).
+- Spec source `internal/api/data/openapi.json > /organization.delete > post`
+  declares zero parameters and a required `application/json` request body
+  whose schema is the closed-shape single-string-scalar
+  `{organizationId}` (required, no optionals). Response 200 is `{}` with
+  `additionalProperties: false`, identical to API-0246/0247/0248/0249.
+- `SampleBody` is the literal `{"organizationId": "yalla-coverage-org-delete-0250"}`
+  with the per-case fixture token `*-cov-org-delete-0250` for `git grep`
+  traceability. `SuccessResponse` stays `{}` so the success-leg envelope
+  assertion focuses on `data.method` / `data.status`.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (+59 lines, one new entry).
+  - `ralph/prd.json` (`passes: true` for API-0250).
+  - `ralph/progress.txt` (this entry).
+- Verification run (from repo root):
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — no diff.
+  - `go vet ./...` — clean.
+  - `go test ./...` — PASS (all packages).
+  - `go test -race ./...` — PASS (all packages).
+- Results: green across the baseline. `goimports`, `golangci-lint`,
+  `staticcheck`, `govulncheck`, and `goreleaser` were not invoked this
+  iteration; matches the documented per-story scope.
+- Remaining risks/follow-ups: the next mutation in the organization/* arc
+  is API-0252 `*-removeInvitation` (API-0251 is reserved for a non-mutation
+  story; verify before assuming sequence). Future contributors should
+  inherit the design-rationale header from API-0249 and the
+  `{single-required-scalar}` literal pattern from this entry — both are
+  cross-referenced in their respective fixture comment blocks.
+- **Learnings for future iterations:**
+  - The `coveredAPIOperations` table-driven harness is the only file an
+    API-XXXX story for an existing tag needs to touch when the operation
+    fits the default success/failure shape. The harness
+    (`runAPICoverageSuccess` and the registry/schema invariants tests)
+    handles all four acceptance criteria — registry presence, raw API
+    call, schema get, and manifest coverage — automatically, so a new
+    entry alone satisfies every line item without per-story Go code.
+  - Closed-shape `additionalProperties: false` 200 responses across the
+    organization/* tag mean `SuccessResponse: ` + literal `{}` is the
+    correct fixture; do not invent payload fields, the schema rejects
+    them and the success-leg assertion does not exercise projection on
+    these operations.
+  - `SampleBody` for single-required-scalar POSTs follows the closed-shape
+    literal pattern: a JSON object with the required field set to the
+    deterministic-but-clearly-fake token `yalla-coverage-<short>-<storyID>`.
+    The token must include the four-digit story ID so `git grep "0250"`
+    finds the fixture from any reviewer's terminal.
+  - The fixture-comment header convention (every-optional-populated,
+    per-case fixture token, default 401 failure leg) carries forward from
+    API-0249's future-contributors block; succeeding entries should grep
+    API-0249 first for the design rationale and only re-state per-entry
+    deltas (here: closed-shape single-required-scalar instead of
+    `{name, logo}`).
+---
