@@ -199,3 +199,25 @@ Conventions for the Cobra command tree.
 - For end-to-end command assertions use `runRootArgs(t, args...)`. It runs
   `buildRoot` + `cmd.Execute()` + `renderTerminalError` so the captured
   stderr matches what the binary prints in production.
+
+## Per-operation API coverage (API-XXXX stories)
+
+- Each `API-XXXX` story in `ralph/prd.json` ships its acceptance criteria
+  through `api_coverage_test.go`'s `coveredAPIOperations` slice — append
+  one `apiCoverageCase` literal per story, never duplicate the
+  boilerplate test logic. The harness asserts five invariants per
+  operation: registry presence (id/method/path/tag), `yalla schema get`
+  works, `yalla manifest` lists it, an `httptest`-driven success
+  round-trip with body/query/path forwarding, and a representative
+  failure (default 401 → `E_AUTH`).
+- A case's `SampleBody` must be a JSON document whose required-field
+  shape mirrors the OpenAPI request body. The bytes go on the wire
+  verbatim, so a malformed fixture fails the success leg's body-equality
+  check.
+- Override `FailureStatus` / `FailureCode` when an operation's
+  representative failure is not authentication (e.g. quota → 429,
+  conflict → 409). The default is intentional: every Dokploy operation
+  today requires a bearer token and the agent contract treats 401 as
+  the canonical failure surface.
+- Keep `coveredAPIOperations` sorted by `StoryID` so a story's diff
+  shows up as a single contiguous insert.

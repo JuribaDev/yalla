@@ -1825,3 +1825,82 @@
     OpenAPI embed dance. The same pattern (a tiny adapter interface)
     would help any future cross-package contract test.
 ---
+
+## 2026-05-08 - API-0001
+- **Implemented**: First per-operation API coverage story
+  (admin-setupMonitoring, POST /admin.setupMonitoring, tag admin) plus
+  the scalable, append-only contract-test harness every subsequent
+  API-XXXX story will reuse.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` (new) — defines
+    `apiCoverageCase` (the per-story input record) and
+    `coveredAPIOperations` (the append-only slice). Five
+    table-driven tests run the same assertions per case:
+    `TestAPICoverage_RegistryInvariants` (id/method/path/tag match
+    `api.Default()`), `TestAPICoverage_SchemaCommandWorks`
+    (`yalla schema get --json` envelope), `TestAPICoverage_ManifestListsOperation`
+    (operation id is in `yalla manifest --json` operations.ids),
+    `TestAPICoverage_SuccessRoundTrip` (httptest server validates
+    method, path, Authorization header, content-type, body, and the
+    success envelope shape), and `TestAPICoverage_RepresentativeFailure`
+    (default 401 → CodeAuth, configurable per case). Fixture body for
+    admin-setupMonitoring mirrors the openapi.json schema's required
+    shape (`metricsConfig` with `server.refreshRate` + `containers`).
+  - `internal/cli/AGENTS.md` — new "Per-operation API coverage"
+    section documenting the harness contract for future API-XXXX
+    contributors (sorted-by-story-id, override FailureStatus/Code
+    when 401 is not the right representative failure, SampleBody
+    must mirror the OpenAPI required shape verbatim).
+  - `ralph/prd.json` — flipped `API-0001.passes` to `true`.
+- **Verification run**:
+  - `gofmt -w .` — clean (one auto-format pass on the new test file).
+  - `go vet ./...` — clean.
+  - `go mod tidy` — no changes.
+  - `go test ./...` — all packages pass; the five new
+    `TestAPICoverage_*` subtests under `API-0001/admin-setupMonitoring`
+    PASS.
+  - `go test -race ./...` — clean.
+  - `bash scripts/verify.sh --quiet` — full local gate clean. The
+    same four optional tools as in earlier stories
+    (`govulncheck`, `staticcheck`, `golangci-lint`, `goreleaser`)
+    are still not installed locally and are documented in the
+    verify.sh banner; this matches the project's "report, never
+    silently skip" policy.
+- **Remaining risks / follow-ups**:
+  - The harness defaults the failure leg to 401→CodeAuth. A handful
+    of upcoming operations (rate-limit-prone create/delete, conflict-
+    prone update) will want to override `FailureStatus` /
+    `FailureCode` to assert the more representative path; document
+    that as a checklist item when we get to those PRD entries.
+  - Body fixtures are currently free-form JSON. We do **not**
+    validate the fixture against the OpenAPI request schema today;
+    if a fixture drifts from the schema, only the wire-side equality
+    check protects us. A future enhancement (post-coverage) is to
+    pipe each `SampleBody` through a schema validator using the
+    embedded JSON schema fragments — out of scope for this story.
+- **Learnings for future iterations**:
+  - **One harness for ~440 stories**: hand-rolling a separate test
+    file per API-XXXX story would mean ~440 near-identical files and
+    the same number of code-review rituals. The data-driven slice
+    keeps the per-story diff to a single struct literal while still
+    giving each story a named subtest path
+    (`TestAPICoverage_*/API-XXXX/<operationId>`) so a regression
+    points back to its PRD entry without grep gymnastics.
+  - **Use `setupAPICallServer` from the existing test suite**: the
+    helper wires an httptest server to `YALLA_BASE_URL` and seeds
+    `YALLA_TOKEN` via `t.Setenv`, which means our coverage tests
+    cannot run with `t.Parallel()` — same constraint as every other
+    env-mutating test in `internal/cli`.
+  - **Body equality through JSON normalize**: comparing wire bytes
+    directly fails on whitespace differences (the CLI re-serialises
+    JSON through json.Decoder which collapses pretty-printed
+    fixtures). Round-tripping both sides through `json.Unmarshal` +
+    `json.Marshal` before comparison eliminates the flake without
+    losing structural fidelity.
+  - **Per-operation registry assertion is intentionally redundant**:
+    `internal/api/registry_test.go` already locks the full operation
+    set; per-story checks duplicate that for a precise reason — when
+    an assertion fails, the failing subtest name names the PRD entry
+    so the contributor knows which story to revisit instead of
+    decoding which row in a 446-element slice broke.
+---
