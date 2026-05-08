@@ -13962,3 +13962,63 @@ Learnings for future iterations:
     harness relies on. The test loop is registry-invariant only —
     no per-case wiring required beyond the struct literal.
 ---
+
+## 2026-05-08 - API-0110
+- Implemented coverage for `docker-getContainersByAppLabel`
+  (GET /docker.getContainersByAppLabel).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended the API-0110 case to
+    `coveredAPIOperations` (third entry in the docker/* roster, inserted
+    immediately after API-0109 and immediately before API-0246
+    `organization-active`). REQUIRED+REQUIRED+OPTIONAL three-query-param
+    GET — `appName` REQUIRED, `type` enum REQUIRED (`"standalone"` chosen
+    from the spec's `["standalone","swarm"]` enum), `serverId` OPTIONAL.
+    No `SampleBody`/`SamplePathParams`. Failure leg defaults to
+    401 → CodeAuth (the harness default) per the per-tag opener
+    convention re-affirmed at API-0108/API-0109; the docker/* roster's
+    404→CodeNotFound representative is reserved for a later id-bearing
+    GET (API-0111..API-0113) when spec re-verification confirms 404
+    exercisability.
+  - `ralph/prd.json` — flipped `passes` to true for API-0110.
+- Verification run from repo root:
+  - `gofmt -w .` — clean
+  - `go vet ./...` — clean
+  - `go mod tidy` — no changes
+  - `go test ./...` — all packages pass (internal/cli 1.172s)
+  - `go test -race ./...` — all packages pass (internal/cli 2.832s)
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — not installed locally; documented per the
+    Codebase Patterns "Verification baseline" rule.
+- Remaining risks: none introduced by this change. The next case in the
+  PRD-ordered priority-3 backlog is API-0111
+  `docker-getContainersByAppNameMatch`.
+- **Learnings for future iterations:**
+  - The forward-reference verification rule held a third time inside
+    docker/*: API-0108 was REQUIRED+OPTIONAL (two params), API-0109
+    was OPTIONAL-only (one param), API-0110 is REQUIRED+REQUIRED+
+    OPTIONAL (three params, one of which is enum-constrained). Three
+    consecutive docker/* GETs, three genuinely different sub-shapes
+    — slug-prefix-is-not-shape stays the load-bearing lesson and now
+    has its strongest in-tag demonstration on record.
+  - **Enum-constrained REQUIRED query parameters get a spec-legal
+    fixture value.** The harness does not enforce enum membership
+    client-side (it only forwards SampleQuery verbatim and re-reads
+    it on the success leg), but seeding `"standalone"` from the
+    spec's `["standalone","swarm"]` enum keeps the fixture honest
+    and surfaces any future regression where the CLI starts to
+    mis-quote or coerce enum values en route to `r.URL.Query()`.
+    Future enum-bearing REQUIRED query params should follow this
+    pattern: pick the first spec-declared enum entry deterministically
+    so `git grep` of the test fixture maps unambiguously back to a
+    single PRD story.
+  - Insertion location for in-tag append-only: API-0110 was inserted
+    inside the docker/* contiguous block (after API-0109, before
+    API-0246) rather than at the very end of `coveredAPIOperations`.
+    The harness loops the slice without depending on storyID order,
+    so either position works, but keeping a tag's entries
+    contiguous makes per-tag forward-reference comments easier to
+    maintain and `git grep` for the next unfilled docker/* slot
+    cheaper to run. Future docker/* peers (API-0111..API-0113)
+    should continue the docker block at the same location rather
+    than scattering across the end of the slice.
+---
