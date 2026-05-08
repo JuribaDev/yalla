@@ -5969,3 +5969,49 @@
     fixtures (`yalla-coverage-org-create-0249`,
     `yalla-coverage-org-delete-0250`).
 ---
+
+## 2026-05-08 - API-0253
+- Added `organization-setDefault` (API-0253) to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go`. The single struct-literal append now
+  exercises registry invariants (POST /organization.setDefault, tag
+  organization), the `yalla schema get` command, manifest inclusion, an
+  httptest-backed success exchange (200 → `{}`), and the harness-default
+  representative-failure leg (401 → CodeAuth).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (+~70 lines: one struct literal)
+  - `ralph/prd.json` (`passes: true` for API-0253)
+  - `ralph/progress.txt` (this entry)
+- Verification run from repo root:
+  - `gofmt -w .` — clean
+  - `go mod tidy` — clean
+  - `go vet ./...` — clean
+  - `go test ./...` — PASS
+  - `go test -race ./...` — PASS
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`
+    not installed locally; skipped per existing baseline.
+- Results: harness loop now runs all five contract checks for API-0253
+  alongside the prior 97 covered operations; no other source files needed
+  changes because the registry, schema-command, manifest, success, and
+  failure paths are all data-driven off `coveredAPIOperations`.
+- Remaining risks / follow-ups: API-0254 `organization-update` is the next
+  organization/* mutation in the arc — the future-contributors block in the
+  new entry forecasts that successor as another `{single-required-scalar}`
+  POST that can copy this fixture verbatim; if the spec turns out to require
+  additional fields, the SampleBody literal will need to grow.
+- **Learnings for future iterations:**
+  - The `{single-required-scalar}` body shape forecast in the API-0250 /
+    API-0252 comment blocks held: `organization-setDefault` declares exactly
+    `{"organizationId": <string>}` required, identical wire shape to
+    `organization-delete` with no field-name change. Confirmed by reading
+    `internal/api/data/openapi.json > paths./organization.setDefault.post`.
+  - The fixture-token convention `<tag>-cov-<slug>-<storyID>` continues to
+    keep `git grep` traceable — `yalla-coverage-org-setDefault-0253` is unique
+    across the organization/* roster (verified: no collisions with `*-create-
+    0249`, `*-delete-0250`, `*-removeInvitation-0252`).
+  - For pure mutation peers in an established tag arc, the mechanical work is
+    a single struct literal append. No registry, manifest, schema-command,
+    or test-harness changes are needed because the harness loops over
+    `coveredAPIOperations`. The only judgment call is the SampleBody
+    literal — verify it against `data/openapi.json` before copying the
+    previous peer's body verbatim.
+---
