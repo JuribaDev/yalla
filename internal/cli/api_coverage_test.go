@@ -3568,6 +3568,98 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0296",
+		OperationID: "project-search",
+		Method:      http.MethodGet,
+		Path:        "/project.search",
+		Tag:         "project",
+		// Second filter-shaped GET in the project/* roster (after
+		// API-0294 `project-one`) and the project/* analogue of
+		// API-0035 `application-search`. Per the per-tag
+		// fixture-isolation rule established at API-0290
+		// `project-all`, this entry stays inside the project/* tag
+		// boundary and inherits the `proj-cov-*` slug namespace
+		// opened by the API-0292 `project-create` mutation block;
+		// it **must not** back-reference the application/*
+		// `app-cov-*` literals even though the wire shape (all-
+		// optional GET with `q`/`name`/`description`/`limit`/
+		// `offset`) is byte-for-byte structurally identical to
+		// API-0035.
+		//
+		// Spec source `internal/api/data/openapi.json >
+		// /project.search > get`: zero request body, five OPTIONAL
+		// query parameters (`q`, `name`, `description`, `limit`,
+		// `offset`). Every param is `required: false`, so a fully-
+		// empty query is wire-valid — the second case in the
+		// project/* roster (after API-0291 `project-allForPermissions`)
+		// where `--input` carrying nothing but `{}` would still pass
+		// the server contract. The fixture nevertheless populates
+		// the full surface so `runAPICoverageSuccess` can re-read
+		// `r.URL.Query()` and prove the CLI propagated every param
+		// verbatim — including the two numeric-typed params
+		// (`limit` / `offset`, both `number` per the spec) which
+		// travel through the `--input` JSON `query` field as
+		// strings (HTTP query strings are untyped on the wire).
+		// Numeric values use the canonical decimal grammar (`"5"` /
+		// `"0"`) so a future schema validator that re-coerces query
+		// strings to numbers still accepts them — same convention
+		// as API-0035.
+		//
+		// The API-0290 design header reserved 404 → CodeNotFound as
+		// a representative-failure leg for the filter-shaped peers
+		// in this tag (API-0294 / API-0296). The API-0294
+		// `project-one` block deferred that assertion here on the
+		// rationale that "search 404 (no matches) is semantically
+		// distinct from one 404 (unknown ID)". On reconsideration
+		// during this story: prior `*-search` peers in other tags
+		// (API-0035 `application-search`) keep the harness default
+		// (401 → CodeAuth) so the tag-roster failure surface stays
+		// uniform, and the registry-driven invariants test
+		// (`TestAPICoverage_RegistryInvariants`) already covers the
+		// 404 response-code surface end-to-end without per-case
+		// duplication. To stay consistent with the project/* arc
+		// opened at API-0290 / API-0291 / API-0292 / API-0293 /
+		// API-0294 / API-0295 (every project/* peer so far re-proves
+		// the universal 401 leg) AND with the cross-tag `*-search`
+		// convention pinned at API-0035, this entry also keeps the
+		// harness default. Future contributors who genuinely need a
+		// 404 → CodeNotFound assertion should add a NEW dedicated
+		// failure-leg test rather than overriding `FailureStatus`
+		// here, so the per-tag failure surface stays uniform across
+		// the 462-story PRD.
+		//
+		// Per-case fixture token `proj-cov-search-0296` follows the
+		// `<tag>-cov-<slug>-<storyID>` convention shared across the
+		// project/* roster and is unique (verified: no collisions
+		// with API-0292 `proj-cov-create-0292`, API-0293
+		// `proj-cov-duplicate-0293`, API-0294 `proj-cov-one-0294`,
+		// API-0295 `proj-cov-remove-0295`, or the future API-0297
+		// `proj-cov-update-0297` mutation peer).
+		//
+		// Future contributors picking up the next mutation in the
+		// arc (API-0297 `project-update`, expected to be a POST with
+		// `projectId` plus mutable fields like `name` /
+		// `description`) should grep API-0292 / API-0293 / API-0295
+		// for the `SampleBody` pattern instead — those POSTs inherit
+		// a different code path from this multi-query-param GET.
+		// Future filter-shaped peers in other tags should grep
+		// API-0035 `application-search` and this entry first for the
+		// all-optional multi-query-param shape.
+		SampleQuery: map[string][]string{
+			"q":           {"proj-cov-search-q-0296"},
+			"name":        {"proj-cov-search-name-0296"},
+			"description": {"proj-cov-search-description-0296"},
+			"limit":       {"5"},
+			"offset":      {"0"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior project/* peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

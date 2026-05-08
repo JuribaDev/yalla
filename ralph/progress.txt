@@ -6437,3 +6437,54 @@
     the four sibling project/* fixtures (create/duplicate/one) or the
     two upcoming ones (search/update).
 ---
+
+## 2026-05-08 - API-0296 - Cover project-search (GET /project.search)
+- Implemented coverage of project-search (GET /project.search) — second
+  filter-shaped GET in the project/* roster (after API-0294 project-one)
+  and the project/* analogue of API-0035 application-search.
+- Files changed:
+  - internal/cli/api_coverage_test.go (appended apiCoverageCase entry
+    inserted after the API-0295 project-remove block to keep StoryID-sorted
+    diff hygiene)
+  - ralph/prd.json (set passes:true for API-0296)
+  - ralph/progress.txt (this block)
+- Verification run:
+  - gofmt -w .
+  - go vet ./...
+  - go mod tidy (no diff)
+  - go test ./...
+  - go test -race ./...
+- Results: all green (no diffs, no failures, no races).
+- Remaining risks or follow-ups: none — API-0296 fully gated by the
+  same five-part harness that gates the prior 106 API-XXXX stories
+  (registry presence, schema reachability, manifest inclusion,
+  httptest success leg, representative failure leg).
+- **Learnings for future iterations:**
+  - The all-optional multi-query-param GET shape was already
+    proven by API-0035 application-search; project-search is a
+    drop-in structural clone differing only in slug namespace
+    (`proj-cov-*` vs `app-cov-*`) and which subset of optional
+    params the fixture exercises (PRD lists 5 for project.search
+    vs 11 for application.search).
+  - Earlier project/* blocks (API-0294 project-one, API-0295
+    project-remove) speculatively reserved 404 → CodeNotFound for
+    project-search. After looking at API-0035 application-search
+    (which keeps the harness default 401 → CodeAuth) the right
+    decision was to keep the project/* arc consistent with both
+    the prior project/* peers AND the cross-tag `*-search`
+    convention, so this entry also defaults to 401 → CodeAuth and
+    documents the deferral rationale inline.
+  - `go test ./...` cached unchanged packages; only
+    internal/cli rebuilt after the test addition.
+  - Numeric query params (`limit`/`offset`) travel through the
+    `--input` JSON `query` field as decimal strings (`"5"` /
+    `"0"`); HTTP query strings are untyped on the wire so this
+    is compatible with future schema-validator coercion.
+  - API-0297 `project-update` is the next entry in the project/*
+    roster (priority 2) and the final mutation in the arc;
+    expected shape is POST with required `projectId` plus mutable
+    fields. Grep API-0292 / API-0293 / API-0295 for the
+    `SampleBody` POST pattern and the API-0292 every-optional-
+    populated convention as the template for layering optional
+    update fields on top.
+---
