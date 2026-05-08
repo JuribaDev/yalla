@@ -9982,3 +9982,44 @@ Learnings for future iterations:
     convention proven across API-0351..API-0372 and now extended to
     API-0373 without modification.
 ---
+
+## 2026-05-08 - API-0374
+- Implemented coverage for `settings-health` (GET /settings.health).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended the API-0374 entry to
+    `coveredAPIOperations`. Per direct re-verification of
+    `internal/api/data/openapi.json > /settings.health > get` the operation is
+    a parameter-free GET (no query, no path, no header) with no request body
+    and responses 200/400/401/403/404/500. The 200 schema is `{}` with
+    `additionalProperties: false`. The entry uses the canonical empty-`{}`
+    `SuccessResponse` and inherits the harness 401 → CodeAuth failure default.
+  - `ralph/prd.json` — flipped API-0374 `passes` from `false` to `true`.
+  - `ralph/progress.txt` — this entry.
+- Verification run:
+  - `gofmt -w .`
+  - `go vet ./...`
+  - `go test ./... -count=1` → all packages OK
+  - `go test -race ./... -count=1` → all packages OK
+- Results: green across the board.
+- Remaining risks or follow-ups:
+  - 300 PRD stories still have `passes: false`. Next in PRD order is API-0375
+    `settings-isCloud` (GET /settings.isCloud).
+- **Learnings for future iterations:**
+  - The forward-reference parameter-axis flip-flop continues:
+    API-0371 (param-free) → API-0372 (param-free) → API-0373 (one OPTIONAL
+    `serverId` query) → API-0374 (param-free again). Whether a settings/* GET
+    is parameter-free or carries an OPTIONAL `serverId` depends on whether
+    the probe is platform-wide (param-free) vs server-scoped — slug-prefix
+    pattern matching is unreliable; per-operation spec re-verification is
+    mandatory.
+  - The append-only `coveredAPIOperations` slice in
+    `internal/cli/api_coverage_test.go` plus its three harness tests
+    (`TestAPICoverage_RegistryInvariants`, `_SchemaCommandWorks`,
+    `_ManifestListsOperation`, `_SuccessRoundTrip`,
+    `_RepresentativeFailure`) means a new GET-shape settings/* coverage
+    story only requires a single struct literal — all five acceptance
+    criteria are exercised automatically.
+  - For parameter-free no-body GETs, omit `SampleQuery`, `SamplePathParams`,
+    and `SampleBody` entirely; the harness defaults to GET-with-empty-query
+    and asserts the wire-level invariants on its own.
+---
