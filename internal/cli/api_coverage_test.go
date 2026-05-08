@@ -10163,6 +10163,134 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0301",
+		OperationID: "redirects-update",
+		Method:      http.MethodPost,
+		Path:        "/redirects.update",
+		Tag:         "redirects",
+		// Fourth and final entry in the redirects/* roster, immediately
+		// following API-0298 `redirects-create`, API-0299
+		// `redirects-delete`, and API-0300 `redirects-one`, and
+		// continuing inside the `redirects-cov-*` per-tag fixture-
+		// isolation namespace opened by API-0298. Per the per-tag
+		// fixture-isolation rule this entry **must not** back-reference
+		// any closed prior-tag namespace (`port-cov-*`, `proj-cov-*`,
+		// `mounts-cov-*`, `org-cov-*`, `domain-cov-*`, etc.); per the
+		// API-0300 closing block's forward reference, this entry was
+		// the next pending PRD-ordered priority-3 backlog entry on the
+		// redirects/* roster.
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /redirects.update > post`:
+		// a **POST** with **no parameters** and a **REQUIRED request
+		// body** whose schema declares **four REQUIRED fields** —
+		// three non-nullable plain strings (`redirectId`, `regex`,
+		// `replacement`) and one non-nullable boolean (`permanent`).
+		// The schema declares zero optional fields, so the closed-
+		// shape body is exactly the four-required-scalar surface — no
+		// every-optional-populated expansion applies here, mirroring
+		// the API-0298 `redirects-create` peer in the same redirects/*
+		// namespace. Responses 200/400/401/403/500 — the spec does
+		// **not** declare 404 on this operation, matching the cross-
+		// tag update-by-id mutation precedent on API-0122
+		// `domain-update`, API-0130 `environment-update`, API-0193
+		// `mounts-update`, and API-0271 `port-update` (Dokploy's tRPC
+		// convention collapses missing-target into 400/validation
+		// rather than surfacing a 404 leg even when the body carries
+		// an id-shaped scalar). The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort.
+		//
+		// **Shape positioning — four-required-scalar update-by-id
+		// POST mutation, body REQUIRED, all fields required, no
+		// optional surface, mixed string-and-boolean wire types.**
+		// Second request-body POST in the redirects/* roster (after
+		// API-0298 `redirects-create`'s four-required-scalar create)
+		// and structurally a near-clone of that create-mutation shape
+		// with the `applicationId` foreign-key swapped for the by-id
+		// target `redirectId`: the wire surface is identical strings
+		// (`regex`, `replacement`), an identical typed boolean
+		// (`permanent`), and the single id-shaped string differs only
+		// in its referent (creating a redirect for an application vs.
+		// updating a redirect by its own id). That "create-shape with
+		// id swapped in" pattern places this entry alongside API-0271
+		// `port-update`'s structural relationship to API-0268
+		// `port-create` — distinct from the cross-tag minimal
+		// single-required-scalar update template at API-0122
+		// `domain-update` and API-0130 `environment-update` (which
+		// supply only the id and rely entirely on optional fields for
+		// the settable surface), this operation makes the full
+		// settable surface REQUIRED on every call so the closed shape
+		// exercises every wire-typed leg (plain string, typed boolean)
+		// on every update. The harness's `len(tc.SampleBody) > 0` gate
+		// at `runAPICoverageSuccess` activates the JSON content-type
+		// and byte-for-byte body comparison legs; this fixture
+		// supplies all four REQUIRED fields so the success path
+		// verifies the CLI propagated the body verbatim, including the
+		// typed-boolean wire leg (the byte-for-byte comparison would
+		// catch any silent JSON coercion of `true` → `"true"`).
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (update-by-id
+		// actions collapse missing-target into 400/validation per
+		// Dokploy's tRPC conventions, exactly as documented for
+		// API-0122 `domain-update`, API-0130 `environment-update`,
+		// API-0193 `mounts-update`, and API-0271 `port-update`), so
+		// the 404→CodeNotFound override is structurally inapplicable
+		// here. 400→CodeInvalidInput is *technically* available — a
+		// payload that omits any of the four REQUIRED fields,
+		// supplies a non-string `redirectId`/`regex`/`replacement`,
+		// or sends a non-boolean `permanent` would fail server-side
+		// validation — but the harness reserves 400 representatives
+		// for stories where payload validation is the operation's
+		// *uniquely distinguishing* failure mode. A conventional
+		// update-by-id POST collapses to type-checking, so the
+		// harness-default 401→CodeAuth failure leg remains the most
+		// representative single failure mode every authenticated
+		// Dokploy operation must re-prove, and additionally re-proves
+		// the auth invariant inside the `redirects-cov-*` namespace
+		// for the four-required-scalar update-by-id mutation shape.
+		// Per the established `<tag>-cov-<slug>-<storyID>`
+		// deterministic-but-clearly-fake naming convention, the
+		// fixture id base `redirects-cov-update-0301` keeps `git grep`
+		// traceable to this PRD story without colliding with API-0298
+		// (`redirects-cov-create-0298-app`), API-0299
+		// (`redirects-cov-delete-0299`), or API-0300
+		// (`redirects-cov-one-0300`). The `regex` and `replacement`
+		// scalars carry pattern-shaped string literals so the wire
+		// fixture readably models a routing-redirect config while
+		// still being obviously synthetic, mirroring the API-0298
+		// `redirects-create` precedent. `permanent` is pinned to
+		// `false` (deliberately the inverse of API-0298's `true`) so
+		// the redirects/* roster exercises both branches of the
+		// typed-boolean wire leg across its create/update peers
+		// without either fixture relying on a default.
+		//
+		// API-0301 closes the priority-3 redirects/* roster (all four
+		// redirects/* operations are now covered: `redirects-create`,
+		// `redirects-delete`, `redirects-one`, `redirects-update`).
+		// The next pending PRD-ordered priority-3 backlog entry is
+		// API-0331 `security-create`, which opens a new tag fixture-
+		// isolation namespace `security-cov-*`; the next contributor
+		// must re-verify the spec against
+		// `internal/api/data/openapi.json` per the forward-reference
+		// lesson before assuming any field shape, and **must not**
+		// back-reference the `redirects-cov-*` namespace closed here.
+		SampleBody: json.RawMessage(`{
+			"redirectId": "redirects-cov-update-0301",
+			"regex": "^/redirects-cov-update-0301/(.*)$",
+			"replacement": "/redirects-cov-update-0301-target/$1",
+			"permanent": false
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0335",
 		OperationID: "server-all",
 		Method:      http.MethodGet,

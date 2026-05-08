@@ -16614,3 +16614,66 @@ Learnings for future iterations:
     naming convention that the harness has now applied across 11+
     tag namespaces without collision.
 ---
+
+## 2026-05-08 - API-0301 redirects-update
+- Implemented contract coverage for `redirects-update` (POST /redirects.update)
+  by appending the API-0301 entry to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go` immediately after API-0300
+  `redirects-one`. The new entry closes the priority-3 redirects/* roster.
+- Spec re-verified against `internal/api/data/openapi.json > /redirects.update
+  > post`: POST, no parameters, REQUIRED body declaring four REQUIRED fields
+  (`redirectId`, `regex`, `replacement` strings + `permanent` boolean), zero
+  optional surface, responses 200/400/401/403/500 (no 404). Shape: four-
+  required-scalar update-by-id POST, structurally a near-clone of API-0298
+  `redirects-create` with `applicationId` swapped for `redirectId` — same
+  pattern as API-0271 `port-update` vs API-0268 `port-create`.
+- `permanent` deliberately pinned to `false` (inverse of API-0298's `true`)
+  so the redirects/* roster exercises both branches of the typed-boolean
+  wire leg across its create/update peers without either fixture relying on
+  a default. Fixture id base `redirects-cov-update-0301` keeps `git grep`
+  traceable to this story without colliding with redirects-cov-create-0298,
+  redirects-cov-delete-0299, or redirects-cov-one-0300.
+- Family choice: harness-default 401→CodeAuth retained. Spec omits 404
+  (Dokploy tRPC convention collapses missing-target into 400/validation on
+  update-by-id mutations, exactly as on API-0122 domain-update, API-0130
+  environment-update, API-0193 mounts-update, and API-0271 port-update),
+  so the 404→CodeNotFound override is structurally inapplicable.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — added API-0301 entry
+  - `ralph/prd.json` — set passes: true for API-0301
+  - `ralph/progress.txt` — this entry
+- Verification run: `gofmt -w .`, `go mod tidy`, `go vet ./...`,
+  `go test ./...`, `go test -race ./...` — all pass. The harness's
+  `TestAPICoverage_RegistryInvariants/API-0301/redirects-update`,
+  `TestAPICoverage_SuccessRoundTrip`, and `TestAPICoverage_FailureMatrix`
+  subtests all pass on first run with no plumbing changes required.
+- Remaining risks/follow-ups: none for this story. The next pending PRD-
+  ordered priority-3 backlog entry is API-0331 `security-create`, which
+  opens a new tag fixture-isolation namespace `security-cov-*`; the next
+  contributor must re-verify the spec against
+  `internal/api/data/openapi.json` per the forward-reference lesson before
+  assuming any field shape, and **must not** back-reference the
+  `redirects-cov-*` namespace closed by API-0301.
+- **Learnings for future iterations:**
+  - The "create-shape with id swapped in" pattern documented at API-0271
+    `port-update` (vs API-0268 `port-create`) recurs at API-0301
+    `redirects-update` (vs API-0298 `redirects-create`). When a tag's
+    `*-update` operation declares the same wire surface as its `*-create`
+    peer with only the foreign-id swapped for a by-id target, the family
+    choice mirrors the create's choice: harness-default 401→CodeAuth, no
+    404 override (update-by-id collapses missing-target into 400 per
+    Dokploy's tRPC convention), and the SampleBody re-uses the create's
+    pattern-shaped string fixtures with the new id slot.
+  - When a tag's create/update peers share a typed-boolean field, pin the
+    update fixture's boolean to the inverse of the create fixture's
+    boolean. This exercises both branches of the typed-boolean wire leg
+    across the tag's roster without either fixture relying on a default,
+    and the harness's byte-for-byte body comparison would catch any silent
+    JSON coercion of `true` ↔ `"true"` on either branch.
+  - The harness-side `apiCoverageCase` plumbing already handles every
+    shape API-0301 needs (POST + body, no params, empty `{}` success,
+    401→CodeAuth default failure leg) — no `runAPICoverage*` changes were
+    required to land this story. Subsequent same-shape stories should
+    expect zero plumbing churn and only need the per-case fixture entry +
+    PRD/progress updates.
+---
