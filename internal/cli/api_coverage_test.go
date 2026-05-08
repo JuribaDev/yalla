@@ -2846,6 +2846,71 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.method` / `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0252",
+		OperationID: "organization-removeInvitation",
+		Method:      http.MethodPost,
+		Path:        "/organization.removeInvitation",
+		Tag:         "organization",
+		// Third mutation in the organization/* roster, immediately after
+		// API-0249 `organization-create` (the design-rationale anchor)
+		// and API-0250 `organization-delete` (the fixture-pattern anchor)
+		// — and the first peer to pick up the
+		// `{single-required-scalar}` body shape forecast in the API-0250
+		// future-contributors comment block ("Future contributors
+		// picking up the next mutation in the arc (API-0252
+		// `*-removeInvitation`, API-0253 `*-setDefault`, API-0254
+		// `*-update`, API-0255 `*-updateMemberRole`) should grep
+		// API-0249 first for the design-rationale header and this entry
+		// second for the `{single-required-scalar}` fixture pattern").
+		// Spec source `data/openapi.json > /organization.removeInvitation
+		// > post` declares zero parameters and a required
+		// `application/json` request body whose schema is the
+		// closed-shape single-string-scalar `{invitationId}` (required,
+		// no optionals) — the exact same wire shape as API-0250
+		// `organization-delete` with the field name swapped from
+		// `organizationId` → `invitationId`. Per the established
+		// `<tag>-cov-<slug>-<storyID>` deterministic-but-clearly-fake
+		// naming convention, the fixture token
+		// `yalla-coverage-org-removeInvitation-0252` keeps `git grep`
+		// traceable to this PRD story without colliding with the
+		// API-0249 (`yalla-coverage-org-create-0249`) or API-0250
+		// (`yalla-coverage-org-delete-0250`) mutation fixtures.
+		//
+		// Responses 200/400/401/403/500 mirror every other
+		// organization/* mutation peer — the 200 schema is `{}` with
+		// `additionalProperties: false`, identical to API-0246/0247/
+		// 0248/0249/0250/0251 above; notably the 404 response code that
+		// `organization-one` (the lookup-shape GET) declares is absent
+		// here because removeInvitation is a delete-by-id action whose
+		// missing-target failure path collapses into 400 (validation)
+		// rather than 404 (not found) per Dokploy's tRPC conventions.
+		// The success-leg envelope assertion therefore stays focused on
+		// `data.method` / `data.status` rather than payload projection,
+		// and the representative-failure leg keeps the harness default
+		// (401 → CodeAuth) because auth is the universal failure mode
+		// every organization/* peer must re-prove — 400 (validation) is
+		// exercised once at the package level by the API-0001 entry
+		// rather than re-asserted on every minimum-required-body POST
+		// in the roster.
+		//
+		// Future contributors picking up the remaining mutations in
+		// the arc (API-0253 `*-setDefault`, API-0254 `*-update`,
+		// API-0255 `*-updateMemberRole`) should continue grepping
+		// API-0249 first for the design-rationale header and this
+		// entry (or API-0250) second for the
+		// `{single-required-scalar}` fixture pattern — every successor
+		// remains a single or two-field POST that can copy the
+		// closed-shape literal verbatim with the field names swapped.
+		SampleBody: json.RawMessage(`{
+			"invitationId": "yalla-coverage-org-removeInvitation-0252"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior organization/* peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

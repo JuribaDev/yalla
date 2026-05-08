@@ -5918,3 +5918,54 @@
     `git grep` traceable without colliding with mutation fixtures on the
     same tag.
 ---
+
+## 2026-05-08 - API-0252 (organization-removeInvitation)
+- **Implemented**: Coverage for Dokploy operation `organization-removeInvitation`
+  (POST /organization.removeInvitation, tag organization). This is the third
+  POST mutation in the organization/* roster, picking up the
+  `{single-required-scalar}` body shape forecast in the API-0250 future-
+  contributors comment block. Spec source declares zero parameters and a
+  required JSON body whose schema is the closed-shape `{invitationId}`
+  (string, required, no optionals) — wire-identical to API-0250
+  `organization-delete` with the field name swapped.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended one `apiCoverageCase`
+    struct literal for `API-0252` after the API-0251 entry. Reused the
+    `{single-required-scalar}` POST fixture pattern with
+    `SampleBody: {"invitationId":"yalla-coverage-org-removeInvitation-0252"}`,
+    `SuccessResponse: "{}"`, and the harness default 401→CodeAuth failure
+    leg. Comment block cross-references API-0249 (design rationale) and
+    API-0250 (fixture pattern), and notes the missing-target-collapses-into-
+    400 (no 404) tRPC convention so future contributors do not assume a
+    404 representative-failure variant.
+  - `ralph/prd.json` — flipped story `API-0252` `passes: true`.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass; `internal/cli 1.080s`.
+  - `go test -race ./...` — all packages pass; `internal/cli 2.525s`.
+- **Tools NOT available locally**: `goimports`, `golangci-lint`,
+  `staticcheck`, `govulncheck`, `goreleaser` (per the documented baseline).
+- **Remaining risks / follow-ups**: 365 stories remain pending. Next in
+  the organization/* mutation arc is API-0253 `organization-setDefault`,
+  which the registry already shows as a single-required-scalar POST and
+  can copy this entry's fixture pattern verbatim.
+- **Learnings for future iterations**:
+  - The `coveredAPIOperations` table-driven harness automates every
+    acceptance-criteria line item (registry presence, schema reachability,
+    manifest inclusion, httptest success, representative-failure leg) for
+    a `single-required-scalar` POST — appending one struct literal
+    completes the story without any new test plumbing.
+  - `organization-removeInvitation` notably **omits** the 404 response code
+    that the lookup-shape GET `organization-one` declares — Dokploy's tRPC
+    surface collapses missing-invitation into a 400 (validation) rather
+    than a 404 (not found). The harness default 401→CodeAuth failure leg
+    is the right call; do not invent a per-case 404 representative-failure
+    variant for delete-by-id mutations in this tag.
+  - Per-case fixture token convention reaffirmed:
+    `<tag>-cov-<slug>-<storyID>` → `yalla-coverage-org-removeInvitation-0252`
+    keeps `git grep` traceable without colliding with API-0249/0250
+    fixtures (`yalla-coverage-org-create-0249`,
+    `yalla-coverage-org-delete-0250`).
+---
