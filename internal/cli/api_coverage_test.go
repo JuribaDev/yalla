@@ -468,6 +468,30 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0023",
+		OperationID: "application-readTraefikConfig",
+		Method:      http.MethodGet,
+		Path:        "/application.readTraefikConfig",
+		Tag:         "application",
+		// Third GET-shaped application/* entry. Mirrors the schema in
+		// `data/openapi.json` for /application.readTraefikConfig: no
+		// request body, a single required query parameter
+		// `applicationId` (string) — the same shape as API-0021's
+		// `application-one`. The harness forwards SampleQuery via the
+		// `--input` JSON `query` field, and `runAPICoverageSuccess`
+		// re-reads `r.URL.Query()` to confirm the CLI propagated the
+		// param verbatim. Deterministic-but-clearly-fake value follows
+		// the established `app-cov-<slug>-<storyID>` convention.
+		SampleQuery: map[string][]string{
+			"applicationId": {"app-cov-read-traefik-config-0023"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties: false`,
+		// matching every prior application/* peer. Empty-object body keeps
+		// the success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

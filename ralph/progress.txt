@@ -2668,3 +2668,21 @@
     `SamplePathParams`) accordingly, keep `SuccessResponse: \`{}\`` for
     application/* peers whose 200 is the spec's empty object.
 ---
+
+## 2026-05-08 - API-0023
+- Implemented coverage for `application-readTraefikConfig` (GET /application.readTraefikConfig).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended `apiCoverageCase` entry mirroring API-0021/API-0022 (single required query param `applicationId`, empty success body).
+  - `ralph/prd.json` — flipped `passes` to `true` for API-0023.
+- Verification run from repo root:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — no diff.
+  - `go vet ./...` — clean.
+  - `go test ./...` — pass (cli 1.121s, all other packages cached).
+  - `go test -race ./...` — pass (cli 2.397s, all other packages cached).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser` — not installed locally; skipped per existing convention.
+- Remaining risks/follow-ups: none; story matches established GET-with-query-param shape (API-0021 `application-one`, API-0022 `application-readAppMonitoring`) and rides the same coverage harness invariants.
+- **Learnings for future iterations:**
+  - The `application-readTraefikConfig` op shares the exact same shape as API-0021 (`application-one`): single required `applicationId` query parameter, empty `{}` 200 body. Reused the same SampleQuery slug convention (`app-cov-read-traefik-config-0023`) so future schema validators see a clearly-fake but well-formed value.
+  - Pattern reaffirmed: GET application/* operations only need a one-struct append to `coveredAPIOperations` — no command/registry/manifest code change is required because the embedded OpenAPI spec already lists every operation and the harness drives schema/manifest/success/failure assertions in a loop.
+---
