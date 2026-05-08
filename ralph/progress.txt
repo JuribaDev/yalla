@@ -17016,3 +17016,73 @@ Learnings for future iterations:
     `requestBody`) are fully covered by the SampleQuery map alone —
     no body fixture is required when the spec omits `requestBody`.
 ---
+
+## 2026-05-08 - API-0131 (gitea-create)
+- Implemented contract coverage for the `gitea-create` Dokploy operation —
+  the **kickoff** entry on the gitea/* roster (eight stories total —
+  API-0131..API-0138). Per the per-tag fixture-isolation rule established
+  at API-0188 / API-0246 / API-0290 / API-0298 / API-0331, this entry
+  opens a fresh `gitea-cov-*` namespace that subsequent gitea/* peers
+  must inherit. Re-verified the spec against
+  `internal/api/data/openapi.json > /gitea.create > post`: POST, no
+  parameters, REQUIRED request body with two REQUIRED string fields
+  (`giteaUrl`, `name`) and a wide surface of OPTIONAL fields including
+  OAuth credentials (`clientId`, `clientSecret`, `accessToken`,
+  `refreshToken`); responses 200/400/401/403/500 with no 404 (matching
+  every prior `*-create` mutation). Wire shape mirrors the
+  two-required-string-scalar precedent set by API-0125 `environment-create`
+  and API-0122 `domain-update`. SampleBody supplies only the two REQUIRED
+  fields — every OPTIONAL credential field is intentionally omitted to
+  keep the fixture minimal and to avoid creating a fixture that
+  hard-codes secret-shaped values that would interfere with a future
+  redaction audit.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — new fixture inserted between
+    API-0130 `environment-update` and API-0188 `mounts-allNamedByApplicationId`,
+    keeping the diff-friendly StoryID-sorted invariant
+  - `ralph/prd.json` — set `passes: true` for API-0131
+- Verification run:
+  - `gofmt -w .` — clean
+  - `go mod tidy` — clean
+  - `go vet ./...` — clean
+  - `go test ./...` — all packages pass
+  - `go test -race ./...` — all packages pass; the new
+    `TestAPICoverage_*` family (RegistryInvariants, SchemaCommandWorks,
+    ManifestListsOperation, SuccessRoundTrip, RepresentativeFailure)
+    spawned the `API-0131/gitea-create` subtest and all five legs went
+    green
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — not installed locally, documented per project
+    convention
+- Remaining risks or follow-ups:
+  - The next pending PRD-ordered priority-5 backlog entry is API-0132
+    `gitea-getGiteaBranches`, which continues inside the `gitea-cov-*`
+    namespace opened here. The next contributor must re-verify the spec
+    against `internal/api/data/openapi.json` per the forward-reference
+    lesson before assuming any field shape — based on operation name
+    conventions it likely takes a `gitProviderId` query parameter.
+- **Learnings for future iterations:**
+  - The `gitea-create` body has 13 OPTIONAL fields including OAuth
+    credentials (`clientSecret`, `accessToken`, `refreshToken`,
+    `clientId`). When opening a tag whose payloads include
+    secret-shaped values, the minimal-required-only fixture rule is
+    *load-bearing*: a fixture that hard-codes a value into one of those
+    optional fields would either (a) trip the renderer-layer redactor
+    if the fixture string happens to overlap a token-shaped pattern, or
+    (b) embed a credential-shaped string in the test corpus that a
+    future redaction audit might mis-attribute. Keep gitea/* fixtures
+    OPTIONAL-field-free until a follow-up story explicitly adds
+    optional-field coverage.
+  - The fixture jumps from API-0130 (line 7449) directly to API-0188
+    (line 7553) before this story; future contributors filling priority-5
+    entries between API-0131 and API-0188 (gitea/*, github/*, gitlab/*,
+    gitProvider/*, licenseKey/*) should grep the file for the StoryID
+    immediately preceding theirs in PRD order to find the correct
+    insertion point — `coveredAPIOperations` is StoryID-sorted, not
+    line-monotonic.
+  - `go test -run 'API-0131'` returns "no tests to run" because Go's
+    `-run` regex matches against the full test name including the parent
+    function. Use `-run 'TestAPICoverage'` and `grep` the output for
+    `0131` to confirm a single new fixture's subtests, exactly as on
+    every prior single-story contract addition.
+---
