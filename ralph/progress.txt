@@ -2777,3 +2777,16 @@
     the historical Dokploy spec describes as targeting a single application
     by id. Confirm each individually rather than batching assumptions.
 ---
+
+## 2026-05-08 - API-0005
+- Added `apiCoverageCase` literal for `ai-get` (GET /ai.get) in `internal/cli/api_coverage_test.go`, slotted between API-0004 and API-0011 to keep the slice sorted by StoryID.
+- Single required query parameter `aiId` propagated via `SampleQuery`; harness re-reads `r.URL.Query()` to verify CLI forwarded the param verbatim.
+- Files changed: `internal/cli/api_coverage_test.go`, `ralph/prd.json`, `ralph/progress.txt`.
+- Verification: `gofmt -w .`, `go mod tidy`, `go vet ./...`, `go test ./...`, `go test -race ./...` — all green. `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, and `goreleaser` remain not-installed locally and were therefore not run.
+- Results: All five contract invariants (registry presence, schema reach, manifest inclusion, success round-trip with query forwarding, 401 → `E_AUTH` failure) pass.
+- Remaining risks: API-0006..API-0010 (the rest of the AI block, including GET /ai.getAll with no params and GET /ai.getModels with two query params) are still `passes:false`; API-0007's two-query-param fixture will be the first to exercise multi-key `SampleQuery` for the ai/* tag.
+- **Learnings for future iterations:**
+  - GET-shaped operations have no `SampleBody`; `buildCoverageInputArgs` skips the `--input` flag entirely when all sample fields are empty, so a query-only fixture stays terse.
+  - The `<tag>-cov-<slug>-<storyID>` naming convention from the application/* roster carries over cleanly to ai/* — reuse it for grep-friendly cross-tag fixtures (e.g. `ai-cov-get-0005`).
+  - The previous worker had skipped API-0005..API-0010 (priority 5) in favour of completing the application/* priority 2 block. Pick AI stories next; the `coveredAPIOperations` slice is sorted by StoryID, so the API-0005 entry slots cleanly between API-0004 (ai-deploy) and API-0011 (application-cancelDeployment).
+---
