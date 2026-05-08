@@ -10416,3 +10416,77 @@ Learnings for future iterations:
     forward-reference comment naming the next-but-one
     operation's PRD ID range is unique per story.
 ---
+
+## 2026-05-08 - API-0380
+- Implemented: Added settings-readTraefikEnv (GET
+  /settings.readTraefikEnv) to the append-only
+  `coveredAPIOperations` slice in `internal/cli/api_coverage_test.go`.
+  Spec re-verified per the API-0345..API-0379 forward-reference
+  lesson against `internal/api/data/openapi.json >
+  /settings.readTraefikEnv > get`: a GET with **one OPTIONAL
+  query parameter** `serverId` (string, `required: false`) and
+  **no request body**. Responses 200/400/401/403/404/500 — 404
+  stays present, matching the parameter-bearing GET precedents at
+  API-0369 `settings-getTraefikPorts`, API-0373
+  `settings-haveTraefikDashboardPortEnabled`, and API-0377
+  `settings-readDirectories`. The 200 schema is `{}` with
+  `additionalProperties: false`, matching every prior covered
+  peer in the settings/* GET cohort.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended a single
+    `apiCoverageCase` literal (sixteenth entry of the settings/*
+    GET cohort, fourth of the parameter-bearing GET sub-roster,
+    thirtieth entry overall on the settings/* coverage roster).
+    The case carries `StoryID`, `OperationID`, `Method`,
+    `Path`, `Tag`, `SampleQuery` (with the
+    `set-cov-readTraefikEnv-0380` slug literal under the
+    settings/* `set-cov-*` namespace), and `SuccessResponse: '{}'`.
+    Failure-leg fields are intentionally omitted so the harness
+    default (401 → CodeAuth) supplies the canonical
+    representative failure. No production code changes — the
+    generic httptest harness fully exercises this shape.
+  - `ralph/prd.json` — set `passes: true` on API-0380.
+- Verification run:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass.
+  - `go test -race ./...` — all packages pass.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    and `goreleaser` remain not installed locally (unchanged from
+    prior iterations).
+- Results: All five required checks pass. The append-only coverage
+  registry fired the registry-presence, schema-reachability,
+  manifest-inclusion, success-leg, and failure-leg subtests for
+  API-0380 with no extra production code required — Dokploy's
+  parameter-bearing GET with an OPTIONAL `serverId` query and
+  empty-object 200 schema is fully exercised by the generic
+  httptest harness.
+- Remaining risks/follow-ups:
+  - 294 PRD stories still have `passes: false`; next in the
+    settings/* roster is API-0381 `settings-readTraefikFile`.
+- **Learnings for future iterations:**
+  - The parameter axis flip-flops across consecutive `read*`
+    entries: API-0377 (parameter-bearing `serverId`) →
+    API-0378/API-0379 (parameter-free) → API-0380
+    (parameter-bearing `serverId` again). The slug-prefix-is-not-
+    shape rule held: the first-three-of-four `read*` peers'
+    parameter shape did not predict the fourth. Always re-read
+    `internal/api/data/openapi.json > <path> > <method>` before
+    populating `SampleQuery`/`SamplePathParams`/`SampleBody`.
+  - The `set-cov-<slug>-<storyId>` fixture-slug convention keeps
+    every settings/* parameter-bearing entry's literal unique
+    against API-0351..API-0379's prior `set-cov-*` slugs and
+    orthogonal to closed namespaces from prior tags. Use the
+    operation slug (e.g., `readTraefikEnv`) plus the four-digit
+    story id (e.g., `0380`) for guaranteed uniqueness.
+  - For Dokploy GETs in this OpenAPI document, the rule of thumb
+    "OPTIONAL `serverId` is conceptually a per-host probe" tracks
+    well: `readTraefikEnv` reads OS process env vars bound to a
+    specific node, so `serverId` makes sense; whereas
+    `readMiddlewareTraefikConfig` and `readTraefikConfig` read
+    controller-owned global router/middleware definitions, so
+    they are platform-wide and parameter-free. Use that
+    semantic-shape correlation as a *prediction* but always
+    confirm against the spec.
+---

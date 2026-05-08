@@ -10148,6 +10148,190 @@ var coveredAPIOperations = []apiCoverageCase{
 		// re-verification stays mandatory across every family
 		// transition.
 	},
+	{
+		StoryID:     "API-0380",
+		OperationID: "settings-readTraefikEnv",
+		Method:      http.MethodGet,
+		Path:        "/settings.readTraefikEnv",
+		Tag:         "settings",
+		// Thirtieth entry on the settings/* coverage roster,
+		// inheriting the `set-cov-*` per-tag fixture-isolation
+		// namespace established by API-0351
+		// `settings-assignDomainServer` and extended through
+		// API-0379 `settings-readTraefikConfig` (must not
+		// back-reference the closed `srv-cov-*`, `proj-cov-*`,
+		// `org-cov-*`, `compose-cov-*`, `app-cov-*`, `ai-cov-*`,
+		// or any other prior tag's namespace, per the per-tag
+		// isolation rule reasserted at API-0335..API-0379 and
+		// originally established at API-0246
+		// `organization-active`).
+		//
+		// **Spec re-verified per the API-0345..API-0379
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json >
+		// /settings.readTraefikEnv > get`: a **GET** with **one
+		// OPTIONAL query parameter** `serverId` (string,
+		// `required: false` — scopes the Traefik environment
+		// read to a specific Dokploy worker server when the
+		// runtime environment being inspected lives on a remote
+		// node rather than the controller) and **no request
+		// body** (GETs in this OpenAPI document never carry a
+		// `requestBody` field). Responses 200/400/401/403/404/500
+		// — the **404 stays present**, matching the
+		// parameter-bearing GET precedents at API-0369
+		// `settings-getTraefikPorts`, API-0373
+		// `settings-haveTraefikDashboardPortEnabled`, and
+		// API-0377 `settings-readDirectories`, and orthogonal to
+		// the parameter-free GET sub-roster opened at API-0363
+		// `settings-getDokployCloudIps` and extended through
+		// API-0364..API-0368, API-0371, API-0372, API-0374,
+		// API-0375, API-0376, API-0378, and API-0379. The 200
+		// schema is `{}` with `additionalProperties: false`,
+		// matching every prior covered peer in the settings/*
+		// GET cohort.
+		//
+		// **Forward-reference correction.** The API-0379 hand-off
+		// comment hedged that the parameter axis (zero vs one
+		// optional query) had to be re-verified per-operation
+		// despite the verb axis staying GET and the slug prefix
+		// staying `read*`, and explicitly flagged that four
+		// consecutive `read*` entries can still sit on different
+		// sides of the parameter axis. Direct inspection of the
+		// spec at `/settings.readTraefikEnv > get` confirmed the
+		// divergence in the affirmative direction: this entry
+		// **does** carry an OPTIONAL `serverId` query parameter
+		// (unlike API-0378 `readMiddlewareTraefikConfig` and
+		// API-0379 `readTraefikConfig` which were both
+		// parameter-free), so the entry tracks the
+		// parameter-bearing GET precedents at API-0369, API-0373,
+		// and API-0377 rather than the parameter-free precedents
+		// at API-0363..API-0368, API-0371, API-0372, API-0374,
+		// API-0375, API-0376, API-0378, and API-0379. The
+		// per-operation re-verification rule kept the contributor
+		// from accidentally inheriting the API-0379
+		// parameter-free shape just because the slug prefix
+		// `read*` matched and the two preceding peers
+		// (API-0378, API-0379) were both parameter-free — the
+		// slug-prefix-is-not-shape lesson reasserted at
+		// API-0371..API-0379 explicitly anticipated this case,
+		// and the affirmative parameter pivot in API-0380
+		// (mirroring API-0377 after two parameter-free peers)
+		// demonstrates that the `read*` family continues to
+		// straddle both sides of the parameter axis. Reading the
+		// Traefik environment is conceptually a per-host probe —
+		// the environment variables are bound to the operating
+		// system process running Traefik on a specific node, so
+		// scoping the read with `serverId` is meaningful in a
+		// multi-node Dokploy deployment, unlike the platform-wide
+		// router/middleware definitions read by API-0378 and
+		// API-0379.
+		//
+		// **Family continuation — sixteenth entry of the
+		// settings/* GET cohort, fourth of the parameter-bearing
+		// GET sub-roster.** API-0363 opened the parameter-free
+		// sub-family by pivoting off the eleven-entry POST cohort
+		// (API-0353..API-0362); API-0364..API-0368 extended the
+		// parameter-free shape across five consecutive entries;
+		// API-0369 pivoted to a single OPTIONAL `serverId` query
+		// (the first parameter-bearing GET in the settings/*
+		// roster); API-0370 pivoted the verb axis to POST while
+		// keeping the no-body, no-parameter shape; API-0371
+		// reverted to the parameter-free GET shape; API-0372
+		// stayed parameter-free; API-0373 pivoted back to the
+		// OPTIONAL `serverId` query shape mirroring API-0369
+		// (the second parameter-bearing GET in the settings/*
+		// roster); API-0374 reverted to the parameter-free
+		// shape; API-0375 continued the parameter-free shape;
+		// API-0376 continued the parameter-free shape; API-0377
+		// pivoted back to the OPTIONAL `serverId` query shape
+		// mirroring API-0369 and API-0373 (the third
+		// parameter-bearing GET in the settings/* roster);
+		// API-0378 reverted to the parameter-free shape;
+		// API-0379 continued the parameter-free shape; and
+		// API-0380 pivots back to the OPTIONAL `serverId` query
+		// shape mirroring API-0369, API-0373, and API-0377 (the
+		// fourth parameter-bearing GET in the settings/*
+		// roster). Following the API-0369, API-0373, and
+		// API-0377 precedents and the per-tag isolation rule, we
+		// populate `SampleQuery` with a fixture-slug literal
+		// under the settings/* `set-cov-*` namespace so the
+		// success-leg `r.URL.Query()` re-read at
+		// `runAPICoverageSuccess` exercises end-to-end forwarding
+		// even though the parameter is OPTIONAL — the harness
+		// does not gate on `required`-ness, it forwards whatever
+		// `SampleQuery` carries (per the API-0077
+		// `compose-getTags` precedent, the API-0041
+		// `backup-listBackupFiles` precedent, the API-0369
+		// `settings-getTraefikPorts` precedent, the API-0373
+		// `settings-haveTraefikDashboardPortEnabled` precedent,
+		// and the API-0377 `settings-readDirectories` precedent).
+		//
+		// Fixture conventions:
+		//   * `set-cov-readTraefikEnv-0380` — slug-named literal
+		//     for the OPTIONAL `serverId` query parameter, unique
+		//     against API-0351..API-0379's `set-cov-*` slugs and
+		//     orthogonal to every prior tag's `srv-cov-*`,
+		//     `proj-cov-*`, `org-cov-*`, `compose-cov-*`,
+		//     `app-cov-*`, `ai-cov-*`, etc. namespaces.
+		SampleQuery: map[string][]string{
+			"serverId": {"set-cov-readTraefikEnv-0380"},
+		},
+		// 200 response in the spec is `{}` with
+		// `additionalProperties: false`, matching the
+		// empty-success convention shared by every prior
+		// settings/* GET peer (API-0363..API-0379). Empty-object
+		// body keeps the success-leg envelope assertion focused
+		// on `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+		//
+		// **Failure-leg fields are intentionally omitted.** Even
+		// though the spec declares 404 on this operation, the
+		// per-tag opener convention reasserted at
+		// API-0335..API-0379 reserves 404 → CodeNotFound for the
+		// canonical by-id `*-one` peer, not for parameter-bearing
+		// environment-variable readers like `readTraefikEnv`
+		// (which returns the runtime environment of the Traefik
+		// process, not a single resource keyed by id — and the
+		// `serverId` query is OPTIONAL, so the happy path itself
+		// does not require the parameter to resolve to a known
+		// target). Auth is the universal failure mode every
+		// Dokploy operation must re-prove, so 401 → CodeAuth via
+		// the harness default (`tc.FailureStatus == 0` → 401,
+		// `tc.FailureCode == ""` → CodeAuth) stays the most
+		// informative representative. 400 → CodeInvalidInput
+		// stays reserved for stories where payload validation is
+		// the operation's distinguishing failure mode; this entry
+		// uses the canonical 401.
+		//
+		// The next case in the settings/* roster per PRD
+		// ordering is API-0381 `settings-readTraefikFile`
+		// (declared a **GET** in the PRD). The next contributor
+		// must re-verify against `internal/api/data/openapi.json
+		// > /settings.readTraefikFile > get` per the
+		// forward-reference lesson before assuming any field is
+		// identical to this entry — the response-set axis
+		// (presence vs absence of 404), the parameter axis
+		// (zero vs one optional query vs other), and the
+		// request-body axis (none vs JSON) must each be
+		// re-verified per-operation. The slug stays `read*` but
+		// pivots from a Traefik environment-variable reader
+		// (`readTraefikEnv`) to a Traefik file reader
+		// (`readTraefikFile`); per the slug-prefix-is-not-shape
+		// lesson reasserted at API-0371..API-0379, five
+		// consecutive `read*` entries can still sit on different
+		// sides of the parameter axis or carry different response
+		// sets. Do not assume the parameter list, request body,
+		// or response set carries over solely because the verb
+		// is GET and the slug prefix matches; the parameter-axis
+		// flip-flop across API-0371..API-0380 (parameter-free →
+		// parameter-bearing → parameter-free → parameter-free →
+		// parameter-free → parameter-bearing → parameter-free →
+		// parameter-free → parameter-bearing) demonstrates that
+		// adjacent entries regularly sit on opposite sides of
+		// the parameter axis. Per-operation re-verification stays
+		// mandatory across every family transition.
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
