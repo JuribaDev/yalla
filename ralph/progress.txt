@@ -2479,3 +2479,51 @@
     the bottom of `coveredAPIOperations`; resist the urge to group
     by tag or alphabetise by operationId.
 ---
+
+## 2026-05-08 - API-0019
+- **Implemented**: API coverage for `application-markRunning`
+  (POST /application.markRunning). Pattern follows
+  API-0013/API-0015/API-0017/API-0018: appended one
+  `apiCoverageCase{...}` literal to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go`. The five-part harness
+  (registry invariants, `yalla schema get`, `yalla manifest`,
+  httptest success round-trip, default 401 → CodeAuth representative
+  failure) now also gates `application-markRunning`. No production-code
+  changes; the operation is already wired through the embedded
+  OpenAPI spec, the `api.Default()` registry, and the raw
+  `yalla api call` executor.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended one `apiCoverageCase`
+    entry for `API-0019 / application-markRunning`. Fixture supplies
+    the only required field (`applicationId`) with a deterministic-
+    but-clearly-fake value (`app-cov-mark-running-0019`). Same minimal
+    shape as API-0013/0015/0017/0018.
+  - `ralph/prd.json` — `API-0019.passes` flipped to `true`.
+- **Verification run**: `gofmt -w .`, `go mod tidy`, `go vet ./...`,
+  `go test ./...`, `go test -race ./...`, plus a focused
+  `go test ./internal/cli -run 'TestAPICoverage' -count=1`. All green;
+  the new `API-0019/application-markRunning` subtests pass.
+- **Tools not installed locally** (documented per the Codebase Patterns
+  baseline rather than silently skipped): `goimports`, `golangci-lint`,
+  `staticcheck`, `govulncheck`, `goreleaser`. CI still runs the
+  security/lint matrix on push.
+- **Results**: All required gates pass. `application-markRunning` is
+  now registry-checked, schema-reachable, manifest-listed, success-
+  round-tripped through `httptest.Server`, and failure-mapped to
+  `CodeAuth` on 401.
+- **Remaining risks / follow-ups**: None for this story. The next
+  pending API story by priority is API-0020 (`application-move`,
+  POST /application.move), still `passes: false`.
+- **Learnings for future iterations**:
+  - The `applicationId`-only minimal pattern now spans
+    cancelDeployment, cleanQueues, clearDeployments, delete,
+    disconnectGitProvider, killBuild, and markRunning. The next peers
+    in the application/* tag (move, redeploy, refreshToken, reload,
+    start, stop, etc.) likely follow the same single-field shape; the
+    edit remains mechanical until a richer body arrives (e.g.
+    `application-move` may add `targetEnvironmentId`).
+  - Always re-confirm the OpenAPI shape before copy-pasting: even peers
+    inside the same tag occasionally pick up extra required fields.
+    The 30-second `node -e require('./internal/api/data/openapi.json')`
+    spot-check pays for itself versus a misleading fixture in CI.
+---
