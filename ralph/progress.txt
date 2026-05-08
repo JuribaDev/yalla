@@ -7695,3 +7695,72 @@
     spec diff above. Maintaining this discipline keeps the harness
     truly append-only.
 ---
+
+## 2026-05-08 - API-0350 - Cover server-withSSHKey (GET /server.withSSHKey)
+- Added `coveredAPIOperations` entry for `server-withSSHKey` in
+  `internal/cli/api_coverage_test.go`, closing out the server/* tag
+  (entries API-0335..API-0350 now complete).
+- The spec is a parameter-free GET (zero query, zero path, zero body),
+  byte-identical to `/ai.getAll > get` modulo the `tag` array. Verified
+  via `diff <(jq -S '.paths["/ai.getAll"].get | del(.operationId)' …)
+  <(jq -S '.paths["/server.withSSHKey"].get | del(.operationId)' …)` —
+  single-line diff on `tag` only. Inherits the parameter-free GET wire
+  shape from API-0006 `ai-getAll` (rather than mirroring API-0349
+  `server-validate`'s single-required-query-param shape, which the
+  forward-reference comment correctly flagged as "unknown until
+  re-verified"). No SampleQuery, SamplePathParams, or SampleBody —
+  matches the no-input agent-contract shape
+  `yalla api call server-withSSHKey --input '{}' --json`.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (+ ~95 lines of new entry +
+    inline narrative; no other code touched).
+  - `ralph/prd.json` (`API-0350.passes` flipped to `true`).
+  - `ralph/progress.txt` (this entry).
+- Verification run:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — pass.
+  - `go test -race ./...` — pass (cli pkg ran with -race in 2.6s).
+- Results: All required quality gates green. Failure-leg covered by the
+  harness default (401 → CodeAuth) per the per-tag opener convention
+  reasserted at API-0335..API-0349; 404 → CodeNotFound stays reserved
+  for the canonical by-id `server-one` peer (API-0342).
+- Remaining risks or follow-ups:
+  - Server/* tag is now closed (16 stories complete). The next pending
+    case in the PRD roster is API-0351 `settings-assignDomainServer`,
+    which opens the settings/* tag and must introduce a fresh
+    `set-cov-*` per-tag fixture-isolation namespace orthogonal to the
+    `srv-cov-*` namespace established at API-0335. Per the
+    forward-reference lesson, do NOT mirror API-0350's shape blindly:
+    the settings/* opener must re-verify its spec against
+    `internal/api/data/openapi.json > /settings.assignDomainServer`
+    before authoring.
+- **Learnings for future iterations:**
+  - **Always re-verify spec before mirroring.** API-0349's
+    forward-reference comment correctly flagged that API-0350's shape
+    was "unknown until re-verified," and the verification turned up
+    a different shape (parameter-free GET, not single-required-query-
+    param). Blindly copying API-0349's `SampleQuery: serverId` would
+    have produced a runtime error when the harness POSTed an
+    unexpected query parameter against the parameter-free spec.
+  - **Parameter-free GET cohort lineage.** When an operation has zero
+    parameters and no request body, mirror the API-0006 `ai-getAll`
+    cohort (continued by API-0098 `deployment-allCentralized`,
+    API-0246 `organization-active`, etc.): leave `SampleQuery`,
+    `SamplePathParams`, and `SampleBody` all unset and rely on
+    `runAPICoverageSuccess`'s wire-level invariants (method, path,
+    Authorization header, empty query string, empty body).
+  - **Tag-closing entries should forward-reference the next tag's
+    opener.** API-0350 closes server/* and forward-references
+    API-0351 `settings-assignDomainServer` (the settings/* opener),
+    flagging the per-tag fixture-isolation namespace transition
+    (`srv-cov-*` → `set-cov-*`) so the next contributor doesn't
+    accidentally back-reference the closed tag's namespace.
+  - **`diff <(jq -S '.paths[…].get | del(.operationId)' …)` is the
+    canonical spec-equivalence check.** Stripping the `operationId`
+    field lets you diff the structural shape (parameters, request
+    body, responses) without the unique-per-operation key creating
+    noise. Mention the byte-identical comparison in the inline
+    narrative so future readers can verify with the same one-liner.
+---

@@ -5236,6 +5236,100 @@ var coveredAPIOperations = []apiCoverageCase{
 		// projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0350",
+		OperationID: "server-withSSHKey",
+		Method:      http.MethodGet,
+		Path:        "/server.withSSHKey",
+		Tag:         "server",
+		// Sixteenth and **final** entry on the server/* coverage
+		// roster, closing out the tag opened at API-0335
+		// `server-create`. Unlike the four single-required-query-param
+		// GETs that came before it (API-0339 `server-getDefaultCommand`,
+		// API-0342 `server-one`, API-0345 `server-security`, API-0349
+		// `server-validate`), `/server.withSSHKey` is a
+		// **parameter-free** GET — the spec declares zero parameters
+		// and no request body, exactly mirroring the cross-tag
+		// parameter-free GET cohort opened by API-0006 `ai-getAll`,
+		// continued by API-0098 (`deployment-allCentralized`),
+		// API-0246 (`organization-active`), and others. Inherits the
+		// `srv-cov-*` per-tag fixture-isolation namespace established
+		// at API-0335 (must not back-reference the cross-tag
+		// `proj-cov-*` / `org-cov-*` namespaces, per the per-tag
+		// isolation rule reasserted at API-0335..API-0349 and
+		// originally established at API-0246 `organization-active`).
+		//
+		// **Spec re-verified per the API-0345 / API-0347 / API-0348 /
+		// API-0349 forward-reference lesson** against
+		// `internal/api/data/openapi.json > /server.withSSHKey > get`:
+		// zero request body, zero parameters (no query, no path, no
+		// header). Responses 200/400/401/403/404/500 — byte-identical
+		// to `/ai.getAll > get` modulo the `tag` field (verified at
+		// story authoring time via
+		// `diff <(jq -S '.paths["/ai.getAll"].get | del(.operationId)' …)
+		// <(jq -S '.paths["/server.withSSHKey"].get | del(.operationId)' …)`,
+		// which produced a single-line diff on the `tag` array only).
+		// The 200 schema is `{}` with `additionalProperties: false`,
+		// matching every prior server/* peer. The API-0349
+		// forward-reference comment explicitly flagged this entry as
+		// having an unknown shape until re-verified — the spec check
+		// confirmed it is **not** a copy-and-rename of API-0349's
+		// single-required-query-param shape; instead it inherits the
+		// parameter-free GET wire shape from API-0006 `ai-getAll`.
+		// Future contributors writing the first entry of a new tag
+		// should grep this entry first when encountering a
+		// parameter-free GET — it is the most recent server/*
+		// expression of that shape.
+		//
+		// Fixture conventions:
+		//   * No per-case fixture token is allocated because the
+		//     operation accepts no inputs — there is no slug to embed
+		//     in a query value, path parameter, or request body.
+		//     Future server/* peers should NOT introduce a
+		//     `srv-cov-withSSHKey-0350` token retroactively; the
+		//     parameter-free GET cohort precedent (API-0006
+		//     `ai-getAll`, API-0246 `organization-active`) leaves
+		//     SampleQuery / SamplePathParams / SampleBody all unset
+		//     and the harness asserts the wire-level invariants
+		//     (method, path, Authorization header, empty query
+		//     string, empty body) at runAPICoverageSuccess without
+		//     requiring fixture tokens.
+		//   * The canonical agent invocation is therefore
+		//     `yalla api call server-withSSHKey --input '{}' --json`,
+		//     matching the no-input shape the agent contract
+		//     guarantees.
+		//
+		// **Failure-leg fields are intentionally omitted.** Even
+		// though the spec also declares 404 on this operation, the
+		// per-tag opener convention reasserted at API-0335..API-0349
+		// reserves 404 → CodeNotFound for the canonical by-id
+		// `*-one` peer (API-0342 `server-one`), not for
+		// parameter-free GETs like this one. Auth is the universal
+		// failure mode every Dokploy operation must re-prove, so
+		// 401 → CodeAuth via the harness default
+		// (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""`
+		// → CodeAuth) stays the most informative representative.
+		// **Do not** copy the FailureStatus / FailureCode lines from
+		// API-0342 — that was a one-time by-id-shaped GET override.
+		//
+		// This entry **closes out the server/* tag** (sixteen
+		// stories, API-0335..API-0350). The next pending case in the
+		// PRD roster is API-0351 `settings-assignDomainServer`, which
+		// opens the settings/* tag and will introduce a fresh
+		// `set-cov-*` per-tag fixture-isolation namespace orthogonal
+		// to `srv-cov-*`. Future contributors authoring API-0351
+		// should NOT mirror this entry's shape blindly: the
+		// settings/* opener must re-verify its spec against
+		// `internal/api/data/openapi.json > /settings.assignDomainServer`
+		// per the API-0345 / API-0347 / API-0348 / API-0349 / this
+		// forward-reference lesson.
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior server/* peer. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
