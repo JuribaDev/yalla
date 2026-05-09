@@ -25980,3 +25980,82 @@ forward-reference lesson before assuming any field shape.
     kickoff API-0209 `create-custom` is no longer in active extension
     inside this tag; new verb cohorts open their own slug anchors.
 ---
+
+## 2026-05-09 - API-0220 - Cover notification-getEmailProviders (GET /notification.getEmailProviders)
+- **Implemented**: Coverage entry for `notification-getEmailProviders`
+  (GET /notification.getEmailProviders) in the shared coverage harness.
+  The single fixture entry drives success-leg, schema, manifest, and
+  failure-leg assertions through the shared `coveredAPIOperations`
+  table.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — added the API-0220 entry
+    immediately after API-0219 `notification-createTelegram` and before
+    the API-0246 `organization-active` entry. Parameter-free GET: no
+    `SampleQuery`, no `SamplePathParams`, no `SampleBody`. Response
+    set 200/400/401/403/404/500; the failure-leg representative remains
+    the harness-default 401→CodeAuth (per the API-0246
+    `organization-active` precedent that the parameter-free GET cohort
+    re-proves the auth invariant rather than the 404 shadow).
+    `SuccessResponse: ` + "`{}`" + ` matches the `additionalProperties:
+    false` empty-object spec schema and every prior covered peer in the
+    empty-success cohort.
+  - `ralph/prd.json` — flipped `passes` to `true` for API-0220.
+- **Verification run** (from repo root):
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — no changes.
+  - `go vet ./...` — clean.
+  - `go build ./...` — clean.
+  - `go test ./... -count=1` — all packages pass; `internal/cli` 1.503s.
+  - `go test -race ./... -count=1` — all packages pass; `internal/cli`
+    3.306s.
+  - Focused
+    `TestAPICoverage_RegistryInvariants/API-0220/notification-getEmailProviders`
+    — PASS (0.00s).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` not installed locally; left to CI per prior iterations
+    (documented missing rather than silently skipped).
+- **Results**: API-0220 now has `passes: true` in `ralph/prd.json`. The
+  new coverage row drives all five harness assertions (registry presence,
+  manifest coverage, schema retrievability, success leg, failure leg).
+  Story count: 462 total, 391 passing, 71 still failing.
+- **Remaining risks / follow-ups**:
+  - The next priority-5 notification/* peer is API-0221
+    `notification-one` — a query-shaped GET with a single
+    `notificationId` parameter, which crosses the parameter-free GET
+    boundary opened by this entry. Future iterations should grep
+    API-0033 `application-readTraefikConfig` (the cross-tag query-shaped
+    GET precedent) rather than this entry, and should consider whether
+    the 404→CodeNotFound override becomes the more representative
+    failure leg now that a missing-target path exists.
+- **Learnings for future iterations**:
+  - API-0220 is the **first non-`create-*` notification/* coverage
+    entry** and **opens the notification/* parameter-free GET cohort**.
+    The notification/* tag had been a `create-*` POST monoculture from
+    API-0209 through API-0219; API-0220 is the verb-cohort pivot point.
+    Future notification/* peers should grep API-0220 for the
+    parameter-free GET shape and API-0209..API-0219 for the
+    body-bearing POST shape, **not** mix-and-match comments across the
+    boundary.
+  - The 404-bearing parameter-free GET cohort (originated by API-0006
+    `ai-getAll` and reasserted at API-0051 `bitbucket-bitbucketProviders`,
+    API-0246 `organization-active`, API-0290 `project-all`, API-0335
+    `server-all`, etc.) keeps `FailureStatus`/`FailureCode` unset so the
+    harness defaults to 401→CodeAuth. The rationale is that
+    parameter-free GETs have no input the caller can mistype, so the
+    universal auth invariant is the most representative failure mode;
+    the spec's 404 leg is structurally inapplicable to a
+    no-target-by-id endpoint (Dokploy declares 404 uniformly across all
+    operations as a generic transport error). This stands in contrast
+    to query/path-parameter GETs (e.g. API-0033, API-0221), where the
+    404→CodeNotFound override is more representative.
+  - The shared `coveredAPIOperations` harness in
+    `internal/cli/api_coverage_test.go` remains purely additive — no
+    per-operation success/failure scaffolding is required because the
+    table-driven loop materialises all assertions from the fixture
+    record alone.
+  - Cross-tag 401→CodeAuth invariant continues to hold for every
+    parameter-free GET with no per-operation override, regardless of
+    whether the spec's response set includes 404. The 404→CodeNotFound
+    override stays a per-entry decision driven by whether the operation
+    has a target the caller can miss.
+---

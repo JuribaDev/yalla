@@ -19889,6 +19889,86 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0220",
+		OperationID: "notification-getEmailProviders",
+		Method:      http.MethodGet,
+		Path:        "/notification.getEmailProviders",
+		Tag:         "notification",
+		// Thirteenth entry in the notification/* coverage roster, opening
+		// the tag's **parameter-free GET cohort** inside the
+		// `notification-cov-*` per-tag fixture-isolation namespace seeded
+		// at API-0208 `notification-all`. API-0219
+		// `notification-createTelegram` closed the notification/*
+		// `create-*` verb cohort (API-0209..API-0219); API-0220 pivots the
+		// roster onto a new verb cohort — this is the **first non-mutating
+		// non-list parameter-free GET** in the notification/* tag.
+		//
+		// Spec source `data/openapi.json > /notification.getEmailProviders
+		// > get` declares `parameters: []` and no request body — the
+		// endpoint enumerates the static set of email transport providers
+		// Dokploy supports purely from the bearer-token context, mirroring
+		// the cross-tag parameter-free GET precedent set by API-0006
+		// `ai-getAll` and reasserted at API-0033
+		// `application-readTraefikConfig` (query-shaped variant), API-0051
+		// `bitbucket-bitbucketProviders`, API-0098
+		// `deployment-allCentralized`, API-0100 `deployment-queueList`,
+		// API-0246 `organization-active`, API-0247 `organization-all`,
+		// API-0248 `organization-allInvitations`, API-0290 `project-all`,
+		// API-0335 `server-all`, API-0336 `server-buildServers`, API-0337
+		// `server-count`, API-0341 `server-getServerTime`, API-0343
+		// `server-publicIp`, API-0352 `settings-checkGPUStatus`, and
+		// API-0363 `settings-getDokployCloudIps`.
+		//
+		// Responses 200/400/401/403/404/500 — the spec **does** declare
+		// 404 on this operation (the same response set as the 404-bearing
+		// parameter-free GET cohort opened by API-0006 `ai-getAll` and
+		// extended by API-0246 `organization-active`). Per the per-tag
+		// opener rule reaffirmed at API-0246, the representative-failure
+		// leg keeps the harness default of 401→CodeAuth because
+		// authentication is the universal failure mode shared across every
+		// Dokploy operation; 404→CodeNotFound would shadow the auth
+		// invariant the parameter-free GET cohort re-proves on every
+		// entry. The 200 schema is `{}` with `additionalProperties:
+		// false`, identical to every prior covered peer in the
+		// empty-success cohort.
+		//
+		// Leaving SampleQuery/SamplePathParams/SampleBody unset is
+		// intentional — the harness's GET branch asserts that **no
+		// `Content-Type` request header is sent** and ignores SampleBody
+		// entirely, so carrying a SampleBody into this case would silently
+		// encode dead code on the wire (the omission convention
+		// re-asserted at API-0006 `ai-getAll`, API-0246
+		// `organization-active`, API-0247 `organization-all`, API-0335
+		// `server-all`, API-0350 `server-withSSHKey`, and API-0363
+		// `settings-getDokployCloudIps`). The canonical agent invocation
+		// stays `yalla api call notification-getEmailProviders --input
+		// '{}' --json`.
+		//
+		// **Slug style — kebab-case inherited from API-0208/API-0209
+		// through API-0219.** Per the per-tag-slug-style rule fixed by the
+		// kickoff multi-camel entry API-0209 `notification-createCustom`
+		// (→ `create-custom`) and propagated through every notification/*
+		// `create-*` peer, this entry takes `get-email-providers` as the
+		// slug stem and **opens the notification/* parameter-free GET
+		// cohort** — every subsequent notification/* GET that lacks
+		// parameters inherits the same kebab-case discipline. Future
+		// notification/* peers that introduce a `*Id` filter (e.g.
+		// API-0221 `notification-one`) should consult API-0033
+		// `application-readTraefikConfig` for the query-shaped GET
+		// precedent rather than this entry.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// Although the spec lists 404 in the response set, this is the
+		// notification/* parameter-free GET cohort opener and follows the
+		// API-0246 `organization-active` precedent: the failure leg
+		// exercises the universal auth invariant rather than the
+		// tag-specific 404 shadow. Subsequent notification/* peers that
+		// accept a `*Id` filter may override to 404→CodeNotFound on a
+		// per-entry basis once the missing-target leg becomes the more
+		// representative failure.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,
