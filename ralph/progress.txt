@@ -30134,3 +30134,62 @@ forward-reference lesson before assuming any field shape.
     supplied), but the comment must classify correctly so the family
     rationale stays auditable.
 ---
+
+## 2026-05-09 - API-0407
+- Implemented coverage for `sso-deleteProvider` (POST /sso.deleteProvider).
+- Files changed:
+  - internal/cli/api_coverage_test.go: appended `apiCoverageCase` for
+    API-0407 immediately after API-0406 `sso-addTrustedOrigin`. Body shape
+    is single-required-string-scalar (`providerId`); 200 response is `{}`
+    matching the empty-success cohort. Fixture token base
+    `sso-cov-deleteProvider-0407` keeps the open `sso-cov-*` per-tag
+    namespace; harness-default 401→CodeAuth failure leg retained
+    (404 absent from spec, 400/CodeInvalidInput not the uniquely
+    distinguishing failure mode for an imperative-action mutation).
+  - ralph/prd.json: API-0407 marked `passes: true`.
+- Verification run (all green):
+  - `gofmt -w .` — clean
+  - `go mod tidy` — no module changes
+  - `go vet ./...` — no diagnostics
+  - `go test ./...` — all packages pass (internal/cli 1.611s)
+  - `go test -race ./...` — all packages pass (internal/cli 3.552s)
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, and
+    `goreleaser` are not installed locally; documented per the
+    Codebase-Patterns convention rather than silently skipped.
+- Remaining risks or follow-ups:
+  - 16 priority-5 API coverage stories still failing (next:
+    API-0408 `sso-getTrustedOrigins`, the first **GET** in the open
+    sso/* arc — breaks the body-bearing mutator chain into the
+    read-only leg of the same per-tag namespace).
+- **Learnings for future iterations:**
+  - The `coveredAPIOperations` slice is **not strictly StoryID-ordered**
+    in source — API-0406 appears immediately before API-0423
+    `swarm-getNodeApps` (the historical insertion point). New entries
+    for the same tag arc keep landing between the prior peer and the
+    next existing entry, NOT in numeric position. Use the prior
+    StoryID's closing forward-reference comment to locate the splice
+    point rather than searching by adjacent storyID.
+  - The PRD ordering `API-0407 → API-0408 → API-0409 → …` does **not**
+    correspond to `internal/api/data/openapi.json` path declaration
+    order. `/sso.deleteProvider` is declared between `/sso.update`
+    (line 44099) and `/sso.register` (line 44533) in the spec, but
+    its PRD position is dictated by alphabetical operationId ordering
+    within a tag arc, after `sso-addTrustedOrigin`. Always look up
+    the spec by path, never by file-line proximity.
+  - `sso-deleteProvider` is the **first semantically-destructive**
+    operation in the freshly-opened sso/* arc, but Dokploy's tRPC
+    convention still routes the missing-target failure mode through
+    400/validation rather than 404 — so the harness-default
+    401→CodeAuth failure leg remains the most representative single
+    failure mode despite the destructive surface. The 404→CodeNotFound
+    override stays structurally inapplicable for the entire sso/* arc
+    until/unless a future spec revision adds 404 to a response set.
+  - When a peer story has identical structural shape (here API-0406
+    and API-0407 are both single-required-string-scalar POST
+    imperative-action mutations with empty `{}` 200), the new entry's
+    fixture token base must still be unique. The
+    `<tag>-cov-<slug>-<storyID>` rule guarantees this via the
+    `<slug>-<storyID>` tail; verifying non-collision against the
+    open same-tag namespace (in addition to closed prior-tag
+    namespaces) is part of every entry's fixture-token reasoning.
+---

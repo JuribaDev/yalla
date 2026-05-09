@@ -44901,6 +44901,119 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0407",
+		OperationID: "sso-deleteProvider",
+		Method:      http.MethodPost,
+		Path:        "/sso.deleteProvider",
+		Tag:         "sso",
+		// Second entry on the sso/* coverage roster, immediately
+		// following API-0406 `sso-addTrustedOrigin` (the kickoff
+		// entry that opened the `sso-cov-*` per-tag fixture-isolation
+		// namespace). Consumes the forward reference embedded in
+		// API-0406's closing comment ("the priority-5 backlog
+		// continues at API-0407 `sso-deleteProvider` (declared a
+		// **POST** per the spec preview, continuing the body-bearing
+		// sso/* mutator chain)"). Stays within the open `sso-cov-*`
+		// namespace per the per-tag isolation rule originally
+		// established at API-0246 `organization-active`; **must not**
+		// back-reference any closed prior-tag namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json` > `/sso.deleteProvider` >
+		// `post`: method POST, tag sso, **no parameters**, requestBody
+		// REQUIRED with `application/json`, responses
+		// 200/400/401/403/500. The 200 response is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort. **No 404** is declared on
+		// this operation, mirroring the precedent on every prior
+		// covered body-bearing imperative-action POST whose
+		// missing-target failure mode collapses into 400/validation
+		// under Dokploy's tRPC convention rather than a dedicated 404
+		// leg — and matching the immediate prior peer API-0406
+		// `sso-addTrustedOrigin` exactly.
+		//
+		// **Request body schema (top-level fields):**
+		//   - REQUIRED `providerId` (plain string). Identifies the
+		//     SSO provider record being deleted. The fixture supplies
+		//     a `<tag>-cov-<slug>-<storyID>`-conformant literal so the
+		//     success-leg byte-for-byte body comparison verifies the
+		//     CLI propagated the body verbatim.
+		//
+		// No optional fields are declared in the spec for this
+		// operation; the body schema is a single-required-string-
+		// scalar shape with no tail — structurally identical to the
+		// immediate prior peer API-0406 `sso-addTrustedOrigin`
+		// (REQUIRED `origin`).
+		//
+		// **Shape positioning — single-required-string-scalar POST
+		// imperative-action mutation, body REQUIRED, zero optionals.**
+		// REQUIRED-field cardinality matches the immediate prior peer
+		// API-0406 `sso-addTrustedOrigin` (one REQUIRED `origin`) and
+		// the cross-tag precedent API-0404 `sshKey-remove` (one
+		// REQUIRED `sshKeyId`); the absence of any optional tail puts
+		// this entry firmly in the destructive/imperative-action
+		// family — semantically a *delete* operation here, the
+		// canonical destructive shape — alongside `sshKey-remove`
+		// and `sso-addTrustedOrigin` rather than the partial-update
+		// family of API-0405 `sshKey-update`. Distinct from the
+		// body-required-but-no-required-fields API-0402
+		// `sshKey-generate` precedent (saturated single REQUIRED
+		// scalar here, empty `{}` there). The harness's
+		// `len(tc.SampleBody) > 0` gate at `runAPICoverageSuccess`
+		// activates the JSON content-type and byte-for-byte body
+		// comparison legs; this fixture supplies the lone REQUIRED
+		// `providerId` so the success path verifies the CLI
+		// propagated the body verbatim.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so
+		// the 404→CodeNotFound override is structurally inapplicable
+		// even though the operation is semantically a delete (the
+		// missing-target failure mode collapses into 400/validation
+		// under Dokploy's tRPC convention as noted). 400 →
+		// CodeInvalidInput is *technically* available — a payload
+		// that omits the REQUIRED `providerId` would fail
+		// server-side validation — but the harness reserves 400
+		// representatives for stories where payload validation is
+		// the operation's *uniquely distinguishing* failure mode. A
+		// conventional imperative-action mutation collapses to
+		// type-checking, so the harness-default 401→CodeAuth failure
+		// leg remains the most representative single failure mode
+		// every authenticated Dokploy operation must re-prove. This
+		// also matches the 401→CodeAuth choice locked in for the
+		// sso/* tag arc at the API-0406 kickoff entry.
+		//
+		// **Fixture token base** `sso-cov-deleteProvider-0407`
+		// follows the `<tag>-cov-<slug>-<storyID>` convention shared
+		// across every prior tag arc. Verified non-colliding with
+		// the open sso/* namespace (distinct slug `deleteProvider`
+		// and storyID `0407` → unique under the
+		// `<tag>-cov-<slug>-<storyID>` rule) and with every closed
+		// prior-tag namespace (different tag prefix and storyID).
+		//
+		// **sso/* roster continues.** Per the PRD ordering at the
+		// time of this commit, the priority-5 backlog continues at
+		// API-0408 `sso-getTrustedOrigins` (declared a **GET** per
+		// the spec preview, breaking the body-bearing sso/* mutator
+		// chain into the read-only leg of the arc). The next
+		// contributor must re-verify the spec against
+		// `internal/api/data/openapi.json` > `/sso.getTrustedOrigins`
+		// > `get` per the forward-reference lesson before assuming
+		// any field shape, and **must not** reuse any closed
+		// prior-tag namespace; the open `sso-cov-*` namespace
+		// remains in force for the rest of the sso/* arc.
+		SampleBody: json.RawMessage(`{
+			"providerId": "sso-cov-deleteProvider-0407-providerId-fixture"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` / `data.status`
+		// rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0423",
 		OperationID: "swarm-getNodeApps",
 		Method:      http.MethodGet,
