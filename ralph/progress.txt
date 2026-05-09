@@ -31371,3 +31371,145 @@ forward-reference lesson before assuming any field shape.
     stem whose semantic intent does not uniquely determine the
     wire shape.
 ---
+
+
+## 2026-05-09 - API-0421
+- What was implemented:
+  Added per-operation contract coverage for Dokploy API operation
+  `stripe-getProducts` (the **fifth** entry on the stripe/* coverage
+  roster after API-0416 `stripe-canCreateMoreServers`, API-0417
+  `stripe-createCheckoutSession`, API-0418
+  `stripe-createCustomerPortalSession`, API-0419
+  `stripe-getCurrentPlan`, and API-0420 `stripe-getInvoices`).
+  **Spec re-verified per the API-0345..API-0444 forward-reference
+  lesson** against `internal/api/data/openapi.json` >
+  `/stripe.getProducts` > `get`: method GET, tag stripe, **zero
+  parameters** (no path placeholders, no query string), **no
+  `requestBody` declaration at all** (the spec emits no
+  `requestBody` key — parameter-free, body-free read). Responses
+  200/400/401/403/404/500. 200 schema is `{}` with
+  `additionalProperties: false`. **Wire-shape-identical to** API-0416
+  `stripe-canCreateMoreServers`, API-0419 `stripe-getCurrentPlan`,
+  AND API-0420 `stripe-getInvoices` — confirming the
+  parameter-free body-free leg of the disjunction predicted in
+  API-0420's closing comment ("the wire shape *may* be parameter-free
+  body-free ... OR *may* include query parameters — re-verify, do not
+  infer").
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended one
+    `apiCoverageCase` literal between API-0420
+    `stripe-getInvoices` and the swarm/* roster opener
+    API-0423 `swarm-getNodeApps`. **Stays within the open
+    `stripe-cov-*` per-tag fixture-isolation namespace** opened at
+    API-0416 per the per-tag isolation rule originally established
+    at API-0246 `organization-active`. **No SampleBody, SampleQuery,
+    or SamplePathParams** — the operation is parameter-free and
+    body-free per the spec re-verification; the harness's parameter-
+    free body-free GET path drives the success leg with neither query
+    string nor request payload, mirroring API-0416 / API-0419 /
+    API-0420. **No FailureStatus or FailureCode** — the harness-
+    default 401→CodeAuth failure leg applies, re-proving the stripe/*
+    arc's harness-default precedent for the **fifth consecutive
+    time**. `SuccessResponse: \`{}\`` matches the spec's
+    empty-object 200 declaration.
+  - `ralph/prd.json` — flipped `userStories[API-0421].passes` from
+    `false` to `true`. No other story bits touched.
+- Verification run:
+  - `gofmt -w .` — clean (no diff produced).
+  - `go mod tidy` — clean (no dependency drift).
+  - `go vet ./...` — clean.
+  - `go test ./... -count=1` — all packages PASS
+    (api, cli, config, curated, errors, output, release, testutil,
+    upgrade).
+  - `go test -race ./... -count=1` — all packages PASS under the
+    race detector.
+  - `internal/cli` package focus run `-run 'APICoverage'` (1.062s) —
+    RegistryInvariants, SchemaCommandWorks, ManifestListsOperation,
+    SuccessRoundTrip, RepresentativeFailure all green for the new
+    entry.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` are not installed locally and were not run
+    (documented per the Codebase-Patterns convention rather than
+    silently skipped).
+- Results: API-0421 acceptance criteria satisfied. Operation present
+  in OpenAPI registry with method GET, path /stripe.getProducts,
+  tag stripe; raw API call works through the harness parameter-free
+  body-free GET path (`yalla api call stripe-getProducts --json`);
+  schema get works; manifest lists the operation; success and
+  401→CodeAuth representative failure both proven by httptest
+  fixtures.
+- Remaining risks / follow-ups:
+  - 2 priority-5 API coverage stories still failing. The stripe/* arc
+    closes at API-0422 `stripe-upgradeSubscription` (declared a
+    **POST** per the PRD, the third body-bearing-or-body-free POST
+    of the stripe/* arc and the **first state-mutation** in the arc
+    after the API-0419/0420/0421 read-only GET cluster). The next
+    contributor must re-verify the spec against
+    `internal/api/data/openapi.json` >
+    `/stripe.upgradeSubscription` > `post` per the forward-
+    reference lesson before assuming any field shape. The slug-stem
+    `upgradeSubscription` reads as a state-mutation POST family
+    stem (action verb + singular noun) that *very likely* requires a
+    request body (subscription target plan/tier identifier at
+    minimum), but the slug-stem-is-not-shape lesson applies to POST
+    shape just as it does to GET shape — re-verify, do not infer.
+    Prior stripe/* POSTs split between body-bearing (API-0417
+    `stripe-createCheckoutSession`) and body-free (API-0418
+    `stripe-createCustomerPortalSession`). Stays within the open
+    `stripe-cov-*` per-tag fixture-isolation namespace established
+    at API-0416. The 404→CodeNotFound override slot for the
+    stripe/* tag arc still remains UNCONSUMED — reserved for the
+    first stripe/* story whose spec declares an addressable subject
+    AND 404 in the response set; absent such a story across the
+    remaining stripe/* peer (API-0422) the slot stays nominal across
+    the whole arc and rolls forward to the next tag arc. After
+    API-0422 closes the stripe/* arc, only API-0426
+    `application-dropDeployment` remains — a state-mutation POST on
+    the application/* tag that re-opens an `app-cov-*`-shaped
+    namespace if not already extant, OR most likely **MUST open a
+    fresh per-arc namespace** since application/* coverage was last
+    touched well before the API-0246 isolation-rule precedent.
+- **Learnings for future iterations:**
+  - **Forward-reference disjunction confirmed on the parameter-free
+    body-free leg.** API-0420's closing comment explicitly hedged
+    API-0421's wire shape ("*may* be parameter-free body-free ...
+    OR *may* include query parameters") because the slug-stem
+    `getProducts` reads as a catalog-list semantic. The spec
+    re-read confirms the parameter-free body-free leg, making this
+    the **third stripe/* re-affirmation in a row** of the
+    slug-stem-is-not-shape lesson (API-0419 plural→singular state-
+    fetch confounded with by-id, API-0420 plural→list confounded
+    with paginated-list, API-0421 plural→list confounded with
+    filtered-catalog). The forward-reference hedge pattern works
+    exactly because the prior contributor *expects* to be wrong
+    half the time — predictions remain advisory, never authoritative.
+  - **Catalog-list GETs are session-bound state projections, not
+    by-id reads.** Even though `getProducts` reads as a catalog
+    list, Dokploy emits the same fixed product catalog deterministic
+    on the active license/region — there is no addressable selector
+    or filter input. This is structurally identical to
+    `canCreateMoreServers` (action-state probe), `getCurrentPlan`
+    (state projection), and `getInvoices` (session-bound list).
+    The 404→CodeNotFound override remains structurally inapplicable
+    because there is no missing-resource semantic — re-affirming the
+    override is reserved exclusively for canonical by-id reads
+    (most recent precedent API-0410 `sso-one`).
+  - **Empty-success-cohort is now 9 strong** (API-0058
+    `certificates-all`, API-0408 `sso-getTrustedOrigins`,
+    API-0409 `sso-listProviders`, API-0413
+    `sso-showSignInWithSSO`, API-0416
+    `stripe-canCreateMoreServers`, API-0418
+    `stripe-createCustomerPortalSession`, API-0419
+    `stripe-getCurrentPlan`, API-0420 `stripe-getInvoices`,
+    API-0421 `stripe-getProducts`). The harness's parameter-free
+    body-free GET path with `SuccessResponse: \`{}\`` and the
+    harness-default 401→CodeAuth failure leg covers all 9 with zero
+    `Sample*` literals consumed.
+  - **stripe/* arc is one-from-close.** The stripe/* roster begins
+    at API-0416 and the only remaining peer is API-0422
+    `stripe-upgradeSubscription` (POST, state-mutation). After it
+    ships, the `stripe-cov-*` per-tag fixture-isolation namespace
+    closes and the next contributor opens a new per-tag namespace
+    for API-0426 `application-dropDeployment` (the only remaining
+    open story).
+---

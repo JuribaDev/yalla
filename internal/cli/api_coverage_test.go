@@ -47070,6 +47070,195 @@ var coveredAPIOperations = []apiCoverageCase{
 		// stays nominal.
 	},
 	{
+		StoryID:     "API-0421",
+		OperationID: "stripe-getProducts",
+		Method:      http.MethodGet,
+		Path:        "/stripe.getProducts",
+		Tag:         "stripe",
+		// Fifth entry on the stripe/* coverage roster, succeeding the
+		// arc opener at API-0416 `stripe-canCreateMoreServers`
+		// (parameter-free body-free probe-style GET), the body-bearing
+		// POST at API-0417 `stripe-createCheckoutSession`, the body-free
+		// POST at API-0418 `stripe-createCustomerPortalSession`, the
+		// state-fetch GET at API-0419 `stripe-getCurrentPlan`, and the
+		// list-style GET at API-0420 `stripe-getInvoices`. Stays within
+		// the open `stripe-cov-*` per-tag fixture-isolation namespace
+		// established at API-0416 per the per-tag isolation rule
+		// originally established at API-0246 `organization-active`.
+		// The closed prior-tag namespaces (`sso-cov-*` opened at
+		// API-0406 and closed at API-0415, plus all earlier
+		// `set-cov-*`, `srv-cov-*`, `proj-cov-*`, `org-cov-*`,
+		// `compose-cov-*`, `app-cov-*`, `ai-cov-*`, `admin-cov-*`,
+		// `backup-cov-*`, `bb-cov-*`, `cert-cov-*`, `clu-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `usr-cov-*`,
+		// `swarm-cov-*`, `sshKey-cov-*`, etc.) **must not** be reused
+		// or back-referenced.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json` >
+		// `/stripe.getProducts` > `get`: method GET, tag stripe,
+		// **no parameters** (no path placeholders, no query string),
+		// **no `requestBody` declaration at all** (the spec emits no
+		// `requestBody` key — parameter-free, body-free read).
+		// Responses 200/400/401/403/404/500. 200 schema is `{}` with
+		// `additionalProperties: false`, matching the empty-success
+		// cohort (API-0058 `certificates-all`, API-0408
+		// `sso-getTrustedOrigins`, API-0409 `sso-listProviders`,
+		// API-0413 `sso-showSignInWithSSO`, API-0416
+		// `stripe-canCreateMoreServers`, API-0418
+		// `stripe-createCustomerPortalSession`, API-0419
+		// `stripe-getCurrentPlan`, API-0420 `stripe-getInvoices`).
+		//
+		// **Forward-reference prediction CONFIRMED at this commit
+		// boundary on the speculative-clause leg.** API-0420's closing
+		// comment predicted API-0421 as "declared a **GET** per the
+		// PRD ... the wire shape *may* be parameter-free body-free
+		// (matching `getInvoices` / `getCurrentPlan` /
+		// `canCreateMoreServers`) OR *may* include query parameters —
+		// re-verify, do not infer from the stripe/* GET pattern
+		// established so far". The spec re-read at the API-0421 commit
+		// boundary CONFIRMS the GET method AND CONFIRMS the
+		// parameter-free body-free leg of the disjunction: the spec
+		// declares zero parameters AND zero requestBody, so
+		// `stripe-getProducts` is wire-shape-identical to API-0416
+		// `stripe-canCreateMoreServers`, API-0419
+		// `stripe-getCurrentPlan`, and API-0420 `stripe-getInvoices`
+		// — a parameter-free body-free GET returning an empty success
+		// body, not a list-style GET with pagination/filter params or
+		// a by-id read with a path/query selector. The plural-noun
+		// `Products` slug-stem hint reads as catalog-list semantics
+		// that conventionally bring filter/category/limit query
+		// parameters (typical SaaS billing catalog endpoints accept
+		// `?currency=...` or `?planFamily=...`), but the spec is the
+		// only authority. **Third stripe/* re-affirmation in a row of
+		// the slug-stem-is-not-shape lesson** (API-0419 plural→singular
+		// state-fetch confounded with by-id, API-0420 plural→list
+		// confounded with paginated-list, API-0421 plural→list
+		// confounded with filtered-catalog) — slug-stem semantic
+		// intent and wire shape are independent dimensions, the
+		// forward-reference hedge ("re-verify, do not infer") in
+		// API-0420's closing comment is exactly why the prior
+		// contributor wrote it that way.
+		//
+		// **Shape positioning — parameter-free body-free GET, identical
+		// to API-0416 / API-0419 / API-0420.** Wire-shape-identical to
+		// API-0416 `stripe-canCreateMoreServers` (parameter-free
+		// body-free probe-style GET, 200 `{}`,
+		// 200/400/401/403/404/500), to API-0419
+		// `stripe-getCurrentPlan` (parameter-free body-free state-
+		// fetch GET, 200 `{}`, 200/400/401/403/404/500), to API-0420
+		// `stripe-getInvoices` (parameter-free body-free list-style
+		// GET, 200 `{}`, 200/400/401/403/404/500), to API-0413
+		// `sso-showSignInWithSSO` (action-style probe GET precedent),
+		// and to every prior empty-success-cohort GET in the same
+		// shape-class. The slug stems differ — `canCreate*` is a
+		// boolean-probe convention, `get*` is the canonical-by-id GET
+		// family stem when paired with a singular noun and the list-
+		// collection family stem when paired with a plural noun, but
+		// **per the slug-stem-is-not-shape lesson reasserted at
+		// API-0371..API-0444 the slug stem is a naming hint, NOT a
+		// shape determinant**. The `products` collection is fully
+		// determined by the authenticated principal's billing context
+		// (Dokploy emits the same fixed product catalog that maps to
+		// the active license/region), NOT by an addressable selector
+		// or filter — structurally identical to the action-state
+		// semantics of `canCreateMoreServers`, the state-projection
+		// semantics of `getCurrentPlan`, and the session-bound list
+		// semantics of `getInvoices` even though the slug-stem
+		// semantic intent differs ("list available products" vs
+		// "list my invoices" vs "what is my plan?" vs "can I
+		// upgrade?").
+		//
+		// **Family choice — harness-default 401→CodeAuth retained,
+		// re-proving the stripe/* arc precedent for the fifth
+		// consecutive time.** 404 IS in the spec response set
+		// (200/400/401/403/404/500), but the 404→CodeNotFound override
+		// remains **structurally inapplicable** because this operation
+		// has no addressable subject — it is a catalog-list GET driven
+		// entirely by the authenticated principal's billing context,
+		// not a by-id GET. The 404→CodeNotFound override is reserved
+		// exclusively for canonical by-id GET reads where the path or
+		// query parameter explicitly addresses a resource that may not
+		// exist (the most recent precedent being API-0410 `sso-one`);
+		// applying it to a state-projection catalog-list GET would
+		// conflate the missing-resource semantics of a by-id read with
+		// the state-projection semantics of a session-bound list. The
+		// same reasoning applied at API-0413 `sso-showSignInWithSSO`,
+		// API-0416 `stripe-canCreateMoreServers`, API-0419
+		// `stripe-getCurrentPlan`, and API-0420 `stripe-getInvoices`.
+		// 400 → CodeInvalidInput is *technically* available but the
+		// harness reserves 400 representatives for stories where
+		// payload validation is the operation's *uniquely
+		// distinguishing* failure mode, which a parameter-free body-
+		// free GET trivially is not (no inputs to validate). The
+		// harness-default 401→CodeAuth failure leg therefore remains
+		// the most representative single failure mode every
+		// authenticated Dokploy operation must re-prove, re-affirming
+		// the stripe/* arc precedent established by API-0416 and
+		// re-proven by API-0417, API-0418, API-0419, and API-0420 for
+		// the fifth consecutive time within the arc.
+		//
+		// Fixture conventions:
+		//   * No `Sample*` literals consumed — parameter-free,
+		//     body-free GET so neither `SampleQuery` nor `SampleBody`
+		//     applies, mirroring API-0416 `stripe-canCreateMoreServers`,
+		//     API-0418 `stripe-createCustomerPortalSession` (body-free
+		//     POST), API-0419 `stripe-getCurrentPlan`, API-0420
+		//     `stripe-getInvoices`, API-0058 `certificates-all`,
+		//     API-0408 `sso-getTrustedOrigins`, API-0409
+		//     `sso-listProviders`, and API-0413
+		//     `sso-showSignInWithSSO`.
+		//   * Per-case fixture token base
+		//     `stripe-cov-getProducts-0421` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention (reserved
+		//     nominally only since no Sample* literals are emitted)
+		//     and is verified non-colliding with every prior tag's
+		//     namespace AND with the prior stripe/* peers'
+		//     `stripe-cov-canCreateMoreServers-0416` /
+		//     `stripe-cov-createCheckoutSession-0417` /
+		//     `stripe-cov-createCustomerPortalSession-0418` /
+		//     `stripe-cov-getCurrentPlan-0419` /
+		//     `stripe-cov-getInvoices-0420` reservations.
+		// 200 response in the spec is `{}` with
+		// `additionalProperties: false`. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection — mirroring
+		// every empty-success-cohort peer.
+		SuccessResponse: `{}`,
+		//
+		// **stripe/* roster continues.** Per the PRD ordering at the
+		// time of this commit, the priority-5 backlog continues at
+		// API-0422 `stripe-upgradeSubscription` (declared a **POST**
+		// per the PRD, the second body-bearing-or-body-free POST of
+		// the stripe/* arc after the read-only GET cluster
+		// API-0419/0420/0421 closes). The next contributor must
+		// re-verify the spec against
+		// `internal/api/data/openapi.json` >
+		// `/stripe.upgradeSubscription` > `post` per the forward-
+		// reference lesson before assuming any field shape — note
+		// that `upgradeSubscription` reads as a state-mutation POST
+		// family stem (action verb + singular noun), structurally
+		// distinct from the read-only GET cluster covered so far, so
+		// the wire shape *very likely* includes a request body
+		// (subscription target plan/tier identifier at minimum) and
+		// MUST be re-verified against the spec since prior stripe/*
+		// POSTs split between body-bearing (API-0417
+		// `stripe-createCheckoutSession`) and body-free (API-0418
+		// `stripe-createCustomerPortalSession`) — the slug-stem-is-
+		// not-shape lesson applies to POST shape just as it does to
+		// GET shape. Stays within the open `stripe-cov-*` per-tag
+		// fixture-isolation namespace established at API-0416. The
+		// 404→CodeNotFound override slot for the stripe/* tag arc
+		// still remains UNCONSUMED — reserved for the first stripe/*
+		// story whose spec declares an addressable subject (path/query
+		// parameter selector OR a body field that addresses a
+		// targeted resource that may not exist) AND 404 in the
+		// response set; absent such a story across the remaining
+		// stripe/* peer (API-0422) the slot stays nominal across the
+		// whole arc and rolls forward to the next tag arc.
+	},
+	{
 		StoryID:     "API-0423",
 		OperationID: "swarm-getNodeApps",
 		Method:      http.MethodGet,
