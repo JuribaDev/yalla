@@ -24322,3 +24322,93 @@ forward-reference lesson before assuming any field shape.
     therefore correctly captures the operation's representative failure
     mode.
 ---
+
+## 2026-05-09 - API-0315
+- Implemented contract coverage for `redis-update` (POST /redis.update),
+  the fourteenth and final entry on the priority-4 redis/* coverage roster
+  (API-0302..API-0315 all green). Closes the redis/* arc.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended the API-0315 entry to
+    `coveredAPIOperations`, sorted between API-0314 (redis-stop) and
+    API-0331 (security-create) per the StoryID-sorted slice convention.
+    Single-required-string-scalar POST shape: `SampleBody` is the
+    deterministic-but-clearly-fake `{"redisId":
+    "redis-cov-update-0315-redisId"}` literal under the `redis-cov-*`
+    per-tag fixture-isolation namespace opened by API-0302; the wide
+    optional configuration tail (28 OPTIONAL fields covering identity,
+    keyspace credentials, runtime, resource limits, networking,
+    swarm-orchestration cluster, replicas, environmentId) is
+    intentionally omitted because the harness verifies request-body
+    forwarding via byte-for-byte comparison and the optional tail is
+    exhaustively covered through API-0303 `redis-create`, API-0310
+    `redis-saveEnvironment`, and API-0311 `redis-saveExternalPort`.
+    `SuccessResponse` is `{}` per the spec's empty-success cohort. No
+    404 declared on this op, so the harness-default 401→CodeAuth
+    failure leg is retained per the redis/* kickoff invariant locked
+    by API-0302.
+  - `ralph/prd.json` — flipped `passes` to true for API-0315.
+- Verification run:
+  - `gofmt -w .` clean.
+  - `go vet ./...` clean.
+  - `go mod tidy` clean.
+  - `go test ./...` green across all packages.
+  - `go test -race ./...` green across all packages.
+  - `go test ./internal/cli ./internal/api -run
+    'TestAPICoverage|TestManifest|TestRegistry' -count=1` green —
+    confirms registry, schema, manifest, success-leg, and failure-leg
+    invariants all hold for `redis-update`.
+- Outcome: 94 priority-* stories remain pending; 14 priority-4 stories
+  remain. The redis/* tag is now fully covered (14/14). The next
+  PRD-ordered priority-4 entry is API-0323 `rollback-delete` (POST
+  /rollback.delete), which opens a brand-new `rollback-cov-*` per-tag
+  fixture-isolation namespace. The numerically intervening API-0316..
+  API-0322 are priority-5 registry/* and will be picked up after the
+  priority-4 backlog drains.
+- Remaining risks or follow-ups:
+  - Future contributors implementing API-0323 `rollback-delete` MUST
+    open a fresh `rollback-cov-*` namespace and MUST NOT back-reference
+    any closed prior-tag namespace (`redis-cov-*` included) per the
+    per-tag isolation rule reasserted at API-0335..API-0444 and
+    originally established at API-0246 `organization-active`.
+  - API-0315 is the fifth and final entry on the cross-tag `*-update`
+    chain (API-0173 mariadb-update, API-0187 mongo-update, API-0207
+    mysql-update, API-0285 postgres-update, API-0315 redis-update —
+    all green). Every database-service-tag `*-update` operation in the
+    Dokploy spec is now covered. Future generic `*-update` POSTs in
+    other tags (e.g. registry-update API-0322, schedule-update, etc.)
+    must re-verify each spec independently — the slug-prefix-is-not-
+    shape lesson from API-0208 still applies.
+- **Learnings for future iterations:**
+  - The cross-tag `*-update` family across the database-service tags
+    (mariadb / mongo / mysql / postgres / redis) is a direct one-to-
+    one shape: a single REQUIRED top-level string scalar `<tag>Id`,
+    a wide tail of 25–30 OPTIONAL fields (identity / credentials /
+    runtime / resource limits / networking / applicationStatus enum /
+    swarm-orchestration cluster / replicas / environmentId), and a
+    `{}` 200 with `additionalProperties: false`, plus 200/400/401/403/
+    500 (no 404). The body fixture is byte-equivalent across these
+    five peers modulo the `<tag>Id` field name and the slug+storyID
+    suffix. Future `*-update` POSTs in non-database tags must NOT
+    assume this shape — the slug-prefix-is-not-shape lesson holds.
+  - Within the redis/* roster, this entry is the fifth single-required-
+    string-scalar POST peer (after API-0307 `redis-rebuild`, API-0309
+    `redis-remove`, API-0313 `redis-start`, and API-0314 `redis-stop`).
+    The body fixture is byte-equivalent across these five peers modulo
+    the slug+storyID suffix. The redis/* roster's
+    single-required-string-scalar micro-template chain ends here
+    (every uncovered redis/* peer is now closed).
+  - The redis/* roster's 404→CodeNotFound override remains pinned to
+    API-0306 `redis-one`. The override was structurally inapplicable
+    for every other redis/* peer because their specs omit 404 from
+    the response set. This generalises across the database-service
+    tags: each tag's 404 representative is the canonical by-id
+    `*-one` GET, and body-bearing imperative-action POSTs / patch-
+    style POSTs stay on the harness-default 401→CodeAuth invariant.
+  - The redis-specific divergence from the postgres/mariadb/mongo/
+    mysql `*-update` body is the absence of `databaseName` and
+    `databaseUser` fields (only `databasePassword` survives) because
+    redis is a single-keyspace key-value store rather than a multi-
+    database server with named accounts. Future `redis-create` /
+    `redis-update` schema-drift checks should re-confirm this
+    divergence rather than assume cross-tag identity.
+---
