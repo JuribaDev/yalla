@@ -24451,3 +24451,54 @@ forward-reference lesson before assuming any field shape.
     so the success leg asserts on `data.method` / `data.status` rather than
     payload projection.
 ---
+
+## 2026-05-09 - API-0324
+- **Implemented**: Full Dokploy API coverage for `rollback-rollback`
+  (POST /rollback.rollback) — second and final entry in the priority-4
+  rollback/* tag roster, inheriting the `rollback-cov-*` per-tag
+  fixture-isolation namespace opened by API-0323 `rollback-delete`.
+  Spec re-verified per the API-0345..API-0444 forward-reference lesson:
+  POST, no parameters, REQUIRED body with one REQUIRED non-nullable
+  plain string `rollbackId` and zero optional fields, responses
+  200/400/401/403/500 (no 404). 200 body is `{}` with
+  `additionalProperties: false`. Body shape is cardinality- and
+  type-identical to API-0323 `rollback-delete`, API-0309 `redis-remove`,
+  API-0179 `mongo-remove`, and the rest of the
+  single-required-`<tag>Id` body family.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended one
+    `apiCoverageCase` literal at the API-0323 → API-0331 boundary
+    keyed on `rollback-rollback`, with `SampleBody`
+    `{"rollbackId": "rollback-cov-rollback-0324-rollbackId"}` and
+    `SuccessResponse: "{}"`.
+  - `ralph/prd.json` — flipped `passes: false → true` for API-0324.
+- **Verification run**: `gofmt -w .`, `go mod tidy`, `go vet ./...`,
+  `go test ./...`, `go test -race ./...`. Targeted
+  `go test -run TestAPICoverage_… ./internal/cli` exercises all five
+  contract checks (registry invariants, schema reachability, manifest
+  inclusion, success round-trip, representative failure) for
+  `rollback-rollback`.
+- **Results**: All checks pass; default failure family is the
+  harness-default 401→`CodeAuth` (the spec omits 404 so the
+  404→`CodeNotFound` override is structurally inapplicable, matching
+  the destructive/imperative-action POST precedent).
+- **Remaining risks or follow-ups**: None for this story. The next
+  PRD-ordered priority-4 case is API-0325 `schedule-create`, which
+  opens a fresh `schedule-cov-*` per-tag fixture-isolation namespace
+  — the rollback/* tag is now fully covered (API-0323 + API-0324, a
+  two-element tag).
+- **Learnings for future iterations:**
+  - The single-required-`<tag>Id` POST body family is by far the most
+    common Dokploy mutation shape. Whenever a peer in this family is
+    already covered, the spec re-verification step still matters
+    (forward-reference lesson) but the resulting fixture is a
+    near-mechanical copy of any prior peer with `<tag>Id` swapped.
+  - When a tag has only two operations (here: rollback-delete +
+    rollback-rollback), the per-tag `*-cov-*` namespace lifecycle
+    spans exactly those two stories — the second story inherits the
+    namespace, then closes it before the next tag.
+  - The slug for `rollback-rollback` collides with its own tag name.
+    The harness keys on the literal fixture string and never parses
+    `<tag>-cov-<slug>-...` back into segments, so the collision is
+    benign — no special-casing needed.
+---

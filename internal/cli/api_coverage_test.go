@@ -25043,6 +25043,112 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0324",
+		OperationID: "rollback-rollback",
+		Method:      http.MethodPost,
+		Path:        "/rollback.rollback",
+		Tag:         "rollback",
+		// Second entry in the priority-4 rollback/* coverage roster
+		// — inherits the `rollback-cov-*` per-tag fixture-isolation
+		// namespace opened by API-0323 `rollback-delete`. Per the
+		// per-tag fixture-isolation rule established at API-0188
+		// `mounts-allNamedByApplicationId`, API-0246
+		// `organization-active`, API-0268 `port-create`, API-0290
+		// `project-all`, API-0298 `redirects-create`, API-0302
+		// `redis-changeStatus`, and API-0323 `rollback-delete`,
+		// this entry deliberately stays inside the `rollback-cov-*`
+		// namespace and **must not** back-reference any closed
+		// prior-tag namespace (`admin-cov-*`, `ai-cov-*`,
+		// `app-cov-*`, `backup-cov-*`, `bb-cov-*`, `cert-cov-*`,
+		// `clu-cov-*`, `compose-cov-*`, `deployment-cov-*`,
+		// `dest-cov-*`, `docker-cov-*`, `domain-cov-*`,
+		// `environment-cov-*`, `gitea-cov-*`, `github-cov-*`,
+		// `gitlab-cov-*`, `mariadb-cov-*`, `mongo-cov-*`,
+		// `mounts-cov-*`, `mysql-cov-*`, `org-cov-*`, `port-cov-*`,
+		// `postgres-cov-*`, `preview-cov-*`, `proj-cov-*`,
+		// `redirects-cov-*`, `redis-cov-*`, `security-cov-*`,
+		// `set-cov-*`, `srv-cov-*`, `swarm-cov-*`, `usr-cov-*`).
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json > /rollback.rollback >
+		// post`: a **POST** with **no parameters** and a
+		// **REQUIRED request body** whose schema declares **one
+		// REQUIRED non-nullable plain string field** `rollbackId`
+		// with **zero optional fields**. Responses 200/400/401/403/
+		// 500 — **no 404** is declared, mirroring the action-on-
+		// known-id POST precedent reasserted across every body-
+		// bearing imperative-action POST already covered (e.g.
+		// API-0323 `rollback-delete`, API-0309 `redis-remove`,
+		// API-0179 `mongo-remove`) whose missing-target failure mode
+		// collapses into 400/validation under Dokploy's tRPC
+		// convention rather than a dedicated 404 leg. The 200
+		// response is `{}` with `additionalProperties: false`,
+		// matching the empty-success cohort.
+		//
+		// **Body composition:**
+		//   - **REQUIRED:** `rollbackId` (plain string). Identifies
+		//     the rollback record to apply. The fixture below
+		//     supplies a deterministic-but-clearly-fake
+		//     `rollback-cov-rollback-0324-rollbackId` literal
+		//     carrying the `<tag>-cov-<slug>-<storyID>-<field>`
+		//     suffix for `git grep` traceability.
+		//   - **No optional fields exist on this operation**, so the
+		//     fixture saturates the entire schema surface with the
+		//     single REQUIRED scalar.
+		//
+		// **Shape positioning — single-required-string-scalar POST
+		// imperative-action mutation, body REQUIRED, no optional
+		// tail.** Cardinality- and type-identical to API-0323
+		// `rollback-delete`, API-0309 `redis-remove`, API-0179
+		// `mongo-remove`, API-0173 `mariadb-update`, API-0285
+		// `postgres-update`, API-0314 `redis-stop`, and the rest
+		// of the single-required-`<tag>Id` body family (one
+		// REQUIRED plain string slot, zero optional slots).
+		// Functionally a state-changing imperative-action `*-
+		// rollback` slug rather than the patch-style `*-update` or
+		// destructive-action `*-delete` family, but the on-the-
+		// wire shape and 401-default failure family are identical.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so
+		// the 404→CodeNotFound override is structurally
+		// inapplicable. `*-rollback` here is a body-bearing
+		// imperative-action POST and stays on the 401→CodeAuth
+		// invariant locked by every imperative-action peer already
+		// covered.
+		//
+		// **Fixture token base** `rollback-cov-rollback-0324`
+		// follows the established `<tag>-cov-<slug>-<storyID>`
+		// deterministic-but-clearly-fake naming convention. The
+		// slug `rollback` collides with the tag name itself; this
+		// is benign because the harness keys on the literal value
+		// rather than parsing it back into segments. Single-segment
+		// slug has no internal capitalisation so the kebab-vs-camel
+		// choice is moot here.
+		//
+		// The next case in the PRD-ordered priority-4 backlog is
+		// API-0325 `schedule-create`, which opens a fresh
+		// `schedule-cov-*` per-tag fixture-isolation namespace
+		// after this entry closes the rollback/* coverage roster
+		// (API-0323 `rollback-delete` + API-0324 `rollback-
+		// rollback` — a two-element tag, fully covered). The next
+		// contributor must re-verify the spec against
+		// `internal/api/data/openapi.json` per the forward-
+		// reference lesson before assuming any field shape, and
+		// **must not** inherit this `rollback-cov-*` namespace
+		// across the tag boundary.
+		SampleBody: json.RawMessage(`{
+			"rollbackId": "rollback-cov-rollback-0324-rollbackId"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0331",
 		OperationID: "security-create",
 		Method:      http.MethodPost,
