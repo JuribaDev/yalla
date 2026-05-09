@@ -29448,3 +29448,118 @@ forward-reference lesson before assuming any field shape.
     required/optional status against `internal/api/data/openapi.json`
     rather than assuming sibling parity inside the same tag arc.
 ---
+
+## 2026-05-09 - API-0400 (sshKey-all)
+- Implemented Cover sshKey-all (GET /sshKey.all) — the **tag-arc opener
+  for the sshKey/* coverage roster**, opening a fresh `sshKey-cov-*`
+  per-tag fixture-isolation namespace as forecast in API-0322
+  `registry-update`'s closing comment.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended a single
+    `apiCoverageCase` literal (StoryID API-0400, OperationID
+    sshKey-all, GET, Tag sshKey, **zero parameters**, **no
+    requestBody**, 200/400/401/403/404/500 response set, 200 = `{}`
+    with `additionalProperties: false`). Inserted between API-0399
+    `settings-writeTraefikEnv` and API-0423 `swarm-getNodeApps` to
+    preserve PRD ordering inside the priority-5 slot left vacant by
+    the priority-2 settings/* and priority-3 swarm/* runs that
+    surrounded it.
+  - `ralph/prd.json` — flipped `API-0400.passes = true`.
+  - `ralph/progress.txt` — this entry.
+- Verification run (from repo root):
+  - `gofmt -w .` — clean (`gofmt -l .` reports no diff).
+  - `go mod tidy` — clean (no new deps).
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages PASS (`internal/cli` 1.715s).
+  - `go test -race ./...` — all packages PASS (`internal/cli` 3.373s).
+  - Targeted: `go test ./internal/cli -run
+    'TestAPICoverage_.*/API-0400' -v` — fired all 5 subtests
+    (RegistryInvariants, SchemaCommandWorks, ManifestListsOperation,
+    SuccessRoundTrip, RepresentativeFailure) against operationId
+    `sshKey-all`; all PASS.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser`: not installed locally; skipped per the
+    document-rather-than-silently-skip rule.
+- Results: API-0400 acceptance criteria satisfied. Operation present in
+  the OpenAPI registry with GET + /sshKey.all + tag sshKey; raw API
+  call works through the harness no-input path; schema get works;
+  manifest lists the operation; success and 401-default representative
+  failure both re-proven by the per-tag isolated httptest fixture.
+- Family choice: parameter-free list-style GET, no requestBody —
+  cardinality- and type-identical to the canonical list-GET opener
+  chain (API-0006 `ai-getAll`, API-0058 `certificates-all`, API-0102
+  `destination-all`, API-0208 `notification-all`, API-0246
+  `organization-active`, API-0290 `project-all`, API-0316
+  `registry-all`). Stands apart from the body-bearing sshKey/*
+  mutators (API-0401 `sshKey-create`, API-0402 `sshKey-generate`,
+  API-0404 `sshKey-remove`, API-0405 `sshKey-update`, all POST per
+  the spec preview) and from the by-id reader API-0403 `sshKey-one`
+  (GET with a single REQUIRED query parameter per the spec preview).
+  Harness-default 401 → CodeAuth representative failure retained;
+  the 404 → CodeNotFound override slot is **reserved for the upcoming
+  API-0403 `sshKey-one` entry** (the canonical by-id reader for the
+  sshKey/* tag arc) per the per-tag opener design.
+- Remaining risks / follow-ups:
+  - The `sshKey-cov-*` per-tag fixture-isolation namespace is now
+    **opened** but not yet exercised — list-GET openers do not
+    allocate `<tag>-cov-<slug>-<storyID>` slugs because there is no
+    payload to embed them in. The first body-bearing or parameterised
+    sshKey/* peer (API-0401 `sshKey-create`) must consume the
+    `sshKey-cov-create-0401-*` slug stem to inherit the namespace
+    established here.
+  - The next case in the PRD-ordered priority-5 backlog is API-0401
+    `sshKey-create` (declared a **POST** with a REQUIRED JSON body
+    per the spec preview). The next contributor must re-verify the
+    spec against `internal/api/data/openapi.json` > `/sshKey.create`
+    > `post` per the forward-reference lesson before assuming any
+    field shape, and will consume slugs of the form
+    `sshKey-cov-create-0401-*`.
+- **Learnings for future iterations:**
+  - **List-GET tag-arc opener canonical shape locked in across nine
+    tags now.** The list-GET opener precedent (API-0006 `ai-getAll`,
+    API-0058 `certificates-all`, API-0102 `destination-all`, API-0208
+    `notification-all`, API-0246 `organization-active`, API-0290
+    `project-all`, API-0316 `registry-all`, and now API-0400
+    `sshKey-all`) is reliably **GET + zero parameters + no
+    requestBody + `{}` 200 with `additionalProperties: false`**. The
+    case literal omits every `Sample*` field — the harness's
+    `len(tc.SampleBody) > 0` gate at `runAPICoverageSuccess` stays
+    inactive and `buildCoverageInputArgs` returns an empty slice, so
+    the `yalla api call <op> --json` invocation exercises the
+    no-input-flag path that the agent contract guarantees.
+  - **Priority-5 entries slot into existing StoryID gaps in
+    `api_coverage_test.go`.** When a previous priority-N run skipped
+    the priority-5 stories in a contiguous block (here, the
+    priority-2 settings/* run from API-0395..API-0399 was directly
+    followed by the priority-3 swarm/* run from API-0423..API-0425
+    inside the test file, leaving API-0400..API-0422 vacant), the
+    new priority-5 entry must be inserted at the correct StoryID
+    position to preserve the file's `StoryID`-ascending invariant.
+    **Do not modify the predecessor's existing closing forward-
+    reference comment** — that comment was authored in the context
+    of its own priority-N backlog (API-0399 forward-references
+    API-0427 `user-all`, the next priority-2 case at the time)
+    and is correct for that ordering. The new priority-5 entry's
+    *own* opening comment carries the cross-priority forward
+    reference (here, citing API-0322 `registry-update`'s closing
+    comment as the predecessor in the priority-5 chain).
+  - **Tag-arc opener vs. closer comment convention.** A tag-arc
+    opener (here, API-0400 opening sshKey/*) explicitly enumerates
+    every pending peer in the tag, reserves the `<tag>-cov-*` slug
+    namespace, and forward-references the immediate successor in
+    the tag (API-0401 `sshKey-create`). A tag-arc closer (e.g.
+    API-0322 closing registry/*) declares the namespace closed and
+    forward-references the *next tag-arc opener* in the priority-N
+    backlog (API-0400 `sshKey-all`). Both halves of the convention
+    are load-bearing — the opener tells future contributors what
+    slugs are reserved within the arc, and the closer tells them
+    what arc to open next.
+  - **Forward-reference verification.** Re-read the spec at
+    `internal/api/data/openapi.json` for every story — the prior
+    case's closing comment is a *hint*, not authoritative. Here the
+    API-0322 closing comment correctly predicted GET + sshKey/*
+    namespace + zero parameters + no body for API-0400, and spec
+    re-verification at `/sshKey.all > get` confirmed the prediction
+    exactly (responses 200/400/401/403/404/500, 200 = `{}` with
+    `additionalProperties: false`).
+---
