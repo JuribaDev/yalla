@@ -24830,3 +24830,73 @@ forward-reference lesson before assuming any field shape.
     spec for the fixture, matching the deterministic-first-enum pick
     convention reasserted at API-0325 `schedule-create`.
 ---
+## 2026-05-09 04:55 UTC - API-0211
+- Implemented contract coverage for POST /notification.createEmail (Dokploy
+  `notification-createEmail`).
+- Files changed:
+  - internal/cli/api_coverage_test.go — appended apiCoverageCase entry
+    (StoryID=API-0211) immediately after API-0210, sorted by StoryID.
+    Sample body materialises all 14 REQUIRED fields per the spec
+    (`internal/api/data/openapi.json > /notification.createEmail > post`):
+    six plain strings (`name`, `smtpServer`, `username`, `password`,
+    `fromAddress`), one number (`smtpPort` = 587), one array<string>
+    (`toAddresses`), and seven shared category booleans
+    (`appBuildError`/`databaseBackup`/`volumeBackup`/`dokployRestart`/
+    `appDeploy`/`dockerCleanup`/`serverThreshold`). Fixture values stay
+    inside the `notification-cov-create-email-0211-<field>` namespace and
+    use the RFC 6761 `example.invalid` reserved TLD for SMTP host and
+    mailbox shapes so a future shape validator stays satisfied without
+    risking real DNS/SMTP egress. SuccessResponse is `{}` per the
+    additionalProperties:false success schema.
+  - ralph/prd.json — flipped `passes: false` -> `true` for API-0211.
+  - ralph/progress.txt — this entry.
+- Verification run from the repo root:
+  - gofmt -w .                            : clean
+  - go mod tidy                           : clean (no diff)
+  - go vet ./...                          : clean
+  - go test ./...                         : ok (all 9 packages)
+  - go test -race ./...                   : ok (all 9 packages)
+- Tools not installed locally and therefore documented-as-skipped (per the
+  Codebase Patterns rule): goimports, golangci-lint, staticcheck,
+  govulncheck, goreleaser. Same set as every prior API-0XXX story.
+- Remaining risks / follow-ups:
+  - None for this story. The next-in-queue notification/* siblings
+    (API-0212 createGotify, API-0213 createLark, API-0214 createNtfy, …)
+    can crib this entry's fixture-namespace and mixed-scalar-and-array
+    convention; only the transport-specific tail varies.
+- **Learnings for future iterations:**
+  - The notification/* required-body subset has two distinct shape
+    families so far: (a) partial-required + map<string,string> nest
+    (API-0209 createCustom) and (b) closed all-required scalars (API-0210
+    createDiscord). API-0211 createEmail introduces a third family —
+    closed all-required mixing scalars + a number + an array<string> —
+    in a single REQUIRED layer. Future peers should grep this entry for
+    the mixed-scalar+array all-required convention rather than
+    re-deriving it from the spec.
+  - When a REQUIRED field is secret-shaped (e.g. `password` in
+    createEmail), the request-body forwarder ships the bytes verbatim —
+    the redactor in `internal/api` operates on rendered --json output
+    (response envelopes, error payloads, tracing) and **not** on the
+    request body. Fixtures must therefore use clearly-fake placeholder
+    tokens with no resemblance to real credentials, and the entry's
+    comment should call this out so agents cribbing the fixture do not
+    inline real secrets in source.
+  - `smtpPort` is the first number-typed field in the notification/*
+    roster; it mirrors the number precedent seeded by API-0001
+    `admin-setupMonitoring` (`metricsConfig.server.refreshRate`/`port`).
+    Using IANA-registered ports (587 for SMTP submission) keeps a future
+    port-range validator satisfied without binding the test to a
+    specific deployment topology.
+  - `toAddresses` is the first array<string> in the notification/*
+    roster; the harness ships JSON verbatim so wire-level array shape is
+    exercised end-to-end with no extra plumbing.
+  - The slug-style rule fixed at API-0209 (kebab-case for the
+    multi-camel notification/* roster) propagates cleanly: API-0211
+    inherits `create-email` automatically from the per-tag-slug-style
+    rule. Future siblings inherit kebab-case as well.
+  - The 401→CodeAuth + no-404 invariants for body-bearing imperative-
+    action POSTs continue to hold (createCustom, createDiscord,
+    createEmail, security-create, schedule-create, redirects-create,
+    project-create, port-create, mounts-create). Nothing in createEmail
+    needs the 404→CodeNotFound override.
+---

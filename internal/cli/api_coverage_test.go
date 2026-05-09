@@ -18269,6 +18269,184 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0211",
+		OperationID: "notification-createEmail",
+		Method:      http.MethodPost,
+		Path:        "/notification.createEmail",
+		Tag:         "notification",
+		// Fourth entry in the notification/* coverage roster, continuing
+		// inside the `notification-cov-*` per-tag fixture-isolation
+		// namespace opened by API-0208 `notification-all` and extended
+		// by API-0209 `notification-createCustom` and API-0210
+		// `notification-createDiscord`. Per the per-tag isolation rule
+		// established at API-0188 `mounts-allNamedByApplicationId`,
+		// API-0246 `organization-active`, API-0268 `port-create`,
+		// API-0290 `project-all`, API-0298 `redirects-create`, API-0302
+		// `redis-changeStatus`, API-0323 `rollback-delete`, and
+		// API-0325 `schedule-create`, this entry stays inside the
+		// namespace opened by API-0208 and **must not** back-reference
+		// any closed prior-tag namespace (`admin-cov-*`, `ai-cov-*`,
+		// `app-cov-*`, `backup-cov-*`, `bb-cov-*`, `cert-cov-*`,
+		// `clu-cov-*`, `compose-cov-*`, `deployment-cov-*`,
+		// `dest-cov-*`, `docker-cov-*`, `domain-cov-*`,
+		// `environment-cov-*`, `gitea-cov-*`, `github-cov-*`,
+		// `gitlab-cov-*`, `mariadb-cov-*`, `mongo-cov-*`,
+		// `mounts-cov-*`, `mysql-cov-*`, `org-cov-*`, `port-cov-*`,
+		// `postgres-cov-*`, `preview-cov-*`, `proj-cov-*`,
+		// `redirects-cov-*`, `redis-cov-*`, `rollback-cov-*`,
+		// `schedule-cov-*`, `security-cov-*`, `set-cov-*`,
+		// `srv-cov-*`, `swarm-cov-*`, `usr-cov-*`).
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json > /notification.createEmail
+		// > post`: a **POST** with **no parameters** and a **REQUIRED
+		// request body** whose schema declares **fourteen REQUIRED
+		// non-nullable fields** — six plain strings (`name`,
+		// `smtpServer`, `username`, `password`, `fromAddress`), one
+		// plain number (`smtpPort`), one array-of-string
+		// (`toAddresses`), and seven plain booleans (`appBuildError`,
+		// `databaseBackup`, `volumeBackup`, `dokployRestart`,
+		// `appDeploy`, `dockerCleanup`, `serverThreshold`) — with
+		// **zero optional siblings**. Responses 200/400/401/403/500 —
+		// the spec does **not** declare 404 on this operation,
+		// matching the cross-tag create-mutation precedent on
+		// API-0189 `mounts-create`, API-0209 `notification-createCustom`,
+		// API-0210 `notification-createDiscord`, API-0268
+		// `port-create`, API-0292 `project-create`, API-0298
+		// `redirects-create`, API-0325 `schedule-create`, and
+		// API-0331 `security-create` (Dokploy create POSTs do not
+		// surface missing-target legs because there is no target-by-id
+		// to miss). The 200 schema is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort.
+		//
+		// **Slug style — kebab-case inherited from API-0209/API-0210.**
+		// Per the per-tag-slug-style rule fixed by the kickoff
+		// multi-camel entry API-0209 `notification-createCustom`
+		// (→ `create-custom`) and propagated through API-0210
+		// `notification-createDiscord` (→ `create-discord`), this peer
+		// takes `create-email` and the remaining notification/*
+		// siblings (API-0212 `create-gotify`, API-0213 `create-lark`,
+		// API-0214 `create-ntfy`, …) inherit kebab-case as well.
+		//
+		// **Body composition:**
+		//   - **REQUIRED — closed all-required shape, no optional
+		//     tail.** Inherits the closed-shape all-required convention
+		//     seeded by API-0210 `notification-createDiscord` (ten
+		//     required slots) and extends it to fourteen slots while
+		//     keeping zero optional siblings. Every property the spec
+		//     lists is REQUIRED, so the fixture populates all fourteen
+		//     slots and the wire-level invariant check exercises the
+		//     closed-shape path with no optional keys to drop.
+		//     - `name` (plain string). Carries the deterministic-but-
+		//       clearly-fake `notification-cov-create-email-0211-name`
+		//       value, keyed to the
+		//       `notification-cov-create-email-0211-<field>` namespace
+		//       inherited from API-0209/API-0210.
+		//     - `smtpServer` (plain string), `username` (plain
+		//       string), `password` (plain string), `fromAddress`
+		//       (plain string). The fixture supplies stable
+		//       `notification-cov-create-email-0211-<field>` values.
+		//       `fromAddress` carries a real-shape RFC 5321 mailbox
+		//       on the `example.invalid` reserved TLD (RFC 6761) so a
+		//       future address-shape validator wired into the harness
+		//       still accepts it without risking a real DNS lookup or
+		//       SMTP egress to a third-party host. This extends the
+		//       `endpoint`/`webhookUrl` URL-fixture convention seeded
+		//       by API-0209/API-0210 to the email-address shape.
+		//     - `password` deserves a callout: its REQUIRED status
+		//       means the fixture must materialise a placeholder
+		//       string. The yalla request-body forwarder ships the
+		//       bytes verbatim to the upstream Dokploy host, so the
+		//       redactor in `internal/api` operates on the **rendered
+		//       --json output** (response envelopes, error payloads,
+		//       and tracing) and **not** on the request body. The
+		//       fixture value is therefore a clearly-fake
+		//       `notification-cov-create-email-0211-password` token
+		//       with no resemblance to a real credential — agents
+		//       cribbing this fixture as a template should always
+		//       substitute their own secret material via `--input`,
+		//       never inline it in source.
+		//     - `smtpPort` (plain number). First number-typed field
+		//       in the notification/* roster; mirrors the
+		//       number-typed `metricsConfig.server.refreshRate` /
+		//       `port` precedent seeded by API-0001
+		//       `admin-setupMonitoring`. The fixture uses `587` (the
+		//       IANA-registered SMTP submission port) so a future
+		//       port-range validator stays satisfied without binding
+		//       the test to a specific deployment topology.
+		//     - `toAddresses` (array of plain strings). First
+		//       array-of-scalar field in the notification/* roster;
+		//       the harness ships JSON verbatim so the wire-level
+		//       array shape is exercised end-to-end. The fixture
+		//       carries a single `notification-cov-create-email-
+		//       0211-to@example.invalid` mailbox for the same
+		//       RFC 6761 hygiene reason as `fromAddress`.
+		//     - `appBuildError`, `databaseBackup`, `volumeBackup`,
+		//       `dokployRestart`, `appDeploy`, `dockerCleanup`,
+		//       `serverThreshold` (seven plain booleans) — `true`
+		//       branch on every slot to mirror an "alert me on every
+		//       category" agent-typical Email configuration. The
+		//       seven shared category booleans are the
+		//       transport-agnostic core of the notification/*
+		//       roster; only the transport-specific tail (Discord's
+		//       `decoration`/`webhookUrl`, Email's
+		//       `smtp*`/`fromAddress`/`toAddresses`, …) varies
+		//       between siblings.
+		//
+		// **Shape positioning — closed all-required POST
+		// create-mutation, body REQUIRED, fourteen-field flat scalar
+		// payload with one array-of-string slot and one number slot,
+		// zero optional tail.** Functionally distinct from the
+		// partially-required API-0209 `notification-createCustom`
+		// (two-required-string + eight-optional-boolean + nested
+		// `map[string]string`), the smaller closed all-required
+		// API-0210 `notification-createDiscord` (ten scalar slots, no
+		// array, no number), the closed-shape three-string
+		// API-0331 `security-create`, the deep optional tail of
+		// API-0325 `schedule-create` (anyOf-string-null + enums +
+		// boolean), and the create-with-anyOf API-0298
+		// `redirects-create`. `notification-createEmail` is the first
+		// cross-tag fixture to land a closed all-required body that
+		// mixes scalar strings, a number, an array-of-string, and
+		// booleans in a single REQUIRED layer; future peers in the
+		// notification/* roster that ship transport-specific
+		// non-scalar fields (`createSlack`'s channel array,
+		// `createTeams`'s connector list, etc., per the spec) should
+		// grep this entry first for the mixed-scalar-and-array
+		// all-required convention.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set, so the
+		// 404→CodeNotFound override is structurally inapplicable.
+		// `*-create` here is a body-bearing imperative-action POST
+		// and stays on the 401→CodeAuth invariant locked by every
+		// imperative-action peer already covered.
+		SampleBody: json.RawMessage(`{
+			"name": "notification-cov-create-email-0211-name",
+			"smtpServer": "notification-cov-create-email-0211-smtp.example.invalid",
+			"smtpPort": 587,
+			"username": "notification-cov-create-email-0211-username",
+			"password": "notification-cov-create-email-0211-password",
+			"fromAddress": "notification-cov-create-email-0211-from@example.invalid",
+			"toAddresses": ["notification-cov-create-email-0211-to@example.invalid"],
+			"appBuildError": true,
+			"databaseBackup": true,
+			"volumeBackup": true,
+			"dokployRestart": true,
+			"appDeploy": true,
+			"dockerCleanup": true,
+			"serverThreshold": true
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,
