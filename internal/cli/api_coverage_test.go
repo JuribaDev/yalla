@@ -11365,6 +11365,138 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0158",
+		OperationID: "licenseKey-updateEnterpriseSettings",
+		Method:      http.MethodPost,
+		Path:        "/licenseKey.updateEnterpriseSettings",
+		Tag:         "licenseKey",
+		// Fifth entry on the licenseKey/* coverage roster, inheriting
+		// the `licenseKey-cov-*` per-tag fixture-isolation namespace
+		// opened by API-0154 `licenseKey-activate`, reasserted by
+		// API-0155 `licenseKey-deactivate`, and continued through
+		// API-0156 `licenseKey-getEnterpriseSettings` and API-0157
+		// `licenseKey-haveValidLicenseKey` (the two parameter-free
+		// no-body GETs). Per the per-tag isolation rule reasserted at
+		// API-0335..API-0444 and originally established at API-0246
+		// `organization-active`, this entry **must not** back-reference
+		// any closed prior-tag namespace (`set-cov-*`, `srv-cov-*`,
+		// `proj-cov-*`, `org-cov-*`, `compose-cov-*`, `app-cov-*`,
+		// `ai-cov-*`, `admin-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		// `cert-cov-*`, `clu-cov-*`, `deployment-cov-*`, `dest-cov-*`,
+		// `docker-cov-*`, `domain-cov-*`, `environment-cov-*`,
+		// `gitea-cov-*`, `github-cov-*`, `gitlab-cov-*`,
+		// `gitProvider-cov-*`, `mariadb-cov-*`, `mongo-cov-*`,
+		// `mounts-cov-*`, `mysql-cov-*`, `swarm-cov-*`, `usr-cov-*`,
+		// etc.). Sandwiched between API-0157
+		// `licenseKey-haveValidLicenseKey` and API-0160
+		// `mariadb-changeStatus` (the priority-4 mariadb/* tag kickoff)
+		// per the StoryID-sorted slice rule.
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json` >
+		// `/licenseKey.updateEnterpriseSettings` > `post`: a **POST**
+		// with **no parameters** and a **REQUIRED**
+		// `application/json` request body. The body schema is a flat
+		// object with **one OPTIONAL boolean field**
+		// (`enableEnterpriseFeatures`) — the schema declares no
+		// `required` array, so the field is not strictly required, but
+		// the requestBody envelope itself is REQUIRED. Responses
+		// 200/400/401/403/500 — **no 404** declared, matching the
+		// settings-mutation precedent (404 is reserved for caller-
+		// supplied selectors that miss a server-side row, not for
+		// global-state writes on a singleton settings document). The
+		// 200 schema is `{}` with `additionalProperties: false`,
+		// matching every prior covered peer in the empty-success
+		// cohort.
+		//
+		// **Forward-reference correction.** API-0157's comment
+		// predicted this entry would be a **POST with a body** per the
+		// spec preview but explicitly cautioned against assuming the
+		// field shape. The re-verification confirmed the caution: the
+		// body schema declares zero REQUIRED fields and exactly one
+		// OPTIONAL boolean field (`enableEnterpriseFeatures`), the
+		// minimal-cardinality body-bearing POST shape on the
+		// licenseKey/* roster.
+		//
+		// **Shape positioning — settings-write POST with one optional
+		// boolean.** This is the **first body-bearing POST** on the
+		// licenseKey/* roster whose body declares zero REQUIRED fields
+		// (API-0154 `licenseKey-activate` and API-0155
+		// `licenseKey-deactivate` are body-bearing POSTs with a single
+		// REQUIRED `licenseKey` string). API-0158 is structurally
+		// distinct: zero REQUIRED fields plus one OPTIONAL boolean.
+		// The closest cross-tag precedent is API-0137
+		// `gitea-testConnection` (zero required, two optional strings)
+		// — both share the "REQUIRED requestBody envelope, no required
+		// fields, only optional scalars" skeleton and the harness
+		// handles them identically: the `len(tc.SampleBody) > 0` gate
+		// at `runAPICoverageSuccess` activates the JSON content-type
+		// and byte-for-byte body comparison legs because the
+		// requestBody envelope is required even though every
+		// individual field is optional.
+		//
+		// **Every-optional-populated rule.** Per the API-0010 /
+		// API-0014 / API-0052 / API-0053 / API-0137 / API-0249 /
+		// API-0292 / API-0297 every-optional-populated rule, the
+		// fixture supplies the OPTIONAL boolean field with a
+		// deterministic literal (`true`) so the body-equality leg of
+		// `runAPICoverageSuccess` exercises the declared field name on
+		// the wire. Omitting it would weaken the success-leg
+		// round-trip and let a future schema drift on
+		// `enableEnterpriseFeatures` land silently. The `true` choice
+		// is orthogonal to the contract leg (the harness only asserts
+		// byte-for-byte body propagation) but encodes the canonical
+		// "enable enterprise features" intent the operation documents.
+		//
+		// **Family choice — harness-default 401 → CodeAuth retained.**
+		// 404 → CodeNotFound is **not available** here at all (no 404
+		// in the spec). 400 → CodeInvalidInput is reachable in
+		// principle (a malformed body would fail server-side
+		// validation) but the harness reserves 400 representatives for
+		// stories where payload validation is the operation's
+		// *uniquely distinguishing* failure mode; a settings-write
+		// whose body is one optional boolean has no distinguishing
+		// payload-shape failure surface to claim. The harness-default
+		// 401 → CodeAuth failure leg therefore remains the most
+		// representative single failure mode and reasserts the auth
+		// invariant for the licenseKey/* namespace at this entry
+		// (writing enterprise settings must still pass the bearer
+		// header before any state mutation, per the spec's
+		// `Authorization: []` security requirement).
+		//
+		// **Fixture token base** `licenseKey-cov-updateEntSettings-0158`
+		// follows the `<tag>-cov-<slug>-<storyID>` convention. Verified
+		// non-colliding with API-0154's
+		// `licenseKey-cov-activate-0154-licenseKey`, API-0155's
+		// `licenseKey-cov-deactivate-0155-licenseKey`, and the
+		// no-fixture API-0156 / API-0157 entries (different slug +
+		// storyID → unique). The `updateEntSettings` slug is a
+		// deliberately-shortened form of `updateEnterpriseSettings` to
+		// keep diffs scannable; the body field name
+		// (`enableEnterpriseFeatures`, a boolean) is not a
+		// string-fixture slot (the spec types it as a boolean), so no
+		// `<base>-<field>` literal is minted for it.
+		//
+		// The next case in the priority-5 backlog after this entry is
+		// API-0159 `licenseKey-validate` (declared a **POST** with a
+		// body per the spec preview); the next contributor must
+		// re-verify the spec against
+		// `internal/api/data/openapi.json` per the forward-reference
+		// lesson before assuming any field shape, and will continue
+		// inside the `licenseKey-cov-*` per-tag fixture-isolation
+		// namespace opened at API-0154.
+		SampleBody: json.RawMessage(`{
+			"enableEnterpriseFeatures": true
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0160",
 		OperationID: "mariadb-changeStatus",
 		Method:      http.MethodPost,

@@ -23519,3 +23519,118 @@ forward-reference lesson before assuming any field shape.
     json round-trip with `indent=2` and a trailing newline to match
     the existing file shape.
 ---
+
+## 2026-05-09 - API-0158
+- Implemented coverage for `licenseKey-updateEnterpriseSettings`
+  (POST /licenseKey.updateEnterpriseSettings). The OpenAPI registry
+  already advertises this operationId via the auto-generated spec at
+  `internal/api/data/openapi.json`, so the only change needed was a
+  new `apiCoverageCase` fixture in
+  `internal/cli/api_coverage_test.go` that locks the per-operation
+  contract: registry presence, schema reachability, manifest
+  inclusion, an httptest-backed success exchange, and a
+  representative failure path.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended API-0158
+    `licenseKey-updateEnterpriseSettings` fixture between API-0157
+    `licenseKey-haveValidLicenseKey` and API-0160
+    `mariadb-changeStatus`. Body fixture supplies the lone OPTIONAL
+    boolean field `enableEnterpriseFeatures: true` per the
+    every-optional-populated rule shared with API-0010 / API-0014 /
+    API-0052 / API-0053 / API-0137 / API-0249 / API-0292 / API-0297.
+    `SuccessResponse: "{}"` matches the spec's empty-success cohort.
+  - `ralph/prd.json` — set API-0158 `passes: true`.
+- **Spec re-verified** against `internal/api/data/openapi.json` >
+  `/licenseKey.updateEnterpriseSettings` > `post`: method POST, tag
+  licenseKey, no parameters, requestBody REQUIRED with
+  application/json. **Zero REQUIRED fields** plus one OPTIONAL boolean
+  (`enableEnterpriseFeatures`) — the schema declares no `required`
+  array, so the field is not strictly required, but the requestBody
+  envelope itself is REQUIRED. Responses 200/400/401/403/500; 200 is
+  `{}` with `additionalProperties: false`. **No 404** declared,
+  matching the settings-mutation precedent (404 is reserved for
+  caller-supplied selectors against a server-side row, not for
+  global-state writes on a singleton settings document).
+- **Shape positioning**: settings-write POST with one optional
+  boolean. **First body-bearing POST** on the licenseKey/* roster
+  whose body declares zero REQUIRED fields (API-0154 `licenseKey-
+  activate` and API-0155 `licenseKey-deactivate` are body-bearing
+  POSTs with a single REQUIRED `licenseKey` string). The closest
+  cross-tag precedent is API-0137 `gitea-testConnection` (zero
+  required, two optional strings) — both share the "REQUIRED
+  requestBody envelope, no required fields, only optional scalars"
+  skeleton and the harness handles them identically: the
+  `len(tc.SampleBody) > 0` gate at `runAPICoverageSuccess` activates
+  the JSON content-type and byte-for-byte body comparison legs
+  because the requestBody envelope is required even though every
+  individual field is optional.
+- **Family choice**: harness-default 401→CodeAuth retained. Spec
+  omits 404 (404→CodeNotFound override structurally inapplicable to
+  body-bearing settings-write POST). 400→CodeInvalidInput is
+  technically reachable but the harness reserves 400 representatives
+  for stories where payload validation is the *uniquely
+  distinguishing* failure mode — a settings-write whose body is one
+  optional boolean has no distinguishing payload-shape failure
+  surface to claim. The harness-default 401→CodeAuth failure leg
+  reasserts the auth invariant for the licenseKey/* namespace at this
+  entry, consistent with API-0154..API-0157.
+- **Fixture token base** `licenseKey-cov-updateEntSettings-0158`
+  follows the `<tag>-cov-<slug>-<storyID>` convention. Verified
+  non-colliding with API-0154's
+  `licenseKey-cov-activate-0154-licenseKey`, API-0155's
+  `licenseKey-cov-deactivate-0155-licenseKey`, and the no-fixture
+  API-0156 / API-0157 entries (different slug + storyID → unique).
+  The `updateEntSettings` slug shortens
+  `updateEnterpriseSettings` to keep diffs scannable; no
+  `<base>-<field>` literal is minted because the body field
+  (`enableEnterpriseFeatures`) is typed as a boolean rather than a
+  string.
+- Verification run from repo root:
+  - `gofmt -w .` — clean
+  - `go mod tidy` — no diff
+  - `go vet ./...` — clean
+  - `go test ./...` — all 9 packages pass
+  - `go test -race ./...` — all 9 packages pass (cli takes 3.16s under -race)
+  - Targeted: the five `TestAPICoverage_*` suites all run new
+    `API-0158/licenseKey-updateEnterpriseSettings` subtests and pass.
+  - Optional tools (`goimports`, `golangci-lint`, `staticcheck`,
+    `govulncheck`, `goreleaser`) — not installed locally; skipped
+    per the documented baseline.
+- Remaining risks/follow-ups:
+  - Next priority-5 licenseKey/* story is API-0159
+    `licenseKey-validate` (declared a POST with a body per the spec
+    preview). The forward-reference comment block in this entry
+    points the next contributor at it inside the same
+    `licenseKey-cov-*` namespace; spec re-verification against
+    `internal/api/data/openapi.json` is mandatory before assuming
+    any field shape per the established forward-reference lesson.
+- **Learnings for future iterations:**
+  - The "REQUIRED requestBody envelope, zero REQUIRED fields, only
+    OPTIONAL scalars" body-bearing POST shape now has at least two
+    members on disparate tags: API-0137 `gitea-testConnection` (two
+    optional strings) and API-0158 `licenseKey-updateEnterpriseSettings`
+    (one optional boolean). The harness invariant
+    `len(tc.SampleBody) > 0` is what activates byte-for-byte body
+    propagation — the *payload-level* required-field count is
+    irrelevant. Future operations with the same skeleton can clone
+    either fixture as the template, only swapping the field names
+    and types.
+  - The licenseKey/* roster now carries three structurally-distinct
+    request shapes: single-required-string-scalar POST (API-0154
+    `licenseKey-activate`, API-0155 `licenseKey-deactivate`),
+    parameter-free no-body GET (API-0156
+    `licenseKey-getEnterpriseSettings`, API-0157
+    `licenseKey-haveValidLicenseKey`), and zero-required +
+    optional-only body POST (API-0158
+    `licenseKey-updateEnterpriseSettings`). Each shape entered the
+    roster on its first appearance and the harness assertions stay
+    shape-agnostic, so the 401→CodeAuth failure leg remains
+    representative regardless of body cardinality or method.
+  - Boolean fields are not minted as `<base>-<field>` literals — the
+    fixture-token convention `<tag>-cov-<slug>-<storyID>-<field>`
+    is for *string-typed* slots where a deterministic-but-clearly-
+    fake literal aids grep-friendly traceability. For boolean slots,
+    a plain canonical value (`true` for "enable" semantics) is
+    sufficient, since the harness only asserts byte-for-byte body
+    propagation and a boolean has only two possible values.
+---
