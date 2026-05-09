@@ -30602,3 +30602,96 @@ forward-reference lesson before assuming any field shape.
     `clean*` sub-roster at API-0353..API-0362 is the standing
     reminder of this).
 ---
+## 2026-05-09 - API-0415
+- Implemented coverage for API operation `sso-updateTrustedOrigin`
+  (POST /sso.updateTrustedOrigin).
+- Re-verified spec at `internal/api/data/openapi.json >
+  /sso.updateTrustedOrigin > post`: tag `sso`, no parameters,
+  REQUIRED `application/json` body with two REQUIRED string
+  scalars (`oldOrigin`, `newOrigin`); no OPTIONAL siblings.
+  Responses 200/400/401/403/500 — **404 absent** from the
+  response set. 200 schema is `{}` with
+  `additionalProperties: false`.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended one
+    `apiCoverageCase` literal between API-0414 `sso-update` and
+    the swarm/* roster opener API-0423 `swarm-getNodeApps`.
+    Body fixture supplies both REQUIRED top-level fields with
+    `<tag>-cov-<slug>-<storyID>`-conformant
+    `sso-cov-updateTrustedOrigin-0415-{oldOrigin,newOrigin}-fixture`
+    sentinels (no minimal-trim trick — every field is REQUIRED,
+    so the envelope is exhaustive by construction). Default
+    failure leg (401 → CodeAuth) per the API-0410 reservation;
+    the spec omits 404 entirely so the 404→CodeNotFound override
+    is structurally inapplicable. Stays within the open
+    `sso-cov-*` namespace opened at API-0406.
+  - `ralph/prd.json` — flipped API-0415 `passes` to true.
+  - `ralph/progress.txt` — this entry.
+- Verification:
+  - `gofmt -w .` → clean
+  - `go mod tidy` → no changes
+  - `go vet ./...` → clean
+  - `go test ./...` → all packages pass (internal/cli 2.173s)
+  - `go test -race ./...` → all packages pass (internal/cli 4.231s)
+  - Targeted: `go test ./internal/cli/ -run
+    'APICoverage|RegistryInvariants|SchemaCommandWorks|ManifestListsOperation'`
+    PASS (0.842s) — RegistryInvariants, SchemaCommandWorks,
+    ManifestListsOperation, SuccessRoundTrip, RepresentativeFailure
+    all green for the new entry.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` are not installed locally and were not run
+    (documented per the Codebase-Patterns convention rather
+    than silently skipped).
+- Results: API-0415 acceptance criteria satisfied. Operation
+  present in OpenAPI registry with method POST, path
+  /sso.updateTrustedOrigin, tag sso; raw API call works through
+  the harness body-bearing path
+  (`yalla api call sso-updateTrustedOrigin --input request.json --json`);
+  schema get works; manifest lists the operation.
+- Remaining risks / follow-ups:
+  - 8 priority-5 API coverage stories still failing. The
+    sso/* arc is now fully closed (10/10 stories passing); the
+    backlog continues at the stripe/* tag, opening at API-0416
+    `stripe-canCreateMoreServers` (declared a **GET** in the
+    PRD). The next contributor must open a fresh `stripe-cov-*`
+    per-tag fixture-isolation namespace orthogonal to the
+    now-closed `sso-cov-*` namespace per the per-tag isolation
+    rule originally established at API-0246
+    `organization-active`.
+- **Learnings for future iterations:**
+  - **Slug-prefix-is-not-shape, decisively reaffirmed.** The
+    "trusted origin" slug-substring is shared across three
+    sso/* mutators — API-0406 `sso-addTrustedOrigin` (one
+    REQUIRED `origin`), API-0412 `sso-removeTrustedOrigin`
+    (one REQUIRED `origin`), and API-0415 `sso-updateTrustedOrigin`
+    (two REQUIRED scalars `oldOrigin` / `newOrigin`) — and the
+    body shape diverges between them. The `update*` peer
+    legitimately needs both the old and new values to perform
+    its mutation, and the spec reflects that. Do not
+    pattern-match on the slug-substring alone; always
+    re-verify the spec.
+  - **Two-REQUIRED-field POST mutation is its own family
+    cell.** This is structurally distinct from the
+    single-required-string-scalar mutators (API-0406 / API-0407
+    / API-0412) AND from the multi-required-field-with-
+    optional-subtrees mutators (API-0411 `sso-register` and
+    API-0414 `sso-update`, both of which carry `oidcConfig` /
+    `samlConfig` optional siblings deliberately omitted from
+    their fixtures). API-0415 is the first sso/* peer where
+    the fixture is an *exhaustive* multi-required-field
+    envelope rather than a *minimal-but-valid* one — every
+    declared field is REQUIRED so there's nothing to omit.
+  - **sso/* arc closure note.** With API-0415 the sso/* roster
+    is fully covered (10/10): 4 mutator POSTs (`addTrustedOrigin`,
+    `deleteProvider`, `removeTrustedOrigin`,
+    `updateTrustedOrigin`) + 2 register/update POSTs
+    (`register`, `update`) + 1 by-id GET (`one`, the canonical
+    404→CodeNotFound override home) + 3 read-only leaves
+    (`getTrustedOrigins`, `listProviders`,
+    `showSignInWithSSO`). The harness-default 401→CodeAuth
+    failure leg held for 9 of 10 entries; only the canonical
+    by-id GET at API-0410 `sso-one` consumed the
+    404→CodeNotFound override. The `sso-cov-*` namespace
+    closes here; the next tag (stripe/*) opens a fresh
+    namespace.
+---
