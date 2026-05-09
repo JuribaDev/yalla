@@ -26239,3 +26239,109 @@ forward-reference lesson before assuming any field shape.
     follow the predecessor's kebab-vs-camel choice (notification/* is
     kebab per API-0209's anchor).
 ---
+
+## 2026-05-09 - API-0450 (Cover volumeBackups-update, POST /volumeBackups.update)
+- Implemented: appended a sixth and final volumeBackups/* entry to
+  `coveredAPIOperations` in `internal/cli/api_coverage_test.go` for
+  story API-0450. The entry pins:
+    - `OperationID = "volumeBackups-update"`,
+      `Method = http.MethodPost`, `Path = "/volumeBackups.update"`,
+      `Tag = "volumeBackups"`.
+    - `SampleBody` saturates the full 20-field schema surface — six
+      REQUIRED non-nullable plain string slots (`name`, `volumeName`,
+      `prefix`, `cronExpression`, `destinationId`,
+      `volumeBackupId`) plus the every-optional-populated 14-field
+      tail inherited verbatim from API-0445 `volumeBackups-create`
+      (`serviceType` enum on the `application` branch; `appName`;
+      `serviceName` anyOf-string-null on the string branch;
+      `turnOff` boolean=false; `keepLatestCount` anyOf-number-null
+      on number branch; `enabled` anyOf-boolean-null on boolean
+      branch; the seven service-id slots
+      `applicationId`/`postgresId`/`mariadbId`/`mongoId`/`mysqlId`/
+      `redisId`/`composeId` each on the string branch; `createdAt`
+      RFC 3339 literal). All values are deterministic
+      `volBackups-cov-update-0450-<field>` literals that grep
+      cleanly against the volumeBackups/* peer entries.
+    - `SuccessResponse = "{}"` per the empty-success cohort
+      convention (200 schema is `{}` with `additionalProperties:
+      false`).
+    - Failure leg: harness-default 401→CodeAuth retained — the spec
+      omits 404 from this operation's response set
+      (200/400/401/403/500) so the 404→CodeNotFound override is
+      structurally inapplicable; the volumeBackups/* tag's
+      404→CodeNotFound representative is already pinned to API-0448
+      `volumeBackups-one`. Mirrors the 401→CodeAuth invariant locked
+      across every body-bearing mutation peer (API-0445, API-0446,
+      API-0449, plus the cross-tag *-update precedent at API-0330
+      `schedule-update`).
+- Files changed:
+    - `internal/cli/api_coverage_test.go` — appended the API-0450
+      `apiCoverageCase` literal at the tail of `coveredAPIOperations`,
+      structurally mirroring API-0445 `volumeBackups-create` plus the
+      additional REQUIRED `volumeBackupId` slot (the canonical
+      *-update vs *-create delta, identical to the API-0330
+      `schedule-update` vs API-0325 `schedule-create` precedent).
+    - `ralph/prd.json` — flipped `API-0450.passes` from `false` to
+      `true`.
+    - `ralph/progress.txt` — this entry.
+- Verification (run from repo root):
+    - `gofmt -w .` — clean
+    - `go mod tidy` — clean
+    - `go vet ./...` — clean
+    - `go test ./...` — PASS
+    - `go test -race ./...` — PASS
+    - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+      `goreleaser` — not installed locally, documented as missing
+      per the verification baseline rather than silently skipped.
+- Results: API-0450 now has `passes: true` in `ralph/prd.json`. The
+  new coverage row drives all five harness assertions
+  (`TestAPICoverage_RegistryInvariants`,
+  `TestAPICoverage_SchemaCommandWorks`,
+  `TestAPICoverage_ManifestListsOperation`,
+  `TestAPICoverage_SuccessRoundTrip`,
+  `TestAPICoverage_RepresentativeFailure`) for the
+  `volumeBackups-update` operationId. With this entry the
+  volumeBackups/* roster (6/6) is fully covered. Story count: 462
+  total, 395 passing, 67 still failing.
+- Remaining risks / follow-ups:
+    - The volumeBackups/* tag is closed; subsequent priority-4 work
+      moves on to the next pending priority-4 roster (none remain at
+      priority 4 — all 67 remaining failing stories are priority 5,
+      starting at API-0222 `notification-receiveNotification` and
+      continuing through the notification/* mutating cohort).
+    - The `notification-cov-*` namespace was opened at API-0208 and
+      remains active; the next iteration should grep
+      API-0209..API-0219 for the existing
+      `notification-create*`/`notification-update*` body-fixture
+      shaping conventions before adding API-0222.
+- **Learnings for future iterations:**
+    - The *-update vs *-create delta pattern (single additional
+      REQUIRED `<tag>Id` slot atop an otherwise identical body
+      shape) is now a two-tag invariant: schedule/* at
+      API-0325/API-0330 (3-required → 4-required, both 12-field
+      optional tails) and now volumeBackups/* at API-0445/API-0450
+      (5-required → 6-required, both 14-field optional tails). When
+      a future tag's *-create entry has already locked the optional
+      tail composition, the *-update sibling can be a near-mirror
+      with two changes: (1) add the `<tag>Id` REQUIRED slot, (2)
+      switch the namespace base from `<abbr>-cov-create-<storyID>`
+      to `<abbr>-cov-update-<storyID>`. Everything else — the enum
+      branch choice, the anyOf-*-null branch policy, the
+      `cronExpression` real-shape literal, the `createdAt` RFC 3339
+      literal — should be inherited verbatim so the cross-entry
+      diff stays focused on the structural delta.
+    - When closing a per-tag cohort (here volumeBackups/* 6/6 at
+      API-0450), the closer entry should explicitly state which
+      cohort completes and what work moves next. The progress entry
+      should also surface the next pending priority cohort so the
+      following iteration can skip the priority-scan step. After
+      this entry the priority-4 prefix is fully closed and the
+      priority-5 prefix opens with the notification/* mutating
+      cohort at API-0222.
+    - The `volBackups-cov-update-0450-volumeBackupId` fixture token
+      is the canonical demonstration of the *-update delta — it
+      alone distinguishes the API-0445 wire shape from this entry's.
+      Future *-update entries that mirror an existing *-create
+      should similarly highlight the delta-token in their progress
+      entry so the diff is auditable from the log alone.
+---

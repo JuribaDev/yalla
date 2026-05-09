@@ -40556,6 +40556,209 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0450",
+		OperationID: "volumeBackups-update",
+		Method:      http.MethodPost,
+		Path:        "/volumeBackups.update",
+		Tag:         "volumeBackups",
+		// Sixth and final priority-4 volumeBackups/* peer — closes the
+		// volumeBackups/* roster (6/6) after the request-body POSTs at
+		// API-0445 `volumeBackups-create` (kickoff, every-optional-
+		// populated five-required-string-scalar create-mutation) and
+		// API-0446 `volumeBackups-delete` (single-required-string-
+		// scalar destructive POST), the two-required-query list-style
+		// getter at API-0447 `volumeBackups-list`, the canonical-by-id
+		// GET with the 404→CodeNotFound override at API-0448
+		// `volumeBackups-one`, and the multi-camel-segment imperative-
+		// action POST at API-0449 `volumeBackups-runManually`.
+		// Inherits the `volBackups-cov-*` per-tag fixture-isolation
+		// namespace opened at API-0445 `volumeBackups-create` (note
+		// the abbreviated `volBackups` fixture-prefix decision locked
+		// at the kickoff entry — the full `volumeBackups` tag name is
+		// preserved in OperationID, Method, Path, and Tag fields, so
+		// the abbreviated fixture prefix has no correctness impact,
+		// only diff-friendliness). Per the per-tag fixture-isolation
+		// rule established at API-0188 `mounts-allNamedByApplicationId`,
+		// API-0246 `organization-active`, API-0268 `port-create`,
+		// API-0290 `project-all`, API-0298 `redirects-create`,
+		// API-0325 `schedule-create`, API-0331 `security-create`, and
+		// reasserted at API-0445 `volumeBackups-create`, API-0446
+		// `volumeBackups-delete`, API-0447 `volumeBackups-list`,
+		// API-0448 `volumeBackups-one`, and API-0449
+		// `volumeBackups-runManually`, this entry stays inside the
+		// `volBackups-cov-*` namespace and **must not** back-reference
+		// any closed prior-tag namespace (`admin-cov-*`, `ai-cov-*`,
+		// `app-cov-*`, `auth-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		// `cert-cov-*`, `clu-cov-*`, `compose-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `discord-cov-*`,
+		// `docker-cov-*`, `domain-cov-*`, `email-cov-*`, `gh-cov-*`,
+		// `git-cov-*`, `gitea-cov-*`, `gitlab-cov-*`,
+		// `mariadb-cov-*`, `mongo-cov-*`, `mounts-cov-*`,
+		// `mysql-cov-*`, `notif-cov-*`, `org-cov-*`, `port-cov-*`,
+		// `postgres-cov-*`, `preview-cov-*`, `proj-cov-*`,
+		// `redirects-cov-*`, `redis-cov-*`, `rollback-cov-*`,
+		// `schedule-cov-*`, `security-cov-*`, `set-cov-*`,
+		// `srv-cov-*`, `swarm-cov-*`, `usr-cov-*`). With this entry
+		// the volumeBackups/* roster (6/6) is fully covered;
+		// subsequent priority-4 work moves on to the next pending
+		// roster (no further volumeBackups/* reservations needed).
+		//
+		// **Slug style — single-segment slug `update`, kebab-case
+		// decision propagates as a no-op.** The volumeBackups/* slug-
+		// style decision (kebab-case) was locked at API-0449
+		// `volumeBackups-runManually` (`volBackups-cov-run-manually-
+		// 0449-*`). This entry's slug is a single segment (`update`)
+		// with no internal capitalisation, so the kebab-vs-camel
+		// choice is moot here; the namespace base is simply
+		// `volBackups-cov-update-0450` per the standard
+		// `<tag>-cov-<slug>-<storyID>` convention pre-reserved at the
+		// API-0445 kickoff banner.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json > /volumeBackups.update >
+		// post`: a **POST** with **no parameters** and a **REQUIRED
+		// request body** whose schema declares **six REQUIRED non-
+		// nullable plain string fields** (`name`, `volumeName`,
+		// `prefix`, `cronExpression`, `destinationId`, `volumeBackupId`)
+		// alongside a deep optional tail of fourteen siblings —
+		// identical to the API-0445 `volumeBackups-create` 19-field
+		// surface, but `volumeBackupId` is REQUIRED here because it
+		// identifies the existing record to mutate (whereas
+		// volumeBackups-create lets the server allocate the id and so
+		// declares no `volumeBackupId` slot at all). This promotes the
+		// API-0445 five-required-string-scalar shape to the **first
+		// six-required-string-scalar POST** in the coverage table —
+		// distinct from the four-required-string-scalar API-0330
+		// `schedule-update` (12-field optional tail) and the
+		// three-required-string-scalar API-0325 `schedule-create`
+		// (15-field optional tail). Functionally a volumeBackups/*
+		// analogue of API-0330 `schedule-update`: both are body-bearing
+		// *-update mutation POSTs whose only structural delta from
+		// their *-create sibling is the additional REQUIRED
+		// `<tag>Id`-shaped slot (here `volumeBackupId`, there
+		// `scheduleId`). Responses 200/400/401/403/500 — the spec does
+		// **not** declare 404 on this operation, mirroring every
+		// body-bearing mutation POST already covered (e.g. API-0189
+		// `mounts-create`, API-0292 `project-create`, API-0298
+		// `redirects-create`, API-0325 `schedule-create`, API-0330
+		// `schedule-update`, API-0331 `security-create`, API-0445
+		// `volumeBackups-create`, API-0446 `volumeBackups-delete`,
+		// API-0449 `volumeBackups-runManually`) whose missing-target
+		// failure mode collapses into 400/validation under Dokploy's
+		// tRPC convention rather than a dedicated 404 leg. The 200
+		// schema is `{}` with `additionalProperties: false`, matching
+		// every prior covered peer in the empty-success cohort.
+		//
+		// **Body composition:**
+		//   - **REQUIRED:** `name` (plain string), `volumeName`
+		//     (plain string), `prefix` (plain string),
+		//     `cronExpression` (plain string), `destinationId` (plain
+		//     string), `volumeBackupId` (plain string) — the
+		//     volumeBackup record id is the *-update vs *-create delta
+		//     promoted to a REQUIRED slot. The fixture supplies
+		//     deterministic-but-clearly-fake values keyed to the
+		//     `volBackups-cov-update-0450-<field>` namespace.
+		//     `cronExpression` carries a real-shape cron string
+		//     (`"0 4 * * *"`) so a future schema validator wired into
+		//     the harness still accepts it.
+		//   - **OPTIONAL — every-optional-populated.** Per the
+		//     *-update convention inherited from API-0445
+		//     `volumeBackups-create` (which uses the identical
+		//     optional tail) and reasserted at API-0330
+		//     `schedule-update`, all fourteen optional siblings are
+		//     populated so the wire fixture exercises the full update
+		//     payload, not just the minimum:
+		//     - `serviceType` (enum: application|postgres|mysql|
+		//       mariadb|mongo|redis|compose) — `"application"` branch
+		//       chosen to keep the fixture internally consistent with
+		//       the populated `applicationId` slot (mirroring the
+		//       API-0445 `volumeBackups-create` precedent).
+		//     - `appName` (plain string).
+		//     - `serviceName` (anyOf [string, null]) — string branch
+		//       per the AGENTS.md "anyOf [string, null] → send
+		//       string branch" rule.
+		//     - `turnOff` (plain boolean) — `false` branch.
+		//     - `keepLatestCount` (anyOf [number, null]) — number
+		//       branch (deterministic small integer).
+		//     - `enabled` (anyOf [boolean, null]) — boolean branch
+		//       (`true`).
+		//     - `applicationId` / `postgresId` / `mariadbId` /
+		//       `mongoId` / `mysqlId` / `redisId` / `composeId` (each
+		//       anyOf [string, null]) — string branch on every slot.
+		//     - `createdAt` (plain string) — RFC 3339 literal so a
+		//       future schema validator accepts the timestamp shape.
+		//
+		// **Shape positioning — six-required-string-scalar POST
+		// *-update mutation, body REQUIRED, deep optional tail with
+		// enum + anyOf-string-null + anyOf-number-null + anyOf-
+		// boolean-null + plain boolean.** First six-required-string-
+		// scalar POST to land in the coverage table — promotes the
+		// API-0445 `volumeBackups-create` five-required-scalar shape
+		// by adding `volumeBackupId` as a sixth REQUIRED slot, which
+		// is the canonical *-update vs *-create delta across
+		// Dokploy's tRPC surface (the create operation lets the
+		// server allocate the id; the update operation requires the
+		// caller to pass it — the same delta locked at API-0330
+		// `schedule-update` vs API-0325 `schedule-create`).
+		// Functionally a volumeBackups/* analogue of API-0445
+		// `volumeBackups-create` sharing the same 14-field optional
+		// tail and identical optional-tail composition; the on-the-
+		// wire delta is exactly the additional REQUIRED
+		// `volumeBackupId` slot.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so the
+		// 404→CodeNotFound override is structurally inapplicable. The
+		// volumeBackups/* tag's 404→CodeNotFound representative is
+		// already consumed by API-0448 `volumeBackups-one` per the
+		// canonical by-id-sibling convention. `*-update` here is a
+		// body-bearing mutation POST and stays on the 401→CodeAuth
+		// invariant locked by every body-bearing mutation peer already
+		// covered (e.g. API-0445 `volumeBackups-create`, API-0446
+		// `volumeBackups-delete`, API-0449
+		// `volumeBackups-runManually`, and the cross-tag *-update
+		// precedent at API-0330 `schedule-update`).
+		//
+		// **Fixture token base** `volBackups-cov-update-0450` follows
+		// the established `<tag>-cov-<slug>-<storyID>` deterministic-
+		// but-clearly-fake naming convention pre-reserved by the
+		// API-0445 kickoff banner. Verified: no collisions with
+		// `volBackups-cov-create-0445-*`, `volBackups-cov-delete-0446-*`,
+		// `volBackups-cov-list-0447-*`, `volBackups-cov-one-0448-*`,
+		// or `volBackups-cov-run-manually-0449-*`. With this entry
+		// the volumeBackups/* roster is closed; no further per-tag
+		// fixture reservations needed.
+		SampleBody: json.RawMessage(`{
+			"name": "volBackups-cov-update-0450-name",
+			"volumeName": "volBackups-cov-update-0450-volumeName",
+			"prefix": "volBackups-cov-update-0450-prefix",
+			"serviceType": "application",
+			"appName": "volBackups-cov-update-0450-appName",
+			"serviceName": "volBackups-cov-update-0450-serviceName",
+			"turnOff": false,
+			"cronExpression": "0 4 * * *",
+			"keepLatestCount": 7,
+			"enabled": true,
+			"applicationId": "volBackups-cov-update-0450-applicationId",
+			"postgresId": "volBackups-cov-update-0450-postgresId",
+			"mariadbId": "volBackups-cov-update-0450-mariadbId",
+			"mongoId": "volBackups-cov-update-0450-mongoId",
+			"mysqlId": "volBackups-cov-update-0450-mysqlId",
+			"redisId": "volBackups-cov-update-0450-redisId",
+			"composeId": "volBackups-cov-update-0450-composeId",
+			"createdAt": "2026-05-09T00:00:00Z",
+			"destinationId": "volBackups-cov-update-0450-destinationId",
+			"volumeBackupId": "volBackups-cov-update-0450-volumeBackupId"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the empty-
+		// success cohort. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
