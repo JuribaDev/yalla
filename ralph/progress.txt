@@ -23634,3 +23634,55 @@ forward-reference lesson before assuming any field shape.
     sufficient, since the harness only asserts byte-for-byte body
     propagation and a boolean has only two possible values.
 ---
+
+## 2026-05-09 - API-0307
+- Implemented Cover redis-rebuild (POST /redis.rebuild) using the
+  established `coveredAPIOperations` table-driven harness in
+  `internal/cli/api_coverage_test.go`.
+- Files changed:
+  - `internal/cli/api_coverage_test.go`: appended a new entry between
+    API-0306 `redis-one` and API-0331 `security-create`, supplying the
+    single REQUIRED `redisId` scalar with the deterministic-but-
+    clearly-fake fixture token `redis-cov-rebuild-0307-redisId` per the
+    `<tag>-cov-<slug>-<storyID>-<field>` convention. Body shape is
+    byte-for-byte identical to API-0304 `redis-deploy` (the canonical
+    single-required-string-scalar by-id imperative-action POST), and
+    the failure leg returns to the harness-default 401 → CodeAuth now
+    that API-0306 has consumed the redis/* tag's reserved 404 →
+    CodeNotFound override slot.
+  - `ralph/prd.json`: flipped API-0307 `passes` to `true`.
+  - `ralph/progress.txt`: this entry.
+- Verification: `gofmt -w .`, `go mod tidy` (no diff), `go vet ./...`,
+  `go test ./...`, and `go test -race ./...` all pass. Targeted
+  `go test -run TestAPICoverage/API-0307 -v ./internal/cli/...`
+  exercises all five harness contracts (registry invariants, schema
+  reachability, manifest inclusion, success round-trip, and
+  representative 401 → CodeAuth failure leg) and they all pass.
+- Remaining risks or follow-ups: none specific to this story. The
+  next pending priority-4 story is API-0308 `redis-reload` (POST
+  /redis.reload), already forward-referenced in this entry's comment
+  block.
+- **Learnings for future iterations:**
+  - The redis/* tag's 404 → CodeNotFound override is single-use and
+    was already consumed by API-0306 `redis-one`. Subsequent redis/*
+    POST entries (API-0307..API-0315 except API-0312 `redis-search`)
+    revert to the harness-default 401 → CodeAuth representative-
+    failure leg unless their spec uniquely declares a different
+    distinguishing failure shape.
+  - The OpenAPI spec at `internal/api/data/openapi.json` for
+    `/redis.rebuild` is byte-for-byte structurally identical to
+    `/redis.deploy` (single REQUIRED `redisId` string, no params,
+    200/400/401/403/500 responses with no 404). Future contributors
+    covering the remaining redis/* `*-rebuild`/`*-reload`/`*-start`/
+    `*-stop`/`*-saveEnvironment`/`*-saveExternalPort` POST stories
+    can lean on the API-0304 redis-deploy / API-0307 redis-rebuild
+    template — the fixture token must use a unique
+    `<tag>-cov-<slug>-<storyID>` triple, but the body / response
+    shape and failure-leg defaulting carry over verbatim.
+  - The `*-rebuild` cross-tag precedent chain is API-0165
+    `mariadb-rebuild`, API-0179 `mongo-rebuild`, API-0199
+    `mysql-rebuild`, API-0277 `postgres-rebuild`, and now API-0307
+    `redis-rebuild` — all four prior peers share the canonical
+    single-required-string-scalar `redisId`-equivalent body, no 404
+    response, and the harness-default 401 → CodeAuth failure leg.
+---
