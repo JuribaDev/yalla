@@ -30193,3 +30193,79 @@ forward-reference lesson before assuming any field shape.
     open same-tag namespace (in addition to closed prior-tag
     namespaces) is part of every entry's fixture-token reasoning.
 ---
+
+## 2026-05-09 - API-0408
+- Implemented coverage for `sso-getTrustedOrigins` (GET /sso.getTrustedOrigins).
+- Files changed:
+  - internal/cli/api_coverage_test.go: appended `apiCoverageCase` for
+    API-0408 immediately after API-0407 `sso-deleteProvider`. This is
+    the **first GET** in the sso/* arc — parameter-free, body-free
+    list-style read. No `Sample*` literals consumed (mirrors the
+    minimal-literal pattern of API-0058 `certificates-all`,
+    API-0376 `settings-isUserSubscribed`, API-0383
+    `settings-reloadRedis`). The 200 schema is `{}` with
+    `additionalProperties: false`. Harness-default 401→CodeAuth
+    failure leg retained; 404 IS in the spec response set but the
+    404→CodeNotFound override is structurally inapplicable (no
+    addressable subject — list endpoint), and the canonical
+    by-id 404 slot is reserved for the upcoming API-0410
+    `sso-one` entry. Fixture token slug
+    `sso-cov-getTrustedOrigins-0408` is reserved nominally only.
+  - ralph/prd.json: API-0408 marked `passes: true`.
+- Verification run (all green):
+  - `gofmt -w .` (clean)
+  - `go mod tidy` (clean)
+  - `go vet ./...` (clean)
+  - `go test ./...` PASS (internal/cli 1.461s)
+  - `go test -race ./...` PASS (internal/cli 3.692s)
+  - Targeted: `go test ./internal/cli/ -run 'API-0408|APICoverage'`
+    PASS (1.143s) — RegistryInvariants, SchemaCommandWorks,
+    ManifestListsOperation, SuccessRoundTrip, RepresentativeFailure
+    all green for the new entry.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, and
+    `goreleaser` are not installed locally; documented per the
+    Codebase-Patterns convention rather than silently skipped.
+- Results: API-0408 acceptance criteria satisfied. Operation present
+  in OpenAPI registry with method GET, path /sso.getTrustedOrigins,
+  tag sso; raw API call works through the harness no-input path
+  (`yalla api call sso-getTrustedOrigins --json` — no `--input`
+  needed since the spec declares no parameters and no body); schema
+  get works; manifest lists the operation; success and 401→CodeAuth
+  representative failure both proven by httptest fixtures.
+- Remaining risks or follow-ups:
+  - 15 priority-5 API coverage stories still failing (next:
+    API-0409 `sso-listProviders`, the second read-only leaf of the
+    sso/* arc — also a parameter-free, body-free GET per the spec
+    preview, structurally identical to this entry).
+- **Learnings for future iterations:**
+  - The first GET in a tag arc that already has body-bearing POST
+    coverage breaks the mutator chain into the read-only leg; the
+    new entry's positioning comment must explicitly call this
+    structural inflection out (mutator → list-GET) so the audit
+    chain stays readable. Cross-tag precedent for the parameter-
+    free/body-free list-GET shape is API-0058 `certificates-all`.
+  - When the spec declares 404 on a *list* endpoint (no addressable
+    subject), the 404→CodeNotFound override is **structurally
+    inapplicable** — defer the slot to the canonical by-id reader
+    in the same tag arc (here API-0410 `sso-one`). The harness-
+    default 401→CodeAuth remains the most representative failure
+    leg. This precedent was first locked in by API-0058
+    `certificates-all` and re-applies any time a list/all-style
+    GET happens to ship 404 in its response vocabulary.
+  - Parameter-free, body-free GETs carry **no per-case fixture
+    token in any wire payload** — the `<tag>-cov-<slug>-<storyID>`
+    slug is reserved nominally only (claimed by the entry under
+    the per-tag uniqueness audit but never embedded in a body or
+    query value). This keeps the entry maximally terse and
+    matches the API-0058/API-0376/API-0383 minimal-literal
+    pattern.
+  - The PRD ordering `API-0408 → API-0409 → API-0410` aligns with
+    `internal/api/data/openapi.json` containing both
+    `/sso.listProviders` and `/sso.one` as GET-only paths with no
+    parameters and no body for API-0409 (pre-verified) — the
+    sso/* arc's read-only leg is a stretch of structurally
+    identical entries until API-0410 `sso-one` introduces a
+    by-id reader (which will consume the reserved 404→CodeNotFound
+    override slot). Always re-verify per-operation against the
+    spec before inheriting from this entry.
+---
