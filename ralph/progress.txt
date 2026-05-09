@@ -29077,3 +29077,80 @@ forward-reference lesson before assuming any field shape.
     that path before drafting a fixture, per the API-0345..API-0444
     forward-reference lesson.
 ---
+
+## 2026-05-09 09:10 +0300 - API-0318
+- Implemented coverage for the `registry-one` operation (GET
+  `/registry.one`, tag `registry`) — third entry on the registry/*
+  coverage roster.
+- Added an `apiCoverageCase` entry in
+  `internal/cli/api_coverage_test.go` between API-0317 `registry-create`
+  and API-0323 `rollback-delete`, reusing the canonical by-id-GET
+  precedent chain (API-0008 `ai-one`, API-0021 `application-one`,
+  API-0084 `compose-one`, API-0136 `gitea-one`, API-0142 `github-one`,
+  API-0149 `gitlab-one`, API-0164 `mariadb-one`, API-0178 `mongo-one`,
+  API-0198 `mysql-one`, API-0251 `organization-one`, API-0276
+  `postgres-one`, API-0294 `project-one`, API-0306 `redis-one`,
+  API-0342 `server-one`).
+- The case populates `SampleQuery: {"registryId":
+  ["registry-cov-one-0318-registryId-fixture"]}`, leaves SampleBody and
+  SamplePathParams empty (GETs in the Dokploy OpenAPI document never
+  carry a requestBody), and overrides FailureStatus / FailureCode to
+  `404` / `yerr.CodeNotFound` to claim the registry/* tag arc's
+  reserved 404 → CodeNotFound representative-failure slot opened by
+  API-0316.
+- Eighth roster-level act on the cross-tag reserved 404 → CodeNotFound
+  override after API-0136 `gitea-one`, API-0164 `mariadb-one`,
+  API-0178 `mongo-one`, API-0198 `mysql-one`, API-0276 `postgres-one`,
+  API-0306 `redis-one`, and API-0342 `server-one`.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (new ~165-line entry)
+  - `ralph/prd.json` (API-0318.passes false → true)
+  - `ralph/progress.txt` (this entry)
+- Verification (run from repo root):
+  - `gofmt -l .` → clean
+  - `go mod tidy` → clean
+  - `go vet ./...` → clean
+  - `go test ./...` → ok all packages
+  - `go test -race ./...` → ok all packages
+  - Optional `goimports`, `golangci-lint`, `staticcheck`,
+    `govulncheck`, `goreleaser` not installed in this environment;
+    skipping per Quality Checks doc.
+- Results: green on all required gates.
+- Remaining risks / follow-ups:
+  - The harness's failure-leg override slot is single-use per tag
+    (locked at the by-id `*-one` peer per tag-arc convention). Future
+    registry/* peers (API-0319 `registry-remove`, API-0320
+    `registry-testRegistry`, API-0321 `registry-testRegistryById`,
+    API-0322 `registry-update`) must revert to the harness-default
+    401 → CodeAuth representative-failure leg.
+  - The next case in the PRD-ordered priority-5 backlog is API-0319
+    `registry-remove` (declared a POST per the spec preview); the
+    next contributor must re-verify the spec against
+    `internal/api/data/openapi.json` per the forward-reference lesson
+    before assuming any field shape, and must consume slugs of the
+    form `registry-cov-remove-0319-*` to inherit the registry/* slug
+    namespace established at API-0316.
+- **Learnings for future iterations:**
+  - The 404 → CodeNotFound override at the by-id `*-one` peer is the
+    canonical home for the resource-not-found failure mode under
+    Dokploy's tRPC convention, and the per-tag opener (here API-0316
+    `registry-all`) explicitly reserves it for the `*-one` peer. Mark
+    this clearly in the override's design-rationale block so a future
+    auditor can grep `roster-level act on the reserved override`
+    counts and verify the cross-tag chain stays linear.
+  - GETs in the Dokploy OpenAPI document never carry a `requestBody`;
+    parameters always travel as query (or path). Use SampleQuery
+    rather than SampleBody for `*-one` style readers. The harness's
+    `len(tc.SampleBody) > 0` gate at `runAPICoverageSuccess` stays
+    inactive in this case, leaving the success-leg envelope assertion
+    focused on the wire-level invariants (method, path, Authorization
+    header, query string) shared by every parameter-bearing GET.
+  - Fixture token base `<tag>-cov-<slug>-<storyID>` continues to be
+    the per-tag deterministic-but-clearly-fake naming convention; the
+    `<base>-<id>-fixture` literal is the canonical `*-one` precedent
+    (API-0136, API-0164, API-0178, API-0198, API-0276, API-0306).
+  - `runAPICoverageFailure` reads `tc.FailureStatus` and
+    `tc.FailureCode` and falls back to 401 / `yerr.CodeAuth` when
+    either is zero — opting in to the override is just a two-field
+    struct addition, no harness change needed.
+---

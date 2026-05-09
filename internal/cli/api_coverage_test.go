@@ -32909,6 +32909,175 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0318",
+		OperationID: "registry-one",
+		Method:      http.MethodGet,
+		Path:        "/registry.one",
+		Tag:         "registry",
+		// Third entry on the registry/* coverage roster, immediately
+		// following API-0317 `registry-create` and completing the
+		// forward reference embedded in that entry's closing comment
+		// ("The next case in the PRD-ordered priority-5 backlog is
+		// API-0318 `registry-one` (declared a **GET** with a single
+		// REQUIRED `registryId` query parameter per the spec preview,
+		// claiming the registry/* tag arc's 404→CodeNotFound
+		// representative-failure slot reserved at API-0316)").
+		// Continues inside the `registry-cov-*` per-tag fixture-
+		// isolation namespace opened by API-0316 `registry-all` and
+		// **must not** back-reference any closed prior-tag namespace
+		// (`admin-cov-*`, `ai-cov-*`, `app-cov-*`, `backup-cov-*`,
+		// `bb-cov-*`, `cert-cov-*`, `clu-cov-*`, `compose-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `docker-cov-*`,
+		// `domain-cov-*`, `environment-cov-*`, `gitea-cov-*`,
+		// `github-cov-*`, `gitlab-cov-*`, `mariadb-cov-*`,
+		// `mongo-cov-*`, `mounts-cov-*`, `mysql-cov-*`, `org-cov-*`,
+		// `patch-cov-*`, `port-cov-*`, `postgres-cov-*`,
+		// `preview-cov-*`, `proj-cov-*`, `redirects-cov-*`,
+		// `redis-cov-*`, `security-cov-*`, `set-cov-*`, `srv-cov-*`,
+		// `swarm-cov-*`, `usr-cov-*`) per the per-tag isolation rule
+		// reasserted at API-0335..API-0444 and originally established
+		// at API-0246 `organization-active`.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json` > `/registry.one` > `get`:
+		// a **GET** with **one required query parameter** and **no
+		// request body** (GETs in this OpenAPI document never carry a
+		// `requestBody` field). Parameters per the spec:
+		//   - REQUIRED scalar: `registryId` (plain string).
+		//   - **No optional parameters.**
+		// The single param is typed `string` with no `anyOf` /
+		// `nullable` / enum constraints. Responses 200/400/401/403/
+		// 404/500 — the 200 schema is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. **Note** the appearance of 404 here,
+		// in contrast to the prior registry/* peers (API-0316
+		// `registry-all` and API-0317 `registry-create`) where the
+		// spec omits 404; the canonical by-id GET is the natural home
+		// for the resource-not-found failure mode under Dokploy's
+		// tRPC convention, exactly as observed at API-0136
+		// `gitea-one`, API-0164 `mariadb-one`, API-0178 `mongo-one`,
+		// API-0198 `mysql-one`, API-0276 `postgres-one`, API-0306
+		// `redis-one`, and API-0342 `server-one`.
+		//
+		// **Shape positioning — canonical `*-one` by-id GET.** This
+		// is byte-for-byte the same wire shape as the cross-tag
+		// canonical-by-id-GET precedent chain at API-0008 `ai-one`
+		// (`aiId`), API-0021 `application-one` (`applicationId`),
+		// API-0084 `compose-one` (`composeId`), API-0136 `gitea-one`
+		// (`giteaId`), API-0142 `github-one` (`githubId`), API-0149
+		// `gitlab-one` (`gitlabId`), API-0164 `mariadb-one`
+		// (`mariadbId`), API-0178 `mongo-one` (`mongoId`), API-0198
+		// `mysql-one` (`mysqlId`), API-0251 `organization-one`
+		// (`organizationId`), API-0276 `postgres-one`
+		// (`postgresId`), API-0294 `project-one` (`projectId`),
+		// API-0306 `redis-one` (`redisId`), and API-0342 `server-one`
+		// (`serverId`). The harness forwards SampleQuery via the
+		// `--input` JSON `query` field, and `runAPICoverageSuccess`
+		// re-reads `r.URL.Query()` to confirm the CLI propagated the
+		// param verbatim — exactly the assertion path every prior
+		// `*-one` peer exercises. The wire-equality round-trip
+		// through `r.URL.Query().Get("registryId")` is the canonical
+		// observation here. The harness's `len(tc.SampleBody) > 0`
+		// gate at `runAPICoverageSuccess` stays inactive (no JSON
+		// content-type leg, no body-comparison leg) — leaving the
+		// success-leg envelope assertion focused on the wire-level
+		// invariants (method, path, Authorization header, query
+		// string) shared by every parameter-bearing GET.
+		//
+		// **Family choice — claim the registry/* tag arc's 404 →
+		// CodeNotFound override slot.** The registry/* opener at
+		// API-0316 `registry-all` reserved the override for the
+		// canonical by-id `*-one` peer per the per-tag opener design
+		// (every prior tag's by-id `*-one` peer has consumed the
+		// reserved override: API-0136 `gitea-one`, API-0164
+		// `mariadb-one`, API-0178 `mongo-one`, API-0198 `mysql-one`,
+		// API-0276 `postgres-one`, API-0306 `redis-one`, and
+		// API-0342 `server-one`). API-0318 is that peer for the
+		// registry/* tag: a missing `registryId` (the registry was
+		// already removed, or the agent learned the ID from a stale
+		// source) is a far more common failure than 401 (the process
+		// already proved auth on every prior call in the registry/*
+		// arc, including the kickoff at API-0316 which locked the
+		// 401 → CodeAuth invariant for the namespace). The 404 leg
+		// is therefore the most informative failure to re-prove for
+		// this specific peer's call site. The harness already
+		// supports the override natively (`runAPICoverageFailure`
+		// reads `tc.FailureStatus` / `tc.FailureCode` and falls back
+		// to 401 / CodeAuth when either is zero) so no harness
+		// change is needed; we simply opt in via the two struct
+		// fields. This is the **eighth** roster-level act on the
+		// reserved override, after API-0136 `gitea-one`, API-0164
+		// `mariadb-one`, API-0178 `mongo-one`, API-0198 `mysql-one`,
+		// API-0276 `postgres-one`, API-0306 `redis-one`, and
+		// API-0342 `server-one`. 400 → CodeInvalidInput stays
+		// reserved for stories where payload validation is the
+		// operation's distinguishing failure mode; this entry's
+		// single-string-param query surface is too generic to claim
+		// that distinguishing shape.
+		//
+		// Fixture conventions:
+		//   * Per the API-0010 / API-0014 / API-0249 / API-0292 /
+		//     API-0297 / API-0052 / API-0053 every-optional-populated
+		//     rule, this entry has **zero optional parameters** so the
+		//     rule is trivially satisfied — the fixture supplies
+		//     exactly the single REQUIRED scalar `registryId` and
+		//     nothing else. The harness's success-leg
+		//     `r.URL.Query()` round-trip observes this end-to-end
+		//     through the CLI → API client → httptest server path.
+		//   * Per-case fixture token base `registry-cov-one-0318`
+		//     follows the `<tag>-cov-<slug>-<storyID>` convention
+		//     shared across every prior registry/* peer
+		//     (API-0316..API-0317) and the cross-tag `*-cov-one-XXXX`
+		//     slug used at API-0008, API-0021, API-0084, API-0136,
+		//     API-0142, API-0149, API-0164, API-0178, API-0198,
+		//     API-0251, API-0276, API-0294, API-0306, and API-0342.
+		//     Verified non-colliding with API-0317's
+		//     `registry-cov-create-0317-*` literals (different slug +
+		//     storyID → unique under the `<tag>-cov-<slug>-<storyID>`
+		//     rule). The full-tag-name slug prefix `registry-` remains
+		//     unambiguously distinct from the lexically-adjacent
+		//     full-tag-name `redirects-cov-*` and `redis-cov-*`
+		//     namespaces closed at API-0301 / API-0315 respectively.
+		//   * Deterministic-but-clearly-fake
+		//     `<base>-registryId-fixture` literal keeps diffs readable
+		//     and lets any future schema validator's failure messages
+		//     point at the offending field. The `-fixture` suffix
+		//     matches the API-0136 `gitea-one`, API-0164
+		//     `mariadb-one`, API-0178 `mongo-one`, API-0198
+		//     `mysql-one`, API-0276 `postgres-one`, and API-0306
+		//     `redis-one` precedent for the analogous `<id>` field
+		//     name.
+		//
+		// The next case in the PRD-ordered priority-5 backlog is
+		// API-0319 `registry-remove` (declared a **POST** per the
+		// spec preview; the next contributor must re-verify the spec
+		// against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will continue inside the `registry-cov-*` per-tag
+		// fixture-isolation namespace opened by API-0316 — consume
+		// slugs of the form `registry-cov-remove-0319-*`).
+		SampleQuery: map[string][]string{
+			"registryId": {"registry-cov-one-0318-registryId-fixture"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+		// Failure-leg override: this is the canonical home for the
+		// 404 → CodeNotFound representative-failure assertion
+		// reserved at API-0316 for `registry-one`, and follows the
+		// precedent set by API-0136 `gitea-one`, API-0164
+		// `mariadb-one`, API-0178 `mongo-one`, API-0198 `mysql-one`,
+		// API-0276 `postgres-one`, API-0306 `redis-one`, and
+		// API-0342 `server-one`. See the design-rationale block
+		// above for the full justification.
+		FailureStatus: http.StatusNotFound,
+		FailureCode:   yerr.CodeNotFound,
+	},
+	{
 		StoryID:     "API-0323",
 		OperationID: "rollback-delete",
 		Method:      http.MethodPost,
