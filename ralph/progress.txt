@@ -26059,3 +26059,83 @@ forward-reference lesson before assuming any field shape.
     override stays a per-entry decision driven by whether the operation
     has a target the caller can miss.
 ---
+
+## 2026-05-09 - API-0448 (Cover volumeBackups-one, GET /volumeBackups.one)
+- Appended a new `apiCoverageCase` entry at the tail of
+  `coveredAPIOperations` in `internal/cli/api_coverage_test.go` for
+  story API-0448. The entry pins:
+    - `OperationID = "volumeBackups-one"`,
+      `Method = http.MethodGet`, `Path = "/volumeBackups.one"`,
+      `Tag = "volumeBackups"`.
+    - `SampleQuery` populated with the single REQUIRED query slot
+      `volumeBackupId = "volBackups-cov-one-0448-volumeBackupId"`
+      (deterministic-but-clearly-fake
+      `<tag>-cov-<slug>-<storyID>-<field>` token).
+    - `SuccessResponse = "{}"` to match the spec's empty-success
+      response (`200` is `{}` with `additionalProperties: false`).
+    - No `SampleBody` (operation declares no request body).
+    - `FailureStatus = http.StatusNotFound`,
+      `FailureCode = yerr.CodeNotFound` — consumes the by-id-sibling
+      404→CodeNotFound reservation pre-declared in API-0447
+      `volumeBackups-list`'s design-rationale header. Mirrors the
+      cross-tag canonical-by-id 404-override precedent at API-0055
+      `bitbucket-one`, API-0294 `project-one`, API-0328
+      `schedule-one`, and API-0342 `server-one`.
+- The shared coverage harness now exercises five invariants for this
+  operation: registry presence (id/method/path/tag), `yalla schema get
+  volumeBackups-one --json` reachability, `yalla manifest --json`
+  inclusion, an httptest-driven success round-trip with the
+  `volumeBackupId` query parameter forwarded verbatim on the wire, and
+  a representative 404→CodeNotFound failure leg.
+- Files changed:
+    - `internal/cli/api_coverage_test.go` — appended the API-0448
+      `apiCoverageCase` literal (mirrors API-0328 `schedule-one`
+      precedent verbatim, only renaming the tag-specific identifiers).
+    - `ralph/prd.json` — flipped `API-0448.passes` from `false` to
+      `true`.
+    - `ralph/progress.txt` — this entry.
+- Verification (run from repo root):
+    - `gofmt -w .` — clean
+    - `go mod tidy` — clean
+    - `go vet ./...` — clean
+    - `go test ./...` — PASS
+    - `go test -race ./...` — PASS
+    - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+      `goreleaser` — not installed locally, documented as missing per
+      the verification baseline rather than silently skipped.
+- Results: API-0448 now has `passes: true` in `ralph/prd.json`. The
+  new coverage row drives all five harness assertions. Story count:
+  462 total, 392 passing, 70 still failing.
+- Remaining risks / follow-ups:
+    - API-0449 `volumeBackups-runManually` is the next priority-4
+      volumeBackups/* peer and is the **first multi-camel-segment
+      slug** in this tag — its kebab-vs-camel slug-style choice
+      (`run-manually` vs `runManually`) was deferred from the API-0445
+      kickoff and remains pending. Its entry should grep the
+      API-0445/API-0446/API-0447/API-0448 quartet to inherit the
+      `volBackups-cov-*` namespace.
+    - API-0450 `volumeBackups-update` will close the volumeBackups/*
+      tag's priority-4 cohort.
+- **Learnings for future iterations:**
+    - The single-required-query GET-by-id shape with 404→CodeNotFound
+      override is now a six-tag pattern: bitbucket/* (API-0055),
+      project/* (API-0294), schedule/* (API-0328), server/*
+      (API-0342), and now volumeBackups/* (API-0448). The structural
+      mirror with `schedule-one` is exact (only the tag name and the
+      `*Id` query slot name change), so the API-0328 entry is the
+      canonical scaffold to copy when adding a by-id GET in any
+      future tag.
+    - The `volBackups-cov-one-0448-volumeBackupId` fixture token
+      deliberately omits the `-fixture` suffix used by some earlier
+      precedents (e.g. API-0055's `bb-cov-one-0055-bitbucketId-
+      fixture`) to stay consistent with the shorter
+      `volBackups-cov-list-0447-id` token introduced at API-0447 in
+      the volumeBackups/* roster — the suffix is not load-bearing,
+      only the `<tag>-cov-<slug>-<storyID>-<field>` prefix matters
+      for `git grep` traceability.
+    - Reservations declared in a sibling's design-rationale header
+      (here: API-0447 reserving 404→CodeNotFound for the by-id peer)
+      are load-bearing — when the reserved slot lands, its entry
+      should explicitly cite the reservation banner so the
+      cross-entry contract stays auditable in the diff.
+---
