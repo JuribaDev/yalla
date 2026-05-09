@@ -30061,3 +30061,76 @@ forward-reference lesson before assuming any field shape.
     from the next tag's opener. This pattern was implicit in prior
     closures but is reasserted here to compound across rosters.
 ---
+
+## 2026-05-09 - API-0406
+- Implemented coverage for Dokploy operation `sso-addTrustedOrigin`
+  (POST /sso.addTrustedOrigin, tag sso) by appending an entry to
+  `coveredAPIOperations` in `internal/cli/api_coverage_test.go` between
+  the previously closing API-0405 `sshKey-update` entry and the existing
+  API-0423 `swarm-getNodeApps` entry. The new entry opens the fresh
+  `sso-cov-*` per-tag fixture-isolation namespace required by the
+  per-tag isolation rule originally established at API-0246
+  `organization-active`, and matches the harness shape used by every
+  prior body-bearing single-required-string-scalar POST (e.g. API-0404
+  `sshKey-remove`, API-0405 `sshKey-update`).
+- Spec re-verified per the API-0345..API-0444 forward-reference lesson
+  against `internal/api/data/openapi.json` > `/sso.addTrustedOrigin` >
+  `post`: method POST, tag sso, **no parameters**, requestBody REQUIRED
+  with `application/json` and a single REQUIRED string `origin`, no
+  optional fields, responses 200/400/401/403/500 (200 is `{}` with
+  `additionalProperties: false`, no 404 declared). Harness-default
+  401→CodeAuth failure leg retained — 404 is structurally inapplicable
+  (not in the response set) and 400 is reserved for stories where
+  payload validation is the operation's *uniquely distinguishing*
+  failure mode, which a conventional imperative-action mutation is not.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (+109 lines: new
+    `coveredAPIOperations` entry for API-0406, slotted between API-0405
+    and API-0423; preserves existing entries verbatim).
+  - `ralph/prd.json` (single-byte change: `passes: false` → `true` on
+    the API-0406 user story).
+  - `ralph/progress.txt` (this entry).
+- Verification (run from repo root):
+  - `gofmt -l .` — no diffs.
+  - `go mod tidy` — no module changes.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass.
+  - `go test -race ./...` — all packages pass under the race detector.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, and
+    `goreleaser` are not installed locally; documented per the
+    Codebase-Patterns convention rather than silently skipped.
+- Remaining risks or follow-ups:
+  - 17 priority-5 API coverage stories still failing (next:
+    API-0407 `sso-deleteProvider`, continuing the freshly-opened sso/*
+    arc with another body-bearing POST mutator).
+- **Learnings for future iterations:**
+  - The `coveredAPIOperations` list is **not strictly StoryID-ordered**:
+    after API-0405 `sshKey-update` the next existing entry is API-0423
+    `swarm-getNodeApps`, so insertions for any story in the
+    API-0406..API-0422 range must be slotted between those two. Use
+    `grep -n 'StoryID:.*"API-NNNN"'` to confirm both the predecessor
+    and successor anchors before editing — never assume StoryID order.
+  - When opening a fresh per-tag namespace (here: sso/*), the entry
+    must explicitly **consume** the forward reference from the closing
+    comment of the prior tag's last entry (here: API-0405's
+    "continues at API-0406 `sso-addTrustedOrigin`, opening a fresh
+    `sso-cov-*` namespace") and **emit** a new forward reference to
+    the next priority-5 story (here: API-0407 `sso-deleteProvider`).
+    Skipping either side breaks the audit chain that future
+    contributors rely on.
+  - The fixture token base for a per-tag-namespace-opening entry sets
+    the precedent for every subsequent peer in that arc; choosing
+    `sso-cov-addTrustedOrigin-0406` here (matching the
+    `<tag>-cov-<slug>-<storyID>` convention) locks in the slug-style
+    convention `sso-cov-<camelCaseOperationSuffix>-<storyID>` for the
+    rest of the sso/* arc. Using a different style at API-0407 would
+    break the per-tag uniqueness audit.
+  - Single-required-string-scalar POSTs with **zero optional fields**
+    sit in the destructive/imperative-action family (alongside
+    `sshKey-remove`) rather than the partial-update family of
+    `sshKey-update` (one required + three optionals). The harness
+    behavior is identical for both cohorts (the
+    `len(tc.SampleBody) > 0` gate fires whenever a non-empty body is
+    supplied), but the comment must classify correctly so the family
+    rationale stays auditable.
+---

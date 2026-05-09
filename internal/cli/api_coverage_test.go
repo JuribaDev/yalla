@@ -44798,6 +44798,109 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0406",
+		OperationID: "sso-addTrustedOrigin",
+		Method:      http.MethodPost,
+		Path:        "/sso.addTrustedOrigin",
+		Tag:         "sso",
+		// First entry on the sso/* coverage roster, immediately
+		// following the closed sshKey/* arc whose final entry was
+		// API-0405 `sshKey-update`. Consumes the forward reference
+		// embedded in that entry's closing comment ("the priority-5
+		// backlog continues at API-0406 `sso-addTrustedOrigin`,
+		// opening a fresh `sso-cov-*` per-tag fixture-isolation
+		// namespace"). Opens the `sso-cov-*` per-tag
+		// fixture-isolation namespace and **must not** back-reference
+		// any closed prior-tag namespace per the per-tag isolation
+		// rule originally established at API-0246
+		// `organization-active`.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json` > `/sso.addTrustedOrigin` >
+		// `post`: method POST, tag sso, **no parameters**, requestBody
+		// REQUIRED with `application/json`, responses
+		// 200/400/401/403/500. The 200 response is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort. **No 404** is declared on
+		// this operation, mirroring the precedent on every prior
+		// covered body-bearing imperative-action POST whose
+		// missing-target failure mode collapses into 400/validation
+		// under Dokploy's tRPC convention rather than a dedicated 404
+		// leg.
+		//
+		// **Request body schema (top-level fields):**
+		//   - REQUIRED `origin` (plain string). Identifies the
+		//     trusted origin being registered against the SSO
+		//     configuration. The fixture supplies a
+		//     `<tag>-cov-<slug>-<storyID>`-conformant literal so the
+		//     success-leg byte-for-byte body comparison verifies the
+		//     CLI propagated the body verbatim.
+		//
+		// No optional fields are declared in the spec for this
+		// operation; the body schema is a single-required-string-
+		// scalar shape with no tail.
+		//
+		// **Shape positioning — single-required-string-scalar POST
+		// imperative-action mutation, body REQUIRED, zero optionals.**
+		// REQUIRED-field cardinality matches API-0404 `sshKey-remove`
+		// (one REQUIRED `sshKeyId`) and API-0405 `sshKey-update`
+		// (one REQUIRED `sshKeyId` plus an optional tail of three);
+		// the absence of any optional tail puts this entry in the
+		// destructive/imperative-action family alongside
+		// `sshKey-remove` rather than the partial-update family of
+		// `sshKey-update`. Distinct from the body-required-but-no-
+		// required-fields API-0402 `sshKey-generate` precedent
+		// (saturated single REQUIRED scalar here, empty `{}` there).
+		// The harness's `len(tc.SampleBody) > 0` gate at
+		// `runAPICoverageSuccess` activates the JSON content-type and
+		// byte-for-byte body comparison legs; this fixture supplies
+		// the lone REQUIRED `origin` so the success path verifies the
+		// CLI propagated the body verbatim.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so
+		// the 404→CodeNotFound override is structurally inapplicable.
+		// 400 → CodeInvalidInput is *technically* available — a
+		// payload that omits the REQUIRED `origin` would fail
+		// server-side validation — but the harness reserves 400
+		// representatives for stories where payload validation is
+		// the operation's *uniquely distinguishing* failure mode. A
+		// conventional imperative-action mutation collapses to
+		// type-checking, so the harness-default 401→CodeAuth failure
+		// leg remains the most representative single failure mode
+		// every authenticated Dokploy operation must re-prove. This
+		// also locks in the 401→CodeAuth choice for the freshly-
+		// opened sso/* tag arc, mirroring the kickoff convention used
+		// at API-0400 `sshKey-all` for the prior tag.
+		//
+		// **Fixture token base** `sso-cov-addTrustedOrigin-0406`
+		// follows the `<tag>-cov-<slug>-<storyID>` convention shared
+		// across every prior tag arc. Verified non-colliding with
+		// every closed prior-tag namespace (different tag prefix and
+		// storyID → unique under the `<tag>-cov-<slug>-<storyID>`
+		// rule).
+		//
+		// **sso/* roster opens here.** Per the PRD ordering at the
+		// time of this commit, the priority-5 backlog continues at
+		// API-0407 `sso-deleteProvider` (declared a **POST** per the
+		// spec preview, continuing the body-bearing sso/* mutator
+		// chain). The next contributor must re-verify the spec
+		// against `internal/api/data/openapi.json` >
+		// `/sso.deleteProvider` > `post` per the forward-reference
+		// lesson before assuming any field shape, and **must not**
+		// reuse any closed prior-tag namespace.
+		SampleBody: json.RawMessage(`{
+			"origin": "sso-cov-addTrustedOrigin-0406-origin-fixture"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` / `data.status`
+		// rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0423",
 		OperationID: "swarm-getNodeApps",
 		Method:      http.MethodGet,
