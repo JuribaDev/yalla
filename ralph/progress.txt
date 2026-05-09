@@ -29956,3 +29956,108 @@ forward-reference lesson before assuming any field shape.
     satisfied. No future story can regress on this case by
     hard-coding an optional value.
 ---
+
+## 2026-05-09 10:04 +03 - API-0405
+- Implemented coverage for Dokploy operation `sshKey-update`
+  (POST /sshKey.update). Added a new entry to the
+  `apiCoverageCases` table in
+  `internal/cli/api_coverage_test.go` between API-0404
+  `sshKey-remove` and the swarm/* roster opener API-0423
+  `swarm-getNodeApps`. Re-verified the spec against
+  `internal/api/data/openapi.json > /sshKey.update > post`:
+  method POST, tag sshKey, no parameters, requestBody REQUIRED with
+  `application/json`, responses 200/400/401/403/500, 200 = `{}`
+  with `additionalProperties: false`, **no 404**.
+- Files changed:
+  * `internal/cli/api_coverage_test.go` — added the API-0405
+    sshKey-update test case.
+  * `ralph/prd.json` — flipped `passes` to `true` for
+    API-0405.
+  * `ralph/progress.txt` — this entry.
+- Verification run:
+  - `gofmt -w .` (clean).
+  - `go mod tidy` (clean, no module changes).
+  - `go vet ./...` (clean).
+  - `go test ./...` (all packages pass; `internal/cli` 1.375s).
+  - `go test -race ./...` (all packages pass; `internal/cli`
+    3.578s).
+  - Targeted run `go test ./internal/cli/ -run TestAPICoverage
+    -v`: all five `API-0405/sshKey-update` subtests PASS
+    (RegistryInvariants, SchemaCommandWorks, ManifestListsOperation,
+    SuccessRoundTrip, RepresentativeFailure).
+  - Optional `goimports`, `golangci-lint`, `staticcheck`,
+    `govulncheck`, and `goreleaser` not installed locally;
+    documented previously, no change.
+- Results: API-0405 acceptance criteria satisfied. Operation is
+  present in the OpenAPI registry with method POST, path
+  `/sshKey.update`, tag `sshKey`; raw API call works through the
+  harness no-input path
+  (`yalla api call sshKey-update --input request.json --json`);
+  schema get works; manifest lists the operation; success and
+  401→CodeAuth representative failure both proven by the harness.
+- Body schema choice — minimal-required-only fixture: REQUIRED
+  `sshKeyId` populated with
+  `sshKey-cov-update-0405-sshKeyId-fixture`; optional `name`,
+  `description` (string|null), and `lastUsedAt` (string|null)
+  intentionally omitted to honour the cross-tag credential-redaction
+  safety rule (optional values risk hard-coding secrets into the
+  test corpus). Mirrors the API-0401 `sshKey-create` precedent
+  which omitted its lone optional `description` for the same
+  reason.
+- Family choice: harness-default 401→CodeAuth retained. The spec
+  omits 404 from the response set so the 404→CodeNotFound override
+  is structurally inapplicable; that override slot for the sshKey/*
+  tag arc was already consumed at API-0403 `sshKey-one`. 400 →
+  CodeInvalidInput is technically available but reserved for stories
+  where payload validation is the operation's uniquely
+  distinguishing failure mode; a conventional partial-update
+  collapses to type-checking, so 401→CodeAuth remains the most
+  representative single failure mode and stays consistent with the
+  401→CodeAuth choice locked in by API-0400 `sshKey-all`,
+  API-0401 `sshKey-create`, API-0402 `sshKey-generate`, and
+  API-0404 `sshKey-remove`.
+- Fixture token base `sshKey-cov-update-0405` consumes the closing
+  slot of the `sshKey-cov-*` per-tag fixture-isolation namespace
+  opened at API-0400 `sshKey-all`. Verified non-colliding with
+  API-0401's `sshKey-cov-create-0401-*`, API-0402's
+  `sshKey-cov-generate-0402-*` (declared in comment only —
+  `{}` body has no slot), API-0403's `sshKey-cov-one-0403-*`,
+  and API-0404's `sshKey-cov-remove-0404-*` literals.
+- Remaining risks or follow-ups: none for this story. The sshKey/*
+  roster (API-0400..API-0405) is now fully covered; the
+  `sshKey-cov-*` namespace closes here. The next pending story in
+  PRD priority-5 order is API-0406 `sso-addTrustedOrigin` (POST
+  per the spec preview), which opens a fresh `sso-cov-*` per-tag
+  fixture-isolation namespace orthogonal to every prior tag's
+  namespace per the per-tag isolation rule originally established
+  at API-0246 `organization-active`. Implementing contributor
+  must re-verify the spec against
+  `internal/api/data/openapi.json > /sso.addTrustedOrigin > post`
+  per the forward-reference lesson and **must not** reuse the now-
+  closed `sshKey-cov-*` namespace.
+- **Learnings for future iterations:**
+  - The single-required-string-scalar POST partial-update mutation
+    family with optional string tail is now an explicit cross-tag
+    shape (this entry's documented precedents: API-0401
+    `sshKey-create` family of `*-create` with optional tails;
+    this entry establishes the equivalent for `*-update`). Its
+    REQUIRED-field cardinality matches the destructive `*-remove`
+    family but the optional tail makes it a partial-update — body
+    is REQUIRED, harness's `len(tc.SampleBody) > 0` gate fires
+    as for any body-bearing mutator. Coverage collapses to a
+    one-line `SampleBody` plus harness-default 401→CodeAuth.
+  - The `<entity>Id` fixture literal can recur across multiple
+    peers within a single tag arc (this entry's
+    `sshKey-cov-update-0405-sshKeyId-fixture` is the third
+    consecutive sshKey/* peer to embed a literal of the form
+    `sshKey-cov-<slug>-<storyID>-sshKeyId-fixture` — preceded by
+    API-0403 `sshKey-one` and API-0404 `sshKey-remove`).
+    Uniqueness is preserved by the slug + storyID discriminator
+    inside the suffix, not by the field-name component, so future
+    contributors can reuse the field-name suffix without renaming.
+  - When closing a tag-roster (here sshKey/* at API-0405), the
+    closing entry's comment must explicitly mark the
+    `<tag>-cov-*` namespace as closed and forbid back-references
+    from the next tag's opener. This pattern was implicit in prior
+    closures but is reasserted here to compound across rosters.
+---

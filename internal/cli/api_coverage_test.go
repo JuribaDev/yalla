@@ -44678,6 +44678,126 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0405",
+		OperationID: "sshKey-update",
+		Method:      http.MethodPost,
+		Path:        "/sshKey.update",
+		Tag:         "sshKey",
+		// Sixth and final entry on the sshKey/* coverage roster,
+		// immediately following API-0404 `sshKey-remove` and consuming
+		// the forward reference embedded in that entry's closing
+		// comment ("The next case in the PRD-ordered priority-5 backlog
+		// is API-0405 `sshKey-update` (declared a **POST** per the spec
+		// preview, continuing the body-bearing sshKey/* mutator
+		// chain)"). Continues inside the `sshKey-cov-*` per-tag
+		// fixture-isolation namespace opened by API-0400 `sshKey-all`
+		// and **must not** back-reference any closed prior-tag
+		// namespace per the per-tag isolation rule originally
+		// established at API-0246 `organization-active`.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json` > `/sshKey.update` > `post`:
+		// method POST, tag sshKey, **no parameters**, requestBody
+		// REQUIRED with `application/json`, responses
+		// 200/400/401/403/500. The 200 response is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort. **No 404** is declared on
+		// this operation, mirroring the precedent on every prior
+		// covered body-bearing imperative-action POST `*-update` /
+		// `*-remove` whose missing-target failure mode collapses into
+		// 400/validation under Dokploy's tRPC convention rather than a
+		// dedicated 404 leg.
+		//
+		// **Request body schema (top-level fields):**
+		//   - REQUIRED `sshKeyId` (plain string). Identifies the SSH
+		//     key record to update. The fixture below supplies a
+		//     deterministic-but-clearly-fake
+		//     `sshKey-cov-update-0405-sshKeyId-fixture` literal
+		//     carrying the `<tag>-cov-<slug>-<storyID>-<field>` suffix
+		//     for `git grep` traceability and matching the API-0403
+		//     `sshKey-one` and API-0404 `sshKey-remove`
+		//     `<base>-sshKeyId-fixture` precedents (the three literals
+		//     are independently unique under the
+		//     `<tag>-cov-<slug>-<storyID>` rule because the slug +
+		//     storyID differ).
+		//   - OPTIONAL `name` (plain string), OPTIONAL `description`
+		//     (string|null via `anyOf`), OPTIONAL `lastUsedAt`
+		//     (string|null via `anyOf`). The minimal-required-only
+		//     fixture rule established cross-tag (load-bearing for
+		//     credential-redaction safety: optional values risk
+		//     hard-coding secrets into the test corpus) leaves these
+		//     three slots unset, mirroring the API-0401 `sshKey-create`
+		//     precedent (which carried one optional `description`
+		//     similarly omitted) and every prior covered `*-update`
+		//     peer with optional tails.
+		//
+		// **Shape positioning — single-required-string-scalar POST
+		// partial-update mutation, body REQUIRED, optional string tail
+		// of three.** REQUIRED-field cardinality matches API-0404
+		// `sshKey-remove` (one REQUIRED `sshKeyId`); the optional tail
+		// makes it a *partial-update* shape, distinct from the
+		// destructive `*-remove` family (zero optionals) and the
+		// four-required-string-scalar `*-create` family (API-0401, one
+		// optional `description`). Distinct from the
+		// body-required-but-no-required-fields API-0402
+		// `sshKey-generate` precedent (saturated single REQUIRED scalar
+		// here, empty `{}` there). The harness's
+		// `len(tc.SampleBody) > 0` gate at `runAPICoverageSuccess`
+		// activates the JSON content-type and byte-for-byte body
+		// comparison legs; this fixture supplies the lone REQUIRED
+		// `sshKeyId` so the success path verifies the CLI propagated
+		// the body verbatim.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so the
+		// 404→CodeNotFound override is structurally inapplicable. The
+		// 404→CodeNotFound override slot for the sshKey/* tag arc was
+		// already consumed at API-0403 `sshKey-one`, so this entry
+		// **must not** re-claim it. 400 → CodeInvalidInput is
+		// *technically* available — a payload that omits the REQUIRED
+		// `sshKeyId` would fail server-side validation — but the
+		// harness reserves 400 representatives for stories where
+		// payload validation is the operation's *uniquely
+		// distinguishing* failure mode. A conventional partial-update
+		// mutation collapses to type-checking, so the harness-default
+		// 401→CodeAuth failure leg remains the most representative
+		// single failure mode every authenticated Dokploy operation
+		// must re-prove, and is consistent with the 401→CodeAuth choice
+		// locked in by the sshKey/* kickoff at API-0400 `sshKey-all`
+		// and reasserted by API-0401 `sshKey-create`, API-0402
+		// `sshKey-generate`, and API-0404 `sshKey-remove`.
+		//
+		// **Fixture token base** `sshKey-cov-update-0405` follows the
+		// `<tag>-cov-<slug>-<storyID>` convention shared across every
+		// prior sshKey/* peer (API-0400..API-0404). Verified
+		// non-colliding with API-0401's `sshKey-cov-create-0401-*`,
+		// API-0402's `sshKey-cov-generate-0402-*` (declared in comment
+		// only — `{}` body has no slot), API-0403's
+		// `sshKey-cov-one-0403-*`, and API-0404's
+		// `sshKey-cov-remove-0404-*` literals (different slug + storyID
+		// → unique under the `<tag>-cov-<slug>-<storyID>` rule).
+		//
+		// **sshKey/* roster closes here.** Per the PRD ordering at the
+		// time of this commit, the priority-5 backlog continues at
+		// API-0406 `sso-addTrustedOrigin`, opening a fresh `sso-cov-*`
+		// per-tag fixture-isolation namespace. The next contributor
+		// must re-verify the spec against
+		// `internal/api/data/openapi.json` > `/sso.addTrustedOrigin` >
+		// `post` per the forward-reference lesson before assuming any
+		// field shape, and **must not** reuse the closed `sshKey-cov-*`
+		// namespace.
+		SampleBody: json.RawMessage(`{
+			"sshKeyId": "sshKey-cov-update-0405-sshKeyId-fixture"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` / `data.status`
+		// rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0423",
 		OperationID: "swarm-getNodeApps",
 		Method:      http.MethodGet,
