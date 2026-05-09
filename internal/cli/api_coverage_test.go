@@ -22732,6 +22732,175 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0239",
+		OperationID: "notification-updateLark",
+		Method:      http.MethodPost,
+		Path:        "/notification.updateLark",
+		Tag:         "notification",
+		// Thirty-second entry on the notification/* coverage roster
+		// and the **fifth member of the notification/* `update*`
+		// mutation-by-id cohort** opened by API-0235
+		// `notification-updateCustom`, extended by API-0236
+		// `notification-updateDiscord`, reaffirmed by API-0237
+		// `notification-updateEmail`, and reaffirmed again by
+		// API-0238 `notification-updateGotify`. Per the API-0235
+		// closing note (reaffirmed by API-0236, API-0237, and
+		// API-0238), every `update*` peer must mirror the kickoff
+		// entry's two-required + every-optional-populated shape and
+		// re-derive the optional-sibling list from the matching
+		// `notification-create*` precedent (here API-0213
+		// `notification-createLark`) rather than back-referencing the
+		// closed `test*` cohort (API-0224..API-0234) or any other
+		// transport flavour. Stays inside the `notification-cov-*`
+		// per-tag fixture-isolation namespace seeded at API-0208
+		// `notification-all` and extended across API-0209..API-0238.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json >
+		// /notification.updateLark > post`: a **POST** with **no
+		// parameters** and a **REQUIRED request body** whose schema
+		// declares **two REQUIRED non-nullable plain string fields**
+		// (`notificationId`, `larkId`) alongside a ten-sibling
+		// optional tail covering seven plain booleans
+		// (`appBuildError`, `databaseBackup`, `volumeBackup`,
+		// `dokployRestart`, `appDeploy`, `dockerCleanup`,
+		// `serverThreshold`), two plain strings (`name`,
+		// `webhookUrl`), and one plain string scope-anchor
+		// (`organizationId`). Responses 200/400/401/403/500 — the
+		// spec does **not** declare 404 on this operation, matching
+		// the notification/* `update*` cohort kickoff API-0235 and
+		// the API-0236/API-0237/API-0238 siblings, plus the broader
+		// cross-tag update-by-id mutation precedent (Dokploy's tRPC
+		// convention collapses missing-target into 400/validation
+		// rather than surfacing a 404 leg). The 200 schema is `{}`
+		// with `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort.
+		//
+		// **Slug style — kebab-case inherited from the notification/*
+		// per-tag-slug-style rule fixed by the kickoff multi-camel
+		// entry API-0209 `notification-createCustom` (→
+		// `create-custom`) and reaffirmed by API-0235
+		// `notification-updateCustom` (→ `update-custom`), API-0236
+		// `notification-updateDiscord` (→ `update-discord`), API-0237
+		// `notification-updateEmail` (→ `update-email`), and API-0238
+		// `notification-updateGotify` (→ `update-gotify`).** This
+		// entry takes `update-lark` as the slug stem (two
+		// kebab-cased segments mirrored from `updateLark`). The
+		// fixture namespace is `notification-cov-update-lark-0239-
+		// <field>`, mirroring the `notification-cov-<slug>-<storyID>-
+		// <field>` discipline locked by API-0208..API-0238.
+		//
+		// **Body composition — two-required + every-optional-
+		// populated.** Per the notification/* `update*` cohort house
+		// style locked by API-0235 and reaffirmed by API-0236/
+		// API-0237/API-0238 (every-optional-populated, every value
+		// anchored on the per-storyID namespace), all ten optional
+		// siblings are populated so the wire fixture exercises the
+		// full update payload, not just the by-id minimum.
+		//   - **REQUIRED `notificationId`** (plain non-nullable
+		//     string). The persisted-notifier target identifier;
+		//     re-uses the same field name as API-0235
+		//     `notification-updateCustom`, API-0236
+		//     `notification-updateDiscord`, API-0237
+		//     `notification-updateEmail`, and API-0238
+		//     `notification-updateGotify`, anchored on this story's
+		//     `notification-cov-update-lark-0239-<field>` namespace
+		//     so the literal stays greppable per-story.
+		//   - **REQUIRED `larkId`** (plain non-nullable string).
+		//     Persisted-notifier discriminator for the lark transport
+		//     flavour; mirrors the API-0235 `customId` / API-0236
+		//     `discordId` / API-0237 `emailId` / API-0238 `gotifyId`
+		//     positioning where the second required scalar addresses
+		//     the transport-specific sibling row (`lark_notifications`
+		//     here). Same per-storyID anchor pattern.
+		//   - **OPTIONAL — every-optional-populated.** Mirrors the
+		//     API-0213 `notification-createLark` field set
+		//     one-for-one (seven shared category booleans incl.
+		//     `serverThreshold` on `true`, plain strings `name` and
+		//     `webhookUrl` on a reserved-TLD URL on `example.invalid`
+		//     (RFC 6761) so a future URL-shape validator stays
+		//     satisfied without risking a real DNS lookup or HTTPS
+		//     egress to a third-party Lark/Feishu webhook host) plus
+		//     the additional `organizationId` scope anchor that
+		//     surfaces only on the `update*` family (not on
+		//     `create*`, per the API-0236 observation reaffirmed by
+		//     API-0237 and API-0238). Every value is anchored on the
+		//     per-storyID namespace so a future leak in a golden file
+		//     remains greppable without colliding with the API-0213
+		//     `create*` literals or the API-0235/API-0236/API-0237/
+		//     API-0238 `update-custom` / `update-discord` /
+		//     `update-email` / `update-gotify` literals. Note that
+		//     Lark's transport schema carries the
+		//     `serverThreshold` boolean (shared with email at
+		//     API-0237) but **not** the `decoration` boolean (which
+		//     surfaces only on discord at API-0236 and gotify at
+		//     API-0238), reflecting Lark's webhook-only delivery
+		//     without the color-decoration affordance of the
+		//     decoration-bearing transport flavours.
+		//
+		// **Shape positioning — two-required (two plain strings) POST
+		// mutation-by-id with ten-sibling optional tail (seven
+		// booleans + two strings + one scope anchor), body REQUIRED.**
+		// Functionally distinct from the API-0235 kickoff (seven
+		// booleans + two strings + one nested `map[string]string`
+		// `headers` + one scope anchor), the API-0236 sibling (eight
+		// booleans incl. shared `decoration` + two strings + one
+		// scope anchor), the API-0237 sibling (seven booleans incl.
+		// `serverThreshold` + five strings + one number + one
+		// array-of-string + one scope anchor), and the API-0238
+		// sibling (seven booleans incl. shared `decoration` + three
+		// strings + one number + one scope anchor) — the lark
+		// transport pairs the `serverThreshold` boolean with a
+		// minimal webhook-only delivery surface (`name`,
+		// `webhookUrl`) while dropping every transport-specific
+		// auxiliary slot (no SMTP connection block, no Gotify
+		// `priority`/`appToken`, no Custom `headers` map, no
+		// Discord/Gotify `decoration`), matching Lark's
+		// single-webhook delivery model. This makes API-0239 the
+		// **leanest optional tail in the `update*` cohort to date**
+		// (ten siblings vs. twelve at API-0238, fifteen at API-0237,
+		// eleven at API-0236, and eleven at API-0235). Future
+		// notification/* `update*` peers (API-0240
+		// `notification-updateNtfy`, API-0241
+		// `notification-updatePushover`, …) must re-derive their
+		// optional tail from the matching `notification-create*`
+		// sibling rather than inheriting from this entry, since each
+		// transport flavour declares its own subset of the
+		// notification base schema.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (Dokploy's tRPC
+		// convention collapses missing-target into 400/validation), so
+		// the 404→CodeNotFound override is structurally inapplicable.
+		// `*-updateLark` here is a body-bearing imperative-action
+		// POST and stays on the 401→CodeAuth invariant locked across
+		// every imperative-action notification/* peer
+		// (API-0209..API-0220, API-0222..API-0238), keeping
+		// authentication as the universal failure surface for the
+		// notification/* `update*` cohort.
+		SampleBody: json.RawMessage(`{
+			"notificationId": "notification-cov-update-lark-0239-notificationId",
+			"larkId": "notification-cov-update-lark-0239-larkId",
+			"name": "notification-cov-update-lark-0239-name",
+			"webhookUrl": "https://notification-cov-update-lark-0239.example.invalid/webhook",
+			"appBuildError": true,
+			"databaseBackup": true,
+			"volumeBackup": true,
+			"dokployRestart": true,
+			"appDeploy": true,
+			"dockerCleanup": true,
+			"serverThreshold": true,
+			"organizationId": "notification-cov-update-lark-0239-organizationId"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the empty-
+		// success cohort. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` / `data.status`
+		// rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,

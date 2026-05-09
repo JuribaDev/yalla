@@ -27655,3 +27655,73 @@ forward-reference lesson before assuming any field shape.
     callout (mirrors the API-0237 `password` callout) to keep future
     agents from inlining real credentials.
 ---
+
+## 2026-05-09 — API-0239 (notification-updateLark)
+- Added apiCoverageCase entry for `notification-updateLark` — fifth
+  member of the notification/* `update*` mutation-by-id cohort opened
+  by API-0235 `notification-updateCustom`, extended by API-0236
+  `notification-updateDiscord`, reaffirmed by API-0237
+  `notification-updateEmail`, and reaffirmed again by API-0238
+  `notification-updateGotify`.
+- Body fixture pins two REQUIRED non-nullable plain string slots
+  (`notificationId`, `larkId`) plus a ten-sibling every-optional-
+  populated tail mirroring the API-0213 `notification-createLark`
+  precedent (seven shared category booleans incl. `serverThreshold`
+  on `true`, plain strings `name` and `webhookUrl` on a reserved-TLD
+  RFC 6761 `example.invalid` host) plus the `update*`-only
+  `organizationId` scope anchor.
+- Shape diverges from API-0235 (seven booleans + two strings + nested
+  `headers` map + organizationId), API-0236 (eight booleans incl.
+  shared `decoration` + two strings + organizationId), API-0237
+  (seven booleans incl. `serverThreshold` + five strings + one number
+  + array-of-string `toAddresses` + organizationId), and API-0238
+  (seven booleans incl. shared `decoration` + three strings + one
+  number + organizationId) by pairing the `serverThreshold` boolean
+  with a minimal webhook-only delivery surface (`name`, `webhookUrl`)
+  while dropping every transport-specific auxiliary slot — no SMTP
+  connection block, no Gotify `priority`/`appToken`, no Custom
+  `headers` map, no Discord/Gotify `decoration`. This makes API-0239
+  the **leanest optional tail in the `update*` cohort to date** (ten
+  siblings vs. twelve at API-0238, fifteen at API-0237, eleven at
+  API-0236, and eleven at API-0235).
+- Lark's transport schema carries the `serverThreshold` boolean
+  (shared with email at API-0237) but **not** the `decoration`
+  boolean (which surfaces only on discord at API-0236 and gotify at
+  API-0238) — Lark is webhook-only without color-decoration.
+- Files changed: `internal/cli/api_coverage_test.go`, `ralph/prd.json`,
+  `ralph/progress.txt`.
+- Verified: `gofmt -l .` (clean), `go mod tidy` (no-op), `go vet ./...`
+  (clean), `go test ./...` (pass), `go test -race ./...` (pass).
+  Targeted `TestAPICoverage_.*/API-0239` subtests pass for registry
+  invariants, schema reachability, manifest inclusion, success round-
+  trip, and 401→CodeAuth representative failure leg.
+- Remaining risks: none for this story. Slug stem `update-lark` is
+  now locked; API-0240..API-0245 must re-derive their optional tail
+  from their matching `notification-create*` precedent rather than
+  inheriting from this entry, since each transport flavour declares
+  its own subset of the notification base schema (e.g., ntfy's
+  topic+server pair, pushover's user/app token pair, resend's
+  API-key + from/to mailboxes, slack's channel array, teams's
+  connector list, telegram's bot token + chat id pair).
+- **Learnings for future iterations:**
+  - Lark's optional tail re-derives one-for-one from the API-0213
+    `create*` precedent (nine all-required slots in `create*` →
+    nine populated optionals in `update*`) plus the `update*`-only
+    `organizationId` scope anchor.
+  - The `serverThreshold` boolean is **shared** across email
+    (API-0211/API-0237) and lark (API-0213/API-0239) — it is NOT an
+    email-only marker. Future cross-cohort comparisons should call
+    out `serverThreshold`-bearing transport flavours separately
+    from `decoration`-bearing ones (discord/gotify), since the two
+    booleans live on disjoint transport subsets.
+  - Lark is the **leanest** notification transport in the cohort:
+    no auxiliary connection slots, no priority/token tuple, no
+    headers map, no decoration — just `name` + `webhookUrl` on top
+    of the seven-boolean category bus. Future webhook-only
+    transports without auxiliary slots can grep this entry first
+    rather than re-deriving from a heavier sibling.
+  - Since the operation already exists in the embedded openapi.json
+    (registry size pinned), API-0239 work is purely the coverage
+    harness entry — no registry, manifest, or schema-doc code
+    needed to change.
+---
