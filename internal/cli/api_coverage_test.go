@@ -23459,6 +23459,193 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0243",
+		OperationID: "notification-updateSlack",
+		Method:      http.MethodPost,
+		Path:        "/notification.updateSlack",
+		Tag:         "notification",
+		// Thirty-sixth entry on the notification/* coverage roster
+		// and the **ninth member of the notification/* `update*`
+		// mutation-by-id cohort** opened by API-0235
+		// `notification-updateCustom`, extended by API-0236
+		// `notification-updateDiscord`, reaffirmed by API-0237
+		// `notification-updateEmail`, API-0238
+		// `notification-updateGotify`, API-0239
+		// `notification-updateLark`, API-0240
+		// `notification-updateNtfy`, API-0241
+		// `notification-updatePushover`, and API-0242
+		// `notification-updateResend`. Per the API-0235 closing note
+		// (reaffirmed by API-0236..API-0242), every `update*` peer
+		// must mirror the kickoff entry's two-required + every-
+		// optional-populated shape and re-derive the optional-sibling
+		// list from the matching `notification-create*` precedent
+		// (here API-0217 `notification-createSlack`) rather than
+		// back-referencing the closed `test*` cohort
+		// (API-0224..API-0234) or any other transport flavour. Stays
+		// inside the `notification-cov-*` per-tag fixture-isolation
+		// namespace seeded at API-0208 `notification-all` and
+		// extended across API-0209..API-0242.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json >
+		// /notification.updateSlack > post`: a **POST** with **no
+		// parameters** and a **REQUIRED request body** whose schema
+		// declares **two REQUIRED non-nullable plain string fields**
+		// (`notificationId`, `slackId`) alongside an eleven-sibling
+		// optional tail covering seven plain booleans
+		// (`appBuildError`, `databaseBackup`, `volumeBackup`,
+		// `dokployRestart`, `appDeploy`, `dockerCleanup`,
+		// `serverThreshold`), three plain strings (`name`,
+		// `webhookUrl`, `channel`), and one plain string scope-anchor
+		// (`organizationId`). Responses 200/400/401/403/500 — the
+		// spec does **not** declare 404 on this operation, matching
+		// the notification/* `update*` cohort kickoff API-0235 and
+		// the API-0236..API-0242 siblings, plus the broader cross-tag
+		// update-by-id mutation precedent (Dokploy's tRPC convention
+		// collapses missing-target into 400/validation rather than
+		// surfacing a 404 leg). The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort.
+		//
+		// **Slug style — kebab-case inherited from the notification/*
+		// per-tag-slug-style rule fixed by the kickoff multi-camel
+		// entry API-0209 `notification-createCustom` (→
+		// `create-custom`) and reaffirmed by API-0235
+		// `notification-updateCustom` (→ `update-custom`), API-0236
+		// `notification-updateDiscord` (→ `update-discord`), API-0237
+		// `notification-updateEmail` (→ `update-email`), API-0238
+		// `notification-updateGotify` (→ `update-gotify`), API-0239
+		// `notification-updateLark` (→ `update-lark`), API-0240
+		// `notification-updateNtfy` (→ `update-ntfy`), API-0241
+		// `notification-updatePushover` (→ `update-pushover`), and
+		// API-0242 `notification-updateResend` (→ `update-resend`).**
+		// This entry takes `update-slack` as the slug stem (two
+		// kebab-cased segments mirrored from `updateSlack`). The
+		// fixture namespace is `notification-cov-update-slack-0243-
+		// <field>`, mirroring the `notification-cov-<slug>-<storyID>-
+		// <field>` discipline locked by API-0208..API-0242.
+		//
+		// **Body composition — two-required + every-optional-
+		// populated.** Per the notification/* `update*` cohort house
+		// style locked by API-0235 and reaffirmed by API-0236..
+		// API-0242 (every-optional-populated, every value anchored
+		// on the per-storyID namespace), all eleven optional siblings
+		// are populated so the wire fixture exercises the full update
+		// payload, not just the by-id minimum.
+		//   - **REQUIRED `notificationId`** (plain non-nullable
+		//     string). The persisted-notifier target identifier;
+		//     re-uses the same field name as API-0235..API-0242,
+		//     anchored on this story's
+		//     `notification-cov-update-slack-0243-<field>` namespace
+		//     so the literal stays greppable per-story.
+		//   - **REQUIRED `slackId`** (plain non-nullable string).
+		//     Persisted-notifier discriminator for the slack
+		//     transport flavour; mirrors the API-0235 `customId` /
+		//     API-0236 `discordId` / API-0237 `emailId` / API-0238
+		//     `gotifyId` / API-0239 `larkId` / API-0240 `ntfyId` /
+		//     API-0241 `pushoverId` / API-0242 `resendId` positioning
+		//     where the second required scalar addresses the
+		//     transport-specific sibling row (`slack_notifications`
+		//     here). Same per-storyID anchor pattern.
+		//   - **OPTIONAL — every-optional-populated.** Mirrors the
+		//     API-0217 `notification-createSlack` field set
+		//     one-for-one (seven shared category booleans on `true`,
+		//     plain strings `name`, `webhookUrl`, `channel`) plus the
+		//     additional `organizationId` scope anchor that surfaces
+		//     only on the `update*` family (not on `create*`, per the
+		//     API-0236 observation reaffirmed by API-0237..API-0242).
+		//     Every value is anchored on the per-storyID namespace so
+		//     a future leak in a golden file remains greppable
+		//     without colliding with the API-0217 `create*` literals
+		//     or the API-0235..API-0242 `update-custom` /
+		//     `update-discord` / `update-email` / `update-gotify` /
+		//     `update-lark` / `update-ntfy` / `update-pushover` /
+		//     `update-resend` literals. The `webhookUrl` slot carries
+		//     a clearly-fake RFC 6761 `example.invalid` placeholder
+		//     per the API-0217 callout — Slack incoming-webhook URLs
+		//     are bearer-style secrets (anyone holding the URL can
+		//     post to the channel), and the yalla request-body
+		//     forwarder ships request bytes verbatim while the
+		//     redactor only operates on rendered `--json` output, so
+		//     agents cribbing this fixture must substitute their own
+		//     Slack webhook via `--input` and never inline real
+		//     `webhookUrl` material in source. The `serverThreshold`
+		//     boolean is shared with the email (API-0237), lark
+		//     (API-0239), pushover (API-0241), and resend (API-0242)
+		//     transports — Slack supports per-host alerting on
+		//     resource thresholds via the same notification base
+		//     schema.
+		//
+		// **Shape positioning — two-required (two plain strings) POST
+		// mutation-by-id with eleven-sibling optional tail (seven
+		// booleans + three strings + one scope anchor), body
+		// REQUIRED.** Functionally distinct from the API-0235 kickoff
+		// (seven booleans + two strings + one nested
+		// `map[string]string` `headers` + one scope anchor), the
+		// API-0236 sibling (eight booleans incl. shared `decoration`
+		// + two strings + one scope anchor), the API-0237 sibling
+		// (seven booleans incl. `serverThreshold` + five strings +
+		// one number + one array-of-string + one scope anchor), the
+		// API-0238 sibling (seven booleans incl. shared `decoration`
+		// + three strings + one number + one scope anchor), the
+		// API-0239 sibling (seven booleans incl. `serverThreshold` +
+		// two strings + one scope anchor), the API-0240 sibling (six
+		// booleans + four strings + one number + one scope anchor),
+		// the API-0241 sibling (seven booleans incl. `serverThreshold`
+		// + three strings + one plain number + two nullable numbers +
+		// one scope anchor), and the API-0242 sibling (seven booleans
+		// incl. `serverThreshold` + three strings + one array-of-
+		// string + one scope anchor) — the Slack transport pairs the
+		// canonical seven category booleans (incl. `serverThreshold`)
+		// with three Slack-specific delivery strings (`name`,
+		// `webhookUrl`, `channel`), dropping every SMTP connection
+		// slot (`smtpServer`, `smtpPort`, `username`, `password`),
+		// every email recipient slot (`fromAddress`, `toAddresses`),
+		// and every retry-tuning slot (`priority`, `expire`, `retry`)
+		// since Slack is a webhook-driven HTTP transport rather than
+		// an SMTP submission or alerting-tier transport. Future
+		// notification/* `update*` peers (API-0244
+		// `notification-updateTeams`, API-0245
+		// `notification-updateTelegram`) must re-derive their
+		// optional tail from the matching `notification-create*`
+		// sibling rather than inheriting from this entry, since each
+		// transport flavour declares its own subset of the
+		// notification base schema.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (Dokploy's tRPC
+		// convention collapses missing-target into 400/validation),
+		// so the 404→CodeNotFound override is structurally
+		// inapplicable. `*-updateSlack` here is a body-bearing
+		// imperative-action POST and stays on the 401→CodeAuth
+		// invariant locked across every imperative-action
+		// notification/* peer (API-0209..API-0220, API-0222..
+		// API-0242), keeping authentication as the universal failure
+		// surface for the notification/* `update*` cohort.
+		SampleBody: json.RawMessage(`{
+			"notificationId": "notification-cov-update-slack-0243-notificationId",
+			"slackId": "notification-cov-update-slack-0243-slackId",
+			"name": "notification-cov-update-slack-0243-name",
+			"webhookUrl": "https://hooks.slack.example.invalid/notification-cov-update-slack-0243-webhookUrl",
+			"channel": "#notification-cov-update-slack-0243-channel",
+			"appBuildError": true,
+			"databaseBackup": true,
+			"volumeBackup": true,
+			"dokployRestart": true,
+			"appDeploy": true,
+			"dockerCleanup": true,
+			"serverThreshold": true,
+			"organizationId": "notification-cov-update-slack-0243-organizationId"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the empty-
+		// success cohort. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` / `data.status`
+		// rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,

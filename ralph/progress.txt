@@ -27831,3 +27831,72 @@ forward-reference lesson before assuming any field shape.
     namespace remains the durable golden-leak greppable: every literal
     in the SampleBody is anchored on it.
 ---
+
+## 2026-05-09 - API-0243 - notification-updateSlack
+- Added covered-operation case for `notification-updateSlack` in
+  `internal/cli/api_coverage_test.go` immediately after the API-0242
+  `notification-updateResend` entry, slotted in storyID-sorted order
+  before the API-0246 `organization-active` block.
+- Spec re-verified against `internal/api/data/openapi.json >
+  /notification.updateSlack > post`: POST, no parameters, REQUIRED body
+  with two REQUIRED plain strings (`notificationId`, `slackId`) and an
+  eleven-sibling optional tail (seven booleans `appBuildError`,
+  `databaseBackup`, `volumeBackup`, `dokployRestart`, `appDeploy`,
+  `dockerCleanup`, `serverThreshold`; three plain strings `name`,
+  `webhookUrl`, `channel`; one scope-anchor string `organizationId`).
+  Responses 200/400/401/403/500 — no 404 (matches the rest of the
+  notification/* `update*` cohort and broader Dokploy tRPC
+  missing-target → 400 convention).
+- Body composition follows the `update*` cohort house style locked at
+  API-0235 and reaffirmed by API-0236..API-0242: two-required + every-
+  optional-populated, every value anchored on the per-storyID namespace
+  `notification-cov-update-slack-0243-<field>`. Optional siblings are
+  derived from API-0217 `notification-createSlack` plus the `update*`-
+  only `organizationId` scope anchor.
+- `webhookUrl` placeholder uses an RFC 6761 `example.invalid` host —
+  Slack incoming-webhook URLs are bearer-style secrets, request-body
+  forwarder ships bytes verbatim, the redactor only operates on
+  rendered `--json` output. Agents must substitute their own webhook
+  via `--input` and never inline real `webhookUrl` material in source.
+- Failure family: harness-default 401→CodeAuth retained (no 404 in
+  spec, body-bearing imperative-action POST stays on the cohort
+  invariant locked since API-0209).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (new API-0243 case after the
+    API-0242 entry, before API-0246)
+  - `ralph/prd.json` (`API-0243.passes: true`)
+  - `ralph/progress.txt` (this entry)
+- Verification:
+  - `gofmt -w .` — clean
+  - `go vet ./...` — clean
+  - `go test ./...` — pass
+  - `go test -race ./...` — pass
+  - `go mod tidy` — clean
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — not installed locally, skipped per repo convention.
+- Remaining risks / follow-ups:
+  - API-0244 `notification-updateTeams` and API-0245
+    `notification-updateTelegram` are the next two notification/*
+    `update*` peers to close. Per the API-0235 closing note (reaffirmed
+    by API-0236..API-0243), each must re-derive its optional tail from
+    its matching `notification-create*` precedent (API-0218
+    `notification-createTeams`, API-0219 `notification-createTelegram`)
+    rather than back-referencing this entry.
+- **Learnings for future iterations:**
+  - The Slack transport is webhook-driven (HTTP POST to a Slack-issued
+    incoming-webhook URL) rather than SMTP- or alerting-tier-driven;
+    every email/SMTP slot (`smtpServer`, `smtpPort`, `username`,
+    `password`, `fromAddress`, `toAddresses`) and every retry-tuning
+    slot (`priority`, `expire`, `retry`) is absent. Just three Slack-
+    specific delivery strings on top of the canonical seven category
+    booleans (incl. `serverThreshold`).
+  - `webhookUrl` is a bearer-style secret in disguise — anyone holding
+    the URL can post to the channel. The fixture must use an RFC 6761
+    `example.invalid` host so cribbing agents are forced to substitute
+    via `--input`.
+  - The notification/* `update*` cohort discipline of "re-derive
+    optional tail from matching `create*`, never inherit from a sibling
+    `update*` entry" continues to hold — Slack drops the SMTP/email/
+    alerting slots that earlier transports surfaced, exactly mirroring
+    its `create*` precedent at API-0217.
+---
