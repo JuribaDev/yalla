@@ -28536,3 +28536,73 @@ forward-reference lesson before assuming any field shape.
     `r.URL.Query()` and matches each key independently, so identical
     values do not collide.
 ---
+
+## 2026-05-09 - API-0264
+- Added per-operation coverage entry for `patch-readRepoFile`
+  (GET /patch.readRepoFile) in
+  `internal/cli/api_coverage_test.go`. The new struct slots into the
+  append-only `coveredAPIOperations` registry between API-0263
+  (`patch-readRepoDirectories`) and API-0268 (`port-create`),
+  continuing inside the `patch-cov-*` per-tag fixture-isolation
+  namespace opened at API-0256.
+- Spec re-verified against `internal/api/data/openapi.json >
+  /patch.readRepoFile > get`: GET with **three REQUIRED query
+  parameters** (`id` plain string, `type` enum
+  `application`|`compose`, `filePath` plain string), no request body,
+  and 200/400/401/403/404/500 responses. The 200 schema is `{}` with
+  `additionalProperties: false`, matching the empty-success cohort.
+  Wire-shape is the strict structural twin of API-0263 with `filePath`
+  replacing `repoPath` as the third required query parameter.
+- Fixture id base: `patch-cov-read-repo-file-0264`. `type` set to
+  `application` (first enum member, matches the discriminator choice
+  locked in by API-0256/0260/0261/0263). `filePath` set to a
+  fixture-style relative path that doubles as the slug — keeps the
+  fixture portable and inside the `patch-cov-*` namespace.
+- Failure leg kept on the harness-default 401→`E_AUTH` mode (mirrors
+  API-0005, API-0113, API-0115, API-0256, API-0262, API-0263 —
+  id-bearing GETs that also declare 404 yet treat bearer-token
+  enforcement as the representative failure).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (added API-0264 entry)
+  - `ralph/prd.json` (API-0264 `passes` → true)
+  - `ralph/progress.txt` (this entry)
+- Verification run from repo root:
+  - `gofmt -w .` — clean
+  - `go mod tidy` — no changes
+  - `go vet ./...` — clean
+  - `go test ./...` — all packages ok (cli 1.599s)
+  - `go test -race ./...` — all packages ok (cli 3.445s)
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` not installed locally; skipped per the
+    document-rather-than-silently-skip rule.
+- Remaining risks / follow-ups:
+  - 34 priority-5 API stories still pending; next in PRD order is
+    API-0265 `patch-saveFileAsPatch` (POST per spec preview). The next
+    contributor must re-verify the spec against
+    `internal/api/data/openapi.json > /patch.saveFileAsPatch > post`
+    before assuming any field shape, and continue inside the
+    `patch-cov-*` per-tag fixture-isolation namespace.
+  - The 404→`CodeNotFound` failure-leg variant remains untested for
+    this operation and for every prior id-bearing GET in the patch/*
+    roster; a future contract-test extension that exercises both
+    legs should add a sibling case rather than mutating any existing
+    entry.
+- **Learnings for future iterations:**
+  - When a within-tag predecessor (here API-0263) already covers the
+    exact wire-shape (three-required-query GET with the same
+    `id`+`type` enum head), the new entry is essentially a one-field
+    parameter rename plus rationale-comment refresh. Reuse the
+    predecessor's discriminator choice (`application` first enum
+    member) to keep the patch/* discriminator pinned consistently
+    across the roster.
+  - The `<tag>-cov-<slug>-<storyID>` fixture id base and
+    `git grep`-traceable identifiers are still required even when
+    structurally cloning a sibling — keeping every per-story slug
+    unique inside `patch-cov-*` is what guarantees no fixture
+    crosstalk between subtests when run in parallel.
+  - Reading the openapi.json spec directly (rather than copying field
+    shapes from the predecessor entry) caught the third-query-name
+    rename `repoPath` → `filePath`. The forward-reference rule must
+    be enforced even when the predecessor looks like a near-perfect
+    template.
+---
