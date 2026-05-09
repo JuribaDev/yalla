@@ -27976,3 +27976,48 @@ forward-reference lesson before assuming any field shape.
     `goreleaser` locally** (still — same state as API-0240..API-0243).
     Documented explicitly per repo policy; never silently skipped.
 ---
+
+## 2026-05-09 - API-0245
+- **Implemented**: Coverage entry for `notification-updateTelegram`
+  (POST `/notification.updateTelegram`), the **eleventh and closing**
+  member of the notification/* `update*` mutation-by-id cohort opened
+  by API-0235 and extended through API-0244.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended the API-0245 case
+    between API-0244 and API-0246. Two-required + every-optional-
+    populated body: `notificationId`, `telegramId` (required strings)
+    plus seven category booleans, four Telegram-specific delivery
+    strings (`name`, `botToken`, `chatId`, `messageThreadId`), and the
+    `organizationId` scope anchor. Fixture namespace
+    `notification-cov-update-telegram-0245-<field>`.
+  - `ralph/prd.json` — set US API-0245 `passes: true`.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages OK.
+  - `go test -race ./...` — all packages OK.
+  - Optional tools (`goimports`, `golangci-lint`, `staticcheck`,
+    `govulncheck`, `goreleaser`) remain unavailable locally per the
+    documented baseline; CI's `security` job covers them.
+- **Remaining risks / follow-ups**:
+  - None operation-specific. The notification/* coverage roster is
+    now exhausted at API-0245; future stories will move to other
+    tags (API-0246 onward begins the organization/* roster, already
+    populated through API-0255).
+- **Learnings for future iterations**:
+  - When closing a same-shape cohort (here the 11-transport
+    `update*` family), call out the closure explicitly in the body
+    comment so future agents do not back-reference a closed cohort
+    when opening a new one.
+  - `botToken` joins `webhookUrl` as a bearer-style secret in the
+    notification/* fixtures — both must be inlined as fake literals
+    (no live tokens) because the request-body forwarder ships
+    request bytes verbatim and only rendered `--json` output passes
+    through the redactor. Document the secret nature in the comment
+    so the API-0237 SMTP `password` precedent stays consistent.
+  - The `update*` cohort consistently adds an `organizationId`
+    scope anchor that the matching `create*` cohort does not
+    declare; mirroring this difference verbatim from the spec keeps
+    the every-optional-populated discipline honest.
+---
