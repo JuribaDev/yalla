@@ -27492,3 +27492,43 @@ forward-reference lesson before assuming any field shape.
     2-space indent is preserved by the surgical slice — no
     full-file rewrite risk.
 ---
+
+## 2026-05-09 — API-0236 (notification-updateDiscord)
+- Added apiCoverageCase entry for `notification-updateDiscord` — second
+  member of the notification/* `update*` mutation-by-id cohort opened by
+  API-0235 `notification-updateCustom`.
+- Body fixture pins two REQUIRED non-nullable plain string slots
+  (`notificationId`, `discordId`) plus an eleven-sibling every-optional-
+  populated tail (eight booleans incl. discord-only `decoration`, two
+  strings `name`/`webhookUrl`, and `organizationId` scope anchor). The
+  shape diverges from the kickoff API-0235 by replacing the nested
+  `headers` `map[string]string` with one extra boolean and one extra
+  plain string, reflecting discord's webhook-only delivery vs. custom
+  transport's arbitrary header injection.
+- Files changed: `internal/cli/api_coverage_test.go`, `ralph/prd.json`,
+  `ralph/progress.txt`.
+- Verified: `gofmt -l .` (clean), `go mod tidy` (no-op), `go vet ./...`
+  (clean), `go test ./...` (pass), `go test -race ./...` (pass).
+  Targeted `TestAPICoverage_.*/API-0236` subtests pass for registry
+  invariants, schema reachability, manifest inclusion, success round-
+  trip, and 401→CodeAuth representative failure leg.
+- Remaining risks: none for this story. Slug stem `update-discord` is
+  now locked as the shape precedent for transport-flavour update peers
+  whose optional tail is webhook-style (no header injection).
+- **Learnings for future iterations:**
+  - The notification/* `update*` cohort house style is **two-required
+    + every-optional-populated** (locked at API-0235), but each
+    transport flavour declares a distinct optional-sibling subset. Do
+    NOT inherit the optional tail from API-0235 or from a sibling
+    `update*` peer; always re-derive it from the matching
+    `notification-create*` precedent (API-0210 here) plus the
+    `update*`-only `organizationId` scope anchor.
+  - The discord transport schema swaps the custom transport's
+    `headers: map[string]string` for two scalars (`decoration: bool`,
+    `webhookUrl: string`). The optional-tail count stays at eleven
+    siblings but the type mix shifts.
+  - Since the operation already exists in the embedded openapi.json
+    (registry size 450 stays pinned), API-0236 work is purely the
+    coverage harness entry — no registry, manifest, or schema-doc
+    code needed to change.
+---

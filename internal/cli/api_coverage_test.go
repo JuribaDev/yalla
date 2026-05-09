@@ -22276,6 +22276,143 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0236",
+		OperationID: "notification-updateDiscord",
+		Method:      http.MethodPost,
+		Path:        "/notification.updateDiscord",
+		Tag:         "notification",
+		// Twenty-ninth entry on the notification/* coverage roster and
+		// the **second member of the notification/* `update*`
+		// mutation-by-id cohort** opened by API-0235
+		// `notification-updateCustom`. Per the API-0235 closing note,
+		// future `update*` peers must mirror the kickoff entry's
+		// two-required + every-optional-populated shape and re-derive
+		// the optional-sibling list from the matching
+		// `notification-create*` precedent (here API-0210
+		// `notification-createDiscord`) rather than back-referencing
+		// the closed `test*` cohort (API-0224..API-0234). Stays inside
+		// the `notification-cov-*` per-tag fixture-isolation namespace
+		// seeded at API-0208 `notification-all` and extended across
+		// API-0209..API-0235.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json >
+		// /notification.updateDiscord > post`: a **POST** with **no
+		// parameters** and a **REQUIRED request body** whose schema
+		// declares **two REQUIRED non-nullable plain string fields**
+		// (`notificationId`, `discordId`) alongside an eleven-sibling
+		// optional tail covering eight plain booleans
+		// (`appBuildError`, `databaseBackup`, `volumeBackup`,
+		// `dokployRestart`, `appDeploy`, `dockerCleanup`,
+		// `serverThreshold`, `decoration`), two plain strings (`name`,
+		// `webhookUrl`), and one plain string scope-anchor
+		// (`organizationId`). Responses 200/400/401/403/500 — the spec
+		// does **not** declare 404 on this operation, matching the
+		// notification/* `update*` cohort kickoff API-0235 and the
+		// broader cross-tag update-by-id mutation precedent (Dokploy's
+		// tRPC convention collapses missing-target into 400/validation
+		// rather than surfacing a 404 leg). The 200 schema is `{}`
+		// with `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort.
+		//
+		// **Slug style — kebab-case inherited from the notification/*
+		// per-tag-slug-style rule fixed by the kickoff multi-camel
+		// entry API-0209 `notification-createCustom` (→
+		// `create-custom`) and reaffirmed by API-0235
+		// `notification-updateCustom` (→ `update-custom`).** This
+		// entry takes `update-discord` as the slug stem (two
+		// kebab-cased segments mirrored from `updateDiscord`). The
+		// fixture namespace is `notification-cov-update-discord-0236-
+		// <field>`, mirroring the `notification-cov-<slug>-<storyID>-
+		// <field>` discipline locked by API-0208..API-0235.
+		//
+		// **Body composition — two-required + every-optional-
+		// populated.** Per the notification/* `update*` cohort house
+		// style locked by API-0235 (every-optional-populated, every
+		// value anchored on the per-storyID namespace), all eleven
+		// optional siblings are populated so the wire fixture
+		// exercises the full update payload, not just the by-id
+		// minimum.
+		//   - **REQUIRED `notificationId`** (plain non-nullable
+		//     string). The persisted-notifier target identifier;
+		//     re-uses the same field name as API-0235
+		//     `notification-updateCustom` and the by-id mutation
+		//     opener API-0223 `notification-remove`, anchored on this
+		//     story's `notification-cov-update-discord-0236-<field>`
+		//     namespace so the literal stays greppable per-story.
+		//   - **REQUIRED `discordId`** (plain non-nullable string).
+		//     Persisted-notifier discriminator for the discord
+		//     transport flavour; mirrors the API-0235 `customId`
+		//     positioning where the second required scalar addresses
+		//     the transport-specific sibling row
+		//     (`discord_notifications` here). Same per-storyID anchor
+		//     pattern.
+		//   - **OPTIONAL — every-optional-populated.** Mirrors the
+		//     API-0210 `notification-createDiscord` field set
+		//     one-for-one (eight booleans on `true` covering the
+		//     standard seven plus the discord-only `decoration` flag,
+		//     plain strings `name` and `webhookUrl` on the
+		//     `example.invalid` reserved TLD per RFC 6761) plus the
+		//     additional `organizationId` scope anchor that surfaces
+		//     only on the `update*` family (not on `create*`). Every
+		//     value is anchored on the per-storyID namespace so a
+		//     future leak in a golden file remains greppable without
+		//     colliding with the API-0210 `create*` literals or the
+		//     API-0235 `update-custom` literals.
+		//
+		// **Shape positioning — two-required (two plain strings) POST
+		// mutation-by-id with eleven-sibling optional tail (eight
+		// booleans + two strings + one scope anchor), body REQUIRED.**
+		// Functionally distinct from the API-0235 kickoff (which
+		// carries seven booleans + two strings + one nested
+		// `map[string]string` `headers` + one scope anchor) — the
+		// `headers` map is replaced here by an additional boolean
+		// (`decoration`) and a second plain string (`webhookUrl`),
+		// reflecting the discord transport's webhook-only delivery
+		// shape vs. custom transport's arbitrary header injection.
+		// Future notification/* `update*` peers (API-0237
+		// `notification-updateEmail`, API-0238
+		// `notification-updateGotify`, API-0239
+		// `notification-updateLark`, …) must re-derive their optional
+		// tail from the matching `notification-create*` sibling rather
+		// than inheriting from API-0235 or this entry, since each
+		// transport flavour declares its own subset of the
+		// notification base schema.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (Dokploy's tRPC
+		// convention collapses missing-target into 400/validation), so
+		// the 404→CodeNotFound override is structurally inapplicable.
+		// `*-updateDiscord` here is a body-bearing imperative-action
+		// POST and stays on the 401→CodeAuth invariant locked across
+		// every imperative-action notification/* peer
+		// (API-0209..API-0220, API-0222..API-0235), keeping
+		// authentication as the universal failure surface for the
+		// notification/* `update*` cohort.
+		SampleBody: json.RawMessage(`{
+			"notificationId": "notification-cov-update-discord-0236-notificationId",
+			"discordId": "notification-cov-update-discord-0236-discordId",
+			"name": "notification-cov-update-discord-0236-name",
+			"webhookUrl": "https://example.invalid/notification-cov-update-discord-0236-webhookUrl",
+			"appBuildError": true,
+			"databaseBackup": true,
+			"volumeBackup": true,
+			"dokployRestart": true,
+			"appDeploy": true,
+			"dockerCleanup": true,
+			"serverThreshold": true,
+			"decoration": true,
+			"organizationId": "notification-cov-update-discord-0236-organizationId"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the empty-
+		// success cohort. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` / `data.status`
+		// rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,
