@@ -20987,6 +20987,177 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0229",
+		OperationID: "notification-testNtfyConnection",
+		Method:      http.MethodPost,
+		Path:        "/notification.testNtfyConnection",
+		Tag:         "notification",
+		// Twenty-second entry on the notification/* coverage roster,
+		// staying inside the `notification-cov-*` per-tag fixture-
+		// isolation namespace seeded at API-0208 `notification-all` and
+		// extended across API-0209..API-0228. Per the per-tag isolation
+		// rule reaffirmed across each prior peer this entry stays
+		// inside the namespace opened by API-0208 and **must not**
+		// back-reference any closed prior-tag namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json >
+		// /notification.testNtfyConnection > post`: a **POST** with
+		// **no parameters** and a **REQUIRED request body** whose
+		// schema declares **four REQUIRED non-nullable plain slots and
+		// zero OPTIONAL siblings** — REQUIRED `serverUrl` (string),
+		// `topic` (string), `accessToken` (string), `priority`
+		// (number). Responses 200/400/401/403/500 — the spec does
+		// **not** declare 404 on this operation, matching the
+		// connectivity-validation precedent re-asserted by the cohort
+		// opener API-0224 `notification-testCustomConnection` and the
+		// peers API-0225 `notification-testDiscordConnection` /
+		// API-0226 `notification-testEmailConnection` / API-0227
+		// `notification-testGotifyConnection` / API-0228
+		// `notification-testLarkConnection` (the family is "validate
+		// the agent-supplied transport descriptor", with no by-id
+		// target to miss). The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort.
+		//
+		// **Slug style — kebab-case inherited from API-0209/API-0210/
+		// API-0211/API-0212/API-0213/API-0214/API-0215/API-0216/
+		// API-0217/API-0218/API-0219, the GET-cohort opener API-0220
+		// `notification-getEmailProviders` (→ `get-email-providers`),
+		// the `*Id`-filtered GET-cohort opener API-0221
+		// `notification-one`, the action-receiver POST opener API-0222
+		// `notification-receiveNotification` (→ `receive-notification`),
+		// the by-id mutation cohort opener API-0223
+		// `notification-remove`, the `test*` connectivity-validation
+		// POST cohort opener API-0224 `notification-testCustomConnection`
+		// (→ `test-custom-connection`), the second cohort member
+		// API-0225 `notification-testDiscordConnection`
+		// (→ `test-discord-connection`), the third cohort member
+		// API-0226 `notification-testEmailConnection`
+		// (→ `test-email-connection`), the fourth cohort member
+		// API-0227 `notification-testGotifyConnection`
+		// (→ `test-gotify-connection`), and the fifth cohort member
+		// API-0228 `notification-testLarkConnection`
+		// (→ `test-lark-connection`).** Per the per-tag-slug-style
+		// rule fixed by the kickoff multi-camel entry API-0209
+		// `notification-createCustom` (→ `create-custom`), this entry
+		// takes `test-ntfy-connection` as the slug stem (three
+		// kebab-cased segments mirrored from `testNtfyConnection`).
+		// The fixture namespace is
+		// `notification-cov-test-ntfy-connection-0229-<field>`,
+		// mirroring the `notification-cov-<slug>-<storyID>-<field>`
+		// discipline locked by API-0208..API-0228. **This entry is
+		// the sixth member of the notification/* `test*` connectivity-
+		// validation POST cohort opened by API-0224** — peers
+		// API-0230..API-0234 (`testPushoverConnection`,
+		// `testResendConnection`, `testSlackConnection`,
+		// `testTeamsConnection`, `testTelegramConnection`) inherit
+		// the same slug style and harness-default 401→CodeAuth
+		// failure leg.
+		//
+		// **Body composition — four-required, zero-optional, every
+		// REQUIRED field populated.** The every-optional-populated
+		// convention is structurally inapplicable here because the
+		// spec declares zero optional fields (matching the no-
+		// optional-siblings precedent set by API-0226's six-required-
+		// zero-optional SMTP-shape and API-0228's single-required-
+		// zero-optional Lark-webhook-shape). Mirrors the Ntfy
+		// descriptor portion of the create sibling API-0214
+		// `notification-createNtfy` so the cross-entry diff against
+		// the persisted-notifier sibling stays focused on the
+		// structural delta (this entry omits the `name` REQUIRED slot
+		// and the seven optional `*Notify`/`*Backup`/`*Cleanup`/
+		// `*Threshold`/`*Restart` boolean tail because the spec for
+		// `*-testNtfyConnection` declares neither — the operation is
+		// a pure connectivity probe of an inline transport
+		// descriptor, not a persisted notifier configuration).
+		//   - **REQUIRED `serverUrl`** (plain non-nullable string).
+		//     URL-bearing field — anchored on `example.invalid`
+		//     (RFC 6761 reserved TLD) per the cross-tag URL-anchor
+		//     rule re-asserted by API-0224's `endpoint`, API-0225's
+		//     `webhookUrl`, API-0227's `serverUrl`, and API-0228's
+		//     `webhookUrl` so the fixture cannot accidentally egress
+		//     to a real Ntfy server during tests. The token follows
+		//     the per-tag `notification-cov-<slug>-<storyID>-<field>`
+		//     discipline and re-uses the `serverUrl` field-name
+		//     precedent set by API-0227 `notification-
+		//     testGotifyConnection`.
+		//   - **REQUIRED `topic`** (plain non-nullable string).
+		//     Deterministic literal token following the per-tag
+		//     `notification-cov-<slug>-<storyID>-<field>` discipline.
+		//     Ntfy topics are URL-path-segment-shaped on the wire;
+		//     the kebab-cased token stays inside that grammar.
+		//   - **REQUIRED `accessToken`** (plain non-nullable string).
+		//     Deterministic literal token. **Secret-bearing field** —
+		//     the `redaction_security_test.go` harness redacts any
+		//     value matching the configured token-shape on every
+		//     visible writer (`--json` / human / `--verbose`),
+		//     mirroring the `appToken` precedent re-asserted by
+		//     API-0227. The fixture token is intentionally non-
+		//     realistic so a leak in a future test golden file
+		//     remains greppable without producing a false-positive
+		//     redaction.
+		//   - **REQUIRED `priority`** (plain non-nullable number).
+		//     Pinned to `5` — Ntfy's documented default priority
+		//     midpoint on its 1..5 scale. `5` is the more-
+		//     discriminating value over JSON's number-zero default,
+		//     keeping the on-wire fixture distinguishable from an
+		//     omitted-key parse and matching the `priority`-field
+		//     value precedent set by API-0227 `notification-
+		//     testGotifyConnection` (where `5` is the documented
+		//     midpoint on the 0..10 scale).
+		//
+		// **Shape positioning — four-required (three strings + one
+		// number), zero-optional POST connectivity-validation, body
+		// REQUIRED.** Functionally distinct from the cohort opener
+		// API-0224 `notification-testCustomConnection` (single-
+		// required-string + optional nested `map[string]string`), the
+		// second cohort member API-0225 `notification-
+		// testDiscordConnection` (single-required-string + optional
+		// plain boolean), the third member API-0226 `notification-
+		// testEmailConnection` (six-required, zero-optional), the
+		// fourth member API-0227 `notification-testGotifyConnection`
+		// (three-required + one-optional-boolean), and the fifth
+		// member API-0228 `notification-testLarkConnection` (single-
+		// required-string, zero-optional). This entry establishes
+		// the notification/* tag's **four-required-zero-optional**
+		// REQUIRED-only shape for the `test*` cohort — three plain
+		// strings plus a numeric priority — an analogue future
+		// connectivity probes with similarly-flat all-required
+		// schemas can mirror without re-deriving the URL-anchor or
+		// no-optional-siblings conventions. The no-optional-siblings
+		// invariant is shared with API-0226 (six-required) and
+		// API-0228 (single-required), positioning this entry at the
+		// mid-cardinality point of the no-optional-siblings sub-
+		// cohort.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set, so the
+		// 404→CodeNotFound override is structurally inapplicable
+		// (no by-id target to miss; the agent supplies the transport
+		// descriptor inline). `*-testNtfyConnection` here is a
+		// body-bearing imperative-action POST and stays on the
+		// 401→CodeAuth invariant locked across every imperative-
+		// action notification/* peer (API-0209..API-0220, API-0222,
+		// API-0223, API-0224, API-0225, API-0226, API-0227,
+		// API-0228), keeping authentication as the universal failure
+		// surface for the notification/* `test*` connectivity-
+		// validation POST cohort.
+		SampleBody: json.RawMessage(`{
+			"serverUrl": "https://notification-cov-test-ntfy-connection-0229-server.example.invalid",
+			"topic": "notification-cov-test-ntfy-connection-0229-topic",
+			"accessToken": "notification-cov-test-ntfy-connection-0229-access-token",
+			"priority": 5
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the empty-
+		// success cohort. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` / `data.status`
+		// rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,

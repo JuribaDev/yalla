@@ -26792,3 +26792,50 @@ forward-reference lesson before assuming any field shape.
     1-line `passes: false` → `passes: true` change rather than
     re-indenting the entire 462-story document.
 ---
+
+## 2026-05-09 - API-0229
+- Implemented coverage test entry for `notification-testNtfyConnection` in
+  `internal/cli/api_coverage_test.go`. Sixth member of the notification/*
+  `test*` connectivity-validation POST cohort opened by API-0224.
+- Files changed:
+  - internal/cli/api_coverage_test.go (new entry inserted between API-0228 and
+    API-0246)
+  - ralph/prd.json (passes: true for API-0229)
+- Verification run:
+  - gofmt -w . ✅
+  - go mod tidy ✅
+  - go vet ./... ✅
+  - go test ./... ✅
+  - go test -race ./... ✅
+  - goimports / golangci-lint / staticcheck / govulncheck / goreleaser — not
+    installed locally, intentionally skipped (continues the documented gap).
+- Results: All required quality gates green; coverage harness exercises both
+  the success leg (200 with empty `{}` body) and the harness-default
+  401→CodeAuth failure leg via the shared test runner.
+- Remaining risks/follow-ups: none. Cohort peers API-0230..API-0234
+  (`testPushoverConnection`, `testResendConnection`, `testSlackConnection`,
+  `testTeamsConnection`, `testTelegramConnection`) inherit the same slug
+  style and 401→CodeAuth invariant.
+- **Learnings for future iterations:**
+  - `notification-testNtfyConnection` request body is the **first
+    four-required-zero-optional** shape in the notification/* `test*` cohort.
+    Three plain strings (`serverUrl`, `topic`, `accessToken`) plus a numeric
+    `priority`. Distinguishes it from the 1-req/0-opt (Lark, API-0228),
+    1-req/1-opt (Discord/Custom, API-0224/0225), 3-req/1-opt (Gotify,
+    API-0227), and 6-req/0-opt (Email, API-0226) cohort siblings.
+  - `accessToken` is **secret-bearing** — keep the fixture value non-realistic
+    so future redaction-test golden files stay greppable.
+  - URL-bearing `serverUrl` is anchored on `example.invalid` (RFC 6761
+    reserved TLD) per the cross-tag URL-anchor rule re-asserted across every
+    notification/* `test*` cohort entry; **never** use a real Ntfy host even
+    in fixtures because the harness-shared runner constructs `httptest`
+    responses, not live calls — but a real-looking host could leak into a
+    log golden file.
+  - `priority: 5` matches the Gotify (`API-0227`) cross-cohort precedent;
+    pick the documented midpoint of the protocol's priority scale rather
+    than `0` so the fixture is distinguishable from an omitted-key parse.
+  - File indentation in `internal/cli/api_coverage_test.go` is **single-tab
+    for struct field rows, no nested-tab offset** despite the visible
+    Read line-number prefix suggesting otherwise. Verify with `repr(line)`
+    before crafting an Edit `old_string` for this file.
+---
