@@ -23300,3 +23300,60 @@ forward-reference lesson before assuming any field shape.
     Use `-run 'TestAPICoverage'` and grep for `0304` to verify only
     the new entry's subtests pass.
 ---
+
+## 2026-05-09 - API-0157
+- Implemented coverage for `licenseKey-haveValidLicenseKey` (GET /licenseKey.haveValidLicenseKey).
+- Files changed:
+  - internal/cli/api_coverage_test.go — appended one apiCoverageCase between API-0156 and API-0160.
+  - ralph/prd.json — flipped `passes` to true for API-0157.
+- Spec re-verified against `internal/api/data/openapi.json`:
+  GET, parameters absent, requestBody absent, responses 200/400/401/403/404/500,
+  200 schema `{}` with `additionalProperties: false`. Identical input shape to
+  API-0156 `licenseKey-getEnterpriseSettings` (the parameter-free no-body GET
+  established the prior peer of this cohort).
+- Fixture: none. With zero parameters and no body there is no slot for a
+  `licenseKey-cov-<slug>-0157` token; the per-tag `licenseKey-cov-*` namespace
+  stays opened by API-0154 and is reasserted via comment-block reference only.
+- Failure leg: harness defaults retained (401 → CodeAuth). 404→CodeNotFound is
+  structurally available per the spec but reserved for resource-keyed reads
+  whose missing-target failure mode is the operation's distinguishing surface
+  (a parameter-free GET probing global license validity has no input-keyed
+  missing-target leg). 400→CodeInvalidInput has no payload to validate.
+- Verification:
+  - gofmt -w . — OK
+  - go mod tidy — OK
+  - go vet ./... — OK
+  - go test ./... — OK
+  - go test -race ./... — OK
+  - goimports / golangci-lint / staticcheck / govulncheck / goreleaser — not
+    installed locally; documented as missing rather than silently skipped per
+    the established convention.
+- Remaining risks/follow-ups: API-0158 `licenseKey-updateEnterpriseSettings`
+  is the next priority-5 case in the licenseKey/* roster and ships a body-
+  bearing POST per the spec preview; the next contributor must mint a
+  `licenseKey-cov-<slug>-0158` fixture within the licenseKey-cov-* per-tag
+  namespace and re-verify the request-body shape against
+  `internal/api/data/openapi.json` per the forward-reference lesson before
+  assuming any field shape.
+- **Learnings for future iterations:**
+  - The parameter-free no-body GET cohort now has TWO members on the
+    licenseKey/* roster (API-0156 + API-0157). Structural duplicates in the
+    same tag are acceptable when the spec models them as semantically distinct
+    read-paths — the harness handles them identically, and the StoryID-sorted
+    slice rule plus the per-tag fixture-isolation namespace are the only
+    invariants that need to hold.
+  - When two adjacent same-tag entries share the maximally-degenerate input
+    shape (no params, no body), the second entry's comment block can lean on
+    the first by name ("matching API-0156 exactly") rather than re-deriving
+    the harness behaviour from first principles. The forward-reference
+    correction stanza is still load-bearing because the API-0156 comment
+    only said "GET per the spec preview" — explicit re-verification against
+    `internal/api/data/openapi.json` per the API-0345..API-0444 lesson is
+    still required.
+  - The licenseKey/* tag's response-set pattern diverges from API-0154 /
+    API-0155 (POSTs without 404) starting at API-0156 (GET with 404) and
+    continues at API-0157 (GET with 404). Read-paths in this tag surface a
+    missing-target failure leg even when the path itself takes no inputs;
+    the 404 gates on global state (settings unprovisioned, license absent)
+    rather than a body-supplied resource id.
+---
