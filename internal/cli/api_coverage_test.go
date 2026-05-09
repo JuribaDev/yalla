@@ -32627,6 +32627,125 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0316",
+		OperationID: "registry-all",
+		Method:      http.MethodGet,
+		Path:        "/registry.all",
+		Tag:         "registry",
+		// **Tag-arc opener for the registry/* coverage roster.**
+		// API-0316 is the first of seven pending priority-5 registry/*
+		// peers in the PRD priority list (API-0316 `registry-all`,
+		// API-0317 `registry-create`, API-0318 `registry-one`, API-0319
+		// `registry-remove`, API-0320 `registry-testRegistry`, API-0321
+		// `registry-testRegistryById`, API-0322 `registry-update`),
+		// opening a fresh `registry-cov-*` per-tag fixture-isolation
+		// namespace as forecast in API-0315 `redis-update`'s closing
+		// comment ("the numerically intervening API-0316..API-0322
+		// entries cover the priority-5 registry/* tag and will be
+		// picked up after the priority-4 backlog drains; they too will
+		// open their own `registry-cov-*` namespace independently").
+		// Per the per-tag fixture-isolation rule originally established
+		// at API-0246 `organization-active` and reasserted at API-0058
+		// `certificates-all`, API-0188
+		// `mounts-allNamedByApplicationId`, API-0268 `port-create`,
+		// API-0290 `project-all`, API-0298 `redirects-create`, API-0302
+		// `redis-changeStatus`, and API-0323 `rollback-delete`, future
+		// registry/* peers (API-0317..API-0322) **must** consume slugs
+		// of the form `registry-cov-<slug>-<storyID>` (e.g.
+		// `registry-cov-create-0317-*`, `registry-cov-one-0318-*`,
+		// `registry-cov-remove-0319-*`,
+		// `registry-cov-test-registry-0320-*`,
+		// `registry-cov-test-registry-by-id-0321-*`,
+		// `registry-cov-update-0322-*`) and **must not** back-reference
+		// any closed prior-tag namespace (`admin-cov-*`, `ai-cov-*`,
+		// `app-cov-*`, `backup-cov-*`, `bb-cov-*`, `cert-cov-*`,
+		// `clu-cov-*`, `compose-cov-*`, `deployment-cov-*`,
+		// `dest-cov-*`, `docker-cov-*`, `domain-cov-*`,
+		// `environment-cov-*`, `gitea-cov-*`, `github-cov-*`,
+		// `gitlab-cov-*`, `mariadb-cov-*`, `mongo-cov-*`,
+		// `mounts-cov-*`, `mysql-cov-*`, `org-cov-*`, `patch-cov-*`,
+		// `port-cov-*`, `postgres-cov-*`, `preview-cov-*`,
+		// `proj-cov-*`, `redirects-cov-*`, `redis-cov-*`,
+		// `security-cov-*`, `set-cov-*`, `srv-cov-*`, `swarm-cov-*`,
+		// `usr-cov-*`).
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json > /registry.all > get`: a
+		// **GET** with **zero parameters** (no path placeholders, no
+		// query string), **no requestBody**, and a 200/400/401/403/404/
+		// 500 response set. The 200 schema is `{}` with
+		// `additionalProperties: false`, matching the empty-success
+		// convention shared by every prior covered list-style GET (e.g.
+		// API-0006 `ai-getAll`, API-0058 `certificates-all`, API-0102
+		// `destination-all`, API-0208 `notification-all`, API-0246
+		// `organization-active`, API-0290 `project-all`). Because no
+		// parameters or body are declared, every case-level `Sample*`
+		// field is intentionally omitted — `buildCoverageInputArgs`
+		// returns an empty slice and `yalla api call registry-all
+		// --json` exercises the no-input-flag path that the agent
+		// contract guarantees.
+		//
+		// **Shape positioning — list-style GET, no parameters, no
+		// body.** Cardinality- and type-identical to the prior list-GET
+		// openers cited above. Stands apart from the registry/* by-id
+		// reader API-0318 `registry-one` (declared a GET with a single
+		// REQUIRED `registryId` query parameter per the spec preview)
+		// and from the body-bearing registry/* mutators API-0317
+		// `registry-create` / API-0319 `registry-remove` / API-0320
+		// `registry-testRegistry` / API-0321 `registry-testRegistryById`
+		// / API-0322 `registry-update` (all POST per the spec preview).
+		// The harness's `len(tc.SampleBody) > 0` gate at
+		// `runAPICoverageSuccess` therefore stays inactive here — no
+		// JSON content-type leg, no body-comparison leg — leaving the
+		// success-leg envelope assertion focused on the wire-level
+		// invariants (method, path, Authorization header, empty query
+		// string) shared by every parameter-free GET.
+		//
+		// **Family choice — list GET, harness-default failure leg.**
+		// The 401 → CodeAuth representative-failure slot is the
+		// canonical default for an authenticated list-style read whose
+		// own 4xx vocabulary (400 invalid input, 403 forbidden, 404 not
+		// found) is too generic to claim a distinguishing failure
+		// shape. The 404 → CodeNotFound override slot is **not**
+		// claimed here — `registry-all` is a list endpoint with no
+		// addressable subject; the canonical 404 → CodeNotFound
+		// representative-failure slot for the registry/* tag arc is
+		// **reserved for the upcoming API-0318 `registry-one` entry**
+		// (the canonical by-`registryId` reader, mirroring API-0060
+		// `certificates-one`'s claim of that slot in the certificates/*
+		// tag arc, API-0306 `redis-one`'s in the redis/* tag arc, and
+		// API-0262 `patch-one`'s in the patch/* tag arc). Future
+		// contributor on API-0318 should consume that reservation by
+		// setting `FailureStatus: http.StatusNotFound` and `FailureCode:
+		// yerr.CodeNotFound` on the API-0318 case literal — per-
+		// operation re-verification against `/registry.one > get` is
+		// still required before assuming the response set carries a
+		// 404 leg.
+		//
+		// **Fixture token base** — none. List-GET openers with no
+		// parameters and no body do not allocate a `<tag>-cov-<slug>-
+		// <storyID>` literal because there is no payload to embed it
+		// in; the namespace reservation made above governs only the
+		// future body-bearing or parameterised registry/* peers.
+		//
+		// The successor priority-5 peer in the registry/* roster is
+		// API-0317 `registry-create` (declared a **POST** with a
+		// REQUIRED JSON body per the spec preview). The next
+		// contributor must re-verify the spec against
+		// `internal/api/data/openapi.json > /registry.create > post`
+		// before assuming any field shape per the forward-reference
+		// lesson, and must consume slugs of the form
+		// `registry-cov-create-0317-*` to inherit the registry/* slug
+		// namespace established here.
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0323",
 		OperationID: "rollback-delete",
 		Method:      http.MethodPost,

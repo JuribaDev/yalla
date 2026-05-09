@@ -28894,3 +28894,117 @@ forward-reference lesson before assuming any field shape.
     coverage unless the optional surface is itself uniquely
     distinguishing (the API-0292 project-create exception).
 ---
+
+## 2026-05-09 - API-0316 (registry-all)
+- What was implemented:
+  - Appended a single `apiCoverageCase` literal for `registry-all`
+    (GET /registry.all, tag registry) to the `coveredAPIOperations`
+    slice in `internal/cli/api_coverage_test.go`, inserted in
+    StoryID-sorted position between API-0315 `redis-update` (priority-
+    4 redis/* closer) and API-0323 `rollback-delete` (priority-4
+    rollback/* opener) so the slice stays diff-friendly.
+  - Opens the **`registry-cov-*` per-tag fixture-isolation namespace**
+    forecast in API-0315's closing comment ("the numerically
+    intervening API-0316..API-0322 entries cover the priority-5
+    registry/* tag and will be picked up after the priority-4 backlog
+    drains; they too will open their own `registry-cov-*` namespace
+    independently"). API-0316 is the first of seven pending priority-5
+    registry/* peers (API-0316..API-0322) and reserves the
+    namespace for the upcoming siblings.
+  - Spec re-verified per the API-0345..API-0444 forward-reference
+    lesson against `internal/api/data/openapi.json > /registry.all >
+    get`: a GET with **zero parameters** (no path placeholders, no
+    query string), **no requestBody**, and a 200/400/401/403/404/500
+    response set. The 200 schema is `{}` with `additionalProperties:
+    false`. No `Sample*` field is populated — `buildCoverageInputArgs`
+    returns an empty slice and the harness exercises the no-input-flag
+    path.
+  - Family choice: list-style GET, harness-default 401→CodeAuth
+    failure leg. The 404→CodeNotFound override slot is **reserved for
+    the upcoming API-0318 `registry-one` entry** (the canonical by-
+    `registryId` reader), mirroring the per-tag reservation precedents
+    at API-0060 `certificates-one`, API-0306 `redis-one`, and API-0262
+    `patch-one`.
+  - Shape positioning: cardinality- and type-identical to prior
+    list-GET openers (API-0006 `ai-getAll`, API-0058
+    `certificates-all`, API-0102 `destination-all`, API-0208
+    `notification-all`, API-0246 `organization-active`, API-0290
+    `project-all`); stands apart from the registry/* by-id reader
+    API-0318 (single REQUIRED `registryId` query parameter) and the
+    body-bearing registry/* mutators API-0317/0319/0320/0321/0322 (all
+    POST per the spec preview).
+  - Fixture token base: **none**. List-GET openers with no parameters
+    and no body do not allocate a `<tag>-cov-<slug>-<storyID>` literal
+    because there is no payload to embed it in; the namespace
+    reservation governs only the future body-bearing or parameterised
+    registry/* peers.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (+1 case, ~108 lines including
+    rationale comments).
+  - `ralph/prd.json` (`API-0316.passes = true`).
+  - `ralph/progress.txt` (this entry).
+- Verification run:
+  - `gofmt -w .` — clean (`gofmt -l .` reports no diff).
+  - `go mod tidy` — clean (no new deps).
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages OK (`internal/cli` 1.376s).
+  - `go test -race ./...` — all packages OK (`internal/cli` 3.535s).
+  - `go build ./...` — clean.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` not installed locally; skipped per the
+    document-rather-than-silently-skip rule.
+- Remaining risks / follow-ups:
+  - 30 priority-5 API stories still pending; next in PRD order is
+    API-0317 `registry-create` (POST per the spec preview, REQUIRED
+    JSON body). The next contributor must re-verify the spec against
+    `internal/api/data/openapi.json > /registry.create > post` per the
+    forward-reference lesson before assuming any field shape, and must
+    consume slugs of the form `registry-cov-create-0317-*` to inherit
+    the registry/* slug namespace established here.
+  - The `registry-cov-*` namespace is **open** through API-0322
+    `registry-update`. API-0318 should consume the
+    404→CodeNotFound reservation per the per-tag opener design.
+- **Learnings for future iterations:**
+  - **Tag-arc opener structure for parameter-free list-GETs reasserts
+    cleanly across priority tiers.** API-0058 `certificates-all`
+    established the canonical opener literal shape (no `Sample*`
+    fields, only `SuccessResponse`); API-0316 reuses that exact shape
+    one priority tier later (priority-5 instead of priority-4) without
+    structural drift. Future priority-5 list-GET openers (e.g. the
+    upcoming `sshKey-all`, `sso-getTrustedOrigins`,
+    `stripe-canCreateMoreServers`, `stripe-getCurrentPlan`,
+    `stripe-getInvoices`, `stripe-getProducts` peers in the failing
+    set) should grep this case and API-0058 to inherit the opener
+    structure rather than reinvent it.
+  - **Priority-5 detour openers must explicitly cite the historical
+    moment they were inserted.** API-0316 sits in the file between
+    API-0315 (priority-4 closer) and API-0323 (priority-4 opener)
+    even though it logically opens a priority-5 tag. The opening
+    comment names this positioning explicitly so a future reader does
+    not mistake the registry/* tag for a priority-4 sibling of redis/*
+    and rollback/*. Future priority-5 detour openers (sshKey/*, sso/*,
+    stripe/*, plus the standalone API-0426 `application-dropDeployment`)
+    should follow the same convention.
+  - **Opener comments should enumerate the future per-tag slug
+    expansion.** API-0316 names the planned slugs for API-0317..API-0322
+    (`registry-cov-create-0317-*`, `registry-cov-one-0318-*`,
+    `registry-cov-remove-0319-*`,
+    `registry-cov-test-registry-0320-*`,
+    `registry-cov-test-registry-by-id-0321-*`,
+    `registry-cov-update-0322-*`) so the next contributor can grep
+    the namespace plan before composing their own fixture token base.
+    The kebab-style `test-registry` slugification of the camelCase
+    operationIDs `testRegistry` / `testRegistryById` follows the
+    established convention from `mounts-allNamedByApplicationId` →
+    `mounts-cov-all-named-by-application-id-0188` in API-0188.
+  - **404 reservation transfer between tags follows a uniform rule.**
+    The per-tag 404→CodeNotFound override is consumed exactly once
+    per tag, by the canonical by-id `*-one` peer (or the equivalent
+    by-id read with a unique-resource subject). Across patch/* it
+    landed on API-0262 `patch-one`; across redis/* on API-0306
+    `redis-one`; across certificates/* on API-0060 `certificates-one`;
+    across registry/* it is reserved for the upcoming API-0318
+    `registry-one`. Future tag arcs (rollback/*, sshKey/*, sso/*,
+    stripe/*) should locate their canonical by-id reader and reserve
+    the slot there.
+---
