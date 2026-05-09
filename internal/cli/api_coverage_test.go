@@ -24356,6 +24356,158 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0313",
+		OperationID: "redis-start",
+		Method:      http.MethodPost,
+		Path:        "/redis.start",
+		Tag:         "redis",
+		// Twelfth entry on the redis/* coverage roster, immediately
+		// following API-0312 `redis-search` and completing the
+		// forward reference embedded in that entry's comment block
+		// ("The next case in the PRD-ordered priority-4 backlog is
+		// API-0313 `redis-start` (declared a **POST** per the spec
+		// preview)"). Continues inside the `redis-cov-*` per-tag
+		// fixture-isolation namespace opened by API-0302
+		// `redis-changeStatus` and **must not** back-reference any
+		// closed prior-tag namespace (`admin-cov-*`, `ai-cov-*`,
+		// `app-cov-*`, `backup-cov-*`, `bb-cov-*`, `cert-cov-*`,
+		// `clu-cov-*`, `compose-cov-*`, `deployment-cov-*`,
+		// `dest-cov-*`, `docker-cov-*`, `domain-cov-*`,
+		// `environment-cov-*`, `gitea-cov-*`, `github-cov-*`,
+		// `gitlab-cov-*`, `mariadb-cov-*`, `mongo-cov-*`,
+		// `mounts-cov-*`, `mysql-cov-*`, `org-cov-*`, `port-cov-*`,
+		// `postgres-cov-*`, `preview-cov-*`, `proj-cov-*`,
+		// `redirects-cov-*`, `security-cov-*`, `set-cov-*`,
+		// `srv-cov-*`, `swarm-cov-*`, `usr-cov-*`) per the per-tag
+		// isolation rule reasserted at API-0335..API-0444 and
+		// originally established at API-0246 `organization-active`.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json` > `/redis.start` >
+		// `post`: method POST, tag redis, **no parameters**,
+		// requestBody REQUIRED with `application/json` and a single
+		// REQUIRED top-level scalar `redisId` (string), responses
+		// 200/400/401/403/500. The 200 response is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort. **No 404** is
+		// declared on this operation, mirroring the action-on-known-
+		// id POST precedent reasserted at API-0302
+		// `redis-changeStatus`, API-0304 `redis-deploy`, API-0305
+		// `redis-move`, API-0307 `redis-rebuild`, API-0308
+		// `redis-reload`, API-0309 `redis-remove`, API-0310
+		// `redis-saveEnvironment`, and API-0311
+		// `redis-saveExternalPort` (every body-bearing
+		// imperative-action redis POST whose missing-target failure
+		// mode collapses into 400/validation under Dokploy's tRPC
+		// convention rather than a dedicated 404 leg). The 404
+		// override therefore reverts to inapplicable here — its
+		// sole activation site for the redis/* roster remains
+		// API-0306 `redis-one`, the canonical by-id GET peer.
+		//
+		// **Request body schema (REQUIRED top-level fields):**
+		//   - REQUIRED `redisId` (string) — resource id scalar; the
+		//     fixture below supplies a deterministic-but-clearly-fake
+		//     `redis-cov-start-0313-redisId` literal carrying the
+		//     `<tag>-cov-<slug>-<storyID>-<field>` suffix for `git grep`
+		//     traceability.
+		//   - **No OPTIONAL fields declared.** The schema is a strict
+		//     single-scalar request, byte-for-byte cardinality-identical
+		//     to the API-0307 `redis-rebuild` and API-0309
+		//     `redis-remove` request shapes (single `redisId`
+		//     scalar), narrower than the two-scalar API-0305
+		//     `redis-move` / API-0308 `redis-reload` /
+		//     API-0310 `redis-saveEnvironment` /
+		//     API-0311 `redis-saveExternalPort` shapes, and narrower
+		//     than the multi-scalar API-0303 `redis-create` shape.
+		//     This is the canonical single-required-string-scalar
+		//     POST shape for service-bearing imperative-action
+		//     mutations across the Dokploy database tags
+		//     (`mariadb-start` / `mongo-start` / `mysql-start` /
+		//     `postgres-start` / `redis-start`), and one of the
+		//     three structurally identical entries in the redis/*
+		//     lifecycle-trio (deploy / rebuild / start — the next
+		//     stop / remove peers share the same single-`redisId`
+		//     skeleton). Cross-tag `*-start` precedent chain:
+		//     API-0036 `application-start`, API-0090
+		//     `compose-start`, API-0171 `mariadb-start`, API-0185
+		//     `mongo-start`, API-0205 `mysql-start`, API-0283
+		//     `postgres-start` — every prior `*-start` peer covered
+		//     across the seven `*-start` operations in the spec is
+		//     a single-required-string-scalar POST with the
+		//     tag-specific resource-id field name and a `{}` 200,
+		//     and API-0313 is the seventh and final entry on this
+		//     cross-tag chain.
+		//
+		// **Shape positioning — single-required-string-scalar POST
+		// imperative-action mutation, body REQUIRED.** The lone
+		// REQUIRED slot is a plain non-nullable `type: string` (no
+		// `anyOf` / `nullable` / enum constraints), structurally
+		// identical to the API-0309 `redis-remove` body. The
+		// harness's `len(tc.SampleBody) > 0` gate at
+		// `runAPICoverageSuccess` activates the JSON content-type
+		// and byte-for-byte body comparison legs; this fixture
+		// supplies the single REQUIRED field so the success path
+		// verifies the CLI propagated the body verbatim.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so
+		// the 404→CodeNotFound override is structurally inapplicable
+		// and remains pinned to API-0306 `redis-one` for the
+		// redis/* roster. 400→CodeInvalidInput is *technically*
+		// available — a payload that omits the REQUIRED `redisId`
+		// would fail server-side validation — but the harness
+		// reserves 400 representatives for stories where payload
+		// validation is the operation's *uniquely distinguishing*
+		// failure mode. A conventional imperative-action POST
+		// collapses to type-checking, so the harness-default
+		// 401→CodeAuth failure leg remains the most representative
+		// single failure mode every authenticated Dokploy operation
+		// must re-prove, and is consistent with the 401→CodeAuth
+		// choice locked in by the redis/* kickoff at API-0302
+		// `redis-changeStatus` and continued at
+		// API-0303..API-0312.
+		//
+		// **Fixture token base** `redis-cov-start-0313` follows the
+		// established `<tag>-cov-<slug>-<storyID>` deterministic-but-
+		// clearly-fake naming convention and is verified non-colliding
+		// with API-0302's `redis-cov-changeStatus-0302`, API-0303's
+		// `redis-cov-create-0303`, API-0304's
+		// `redis-cov-deploy-0304-redisId`, API-0305's
+		// `redis-cov-move-0305-{redisId,targetEnvironmentId}`,
+		// API-0306's `redis-cov-one-0306-redisId-fixture`, API-0307's
+		// `redis-cov-rebuild-0307-redisId`, API-0308's
+		// `redis-cov-reload-0308-{redisId,appName}`, API-0309's
+		// `redis-cov-remove-0309-redisId`, API-0310's
+		// `redis-cov-save-environment-0310-{redisId,env}`, API-0311's
+		// `redis-cov-save-external-port-0311-redisId`, and API-0312's
+		// `redis-cov-search-0312` literals. The cross-tag analogs
+		// `mariadb-cov-start-0171`, `mongo-cov-start-0185`,
+		// `mysql-cov-start-0205`, and `postgres-cov-start-0283` are
+		// intentionally similar in shape — same
+		// `<tag>-cov-start-<storyID>` skeleton — but the
+		// `mariadb` / `mongo` / `mysql` / `postgres` vs `redis` tag
+		// prefix and the `0171` / `0185` / `0205` / `0283` vs
+		// `0313` storyID suffix make every literal distinguishable.
+		//
+		// The next case in the PRD-ordered priority-4 backlog is
+		// API-0314 `redis-stop` (declared a **POST** per the spec
+		// preview; the next contributor must re-verify the spec
+		// against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will continue inside the `redis-cov-*` per-tag
+		// fixture-isolation namespace opened by API-0302).
+		SampleBody: json.RawMessage(`{
+			"redisId": "redis-cov-start-0313-redisId"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0331",
 		OperationID: "security-create",
 		Method:      http.MethodPost,

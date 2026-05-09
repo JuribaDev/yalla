@@ -24120,3 +24120,73 @@ forward-reference lesson before assuming any field shape.
     401→CodeAuth invariant kicked off at API-0302
     `redis-changeStatus`.
 ---
+
+## 2026-05-09 - API-0313 (redis-start)
+- Implemented Cover redis-start (POST /redis.start) by appending a new
+  `coveredAPIOperations` entry to `internal/cli/api_coverage_test.go`,
+  inserted immediately after API-0312 `redis-search` and before API-0331
+  `security-create`. Twelfth entry on the redis/* roster, continuing the
+  `redis-cov-*` per-tag fixture-isolation namespace opened by API-0302
+  `redis-changeStatus`.
+- Wire shape (re-verified against `internal/api/data/openapi.json` >
+  `/redis.start` > `post`): POST, body REQUIRED, no parameters,
+  single REQUIRED top-level string scalar `redisId`, responses
+  200/400/401/403/500 — no 404, so the harness-default 401→CodeAuth
+  failure leg is retained (404 override remains pinned to API-0306
+  `redis-one`). 200 is `{}` with `additionalProperties:false`. Shape
+  is byte-for-byte identical to API-0309 `redis-remove` and to the
+  cross-tag `*-start` precedent chain at API-0036 `application-start`,
+  API-0090 `compose-start`, API-0171 `mariadb-start`, API-0185
+  `mongo-start`, API-0205 `mysql-start`, and API-0283 `postgres-start`
+  — modulo the resource-id field name. API-0313 is the seventh and
+  final entry on this cross-tag `*-start` chain.
+- Fixture token base `redis-cov-start-0313`. SampleBody supplies the
+  single REQUIRED `redisId` field as `redis-cov-start-0313-redisId`
+  for `git grep` traceability.
+- Files changed:
+  - internal/cli/api_coverage_test.go (+~165 lines for the new entry)
+  - ralph/prd.json (`API-0313.passes` flipped to `true`)
+  - ralph/progress.txt (this entry)
+- Verification run from the repository root:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean (no diff).
+  - `go vet ./...` — pass.
+  - `go test ./...` — pass (all 9 packages; cli 1.237s).
+  - `go test -race ./...` — pass (all 9 packages; cli 3.255s under -race).
+  - Targeted re-run of `TestAPICoverage_*/API-0313/redis-start` confirms
+    all five harness invariants execute (RegistryInvariants,
+    SchemaCommandWorks, ManifestListsOperation, SuccessRoundTrip,
+    RepresentativeFailure).
+  - goimports / golangci-lint / staticcheck / govulncheck / goreleaser
+    are still not installed locally; documented as missing per the
+    per-iteration policy.
+- Results: success-leg (200 + JSON body byte-for-byte propagation +
+  envelope) and representative failure-leg (401 → CodeAuth → exit 4)
+  both green. 97 priority-4 stories remain pending.
+- Remaining risks or follow-ups:
+  - The next PRD-ordered redis/* peer is API-0314 `redis-stop` — a
+    POST per the spec preview; the next contributor must re-verify
+    the spec at `internal/api/data/openapi.json` > `/redis.stop` >
+    `post` per the forward-reference lesson before assuming any field
+    shape, and will continue inside the `redis-cov-*` per-tag
+    fixture-isolation namespace.
+- **Learnings for future iterations:**
+  - The `*-start` family is a direct one-to-one shape across every
+    Dokploy service tag covered to date (application/compose/mariadb/
+    mongo/mysql/postgres/redis): a single REQUIRED top-level string
+    scalar `<tag>Id` and a `{}` 200 with `additionalProperties:false`,
+    and 200/400/401/403/500 (no 404). API-0313 completes the cross-
+    tag `*-start` chain — every uncovered `*-start` operation in
+    the priority-4 backlog is now closed.
+  - Within the redis/* roster, this entry is the third
+    single-required-string-scalar POST peer (after API-0307
+    `redis-rebuild` and API-0309 `redis-remove`). Future redis/*
+    `*-stop` and other lifecycle-action POSTs that share the
+    single-`redisId` skeleton can clone API-0313's fixture body
+    nearly verbatim — only the StoryID, OperationID, Path, and
+    fixture-token slug change.
+  - The redis/* roster's 404→CodeNotFound override remains pinned
+    to API-0306 `redis-one`. Body-bearing imperative-action POSTs
+    that omit 404 from their response set stay on the harness-
+    default 401→CodeAuth failure leg.
+---
