@@ -21158,6 +21158,219 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0230",
+		OperationID: "notification-testPushoverConnection",
+		Method:      http.MethodPost,
+		Path:        "/notification.testPushoverConnection",
+		Tag:         "notification",
+		// Twenty-third entry on the notification/* coverage roster,
+		// staying inside the `notification-cov-*` per-tag fixture-
+		// isolation namespace seeded at API-0208 `notification-all`
+		// and extended across API-0209..API-0229. Per the per-tag
+		// isolation rule reaffirmed across each prior peer this
+		// entry stays inside the namespace opened by API-0208 and
+		// **must not** back-reference any closed prior-tag namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json >
+		// /notification.testPushoverConnection > post`: a **POST**
+		// with **no parameters** and a **REQUIRED request body**
+		// whose schema declares **three REQUIRED non-nullable plain
+		// slots and two OPTIONAL nullable-number siblings** —
+		// REQUIRED `userKey` (string), `apiToken` (string),
+		// `priority` (number); OPTIONAL `retry` (number|null) and
+		// `expire` (number|null). Responses 200/400/401/403/500 —
+		// the spec does **not** declare 404 on this operation,
+		// matching the connectivity-validation precedent re-asserted
+		// by the cohort opener API-0224
+		// `notification-testCustomConnection` and the peers
+		// API-0225 `notification-testDiscordConnection` / API-0226
+		// `notification-testEmailConnection` / API-0227
+		// `notification-testGotifyConnection` / API-0228
+		// `notification-testLarkConnection` / API-0229
+		// `notification-testNtfyConnection` (the family is "validate
+		// the agent-supplied transport descriptor", with no by-id
+		// target to miss). The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort.
+		//
+		// **Slug style — kebab-case inherited from API-0209/
+		// API-0210/API-0211/API-0212/API-0213/API-0214/API-0215/
+		// API-0216/API-0217/API-0218/API-0219, the GET-cohort opener
+		// API-0220 `notification-getEmailProviders`
+		// (→ `get-email-providers`), the `*Id`-filtered GET-cohort
+		// opener API-0221 `notification-one`, the action-receiver
+		// POST opener API-0222 `notification-receiveNotification`
+		// (→ `receive-notification`), the by-id mutation cohort
+		// opener API-0223 `notification-remove`, the `test*`
+		// connectivity-validation POST cohort opener API-0224
+		// `notification-testCustomConnection`
+		// (→ `test-custom-connection`), the second cohort member
+		// API-0225 `notification-testDiscordConnection`
+		// (→ `test-discord-connection`), the third cohort member
+		// API-0226 `notification-testEmailConnection`
+		// (→ `test-email-connection`), the fourth cohort member
+		// API-0227 `notification-testGotifyConnection`
+		// (→ `test-gotify-connection`), the fifth cohort member
+		// API-0228 `notification-testLarkConnection`
+		// (→ `test-lark-connection`), and the sixth cohort member
+		// API-0229 `notification-testNtfyConnection`
+		// (→ `test-ntfy-connection`).** Per the per-tag-slug-style
+		// rule fixed by the kickoff multi-camel entry API-0209
+		// `notification-createCustom` (→ `create-custom`), this
+		// entry takes `test-pushover-connection` as the slug stem
+		// (three kebab-cased segments mirrored from
+		// `testPushoverConnection`). The fixture namespace is
+		// `notification-cov-test-pushover-connection-0230-<field>`,
+		// mirroring the `notification-cov-<slug>-<storyID>-<field>`
+		// discipline locked by API-0208..API-0229. **This entry is
+		// the seventh member of the notification/* `test*`
+		// connectivity-validation POST cohort opened by API-0224**
+		// — peers API-0231..API-0234 (`testResendConnection`,
+		// `testSlackConnection`, `testTeamsConnection`,
+		// `testTelegramConnection`) inherit the same slug style and
+		// harness-default 401→CodeAuth failure leg.
+		//
+		// **Body composition — three-required + two-optional, every
+		// REQUIRED and OPTIONAL field populated** per the cross-tag
+		// every-optional-populated convention re-asserted by
+		// API-0224 (one optional nested `map[string]string`
+		// populated with one entry), API-0225 (one optional plain
+		// boolean populated with `true`), and API-0227 (one optional
+		// plain boolean populated with `true`). This entry is the
+		// first cohort member with **two** optional siblings, and
+		// both are **nullable-number** (`number | null`) shapes —
+		// the every-optional-populated convention dictates the non-
+		// null leg of the union, distinguishing the on-wire fixture
+		// from a JSON `null` projection. Mirrors the Pushover
+		// descriptor portion of the create sibling API-0215
+		// `notification-createPushover` so the cross-entry diff
+		// against the persisted-notifier sibling stays focused on
+		// the structural delta (this entry omits the `name`
+		// REQUIRED slot and the seven optional `*Notify`/`*Backup`/
+		// `*Cleanup`/`*Threshold`/`*Restart` boolean tail because
+		// the spec for `*-testPushoverConnection` declares neither
+		// — the operation is a pure connectivity probe of an inline
+		// transport descriptor, not a persisted notifier
+		// configuration).
+		//   - **REQUIRED `userKey`** (plain non-nullable string).
+		//     Deterministic literal token following the per-tag
+		//     `notification-cov-<slug>-<storyID>-<field>`
+		//     discipline. **Secret-bearing field** — Pushover user
+		//     keys uniquely identify a recipient and are treated as
+		//     credentials, mirroring the `apiToken`/`appToken`/
+		//     `accessToken` redaction precedent re-asserted by
+		//     API-0227 and API-0229. The fixture token is
+		//     intentionally non-realistic (kebab-shaped, not the
+		//     30-char alphanumeric Pushover format) so a leak in a
+		//     future test golden file remains greppable without
+		//     producing a false-positive redaction.
+		//   - **REQUIRED `apiToken`** (plain non-nullable string).
+		//     **Secret-bearing field** — Pushover application API
+		//     tokens are credentials, mirroring the `appToken`
+		//     precedent set by API-0227 `notification-
+		//     testGotifyConnection` and the `accessToken` precedent
+		//     set by API-0229 `notification-testNtfyConnection`.
+		//     The fixture token is intentionally non-realistic so a
+		//     leak in a future test golden file remains greppable
+		//     without producing a false-positive redaction.
+		//   - **REQUIRED `priority`** (plain non-nullable number).
+		//     Pinned to `1` — Pushover's documented "high priority"
+		//     value on its `-2..2` scale. `1` is the more-
+		//     discriminating value over JSON's number-zero default
+		//     (which is also Pushover's documented default
+		//     priority), keeping the on-wire fixture distinguishable
+		//     from an omitted-key parse. Pinning to the boundary
+		//     value `2` ("emergency") is intentionally avoided
+		//     because Pushover's wire-validator requires `retry`
+		//     and `expire` to be set when priority=2 — using `1`
+		//     decouples the priority literal from the optional-tail
+		//     populated/null question. This refines the priority-
+		//     value precedent set by API-0227 `notification-
+		//     testGotifyConnection` (where `5` is the documented
+		//     midpoint on the 0..10 scale) and API-0229 `notification-
+		//     testNtfyConnection` (where `5` is the documented
+		//     midpoint on the 1..5 scale): the value choice tracks
+		//     each provider's documented scale, and the discriminator
+		//     rule (avoid the JSON-zero default) is the cross-cohort
+		//     invariant.
+		//   - **OPTIONAL `retry`** (nullable number — `number |
+		//     null`). Populated with `60` per the every-optional-
+		//     populated convention. `60` is Pushover's documented
+		//     minimum retry interval (in seconds), the more-
+		//     discriminating value over JSON's number-zero default
+		//     and over the union's `null` leg. The non-null number
+		//     literal exercises the populated leg of the
+		//     `anyOf: [number, null]` shape and keeps the fixture
+		//     deterministic against future schema-aware unmarshal
+		//     paths.
+		//   - **OPTIONAL `expire`** (nullable number — `number |
+		//     null`). Populated with `3600` per the every-optional-
+		//     populated convention. `3600` (one hour, in seconds)
+		//     is well within Pushover's documented `expire ≤ 10800`
+		//     ceiling and is the more-discriminating value over
+		//     JSON's number-zero default and over the union's
+		//     `null` leg. The non-null number literal exercises
+		//     the populated leg of the `anyOf: [number, null]`
+		//     shape and keeps the fixture deterministic against
+		//     future schema-aware unmarshal paths.
+		//
+		// **Shape positioning — three-required (two strings + one
+		// number) plus two-optional-nullable-number POST
+		// connectivity-validation, body REQUIRED.** Functionally
+		// distinct from the cohort opener API-0224 `notification-
+		// testCustomConnection` (single-required-string + optional
+		// nested `map[string]string`), the second cohort member
+		// API-0225 `notification-testDiscordConnection` (single-
+		// required-string + optional plain boolean), the third
+		// member API-0226 `notification-testEmailConnection` (six-
+		// required, zero-optional), the fourth member API-0227
+		// `notification-testGotifyConnection` (three-required + one-
+		// optional-boolean), the fifth member API-0228 `notification-
+		// testLarkConnection` (single-required-string, zero-
+		// optional), and the sixth member API-0229 `notification-
+		// testNtfyConnection` (four-required, zero-optional). This
+		// entry establishes the notification/* tag's **three-
+		// required + two-optional-nullable-number** shape for the
+		// `test*` cohort — the first cohort member with multiple
+		// optional siblings and the first with `nullable` (union-
+		// with-null) optional types — an analogue future
+		// connectivity probes with similarly-shaped nullable-numeric
+		// optional tails can mirror without re-deriving the URL-
+		// anchor or every-optional-populated conventions. The
+		// three-required-tuple invariant is shared with API-0227
+		// (which adds one optional plain boolean instead); the two-
+		// optional-nullable-number invariant is established for the
+		// first time by this entry.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set, so the
+		// 404→CodeNotFound override is structurally inapplicable
+		// (no by-id target to miss; the agent supplies the
+		// transport descriptor inline). `*-testPushoverConnection`
+		// here is a body-bearing imperative-action POST and stays
+		// on the 401→CodeAuth invariant locked across every
+		// imperative-action notification/* peer (API-0209..API-0220,
+		// API-0222, API-0223, API-0224, API-0225, API-0226,
+		// API-0227, API-0228, API-0229), keeping authentication as
+		// the universal failure surface for the notification/*
+		// `test*` connectivity-validation POST cohort.
+		SampleBody: json.RawMessage(`{
+			"userKey": "notification-cov-test-pushover-connection-0230-user-key",
+			"apiToken": "notification-cov-test-pushover-connection-0230-api-token",
+			"priority": 1,
+			"retry": 60,
+			"expire": 3600
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the empty-
+		// success cohort. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` / `data.status`
+		// rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,

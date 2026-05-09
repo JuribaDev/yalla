@@ -26839,3 +26839,153 @@ forward-reference lesson before assuming any field shape.
     Read line-number prefix suggesting otherwise. Verify with `repr(line)`
     before crafting an Edit `old_string` for this file.
 ---
+
+## 2026-05-09 - API-0230 (Cover notification-testPushoverConnection, POST /notification.testPushoverConnection)
+- Implemented Dokploy API operation coverage for
+  `notification-testPushoverConnection`. This is the **seventh
+  member** of the notification/* `test*` connectivity-validation POST
+  cohort opened by API-0224 `notification-testCustomConnection` and
+  continued by API-0225 (`testDiscordConnection`), API-0226
+  (`testEmailConnection`), API-0227 (`testGotifyConnection`),
+  API-0228 (`testLarkConnection`), and API-0229
+  (`testNtfyConnection`).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended a new
+    `apiCoverageCase` entry directly after API-0229 and before
+    API-0246. Slug stem `test-pushover-connection`; fixture namespace
+    `notification-cov-test-pushover-connection-0230-<field>`. The
+    body fixture pins three REQUIRED literals (`userKey`, `apiToken`,
+    `priority`) plus two OPTIONAL **nullable-number** siblings
+    (`retry`, `expire`) populated with non-null integers per the
+    every-optional-populated convention. `priority` pinned to `1`
+    (Pushover's "high priority" on its `-2..2` scale) — chosen
+    deliberately over `0` (the JSON-zero default that would shadow
+    omission) and `2` ("emergency", which forces wire-side `retry` /
+    `expire` validation crossover). `SuccessResponse: "{}"` per the
+    empty-success cohort convention. No `FailureStatus` /
+    `FailureCode` overrides — the spec response set is
+    200/400/401/403/500 (no 404), so the harness-default 401→CodeAuth
+    representative failure leg applies unchanged.
+  - `ralph/prd.json` (set `passes: true` for API-0230 only — surgical
+    1-line flip preserving the 2-space indent).
+  - `ralph/progress.txt` (this entry).
+- The `apiCoverageCase` harness automatically asserts: registry
+  presence (operationId/method/path/tag), schema reachability via
+  `yalla schema get`, manifest inclusion via `yalla manifest --json`,
+  the success leg (200 round-trip with `--json` envelope
+  `yalla.output.v1`), and a 401→CodeAuth representative failure leg
+  with `yalla.error.v1` envelope and non-zero exit code. No new
+  harness changes were required.
+- Verification run (from repo root):
+  - `gofmt -l .` ✅ (empty — no diff after edit)
+  - `go vet ./...` ✅
+  - Targeted: `go test ./internal/cli/ -run 'TestAPICoverage_.*/API-0230' -count=1` ✅ — all five harness gates (`RegistryInvariants`, `SchemaCommandWorks`, `ManifestListsOperation`, `SuccessRoundTrip`, `RepresentativeFailure`) pass for the new operationId.
+  - `go test ./...` ✅ (all packages pass; internal/cli 1.296s)
+  - `go test -race ./...` ✅ (all packages pass; internal/cli 3.437s)
+  - `goimports` / `golangci-lint` / `staticcheck` / `govulncheck` /
+    `goreleaser`: not installed locally — skipped per documented
+    pattern (note in Codebase Patterns section).
+- Body composition (per spec re-verified against
+  `internal/api/data/openapi.json > /notification.testPushoverConnection
+  > post`):
+  - REQUIRED `userKey` (string) → secret-bearing (Pushover user keys
+    uniquely identify a recipient and act as credentials). Fixture
+    uses a deterministic non-realistic kebab literal under
+    `notification-cov-test-pushover-connection-0230-user-key` so a
+    leak in a future golden file is greppable without producing a
+    false-positive redaction. Mirrors the `apiToken` / `appToken` /
+    `accessToken` redaction precedent re-asserted by API-0227 and
+    API-0229.
+  - REQUIRED `apiToken` (string) → secret-bearing. Same redaction
+    treatment.
+  - REQUIRED `priority` (number) → pinned to `1`. Value-precedence
+    rule refined: each provider's documented scale anchors the
+    fixture, the **discriminator rule** (avoid the JSON-zero
+    default) is the cross-cohort invariant. `0` is Pushover's
+    documented default and the JSON-zero default — using it would
+    let the on-wire fixture collide with an omitted-key parse. `2`
+    ("emergency") is intentionally avoided because Pushover's wire-
+    validator requires `retry` and `expire` when `priority=2` —
+    using `1` decouples the priority literal from the optional-tail
+    populated/null question. `1` ("high priority") is the more-
+    discriminating value that satisfies both constraints.
+  - OPTIONAL `retry` (nullable number) → populated with `60`
+    (Pushover's documented minimum retry interval) per the every-
+    optional-populated convention. Exercises the **non-null leg of
+    the `anyOf: [number, null]` union**, distinguishing the on-wire
+    fixture from a JSON `null` projection.
+  - OPTIONAL `expire` (nullable number) → populated with `3600` (one
+    hour, well within Pushover's documented `expire ≤ 10800`
+    ceiling) per the every-optional-populated convention. Exercises
+    the non-null leg of the union.
+- Story count after this entry: 462 total, 404 passing, 58 still
+  failing.
+- Remaining risks / follow-ups:
+  - 4 sibling `notification.test*Connection` operations remain
+    (API-0231 `testResendConnection`, API-0232 `testSlackConnection`,
+    API-0233 `testTeamsConnection`, API-0234 `testTelegramConnection`)
+    and should reuse this slug + 401→CodeAuth pattern.
+  - The next pending story by priority is API-0231
+    `notification-testResendConnection` (priority=5).
+- **Learnings for future iterations:**
+  - **Nullable-number optionals — every-optional-populated picks the
+    non-null leg.** This is the **first** notification/* `test*`
+    cohort entry whose optional siblings are `nullable` (a JSON-
+    Schema `anyOf: [<type>, null]` union) rather than plain
+    non-nullable types. The cohort's every-optional-populated
+    convention (re-asserted by API-0224, API-0225, API-0227)
+    extends naturally to the nullable case: populate with a non-null
+    literal of the non-null leg, **never** with JSON `null`. The
+    rationale matches the cross-cohort discriminator rule — `null`
+    is structurally identical to an omitted-key parse for a nullable
+    field, so the on-wire fixture would lose the populated-vs-
+    omitted distinction. Future peers (any tag) facing a nullable
+    optional should grep this entry for the non-null-leg precedent
+    and pick a documented spec-anchored literal (Pushover's `60` /
+    `3600` here track the documented retry-floor and an in-bounds
+    expire) rather than zero, the JSON default.
+  - **Priority-value discriminator rule — provider scale anchors the
+    fixture, "avoid JSON-zero default" is the invariant.** API-0227
+    (Gotify, scale 0..10, midpoint 5) and API-0229 (Ntfy, scale
+    1..5, midpoint 5) both pinned to their documented midpoints
+    *and* to a non-zero non-default value. Pushover's scale (-2..2,
+    default 0) cannot satisfy both rules at the documented midpoint
+    (`0` is also the default). The discriminator rule wins:
+    `priority: 1` (high priority) is the smallest non-zero non-
+    boundary value that distinguishes the on-wire fixture from an
+    omitted-key parse without crossing into the boundary value `2`
+    ("emergency") whose validator path enforces `retry` / `expire`.
+    Future cohort members with provider scales whose midpoint
+    coincides with the JSON-zero default should pick the smallest
+    spec-documented non-zero non-boundary value following this
+    refinement.
+  - **Boundary-value avoidance — uncoupling literal choice from
+    optional-tail populated/null question.** Pushover's wire
+    validator requires `retry` and `expire` to be present when
+    `priority=2`. Pinning the REQUIRED `priority` to `2` would
+    couple the priority literal choice to the optional-tail
+    population question — the entry would then be unable to test
+    optional-tail-omitted variants in any future companion test
+    without cross-rewriting `priority`. Choosing `priority: 1`
+    decouples the two concerns. Future entries with similar
+    "validator-coupled-required-fields" boundary semantics
+    (provider X, when `mode=Y`, requires fields A/B) should
+    explicitly avoid the boundary REQUIRED literal so each
+    optional-tail variant can be tested in isolation if needed.
+  - **Cohort-opener forward reference list now extends through
+    API-0229.** The API-0224 opener's comment names cohort peers by
+    ID up through API-0234, and each subsequent member back-
+    references the opener and prior members (this entry follows
+    that discipline by naming API-0224 through API-0229 in its
+    Slug-style and Shape-positioning blocks). The next cohort
+    member API-0231 should append `API-0230 (→ test-pushover-
+    connection)` to its Slug-style back-reference and update its
+    Shape-positioning block to include the API-0230 three-required-
+    plus-two-nullable-number positioning row.
+  - **Indent-preserving PRD flip discipline still holds.** The
+    `ralph/prd.json` file uses 2-space indent. We flipped
+    `passes: false` → `passes: true` via a Python anchor-and-slice
+    on the API-0230 story object so the diff stays a clean 1-line
+    change; full file rewrite would risk re-indenting the entire
+    462-story document.
+---
