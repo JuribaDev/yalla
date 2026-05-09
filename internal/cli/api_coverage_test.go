@@ -20946,6 +20946,128 @@ var coveredAPIOperations = []apiCoverageCase{
 		FailureCode:   yerr.CodeNotFound,
 	},
 	{
+		StoryID:     "API-0289",
+		OperationID: "previewDeployment-redeploy",
+		Method:      http.MethodPost,
+		Path:        "/previewDeployment.redeploy",
+		Tag:         "previewDeployment",
+		// Fourth and closing entry in the previewDeployment/* roster,
+		// immediately following API-0286 `previewDeployment-all` (the
+		// opener that established the `preview-cov-*` per-tag fixture-
+		// isolation namespace), API-0287 `previewDeployment-delete`
+		// (the body-bearing imperative-action POST), and API-0288
+		// `previewDeployment-one` (the canonical by-id `*-one` GET
+		// that consumed the 404→CodeNotFound representative-failure
+		// override slot for this tag). The API-0288 closing block
+		// forward-referenced this entry verbatim ("API-0289
+		// `previewDeployment-redeploy` declared a POST per the spec
+		// preview ... will continue inside the `preview-cov-*` per-
+		// tag fixture-isolation namespace. Per the per-tag opener
+		// convention, the 404→CodeNotFound override is now spent for
+		// the previewDeployment/* roster — API-0289 must revert to
+		// the harness-default 401→CodeAuth representative-failure leg
+		// even if 404 appears in its spec response set"). After this
+		// entry the tag arc closes; the next case in the PRD-ordered
+		// priority backlog is API-0290 `project-all`, which opens a
+		// new `proj-cov-*` namespace and **must not** back-reference
+		// any previewDeployment/* literals.
+		//
+		// Per that per-tag fixture rule, this entry continues inside
+		// the `preview-cov-*` namespace and **must not** back-
+		// reference any closed prior-tag namespace (`admin-cov-*`,
+		// `ai-cov-*`, `app-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		// `cert-cov-*`, `clu-cov-*`, `compose-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `docker-cov-*`,
+		// `domain-cov-*`, `environment-cov-*`, `gitea-cov-*`,
+		// `github-cov-*`, `gitlab-cov-*`, `mariadb-cov-*`,
+		// `mongo-cov-*`, `mounts-cov-*`, `mysql-cov-*`, `org-cov-*`,
+		// `postgres-cov-*`, `proj-cov-*`, `set-cov-*`, `srv-cov-*`,
+		// `swarm-cov-*`, `usr-cov-*`).
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against `internal/api/data/openapi.json` >
+		// `/previewDeployment.redeploy` > `post`: method POST, tag
+		// previewDeployment, no parameters, requestBody REQUIRED with
+		// `application/json` and **three top-level fields** —
+		// `previewDeploymentId` (REQUIRED plain string, no `anyOf` /
+		// `nullable` / enum constraints) plus optional siblings
+		// `title` (plain string) and `description` (plain string,
+		// **not** the `anyOf [string, null]` projection that
+		// `*-create` peers carry). Responses 200/400/401/403/500
+		// where the 200 schema is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the empty-
+		// success cohort. **No 404** declared — mirroring the
+		// action-on-known-id POST precedent across every body-bearing
+		// imperative-action POST already covered in the
+		// previewDeployment/* roster (API-0287
+		// `previewDeployment-delete`).
+		//
+		// **Shape positioning — required `<noun>Id` + optional
+		// `title` + optional `description` plain-string-trio POST,
+		// body REQUIRED.** Cardinality- and type-identical to the
+		// cross-tag `*-redeploy` / `*-deploy` precedent established
+		// by API-0016 `application-deploy` (the canonical reference
+		// in internal/cli/AGENTS.md), API-0071 `compose-deploy`, and
+		// API-0087 `compose-redeploy` — same property names (modulo
+		// the `<noun>Id` prefix), same `required` projection, same
+		// optional-string siblings. This is *not* the minimal-id-
+		// only POST family (e.g. API-0287 `previewDeployment-delete`
+		// which has only the required `previewDeploymentId`), nor
+		// the two-required-body-fields family, nor the
+		// `<noun>Id`+`suffix` shape. All three fields are populated
+		// with deterministic-but-clearly-fake values so the wire-
+		// payload assertion exercises the full redeploy envelope
+		// rather than just the minimum, matching the *-create /
+		// *-deploy convention recorded in internal/cli/AGENTS.md.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// Spec omits 404, so the 404→CodeNotFound override is
+		// structurally inapplicable; even were it applicable, the
+		// per-tag opener convention reserves 404→CodeNotFound
+		// exclusively for the canonical by-id `*-one` GET peer,
+		// which for previewDeployment/* was API-0288. Auth failures
+		// are the universal failure surface for every body-bearing
+		// imperative-action POST in the previewDeployment/* roster,
+		// matching the API-0287 `previewDeployment-delete`
+		// precedent inside this same tag. The harness's
+		// `len(tc.SampleBody) > 0` gate fires here: the JSON
+		// content-type and body byte-comparison legs both activate,
+		// exactly as on every prior body-bearing imperative-action
+		// POST peer.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base `preview-cov-redeploy-0289`
+		//     follows the established `<tag>-cov-<slug>-<storyID>`
+		//     deterministic-but-clearly-fake naming convention shared
+		//     across every prior covered peer and verified non-
+		//     colliding with API-0286 `preview-cov-all-0286`,
+		//     API-0287 `preview-cov-delete-0287`, and API-0288
+		//     `preview-cov-one-0288` literals. Single-segment slug
+		//     `redeploy` has no internal capitalisation so the
+		//     kebab-vs-camel choice is moot here. The `preview-`
+		//     slug prefix is the same shortening of the
+		//     `previewDeployment` tag used by every previewDeployment/*
+		//     peer (consistent with `proj-` for `project`, `org-`
+		//     for `organization`, `srv-` for `server`, `usr-` for
+		//     `user`, `set-` for `settings`).
+		//   * The required `previewDeploymentId` value reuses the
+		//     `preview-cov-redeploy-0289` token; `title` and
+		//     `description` carry storyID-tagged literals so a
+		//     future cross-fixture audit can grep the optional-field
+		//     populations and the storyID independently.
+		SampleBody: json.RawMessage(`{
+			"previewDeploymentId": "preview-cov-redeploy-0289",
+			"title": "API-0289 redeploy fixture",
+			"description": "API-0289 fixture for previewDeployment-redeploy coverage"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0290",
 		OperationID: "project-all",
 		Method:      http.MethodGet,

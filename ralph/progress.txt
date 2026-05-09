@@ -22984,3 +22984,111 @@ forward-reference lesson before assuming any field shape.
     must be inherited verbatim by API-0289 `previewDeployment-redeploy`
     without back-referencing any closed prior-tag namespace.
 ---
+## 2026-05-09 - API-0289 - Cover previewDeployment-redeploy (POST /previewDeployment.redeploy)
+- What was implemented:
+  - Added a new `apiCoverageCase` entry for `previewDeployment-redeploy`
+    (POST /previewDeployment.redeploy, tag previewDeployment) in
+    `internal/cli/api_coverage_test.go`, immediately after API-0288
+    `previewDeployment-one` (the canonical by-id GET that consumed the
+    404→CodeNotFound override slot for this tag) and before the
+    API-0290 `project-all` boundary that opens the project/* arc.
+    This is the fourth and **closing** entry on the previewDeployment/*
+    coverage roster, completing the forward reference embedded in
+    API-0288's closing block.
+  - **Spec re-verified** against
+    `internal/api/data/openapi.json` > `/previewDeployment.redeploy` >
+    `post`: method POST, tag previewDeployment, no parameters,
+    requestBody REQUIRED with `application/json` and **three top-level
+    fields** — `previewDeploymentId` (REQUIRED plain string, no
+    `anyOf` / `nullable` / enum constraints) plus optional siblings
+    `title` (plain string) and `description` (plain string, **not**
+    the `anyOf [string, null]` projection that `*-create` peers
+    carry). Responses 200/400/401/403/500 with the 200 body `{}`
+    (`additionalProperties: false`). **No 404** declared — mirroring
+    the action-on-known-id POST precedent across every body-bearing
+    imperative-action POST already covered (API-0287
+    `previewDeployment-delete` inside the same tag, plus the
+    cross-tag `*-redeploy` / `*-deploy` family API-0016
+    `application-deploy`, API-0071 `compose-deploy`, API-0087
+    `compose-redeploy`).
+  - **Shape — required `<noun>Id` + optional `title` + optional
+    `description` plain-string-trio POST, body REQUIRED.**
+    Cardinality- and type-identical to the cross-tag `*-redeploy` /
+    `*-deploy` precedent (API-0087 `compose-redeploy` is the
+    closest twin: same property names modulo the `<noun>Id` prefix,
+    same `required` projection, same optional-string siblings). All
+    three fields are populated with deterministic-but-clearly-fake
+    values so the wire-payload assertion exercises the full redeploy
+    envelope rather than just the minimum, matching the
+    *-create / *-deploy convention recorded in
+    `internal/cli/AGENTS.md`.
+  - **Family choice — harness-default 401→CodeAuth retained.** Spec
+    omits 404, so the 404→CodeNotFound override is structurally
+    inapplicable; even were it applicable, the per-tag opener
+    convention reserves 404→CodeNotFound exclusively for the
+    canonical by-id `*-one` GET peer, which for previewDeployment/*
+    was API-0288 (override slot now spent for this tag).
+  - **Fixture token base** `preview-cov-redeploy-0289` follows the
+    `<tag>-cov-<slug>-<storyID>` rule and is verified non-colliding
+    with API-0286 `preview-cov-all-0286`, API-0287
+    `preview-cov-delete-0287`, and API-0288 `preview-cov-one-0288`
+    literals, and with every prior closed namespace.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (added API-0289 case +
+    rationale comment block)
+  - `ralph/prd.json` (set `passes: true` for API-0289)
+  - `ralph/progress.txt` (this entry)
+- Verification run from repo root:
+  - `gofmt -w .` — clean
+  - `go mod tidy` — no diff
+  - `go vet ./...` — pass
+  - `go test ./internal/cli -run 'TestAPICoverage/API-0289' -v`
+    — all five legs PASS (RegistryInvariants, SchemaCommandWorks,
+    ManifestListsOperation, SuccessRoundTrip, RepresentativeFailure).
+  - `go test ./... -count=1` — all packages PASS
+  - `go test -race ./... -count=1` — all packages PASS
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, and
+    `goreleaser` are still not installed locally and remain
+    documented as missing per the Codebase Patterns note rather
+    than silently skipped.
+- Remaining risks / follow-ups: API-0289 closes the
+  previewDeployment/* roster. The next priority-4 story in the
+  PRD-ordered backlog is API-0302 `redis-changeStatus`, which opens
+  a new `redis-cov-*` per-tag fixture-isolation namespace and
+  **must not** back-reference any previewDeployment/* literals. The
+  next contributor MUST: (1) re-verify the spec against
+  `internal/api/data/openapi.json` per the forward-reference
+  lesson before assuming any field shape; (2) open a fresh
+  `redis-cov-*` namespace with a `redis-` slug prefix consistent
+  with the `<tag>-cov-<slug>-<storyID>` rule; (3) leave the
+  404→CodeNotFound override slot fresh for the eventual canonical
+  by-id `*-one` GET peer for the redis/* roster (API-0307
+  `redis-one`, when its turn arrives).
+- **Learnings for future iterations:**
+  - The cross-tag `*-redeploy` / `*-deploy` precedent is now
+    consistently shaped: required `<noun>Id` + optional `title` +
+    optional `description`, all plain strings (NOT
+    `anyOf [string, null]`). API-0016 (application-deploy),
+    API-0071 (compose-deploy), API-0087 (compose-redeploy), and
+    API-0289 (previewDeployment-redeploy) all share this shape.
+    Future `*-redeploy` / `*-deploy` stories should grep these
+    blocks first and copy the all-three-fields-populated fixture
+    pattern.
+  - The `preview-cov-*` per-tag fixture-isolation namespace
+    opened by API-0286 has been used across all four
+    previewDeployment/* peers (API-0286/0287/0288/0289) and is
+    now closed. API-0290 already opened the next `proj-cov-*`
+    namespace; future contributors crossing this boundary must
+    not back-reference `preview-cov-*` literals.
+  - Each per-tag opener convention reasserted at API-0290 is
+    structural, not stylistic: the 404→CodeNotFound override is
+    spent on the canonical by-id `*-one` GET peer (API-0288 for
+    previewDeployment/*), and every other peer in the tag — even
+    when the spec declares 404 — must revert to the
+    harness-default 401→CodeAuth representative-failure leg.
+    Body-bearing imperative-action POSTs whose specs omit 404
+    entirely (like API-0287 `previewDeployment-delete` and
+    API-0289 `previewDeployment-redeploy`) reinforce this
+    convention by structural inapplicability rather than
+    deliberate choice.
+---
