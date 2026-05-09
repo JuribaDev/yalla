@@ -20288,6 +20288,130 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0224",
+		OperationID: "notification-testCustomConnection",
+		Method:      http.MethodPost,
+		Path:        "/notification.testCustomConnection",
+		Tag:         "notification",
+		// Seventeenth entry on the notification/* coverage roster, staying
+		// inside the `notification-cov-*` per-tag fixture-isolation
+		// namespace seeded at API-0208 `notification-all` and extended
+		// across API-0209..API-0223. Per the per-tag isolation rule
+		// reaffirmed across each prior peer this entry stays inside the
+		// namespace opened by API-0208 and **must not** back-reference
+		// any closed prior-tag namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json >
+		// /notification.testCustomConnection > post`: a **POST** with
+		// **no parameters** and a **REQUIRED request body** whose schema
+		// declares a single REQUIRED non-nullable plain string slot
+		// (`endpoint`) plus a single OPTIONAL nested string-valued map
+		// (`headers`: `map[string]string` per the
+		// `propertyNames`/`additionalProperties` pair). Responses
+		// 200/400/401/403/500 — the spec does **not** declare 404 on
+		// this operation, matching the cross-tag connectivity-validation
+		// precedent (the family is "validate the agent-supplied
+		// transport descriptor", with no by-id target to miss). The 200
+		// schema is `{}` with `additionalProperties: false`, matching
+		// every prior covered peer in the empty-success cohort.
+		//
+		// **Slug style — kebab-case inherited from API-0209/API-0210/
+		// API-0211/API-0212/API-0213/API-0214/API-0215/API-0216/
+		// API-0217/API-0218/API-0219, the GET-cohort opener API-0220
+		// `notification-getEmailProviders` (→ `get-email-providers`),
+		// the `*Id`-filtered GET-cohort opener API-0221
+		// `notification-one`, the action-receiver POST opener API-0222
+		// `notification-receiveNotification` (→ `receive-notification`),
+		// and the by-id mutation cohort opener API-0223
+		// `notification-remove`.** Per the per-tag-slug-style rule fixed
+		// by the kickoff multi-camel entry API-0209
+		// `notification-createCustom` (→ `create-custom`), this entry
+		// takes `test-custom-connection` as the slug stem (three
+		// kebab-cased segments mirrored from `testCustomConnection`).
+		// The fixture namespace is
+		// `notification-cov-test-custom-connection-0224-<field>`,
+		// mirroring the `notification-cov-<slug>-<storyID>-<field>`
+		// discipline locked by API-0208..API-0223. **This entry opens
+		// the notification/* `test*` connectivity-validation POST
+		// cohort** — subsequent peers API-0225..API-0234
+		// (`testDiscordConnection`, `testEmailConnection`,
+		// `testGotifyConnection`, `testLarkConnection`,
+		// `testRocketChatConnection`, `testSlackConnection`,
+		// `testTeamsConnection`, `testTelegramConnection`, …)
+		// inherit this slug style and the harness-default 401→CodeAuth
+		// failure leg.
+		//
+		// **Body composition:**
+		//   - **REQUIRED:** `endpoint` (plain non-nullable string).
+		//     The fixture supplies a deterministic-but-clearly-fake
+		//     real-shape https URL on the `example.invalid` reserved
+		//     TLD (RFC 6761) so a future URL-shape validator wired into
+		//     the harness still accepts it without risking a real DNS
+		//     lookup or wire egress to a third-party host. The token
+		//     follows the per-tag
+		//     `notification-cov-<slug>-<storyID>-<field>` discipline
+		//     and matches the URL-bearing convention established at
+		//     API-0209 `notification-createCustom` for the `endpoint`
+		//     field on the same custom-transport family.
+		//   - **OPTIONAL — every-optional-populated.** Per the
+		//     every-optional-populated convention re-applied across
+		//     prior notification/* peers with optional siblings (e.g.
+		//     API-0209 `notification-createCustom` populated all eight
+		//     optional siblings including the same `headers` map),
+		//     the lone optional `headers` slot is populated with a
+		//     single-entry map so the JSON serialisation is
+		//     deterministic and the round-trip through `--input`
+		//     preserves the nested string-valued map shape (the spec's
+		//     `propertyNames: {type: string}` plus
+		//     `additionalProperties: {type: string}` pair). The map
+		//     entry uses the
+		//     `notification-cov-test-custom-connection-0224-header`
+		//     token under the `X-Notification-Source` key, mirroring
+		//     the API-0209 single-entry-map convention so future
+		//     `notification-update*` peers that also declare a
+		//     `map[string]string` field can grep this entry for the
+		//     deterministic-single-entry-map convention.
+		//
+		// **Shape positioning — single-required-string + optional
+		// nested `map[string]string` POST connectivity-validation,
+		// body REQUIRED.** Functionally distinct from the closed
+		// all-required by-id POST API-0223 `notification-remove`
+		// (single `notificationId`, zero optional fields) and the
+		// two-required-string deep-optional-tail create POST
+		// API-0209 `notification-createCustom`. This entry is the
+		// notification/* tag's first connectivity-validation `test*`
+		// fixture; the cross-tag analogue is the
+		// `*-testConnection`-style probe absent from prior covered
+		// tags, so this entry establishes the notification/* tag's
+		// own canonical shape for the cohort.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set, so the
+		// 404→CodeNotFound override is structurally inapplicable
+		// (no by-id target to miss; the agent supplies the transport
+		// descriptor inline). `*-testCustomConnection` here is a
+		// body-bearing imperative-action POST and stays on the
+		// 401→CodeAuth invariant locked across every imperative-
+		// action notification/* peer (API-0209..API-0220, API-0222,
+		// API-0223), keeping authentication as the universal failure
+		// surface for the notification/* `test*` connectivity-
+		// validation POST cohort opened here.
+		SampleBody: json.RawMessage(`{
+			"endpoint": "https://example.invalid/notification-cov-test-custom-connection-0224-endpoint",
+			"headers": {
+				"X-Notification-Source": "notification-cov-test-custom-connection-0224-header"
+			}
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the empty-
+		// success cohort. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` / `data.status`
+		// rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,

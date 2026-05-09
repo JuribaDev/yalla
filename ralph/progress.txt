@@ -26478,3 +26478,108 @@ forward-reference lesson before assuming any field shape.
       because connectivity-test endpoints re-use the same credential
       payload as the create endpoint.
 ---
+
+## 2026-05-09 - API-0224 (Cover notification-testCustomConnection, POST /notification.testCustomConnection)
+- Implemented: appended a seventeenth notification/* entry to
+  `coveredAPIOperations` in `internal/cli/api_coverage_test.go` for
+  story API-0224. The entry pins:
+    - `OperationID = "notification-testCustomConnection"`,
+      `Method = http.MethodPost`,
+      `Path = "/notification.testCustomConnection"`,
+      `Tag = "notification"`.
+    - `SampleBody` populates the spec's single REQUIRED non-nullable
+      plain string slot `endpoint =
+      "https://example.invalid/notification-cov-test-custom-connection-0224-endpoint"`
+      and the lone OPTIONAL nested string-valued map `headers`
+      (single entry under `X-Notification-Source` token), per the
+      every-optional-populated convention re-applied since API-0209
+      `notification-createCustom`. The fixture namespace
+      `notification-cov-test-custom-connection-0224-<field>` follows
+      the per-tag `notification-cov-<slug>-<storyID>-<field>`
+      discipline locked at API-0209 and re-applied across every
+      notification/* fixture since (API-0210..API-0223). Slug stem
+      `test-custom-connection` is three kebab-cased segments mirrored
+      from `testCustomConnection`, inheriting the kebab-case style
+      fixed by the kickoff multi-camel entry API-0209
+      (→ `create-custom`). The URL token uses the
+      `example.invalid` reserved TLD (RFC 6761) so any future
+      URL-shape validator wired into the harness still accepts it
+      without risking a real DNS lookup or wire egress.
+    - `SuccessResponse = "{}"` per the empty-success cohort
+      convention (200 schema is `{}` with `additionalProperties:
+      false`).
+    - Failure leg: harness-default 401→CodeAuth retained — the spec
+      omits 404 from this operation's response set
+      (200/400/401/403/500), structurally matching the cross-tag
+      connectivity-validation precedent (no by-id target to miss;
+      the agent supplies the transport descriptor inline). The
+      notification/* tag's 404-shadow representative is already
+      pinned to API-0221 `notification-one`. Re-asserts the
+      401→CodeAuth invariant locked across every imperative-action
+      notification/* peer.
+    - **Cohort opener:** This entry opens the notification/* `test*`
+      connectivity-validation POST cohort. Subsequent peers
+      API-0225..API-0234 (`testDiscordConnection`,
+      `testEmailConnection`, `testGotifyConnection`,
+      `testLarkConnection`, `testRocketChatConnection`,
+      `testSlackConnection`, `testTeamsConnection`,
+      `testTelegramConnection`, …) inherit this slug style and the
+      harness-default 401→CodeAuth failure leg.
+- Files changed:
+    - `internal/cli/api_coverage_test.go` — appended the API-0224
+      `apiCoverageCase` literal between the API-0223 closer and the
+      API-0246 `organization-active` opener, preserving StoryID-sorted
+      order.
+    - `ralph/prd.json` — flipped `API-0224.passes` from `false` to
+      `true`.
+    - `ralph/progress.txt` — this entry.
+- Verification (run from repo root):
+    - `gofmt -w .` — clean
+    - `go mod tidy` — clean
+    - `go vet ./...` — clean
+    - `go test ./...` — PASS
+    - `go test -race ./...` — PASS
+    - Targeted `go test ./internal/cli/ -run 'TestAPICoverage/API-0224'
+      -count=1 -v` — 5/5 subtests pass (RegistryInvariants,
+      SchemaCommandWorks, ManifestListsOperation, SuccessRoundTrip,
+      RepresentativeFailure).
+    - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+      `goreleaser` — not installed locally, documented as missing
+      per the verification baseline rather than silently skipped.
+- Results: API-0224 now has `passes: true` in `ralph/prd.json`. Story
+  count: 462 total, 398 passing, 64 still failing. The new coverage
+  row drives all five harness assertions for the
+  `notification-testCustomConnection` operationId.
+- Remaining risks / follow-ups:
+    - The next priority-5 notification/* peer is API-0225
+      `notification-testDiscordConnection`, the next entry in the
+      `test*` connectivity-validation POST cohort opened by this
+      entry. Subsequent peers API-0226..API-0234 cover the per-
+      transport `testEmailConnection`/`testGotifyConnection`/
+      `testLarkConnection`/etc.
+    - The `notification-cov-*` namespace remains active and should
+      stay open across API-0225..API-0234 and any remaining
+      notification/* mutating peers.
+- **Learnings for future iterations:**
+    - When a *test*Connection-style POST declares an OPTIONAL nested
+      `map[string]string` field (here `headers`, identical to the
+      `headers` slot already exercised on API-0209
+      `notification-createCustom`), populate a single-entry map under
+      a deterministic key. This keeps JSON encoding deterministic
+      across Go map-iteration nondeterminism (a single entry has no
+      iteration ambiguity), exercises the full body-forwarding leg
+      of the success round-trip, and matches the existing
+      single-entry-map convention.
+    - When opening a multi-segment slug cohort (here `test*`
+      validation: `test-custom-connection`, `test-discord-connection`,
+      …), explicitly call out the cohort name in the entry comment
+      so the next iteration grepping for the cohort opener finds
+      it without re-deriving from the operationIds.
+    - The cross-tag `*-testConnection`-style probe is absent from
+      every prior covered tag, so this entry establishes the
+      notification/* tag's own canonical shape for the cohort. The
+      shape (single REQUIRED string + OPTIONAL `map[string]string`)
+      should be re-evaluated per-spec on each `test*Connection`
+      peer because the per-transport schemas diverge widely
+      (e.g. Discord uses `webhookUrl`, Email uses SMTP fields).
+---
