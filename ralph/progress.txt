@@ -29008,3 +29008,72 @@ forward-reference lesson before assuming any field shape.
     stripe/*) should locate their canonical by-id reader and reserve
     the slot there.
 ---
+
+## 2026-05-09 - API-0317 Cover registry-create (POST /registry.create)
+- Added `apiCoverageCase` entry for `registry-create` in
+  `internal/cli/api_coverage_test.go`. POST mutation, no parameters,
+  REQUIRED `application/json` body, response set 200/400/401/403/500
+  (no 404 — consistent with every prior covered `*-create` mutation).
+- Continued inside the `registry-cov-*` per-tag fixture-isolation
+  namespace opened by API-0316 `registry-all`. Fixture token base
+  `registry-cov-create-0317`. Required-only fixture covers all five
+  REQUIRED top-level fields:
+    * `registryName`        → `"registry-cov-create-0317"`
+    * `username`            → `"registry-cov-create-0317-username"`
+    * `password`            → `"registry-cov-create-0317-password"`
+    * `registryUrl`         → `"registry-cov-create-0317-registryUrl"`
+    * `registryType`        → `"cloud"` (single-valued enum, must
+       match the literal to satisfy a future schema validator)
+    * `imagePrefix`         → `null` (declared REQUIRED but
+       `anyOf:[string,null]`, so the null branch alone satisfies
+       the schema and keeps the minimal-required-only fixture rule
+       intact — no value-bearing string is fabricated for an
+       optional-shape slot).
+  OPTIONAL `serverId` is intentionally omitted per the minimal-
+  required-only fixture rule (load-bearing for credential-redaction
+  safety).
+- Retained harness-default 401→CodeAuth representative-failure (404
+  is structurally absent from the spec; 400→CodeInvalidInput
+  reserved for stories where validation is the uniquely
+  distinguishing failure mode). The 404→CodeNotFound override slot
+  for the registry/* tag arc remains reserved for the upcoming
+  API-0318 `registry-one` entry per API-0316's reservation.
+- Marked `API-0317.passes = true` in `ralph/prd.json`. Pending
+  count: 30 → 29; passed: 432 → 433 of 462.
+- Files changed:
+    * `internal/cli/api_coverage_test.go`
+    * `ralph/prd.json`
+    * `ralph/progress.txt`
+- Verification (run from repo root):
+    * `gofmt -w .`            → clean
+    * `go mod tidy`            → clean
+    * `go vet ./...`           → clean
+    * `go test ./...`          → all packages PASS
+    * `go test -race ./...`    → all packages PASS
+    * `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+      `goreleaser` not installed locally — documented as missing
+      per the established rule, never silently skipped.
+- Remaining risks / follow-ups: none for this story. Next pending
+  registry/* peer is API-0318 `registry-one` (GET with required
+  `registryId` query parameter; should claim the 404→CodeNotFound
+  override slot per API-0316's reservation).
+- **Learnings for future iterations:**
+  - For a `*-create` POST whose REQUIRED schema includes an
+    `anyOf:[string,null]` slot, the null branch is the safest
+    minimal-required fixture. It satisfies the schema without
+    fabricating a value-bearing string for an optional-shape slot,
+    keeps the credential-redaction audit surface minimal, and
+    exercises the JSON `null` literal through the byte-for-byte
+    body-comparison leg activated by `len(tc.SampleBody) > 0`.
+  - Single-valued `enum` slots (e.g. `registryType: ["cloud"]`)
+    *must* use the literal enum value in the fixture — substituting
+    a `<tag>-cov-<slug>-<storyID>` token here would fail a future
+    schema validator. Document the constraint explicitly in the
+    case comment so the next contributor does not propose a
+    "generic" fake.
+  - The PRD's per-story `apiOperation.requestBody` block reports
+    only `required` and `contentTypes`; the field list lives in
+    `internal/api/data/openapi.json`. Always re-verify the spec at
+    that path before drafting a fixture, per the API-0345..API-0444
+    forward-reference lesson.
+---
