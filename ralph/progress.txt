@@ -25091,3 +25091,103 @@ forward-reference lesson before assuming any field shape.
     scalar id, `{}` success body, no 404 declared. The 401-default
     failure leg is the canonical representative for all of them.
 ---
+
+## 2026-05-09 - API-0330 (schedule-update)
+- Implemented contract coverage for POST /schedule.update (Dokploy
+  `schedule-update`), the sixth and final priority-4 schedule/* peer.
+  Closes the schedule/* roster (6/6 covered: API-0325/0326/0327/0328/
+  0329/0330).
+- Files changed:
+  - internal/cli/api_coverage_test.go — appended apiCoverageCase entry
+    (StoryID=API-0330) immediately after API-0329 `schedule-runManually`
+    and before API-0331 `security-create`, sorted by StoryID.
+    Four-required-string-scalar POST mutation: `SampleBody` materialises
+    all 16 fields per the spec (`internal/api/data/openapi.json >
+    /schedule.update > post`) — 4 REQUIRED plain strings (`scheduleId`,
+    `name`, `cronExpression`, `command`) plus the every-optional-
+    populated 12-field tail (`appName`, `serviceName`, `shellType` =
+    `bash`, `scheduleType` = `application`, `script`, `applicationId`,
+    `composeId`, `serverId`, `userId`, `enabled` = true, `timezone` =
+    `"UTC"`, `createdAt` = `"2026-05-09T00:00:00Z"`). Fixture values
+    stay inside the `schedule-cov-update-0330-<field>` namespace under
+    the schedule/* per-tag namespace opened at API-0325. Single-segment
+    slug `update` → no camelCase decision (the schedule/* slug-style
+    decision was locked at API-0329 `schedule-runManually`). No 404 in
+    the response set, so harness-default 401→CodeAuth retained — the
+    schedule/* 404 representative stays pinned to API-0328
+    `schedule-one`. SuccessResponse is `{}` per the
+    additionalProperties:false success schema.
+  - ralph/prd.json — flipped `passes: false` -> `true` for API-0330.
+  - ralph/progress.txt — this entry.
+- Verification run from the repo root:
+  - gofmt -w .                            : clean (no diff)
+  - go mod tidy                           : clean (no diff)
+  - go vet ./...                          : clean
+  - go test ./internal/cli ./internal/api
+      -run 'TestAPICoverage|TestManifest|TestRegistry|TestSchema'
+      -count=1                             : ok — confirms registry,
+                                            schema, manifest, success-
+                                            leg, and failure-leg
+                                            invariants all hold for
+                                            `schedule-update`.
+  - go test ./... -count=1                : ok (all 9 packages)
+  - go test -race ./... -count=1          : ok (all 9 packages)
+- Tools not installed locally and therefore documented-as-skipped (per
+  the Codebase Patterns rule): goimports, golangci-lint, staticcheck,
+  govulncheck, goreleaser. Same set as every prior API-0XXX story.
+- Outcome: 82 stories remain pending (83 → 82). The schedule/* roster
+  is now fully closed; the next priority-4 batch is the volumeBackups/*
+  tag at API-0445..API-0450 (six peers: create, delete, list, one,
+  runManually, update — structurally a near-mirror of the schedule/*
+  shape).
+- Remaining risks / follow-ups:
+  - None for this story. Future volumeBackups/* contributors should
+    consider whether to cross-reference the schedule/* roster as the
+    canonical *-create / *-delete / *-list / *-one / *-runManually /
+    *-update precedent (the operationId set is identical), or open a
+    fresh `volBackups-cov-*` namespace per the per-tag fixture-
+    isolation rule.
+- **Learnings for future iterations:**
+  - **The *-update vs *-create delta is canonical across Dokploy's
+    tRPC surface.** Both operations share the same body schema; the
+    delta is exactly that the *id field is OPTIONAL on *-create
+    (server allocates) and REQUIRED on *-update (caller passes the
+    target id). Schedule-update is the first four-required-string-
+    scalar POST in the coverage table; it promotes the API-0325
+    schedule-create three-required shape by REQUIRING `scheduleId`.
+    Future *-update peers (e.g. API-0450 `volumeBackups-update`)
+    should expect the same one-extra-required-id delta vs their
+    *-create sibling.
+  - **The schedule/* roster is now a complete 6-shape worked example**
+    spanning every common Dokploy operation cardinality:
+      - API-0325 schedule-create   — three-required + 13 optional
+        body POST mutation
+      - API-0326 schedule-delete   — single-required-string-scalar
+        body POST destructive action
+      - API-0327 schedule-list     — two-required-query list-style
+        GET
+      - API-0328 schedule-one      — single-required-query by-id GET
+        with 404 → CodeNotFound override
+      - API-0329 schedule-runManually — single-required-string-scalar
+        body POST imperative action (camelCase slug)
+      - API-0330 schedule-update   — four-required + 12 optional
+        body POST mutation
+    Future per-tag rosters that open with one of these shapes can crib
+    the matching schedule/* entry's design-rationale header verbatim
+    and diff-only the slug, namespace base, and per-tag forward
+    references.
+  - **Slug-style decisions are sticky across mixed-style rosters.**
+    Schedule/* locked camelCase at API-0329 (`runManually`) and the
+    later API-0330 (`update`, single-segment) inherits that decision
+    even though its own slug carries no internal capitalisation.
+    Future per-tag closers landing single-segment slugs after a
+    multi-camel-segment opener must still cite the locked decision
+    in their slug-style banner — single-segment slugs do not "reset"
+    the per-tag style.
+  - **Empty-success body + every-optional-populated body composition
+    is now the dominant *-create / *-update fixture shape** in the
+    coverage table (API-0014, API-0040, API-0069, API-0189, API-0292,
+    API-0298, API-0325, and now API-0330 all share it). Future deep-
+    optional-tail peers should default to this shape unless the spec
+    forces otherwise.
+---

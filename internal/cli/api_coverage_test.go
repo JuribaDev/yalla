@@ -26406,6 +26406,182 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0330",
+		OperationID: "schedule-update",
+		Method:      http.MethodPost,
+		Path:        "/schedule.update",
+		Tag:         "schedule",
+		// Sixth and final priority-4 schedule/* peer — closes the
+		// schedule/* roster after the request-body POSTs at API-0325
+		// `schedule-create` (kickoff, every-optional-populated
+		// 16-field body) and API-0326 `schedule-delete` (single-
+		// required-string-scalar destructive action), the two-
+		// required-query list-style getter at API-0327
+		// `schedule-list`, the canonical by-id GET with the
+		// 404→CodeNotFound override at API-0328 `schedule-one`, and
+		// the multi-camel-segment imperative-action POST at API-0329
+		// `schedule-runManually`. Inherits the `schedule-cov-*`
+		// per-tag fixture-isolation namespace opened at API-0325
+		// `schedule-create`. Per the per-tag fixture-isolation rule
+		// established at API-0188 `mounts-allNamedByApplicationId`,
+		// API-0246 `organization-active`, API-0268 `port-create`,
+		// API-0290 `project-all`, API-0298 `redirects-create`,
+		// API-0331 `security-create`, and reasserted at API-0325
+		// `schedule-create`, API-0326 `schedule-delete`, API-0327
+		// `schedule-list`, API-0328 `schedule-one`, and API-0329
+		// `schedule-runManually`, this entry stays inside the
+		// `schedule-cov-*` namespace and **must not** back-reference
+		// any closed prior-tag namespace (`admin-cov-*`, `ai-cov-*`,
+		// `app-cov-*`, `auth-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		// `cluster-cov-*`, `compose-cov-*`, `deployment-cov-*`,
+		// `destination-cov-*`, `discord-cov-*`, `docker-cov-*`,
+		// `domain-cov-*`, `email-cov-*`, `gh-cov-*`, `git-cov-*`,
+		// `gitea-cov-*`, `gitlab-cov-*`, `mariadb-cov-*`,
+		// `mongo-cov-*`, `mounts-cov-*`, `mysql-cov-*`,
+		// `notif-cov-*`, `org-cov-*`, `port-cov-*`, `postgres-cov-*`,
+		// `preview-cov-*`, `proj-cov-*`, `redirects-cov-*`,
+		// `redis-cov-*`, `rollback-cov-*`, `security-cov-*`,
+		// `set-cov-*`, `srv-cov-*`, `swarm-cov-*`, `usr-cov-*`).
+		// With this entry the schedule/* roster (6/6) is fully
+		// covered; subsequent priority-4 work moves on to the
+		// `volumeBackups-*` tag at API-0445..API-0450.
+		//
+		// **Slug style — single-segment slug `update`, no decision.**
+		// The schedule/* slug-style decision (camelCase suffix
+		// preservation) was locked at API-0329 `schedule-runManually`
+		// (`schedule-cov-runManually-0329-*`). This entry's slug is a
+		// single segment (`update`) with no internal capitalisation,
+		// so the camelCase decision is moot here; the namespace base
+		// is simply `schedule-cov-update-0330` per the standard
+		// `<tag>-cov-<slug>-<storyID>` convention.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json > /schedule.update > post`:
+		// a **POST** with **no parameters** and a **REQUIRED request
+		// body** whose schema declares **four REQUIRED non-nullable
+		// plain string fields** (`scheduleId`, `name`,
+		// `cronExpression`, `command`) alongside a deep optional tail
+		// of twelve siblings. Distinct from the three-required-
+		// string-scalar precedent at API-0325 `schedule-create`
+		// (same 16-field surface, but `scheduleId` is OPTIONAL there
+		// because the server allocates the id) — `schedule-update`
+		// promotes `scheduleId` to a REQUIRED slot because it
+		// identifies the existing record to mutate. Distinct also
+		// from the closed-shape three-required-string-scalar
+		// API-0331 `security-create` (zero optional fields).
+		// Responses 200/400/401/403/500 — the spec does **not**
+		// declare 404 on this operation, mirroring the request-body
+		// POST family already covered (e.g. API-0189 `mounts-create`,
+		// API-0292 `project-create`, API-0298 `redirects-create`,
+		// API-0325 `schedule-create`, API-0331 `security-create`)
+		// whose missing-target failure mode collapses into 400/
+		// validation under Dokploy's tRPC convention rather than a
+		// dedicated 404 leg. The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort.
+		//
+		// **Body composition:**
+		//   - **REQUIRED:** `scheduleId` (plain string), `name`
+		//     (plain string), `cronExpression` (plain string),
+		//     `command` (plain string). The fixture supplies
+		//     deterministic-but-clearly-fake values keyed to the
+		//     `schedule-cov-update-0330-<field>` namespace.
+		//     `cronExpression` carries a real-shape cron string
+		//     (`"0 4 * * *"`) so a future schema validator wired
+		//     into the harness still accepts it.
+		//   - **OPTIONAL — every-optional-populated.** Per the
+		//     *-update convention inherited from API-0325
+		//     `schedule-create` (which uses the identical optional
+		//     tail), all twelve optional siblings are populated so
+		//     the fixture saturates the entire schema surface:
+		//     - `appName` (plain string).
+		//     - `serviceName` (anyOf [string, null]) — string
+		//       branch.
+		//     - `shellType` (enum `bash` | `sh`) — `bash` branch,
+		//       matching API-0325 `schedule-create`.
+		//     - `scheduleType` (enum `application` | `compose` |
+		//       `server` | `dokploy-server`) — `application`
+		//       branch, matching API-0325 `schedule-create` so the
+		//       populated `applicationId` slot stays internally
+		//       consistent with the chosen scheduleType.
+		//     - `script` (anyOf [string, null]) — string branch.
+		//     - `applicationId` (anyOf [string, null]) — string
+		//       branch (consistent with `scheduleType:
+		//       application`).
+		//     - `composeId` (anyOf [string, null]) — string branch.
+		//     - `serverId` (anyOf [string, null]) — string branch.
+		//     - `userId` (anyOf [string, null]) — string branch.
+		//     - `enabled` (plain boolean) — `true` branch.
+		//     - `timezone` (anyOf [string, null]) — string branch
+		//       (`"UTC"` so a future server-side validator accepts
+		//       it as a real IANA tz).
+		//     - `createdAt` (plain string) — RFC 3339 literal so a
+		//       future schema validator accepts the timestamp
+		//       shape.
+		//
+		// **Shape positioning — four-required-string-scalar POST
+		// mutation, body REQUIRED, deep optional tail with enums +
+		// anyOf-string-null + boolean.** First four-required-string-
+		// scalar POST to land in the coverage table — promotes the
+		// API-0325 `schedule-create` three-required-scalar shape by
+		// adding `scheduleId` as a fourth REQUIRED slot, which is
+		// the canonical *-update vs *-create delta across Dokploy's
+		// tRPC surface (the create operation lets the server
+		// allocate the id; the update operation requires the caller
+		// to pass it). Functionally an *-update mutation analogue of
+		// API-0325 `schedule-create` sharing the same 16-field
+		// surface and identical optional-tail composition; the
+		// on-the-wire delta is exactly the additional REQUIRED
+		// `scheduleId` slot.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so
+		// the 404→CodeNotFound override is structurally
+		// inapplicable. The schedule/* tag's 404→CodeNotFound
+		// representative is already pinned to API-0328
+		// `schedule-one` per the canonical by-id-sibling
+		// convention. `*-update` here is a body-bearing mutation
+		// POST and stays on the 401→CodeAuth invariant locked by
+		// every body-bearing mutation peer already covered (e.g.
+		// API-0325 `schedule-create`, API-0326 `schedule-delete`,
+		// API-0329 `schedule-runManually`).
+		//
+		// **Fixture token base** `schedule-cov-update-0330` follows
+		// the established `<tag>-cov-<slug>-<storyID>`
+		// deterministic-but-clearly-fake naming convention.
+		// Verified: no collisions with `schedule-cov-create-0325-*`,
+		// `schedule-cov-delete-0326-*`, `schedule-cov-list-0327-*`,
+		// `schedule-cov-one-0328-*`, or
+		// `schedule-cov-runManually-0329-*`. With this entry the
+		// schedule/* roster is closed; no further per-tag fixture
+		// reservations needed.
+		SampleBody: json.RawMessage(`{
+			"scheduleId": "schedule-cov-update-0330-scheduleId",
+			"name": "schedule-cov-update-0330-name",
+			"cronExpression": "0 4 * * *",
+			"appName": "schedule-cov-update-0330-appName",
+			"serviceName": "schedule-cov-update-0330-serviceName",
+			"shellType": "bash",
+			"scheduleType": "application",
+			"command": "schedule-cov-update-0330-command",
+			"script": "schedule-cov-update-0330-script",
+			"applicationId": "schedule-cov-update-0330-applicationId",
+			"composeId": "schedule-cov-update-0330-composeId",
+			"serverId": "schedule-cov-update-0330-serverId",
+			"userId": "schedule-cov-update-0330-userId",
+			"enabled": true,
+			"timezone": "UTC",
+			"createdAt": "2026-05-09T00:00:00Z"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the empty-
+		// success cohort. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0331",
 		OperationID: "security-create",
 		Method:      http.MethodPost,
