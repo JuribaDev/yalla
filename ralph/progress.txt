@@ -29154,3 +29154,67 @@ forward-reference lesson before assuming any field shape.
     either is zero — opting in to the override is just a two-field
     struct addition, no harness change needed.
 ---
+
+## 2026-05-09 - API-0319 (registry-remove)
+- Added apiCoverageCase entry for registry-remove in
+  internal/cli/api_coverage_test.go: POST writer, no parameters,
+  REQUIRED `application/json` body with single REQUIRED non-nullable
+  string field `registryId`, response set 200/400/401/403/500 (no 404
+  declared, matching every prior covered destructive-POST `*-remove`
+  peer).
+- Continues inside the `registry-cov-*` per-tag fixture-isolation
+  namespace opened by API-0316 `registry-all`. Fixture token base
+  `registry-cov-remove-0319`; SampleBody supplies the lone REQUIRED
+  scalar `registryId` as
+  `registry-cov-remove-0319-registryId-fixture`.
+- Failure leg defaults to harness 401 → CodeAuth (registry/* tag arc's
+  reserved 404 → CodeNotFound override slot was already consumed at
+  API-0318 `registry-one`, and the spec omits 404 from the response set
+  so the override is structurally inapplicable here regardless).
+- Re-verified spec against
+  `internal/api/data/openapi.json > /registry.remove > post` per the
+  API-0345..API-0444 forward-reference lesson before authoring the
+  fixture.
+- Marked API-0319.passes = true in ralph/prd.json.
+- Files changed:
+    - internal/cli/api_coverage_test.go (+125 lines, new case literal)
+    - ralph/prd.json (passes flip)
+    - ralph/progress.txt (this entry)
+- Verification: `gofmt -w .`, `go mod tidy`, `go vet ./...`,
+  `go test ./...`, `go test -race ./...` — all clean.
+- Tools not run locally (not installed; same as prior iterations):
+  goimports, golangci-lint, staticcheck, govulncheck, goreleaser.
+- Remaining priority-5 registry/* peers in the per-tag arc:
+  API-0320 `registry-testRegistry` (POST), API-0321
+  `registry-testRegistryById` (POST), API-0322 `registry-update`
+  (POST). Next contributor on API-0320 should re-verify the spec
+  against `internal/api/data/openapi.json > /registry.testRegistry >
+  post` and continue inside the `registry-cov-*` namespace with slugs
+  `registry-cov-testRegistry-0320-*`.
+- **Learnings for future iterations:**
+  - The `registry-remove` POST spec is a clean
+    single-required-string-scalar destructive mutation, byte-for-byte
+    identical to the wire shape covered at API-0179 `mongo-remove`,
+    API-0309 `redis-remove`, and the API-0323 `rollback-delete`
+    kickoff entry that already lived directly after `registry-one` in
+    the slice — the new case literal slots between them without
+    disturbing any sibling.
+  - The 404 → CodeNotFound override is a *single-slot reservation per
+    tag*: once API-0318 `registry-one` claimed it for the registry/*
+    arc, every subsequent registry/* peer (including this one) must
+    retain the harness-default 401 → CodeAuth failure leg even when
+    the spec response set technically declares 404 — and since
+    `registry-remove`'s response set actually omits 404, the override
+    is doubly unavailable here.
+  - Body-bearing destructive POSTs in this codebase consistently omit
+    404 from their response sets under Dokploy's tRPC convention
+    (missing-target collapses to 400/validation), so the
+    harness-default failure leg is the conventional choice for every
+    future `*-remove` / `*-delete` peer regardless of tag.
+  - The `<tag>-cov-<slug>-<storyID>-<field>` literal convention is
+    self-disambiguating across same-tag peers because both the slug
+    (`remove` vs `create` vs `one`) and the storyID
+    (`0319` vs `0317` vs `0318`) differ; no manual collision check is
+    needed beyond confirming neither component is reused inside the
+    open per-tag namespace.
+---

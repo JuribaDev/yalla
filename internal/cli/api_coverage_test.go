@@ -33078,6 +33078,131 @@ var coveredAPIOperations = []apiCoverageCase{
 		FailureCode:   yerr.CodeNotFound,
 	},
 	{
+		StoryID:     "API-0319",
+		OperationID: "registry-remove",
+		Method:      http.MethodPost,
+		Path:        "/registry.remove",
+		Tag:         "registry",
+		// Fourth entry on the registry/* coverage roster, immediately
+		// following API-0318 `registry-one` and completing the forward
+		// reference embedded in that entry's closing comment ("The next
+		// case in the PRD-ordered priority-5 backlog is API-0319
+		// `registry-remove` (declared a **POST** per the spec preview;
+		// the next contributor must re-verify the spec against
+		// `internal/api/data/openapi.json` per the forward-reference
+		// lesson before assuming any field shape, and will continue
+		// inside the `registry-cov-*` per-tag fixture-isolation
+		// namespace opened by API-0316 — consume slugs of the form
+		// `registry-cov-remove-0319-*`)"). Continues inside the
+		// `registry-cov-*` per-tag fixture-isolation namespace opened
+		// by API-0316 `registry-all` and **must not** back-reference
+		// any closed prior-tag namespace (`admin-cov-*`, `ai-cov-*`,
+		// `app-cov-*`, `backup-cov-*`, `bb-cov-*`, `cert-cov-*`,
+		// `clu-cov-*`, `compose-cov-*`, `deployment-cov-*`,
+		// `dest-cov-*`, `docker-cov-*`, `domain-cov-*`,
+		// `environment-cov-*`, `gitea-cov-*`, `github-cov-*`,
+		// `gitlab-cov-*`, `mariadb-cov-*`, `mongo-cov-*`,
+		// `mounts-cov-*`, `mysql-cov-*`, `org-cov-*`, `patch-cov-*`,
+		// `port-cov-*`, `postgres-cov-*`, `preview-cov-*`,
+		// `proj-cov-*`, `redirects-cov-*`, `redis-cov-*`,
+		// `security-cov-*`, `set-cov-*`, `srv-cov-*`, `swarm-cov-*`,
+		// `usr-cov-*`) per the per-tag isolation rule originally
+		// established at API-0246 `organization-active`.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json` > `/registry.remove` >
+		// `post`: method POST, tag registry, **no parameters**,
+		// requestBody REQUIRED with `application/json`, responses
+		// 200/400/401/403/500. The 200 response is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort. **No 404** is declared on
+		// this operation, mirroring the precedent on every prior
+		// covered body-bearing imperative-action POST `*-remove` /
+		// `*-delete` whose missing-target failure mode collapses into
+		// 400/validation under Dokploy's tRPC convention rather than a
+		// dedicated 404 leg (e.g. API-0179 `mongo-remove`, API-0309
+		// `redis-remove`).
+		//
+		// **Request body schema (REQUIRED top-level fields):**
+		//   - REQUIRED `registryId` (plain string). Identifies the
+		//     registry record to delete. The fixture below supplies a
+		//     deterministic-but-clearly-fake
+		//     `registry-cov-remove-0319-registryId-fixture` literal
+		//     carrying the `<tag>-cov-<slug>-<storyID>-<field>` suffix
+		//     for `git grep` traceability and matching the API-0318
+		//     `registry-one` `<base>-registryId-fixture` precedent for
+		//     the analogous `<id>` field name.
+		//   - **No optional fields exist on this operation**, so the
+		//     fixture saturates the entire schema surface with the
+		//     single REQUIRED scalar.
+		//
+		// **Shape positioning — single-required-string-scalar POST
+		// destructive-action mutation, body REQUIRED, no optional
+		// tail.** Cardinality- and type-identical to API-0179
+		// `mongo-remove`, API-0309 `redis-remove`, and the
+		// upcoming-but-already-coded API-0323 `rollback-delete`
+		// (declared immediately after this entry on the same
+		// single-required-string-scalar destructive-POST shape). The
+		// harness's `len(tc.SampleBody) > 0` gate at
+		// `runAPICoverageSuccess` activates the JSON content-type and
+		// byte-for-byte body comparison legs; this fixture supplies
+		// the lone REQUIRED `registryId` so the success path verifies
+		// the CLI propagated the body verbatim.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so the
+		// 404→CodeNotFound override is structurally inapplicable
+		// (matching every prior covered destructive-POST `*-remove`
+		// peer). The 404 → CodeNotFound override slot for the
+		// registry/* tag arc was already consumed at API-0318
+		// `registry-one`, so this entry **must not** re-claim it.
+		// 400 → CodeInvalidInput is *technically* available — a
+		// payload that omits the REQUIRED `registryId` would fail
+		// server-side validation — but the harness reserves 400
+		// representatives for stories where payload validation is the
+		// operation's *uniquely distinguishing* failure mode. A
+		// conventional `*-remove` mutation collapses to type-checking,
+		// so the harness-default 401→CodeAuth failure leg remains the
+		// most representative single failure mode every authenticated
+		// Dokploy operation must re-prove, and is consistent with the
+		// 401→CodeAuth choice locked in by the registry/* kickoff at
+		// API-0316 `registry-all` and reasserted by API-0317
+		// `registry-create`.
+		//
+		// **Fixture token base** `registry-cov-remove-0319` follows
+		// the `<tag>-cov-<slug>-<storyID>` convention shared across
+		// every prior registry/* peer (API-0316..API-0318) and the
+		// cross-tag `*-cov-remove-XXXX` precedent at API-0179
+		// `mongo-remove` and API-0309 `redis-remove`. Verified
+		// non-colliding with API-0317's `registry-cov-create-0317-*`
+		// and API-0318's `registry-cov-one-0318-*` literals (different
+		// slug + storyID → unique under the
+		// `<tag>-cov-<slug>-<storyID>` rule). The full-tag-name slug
+		// prefix `registry-` remains unambiguously distinct from the
+		// lexically-adjacent full-tag-name `redirects-cov-*` and
+		// `redis-cov-*` namespaces closed at API-0301 / API-0315
+		// respectively.
+		//
+		// The next case in the PRD-ordered priority-5 backlog is
+		// API-0320 `registry-testRegistry` (declared a **POST** per
+		// the spec preview; the next contributor must re-verify the
+		// spec against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will continue inside the `registry-cov-*` per-tag
+		// fixture-isolation namespace opened by API-0316 — consume
+		// slugs of the form `registry-cov-testRegistry-0320-*`).
+		SampleBody: json.RawMessage(`{
+			"registryId": "registry-cov-remove-0319-registryId-fixture"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0323",
 		OperationID: "rollback-delete",
 		Method:      http.MethodPost,
