@@ -28201,3 +28201,57 @@ forward-reference lesson before assuming any field shape.
   - For required-body POSTs with optional `anyOf{string,null}` id fields, the convention is to populate one and OMIT the sibling so the JSON-serialiser's omit-field branch is exercised on the wire.
   - The harness's failure-leg default is 401→CodeAuth; only override (`tc.FailureStatus` / `tc.FailureCode`) when the spec genuinely makes a different status the canonical distinguishing failure (e.g. 404 for by-id GETs whose response set contains 404, or 400 when the operation's *defining* failure mode is payload validation).
 ---
+
+## 2026-05-09 - API-0259
+- Added coverage table entry for `patch-delete` (POST /patch.delete) in
+  `internal/cli/api_coverage_test.go` immediately after API-0258
+  `patch-create` and before API-0268 `port-create`, continuing the
+  `patch-cov-*` per-tag fixture-isolation namespace opened at
+  API-0256.
+- Spec re-verified against
+  `internal/api/data/openapi.json > /patch.delete > post`: required
+  body with a single REQUIRED scalar string `patchId`, no optional
+  fields, zero parameters, response set 200/400/401/403/500 (no 404
+  — mutating-POST cohort, not by-id GET).
+- Fixture: `patchId = "patch-cov-delete-0259"` follows the
+  `<tag>-cov-<slug>-<storyID>` convention (verified unique across
+  all prior `*-cov-*` namespaces).
+- Family choice: harness-default 401→CodeAuth retained (404
+  structurally inapplicable since spec omits 404; 400 reserved for
+  uniquely-distinguishing payload-validation stories).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (+121 lines, one new
+    `coveredAPIOperations` entry)
+  - `ralph/prd.json` (`API-0259.passes` flipped to `true`)
+  - `ralph/progress.txt` (this entry)
+- Verification run:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — pass.
+  - `go test ./...` — pass (all packages).
+  - `go test -race ./...` — pass (all packages).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — not installed locally, documented per the
+    progress-log contract rather than silently skipped.
+- Remaining risks/follow-ups: 39 stories still failing in
+  `prd.json`; the next patch/* peer is API-0260 `patch-ensureRepo`.
+- **Learnings for future iterations:**
+  - The single-required-`{resource}Id` POST shape (one mandatory
+    scalar string, no optional fields, no parameters) is the
+    canonical "delete by id" mutation payload across the Dokploy
+    surface. The 200 body is always `{}` with
+    `additionalProperties: false`, so the success-leg envelope
+    assertion focuses on `data.method` / `data.status` rather than
+    payload projection.
+  - POST-style by-id deletes in this Dokploy surface emit 400 for
+    a missing-id rather than 404; only by-id GETs (e.g. API-0256
+    `patch-byEntityId`) carry 404 in their spec response set. This
+    means 404→CodeNotFound overrides remain reserved for read-side
+    by-id stories; the harness-default 401→CodeAuth stays the
+    representative failure leg for mutating-POST by-id deletes.
+  - The patch/* roster after API-0259 continues with API-0260
+    `patch-ensureRepo`, API-0261 `patch-markFileForDeletion`,
+    API-0262 `patch-one` (a GET, so a 404 in the response set is
+    likely), API-0263..API-0267, all inside the `patch-cov-*`
+    namespace.
+---
