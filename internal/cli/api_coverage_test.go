@@ -39237,6 +39237,156 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0447",
+		OperationID: "volumeBackups-list",
+		Method:      http.MethodGet,
+		Path:        "/volumeBackups.list",
+		Tag:         "volumeBackups",
+		// Third priority-4 volumeBackups/* peer and the **first GET-
+		// shaped** entry on the volumeBackups/* coverage roster —
+		// succeeds the body-bearing POST pair API-0445
+		// `volumeBackups-create` (kickoff) and API-0446
+		// `volumeBackups-delete` (single-required-string-scalar
+		// destructive POST). Inherits the `volBackups-cov-*` per-tag
+		// fixture-isolation namespace opened at API-0445
+		// `volumeBackups-create` (note the abbreviated `volBackups`
+		// fixture-prefix decision locked at the kickoff entry — the
+		// full `volumeBackups` tag name is preserved in OperationID,
+		// Method, Path, and Tag fields, so the abbreviated fixture
+		// prefix has no correctness impact, only diff-friendliness).
+		// Per the per-tag fixture-isolation rule established at
+		// API-0188 `mounts-allNamedByApplicationId`, API-0246
+		// `organization-active`, API-0268 `port-create`, API-0290
+		// `project-all`, API-0298 `redirects-create`, API-0325
+		// `schedule-create`, API-0331 `security-create`, and
+		// reasserted at API-0445 `volumeBackups-create` and API-0446
+		// `volumeBackups-delete`, this entry stays inside the
+		// `volBackups-cov-*` namespace and **must not** back-
+		// reference any closed prior-tag namespace (`admin-cov-*`,
+		// `ai-cov-*`, `app-cov-*`, `auth-cov-*`, `backup-cov-*`,
+		// `bb-cov-*`, `cert-cov-*`, `clu-cov-*`, `compose-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `discord-cov-*`,
+		// `docker-cov-*`, `domain-cov-*`, `email-cov-*`, `gh-cov-*`,
+		// `git-cov-*`, `gitea-cov-*`, `gitlab-cov-*`,
+		// `mariadb-cov-*`, `mongo-cov-*`, `mounts-cov-*`,
+		// `mysql-cov-*`, `notif-cov-*`, `org-cov-*`, `port-cov-*`,
+		// `postgres-cov-*`, `preview-cov-*`, `proj-cov-*`,
+		// `redirects-cov-*`, `redis-cov-*`, `rollback-cov-*`,
+		// `schedule-cov-*`, `security-cov-*`, `set-cov-*`,
+		// `srv-cov-*`, `swarm-cov-*`, `usr-cov-*`).
+		// Subsequent volumeBackups/* peers (API-0448
+		// `volumeBackups-one`, API-0449 `volumeBackups-runManually`,
+		// API-0450 `volumeBackups-update`) should grep this block,
+		// the API-0445 `volumeBackups-create` kickoff, and the
+		// API-0446 `volumeBackups-delete` mirror to continue
+		// inheriting the volumeBackups/* slug namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json > /volumeBackups.list >
+		// get`: a **GET** with **two REQUIRED query parameters** and
+		// **no request body** — `id` (plain string) and
+		// `volumeBackupType` (string with a seven-value enum
+		// `application` | `postgres` | `mysql` | `mariadb` | `mongo`
+		// | `redis` | `compose`). Responses 200/400/401/403/**404**/
+		// 500 — a 404 leg is declared, but per the list-style-getter
+		// convention reasserted at API-0054
+		// `bitbucket-getBitbucketRepositories` (scoped-list GET),
+		// API-0290 `project-all` (fleet list), API-0327
+		// `schedule-list` (filter-by-parent-id list — the priority-4
+		// schedule/* mirror precedent for this exact slot), API-0335
+		// `server-all` (fleet list), and the bitbucket/* roster's
+		// split between API-0054 (list, 401-default) and API-0055
+		// `bitbucket-one` (by-id, 404-override), the 404 →
+		// CodeNotFound representative is reserved for the canonical
+		// by-id sibling at API-0448 `volumeBackups-one`, **not**
+		// this filter-by-parent-id list endpoint. The 200 response
+		// is `{}` with `additionalProperties: false`, matching every
+		// prior covered peer in the empty-success cohort.
+		//
+		// **Query composition:**
+		//   - **REQUIRED:** `id` (plain string). Identifies the
+		//     parent resource whose volume backups are being listed
+		//     (interpretation depends on `volumeBackupType` — e.g.
+		//     an application id when `volumeBackupType=application`,
+		//     a postgres id when `volumeBackupType=postgres`, and so
+		//     on across the seven-value enum). The fixture below
+		//     supplies a deterministic-but-clearly-fake
+		//     `volBackups-cov-list-0447-id` literal carrying the
+		//     `<tag>-cov-<slug>-<storyID>-<field>` suffix for
+		//     `git grep` traceability.
+		//   - **REQUIRED:** `volumeBackupType` (string, seven-value
+		//     enum `application` | `postgres` | `mysql` | `mariadb`
+		//     | `mongo` | `redis` | `compose`). The fixture picks
+		//     `application` — the first enum value, matching the
+		//     deterministic-first-enum pick convention reasserted
+		//     at API-0327 `schedule-list`'s own `scheduleType` enum
+		//     population (which also picked `application` as the
+		//     first of its four-value enum). The harness's
+		//     `runAPICoverageSuccess` re-reads `r.URL.Query()` and
+		//     asserts every populated `SampleQuery` key/value pair
+		//     survives verbatim, so the wire query string proves
+		//     end-to-end propagation through the CLI → API client →
+		//     httptest server path for both required slots.
+		//   - **No optional query parameters exist on this
+		//     operation**, so the fixture saturates the entire
+		//     query-parameter surface with the two REQUIRED slots.
+		//
+		// **Shape positioning — two-required-query GET list-style
+		// getter, no request body, plain-string + seven-value-enum
+		// query mix.** Cardinality- and shape-identical to API-0327
+		// `schedule-list` (the priority-4 schedule/* mirror
+		// precedent for this slot — also two REQUIRED query slots,
+		// `id` plain string + an enum-typed `*Type` discriminator),
+		// with the discriminator's enum width widened from four
+		// values (`schedule-list`'s `scheduleType`) to seven values
+		// (this entry's `volumeBackupType`). Mirrors the multi-
+		// required-query GET precedent on API-0053
+		// `bitbucket-getBitbucketBranches` (three-param GET) and the
+		// scoped-list-getter precedent on API-0054
+		// `bitbucket-getBitbucketRepositories` (single-required-
+		// query scoped list). Closes the minimum-query-surface-with-
+		// an-enum slot for the volumeBackups/* roster; the by-id GET
+		// shape is reserved for API-0448 `volumeBackups-one`.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// Even though the spec declares 404 on this operation, the
+		// per-tag opener convention reserves 404 → CodeNotFound for
+		// the canonical by-id sibling (API-0448
+		// `volumeBackups-one`), not for this filter-by-parent-id
+		// list endpoint. Auth is the universal failure mode every
+		// Dokploy operation must re-prove, so 401 → CodeAuth via
+		// the harness default (`tc.FailureStatus == 0` → 401,
+		// `tc.FailureCode == ""` → CodeAuth) stays the most
+		// informative representative for a list-style getter,
+		// mirroring API-0054 `bitbucket-getBitbucketRepositories`,
+		// API-0290 `project-all`, API-0327 `schedule-list`, and
+		// API-0335 `server-all`.
+		//
+		// **Fixture token base** `volBackups-cov-list-0447` follows
+		// the established `<tag>-cov-<slug>-<storyID>` convention
+		// pre-reserved by the API-0445 kickoff banner (verified: no
+		// collisions with `volBackups-cov-create-0445-*` or
+		// `volBackups-cov-delete-0446-*`, and reserves the slug
+		// namespace for the upcoming `volBackups-cov-one-0448`,
+		// `volBackups-cov-runManually-0449`, and
+		// `volBackups-cov-update-0450` peers). Single-segment slug
+		// `list` has no internal capitalisation so the kebab-vs-
+		// camel slug-style choice deferred to API-0449
+		// `volumeBackups-runManually` (the first multi-camel-segment
+		// volumeBackups/* slug) remains unaffected here.
+		SampleQuery: map[string][]string{
+			"id":               {"volBackups-cov-list-0447-id"},
+			"volumeBackupType": {"application"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the empty-
+		// success cohort. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

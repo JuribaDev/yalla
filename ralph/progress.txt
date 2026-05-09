@@ -25604,3 +25604,85 @@ forward-reference lesson before assuming any field shape.
     notification/* siblings; every other slot must be re-verified
     per spec.
 ---
+
+## 2026-05-09 - API-0447 (Cover volumeBackups-list, GET /volumeBackups.list)
+- Appended a new `apiCoverageCase` entry at the tail of
+  `coveredAPIOperations` in `internal/cli/api_coverage_test.go` for
+  story API-0447. The entry pins:
+    - `OperationID = "volumeBackups-list"`,
+      `Method = http.MethodGet`, `Path = "/volumeBackups.list"`,
+      `Tag = "volumeBackups"`.
+    - `SampleQuery` populated with the two REQUIRED query slots:
+      `id = "volBackups-cov-list-0447-id"` (deterministic-but-clearly-
+      fake `<tag>-cov-<slug>-<storyID>-<field>` token) and
+      `volumeBackupType = "application"` (first enum value of the
+      seven-value enum `application`/`postgres`/`mysql`/`mariadb`/
+      `mongo`/`redis`/`compose`).
+    - `SuccessResponse = "{}"` to match the spec's empty-success
+      response (`200` is `{}` with `additionalProperties: false`).
+    - No `SampleBody` (operation declares no request body).
+    - Default `FailureStatus`/`FailureCode` (401 → CodeAuth) — matches
+      the list-style-getter convention reasserted at API-0054
+      `bitbucket-getBitbucketRepositories`, API-0290 `project-all`,
+      API-0327 `schedule-list`, and API-0335 `server-all`. The 404 →
+      CodeNotFound override stays reserved for the canonical by-id
+      sibling (API-0448 `volumeBackups-one`).
+- The shared coverage harness now exercises five invariants for this
+  operation: registry presence (id/method/path/tag), `yalla schema get
+  volumeBackups-list --json` reachability, `yalla manifest --json`
+  inclusion, an httptest-driven success round-trip with both query
+  parameters forwarded verbatim on the wire, and a representative
+  401→CodeAuth failure leg.
+- Files changed:
+    - `internal/cli/api_coverage_test.go` — appended the API-0447
+      `apiCoverageCase` literal (mirrors API-0327 `schedule-list`
+      precedent, widened from a four-value enum to seven values).
+    - `ralph/prd.json` — flipped `API-0447.passes` from `false` to
+      `true`.
+    - `ralph/progress.txt` — this entry.
+- Verification (run from repo root):
+    - `gofmt -w .` — clean
+    - `go mod tidy` — clean
+    - `go vet ./...` — clean
+    - `go test ./...` — PASS
+    - `go test -race ./...` — PASS
+    - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+      `goreleaser` — not installed locally; documented as missing per
+      the verification baseline rather than silently skipped.
+- Remaining risks / follow-ups:
+    - API-0448 `volumeBackups-one` is the next priority-4 peer and is
+      pre-reserved as the volumeBackups/* tag's 404→CodeNotFound
+      representative (canonical by-id-sibling convention). Its entry
+      should grep this block and the API-0445 / API-0446 kickoff plus
+      delete blocks to inherit the `volBackups-cov-*` namespace.
+    - The slug-style choice (kebab-vs-camel for multi-camel-segment
+      operationIds) is still deferred to API-0449
+      `volumeBackups-runManually`, the first multi-camel-segment
+      volumeBackups/* slug. Single-segment slugs (`create`, `delete`,
+      `list`, `one`, `update`) sidestep the choice entirely.
+- **Learnings for future iterations:**
+    - The closest priority-4 mirror precedent for a `*-list` GET with
+      two REQUIRED query slots (one plain string + one enum) is
+      API-0327 `schedule-list`. Its commentary scaffold (per-tag
+      isolation banner → spec re-verification block → query
+      composition → shape positioning → family choice → fixture token
+      base) ports cleanly to volumeBackups-list with only the enum
+      width and id-token name swapped.
+    - When a list endpoint declares a 404 leg in the spec but per-tag
+      convention reserves 404→CodeNotFound for the canonical by-id
+      sibling, leave `FailureStatus`/`FailureCode` defaulted (401 /
+      CodeAuth). The convention is established across bitbucket/*,
+      project/*, schedule/*, server/* and now applies verbatim to the
+      volumeBackups/* tag.
+    - For enum-typed query parameters, picking the first enum value is
+      the documented deterministic-first-enum convention (locked at
+      API-0325 `schedule-create` / API-0327 `schedule-list` for
+      `scheduleType`, applied here for `volumeBackupType`). It keeps
+      fixtures grep-friendly and makes diffs of new enum-bearing
+      operations trivially reviewable.
+    - The volumeBackups/* tag's full operationId (`volumeBackups-*`)
+      stays in OperationID/Method/Path/Tag fields verbatim, but the
+      fixture-prefix is abbreviated to `volBackups-cov-*` (locked at
+      API-0445 kickoff). Future volumeBackups/* peers must keep using
+      `volBackups-cov-*` for fixture tokens.
+---
