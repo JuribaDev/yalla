@@ -40337,6 +40337,148 @@ var coveredAPIOperations = []apiCoverageCase{
 		FailureStatus: http.StatusNotFound,
 		FailureCode:   yerr.CodeNotFound,
 	},
+	{
+		StoryID:     "API-0449",
+		OperationID: "volumeBackups-runManually",
+		Method:      http.MethodPost,
+		Path:        "/volumeBackups.runManually",
+		Tag:         "volumeBackups",
+		// Fifth priority-4 volumeBackups/* peer and the **first
+		// multi-camel-segment** entry on the volumeBackups/* coverage
+		// roster — succeeds the body-bearing POST pair API-0445
+		// `volumeBackups-create` (kickoff, five-required-string-scalar
+		// create-mutation) and API-0446 `volumeBackups-delete`
+		// (single-required-string-scalar destructive POST), the
+		// two-required-query list-style getter API-0447
+		// `volumeBackups-list`, and the canonical-by-id GET API-0448
+		// `volumeBackups-one` (single-required-string-query, 404 →
+		// CodeNotFound override). Inherits the `volBackups-cov-*`
+		// per-tag fixture-isolation namespace opened at API-0445
+		// `volumeBackups-create` (note the abbreviated `volBackups`
+		// fixture-prefix decision locked at the kickoff entry — the
+		// full `volumeBackups` tag name is preserved in OperationID,
+		// Method, Path, and Tag fields, so the abbreviated fixture
+		// prefix has no correctness impact, only diff-friendliness).
+		// Per the per-tag fixture-isolation rule established at
+		// API-0188 `mounts-allNamedByApplicationId`, API-0246
+		// `organization-active`, API-0268 `port-create`, API-0290
+		// `project-all`, API-0298 `redirects-create`, API-0325
+		// `schedule-create`, API-0331 `security-create`, and
+		// reasserted at API-0445 `volumeBackups-create`, API-0446
+		// `volumeBackups-delete`, API-0447 `volumeBackups-list`, and
+		// API-0448 `volumeBackups-one`, this entry stays inside the
+		// `volBackups-cov-*` namespace and **must not** back-reference
+		// any closed prior-tag namespace (`admin-cov-*`, `ai-cov-*`,
+		// `app-cov-*`, `auth-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		// `cert-cov-*`, `clu-cov-*`, `compose-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `discord-cov-*`,
+		// `docker-cov-*`, `domain-cov-*`, `email-cov-*`, `gh-cov-*`,
+		// `git-cov-*`, `gitea-cov-*`, `gitlab-cov-*`,
+		// `mariadb-cov-*`, `mongo-cov-*`, `mounts-cov-*`,
+		// `mysql-cov-*`, `notif-cov-*`, `org-cov-*`, `port-cov-*`,
+		// `postgres-cov-*`, `preview-cov-*`, `proj-cov-*`,
+		// `redirects-cov-*`, `redis-cov-*`, `rollback-cov-*`,
+		// `schedule-cov-*`, `security-cov-*`, `set-cov-*`,
+		// `srv-cov-*`, `swarm-cov-*`, `usr-cov-*`). The remaining
+		// volumeBackups/* peer (API-0450 `volumeBackups-update`)
+		// should grep this block plus the API-0445/API-0446/API-0447/
+		// API-0448 quartet to continue inheriting the volumeBackups/*
+		// slug namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json > /volumeBackups.runManually
+		// > post`: a **POST** with **no parameters** and a **REQUIRED
+		// request body** whose schema declares **one REQUIRED non-
+		// nullable plain string field** `volumeBackupId` with **zero
+		// optional fields**. Responses 200/400/401/403/500 — **no 404**
+		// is declared, mirroring the action-on-known-id POST precedent
+		// reasserted across every body-bearing imperative-action POST
+		// already covered (API-0326 `schedule-delete`, API-0323
+		// `rollback-delete`, API-0309 `redis-remove`, API-0179
+		// `mongo-remove`, and the volumeBackups/* mirror at API-0446
+		// `volumeBackups-delete`) whose missing-target failure mode
+		// collapses into 400/validation under Dokploy's tRPC
+		// convention rather than a dedicated 404 leg. The 200 response
+		// is `{}` with `additionalProperties: false`, matching the
+		// empty-success cohort.
+		//
+		// **Slug style — kebab-case `run-manually`, the canonical
+		// volumeBackups/* multi-camel slug-style decision.** Per the
+		// kebab-vs-camel choice deferred at API-0445 `volumeBackups-
+		// create` (and re-deferred at API-0446 `volumeBackups-delete`,
+		// API-0447 `volumeBackups-list`, and API-0448 `volumeBackups-
+		// one` — all single-segment slugs `create`/`delete`/`list`/
+		// `one` with no internal capitalisation), the volumeBackups/*
+		// roster picks **kebab-case**. This mirrors the dominant
+		// cross-tag precedent: API-0023 `application-readTraefikConfig`
+		// (`app-cov-read-traefik-config-0023`), API-0188
+		// `mounts-allNamedByApplicationId` (`mounts-cov-all-named-by-
+		// application-id-0188`), and the entire notification/* `create-
+		// *` cohort opened at API-0209 `notification-createCustom`
+		// (slugs `create-custom`, `create-discord`, `create-email`,
+		// `create-gotify`, `create-lark`, `create-ntfy`, `create-
+		// pushover`, `create-resend`, `create-slack`, `create-teams`,
+		// `create-telegram`). The remaining volumeBackups/* peer
+		// (API-0450 `volumeBackups-update`) is itself a single-segment
+		// `update` slug with no internal capitalisation, so this
+		// kebab-case decision propagates as a no-op there but governs
+		// any future multi-camel additions to the tag.
+		//
+		// **Body composition:**
+		//   - **REQUIRED:** `volumeBackupId` (plain string).
+		//     Identifies the volumeBackup record to execute. The
+		//     fixture below supplies a deterministic-but-clearly-fake
+		//     `volBackups-cov-run-manually-0449-volumeBackupId`
+		//     literal carrying the
+		//     `<tag>-cov-<slug>-<storyID>-<field>` suffix for
+		//     `git grep` traceability.
+		//   - **No optional fields exist on this operation**, so the
+		//     fixture saturates the entire schema surface with the
+		//     single REQUIRED scalar.
+		//
+		// **Shape positioning — single-required-string-scalar POST
+		// imperative-action mutation, body REQUIRED, no optional
+		// tail.** Cardinality- and type-identical to API-0446
+		// `volumeBackups-delete` (the volumeBackups/* sibling sharing
+		// the exact same one-`volumeBackupId`-scalar wire shape — the
+		// only difference is operationId/Path and the action verb's
+		// semantics: delete vs. trigger an immediate manual run),
+		// API-0326 `schedule-delete`, API-0323 `rollback-delete`,
+		// API-0309 `redis-remove`, API-0179 `mongo-remove`, and the
+		// rest of the single-required-`<tag>Id` body family (one
+		// REQUIRED plain string slot, zero optional slots).
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so the
+		// 404→CodeNotFound override is structurally inapplicable. The
+		// volumeBackups/* tag's 404→CodeNotFound representative is
+		// already consumed by API-0448 `volumeBackups-one` per the
+		// canonical by-id-sibling convention. This entry is a body-
+		// bearing imperative-action POST and stays on the
+		// 401→CodeAuth invariant locked by every body-bearing action
+		// peer already covered, mirroring API-0446
+		// `volumeBackups-delete`.
+		//
+		// **Fixture token base** `volBackups-cov-run-manually-0449`
+		// follows the established `<tag>-cov-<slug>-<storyID>`
+		// convention pre-reserved by the API-0445 kickoff banner and
+		// applies the kebab-case slug-style decision locked above
+		// (verified: no collisions with `volBackups-cov-create-0445-*`,
+		// `volBackups-cov-delete-0446-*`, `volBackups-cov-list-0447-*`,
+		// or `volBackups-cov-one-0448-*`, and reserves the slug
+		// namespace for the upcoming `volBackups-cov-update-0450`
+		// peer).
+		SampleBody: json.RawMessage(`{
+			"volumeBackupId": "volBackups-cov-run-manually-0449-volumeBackupId"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the empty-
+		// success cohort. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

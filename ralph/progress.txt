@@ -26139,3 +26139,52 @@ forward-reference lesson before assuming any field shape.
       should explicitly cite the reservation banner so the
       cross-entry contract stays auditable in the diff.
 ---
+
+## 2026-05-09 06:05 UTC - API-0449
+- Implemented: Cover volumeBackups-runManually (POST /volumeBackups.runManually).
+  Appended a sixth volumeBackups/* entry to `coveredAPIOperations` in
+  `internal/cli/api_coverage_test.go`. The entry mirrors the API-0446
+  `volumeBackups-delete` shape (single-required-string-scalar POST body,
+  responses 200/400/401/403/500 — no 404), keeps the harness-default
+  401 → CodeAuth representative failure, and is the **first multi-camel-
+  segment volumeBackups/* slug**: locks the **kebab-case** slug-style
+  decision (`volBackups-cov-run-manually-0449-volumeBackupId`) deferred at
+  API-0445/446/447/448, matching the dominant cross-tag precedent
+  (notification/* `create-*` cohort, `mounts-allNamedByApplicationId`,
+  `application-readTraefikConfig`).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (single struct literal appended)
+  - `ralph/prd.json` (set `API-0449.passes = true`)
+  - `ralph/progress.txt` (this entry)
+- Verification run: `gofmt -w .`, `go mod tidy`, `go vet ./...`,
+  `go test ./...`, `go test -race ./...` — all PASS.
+  `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`
+  remain uninstalled locally; same as the API-0448 baseline.
+- Results: registry, schema, manifest, success-leg, and failure-leg
+  invariants now cover `volumeBackups-runManually`. The PRD acceptance
+  criteria for raw API call, schema get, --no-input compatibility,
+  yalla.output.v1 success envelope, yalla.error.v1 failure envelope, and
+  manifest inclusion are all enforced via the shared coverage harness.
+- Remaining risks or follow-ups:
+  - Only API-0450 `volumeBackups-update` remains in the volumeBackups/*
+    roster. Its slug `update` is single-segment so the kebab-case
+    decision locked here propagates as a no-op there. The
+    fixture-token namespace `volBackups-cov-update-0450-*` is reserved.
+- **Learnings for future iterations:**
+  - When a per-tag opener defers a slug-style choice ("first multi-
+    camel-segment slug"), the next entry whose slug actually contains
+    internal capitalisation MUST resolve the choice and document it
+    with cross-tag precedents (here: notification/* `create-*` cohort,
+    API-0023 `app-cov-read-traefik-config`, API-0188 `mounts-cov-all-
+    named-by-application-id`). Future tags with multi-camel slugs
+    should default to kebab-case unless the tag's existing fixture
+    history points the other way (see `srv-cov-getServerMetrics-0340`
+    or `set-cov-checkGPUStatus-0352` for the camel-retained
+    counterexamples).
+  - When a tag has multiple body-bearing imperative-action POSTs that
+    take only `<tag>Id`, the second sibling (here:
+    `volumeBackups-runManually` after `volumeBackups-delete`) can mirror
+    the prior entry's wire shape exactly while still re-proving the
+    full coverage harness — the value is in the cross-entry diff (slug,
+    fixture token, action verb), not in the wire contract itself.
+---
