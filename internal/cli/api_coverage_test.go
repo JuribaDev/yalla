@@ -26130,6 +26130,136 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0328",
+		OperationID: "schedule-one",
+		Method:      http.MethodGet,
+		Path:        "/schedule.one",
+		Tag:         "schedule",
+		// Fourth priority-4 schedule/* peer and the **canonical
+		// by-id GET** entry on the schedule/* coverage roster —
+		// succeeds the request-body POSTs at API-0325
+		// `schedule-create` (kickoff, every-optional-populated
+		// 11-field body) and API-0326 `schedule-delete` (single-
+		// required-string-scalar destructive action), and the
+		// two-required-query list-style getter at API-0327
+		// `schedule-list`. Inherits the `schedule-cov-*` per-tag
+		// fixture-isolation namespace opened at API-0325. Per the
+		// per-tag fixture-isolation rule established at API-0188
+		// `mounts-allNamedByApplicationId`, API-0246
+		// `organization-active`, API-0268 `port-create`, API-0290
+		// `project-all`, API-0298 `redirects-create`, API-0331
+		// `security-create`, and reasserted at API-0325
+		// `schedule-create` and API-0327 `schedule-list`, this
+		// entry stays inside the `schedule-cov-*` namespace and
+		// **must not** back-reference any closed prior-tag
+		// namespace (`admin-cov-*`, `ai-cov-*`, `app-cov-*`,
+		// `auth-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		// `cluster-cov-*`, `compose-cov-*`, `deployment-cov-*`,
+		// `destination-cov-*`, `discord-cov-*`, `docker-cov-*`,
+		// `domain-cov-*`, `email-cov-*`, `gh-cov-*`, `git-cov-*`,
+		// `gitea-cov-*`, `gitlab-cov-*`, `mariadb-cov-*`,
+		// `mongo-cov-*`, `mounts-cov-*`, `mysql-cov-*`,
+		// `notif-cov-*`, `org-cov-*`, `port-cov-*`,
+		// `postgres-cov-*`, `preview-cov-*`, `proj-cov-*`,
+		// `redirects-cov-*`, `redis-cov-*`, `rollback-cov-*`,
+		// `security-cov-*`, `set-cov-*`, `srv-cov-*`,
+		// `swarm-cov-*`, `usr-cov-*`). Subsequent schedule/* peers
+		// (API-0329 `schedule-runManually`, API-0330
+		// `schedule-update`) should grep this block and the
+		// API-0325/API-0326/API-0327 trio to continue inheriting
+		// the schedule/* slug namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json > /schedule.one > get`:
+		// a **GET** with **no request body** and **one REQUIRED
+		// query parameter** — `scheduleId` (plain string). Typed
+		// `string` with no `anyOf` / `nullable` / enum constraints.
+		// **No optional siblings** — wire shape is byte-for-byte
+		// identical to API-0055 `bitbucket-one`'s
+		// 1-required-string-query envelope and API-0342
+		// `server-one`'s by-id retrieval shape. Responses
+		// 200/400/401/403/**404**/500 — the **404 stays present**
+		// and is the canonical semantic failure mode for a by-id
+		// retrieval. The 200 response is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort.
+		//
+		// **Query composition:**
+		//   - **REQUIRED:** `scheduleId` (plain string). Identifies
+		//     the specific schedule resource to retrieve. The
+		//     fixture below supplies a deterministic-but-clearly-
+		//     fake `schedule-cov-one-0328-scheduleId-fixture`
+		//     literal carrying the
+		//     `<tag>-cov-<slug>-<storyID>-<field>-fixture` suffix
+		//     for `git grep` traceability, mirroring API-0055
+		//     `bitbucket-one`'s `bb-cov-one-0055-bitbucketId-
+		//     fixture` literal.
+		//   - **No optional query parameters exist on this
+		//     operation**, so the fixture saturates the entire
+		//     query-parameter surface with the single REQUIRED
+		//     slot.
+		//
+		// **Shape positioning — single-required-query GET by-id
+		// retrieval, no request body, plain-string query.**
+		// Mirrors the canonical-by-id-GET precedent on API-0055
+		// `bitbucket-one` (single-required-string-query by-id
+		// retrieval, 404-override) and API-0342 `server-one`
+		// (by-id retrieval, 404-override). Closes the by-id GET
+		// shape for the schedule/* roster; remaining schedule/*
+		// peers (API-0329 `schedule-runManually`, API-0330
+		// `schedule-update`) are mutating POSTs that must each
+		// re-verify their own spec shapes per the
+		// API-0345..API-0444 forward-reference lesson.
+		//
+		// **Family choice — 404 → CodeNotFound override, the
+		// canonical 404-override home in schedule/*.** API-0327
+		// `schedule-list`'s design-rationale header explicitly
+		// reserved 404 → CodeNotFound for "the canonical by-id
+		// sibling at API-0328 `schedule-one`, **not** this
+		// filter-by-parent-id list endpoint." This entry consumes
+		// that reservation — the override mirrors the precedent
+		// set at API-0055 `bitbucket-one`, API-0342 `server-one`,
+		// and reserved earlier at API-0290 `project-all` /
+		// API-0294 `project-one` / API-0335 `server-all` for the
+		// `*-one` shape across tags. A missing-resource by-id
+		// retrieval is the most informative failure to exercise
+		// here; auth failures stay covered fleet-wide by the
+		// cross-tag default 401 → CodeAuth path.
+		//
+		// **Fixture token base** `schedule-cov-one-0328` follows
+		// the established `<tag>-cov-<slug>-<storyID>` convention
+		// and consumes the slot reserved by the API-0325 kickoff
+		// header and API-0327 `schedule-list`'s design-rationale
+		// header (verified: no collisions with
+		// `schedule-cov-create-0325-*`,
+		// `schedule-cov-delete-0326-*`, or
+		// `schedule-cov-list-0327-*`, and reserves the slug
+		// namespace for the upcoming
+		// `schedule-cov-runManually-0329` and
+		// `schedule-cov-update-0330` peers).
+		SampleQuery: map[string][]string{
+			"scheduleId": {"schedule-cov-one-0328-scheduleId-fixture"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+		// Failure-leg override: this is the canonical home for the
+		// 404 → CodeNotFound representative-failure assertion
+		// reserved at API-0327 `schedule-list`'s design-rationale
+		// header for the schedule/* by-id peer. Mirrors the
+		// API-0055 `bitbucket-one` and API-0342 `server-one`
+		// 404-override precedents across tags. A missing-resource
+		// by-id retrieval is the most informative failure to
+		// exercise here; auth failures stay covered fleet-wide by
+		// the cross-tag default 401 → CodeAuth path.
+		FailureStatus: http.StatusNotFound,
+		FailureCode:   yerr.CodeNotFound,
+	},
+	{
 		StoryID:     "API-0331",
 		OperationID: "security-create",
 		Method:      http.MethodPost,

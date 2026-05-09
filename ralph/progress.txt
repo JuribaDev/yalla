@@ -24969,3 +24969,51 @@ forward-reference lesson before assuming any field shape.
     cohort (createCustom, createDiscord, createEmail, createGotify).
     Nothing in createGotify needs the 404→CodeNotFound override.
 ---
+
+## 2026-05-09 - API-0328
+- **Implemented**: Per-operation contract coverage for `schedule-one` (GET
+  /schedule.one) — the canonical by-id GET on the schedule/* roster.
+  Appended one `apiCoverageCase` literal to the append-only
+  `coveredAPIOperations` table; the existing harness drives all five
+  invariants (registry presence, schema reachability, manifest inclusion,
+  httptest success round-trip, representative failure) automatically.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended API-0328 entry between
+    the API-0327 `schedule-list` block and the API-0331 `security-create`
+    kickoff. Single REQUIRED query parameter `scheduleId` saturates the
+    entire query surface (no optional siblings on this op). Failure-leg
+    override 404 → CodeNotFound consumes the reservation made by the
+    API-0327 `schedule-list` design-rationale header for the schedule/*
+    by-id sibling, mirroring the API-0055 `bitbucket-one` and API-0342
+    `server-one` 404-override precedents.
+  - `ralph/prd.json` — set API-0328 `passes: true`.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean (no new deps).
+  - `go vet ./...` — clean.
+  - `go test ./... -count=1` — all packages `ok`.
+  - `go test -race ./... -count=1` — all packages `ok`.
+- **Tools NOT available locally** (unchanged from prior stories):
+  `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`.
+- **Remaining risks / follow-ups**:
+  - 84 failing PRD stories remain. Next priority-4 schedule/* peers
+    (API-0329 `schedule-runManually`, API-0330 `schedule-update`) should
+    grep this block and the API-0325/0326/0327 trio to inherit the
+    `schedule-cov-*` slug namespace.
+- **Learnings for future iterations**:
+  - The `apiCoverageCase` table is the only source of new code per
+    API-XXXX story — adding a literal is sufficient and keeps the diff
+    minimal (~135 lines including documentation comments).
+  - The 404-override slot is reserved for the canonical `*-one` by-id
+    GET in each tag, established by the bitbucket/* roster and reasserted
+    across project/* / server/* / schedule/* tags. List-style GETs that
+    *also* declare 404 in the spec keep the harness-default 401 → CodeAuth
+    failure leg because the per-tag opener convention reserves the 404
+    representative for the by-id sibling — re-check the prior list-style
+    entry's design-rationale header before claiming the override.
+  - When the spec declares a single REQUIRED query parameter with no
+    optional siblings, the minimum-required envelope IS the whole envelope
+    — no every-optional-populated rule applies. Mirror the API-0055
+    `bitbucket-one` `bb-cov-one-0055-bitbucketId-fixture` literal pattern
+    for the `<tag>-cov-<slug>-<storyID>-<field>-fixture` traceable token.
+---
