@@ -28838,3 +28838,59 @@ forward-reference lesson before assuming any field shape.
     before picking a slug to avoid silent collision in subtest
     names that run in parallel via `t.Parallel`.
 ---
+
+
+## 2026-05-09 - API-0267 (patch-update)
+- Added apiCoverageCase entry for patch-update (POST /patch.update) in
+  internal/cli/api_coverage_test.go, sorted between API-0266 and
+  API-0268. Spec re-verified against
+  internal/api/data/openapi.json > /patch.update > post: a POST with
+  zero parameters, REQUIRED body, exactly ONE required string scalar
+  (patchId) and SIX optional fields (type enum {create,update,delete},
+  filePath string, enabled boolean, content string, createdAt string,
+  updatedAt anyOf [string,null]). Responses 200/400/401/403/500 (no
+  404), matching the canonical mutating-POST cohort.
+- Fixture closes the patch-cov-* per-tag namespace opened at API-0256:
+  per-case slug `patch-cov-update-0267` populates only the required
+  patchId field, deliberately omitting all six optional fields per the
+  established within-tag minimum-required-fields precedent (API-0265
+  patch-saveFileAsPatch, API-0266 patch-toggleEnabled). Harness-default
+  401 -> CodeAuth failure leg retained (404 inapplicable, 400
+  representative reserved for stories where validation is the unique
+  failure mode).
+- Files changed:
+  - internal/cli/api_coverage_test.go (new case appended)
+  - ralph/prd.json (passes: true)
+  - ralph/progress.txt (this entry)
+- Verification run:
+  - gofmt -w . (clean)
+  - go mod tidy (clean)
+  - go vet ./... (clean)
+  - go test ./... (all pass; internal/cli 1.469s)
+  - go test -race ./... (all pass; internal/cli 3.444s)
+  - goimports/golangci-lint/staticcheck/govulncheck/goreleaser not
+    installed locally; documented per Codebase Patterns convention.
+- Remaining risks or follow-ups:
+  - patch-update closes patch/* tag. Next failing priority-3 backlog
+    entry is API-0268 port-create (opens fresh port-cov-* namespace).
+  - A future contract-test extension exercising each `type` enum
+    branch (create/update/delete) or the `updatedAt`
+    anyOf-string-or-null branches should add a sibling case rather than
+    mutating the closed-shape API-0267 fixture.
+- Learnings for future iterations:
+  - Indentation in api_coverage_test.go is tabs at the case-struct
+    level; the slice elements sit one tab deep (`\t{` and `\t},`),
+    field literals two tabs deep (`\t\tStoryID:`), JSON body lines
+    three tabs deep. The Read tool renders tabs as expanded spaces, so
+    Edit's exact-string match must use real tabs — verify with a
+    Python repr() print before constructing the replacement.
+  - Closing-tag entries should explicitly name the next-tag-arc opener
+    (here API-0268 port-create -> port-cov-* namespace) so the
+    forward-reference lesson cleanly hands off across the tag boundary.
+  - For one-required-plus-N-optional POST update mutations, the
+    canonical fixture supplies only the required field — the harness
+    runAPICoverageSuccess body-equality assertion compares wire bytes
+    verbatim, so populating optionals only adds noise without unique
+    coverage unless the optional surface is itself uniquely
+    distinguishing (the API-0292 project-create exception).
+---

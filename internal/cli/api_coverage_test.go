@@ -26105,6 +26105,173 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0267",
+		OperationID: "patch-update",
+		Method:      http.MethodPost,
+		Path:        "/patch.update",
+		Tag:         "patch",
+		// Twelfth and final entry in the patch/* roster, immediately
+		// following API-0256 `patch-byEntityId`, API-0257
+		// `patch-cleanPatchRepos`, API-0258 `patch-create`, API-0259
+		// `patch-delete`, API-0260 `patch-ensureRepo`, API-0261
+		// `patch-markFileForDeletion`, API-0262 `patch-one`, API-0263
+		// `patch-readRepoDirectories`, API-0264 `patch-readRepoFile`,
+		// API-0265 `patch-saveFileAsPatch`, and API-0266
+		// `patch-toggleEnabled`, closing the `patch-cov-*` per-tag
+		// fixture-isolation namespace opened at API-0256. Per the
+		// per-tag fixture-isolation rule reasserted at every prior
+		// patch/* story, this entry **must not** back-reference any
+		// closed prior-tag namespace (`admin-cov-*`, `ai-cov-*`,
+		// `app-cov-*`, `backup-cov-*`, `bb-cov-*`, `cert-cov-*`,
+		// `clu-cov-*`, `compose-cov-*`, `deployment-cov-*`,
+		// `dest-cov-*`, `docker-cov-*`, `domain-cov-*`,
+		// `environment-cov-*`, `git-cov-*`, `mounts-cov-*`,
+		// `notification-cov-*`, `org-cov-*`, `proj-cov-*`,
+		// `set-cov-*`, or `srv-cov-*`); the next-tag arc opens at
+		// API-0268 `port-create` and must establish its own
+		// `port-cov-*` slug namespace rather than back-reference the
+		// `patch-cov-*` literals here for body-shape templates.
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /patch.update > post`: a
+		// **POST** with **zero parameters** (no query, no path, no
+		// header) and a **REQUIRED** `requestBody`
+		// (`requestBody.required = true`) carrying a JSON object whose
+		// inner schema declares **exactly ONE REQUIRED scalar** — a
+		// non-nullable plain string (`patchId`, no `format` /
+		// `pattern`) — and **six OPTIONAL fields**: a non-nullable
+		// string-with-enum scalar (`type` ∈ {`create`, `update`,
+		// `delete`}, no default declared — note this is the
+		// patch-action enum that API-0258 `patch-create` declares as
+		// an optional discriminator, distinct from API-0265
+		// `patch-saveFileAsPatch`'s `{create, update}` `patchType`
+		// enum and from the `applicationOrCompose` `{application,
+		// compose}` enum carried by API-0260 / API-0261 / API-0263 /
+		// API-0264 / API-0265), a non-nullable plain string
+		// (`filePath`), a non-nullable boolean (`enabled`), a
+		// non-nullable plain string (`content`), a non-nullable plain
+		// string (`createdAt`), and an `anyOf [string, null]` scalar
+		// (`updatedAt`). Responses 200/400/401/403/500 — note the
+		// **absence of 404**, mirroring the canonical mutating-POST
+		// cohort response set at API-0257 `patch-cleanPatchRepos`,
+		// API-0258 `patch-create`, API-0259 `patch-delete`, API-0260
+		// `patch-ensureRepo`, API-0261 `patch-markFileForDeletion`,
+		// API-0265 `patch-saveFileAsPatch`, and API-0266
+		// `patch-toggleEnabled` rather than the by-id-flavoured
+		// 404-bearing GET response set at API-0256 `patch-byEntityId`
+		// / API-0262 `patch-one` / API-0263
+		// `patch-readRepoDirectories` / API-0264 `patch-readRepoFile`.
+		// The 200 schema is `{}` with `additionalProperties: false`,
+		// matching every prior covered peer in the empty-success
+		// cohort.
+		//
+		// **Shape positioning — single-required-string-scalar POST
+		// update-mutation with a six-field optional surface, body
+		// REQUIRED.** The lone-required-`patchId` head is structurally
+		// identical to API-0259 `patch-delete`'s
+		// single-required-string-scalar POST shape — both carry only
+		// `patchId` as the required wire payload — but the optional
+		// fan-out here (six fields including a tri-valued patch-action
+		// enum, two timestamp strings, and an anyOf-string-or-null) is
+		// the largest optional surface in the patch/* roster, larger
+		// than API-0258 `patch-create`'s required-string-pair-plus-
+		// optional-discriminator/boolean/two-nullable-string-ids head
+		// and larger than API-0265 `patch-saveFileAsPatch`'s
+		// four-required-plus-one-optional shape. The harness's
+		// `len(tc.SampleBody) > 0` gate at `runAPICoverageSuccess`
+		// activates the JSON content-type and byte-for-byte body
+		// comparison legs; this fixture supplies only the single
+		// REQUIRED `patchId` field so the success path verifies the
+		// CLI propagated the body verbatim.
+		//
+		// **Optional-field handling — every optional field
+		// deliberately omitted from the success-leg fixture.** The
+		// harness reserves "every-optional-populated" expansion for
+		// stories where the optional surface is the operation's
+		// *uniquely distinguishing* shape (e.g. API-0292
+		// `project-create`'s `{name, description?, env?}` whose
+		// optional fields participate in the only meaningful
+		// failure-leg discrimination). On a one-required-plus-
+		// six-optional POST, omitting all six optional fields
+		// exercises the canonical "minimum-required-fields" path the
+		// success-leg assertion in `runAPICoverageSuccess` is designed
+		// to validate; including them would shadow the spec's optional
+		// surface without adding any unique coverage. Mirrors the
+		// established within-tag precedent at API-0265
+		// `patch-saveFileAsPatch` (deliberately-omitted `patchType`
+		// optional). A future contract-test extension that exercises
+		// each optional `type` enum value (`create`, `update`,
+		// `delete`) or the `anyOf [string, null]` `updatedAt` branches
+		// should add a sibling case rather than mutating this one.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base `patch-cov-update-0267`
+		//     follows the `<tag>-cov-<slug>-<storyID>` convention
+		//     shared across every per-tag roster and is unique
+		//     (verified: no collisions with API-0256
+		//     `patch-cov-by-entity-id-0256`, API-0257
+		//     `patch-cov-cleanPatchRepos-0257`, API-0258
+		//     `patch-cov-create-0258`, API-0259
+		//     `patch-cov-delete-0259`, API-0260
+		//     `patch-cov-ensure-repo-0260`, API-0261
+		//     `patch-cov-mark-file-for-deletion-0261`, API-0262
+		//     `patch-cov-one-0262`, API-0263
+		//     `patch-cov-read-repo-directories-0263`, API-0264
+		//     `patch-cov-read-repo-file-0264`, API-0265
+		//     `patch-cov-save-file-as-patch-0265`, or API-0266
+		//     `patch-cov-toggle-enabled-0266`, and orthogonal to every
+		//     prior tag's `*-cov-*` namespaces).
+		//   * `patchId` carries the deterministic fixture token
+		//     `patch-cov-update-0267` so the wire payload is uniquely
+		//     identifiable in test output and cannot collide with any
+		//     production patch identifier. The schema constrains the
+		//     field to `type: string` only (no `format` or `pattern`),
+		//     so a fixture-shaped identifier is structurally valid.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (POST-style update
+		// on this Dokploy surface emits 400 for an unknown `patchId`
+		// rather than 404 — the by-id GETs at API-0256 / API-0262 /
+		// API-0263 / API-0264 carry 404 because they are *lookups*,
+		// not mutations), so the 404→CodeNotFound override is
+		// structurally inapplicable. 400→CodeInvalidInput is
+		// *technically* available — a payload that omits the REQUIRED
+		// `patchId` scalar, supplies an out-of-enum `type` value, or
+		// sends a non-boolean `enabled` would fail server-side
+		// validation — but the harness reserves 400 representatives
+		// for stories where payload validation is the operation's
+		// *uniquely distinguishing* failure mode, and the success-leg
+		// fixture above always carries the required scalar with a
+		// structurally valid type, so the validator surface is not
+		// exercised on the failure leg. Auth is the universal failure
+		// mode every authenticated Dokploy operation must re-prove, so
+		// the harness-default 401→CodeAuth failure leg
+		// (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""` →
+		// CodeAuth) stays the most informative representative — same
+		// call as the patch/* peers at API-0256, API-0257, API-0258,
+		// API-0259, API-0260, API-0261, API-0262, API-0263, API-0264,
+		// API-0265, and API-0266.
+		//
+		// API-0267 closes the patch/* roster. The next pending
+		// PRD-ordered backlog entry is API-0268 `port-create`
+		// (declared a **POST** per the spec preview), which opens a
+		// fresh port/* per-tag fixture-isolation namespace; the next
+		// contributor must open their own `port-cov-*` slug namespace
+		// and re-verify the spec against
+		// `internal/api/data/openapi.json > /port.create > post` per
+		// the forward-reference lesson before assuming any field shape.
+		SampleBody: json.RawMessage(`{
+			"patchId": "patch-cov-update-0267"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0268",
 		OperationID: "port-create",
 		Method:      http.MethodPost,
