@@ -22413,6 +22413,164 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0237",
+		OperationID: "notification-updateEmail",
+		Method:      http.MethodPost,
+		Path:        "/notification.updateEmail",
+		Tag:         "notification",
+		// Thirtieth entry on the notification/* coverage roster and
+		// the **third member of the notification/* `update*`
+		// mutation-by-id cohort** opened by API-0235
+		// `notification-updateCustom` and extended by API-0236
+		// `notification-updateDiscord`. Per the API-0235 closing note
+		// (reaffirmed by API-0236), every `update*` peer must mirror
+		// the kickoff entry's two-required + every-optional-populated
+		// shape and re-derive the optional-sibling list from the
+		// matching `notification-create*` precedent (here API-0211
+		// `notification-createEmail`) rather than back-referencing the
+		// closed `test*` cohort (API-0224..API-0234) or any other
+		// transport flavour. Stays inside the `notification-cov-*`
+		// per-tag fixture-isolation namespace seeded at API-0208
+		// `notification-all` and extended across API-0209..API-0236.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json >
+		// /notification.updateEmail > post`: a **POST** with **no
+		// parameters** and a **REQUIRED request body** whose schema
+		// declares **two REQUIRED non-nullable plain string fields**
+		// (`notificationId`, `emailId`) alongside a fifteen-sibling
+		// optional tail covering seven plain booleans
+		// (`appBuildError`, `databaseBackup`, `volumeBackup`,
+		// `dokployRestart`, `appDeploy`, `dockerCleanup`,
+		// `serverThreshold`), six plain strings (`name`, `smtpServer`,
+		// `username`, `password`, `fromAddress`), one plain number
+		// (`smtpPort`), one array-of-string (`toAddresses`), and one
+		// plain string scope-anchor (`organizationId`). Responses
+		// 200/400/401/403/500 — the spec does **not** declare 404 on
+		// this operation, matching the notification/* `update*` cohort
+		// kickoff API-0235 and the API-0236 sibling, plus the broader
+		// cross-tag update-by-id mutation precedent (Dokploy's tRPC
+		// convention collapses missing-target into 400/validation
+		// rather than surfacing a 404 leg). The 200 schema is `{}`
+		// with `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort.
+		//
+		// **Slug style — kebab-case inherited from the notification/*
+		// per-tag-slug-style rule fixed by the kickoff multi-camel
+		// entry API-0209 `notification-createCustom` (→
+		// `create-custom`) and reaffirmed by API-0235
+		// `notification-updateCustom` (→ `update-custom`) and API-0236
+		// `notification-updateDiscord` (→ `update-discord`).** This
+		// entry takes `update-email` as the slug stem (two
+		// kebab-cased segments mirrored from `updateEmail`). The
+		// fixture namespace is `notification-cov-update-email-0237-
+		// <field>`, mirroring the `notification-cov-<slug>-<storyID>-
+		// <field>` discipline locked by API-0208..API-0236.
+		//
+		// **Body composition — two-required + every-optional-
+		// populated.** Per the notification/* `update*` cohort house
+		// style locked by API-0235 and reaffirmed by API-0236 (every-
+		// optional-populated, every value anchored on the per-storyID
+		// namespace), all fifteen optional siblings are populated so
+		// the wire fixture exercises the full update payload, not
+		// just the by-id minimum.
+		//   - **REQUIRED `notificationId`** (plain non-nullable
+		//     string). The persisted-notifier target identifier;
+		//     re-uses the same field name as API-0235
+		//     `notification-updateCustom` and API-0236
+		//     `notification-updateDiscord`, anchored on this story's
+		//     `notification-cov-update-email-0237-<field>` namespace
+		//     so the literal stays greppable per-story.
+		//   - **REQUIRED `emailId`** (plain non-nullable string).
+		//     Persisted-notifier discriminator for the email transport
+		//     flavour; mirrors the API-0235 `customId` / API-0236
+		//     `discordId` positioning where the second required scalar
+		//     addresses the transport-specific sibling row
+		//     (`email_notifications` here). Same per-storyID anchor
+		//     pattern.
+		//   - **OPTIONAL — every-optional-populated.** Mirrors the
+		//     API-0211 `notification-createEmail` field set
+		//     one-for-one (seven shared category booleans on `true`,
+		//     plain strings `name`, `smtpServer`, `username`,
+		//     `password`, `fromAddress`, plain number `smtpPort` on
+		//     `587` (IANA-registered SMTP submission port), and
+		//     array-of-string `toAddresses` carrying a single
+		//     RFC 6761 `example.invalid` mailbox) plus the additional
+		//     `organizationId` scope anchor that surfaces only on the
+		//     `update*` family (not on `create*`, per the API-0236
+		//     observation). Every value is anchored on the per-storyID
+		//     namespace so a future leak in a golden file remains
+		//     greppable without colliding with the API-0211 `create*`
+		//     literals or the API-0235/API-0236 `update-custom` /
+		//     `update-discord` literals. The `password` slot carries a
+		//     clearly-fake `notification-cov-update-email-0237-
+		//     password` placeholder per the API-0211 callout — the
+		//     yalla request-body forwarder ships request bytes
+		//     verbatim and the redactor only operates on rendered
+		//     `--json` output, so agents cribbing this fixture must
+		//     substitute their own secret material via `--input` and
+		//     never inline real credentials in source.
+		//
+		// **Shape positioning — two-required (two plain strings) POST
+		// mutation-by-id with fifteen-sibling optional tail (seven
+		// booleans + six strings + one number + one array-of-string +
+		// one scope anchor), body REQUIRED.** Functionally distinct
+		// from the API-0235 kickoff (seven booleans + two strings +
+		// one nested `map[string]string` `headers` + one scope anchor)
+		// and the API-0236 sibling (eight booleans incl. discord-only
+		// `decoration` + two strings + one scope anchor) — the email
+		// transport widens the optional tail with the SMTP-specific
+		// connection slots (`smtpServer`, `smtpPort` number,
+		// `username`, `password`, `fromAddress`, `toAddresses` array)
+		// while dropping the discord-only `decoration` boolean,
+		// reflecting SMTP's connection-oriented delivery shape vs.
+		// custom transport's arbitrary header injection and discord's
+		// webhook-only delivery. Future notification/* `update*` peers
+		// (API-0238 `notification-updateGotify`, API-0239
+		// `notification-updateLark`, …) must re-derive their optional
+		// tail from the matching `notification-create*` sibling rather
+		// than inheriting from this entry, since each transport
+		// flavour declares its own subset of the notification base
+		// schema.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (Dokploy's tRPC
+		// convention collapses missing-target into 400/validation), so
+		// the 404→CodeNotFound override is structurally inapplicable.
+		// `*-updateEmail` here is a body-bearing imperative-action
+		// POST and stays on the 401→CodeAuth invariant locked across
+		// every imperative-action notification/* peer
+		// (API-0209..API-0220, API-0222..API-0236), keeping
+		// authentication as the universal failure surface for the
+		// notification/* `update*` cohort.
+		SampleBody: json.RawMessage(`{
+			"notificationId": "notification-cov-update-email-0237-notificationId",
+			"emailId": "notification-cov-update-email-0237-emailId",
+			"name": "notification-cov-update-email-0237-name",
+			"smtpServer": "notification-cov-update-email-0237-smtp.example.invalid",
+			"smtpPort": 587,
+			"username": "notification-cov-update-email-0237-username",
+			"password": "notification-cov-update-email-0237-password",
+			"fromAddress": "notification-cov-update-email-0237-from@example.invalid",
+			"toAddresses": ["notification-cov-update-email-0237-to@example.invalid"],
+			"appBuildError": true,
+			"databaseBackup": true,
+			"volumeBackup": true,
+			"dokployRestart": true,
+			"appDeploy": true,
+			"dockerCleanup": true,
+			"serverThreshold": true,
+			"organizationId": "notification-cov-update-email-0237-organizationId"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the empty-
+		// success cohort. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` / `data.status`
+		// rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,
