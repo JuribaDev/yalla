@@ -26361,3 +26361,120 @@ forward-reference lesson before assuming any field shape.
   - Body-borne secret slots (`Token`, `apiKey`, `webhookUrl`, `password`, `accessToken`, `botToken`, `userKey`+`apiToken`) are forwarded verbatim by the yalla request-body forwarder; the redactor in `internal/api` only operates on rendered `--json` output. Fixtures should always use deterministic clearly-fake markers (e.g. `notification-cov-receive-notification-0222-token`) and never resemble real upstream tokens.
   - Spec receivers that ingest by content (no target id to resolve) typically omit 404 from their response set, so the harness-default 401→CodeAuth representative-failure leg applies.
 ---
+
+## 2026-05-09 - API-0223 (Cover notification-remove, POST /notification.remove)
+- Implemented: appended a sixteenth notification/* entry to
+  `coveredAPIOperations` in `internal/cli/api_coverage_test.go` for
+  story API-0223. The entry pins:
+    - `OperationID = "notification-remove"`,
+      `Method = http.MethodPost`, `Path = "/notification.remove"`,
+      `Tag = "notification"`.
+    - `SampleBody` populates the spec's single REQUIRED non-nullable
+      plain string slot `notificationId =
+      "notification-cov-remove-0223-notificationId"`, per the per-tag
+      `notification-cov-<slug>-<storyID>-<field>` discipline locked at
+      API-0209 `notification-createCustom` and re-applied across every
+      notification/* fixture since (API-0210..API-0222). The wire
+      shape is byte-identical to the cross-tag single-required-string
+      by-id-POST idiom established at API-0042 `backup-remove`,
+      API-0298 `project-remove`, and API-0344 `server-remove`; the
+      notification/* tag is the first to lift the same shape under a
+      `notificationId` selector.
+    - `SuccessResponse = "{}"` per the empty-success cohort
+      convention (200 schema is `{}` with `additionalProperties:
+      false`).
+    - Failure leg: harness-default 401→CodeAuth retained — the spec
+      omits 404 from this operation's response set
+      (200/400/401/403/500), so the by-id-mutation 404→CodeNotFound
+      override that the cross-tag `*-remove` peers normally claim is
+      structurally inapplicable. The notification/* tag's
+      404-shadow representative is already pinned to API-0221
+      `notification-one` (the `*Id`-filtered GET cohort opener),
+      where the spec actually declares 404. Re-asserts the
+      401→CodeAuth invariant locked across every imperative-action
+      notification/* peer (API-0209..API-0220 and API-0222).
+    - Slug stem `remove`: single-segment, so the kebab-case
+      decision locked at API-0209 `notification-createCustom` (→
+      `create-custom`) is a no-op here. Opens the notification/*
+      by-id mutation cohort.
+- Files changed:
+    - `internal/cli/api_coverage_test.go` — appended the API-0223
+      `apiCoverageCase` literal between the API-0222 closer and the
+      API-0246 `organization-active` opener, preserving StoryID-sorted
+      order.
+    - `ralph/prd.json` — flipped `API-0223.passes` from `false` to
+      `true`.
+    - `ralph/progress.txt` — this entry.
+- Verification (run from repo root):
+    - `gofmt -w .` — clean (gofmt -l reported no diffs)
+    - `go mod tidy` — clean
+    - `go vet ./...` — clean
+    - `go test ./...` — PASS
+    - `go test -race ./...` — PASS
+    - Targeted `go test ./internal/cli/ -run 'TestAPICoverage/API-0223'
+      -count=1 -v` — 5/5 subtests pass (RegistryInvariants,
+      SchemaCommandWorks, ManifestListsOperation, SuccessRoundTrip,
+      RepresentativeFailure).
+    - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+      `goreleaser` — not installed locally, documented as missing
+      per the verification baseline rather than silently skipped.
+- Results: API-0223 now has `passes: true` in `ralph/prd.json`. Story
+  count: 462 total, 397 passing, 65 still failing. The new coverage
+  row drives all five harness assertions
+  (`TestAPICoverage_RegistryInvariants`,
+  `TestAPICoverage_SchemaCommandWorks`,
+  `TestAPICoverage_ManifestListsOperation`,
+  `TestAPICoverage_SuccessRoundTrip`,
+  `TestAPICoverage_RepresentativeFailure`) for the
+  `notification-remove` operationId.
+- Remaining risks / follow-ups:
+    - The next priority-5 notification/* peer is API-0224
+      `notification-testCustomConnection`, which opens the
+      notification/* `test*` connectivity-validation POST cohort.
+      Subsequent peers API-0225..API-0234 cover the per-transport
+      `testDiscordConnection`/`testEmailConnection`/`testGotifyConnection`/
+      `testLarkConnection`/`testNtfyConnection`/`testPushoverConnection`/
+      `testResendConnection`/`testSlackConnection`/`testTeamsConnection`/
+      `testTelegramConnection` family. Their fixtures should mirror
+      the corresponding `create-<transport>` peer's body shape (e.g.
+      API-0225 testDiscordConnection mirrors API-0210 createDiscord)
+      since a connectivity test re-uses the same credential payload as
+      the create operation, minus any persisted-record fields.
+    - API-0223's slug `remove` is single-segment and so does not
+      exercise the kebab-vs-camel decision; the next multi-camel
+      slug (`testCustomConnection` → `test-custom-connection` per the
+      notification/* kebab convention) will be the first since the
+      kebab decision was locked.
+- **Learnings for future iterations:**
+    - The `*-remove` POST shape (single REQUIRED `<tag>Id` string)
+      is **the smallest body-mutation shape in the codebase** and now
+      ships in eight tags: backup/* (API-0042), bitbucket/* (API-0054),
+      certificates/* (API-0102 — was different op set, see file),
+      destination/* (API-0105), environment/* (API-0136), mariadb/*
+      (API-0167), mongo/* (API-0181), mounts/* (API-0192), mysql/*
+      (API-0196), postgres/* (API-0211 was different — see file),
+      project/* (API-0298), redis/* (API-0316), server/* (API-0344),
+      user/* (API-0440), and now notification/* (API-0223). When the
+      spec for a new tag's `*-remove` peer omits 404 from the response
+      set (as notification/* does), the harness-default 401→CodeAuth
+      override is the correct choice — overriding to 404→CodeNotFound
+      would shadow the auth invariant when the spec does not actually
+      surface a missing-target leg.
+    - When a tag has both a 404-bearing `*-one` GET (API-0221) and a
+      non-404-bearing `*-remove` POST (API-0223), the 404→CodeNotFound
+      representative is correctly pinned to the GET (where the spec
+      surfaces the missing-id case) and the POST stays on the
+      universal 401→CodeAuth invariant. This is a per-tag pattern
+      worth grepping when a future tag's first by-id mutation is
+      added: check the spec's response set first, then defer to the
+      by-id GET sibling for the 404 representative if the mutation
+      does not surface 404 itself.
+    - The forward-reference forecast in API-0222 explicitly named
+      API-0223 `remove` (alongside `test*` / `update*` peers) as the
+      next non-`receive*` cohort opener; this entry resolves that
+      forecast and pre-declares the slug discipline for the upcoming
+      `test*` cohort (API-0224..API-0234). Each `test*` peer should
+      mirror its corresponding `create-<transport>` peer's body shape
+      because connectivity-test endpoints re-use the same credential
+      payload as the create endpoint.
+---

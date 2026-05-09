@@ -20201,6 +20201,93 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0223",
+		OperationID: "notification-remove",
+		Method:      http.MethodPost,
+		Path:        "/notification.remove",
+		Tag:         "notification",
+		// Sixteenth entry on the notification/* coverage roster, staying
+		// inside the `notification-cov-*` per-tag fixture-isolation
+		// namespace seeded at API-0208 `notification-all` and extended
+		// across API-0209..API-0222. Per the per-tag isolation rule
+		// reaffirmed across each prior peer this entry stays inside the
+		// namespace opened by API-0208 and **must not** back-reference
+		// any closed prior-tag namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json > /notification.remove > post`:
+		// a **POST** with **no parameters** and a **REQUIRED request
+		// body** whose schema declares a single REQUIRED non-nullable
+		// plain string slot (`notificationId`). Responses
+		// 200/400/401/403/500 — the spec does **not** declare 404 on
+		// this operation, so the by-id-mutation 404→CodeNotFound
+		// override that fits the cross-tag `*-remove` precedent
+		// (API-0042 `backup-remove`, API-0298 `project-remove`,
+		// API-0344 `server-remove`) is structurally inapplicable here.
+		// The 200 schema is `{}` with `additionalProperties: false`,
+		// matching every prior covered peer in the empty-success
+		// cohort.
+		//
+		// **Slug style — kebab-case inherited from API-0209/API-0210/
+		// API-0211/API-0212/API-0213/API-0214/API-0215/API-0216/
+		// API-0217/API-0218/API-0219, the GET-cohort opener API-0220
+		// `notification-getEmailProviders` (→ `get-email-providers`),
+		// the `*Id`-filtered GET-cohort opener API-0221
+		// `notification-one`, and the action-receiver POST opener
+		// API-0222 `notification-receiveNotification`
+		// (→ `receive-notification`).** Per the per-tag-slug-style rule
+		// fixed by the kickoff multi-camel entry API-0209
+		// `notification-createCustom` (→ `create-custom`), this entry
+		// takes `remove` as the slug stem. The slug is single-segment
+		// so the kebab-case decision is a no-op here; the fixture
+		// namespace is `notification-cov-remove-0223-<field>`,
+		// mirroring the `notification-cov-<slug>-<storyID>-<field>`
+		// discipline locked by API-0208..API-0222. **This entry opens
+		// the notification/* by-id mutation cohort** — any future
+		// notification/* peer that mutates an existing record by
+		// `notificationId` inherits this slug style and the
+		// harness-default 401→CodeAuth failure leg.
+		//
+		// **Body composition:**
+		//   - **REQUIRED — closed all-required shape, no optional
+		//     tail.** Single `notificationId` slot: a plain
+		//     non-nullable string carrying the deterministic-but-
+		//     clearly-fake `notification-cov-remove-0223-notificationId`
+		//     token, per the per-tag
+		//     `notification-cov-<slug>-<storyID>-<field>` namespace
+		//     seeded at API-0209 `notification-createCustom` and
+		//     re-applied across every notification/* fixture since.
+		//     Mirrors the cross-tag single-required-string by-id-POST
+		//     idiom established at API-0042 `backup-remove`
+		//     (`backupId`), API-0298 `project-remove` (`projectId`),
+		//     and API-0344 `server-remove` (`serverId`); the
+		//     notification/* tag is the first to lift the same shape
+		//     under a `notificationId` selector.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from this operation's response set, so the
+		// 404→CodeNotFound override that the cross-tag `*-remove` peers
+		// would normally claim is structurally inapplicable here. The
+		// notification/* tag's 404-shadow representative is already
+		// pinned to API-0221 `notification-one` (the `*Id`-filtered GET
+		// cohort opener), where the spec actually declares 404. This
+		// re-asserts the 401→CodeAuth invariant locked across every
+		// imperative-action notification/* peer (API-0209..API-0220 and
+		// API-0222), keeping authentication as the universal failure
+		// surface for the notification/* by-id mutation cohort opened
+		// here.
+		SampleBody: json.RawMessage(`{
+			"notificationId": "notification-cov-remove-0223-notificationId"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the empty-
+		// success cohort. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` / `data.status`
+		// rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,
