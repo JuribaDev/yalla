@@ -28403,3 +28403,60 @@ forward-reference lesson before assuming any field shape.
     `openapi.json > /patch.one > get` before the next
     contributor inserts its case.
 ---
+
+## 2026-05-09 - API-0262
+- Added per-operation coverage entry for `patch-one` (GET /patch.one) in
+  `internal/cli/api_coverage_test.go`. The new struct slots into the
+  append-only `coveredAPIOperations` registry between API-0261
+  (`patch-markFileForDeletion`) and API-0268 (`port-create`), continuing
+  the per-tag `patch-cov-*` fixture-isolation namespace opened at
+  API-0256.
+- Spec re-verified directly against
+  `internal/api/data/openapi.json > /patch.one > get`: GET with one
+  REQUIRED query parameter `patchId` (plain string, no
+  `format`/`pattern`), no request body, response set
+  200/400/401/403/404/500, 200 schema `{}` with
+  `additionalProperties: false`. Wire-shape peer is API-0115
+  `domain-byApplicationId` (single-required-query GET) — distinct from
+  the within-tag two-required-query GET at API-0256.
+- Failure leg keeps the harness default (401 → CodeAuth) per the
+  established id-bearing GET precedent (API-0005, API-0113, API-0115,
+  API-0256): bearer-token enforcement runs before any entity lookup,
+  so auth is the universally informative representative even when 404
+  is structurally available.
+- Fixture token: `patch-cov-one-0262`. Verified unique across the
+  patch/* roster (no collision with `patch-cov-by-entity-id-0256`,
+  `patch-cov-cleanPatchRepos-0257`, `patch-cov-create-0258`,
+  `patch-cov-delete-0259`, `patch-cov-ensure-repo-0260`, or
+  `patch-cov-mark-file-for-deletion-0261`).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (+1 case ~109 lines including
+    rationale comments)
+  - `ralph/prd.json` (`API-0262.passes = true`)
+  - `ralph/progress.txt` (this entry)
+- Verification: `gofmt -w .`, `go mod tidy`, `go vet ./...`,
+  `go test ./...`, `go test -race ./...` — all green. `goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser` not
+  installed locally (documented in prior entries).
+- **Learnings for future iterations:**
+  - Within the same tag the wire shape can swing across stories: the
+    patch/* roster opens at API-0256 with a two-required-query GET,
+    swings to a five-entry POST/required-body block at API-0257..
+    API-0261, then swings *back* to a single-required-query GET at
+    API-0262. Do not template field shape from the immediate previous
+    entry; re-verify against `internal/api/data/openapi.json` every
+    time, even within a single tag.
+  - The cross-tag wire-shape peer for a GET is often a more useful
+    template than the immediate prior entry — for a
+    single-required-query id-bearing GET, the API-0115
+    (`domain-byApplicationId`) precedent maps 1:1 even though five
+    POSTs intervene.
+  - The harness's `SampleQuery: map[string][]string{...}` is forwarded
+    via the `--input` JSON `query` field; the `len(tc.SampleBody) > 0`
+    gate stays inert so no content-type/body assertions activate. No
+    extra wiring is needed for query-only GETs.
+  - Fixture-uniqueness audit must enumerate every prior entry in the
+    same `<tag>-cov-*` namespace, not just the most recent. The
+    patch/* roster already has six prior fixture tokens; future
+    contributors should grep the namespace before picking a slug.
+---
