@@ -27088,3 +27088,63 @@ forward-reference lesson before assuming any field shape.
     story object. The 2-space-indented JSON file stays clean with a
     one-line diff; never rewrite the full PRD file.
 ---
+
+## 2026-05-09T04:01Z - API-0232
+
+- **What was implemented**: Added an `apiCoverageCase` entry for the
+  Dokploy `notification-testSlackConnection` operation (`POST
+  /notification.testSlackConnection`) inside
+  `internal/cli/api_coverage_test.go`. Operation is the **ninth
+  member** of the notification/* `test*` connectivity-validation POST
+  cohort opened by API-0224 and the 25th overall entry on the
+  notification/* coverage roster (after API-0208..API-0231). Establishes
+  the cohort's **two-required-string + zero-optional** body shape —
+  REQUIRED `webhookUrl` (https URL on `example.invalid` reserved TLD)
+  and REQUIRED `channel` (deterministic per-tag literal). Slug stem is
+  `test-slack-connection`; fixture namespace
+  `notification-cov-test-slack-connection-0232-<field>` follows the
+  per-tag isolation discipline locked since API-0208.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended API-0232 entry.
+  - `ralph/prd.json` — flipped `passes` for API-0232 to `true`.
+  - `ralph/progress.txt` — this entry.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages OK (`internal/cli` 1.565s).
+  - `go test -race ./...` — all packages OK (`internal/cli` 3.326s).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — not installed locally, skipped per documented
+    baseline.
+- **Results**: Story passes. The harness `runAPICoverageCase` exercises
+  the registry invariants (method/path/tag), the success leg
+  (`yalla api call notification-testSlackConnection --input` round-trip
+  with the fixture body and an empty `{}` response), the schema leg
+  (`yalla schema get notification-testSlackConnection --json`), and
+  the harness-default 401→CodeAuth failure leg in lockstep with the
+  prior 24 notification/* entries. Manifest coverage falls out of the
+  registry-driven `yalla manifest --json` path automatically.
+- **Remaining risks or follow-ups**: None. The remaining `test*` cohort
+  peers API-0233 (`testTeamsConnection`) and API-0234
+  (`testTelegramConnection`) inherit the same slug style, harness-
+  default failure leg, and per-tag fixture namespace — they will diff
+  only on body shape.
+- **Learnings for future iterations:**
+  - The `notification-cov-test-slack-connection-0232-<field>` fixture
+    namespace is the first to combine a deterministic URL anchor on
+    `example.invalid` (RFC 6761) with a paired non-URL channel-routing
+    string. Future channel-routed webhook probes (Mattermost,
+    RocketChat) should reuse the same paired pattern rather than
+    re-deriving the slot relationship.
+  - Slack incoming-webhook URLs embed a per-channel bearer-equivalent
+    token in the URL path; treat the `webhookUrl` slot as secret-
+    bearing for redaction-test purposes alongside Resend `apiKey` and
+    Pushover/Gotify `apiToken`.
+  - The two-required-string-zero-optional shape is genuinely new in
+    the notification/* `test*` cohort — every prior cohort member
+    either had a single required string or three-plus required slots.
+    Don't conflate it with API-0228 (single-required) when building
+    cross-entry comments.
+
+---
