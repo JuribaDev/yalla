@@ -20526,6 +20526,175 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0226",
+		OperationID: "notification-testEmailConnection",
+		Method:      http.MethodPost,
+		Path:        "/notification.testEmailConnection",
+		Tag:         "notification",
+		// Nineteenth entry on the notification/* coverage roster, staying
+		// inside the `notification-cov-*` per-tag fixture-isolation
+		// namespace seeded at API-0208 `notification-all` and extended
+		// across API-0209..API-0225. Per the per-tag isolation rule
+		// reaffirmed across each prior peer this entry stays inside the
+		// namespace opened by API-0208 and **must not** back-reference
+		// any closed prior-tag namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json >
+		// /notification.testEmailConnection > post`: a **POST** with
+		// **no parameters** and a **REQUIRED request body** whose schema
+		// declares **six REQUIRED non-nullable plain slots and zero
+		// optional siblings** — `smtpServer` (string), `smtpPort`
+		// (number), `username` (string), `password` (string),
+		// `toAddresses` (array of string), and `fromAddress` (string).
+		// Responses 200/400/401/403/500 — the spec does **not** declare
+		// 404 on this operation, matching the connectivity-validation
+		// precedent re-asserted by the cohort opener API-0224
+		// `notification-testCustomConnection` and the second member
+		// API-0225 `notification-testDiscordConnection` (the family is
+		// "validate the agent-supplied transport descriptor", with no
+		// by-id target to miss). The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort.
+		//
+		// **Slug style — kebab-case inherited from API-0209/API-0210/
+		// API-0211/API-0212/API-0213/API-0214/API-0215/API-0216/
+		// API-0217/API-0218/API-0219, the GET-cohort opener API-0220
+		// `notification-getEmailProviders` (→ `get-email-providers`),
+		// the `*Id`-filtered GET-cohort opener API-0221
+		// `notification-one`, the action-receiver POST opener API-0222
+		// `notification-receiveNotification` (→ `receive-notification`),
+		// the by-id mutation cohort opener API-0223
+		// `notification-remove`, the `test*` connectivity-validation
+		// POST cohort opener API-0224 `notification-testCustomConnection`
+		// (→ `test-custom-connection`), and the second cohort member
+		// API-0225 `notification-testDiscordConnection`
+		// (→ `test-discord-connection`).** Per the per-tag-slug-style
+		// rule fixed by the kickoff multi-camel entry API-0209
+		// `notification-createCustom` (→ `create-custom`), this entry
+		// takes `test-email-connection` as the slug stem (three
+		// kebab-cased segments mirrored from `testEmailConnection`).
+		// The fixture namespace is
+		// `notification-cov-test-email-connection-0226-<field>`,
+		// mirroring the `notification-cov-<slug>-<storyID>-<field>`
+		// discipline locked by API-0208..API-0225. **This entry is the
+		// third member of the notification/* `test*` connectivity-
+		// validation POST cohort opened by API-0224** — peers
+		// API-0227..API-0234 (`testGotifyConnection`,
+		// `testLarkConnection`, `testNtfyConnection`,
+		// `testPushoverConnection`, `testResendConnection`,
+		// `testSlackConnection`, `testTeamsConnection`,
+		// `testTelegramConnection`) inherit the same slug style and
+		// harness-default 401→CodeAuth failure leg.
+		//
+		// **Body composition — six-required, zero-optional, every
+		// REQUIRED field populated.** Mirrors the SMTP descriptor shape
+		// established by API-0211 `notification-createEmail` so the
+		// cross-entry diff against the create sibling stays focused on
+		// the structural delta (this entry omits the `name` REQUIRED
+		// slot and the seven optional `*Notify` boolean tail because
+		// the spec for `*-testEmailConnection` declares neither — the
+		// operation is a pure connectivity probe of an inline transport
+		// descriptor, not a persisted notifier configuration).
+		//   - **REQUIRED `smtpServer`** (plain non-nullable string).
+		//     The fixture supplies a deterministic-but-clearly-fake
+		//     hostname on the `example.invalid` reserved TLD (RFC 6761)
+		//     so a future SMTP-host-shape validator wired into the
+		//     harness still accepts it without risking a real DNS
+		//     lookup or wire egress to a third-party SMTP relay. The
+		//     token follows the per-tag
+		//     `notification-cov-<slug>-<storyID>-<field>` discipline
+		//     and mirrors the SMTP-host convention established by
+		//     API-0211's `smtpServer` field on the same email-transport
+		//     family.
+		//   - **REQUIRED `smtpPort`** (plain non-nullable number).
+		//     Pinned to `587` — the IANA-registered submission port
+		//     (RFC 6409), matching the API-0211 fixture verbatim. `587`
+		//     is the more-discriminating value over JSON's number-zero
+		//     default, keeping the on-wire fixture distinguishable from
+		//     an omitted-key parse and signalling correct submission-
+		//     port semantics to any future SMTP-port validator.
+		//   - **REQUIRED `username`** (plain non-nullable string).
+		//     Deterministic literal token under the per-tag namespace.
+		//     This is a credential-adjacent field but not a secret on
+		//     its own (mailboxes are typically logged); pairing with
+		//     the secret `password` field below is what completes the
+		//     credential pair, so the redaction invariant is exercised
+		//     by `password`, not `username`.
+		//   - **REQUIRED `password`** (plain non-nullable string).
+		//     Deterministic literal token. **Secret-bearing field** —
+		//     the `redaction_security_test.go` harness redacts any
+		//     value matching the configured token-shape on every
+		//     visible writer (`--json` / human / `--verbose`). The
+		//     fixture token is intentionally non-realistic so a leak in
+		//     a future test golden file remains greppable without
+		//     producing a false-positive redaction.
+		//   - **REQUIRED `toAddresses`** (non-nullable array of
+		//     non-nullable strings). Single-entry array carrying a
+		//     deterministic `<local>@<host>.example.invalid` literal so
+		//     the JSON serialisation is order-stable and the wire-level
+		//     array-shape assertion is unambiguous. Mirrors API-0211's
+		//     single-entry-array convention for the same `toAddresses`
+		//     field.
+		//   - **REQUIRED `fromAddress`** (plain non-nullable string).
+		//     Deterministic `<local>@<host>.example.invalid` literal
+		//     mirroring the API-0211 convention so the cross-entry
+		//     diff against the create sibling on the same email-
+		//     transport family stays focused on the structural delta.
+		//
+		// **Optional siblings — none.** The every-optional-populated
+		// convention is structurally inapplicable here because the
+		// spec declares zero optional fields on this operation. This
+		// distinguishes the entry from API-0224 (one optional nested
+		// `map[string]string`) and API-0225 (one optional plain
+		// boolean) and establishes the notification/* tag's first
+		// fully-required `test*` shape; future peers in the cohort
+		// with similarly-flat fully-required schemas can grep this
+		// entry for the no-optional-siblings convention.
+		//
+		// **Shape positioning — six-required (four strings + one
+		// number + one array-of-string) POST connectivity-validation,
+		// body REQUIRED.** Functionally distinct from the cohort
+		// opener API-0224 `notification-testCustomConnection`
+		// (single-required-string + optional nested
+		// `map[string]string`) and the second cohort member API-0225
+		// `notification-testDiscordConnection` (single-required-string
+		// + optional plain boolean). Shares no spine with the prior
+		// two cohort members beyond the shared body-required and
+		// empty-success-response invariants — this entry establishes
+		// the notification/* tag's wide-required-tuple shape for the
+		// `test*` cohort, an analogue future SMTP-style probes (e.g.
+		// the IMAP/POP3 shapes if those were ever to be added to the
+		// spec) can mirror.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set, so the
+		// 404→CodeNotFound override is structurally inapplicable
+		// (no by-id target to miss; the agent supplies the transport
+		// descriptor inline). `*-testEmailConnection` here is a
+		// body-bearing imperative-action POST and stays on the
+		// 401→CodeAuth invariant locked across every imperative-
+		// action notification/* peer (API-0209..API-0220, API-0222,
+		// API-0223, API-0224, API-0225), keeping authentication as
+		// the universal failure surface for the notification/* `test*`
+		// connectivity-validation POST cohort.
+		SampleBody: json.RawMessage(`{
+			"smtpServer": "notification-cov-test-email-connection-0226-smtp.example.invalid",
+			"smtpPort": 587,
+			"username": "notification-cov-test-email-connection-0226-username",
+			"password": "notification-cov-test-email-connection-0226-password",
+			"toAddresses": ["notification-cov-test-email-connection-0226-to@example.invalid"],
+			"fromAddress": "notification-cov-test-email-connection-0226-from@example.invalid"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the empty-
+		// success cohort. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` / `data.status`
+		// rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,

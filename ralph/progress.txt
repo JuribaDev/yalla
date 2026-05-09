@@ -26611,3 +26611,32 @@ forward-reference lesson before assuming any field shape.
   - For optional-boolean tails, populate with `true` (not `false`) so the on-wire JSON differs from the unmarshal zero value — protects future spec validators against silently coalescing an omitted optional with an explicit-false.
   - For URL-bearing required strings on connectivity-validation operations, always anchor the fixture on `example.invalid` (RFC 6761 reserved TLD) — never on `discord.com`, `slack.com`, etc., even with a fake path. This is the cross-tag convention re-asserted by API-0224 and reinforced here.
 ---
+
+
+## 2026-05-09 - API-0226 (Cover notification-testEmailConnection, POST /notification.testEmailConnection)
+- Implemented Dokploy API operation coverage for `notification-testEmailConnection`. This is the third member of the notification/* `test*` connectivity-validation POST cohort opened by API-0224 `notification-testCustomConnection` and continued by API-0225 `notification-testDiscordConnection`.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — added `apiCoverageCase` entry inserted between API-0225 (line 20527) and API-0246, slug `test-email-connection`, fixture namespace `notification-cov-test-email-connection-0226-<field>`. The body shape mirrors the API-0211 `notification-createEmail` SMTP descriptor minus the `name` REQUIRED slot and the seven optional `*Notify` boolean tail, because `*-testEmailConnection` is a pure connectivity probe rather than a persisted notifier configuration. `smtpPort` is pinned to `587` (IANA submission port, RFC 6409) verbatim from API-0211.
+  - `ralph/prd.json` — flipped `API-0226.passes` from `false` to `true`.
+  - `ralph/progress.txt` — this entry.
+- The `apiCoverageCase` harness automatically asserts: registry presence (operationId/method/path/tag), schema reachability via `yalla schema get`, manifest inclusion via `yalla manifest --json`, an httptest-backed success exchange (`yalla api call ... --input ... --json` with `yalla.output.v1`), and a 401→CodeAuth representative failure leg with `yalla.error.v1` envelope and non-zero exit code. No new harness changes were required.
+- Verification run (from repo root):
+  - `gofmt -l .` ✅ (clean)
+  - `go mod tidy` ✅
+  - `go vet ./...` ✅
+  - `go test ./...` ✅ (all packages pass; internal/cli 1.507s)
+  - `go test -race ./...` ✅ (all packages pass; internal/cli 3.291s)
+  - `goimports` / `golangci-lint` / `staticcheck` / `govulncheck` / `goreleaser`: not installed locally — skipped per documented pattern.
+- Body composition (per spec re-verified against `internal/api/data/openapi.json > /notification.testEmailConnection > post`):
+  - Six REQUIRED non-nullable slots: `smtpServer` (string), `smtpPort` (number), `username` (string), `password` (string, secret-bearing), `toAddresses` (array of string, single-entry), `fromAddress` (string).
+  - Zero optional siblings — the every-optional-populated convention is structurally inapplicable. This is the notification/* tag's first fully-required `test*` shape, distinct from API-0224 (one optional nested map) and API-0225 (one optional plain boolean).
+  - All literals carry the per-tag `notification-cov-test-email-connection-0226-<field>` token; hostnames sit on the `example.invalid` reserved TLD (RFC 6761) so a future SMTP-host-shape validator wired into the harness still accepts them without risking real DNS lookup or wire egress to a third-party SMTP relay.
+- Spec response set is 200/400/401/403/500 (no 404), so the harness-default 401→CodeAuth failure leg applies — the 404→CodeNotFound override is structurally inapplicable for connectivity-validation operations (no by-id target to miss; agent supplies the transport descriptor inline). This matches both prior cohort members API-0224 and API-0225.
+- Remaining risks / follow-ups:
+  - 8 sibling `notification.test*Connection` operations remain (API-0227..API-0234) and should reuse this slug pattern + 401→CodeAuth invariant.
+  - Spec digest `EmbeddedSpecSHA256` is unchanged (no spec bump) so no companion edits to `ralph/prd.json > sourceApi.sha256` or `expectedOperationCount` were required.
+- **Learnings for future iterations:**
+  - When a `test*Connection` cohort entry corresponds 1:1 to an existing `*-create` sibling on the same transport family (here API-0211 `notification-createEmail`), the body should mirror the create sibling's spec-aligned overlap (here the SMTP descriptor: `smtpServer`/`smtpPort`/`username`/`password`/`toAddresses`/`fromAddress`) but **must not** import any field the spec doesn't declare on the test endpoint (here the `name` REQUIRED slot and the seven optional `*Notify` boolean tail). Cross-checking the test spec against the create spec field-by-field is the safest way to catch spec drift; copy-paste-and-prune from the create sibling is a foot-gun if not paired with a re-verification pass.
+  - When a cohort member has zero optional fields, the every-optional-populated convention is **structurally inapplicable**, not silently violated. The comment block must explicitly call out the no-optional-siblings status so future cohort members and reviewers don't read the entry as a violation. This entry establishes that pattern for the notification/* `test*` cohort and any other future tag's connectivity-validation cohort with a fully-required schema can grep this entry for the wording.
+  - SMTP-port literal `587` should be inherited verbatim from the create sibling — picking a different port (e.g. 25, 465, 2525) without a spec reason creates cross-entry diff noise and risks a future SMTP-port-shape validator rejecting the fixture as a non-submission port. The IANA-registered submission port (RFC 6409) is the canonical choice.
+---
