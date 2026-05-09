@@ -33507,6 +33507,182 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0322",
+		OperationID: "registry-update",
+		Method:      http.MethodPost,
+		Path:        "/registry.update",
+		Tag:         "registry",
+		// **Seventh and final entry on the registry/* coverage
+		// roster**, immediately following API-0316 `registry-all`,
+		// API-0317 `registry-create`, API-0318 `registry-one`,
+		// API-0319 `registry-remove`, API-0320 `registry-testRegistry`,
+		// and API-0321 `registry-testRegistryById`, and completing
+		// the forward reference embedded in API-0321's closing comment
+		// ("The next case in the PRD-ordered priority-5 backlog is
+		// API-0322 `registry-update` (declared a **POST** per the
+		// spec preview; the next contributor must re-verify the spec
+		// against `internal/api/data/openapi.json` per the forward-
+		// reference lesson before assuming any field shape, and will
+		// continue inside the `registry-cov-*` per-tag fixture-
+		// isolation namespace opened by API-0316 — consume slugs of
+		// the form `registry-cov-update-0322-*`)"). **This case
+		// closes the registry/* tag arc** opened by API-0316
+		// `registry-all`; the next priority-5 entry in the PRD-ordered
+		// backlog is API-0400 `sshKey-all` (after the priority-4
+		// rollback/schedule/security/server/settings backlog drained
+		// at API-0323..API-0399), which will open a fresh `sshKey-cov-*`
+		// per-tag fixture-isolation namespace per the per-tag
+		// isolation rule originally established at API-0246
+		// `organization-active`. Continues inside the `registry-cov-*`
+		// per-tag fixture-isolation namespace opened by API-0316 and
+		// **must not** back-reference any closed prior-tag namespace
+		// (`admin-cov-*`, `ai-cov-*`, `app-cov-*`, `backup-cov-*`,
+		// `bb-cov-*`, `cert-cov-*`, `clu-cov-*`, `compose-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `docker-cov-*`,
+		// `domain-cov-*`, `environment-cov-*`, `gitea-cov-*`,
+		// `github-cov-*`, `gitlab-cov-*`, `mariadb-cov-*`,
+		// `mongo-cov-*`, `mounts-cov-*`, `mysql-cov-*`, `org-cov-*`,
+		// `patch-cov-*`, `port-cov-*`, `postgres-cov-*`,
+		// `preview-cov-*`, `proj-cov-*`, `redirects-cov-*`,
+		// `redis-cov-*`, `security-cov-*`, `set-cov-*`, `srv-cov-*`,
+		// `swarm-cov-*`, `usr-cov-*`).
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json` > `/registry.update` >
+		// `post`: method POST, tag registry, **no parameters**,
+		// requestBody REQUIRED with `application/json`, responses
+		// 200/400/401/403/500. The 200 response is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort. **No 404** is declared on
+		// this operation, mirroring the precedent on every prior
+		// covered `*-update` patch-style mutation (API-0163
+		// `mariadb-update`, API-0182 `mongo-update`, API-0202
+		// `mysql-update`, API-0280 `postgres-update`, API-0315
+		// `redis-update`); the patch-style POST surfaces missing-id
+		// as 400/validation under Dokploy's tRPC convention rather
+		// than a dedicated 404 leg.
+		//
+		// **Request body schema:**
+		//   - **REQUIRED:** `registryId` (plain string). Identifies
+		//     the registry record to patch and is the sole declared-
+		//     required slot per the OpenAPI schema's
+		//     `required: ["registryId"]` array.
+		//   - **OPTIONAL fields intentionally OMITTED** per the
+		//     minimal-required-only fixture rule (load-bearing for
+		//     credential-redaction safety): `registryName` (string),
+		//     `imagePrefix` (`anyOf: [string, null]` nullable), the
+		//     credential-shaped scalars `username` (string) /
+		//     `password` (string), `registryUrl` (string),
+		//     `createdAt` (string), `registryType` (string,
+		//     `enum: ["cloud"]`), `organizationId` (string), and
+		//     `serverId` (string). A patch-style POST `update` with
+		//     one REQUIRED key resolves the persisted record by that
+		//     key; the optional configuration tail is exhaustively
+		//     server-defaulted and is never required by the
+		//     happy-path success leg. The `len(tc.SampleBody) > 0`
+		//     gate at `runAPICoverageSuccess` checks the body is
+		//     forwarded byte-for-byte, so adding unused optional
+		//     fixture fields (especially the credential-shaped
+		//     `username` / `password` slots) would dilute the focused
+		//     single-required-field assertion and risk regressing the
+		//     redaction-safety carve-out exercised at
+		//     `internal/cli/redaction_security_test.go`. Future
+		//     contributors adding optional-field positive coverage
+		//     should do so in a follow-up story rather than expanding
+		//     this minimal positive case.
+		//
+		// **Shape positioning — single-required-string-scalar POST
+		// patch-style mutation, body REQUIRED, with WIDE optional
+		// configuration tail.** Cardinality- and type-identical to
+		// the canonical `*-update` precedent chain: API-0163
+		// `mariadb-update` (single REQUIRED `mariadbId` plain string +
+		// wide optional tail), API-0182 `mongo-update` (single
+		// REQUIRED `mongoId` + wide optional tail), API-0202
+		// `mysql-update` (single REQUIRED `mysqlId` + wide optional
+		// tail), API-0280 `postgres-update` (single REQUIRED
+		// `postgresId` + wide optional tail), and API-0315
+		// `redis-update` (single REQUIRED `redisId` + wide optional
+		// tail). Distinct from the **multi-required-field** API-0317
+		// `registry-create` (six REQUIRED fields including the
+		// nullable-but-REQUIRED `imagePrefix` and the single-valued
+		// `registryType` enum) on the same tag — `update` is patch-
+		// style by-id, `create` is full-record-instantiation. The
+		// harness's `len(tc.SampleBody) > 0` gate at
+		// `runAPICoverageSuccess` activates the JSON content-type and
+		// byte-for-byte body comparison legs; this fixture supplies
+		// only the single REQUIRED field so the success path verifies
+		// the CLI propagated the body verbatim.
+		//
+		// **Family choice — harness-default 401 → CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so
+		// the 404 → CodeNotFound override is structurally inapplicable
+		// (matching every prior covered `*-update` patch-style
+		// mutation — API-0163 `mariadb-update`, API-0182
+		// `mongo-update`, API-0202 `mysql-update`, API-0280
+		// `postgres-update`, API-0315 `redis-update`). The 404 →
+		// CodeNotFound override slot for the registry/* tag arc was
+		// already consumed at API-0318 `registry-one` (the canonical
+		// by-`registryId` reader) per the per-tag opener design, so
+		// this entry **must not** re-claim it. 400 → CodeInvalidInput
+		// is *technically* available — a payload supplying a non-
+		// string `registryId`, omitting it entirely, or supplying a
+		// `registryType` outside the `["cloud"]` enum, would fail
+		// server-side validation — but the harness reserves 400
+		// representatives for stories where payload validation is the
+		// operation's *uniquely distinguishing* failure mode. A
+		// conventional `*-update` patch-style mutation collapses to
+		// type-checking, so the harness-default 401 → CodeAuth failure
+		// leg remains the most representative single failure mode
+		// every authenticated Dokploy operation must re-prove, and is
+		// consistent with the 401 → CodeAuth choice locked in by the
+		// registry/* kickoff at API-0316 `registry-all` and reasserted
+		// by API-0317 `registry-create`, API-0319 `registry-remove`,
+		// API-0320 `registry-testRegistry`, and API-0321
+		// `registry-testRegistryById`.
+		//
+		// **Fixture token base** `registry-cov-update-0322` follows
+		// the `<tag>-cov-<slug>-<storyID>` convention shared across
+		// every prior registry/* peer (API-0316..API-0321) and is
+		// verified non-colliding with API-0316's
+		// `registry-cov-all-0316-*`, API-0317's
+		// `registry-cov-create-0317-*`, API-0318's
+		// `registry-cov-one-0318-*`, API-0319's
+		// `registry-cov-remove-0319-*`, API-0320's
+		// `registry-cov-testRegistry-0320-*`, and API-0321's
+		// `registry-cov-testRegistryById-0321-*` literals (different
+		// slug + storyID → unique under the
+		// `<tag>-cov-<slug>-<storyID>` rule). The full-tag-name slug
+		// prefix `registry-` remains unambiguously distinct from the
+		// lexically-adjacent full-tag-name `redirects-cov-*` and
+		// `redis-cov-*` namespaces closed at API-0301 / API-0315
+		// respectively, satisfying the `<tag>-cov-<slug>-<storyID>`
+		// uniqueness rule.
+		//
+		// **This case closes the `registry-cov-*` namespace** —
+		// future stories that need to reference registry/* fixtures
+		// should reach back into one of API-0316..API-0322 rather
+		// than re-opening the namespace. The next case in the PRD-
+		// ordered priority-5 backlog is API-0400 `sshKey-all`
+		// (declared a **GET** per the spec preview, opening a fresh
+		// `sshKey-cov-*` per-tag fixture-isolation namespace as the
+		// sshKey/* tag-arc kickoff). The next contributor must re-
+		// verify the spec against
+		// `internal/api/data/openapi.json` > `/sshKey.all` > `get`
+		// per the forward-reference lesson before assuming any field
+		// shape, and will consume slugs of the form
+		// `sshKey-cov-all-0400-*`.
+		SampleBody: json.RawMessage(`{
+			"registryId": "registry-cov-update-0322-registryId"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0323",
 		OperationID: "rollback-delete",
 		Method:      http.MethodPost,

@@ -29344,3 +29344,107 @@ forward-reference lesson before assuming any field shape.
     sibling `registry-testRegistry` (four-required) and required
     spec verification before fixture authorship.
 ---
+
+## 2026-05-09 - API-0322 (registry-update)
+- Implemented Cover registry-update (POST /registry.update) — the
+  **seventh and final entry on the registry/* coverage roster**, closing
+  the registry/* tag arc opened at API-0316 `registry-all`.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended a single
+    `apiCoverageCase` literal (StoryID API-0322, OperationID
+    registry-update, POST, Tag registry, REQUIRED application/json body
+    with the **single REQUIRED** `registryId` plain string and **nine
+    OPTIONAL** fields deliberately omitted per the minimal-required-only
+    fixture rule — `registryName`, `imagePrefix` (`anyOf: [string,
+    null]` nullable), the credential-shaped scalars `username` /
+    `password`, `registryUrl`, `createdAt`, `registryType` (single-
+    valued `enum: ["cloud"]`), `organizationId`, `serverId`). Inserted
+    between API-0321 `registry-testRegistryById` and API-0323
+    `rollback-delete` to preserve PRD ordering.
+  - `ralph/prd.json` — flipped `API-0322.passes = true`.
+  - `ralph/progress.txt` — this entry.
+- Verification run (from repo root):
+  - `gofmt -w .` — clean (`gofmt -l .` reports no diff).
+  - `go mod tidy` — clean (no new deps).
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages PASS (`internal/cli` 1.310s).
+  - `go test -race ./...` — all packages PASS (`internal/cli` 3.500s).
+  - Targeted: `go test ./internal/cli/... -run
+    'TestAPICoverage_.*/API-0322' -v` — fired all 5 subtests
+    (RegistryInvariants, SchemaCommandWorks, ManifestListsOperation,
+    SuccessRoundTrip, RepresentativeFailure) against operationId
+    `registry-update`; all PASS.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser`: not installed locally; skipped per the
+    document-rather-than-silently-skip rule.
+- Results: API-0322 acceptance criteria satisfied. Operation present in
+  the OpenAPI registry with POST + /registry.update + tag registry; raw
+  API call works through the harness fixture; schema get works; manifest
+  lists the operation; success and 401-default representative failure
+  both re-proven by the per-tag isolated httptest fixture.
+- Family choice: single-required-string-scalar POST patch-style
+  mutation, body REQUIRED, with WIDE optional configuration tail —
+  cardinality- and type-identical to the canonical `*-update` chain
+  (API-0163 `mariadb-update`, API-0182 `mongo-update`, API-0202
+  `mysql-update`, API-0280 `postgres-update`, API-0315 `redis-update`).
+  Distinct from the multi-required-field API-0317 `registry-create` on
+  the same tag — `update` is patch-style by-id, `create` is full-record
+  instantiation. Harness-default 401 → CodeAuth representative failure
+  retained (404 is omitted from the spec response set; the
+  404 → CodeNotFound override slot for the registry/* arc was already
+  consumed at API-0318 `registry-one` per the per-tag opener design and
+  must not be re-claimed here).
+- Remaining risks / follow-ups:
+  - **The `registry-cov-*` per-tag fixture-isolation namespace is now
+    closed.** Future stories that need to reference registry/* fixtures
+    should reach back into one of API-0316..API-0322 rather than
+    re-opening the namespace.
+  - Optional fields (registryName, imagePrefix, username, password,
+    registryUrl, createdAt, registryType, organizationId, serverId)
+    intentionally not fixtured per the load-bearing minimal-required-
+    only rule (especially load-bearing for the `username` / `password`
+    credential-shaped scalars under the redaction-safety carve-out
+    exercised at `internal/cli/redaction_security_test.go`); expanding
+    to optional-field positive coverage is a follow-up story.
+  - The next case in the PRD-ordered priority-5 backlog is API-0400
+    `sshKey-all` (declared a **GET** per the spec preview, opening a
+    fresh `sshKey-cov-*` per-tag fixture-isolation namespace as the
+    sshKey/* tag-arc kickoff). The next contributor must re-verify the
+    spec against `internal/api/data/openapi.json` > `/sshKey.all` >
+    `get` per the forward-reference lesson before assuming any field
+    shape, and will consume slugs of the form `sshKey-cov-all-0400-*`.
+- **Learnings for future iterations:**
+  - **`*-update` patch-style POST canonical shape locked in across six
+    tags now.** The `*-update` precedent (API-0163 `mariadb-update`,
+    API-0182 `mongo-update`, API-0202 `mysql-update`, API-0280
+    `postgres-update`, API-0315 `redis-update`, and API-0322
+    `registry-update`) is reliably **single REQUIRED `<tag>Id` plain
+    string + WIDE optional configuration tail**. The minimal-required-
+    only fixture supplies only the `<tag>Id` and omits everything else;
+    do not break this pattern. Adding optional-field coverage to a
+    `*-update` fixture risks regressing the credential-redaction
+    safety carve-out whenever an optional slot turns out to be a
+    credential-shaped scalar (e.g. `databasePassword` on
+    redis/mongo/mariadb/mysql/postgres `*-update`, or
+    `username` / `password` on registry-update).
+  - **Tag-arc closure forward reference convention.** When a story
+    closes a per-tag namespace (here, API-0322 closes `registry-cov-*`),
+    the closing comment **must** explicitly call out that the namespace
+    is now closed AND identify the next priority-N entry in the PRD-
+    ordered backlog as the new tag-arc kickoff. This is the same
+    convention used at every prior arc-closer (e.g. API-0301
+    `redirects-update` closing redirects/*, API-0315 `redis-update`
+    closing redis/*). The next contributor reading API-0322's closing
+    comment immediately knows (a) the registry/* namespace is closed,
+    (b) the next entry is API-0400 `sshKey-all`, and (c) they will open
+    a fresh `sshKey-cov-*` namespace.
+  - **`registry-update` body diverges from `registry-create` and
+    `registry-testRegistry` on field-required status.** The `username`,
+    `password`, `registryUrl`, and `registryType` fields that are
+    REQUIRED on `registry-create` (API-0317) and `registry-testRegistry`
+    (API-0320) are all OPTIONAL on `registry-update`. Reaffirms the
+    per-field re-verification rule from API-0320: future contributors
+    who copy a sibling's fixture must always re-verify per-field
+    required/optional status against `internal/api/data/openapi.json`
+    rather than assuming sibling parity inside the same tag arc.
+---
