@@ -24412,3 +24412,42 @@ forward-reference lesson before assuming any field shape.
     `redis-update` schema-drift checks should re-confirm this
     divergence rather than assume cross-tag identity.
 ---
+
+## 2026-05-09 - API-0323
+- **Implemented**: Coverage entry for `rollback-delete` (POST /rollback.delete).
+  Opens a fresh `rollback-cov-*` per-tag fixture-isolation namespace after the
+  redis/* arc closed at API-0315. Body is the canonical
+  single-required-string-scalar shape (`rollbackId`); responses
+  200/400/401/403/500 with no 404 declared, so the harness-default
+  401→CodeAuth failure family is retained.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended an `apiCoverageCase` for
+    `rollback-delete` between API-0315 (`redis-update`) and API-0331
+    (`security-create`), with deterministic `rollback-cov-delete-0323-rollbackId`
+    fixture token and empty-success `{}` response.
+  - `ralph/prd.json` — set US/API-0323 `passes: true`.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean (no new deps).
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages `ok`.
+  - `go test -race ./...` — all packages `ok`.
+- **Tools NOT available locally** (unchanged from prior iterations):
+  `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`.
+- **Remaining risks / follow-ups**:
+  - Rollback tag coverage continues with API-0324 `rollback-rollback` (also
+    priority 4). It should grep this entry first to inherit the
+    `rollback-cov-*` slug namespace per the per-tag isolation rule.
+- **Learnings for future iterations**:
+  - The `*-delete` slug on a body-bearing destructive POST keeps the same
+    on-the-wire shape and 401-default failure family as the `*-remove` /
+    `*-stop` peers — a single REQUIRED `<tag>Id` plain string with zero
+    optional fields. The harness's existing 401→CodeAuth default is the
+    correct choice; 404 is structurally inapplicable because the spec
+    omits it (Dokploy collapses missing-target into 400/validation under
+    its tRPC convention for body-bearing imperative actions).
+  - Empty-success cohort response (`{}` with `additionalProperties: false`)
+    is the dominant priority-4 mutation shape — keep `SuccessResponse: \`{}\``
+    so the success leg asserts on `data.method` / `data.status` rather than
+    payload projection.
+---
