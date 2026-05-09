@@ -46252,6 +46252,121 @@ var coveredAPIOperations = []apiCoverageCase{
 		// namespace **must not** be reused.
 	},
 	{
+		StoryID:     "API-0416",
+		OperationID: "stripe-canCreateMoreServers",
+		Method:      http.MethodGet,
+		Path:        "/stripe.canCreateMoreServers",
+		Tag:         "stripe",
+		// First entry on the stripe/* coverage roster, opening the
+		// fresh `stripe-cov-*` per-tag fixture-isolation namespace
+		// orthogonal to every prior tag's namespace (the now-closed
+		// `sso-cov-*` opened at API-0406 and closed at API-0415,
+		// plus all earlier `set-cov-*`, `srv-cov-*`, `proj-cov-*`,
+		// `org-cov-*`, `compose-cov-*`, `app-cov-*`, `ai-cov-*`,
+		// `admin-cov-*`, `backup-cov-*`, `bb-cov-*`, `cert-cov-*`,
+		// `clu-cov-*`, `deployment-cov-*`, `dest-cov-*`,
+		// `usr-cov-*`, `swarm-cov-*`, etc.) per the per-tag
+		// isolation rule originally established at API-0246
+		// `organization-active` and reasserted at API-0335..API-0444.
+		// This entry establishes the canonical `stripe-cov-*`
+		// prefix for the stripe/* roster — every subsequent stripe/*
+		// story (API-0417 `stripe-createCheckoutSession`, API-0418
+		// `stripe-createCustomerPortalSession`, API-0419
+		// `stripe-getCurrentPlan`, API-0420 `stripe-getInvoices`,
+		// API-0421 `stripe-getProducts`, API-0422
+		// `stripe-upgradeSubscription`) inherits this per-tag
+		// fixture-isolation namespace. The now-closed `sso-cov-*`
+		// namespace **must not** be reused or back-referenced by
+		// any stripe/* entry.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json` >
+		// `/stripe.canCreateMoreServers` > `get`: method GET, tag
+		// stripe, **no parameters** (no path placeholders, no query
+		// string), **no request body** (parameter-free, body-free
+		// action-style probe GET). Responses 200/400/401/403/404/500.
+		// 200 schema is `{}` with `additionalProperties: false`,
+		// matching every prior covered peer in the empty-success
+		// cohort (API-0058 `certificates-all`, API-0408
+		// `sso-getTrustedOrigins`, API-0409 `sso-listProviders`,
+		// API-0413 `sso-showSignInWithSSO`).
+		//
+		// **Shape positioning — parameter-free body-free
+		// action-style probe GET.** Structurally identical to
+		// API-0413 `sso-showSignInWithSSO` (action-style probe GET
+		// with no selector, no parameters, no body, 200 schema `{}`,
+		// 404 in the spec response set but no addressable subject).
+		// The stripe/* tag's first read is an account-state probe
+		// ("can the caller create more servers under their current
+		// plan?") that takes no inputs because the answer is fully
+		// determined by the authenticated principal's account state;
+		// the slug-stem `canCreate*` is a boolean-probe convention
+		// that aligns with the action-style probe family rather than
+		// the canonical-by-id GET family or the list-style GET
+		// family. Per the slug-stem-is-not-shape lesson reasserted
+		// at API-0371..API-0444, this shape match is confirmed by
+		// re-reading the spec, NOT by inferring from the slug stem.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// 404 IS in the spec response set (200/400/401/403/404/500),
+		// but the 404→CodeNotFound override is **structurally
+		// inapplicable** because this operation has no addressable
+		// subject — it is an action-style probe with no selector,
+		// not a by-id GET. The 404→CodeNotFound override is
+		// reserved exclusively for canonical by-id GET reads where
+		// the path or query parameter explicitly addresses a
+		// resource that may not exist (the most recent precedent
+		// being API-0410 `sso-one`); applying it to a probe-style
+		// GET would conflate the missing-resource semantics of a
+		// by-id read with the policy/state-check semantics of a
+		// probe. The same reasoning applied at API-0413
+		// `sso-showSignInWithSSO` (action-style probe with 404 in
+		// spec response set but 404→CodeNotFound inapplicable). 400
+		// → CodeInvalidInput is *technically* available but the
+		// harness reserves 400 representatives for stories where
+		// payload validation is the operation's *uniquely
+		// distinguishing* failure mode, which a parameter-free
+		// body-free GET trivially is not (no inputs to validate).
+		// The harness-default 401→CodeAuth failure leg therefore
+		// remains the most representative single failure mode every
+		// authenticated Dokploy operation must re-prove, opening
+		// the 401→CodeAuth precedent for the stripe/* arc.
+		//
+		// Fixture conventions:
+		//   * No `Sample*` literals consumed — parameter-free,
+		//     body-free GET so neither `SampleQuery` nor `SampleBody`
+		//     applies, mirroring the minimal-literal pattern of
+		//     API-0058 `certificates-all`, API-0408
+		//     `sso-getTrustedOrigins`, API-0409 `sso-listProviders`,
+		//     and API-0413 `sso-showSignInWithSSO`.
+		//   * Per-case fixture token base
+		//     `stripe-cov-canCreateMoreServers-0416` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention (reserved
+		//     nominally only since no Sample* literals are emitted)
+		//     and is verified non-colliding with every prior tag's
+		//     namespace.
+		// 200 response in the spec is `{}` with
+		// `additionalProperties: false`. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+		//
+		// **stripe/* roster opens here.** Per the PRD ordering at
+		// the time of this commit, the stripe/* arc spans API-0416
+		// through API-0422 (7 stories). The next contributor must
+		// re-verify the spec for each successor against
+		// `internal/api/data/openapi.json` per the forward-reference
+		// lesson before assuming any field shape, and must stay
+		// within the open `stripe-cov-*` per-tag fixture-isolation
+		// namespace established here. The 404→CodeNotFound override
+		// slot for the stripe/* tag arc remains UNCONSUMED — the
+		// first stripe/* story whose spec declares an addressable
+		// subject (path/query parameter selector) AND 404 in the
+		// response set may claim it; absent such a story the slot
+		// stays nominal.
+	},
+	{
 		StoryID:     "API-0423",
 		OperationID: "swarm-getNodeApps",
 		Method:      http.MethodGet,

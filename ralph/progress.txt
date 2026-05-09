@@ -30695,3 +30695,106 @@ forward-reference lesson before assuming any field shape.
     closes here; the next tag (stripe/*) opens a fresh
     namespace.
 ---
+
+## 2026-05-09 - API-0416
+- Implemented coverage for API operation `stripe-canCreateMoreServers`
+  (GET /stripe.canCreateMoreServers).
+- Re-verified spec at `internal/api/data/openapi.json >
+  /stripe.canCreateMoreServers > get`: tag `stripe`, **no parameters**
+  (no path placeholders, no query string), **no request body**
+  (parameter-free, body-free action-style probe GET). Responses
+  200/400/401/403/404/500. 200 schema is `{}` with
+  `additionalProperties: false`.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended one
+    `apiCoverageCase` literal between the now-closed sso/* roster
+    closer API-0415 `sso-updateTrustedOrigin` and the swarm/* roster
+    opener API-0423 `swarm-getNodeApps`. **Opens the fresh
+    `stripe-cov-*` per-tag fixture-isolation namespace** orthogonal
+    to the now-closed `sso-cov-*` namespace per the per-tag
+    isolation rule originally established at API-0246
+    `organization-active`. No `Sample*` literals consumed (mirrors
+    the minimal-literal pattern of API-0058 `certificates-all`,
+    API-0408 `sso-getTrustedOrigins`, API-0409 `sso-listProviders`,
+    API-0413 `sso-showSignInWithSSO`). The 200 schema is `{}`. 404
+    IS in the spec response set but the 404→CodeNotFound override
+    is structurally inapplicable (action-style probe with no
+    addressable subject — same reasoning as API-0413
+    `sso-showSignInWithSSO`); the 404 slot for the stripe/* tag arc
+    therefore remains UNCONSUMED. Harness-default 401→CodeAuth
+    failure leg retained — opens the 401→CodeAuth precedent for the
+    stripe/* arc. Fixture token slug
+    `stripe-cov-canCreateMoreServers-0416` is reserved nominally
+    only.
+  - `ralph/prd.json` — flipped API-0416 `passes` to true (trailing
+    newline preserved).
+  - `ralph/progress.txt` — this entry.
+- Verification (all green):
+  - `gofmt -l .` → clean
+  - `go mod tidy` → no changes
+  - `go vet ./...` → clean
+  - `go test ./...` → all packages pass (internal/cli 1.394s)
+  - `go test -race ./...` → all packages pass (internal/cli 3.695s)
+  - Targeted: `go test ./internal/cli/ -run
+    'API-0416|APICoverage|RegistryInvariants|SchemaCommandWorks|ManifestListsOperation'`
+    PASS (0.974s) — RegistryInvariants, SchemaCommandWorks,
+    ManifestListsOperation, SuccessRoundTrip, RepresentativeFailure
+    all green for the new entry.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` are not installed locally and were not run
+    (documented per the Codebase-Patterns convention rather than
+    silently skipped).
+- Results: API-0416 acceptance criteria satisfied. Operation present
+  in OpenAPI registry with method GET, path /stripe.canCreateMoreServers,
+  tag stripe; raw API call works through the harness parameter-free
+  body-free path (`yalla api call stripe-canCreateMoreServers --json`);
+  schema get works; manifest lists the operation; success and
+  401→CodeAuth representative failure both proven by httptest
+  fixtures.
+- Remaining risks / follow-ups:
+  - 7 priority-5 API coverage stories still failing. The stripe/*
+    arc opens here at API-0416 and continues at API-0417
+    `stripe-createCheckoutSession` (declared a **POST** per the
+    PRD). The next contributor must re-verify the spec against
+    `internal/api/data/openapi.json > /stripe.createCheckoutSession
+    > post` per the forward-reference lesson before assuming any
+    field shape, and must stay within the open `stripe-cov-*`
+    per-tag fixture-isolation namespace established here.
+- **Learnings for future iterations:**
+  - **Action-style probe GET ≡ API-0413 precedent.** The
+    `stripe-canCreateMoreServers` shape is structurally identical
+    to API-0413 `sso-showSignInWithSSO` — parameter-free, body-free
+    GET with 200 schema `{}` and 404 in the spec response set but
+    no addressable subject. The slug-stem `canCreate*` is a
+    boolean-probe convention ("can the caller perform action X
+    under their current state?") that aligns with the action-style
+    probe family; like other action probes, the answer is fully
+    determined by the authenticated principal's account state, so
+    no inputs are required. Expect the same shape on any future
+    `can*`/`should*`/`is*` boolean-probe GETs across Dokploy.
+  - **404→CodeNotFound override remains a by-id-GET-only construct.**
+    Even when 404 is declared in an action-style probe's response
+    set, the 404→CodeNotFound override does not apply — the
+    override is reserved for canonical by-id GET reads where a
+    path/query parameter explicitly addresses a resource that may
+    not exist (most recent precedent: API-0410 `sso-one`). For
+    probe-style GETs the 404 leg remains harness-default and the
+    representative-failure choice falls back to 401→CodeAuth. This
+    rule was first established at API-0413 and is now reaffirmed
+    at the opening of the stripe/* arc.
+  - **Fresh per-tag namespace required when opening a new tag arc.**
+    The closed `sso-cov-*` namespace **must not** be reused or
+    back-referenced by any stripe/* entry. The new `stripe-cov-*`
+    namespace is verified non-colliding with every prior tag's
+    namespace. Per-case fixture token base follows the
+    `<tag>-cov-<slug>-<storyID>` rule; here reserved nominally
+    only since no Sample* literals are emitted.
+  - **stripe/* arc reservations established at the opener:** the
+    404→CodeNotFound override slot is UNCONSUMED — reserved for
+    the first stripe/* story whose spec declares an addressable
+    subject (path/query parameter selector) AND 404 in the
+    response set. Likely candidates: any stripe/* by-id GET if one
+    exists in the remaining 6 stories; otherwise the slot stays
+    nominal. The 401→CodeAuth harness-default failure leg is now
+    the precedent every stripe/* peer should re-prove.
+---
