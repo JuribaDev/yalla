@@ -24721,6 +24721,149 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0257",
+		OperationID: "patch-cleanPatchRepos",
+		Method:      http.MethodPost,
+		Path:        "/patch.cleanPatchRepos",
+		Tag:         "patch",
+		// Second entry in the patch/* roster, immediately following
+		// API-0256 `patch-byEntityId` and continuing inside the
+		// `patch-cov-*` per-tag fixture-isolation namespace opened
+		// there. Per the per-tag fixture-isolation rule reasserted
+		// at API-0256 this entry **must not** back-reference any
+		// closed prior-tag namespace (`admin-cov-*`, `ai-cov-*`,
+		// `app-cov-*`, `backup-cov-*`, `bb-cov-*`, `cert-cov-*`,
+		// `clu-cov-*`, `compose-cov-*`, `deployment-cov-*`,
+		// `dest-cov-*`, `docker-cov-*`, `domain-cov-*`,
+		// `environment-cov-*`, `git-cov-*`, `mounts-cov-*`,
+		// `notification-cov-*`, `org-cov-*`, `proj-cov-*`,
+		// `set-cov-*`, or `srv-cov-*`); future patch/* peers
+		// (API-0258 `patch-create`, API-0259 `patch-delete`, and
+		// the rest of the patch/* coverage block per `prd.json`)
+		// should grep this block to inherit the `patch-cov-*` slug
+		// namespace established by API-0256.
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /patch.cleanPatchRepos
+		// > post`: a **POST** with **zero parameters** (no query,
+		// no path, no header) and a **REQUIRED** `requestBody`
+		// (`requestBody.required = true`) carrying a JSON object
+		// with one **OPTIONAL** string property `serverId`
+		// (declared in the inner schema's `properties` map but
+		// **absent** from any `required` array — the inner schema
+		// has no `required` key at all). Responses 200/400/401/403/
+		// 500 — note the **absence of 404**, mirroring the
+		// canonical mutating-POST cohort response set rather than
+		// API-0256's by-id-flavoured 404-bearing GET response set.
+		// The 200 schema is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort.
+		//
+		// **Shape positioning — required-body POST with single
+		// optional inner string property, no parameters.** The
+		// closest cross-tag wire-shape peer is API-0387
+		// `settings-setupGPU` (POST, zero parameters, required
+		// body, single optional `serverId` string in inner schema,
+		// 200/400/401/403/500 response set, no 404). The
+		// outer-body axis (REQUIRED) is shared with API-0387 and
+		// distinguishes this entry from the settings/* `clean*`
+		// sub-cohort opened at API-0353 (`requestBody.required =
+		// false` with the same one-optional-`serverId` inner shape)
+		// and the settings/* no-body `clean*` sub-cohort opened at
+		// API-0354 (no `requestBody` field at all). The
+		// inner-required-field axis (OPTIONAL `serverId`)
+		// distinguishes this entry from POST peers like
+		// API-0011 `application-cancelDeployment` and
+		// API-0012 `application-cleanQueues` whose inner schemas
+		// declare a REQUIRED id field. The patch/* tag's `clean*`
+		// verb prefix here is **not** authoritative for body
+		// shape — the settings/* roster already established at
+		// API-0353..API-0359 that `clean*` siblings can diverge
+		// across the outer-body, inner-required, and parameter
+		// axes; future patch/* `clean*` peers (none in the PRD's
+		// patch/* roster, but if added later) must always re-verify
+		// per-operation rather than inheriting any axis from this
+		// entry.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `patch-cov-cleanPatchRepos-0257` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared
+		//     across every per-tag roster and is unique (verified:
+		//     no collisions with API-0256
+		//     `patch-cov-by-entity-id-0256` and orthogonal to
+		//     every prior tag's `srv-cov-*`, `proj-cov-*`,
+		//     `org-cov-*`, `compose-cov-*`, `app-cov-*`,
+		//     `ai-cov-*`, `set-cov-*`, etc. namespaces).
+		//   * `serverId` carries the fixture-shaped literal
+		//     `patch-cov-cleanPatchRepos-0257` rather than a real
+		//     UUID so the wire payload is uniquely identifiable
+		//     in test output and cannot collide with any
+		//     production server identifier. The schema constrains
+		//     the field to `type: string` only (no `format` or
+		//     `pattern`), so a simple fixture token is
+		//     structurally valid.
+		//   * **Populating the optional `serverId`** even though
+		//     it is OPTIONAL in the inner schema follows the
+		//     API-0353 `settings-cleanAll`, API-0385
+		//     `settings-reloadTraefik`, and API-0387
+		//     `settings-setupGPU` precedents for populating the
+		//     optional axis on operations whose only inner field
+		//     is an optional `serverId`. Populating it (a)
+		//     exercises the JSON serialiser's non-empty body
+		//     branch, (b) keeps the `Content-Type:
+		//     application/json` header assertion meaningful, and
+		//     (c) distinguishes this case on the wire from any
+		//     hypothetical no-body POST cohort. Leaving the body
+		//     as `{}` would degrade this case to a degenerate
+		//     empty-payload round-trip and lose the
+		//     body-forwarding assertion.
+		//
+		// **Family choice — harness-default 401→CodeAuth
+		// retained.** The spec omits 404 from the response set
+		// (the `cleanPatchRepos` verb is a fleet-wide,
+		// optional-server-scoped patch-repository cleanup, not a
+		// by-id resource lookup), so the 404→CodeNotFound
+		// override is structurally inapplicable.
+		// 400→CodeInvalidInput is *technically* available — a
+		// payload that supplies a non-string `serverId` would fail
+		// server-side validation — but the harness reserves 400
+		// representatives for stories where payload validation is
+		// the operation's *uniquely distinguishing* failure mode,
+		// and the inner schema here declares zero required fields
+		// (the empty-object `{}` payload would itself be a
+		// structurally valid request), so the validator surface is
+		// degenerate and 400 is too narrow to make the canonical
+		// failure representative. Auth is the universal failure
+		// mode every authenticated Dokploy operation must
+		// re-prove, so the harness-default 401→CodeAuth failure
+		// leg (`tc.FailureStatus == 0` → 401, `tc.FailureCode ==
+		// ""` → CodeAuth) stays the most informative
+		// representative — same call as the API-0353
+		// `settings-cleanAll` / API-0387 `settings-setupGPU`
+		// optional-`serverId` POST precedents.
+		//
+		// The next case in the patch/* roster per PRD ordering is
+		// API-0258 `patch-create` (declared a **POST** with
+		// `requestBody.required = true`); the next contributor
+		// must re-verify the spec against
+		// `internal/api/data/openapi.json > /patch.create > post`
+		// per the forward-reference lesson before assuming any
+		// field shape, and will continue inside the `patch-cov-*`
+		// per-tag fixture-isolation namespace inherited from
+		// API-0256 and continued here.
+		SampleBody: json.RawMessage(`{
+			"serverId": "patch-cov-cleanPatchRepos-0257"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0268",
 		OperationID: "port-create",
 		Method:      http.MethodPost,

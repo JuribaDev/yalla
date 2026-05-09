@@ -28088,3 +28088,92 @@ forward-reference lesson before assuming any field shape.
     from the much larger notification/* (API-0208..API-0245) or
     organization/* (API-0246..API-0255) rosters.
 ---
+
+## 2026-05-09 - API-0257 patch-cleanPatchRepos
+- **What was implemented**: Added the `API-0257
+  patch-cleanPatchRepos` (POST `/patch.cleanPatchRepos`) coverage
+  case to `internal/cli/api_coverage_test.go`, immediately after
+  the API-0256 `patch-byEntityId` block opened the patch/* roster
+  and before the API-0268 `port-create` block. Inherits the
+  `patch-cov-*` per-tag fixture-isolation namespace established
+  by API-0256. Required-body POST with a single OPTIONAL
+  `serverId` string property in the inner schema (no inner
+  `required` array), zero parameters, harness-default
+  401→CodeAuth failure leg, empty `{}` success response.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended the API-0257
+    case immediately after the API-0256 entry, before the
+    API-0268 `port-create` block. The shape is structurally
+    identical to API-0387 `settings-setupGPU` (POST, zero
+    parameters, REQUIRED outer body carrying single OPTIONAL
+    `serverId` string, no 404). The fixture token base
+    `patch-cov-cleanPatchRepos-0257` keeps `git grep` traceable
+    to this PRD story and stays inside the `patch-cov-*`
+    namespace.
+  - `ralph/prd.json` — set US API-0257 `passes: true`.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages OK (`internal/cli` 1.351s,
+    others cached).
+  - `go test -race ./...` — all packages OK (`internal/cli`
+    3.637s).
+  - Optional tools (`goimports`, `golangci-lint`, `staticcheck`,
+    `govulncheck`, `goreleaser`) remain unavailable locally per
+    the documented baseline; CI's `security` job covers them.
+- **Remaining risks / follow-ups**:
+  - API-0258 `patch-create` is the next patch/* peer (declared a
+    POST per PRD with `requestBody.required = true`). It must
+    continue inside the `patch-cov-*` namespace inherited from
+    API-0256 and continued here, and re-verify the spec against
+    `internal/api/data/openapi.json > /patch.create > post`
+    before assuming any field shape, per the API-0345..API-0444
+    forward-reference lesson.
+  - The patch/* roster runs API-0256..API-0267 per `prd.json`
+    (12 entries total, 2 now covered). Future contributors
+    should grep this block first to inherit the `patch-cov-*`
+    slug namespace rather than copying organization/* `org-cov-*`
+    or port/* `port-cov-*` fixtures across the tag boundary.
+- **Learnings for future iterations**:
+  - **Required-outer-body + optional-inner-`serverId` is a
+    cross-tag wire shape, not a per-tag idiom.** API-0387
+    `settings-setupGPU` was the prior-tag exemplar and API-0257
+    `patch-cleanPatchRepos` is the patch/* representative of the
+    same wire shape. Both share: POST verb, zero parameters,
+    `requestBody.required = true`, inner schema `{type: object,
+    properties: {serverId: string}}` with no inner `required`
+    array, response set 200/400/401/403/500 (no 404), 200 schema
+    `{}` with `additionalProperties: false`. Future contributors
+    encountering a Dokploy operation with this exact axis
+    combination across any tag should grep both API-0387 and
+    API-0257 for the populating-optional-`serverId` precedent
+    rather than duplicating the rationale or leaving the body
+    empty.
+  - **`clean*` verb prefix is not authoritative for body shape
+    even within the same tag.** The settings/* roster already
+    established at API-0353..API-0359 that `clean*` siblings can
+    diverge across the outer-body, inner-required, and parameter
+    axes. The patch/* tag's only `clean*` peer (this entry,
+    API-0257) sits squarely in the required-outer-body cohort,
+    distinct from settings/* `cleanAll`/`cleanDockerBuilder`/
+    `cleanDockerPrune` (optional-outer-body) and
+    `cleanAllDeploymentQueue`/`cleanMonitoring`/`cleanRedis`/
+    `cleanSSHPrivateKey` (no-body). Future patch/* `clean*`
+    additions (none in the current PRD roster) must always
+    re-verify per-operation rather than assume parity with this
+    entry.
+  - **Outer-body vs. inner-required axes are independent.** The
+    `requestBody.required` flag controls whether the *body
+    envelope* is mandatory; the inner schema's `required` array
+    controls whether *individual fields* are mandatory. API-0257
+    has `requestBody.required = true` (the body envelope must be
+    sent) but the inner schema has no `required` array (every
+    field is optional, including `serverId`). This means the
+    minimum-valid wire payload is `{}`, but the request line
+    must still carry a Content-Type header and a body. Future
+    contributors authoring required-body fixtures should always
+    populate at least one optional field (per the API-0353 /
+    API-0387 precedent) so the body-forwarding round-trip
+    assertion remains meaningful.
+---
