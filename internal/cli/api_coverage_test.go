@@ -19969,6 +19969,83 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0221",
+		OperationID: "notification-one",
+		Method:      http.MethodGet,
+		Path:        "/notification.one",
+		Tag:         "notification",
+		// Fourteenth entry in the notification/* coverage roster and the
+		// **first query-shaped GET** in the tag — opening the
+		// notification/* `*Id`-filtered GET cohort inside the
+		// `notification-cov-*` per-tag fixture-isolation namespace seeded
+		// at API-0208 `notification-all`. API-0220
+		// `notification-getEmailProviders` opened the notification/*
+		// parameter-free GET cohort and forward-referenced this entry as
+		// the canonical query-shaped GET successor; API-0221 follows
+		// through and pivots the tag onto its first single-`*Id` filter
+		// fixture.
+		//
+		// Spec source `data/openapi.json > /notification.one > get`
+		// declares no request body and a single REQUIRED query parameter
+		// `notificationId` (`schemaType: string`). This is the canonical
+		// shape covered for `*-one` GETs across already-landed peers —
+		// API-0021 `application-one`, the cross-tag query-shaped GET
+		// precedent set by API-0023 `application-readTraefikConfig`, and
+		// every subsequent `*-one` GET in the application/*, backup/*,
+		// compose/*, destination/*, and domain/* rosters that filters on
+		// a single `*Id` query string. The harness forwards `SampleQuery`
+		// via the `--input` JSON `query` field, and
+		// `runAPICoverageSuccess` re-reads `r.URL.Query()` to confirm the
+		// CLI propagated `notificationId` verbatim.
+		//
+		// Responses 200/400/401/403/404/500 — identical to the
+		// notification/* tag's parameter-free GET cohort opener API-0220
+		// for 200/400/401/403/500, but unlike API-0220 the 404 here is
+		// semantically reachable (an unknown `notificationId`). The
+		// representative-failure leg still keeps the harness default of
+		// 401→CodeAuth: authentication is the universal failure mode
+		// shared across every Dokploy operation, and per the per-tag
+		// opener rule re-asserted at API-0246 `organization-active` and
+		// reaffirmed at API-0220 `notification-getEmailProviders`, the
+		// failure leg exercises the universal auth invariant on every
+		// cohort opener rather than the tag-specific 404 shadow. A
+		// subsequent notification/* peer that ships a single-target
+		// missing-resource lookup with no auth ambiguity may override
+		// to 404→CodeNotFound on a per-entry basis once the missing-
+		// target leg becomes the more representative failure for that
+		// specific operation.
+		//
+		// **Slug style — kebab-case inherited from API-0208/API-0209
+		// through API-0220.** Per the per-tag-slug-style rule fixed by
+		// the kickoff multi-camel entry API-0209
+		// `notification-createCustom` (→ `create-custom`) and propagated
+		// through every notification/* `create-*` peer plus the
+		// GET-cohort opener API-0220 `notification-getEmailProviders` (→
+		// `get-email-providers`), this entry takes `one` as the slug
+		// stem. The `notificationId` fixture value is therefore
+		// `notification-cov-one-0221`, mirroring the
+		// `notification-cov-<slug>-<storyID>` discipline locked by
+		// API-0208..API-0220 and the cross-tag `*-cov-<slug>-<storyID>`
+		// query-fixture convention established at API-0021
+		// `application-one`. **This entry opens the notification/*
+		// `*Id`-filtered GET cohort** — every subsequent notification/*
+		// GET that filters on a single `*Id` query parameter inherits
+		// this slug style and the harness-default 401→CodeAuth failure
+		// leg. Future contributors covering notification/* peers with
+		// multi-parameter filters should grep this entry first, then
+		// fall back to cross-tag multi-parameter precedents for the
+		// additional shaping rather than re-deriving from scratch.
+		SampleQuery: map[string][]string{
+			"notificationId": {"notification-cov-one-0221"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the empty-success
+		// cohort. Empty-object body keeps the success-leg envelope
+		// assertion focused on `data.method` / `data.status` rather than
+		// payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,
