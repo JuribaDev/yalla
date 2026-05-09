@@ -22107,6 +22107,175 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0235",
+		OperationID: "notification-updateCustom",
+		Method:      http.MethodPost,
+		Path:        "/notification.updateCustom",
+		Tag:         "notification",
+		// Twenty-eighth entry on the notification/* coverage roster
+		// and the **kickoff for the notification/* `update*`
+		// mutation-by-id cohort**, opening a new shape family
+		// distinct from the closed `test*` connectivity-validation
+		// POST cohort (API-0224..API-0234) — per the API-0234
+		// closing note, this entry re-derives slug stem and body
+		// composition from the `notification-create*` mutation
+		// precedents established at API-0209..API-0219 rather than
+		// back-referencing the `test*` cohort. Stays inside the
+		// `notification-cov-*` per-tag fixture-isolation namespace
+		// seeded at API-0208 `notification-all` and extended across
+		// API-0209..API-0234. Per the per-tag isolation rule
+		// reaffirmed across each prior peer this entry stays inside
+		// the namespace opened by API-0208 and **must not** back-
+		// reference any closed prior-tag namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json >
+		// /notification.updateCustom > post`: a **POST** with **no
+		// parameters** and a **REQUIRED request body** whose schema
+		// declares **two REQUIRED non-nullable plain string fields**
+		// (`notificationId`, `customId`) alongside an eleven-sibling
+		// optional tail covering seven plain booleans
+		// (`appBuildError`, `databaseBackup`, `volumeBackup`,
+		// `dokployRestart`, `appDeploy`, `dockerCleanup`,
+		// `serverThreshold`), two plain strings (`name`,
+		// `endpoint`), one nested string-valued map (`headers`:
+		// `map[string]string` per the
+		// `propertyNames`/`additionalProperties` pair), and one
+		// plain string scope-anchor (`organizationId`). Responses
+		// 200/400/401/403/500 — the spec does **not** declare 404
+		// on this operation, matching the cross-tag update-by-id
+		// mutation precedent on API-0010 `ai-update`, API-0050
+		// `backup-update`, API-0107 `destination-update`, API-0122
+		// `domain-update`, API-0130 `environment-update`, API-0193
+		// `mounts-update`, and API-0254 `organization-update`
+		// (Dokploy's tRPC convention collapses missing-target into
+		// 400/validation rather than surfacing a 404 leg). The 200
+		// schema is `{}` with `additionalProperties: false`,
+		// matching every prior covered peer in the empty-success
+		// cohort.
+		//
+		// **Slug style — kebab-case inherited from the
+		// notification/* per-tag-slug-style rule fixed by the
+		// kickoff multi-camel entry API-0209
+		// `notification-createCustom` (→ `create-custom`).** Per
+		// the per-tag-slug-style rule, this entry takes
+		// `update-custom` as the slug stem (two kebab-cased
+		// segments mirrored from `updateCustom`). The fixture
+		// namespace is `notification-cov-update-custom-0235-
+		// <field>`, mirroring the `notification-cov-<slug>-
+		// <storyID>-<field>` discipline locked by API-0208..
+		// API-0234. **This entry is the kickoff member of the
+		// notification/* `update*` mutation-by-id cohort** —
+		// future cohort peers (API-0236
+		// `notification-updateDiscord` → `update-discord`,
+		// API-0237 `notification-updateEmail` → `update-email`,
+		// API-0238 `notification-updateGotify` → `update-gotify`,
+		// API-0239 `notification-updateLark` → `update-lark`, …)
+		// must use kebab-case slugs and re-derive their body
+		// composition from the matching `notification-create*`
+		// sibling rather than back-referencing the closed `test*`
+		// cohort.
+		//
+		// **Body composition — two-required + every-optional-
+		// populated.** Per the *-update convention re-asserted by
+		// API-0050 `backup-update` and API-0107
+		// `destination-update`, and the broader notification/*
+		// every-optional-populated precedent set by API-0209
+		// `notification-createCustom`, all eleven optional siblings
+		// are populated so the wire fixture exercises the full
+		// update payload, not just the by-id minimum. This
+		// **diverges** from the by-id-minimum convention
+		// established by API-0193 `mounts-update` (which omits
+		// optional siblings to keep the minimal positive case
+		// shape-faithful) — the divergence is intentional: the
+		// notification/* tag's house style for body-bearing
+		// mutations is every-optional-populated (locked at
+		// API-0209), and a future contributor adding optional-
+		// field coverage to other notification/* update peers
+		// should mirror this entry rather than the mounts-update
+		// minimal precedent.
+		//   - **REQUIRED `notificationId`** (plain non-nullable
+		//     string). The persisted-notifier target identifier;
+		//     re-uses the same field name as the by-id mutation
+		//     opener API-0223 `notification-remove` but anchored
+		//     on this story's `notification-cov-update-custom-
+		//     0235-<field>` namespace so the literal stays
+		//     greppable per-story.
+		//   - **REQUIRED `customId`** (plain non-nullable string).
+		//     Persisted-notifier discriminator for the custom
+		//     transport flavour; the second required scalar
+		//     surfaces only on the `update*` cohort because
+		//     create-mutations identify the row server-side while
+		//     update-mutations must address an existing
+		//     `notifications` row plus its transport-specific
+		//     sibling row (`custom_notifications` here). Same per-
+		//     storyID anchor pattern.
+		//   - **OPTIONAL — every-optional-populated.** Mirrors the
+		//     API-0209 fixture's optional tail one-for-one (seven
+		//     booleans on `true`, plain string `name`, `endpoint`
+		//     on the `example.invalid` reserved TLD per RFC 6761,
+		//     and a single-entry `headers` map) plus the
+		//     additional `organizationId` scope anchor that
+		//     surfaces only on the `update*` family (not on
+		//     `create*`). Every value is anchored on the per-
+		//     storyID namespace so a future leak in a golden file
+		//     remains greppable without colliding with the
+		//     API-0209 `create*` literals.
+		//
+		// **Shape positioning — two-required (two plain strings)
+		// POST mutation-by-id with eleven-sibling optional tail,
+		// body REQUIRED.** Opens the notification/* tag's
+		// `update*` mutation-by-id cohort. Distinct from every
+		// prior notification/* peer in body cardinality: API-0208
+		// (parameter-free GET, no body), API-0209
+		// `notification-createCustom` (two-required + eight-
+		// sibling optional tail — same field shapes minus
+		// `notificationId`/`customId`/`organizationId`), API-0223
+		// `notification-remove` (single-required by-id body), and
+		// the closed `test*` cohort (API-0224..API-0234,
+		// transport-descriptor bodies with no by-id target).
+		// Future notification/* `update*` peers should mirror this
+		// entry's two-required + every-optional-populated shape,
+		// swapping the optional tail for the matching transport-
+		// specific siblings.
+		//
+		// **Family choice — harness-default 401→CodeAuth
+		// retained.** The spec omits 404 from the response set
+		// (Dokploy's tRPC convention collapses missing-target into
+		// 400/validation), so the 404→CodeNotFound override is
+		// structurally inapplicable. `*-updateCustom` here is a
+		// body-bearing imperative-action POST and stays on the
+		// 401→CodeAuth invariant locked across every imperative-
+		// action notification/* peer (API-0209..API-0220,
+		// API-0222..API-0234), keeping authentication as the
+		// universal failure surface for the notification/*
+		// `update*` cohort kickoff.
+		SampleBody: json.RawMessage(`{
+			"notificationId": "notification-cov-update-custom-0235-notificationId",
+			"customId": "notification-cov-update-custom-0235-customId",
+			"name": "notification-cov-update-custom-0235-name",
+			"endpoint": "https://example.invalid/notification-cov-update-custom-0235-endpoint",
+			"appBuildError": true,
+			"databaseBackup": true,
+			"volumeBackup": true,
+			"dokployRestart": true,
+			"appDeploy": true,
+			"dockerCleanup": true,
+			"serverThreshold": true,
+			"headers": {
+				"X-Notification-Source": "notification-cov-update-custom-0235-header"
+			},
+			"organizationId": "notification-cov-update-custom-0235-organizationId"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the empty-
+		// success cohort. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` / `data.status`
+		// rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,

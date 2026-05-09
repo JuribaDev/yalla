@@ -27347,3 +27347,148 @@ forward-reference lesson before assuming any field shape.
     is preserved by the surgical slice — no full-file rewrite
     risk.
 ---
+
+## 2026-05-09T05:30Z - API-0235 (Cover notification-updateCustom, POST /notification.updateCustom)
+- **What was implemented**: Added an `apiCoverageCase` entry for the
+  Dokploy `notification-updateCustom` operation (`POST
+  /notification.updateCustom`) inside
+  `internal/cli/api_coverage_test.go`. Operation is the **kickoff
+  member of the notification/* `update*` mutation-by-id cohort** and
+  the 28th notification/* coverage entry overall (API-0208..API-0235
+  inclusive). With API-0235 landing, the notification/* tag pivots
+  from the closed `test*` connectivity-validation POST cohort
+  (API-0224..API-0234) into the new `update*` mutation-by-id family
+  (API-0235..API-0245); future cohort peers should re-derive their
+  body composition from the matching `notification-create*` sibling
+  rather than back-referencing the `test*` cohort.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended a new
+    `apiCoverageCase` entry directly after API-0234 and before
+    API-0246. Slug stem `update-custom`; fixture namespace
+    `notification-cov-update-custom-0235-<field>`. The body fixture
+    pins **two REQUIRED non-nullable plain string slots**
+    (`notificationId`, `customId`) plus an **eleven-sibling every-
+    optional-populated** tail (seven booleans, two plain strings
+    `name`/`endpoint`, one `headers` map, one `organizationId` scope
+    anchor) per the notification/* tag's house style for body-
+    bearing mutations locked at API-0209
+    `notification-createCustom`. `SuccessResponse: "{}"` per the
+    empty-success cohort convention. No `FailureStatus` /
+    `FailureCode` overrides — the spec response set is
+    200/400/401/403/500 (no 404), so the harness-default 401→
+    CodeAuth representative failure leg applies unchanged.
+  - `ralph/prd.json` — single-line flip API-0235 `passes: false` →
+    `passes: true`.
+  - `ralph/progress.txt` — this append.
+- The `apiCoverageCase` harness automatically asserts: registry
+  presence (operationId/method/path/tag), schema reachability via
+  `yalla schema get`, manifest inclusion via `yalla manifest --json`,
+  an httptest-backed success exchange (`yalla api call ... --input
+  ... --json` with `yalla.output.v1`), and a 401→CodeAuth
+  representative failure leg with `yalla.error.v1` envelope and
+  non-zero exit code. No new harness changes were required.
+- **Verification run** (from repo root):
+  - `gofmt -l .` → clean (empty).
+  - `go vet ./...` → clean.
+  - `go mod tidy` → no diff.
+  - Targeted `go test ./internal/cli/ -run 'TestAPICoverage_.*/API-0235' -count=1 -v`
+    → all five subtests pass:
+      - `TestAPICoverage_RegistryInvariants/API-0235/notification-updateCustom` PASS
+      - `TestAPICoverage_SchemaCommandWorks/API-0235/notification-updateCustom` PASS
+      - `TestAPICoverage_ManifestListsOperation/API-0235/notification-updateCustom` PASS
+      - `TestAPICoverage_SuccessRoundTrip/API-0235/notification-updateCustom` PASS
+      - `TestAPICoverage_RepresentativeFailure/API-0235/notification-updateCustom` PASS
+  - `go test ./...` → all packages pass; internal/cli 1.345s.
+  - `go test -race ./...` → all packages pass; internal/cli 3.341s.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — not installed locally; same documented gap as
+    API-0224..API-0234.
+- **Body composition** (per spec re-verified against
+  `internal/api/data/openapi.json > /notification.updateCustom > post`):
+  - REQUIRED `notificationId` (string) — persisted-notifier target
+    identifier, re-uses the same field name as the by-id mutation
+    opener API-0223 `notification-remove` but anchored on this
+    story's per-storyID namespace.
+  - REQUIRED `customId` (string) — persisted-notifier discriminator
+    for the custom transport flavour; surfaces only on the
+    `update*` cohort (create-mutations identify the row server-
+    side).
+  - OPTIONAL — every-optional-populated: `appBuildError`,
+    `databaseBackup`, `volumeBackup`, `dokployRestart`, `appDeploy`,
+    `dockerCleanup`, `serverThreshold` (booleans, all `true`),
+    `name` (string), `endpoint` (https URL on `example.invalid`
+    reserved TLD per RFC 6761), `headers` (single-entry
+    `map[string]string`), and `organizationId` (string scope
+    anchor). Mirrors the API-0209 fixture's optional tail one-for-
+    one plus the additional `organizationId` scope anchor that
+    surfaces only on the `update*` family (not on `create*`).
+- Story count after this entry: 462 total, 409 passing, 53 still
+  failing.
+- **Remaining risks / follow-ups**: None for this story. The
+  notification/* `update*` mutation-by-id cohort is now open with
+  API-0235 as the kickoff member. The next pending notification/*
+  story by priority is API-0236 `notification-updateDiscord`
+  (priority=5), which should mirror this entry's two-required +
+  every-optional-populated shape, swapping the optional tail for
+  the matching `notification-createDiscord` (API-0210) sibling
+  shape (Discord webhook URL + decoration flags) plus the
+  required `notificationId`/`discordId` pair and the optional
+  `organizationId` scope anchor.
+- **Learnings for future iterations**:
+  - **Cohort opener pattern.** When a story opens a new cohort
+    (API-0235 opens the notification/* `update*` cohort after
+    API-0234 closed the `test*` cohort), the opener's preamble
+    should explicitly name the closed predecessor cohort, the
+    new cohort's shape family, and the cross-tag update-by-id
+    precedent list (API-0010, API-0050, API-0107, API-0122,
+    API-0130, API-0193, API-0254). Cohort openers carry forward-
+    reference lists naming the next 4-10 expected peers; this
+    lets future iterations confirm cohort scope without re-
+    deriving from the spec.
+  - **Update-by-id divergence from the by-id-minimum precedent
+    is intentional and tag-scoped.** API-0193 `mounts-update`
+    establishes a by-id-minimum precedent (omit optional
+    siblings to keep the minimal positive case shape-faithful).
+    But the notification/* tag's house style for body-bearing
+    mutations is every-optional-populated (locked at API-0209
+    `notification-createCustom` and re-asserted at API-0050
+    `backup-update`/API-0107 `destination-update`). The
+    decision rule: **mirror the matching create-mutation
+    sibling's optional-tail discipline rather than the cross-
+    tag update-by-id minimum precedent**, since the per-tag
+    create-precedent is closer in field-shape semantics. This
+    rule should be applied to the rest of the notification/*
+    `update*` cohort.
+  - **`organizationId` scope anchor surfaces on `update*` but
+    not `create*` family.** The spec for
+    `notification-updateCustom` declares an optional
+    `organizationId` field that is absent from
+    `notification-createCustom`'s schema. The asymmetry exists
+    because update mutations may need to re-scope a notifier
+    from one organization to another (multi-tenant
+    reassignment), while creates inherit the caller's
+    organization scope server-side. Future notification/*
+    `update*` peers should expect this `organizationId` slot in
+    the spec and populate it in the fixture per the every-
+    optional-populated convention.
+  - **Two-required-string body cardinality (persisted-notifier
+    flavour).** API-0235 introduces a new body cardinality on
+    the notification/* tag — **two required scalars**
+    (`notificationId` + transport-specific discriminator) — that
+    every `update*` cohort peer is expected to re-assert,
+    swapping the second discriminator for the transport-
+    specific sibling row identifier (`discordId`, `emailId`,
+    `gotifyId`, `larkId`, …). The cardinality is distinct from
+    every prior notification/* peer: API-0208 (no body),
+    API-0209 (two-required + eight-optional, no
+    `notificationId`), API-0223 (single-required by-id), and
+    the closed `test*` cohort (transport-descriptor bodies
+    with no by-id target).
+  - **PRD flip via regex anchor when JSON is large.** The
+    `ralph/prd.json` file is ~1.7MB and 462 stories deep; the
+    flip used a Python regex anchored on `"id": "API-0235"` to
+    locate the story object then a substring slice on the
+    trailing `"passes": false` to flip exactly one line. The
+    2-space indent is preserved by the surgical slice — no
+    full-file rewrite risk.
+---
