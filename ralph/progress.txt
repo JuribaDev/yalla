@@ -25535,3 +25535,72 @@ forward-reference lesson before assuming any field shape.
     broker enforces 1..5, so picking a mid-range integer is the
     safest deterministic choice.
 ---
+
+## 2026-05-09 - API-0215 - Cover notification-createPushover (POST /notification.createPushover)
+- Added apiCoverageCase struct literal for `notification-createPushover` to
+  `internal/cli/api_coverage_test.go`, sorted between API-0214 (createNtfy) and
+  API-0246 (organization-active) per the StoryID-sorted convention.
+- Eighth entry in the notification/* coverage roster, second
+  partially-required entry on the tag (after API-0209 createCustom) and
+  the first cross-tag fixture in the notification/* roster to land an
+  `anyOf:[{type:number},{type:null}]` populated-branch optional pair
+  (`retry`, `expire`).
+- Files changed: `internal/cli/api_coverage_test.go`, `ralph/prd.json`,
+  `ralph/progress.txt`.
+- Verification run: `gofmt -w .`, `go mod tidy`, `go vet ./...`,
+  `go test ./...`, `go test -race ./...` — all green. `goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, and `goreleaser` are
+  still not installed locally and remain documented as missing rather
+  than silently skipped.
+- PRD updated: `userStories[id=API-0215].passes` flipped to `true`.
+- Remaining risks / follow-ups: API-0216 `notification-createResend`
+  is the next priority-5 entry in the PRD-ordered backlog, declared a
+  POST per the spec preview and continuing inside the same
+  `notification-cov-*` per-tag namespace. Re-verify the spec against
+  `internal/api/data/openapi.json` per the forward-reference lesson
+  before assuming any field shape — `createResend` is the SaaS-Resend
+  transport so the body composition (likely a single API-key plus
+  from/to addresses on top of the standard category booleans) will
+  differ from Pushover's `userKey`/`apiToken` pair plus
+  emergency-priority `retry`/`expire` numerics.
+- **Learnings for future iterations:**
+  - Pushover's spec is the **first notification/* peer with optional
+    siblings since API-0209 createCustom** — five intervening peers
+    (Discord/Email/Gotify/Lark/Ntfy) all shipped closed-shape all-
+    required bodies. Don't carry over the closed-shape comment
+    framing from API-0210..API-0214 wholesale; partially-required
+    bodies need explicit REQUIRED-vs-OPTIONAL split commentary
+    matching the API-0209 createCustom precedent.
+  - Pushover ships **two body-borne secrets** (`userKey`, `apiToken`)
+    on a single create. Prior single-secret peers (`webhookUrl` on
+    Discord/Lark, `password` on Email, `accessToken` on Ntfy) only
+    needed one redactor-coverage callout; the comment block here
+    covers both jointly under the same per-tag fixture-namespace
+    rule and re-asserts that the request-body redactor in
+    `internal/api` operates on rendered output, not on outbound
+    request bytes.
+  - The spec uses `anyOf:[{type:number},{type:null}]` for `retry`
+    and `expire`. The `every-optional-populated` *-create convention
+    (from API-0014/0040/0069/0209/0292/0325) says we populate every
+    optional slot; for an anyOf-nullable, that means picking the
+    populated leg (a plain number) rather than `null`, since the
+    null leg is already cross-tag-exercised at API-0325
+    `schedule-create` for anyOf-string-null. Future peers grepping
+    this entry for the populated-branch convention should not
+    re-prove the null leg here.
+  - Pushover's `priority` field has a JSON-schema `default: 0`. Use
+    the spec-declared default (`0`) rather than a non-zero "loud"
+    value so a future numeric-bound validator doesn't reject the
+    fixture; the upstream broker maps `0` to "normal priority"
+    independent of the optional `retry`/`expire` emergency-mode
+    pair.
+  - The seventh-boolean slot `serverThreshold` returns to the
+    Pushover body (after API-0212 Gotify swapped it for
+    `decoration` and API-0214 Ntfy dropped it entirely),
+    confirming the per-spec rule reaffirmed across the roster that
+    only the transport-agnostic core six (`appBuildError`,
+    `databaseBackup`, `volumeBackup`, `dokployRestart`,
+    `appDeploy`, `dockerCleanup`) remain stable across
+    notification/* siblings; every other slot must be re-verified
+    per spec.
+---

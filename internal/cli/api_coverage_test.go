@@ -18967,6 +18967,196 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0215",
+		OperationID: "notification-createPushover",
+		Method:      http.MethodPost,
+		Path:        "/notification.createPushover",
+		Tag:         "notification",
+		// Eighth entry in the notification/* coverage roster, continuing
+		// inside the `notification-cov-*` per-tag fixture-isolation
+		// namespace opened by API-0208 `notification-all` and extended
+		// by API-0209 `notification-createCustom`, API-0210
+		// `notification-createDiscord`, API-0211
+		// `notification-createEmail`, API-0212
+		// `notification-createGotify`, API-0213
+		// `notification-createLark`, and API-0214
+		// `notification-createNtfy`. Per the per-tag isolation rule
+		// reaffirmed across each prior peer, this entry stays inside
+		// the namespace opened by API-0208 and **must not**
+		// back-reference any closed prior-tag namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json > /notification.createPushover
+		// > post`: a **POST** with **no parameters** and a **REQUIRED
+		// request body** whose schema declares **three REQUIRED non-
+		// nullable plain string fields** (`name`, `userKey`, `apiToken`)
+		// alongside a **ten-sibling optional tail** covering seven plain
+		// booleans (`appBuildError`, `databaseBackup`, `volumeBackup`,
+		// `dokployRestart`, `appDeploy`, `dockerCleanup`,
+		// `serverThreshold`), one plain number with a `default: 0`
+		// (`priority`), and two `anyOf:[{type:number},{type:null}]`
+		// nullable numbers (`retry`, `expire`). Responses
+		// 200/400/401/403/500 — the spec does **not** declare 404 on
+		// this operation, matching the cross-tag create-mutation
+		// precedent on API-0189 `mounts-create`,
+		// API-0209..API-0214 `notification-create*`, API-0268
+		// `port-create`, API-0292 `project-create`, API-0298
+		// `redirects-create`, API-0325 `schedule-create`, and
+		// API-0331 `security-create` (Dokploy create POSTs do not
+		// surface missing-target legs because there is no
+		// target-by-id to miss). The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort.
+		//
+		// **Slug style — kebab-case inherited from API-0209/API-0210/
+		// API-0211/API-0212/API-0213/API-0214.** Per the per-tag-slug-
+		// style rule fixed by the kickoff multi-camel entry API-0209
+		// `notification-createCustom` (→ `create-custom`) and
+		// propagated through `create-discord`, `create-email`,
+		// `create-gotify`, `create-lark`, and `create-ntfy`, this peer
+		// takes `create-pushover` and the remaining notification/*
+		// siblings (API-0216 `create-resend`, API-0217 `create-slack`,
+		// …) inherit kebab-case as well.
+		//
+		// **Body composition — partially-required, returns to the
+		// API-0209 createCustom shape lineage after a five-entry
+		// closed-shape detour through API-0210..API-0214.** This is the
+		// second notification/* entry to ship an optional tail (the
+		// first being API-0209 `notification-createCustom` with two
+		// required strings + an eight-sibling optional tail), and the
+		// **first** cross-tag fixture in the notification/* roster to
+		// land an `anyOf:[{type:number},{type:null}]` nullable-number
+		// optional sibling (the closest prior-tag analog being
+		// API-0325 `schedule-create`'s anyOf-string-null tail).
+		//   - **REQUIRED:** `name`, `userKey`, `apiToken` (each plain
+		//     string). The fixture supplies deterministic-but-clearly-
+		//     fake values keyed to the
+		//     `notification-cov-create-pushover-0215-<field>` namespace
+		//     inherited from API-0209..API-0214.
+		//     - `userKey` and `apiToken` both **carry transport
+		//       secrets.** Like `webhookUrl` on API-0210/0213, the
+		//       `password` on Email peers (API-0211 / future SMTP-
+		//       backed siblings), and `accessToken` on API-0214
+		//       `createNtfy`, the per-account Pushover identifiers
+		//       (`userKey` is the agent's account-scoped recipient ID,
+		//       `apiToken` is the per-application API key) are embedded
+		//       directly in the request body; the yalla request-body
+		//       forwarder ships the bytes verbatim to the upstream
+		//       Dokploy host, so the redactor in `internal/api`
+		//       operates on the **rendered --json output** (response
+		//       envelopes, error payloads, and tracing) and **not** on
+		//       the request body. The fixture values are
+		//       clearly-fake `notification-cov-create-pushover-0215-*`
+		//       tokens with no resemblance to real Pushover credentials
+		//       — agents cribbing this fixture as a template should
+		//       always substitute their own secret material via
+		//       `--input`, never inline it in source.
+		//   - **OPTIONAL — every-optional-populated.** Per the
+		//     *-create convention from API-0014, API-0040, API-0069,
+		//     API-0209, API-0292, and API-0325, all ten optional
+		//     siblings are populated so the wire fixture exercises the
+		//     full create payload, not just the minimum.
+		//     - `appBuildError`, `databaseBackup`, `volumeBackup`,
+		//       `dokployRestart`, `appDeploy`, `dockerCleanup`,
+		//       `serverThreshold` (each plain boolean) — `true` branch
+		//       on every slot to mirror an "alert me on every
+		//       category" agent-typical Pushover configuration. The
+		//       seventh-boolean slot (`serverThreshold`) returns here
+		//       after API-0212 `createGotify` swapped it for
+		//       `decoration` and API-0214 `createNtfy` dropped it
+		//       entirely, confirming the per-spec rule reaffirmed
+		//       across the roster that only the transport-agnostic
+		//       core six remain stable across notification/* siblings.
+		//     - `priority` (plain number with `default: 0`). Pushover's
+		//       message-priority slot uses the documented `-2..2`
+		//       inclusive range where `0` is the broker default
+		//       (normal-priority alert). Fixture uses `0` to land on
+		//       the spec-declared default and stay neutral against any
+		//       future numeric-bound validator that might reject
+		//       `-3`/`+3` or interpret omission as "unset" rather than
+		//       "default". Plain number — not integer, not bounded in
+		//       the JSON schema — so the fixture stays a JSON number
+		//       literal.
+		//     - `retry`, `expire` (each `anyOf:[{type:number},
+		//       {type:null}]`). Pushover documents these as
+		//       emergency-priority retry control: `retry` is the
+		//       seconds between re-deliveries (Pushover-documented
+		//       minimum 30s) and `expire` is the seconds before the
+		//       broker stops re-delivering (Pushover-documented
+		//       maximum 10800s). The spec's `anyOf` permits `null` to
+		//       opt out of the slot; the fixture supplies plain-number
+		//       values (`60` for retry, `3600` for expire) so the
+		//       wire-level test exercises the populated branch of the
+		//       anyOf — both values sit cleanly inside the
+		//       documented `30..86400`/`0..10800` Pushover ranges and
+		//       do not depend on emergency-priority semantics
+		//       upstream. Future peers grepping this entry for the
+		//       anyOf-number-null populated-branch convention should
+		//       note that the alternative leg (passing JSON `null`)
+		//       is already exercised cross-tag at API-0325
+		//       `schedule-create` for anyOf-string-null and does not
+		//       need re-proving here.
+		//
+		// **Shape positioning — three-required-string POST
+		// create-mutation, body REQUIRED, ten-field optional tail
+		// mixing seven booleans, one default-bearing plain number, and
+		// two anyOf-nullable numbers.** Functionally distinct from the
+		// other partially-required peer API-0209
+		// `notification-createCustom` (two required strings + seven
+		// optional booleans + one nested `map[string]string`,
+		// **no** numeric or anyOf-nullable slots), the closed
+		// all-required scalar-only API-0210 `notification-createDiscord`
+		// (ten slots, no number), the closed all-required
+		// API-0211 `notification-createEmail` (fourteen slots with one
+		// number and one array-of-string), the closed all-required
+		// API-0212 `notification-createGotify` (eleven slots, one
+		// number, no optional tail), the closed all-required
+		// API-0213 `notification-createLark` (nine pure-scalar slots,
+		// no optional tail), the closed all-required API-0214
+		// `notification-createNtfy` (eleven slots with one number and
+		// one body-borne secret, no optional tail), the deep optional
+		// tail of API-0325 `schedule-create` (anyOf-string-null +
+		// enums + boolean), and the create-with-anyOf API-0298
+		// `redirects-create`. `notification-createPushover` is the
+		// **first cross-tag fixture in the notification/* roster** to
+		// land an anyOf-number-null pair in the optional tail and the
+		// **first to ship two body-borne secrets** (`userKey`,
+		// `apiToken`) on a single create operation; future peers
+		// that also declare nullable numeric fields
+		// (`notification-update*` flavours, etc.) should grep this
+		// entry first for the populated-branch anyOf-number-null
+		// convention.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set, so the
+		// 404→CodeNotFound override is structurally inapplicable.
+		// `*-create` here is a body-bearing imperative-action POST and
+		// stays on the 401→CodeAuth invariant locked by every
+		// imperative-action peer already covered.
+		SampleBody: json.RawMessage(`{
+			"name": "notification-cov-create-pushover-0215-name",
+			"userKey": "notification-cov-create-pushover-0215-user-key",
+			"apiToken": "notification-cov-create-pushover-0215-api-token",
+			"appBuildError": true,
+			"databaseBackup": true,
+			"volumeBackup": true,
+			"dokployRestart": true,
+			"appDeploy": true,
+			"dockerCleanup": true,
+			"serverThreshold": true,
+			"priority": 0,
+			"retry": 60,
+			"expire": 3600
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,
