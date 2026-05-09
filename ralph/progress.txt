@@ -24502,3 +24502,92 @@ forward-reference lesson before assuming any field shape.
     `<tag>-cov-<slug>-...` back into segments, so the collision is
     benign — no special-casing needed.
 ---
+
+## 2026-05-09 - API-0325 (schedule-create)
+- **Implemented**: Full Dokploy API coverage for `schedule-create`
+  (POST /schedule.create) — kickoff entry for the priority-4
+  schedule/* tag roster, opening a fresh `schedule-cov-*` per-tag
+  fixture-isolation namespace after API-0324 `rollback-rollback`
+  closed the rollback/* arc. Spec re-verified per the
+  API-0345..API-0444 forward-reference lesson: POST, no parameters,
+  REQUIRED body with three REQUIRED non-nullable plain strings
+  (`name`, `cronExpression`, `command`) plus a deep optional tail of
+  fifteen siblings (anyOf-string-null × 7, plain string × 2, two
+  enums `shellType` (bash|sh) and `scheduleType` (application|
+  compose|server|dokploy-server), one plain boolean `enabled`).
+  Responses 200/400/401/403/500 (no 404). 200 body is `{}` with
+  `additionalProperties: false`.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended one
+    `apiCoverageCase` literal at the API-0324 → API-0331 boundary
+    keyed on `schedule-create`. `SampleBody` saturates the entire
+    schema surface (every-optional-populated convention from
+    API-0014, API-0040, API-0069, API-0292): all three required
+    strings, `cronExpression` carries a real-shape cron literal
+    (`"0 4 * * *"`), enums select `"bash"` and `"application"`
+    branches with the latter kept internally consistent with the
+    populated `applicationId` per the API-0040 `databaseType` +
+    `postgresId` precedent, every anyOf-string-null slot supplies
+    the string branch per the AGENTS.md rule, `enabled: true`,
+    `timezone: "UTC"`, `createdAt` is an RFC 3339 literal so a
+    future schema validator accepts the timestamp shape. All
+    fixture values follow the deterministic
+    `schedule-cov-create-0325-<field>` namespace for git-grep
+    traceability. `SuccessResponse: \`{}\`` matches the empty-
+    success cohort; harness-default 401→CodeAuth retained for the
+    failure leg (404 structurally inapplicable per the spec).
+  - `ralph/prd.json` — flipped `API-0325.passes` to `true`.
+  - `ralph/progress.txt` — appended this entry.
+- **Verification run**:
+  - `gofmt -w .` clean.
+  - `go mod tidy` clean (no new deps).
+  - `go vet ./...` clean.
+  - `go test ./...` green across all packages.
+  - `go test -race ./...` green across all packages.
+  - Targeted `go test -run TestAPICoverage|TestManifest
+    ./internal/cli -count=1` green — confirms registry, schema,
+    manifest, success-leg, and failure-leg invariants for
+    `schedule-create`.
+- **Tools NOT available locally** (unchanged from prior iterations):
+  `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+  `goreleaser`.
+- **Results**: success-leg (200 + JSON body propagation +
+  envelope) and representative failure-leg (401 → CodeAuth → exit
+  code 4) covered by the shared coverage-harness drivers
+  (`runAPICoverageSuccess` and `runAPICoverageAuthFailure`).
+- **Remaining risks / follow-ups**: None for this story. The next
+  PRD-ordered priority-4 case is API-0326 `schedule-delete`. It
+  must grep this block first to inherit the `schedule-cov-*`
+  namespace per the per-tag isolation rule, and re-verify the spec
+  before assuming any field shape.
+- **Learnings for future iterations:**
+  - The schedule-create body is the first schedule/* fixture and
+    sets the namespace style. It is also the first Dokploy `*-create`
+    operation in the project that combines THREE required plain
+    string scalars (vs API-0331 security-create's three closed-shape
+    required strings, or API-0292 project-create's one-required +
+    two-optional shape) with a deep saturated optional tail. Future
+    contributors evaluating cardinality should treat schedule-create
+    as a separate precedent from those two.
+  - When an operation has **multiple enum fields with cross-field
+    consistency** (here `scheduleType: "application"` constrains
+    which `*Id` slot is meaningfully populated), pick branches that
+    keep the fixture internally consistent — same rule applied to
+    API-0040 backup-create's `databaseType: "postgres"` +
+    `postgresId`. The harness does not validate cross-field
+    consistency, but a future schema validator wired in might, and
+    the fixture should not block that upgrade.
+  - The slug `schedule-cov-create-0325` carries no internal
+    capitalisation, so the per-tag kebab-vs-camel slug-style
+    decision is **deferred** to API-0329 `schedule-runManually`,
+    which will be the first multi-camel-segment slug to land on
+    this tag. The contributor for API-0329 must decide kebab
+    (`schedule-cov-run-manually-0329`) vs camel
+    (`schedule-cov-runManually-0329`) per the AGENTS.md rule and
+    document the choice in that entry's comment block; every
+    subsequent schedule/* multi-segment slug must mirror it.
+  - The schedule/* tag is the largest tag covered to date in this
+    iteration window (six operations: API-0325..API-0330). The
+    namespace will span all six entries, then close before the
+    volumeBackups/* arc opens at API-0445.
+---

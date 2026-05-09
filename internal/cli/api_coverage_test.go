@@ -25149,6 +25149,150 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0325",
+		OperationID: "schedule-create",
+		Method:      http.MethodPost,
+		Path:        "/schedule.create",
+		Tag:         "schedule",
+		// Kickoff entry for the priority-4 schedule/* coverage roster —
+		// opens a fresh `schedule-cov-*` per-tag fixture-isolation
+		// namespace after API-0324 `rollback-rollback` closed the
+		// rollback/* arc (a two-element tag, fully covered by API-0323
+		// `rollback-delete` + API-0324 `rollback-rollback`). Per the
+		// per-tag fixture-isolation rule established at API-0188
+		// `mounts-allNamedByApplicationId`, API-0246
+		// `organization-active`, API-0268 `port-create`, API-0290
+		// `project-all`, API-0298 `redirects-create`, API-0302
+		// `redis-changeStatus`, and API-0323 `rollback-delete`, this
+		// entry deliberately stands alone and **must not** back-
+		// reference any closed prior-tag namespace (`admin-cov-*`,
+		// `ai-cov-*`, `app-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		// `cert-cov-*`, `clu-cov-*`, `compose-cov-*`, `deployment-cov-*`,
+		// `dest-cov-*`, `docker-cov-*`, `domain-cov-*`,
+		// `environment-cov-*`, `gitea-cov-*`, `github-cov-*`,
+		// `gitlab-cov-*`, `mariadb-cov-*`, `mongo-cov-*`,
+		// `mounts-cov-*`, `mysql-cov-*`, `org-cov-*`, `port-cov-*`,
+		// `postgres-cov-*`, `preview-cov-*`, `proj-cov-*`,
+		// `redirects-cov-*`, `redis-cov-*`, `rollback-cov-*`,
+		// `security-cov-*`, `set-cov-*`, `srv-cov-*`, `swarm-cov-*`,
+		// `usr-cov-*`). Subsequent schedule/* peers (API-0326
+		// `schedule-delete`, API-0327 `schedule-list`, API-0328
+		// `schedule-one`, API-0329 `schedule-runManually`, API-0330
+		// `schedule-update`) should grep this block first to inherit
+		// the schedule/* slug namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json > /schedule.create > post`:
+		// a **POST** with **no parameters** and a **REQUIRED request
+		// body** whose schema declares **three REQUIRED non-nullable
+		// plain string fields** (`name`, `cronExpression`, `command`)
+		// alongside a deep optional tail of fifteen siblings. Distinct
+		// from the closed-shape three-required-string-scalar precedent
+		// at API-0331 `security-create` (which has zero optional
+		// fields) and the create-mutation precedent at API-0292
+		// `project-create` (one required + two optional): schedule-
+		// create is the first schedule/* fixture to combine
+		// REQUIRED-string-scalars with a saturated optional tail
+		// covering enums, anyOf-string-null, and a plain boolean.
+		// Responses 200/400/401/403/500 — the spec does **not**
+		// declare 404 on this operation, matching the cross-tag
+		// create-mutation precedent on API-0189 `mounts-create`,
+		// API-0268 `port-create`, API-0292 `project-create`,
+		// API-0298 `redirects-create`, and API-0331 `security-create`
+		// (Dokploy create POSTs do not surface missing-target legs
+		// because there is no target-by-id to miss). The 200 schema
+		// is `{}` with `additionalProperties: false`, matching every
+		// prior covered peer in the empty-success cohort.
+		//
+		// **Body composition:**
+		//   - **REQUIRED:** `name` (plain string), `cronExpression`
+		//     (plain string), `command` (plain string). The fixture
+		//     supplies deterministic-but-clearly-fake values keyed
+		//     to the `schedule-cov-create-0325-<field>` namespace.
+		//     `cronExpression` carries a real-shape cron string
+		//     (`"0 4 * * *"`) so a future schema validator wired
+		//     into the harness still accepts it.
+		//   - **OPTIONAL — every-optional-populated.** Per the
+		//     *-create convention from API-0014, API-0040, API-0069,
+		//     and API-0292, all fifteen optional siblings are
+		//     populated so the wire fixture exercises the full
+		//     create payload, not just the minimum:
+		//     - `scheduleId` (plain string).
+		//     - `appName` (plain string).
+		//     - `serviceName` (anyOf [string, null]) — string branch
+		//       per the AGENTS.md "anyOf [string, null] → send
+		//       string branch" rule.
+		//     - `shellType` (enum: bash|sh) — `"bash"` branch.
+		//     - `scheduleType` (enum: application|compose|server|
+		//       dokploy-server) — `"application"` branch chosen to
+		//       keep the fixture internally consistent with the
+		//       populated `applicationId` (mirroring the API-0040
+		//       backup-create `databaseType: "postgres"` +
+		//       `postgresId` precedent).
+		//     - `script` (anyOf [string, null]) — string branch.
+		//     - `applicationId` / `composeId` / `serverId` / `userId`
+		//       (each anyOf [string, null]) — string branch on every
+		//       slot.
+		//     - `enabled` (plain boolean) — `true` branch.
+		//     - `timezone` (anyOf [string, null]) — string branch
+		//       (`"UTC"` so a future server-side validator accepts
+		//       it as a real IANA tz).
+		//     - `createdAt` (plain string) — RFC 3339 literal so a
+		//       future schema validator accepts the timestamp shape.
+		//
+		// **Shape positioning — three-required-string-scalar POST
+		// create-mutation, body REQUIRED, deep optional tail with
+		// enums + anyOf-string-null + boolean.** Functionally the
+		// schedule/* analogue of API-0040 `backup-create` (deep
+		// optional tail, enum branches kept internally consistent
+		// with their populated id slots), and contrasts with the
+		// closed-shape API-0331 `security-create`. The slug
+		// `schedule-cov-create-0325` follows the established
+		// `<tag>-cov-<slug>-<storyID>` naming convention for
+		// deterministic fixtures.
+		//
+		// **Slug style for schedule/* — kebab-case.** The first
+		// multi-camel-segment slug to land on this tag will be
+		// `schedule-runManually` at API-0329; per the AGENTS.md
+		// per-tag-slug-style rule, future contributors must decide
+		// kebab vs camel at that point. Single-segment slugs (here
+		// `create`) carry no internal capitalisation so the
+		// kebab-vs-camel choice is moot for this fixture.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so
+		// the 404→CodeNotFound override is structurally
+		// inapplicable. `*-create` here is a body-bearing
+		// imperative-action POST and stays on the 401→CodeAuth
+		// invariant locked by every imperative-action peer already
+		// covered.
+		SampleBody: json.RawMessage(`{
+			"scheduleId": "schedule-cov-create-0325-scheduleId",
+			"name": "schedule-cov-create-0325-name",
+			"cronExpression": "0 4 * * *",
+			"appName": "schedule-cov-create-0325-appName",
+			"serviceName": "schedule-cov-create-0325-serviceName",
+			"shellType": "bash",
+			"scheduleType": "application",
+			"command": "schedule-cov-create-0325-command",
+			"script": "schedule-cov-create-0325-script",
+			"applicationId": "schedule-cov-create-0325-applicationId",
+			"composeId": "schedule-cov-create-0325-composeId",
+			"serverId": "schedule-cov-create-0325-serverId",
+			"userId": "schedule-cov-create-0325-userId",
+			"enabled": true,
+			"timezone": "UTC",
+			"createdAt": "2026-05-09T00:00:00Z"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0331",
 		OperationID: "security-create",
 		Method:      http.MethodPost,
