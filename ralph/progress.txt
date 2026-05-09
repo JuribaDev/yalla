@@ -26345,3 +26345,19 @@ forward-reference lesson before assuming any field shape.
       should similarly highlight the delta-token in their progress
       entry so the diff is auditable from the log alone.
 ---
+
+## 2026-05-09 - API-0222
+- Implemented coverage for `notification-receiveNotification` (POST /notification.receiveNotification).
+- Files changed:
+  - `internal/cli/api_coverage_test.go`: appended a new `apiCoverageCase` between API-0221 and API-0246 with a `SampleBody` exercising every spec field — required `Type` (enum CPU), `Value` (number 92.5), `Threshold` (number 90), `Message`, `Timestamp` (RFC3339 sentinel), `Token` (clearly-fake body-borne secret), plus the optional `ServerType` populated to its default `Dokploy` so the round-trip body-mirror covers the closed shape.
+  - `ralph/prd.json`: flipped API-0222 `passes` to `true`.
+- Verification run: `gofmt -w .`, `go vet ./...`, `go mod tidy`, `go test ./...`, `go test -race ./...`. All passed. `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser` remain not-installed locally per the established baseline.
+- Targeted: `go test ./internal/cli/ -run 'TestAPICoverage/API-0222' -count=1 -v` — 5/5 subtests pass (RegistryInvariants, SchemaCommandWorks, ManifestListsOperation, SuccessRoundTrip, RepresentativeFailure).
+- Results: 66/462 stories remain failing; this story closes API-0222 and opens the notification/* `receive*` action-receiver POST cohort.
+- Remaining risks or follow-ups: none — the harness handles request-body forwarding, schema reachability, and manifest inclusion automatically once the case literal is appended.
+- **Learnings for future iterations:**
+  - The notification/* tag's body-bearing POSTs are no longer all `create-<transport>` — API-0222 introduces a non-`create-*` body-bearing POST (`receive*` action-receiver). Future similar receiver-style endpoints should be slugged under their own verb cohort, not appended to the `create-*` chain.
+  - When a spec ships an optional field with a server-side `default` (e.g. `ServerType: Dokploy`), the fixture should populate it explicitly to the default value so the round-trip body-mirror assertion covers the closed shape; leaving it absent would only exercise the partially-required path.
+  - Body-borne secret slots (`Token`, `apiKey`, `webhookUrl`, `password`, `accessToken`, `botToken`, `userKey`+`apiToken`) are forwarded verbatim by the yalla request-body forwarder; the redactor in `internal/api` only operates on rendered `--json` output. Fixtures should always use deterministic clearly-fake markers (e.g. `notification-cov-receive-notification-0222-token`) and never resemble real upstream tokens.
+  - Spec receivers that ingest by content (no target id to resolve) typically omit 404 from their response set, so the harness-default 401→CodeAuth representative-failure leg applies.
+---

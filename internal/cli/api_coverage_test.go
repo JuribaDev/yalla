@@ -20046,6 +20046,161 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0222",
+		OperationID: "notification-receiveNotification",
+		Method:      http.MethodPost,
+		Path:        "/notification.receiveNotification",
+		Tag:         "notification",
+		// Fifteenth entry in the notification/* coverage roster and the
+		// **first action-receiver POST** in the tag — opening the
+		// notification/* `receive*` ingestion-side cohort inside the
+		// `notification-cov-*` per-tag fixture-isolation namespace
+		// seeded at API-0208 `notification-all`. Per the per-tag
+		// isolation rule reaffirmed across each prior peer, this entry
+		// stays inside the namespace opened by API-0208 and **must
+		// not** back-reference any closed prior-tag namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json > /notification.receiveNotification >
+		// post`: a **POST** with **no parameters** and a **REQUIRED
+		// request body** whose schema declares **six REQUIRED non-
+		// nullable fields** — three plain strings (`Message`,
+		// `Timestamp`, `Token`), one enum string (`Type` with
+		// `Memory|CPU`), and two plain numbers (`Value`, `Threshold`)
+		// — plus **one optional enum string** (`ServerType` with
+		// `Dokploy|Remote`, default `Dokploy`). Responses
+		// 200/400/401/403/500 — the spec does **not** declare 404 on
+		// this operation, matching the cross-tag receiver-side POST
+		// precedent (Dokploy receivers ingest a payload by content
+		// rather than resolving a target by id, so there is no
+		// missing-target leg to surface). The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort.
+		//
+		// **Slug style — kebab-case inherited from API-0209/API-0210/
+		// API-0211/API-0212/API-0213/API-0214/API-0215/API-0216/
+		// API-0217/API-0218/API-0219, the GET-cohort opener API-0220
+		// `notification-getEmailProviders` (→ `get-email-providers`),
+		// and the `*Id`-filtered GET-cohort opener API-0221
+		// `notification-one`.** Per the per-tag-slug-style rule fixed
+		// by the kickoff multi-camel entry API-0209
+		// `notification-createCustom` (→ `create-custom`), this entry
+		// takes `receive-notification` as the slug stem. The fixture
+		// namespace is therefore `notification-cov-receive-notification-0222-*`,
+		// mirroring the `notification-cov-<slug>-<storyID>` discipline
+		// locked by API-0208..API-0221. **This entry opens the
+		// notification/* `receive*` action-receiver POST cohort** —
+		// any future notification/* peer that ingests an inbound
+		// payload from an upstream monitoring source inherits this
+		// slug style and the harness-default 401→CodeAuth failure leg.
+		//
+		// **Body composition:**
+		//   - **Mixed required + optional shape, six required slots
+		//     plus one optional default-bearing tail.** Distinct from
+		//     every prior notification/* `create-*` peer in two ways:
+		//     (a) it is the **first notification/* fixture to ship a
+		//     non-`create-*` body-bearing POST** — every prior
+		//     body-bearing notification/* POST belonged to the
+		//     `create-<transport>` cohort; (b) it is the **first
+		//     notification/* fixture to ship a body-borne enum-string
+		//     field with a server-side default** (`ServerType`).
+		//     Functionally it pivots the tag from outbound transport
+		//     configuration (Discord/Slack/Teams/Telegram webhooks)
+		//     to inbound monitoring-event ingestion (Dokploy server
+		//     reporting CPU/memory threshold alerts back to itself).
+		//     The fixture populates **all seven slots** so the
+		//     wire-level invariant exercises the closed-shape path
+		//     including the optional `ServerType` slot — this matches
+		//     the cross-tag convention of populating optional siblings
+		//     when present so the round-trip body-mirror assertion
+		//     covers every spec-declared field.
+		//     - `ServerType` (optional enum string — `Dokploy|Remote`,
+		//       default `Dokploy`). Carries the explicit `"Dokploy"`
+		//       value so the fixture exercises the canonical default
+		//       branch; the all-zero default is the most representative
+		//       value for an agent calling this endpoint without
+		//       remote-monitor context.
+		//     - `Type` (required enum string — `Memory|CPU`). Carries
+		//       `"CPU"` to mark the fixture against the canonical
+		//       resource-utilisation alert branch.
+		//     - `Value` (required number). Plain JSON number;
+		//       carries the deterministic sentinel `92.5` to mark the
+		//       fixture as a clearly-fake high-load reading distinct
+		//       from any production-realistic value.
+		//     - `Threshold` (required number). Plain JSON number;
+		//       carries the deterministic sentinel `90` to mark the
+		//       fixture as a clearly-fake threshold value paired with
+		//       the `Value` slot above (Value > Threshold so the alert
+		//       is logically consistent with the `Type=CPU` branch).
+		//     - `Message` (required plain string). Carries the
+		//       deterministic-but-clearly-fake
+		//       `notification-cov-receive-notification-0222-message`
+		//       value, keyed to the
+		//       `notification-cov-receive-notification-0222-<field>`
+		//       namespace inherited from API-0209..API-0221.
+		//     - `Timestamp` (required plain string). The spec types
+		//       this as `string` (Dokploy serialises receive-side
+		//       timestamps verbatim rather than enforcing a specific
+		//       date-time shape), so the fixture carries the canonical
+		//       RFC 3339 sentinel `2026-01-01T00:00:00Z` to keep the
+		//       value parseable while clearly synthetic.
+		//     - `Token` (required plain string). **Carries a transport
+		//       secret.** Like the `webhookUrl` on API-0210
+		//       `createDiscord`/API-0213 `createLark`/API-0217
+		//       `createSlack`/API-0218 `createTeams`, the `password`
+		//       on API-0211 `createEmail`, the `accessToken` on
+		//       API-0214 `createNtfy`, the `userKey`+`apiToken` on
+		//       API-0215 `createPushover`, the `apiKey` on API-0216
+		//       `createResend`, and the `botToken` on API-0219
+		//       `createTelegram`, the receive-side authentication
+		//       token is embedded directly in the request body; the
+		//       yalla request-body forwarder ships the bytes verbatim
+		//       to the upstream Dokploy host, so the redactor in
+		//       `internal/api` operates on the **rendered --json
+		//       output** (response envelopes, error payloads, and
+		//       tracing) and **not** on the request body. The fixture
+		//       value `notification-cov-receive-notification-0222-token`
+		//       is a deterministic non-secret marker bearing no
+		//       resemblance to a real Dokploy receive-side token —
+		//       agents cribbing this fixture as a template should
+		//       always substitute their own real receive token via
+		//       `--input`, never inline it in source.
+		//
+		// **Shape positioning — closed required + one optional default-
+		// bearing tail action-receiver POST, body REQUIRED, seven-
+		// field flat payload mixing four strings (one enum required,
+		// one enum optional with default, two plain) and two numbers,
+		// no arrays, no nested objects, body-borne secret on `Token`.**
+		// Functionally distinct from every notification/* `create-*`
+		// peer (those configure outbound transport channels), and
+		// distinct from API-0220 `getEmailProviders` (parameter-free
+		// GET) and API-0221 `notification-one` (`*Id`-filtered GET) in
+		// being the first body-bearing non-`create-*` POST in the tag.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set, so the
+		// 404→CodeNotFound override is structurally inapplicable. As
+		// an action-receiver POST, this stays on the 401→CodeAuth
+		// invariant locked by every imperative-action peer already
+		// covered.
+		SampleBody: json.RawMessage(`{
+			"ServerType": "Dokploy",
+			"Type": "CPU",
+			"Value": 92.5,
+			"Threshold": 90,
+			"Message": "notification-cov-receive-notification-0222-message",
+			"Timestamp": "2026-01-01T00:00:00Z",
+			"Token": "notification-cov-receive-notification-0222-token"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the empty-success
+		// cohort. Empty-object body keeps the success-leg envelope
+		// assertion focused on `data.method` / `data.status` rather than
+		// payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,
