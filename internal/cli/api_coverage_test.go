@@ -19157,6 +19157,198 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0216",
+		OperationID: "notification-createResend",
+		Method:      http.MethodPost,
+		Path:        "/notification.createResend",
+		Tag:         "notification",
+		// Ninth entry in the notification/* coverage roster, continuing
+		// inside the `notification-cov-*` per-tag fixture-isolation
+		// namespace opened by API-0208 `notification-all` and extended
+		// by API-0209 `notification-createCustom`, API-0210
+		// `notification-createDiscord`, API-0211
+		// `notification-createEmail`, API-0212
+		// `notification-createGotify`, API-0213
+		// `notification-createLark`, API-0214
+		// `notification-createNtfy`, and API-0215
+		// `notification-createPushover`. Per the per-tag isolation
+		// rule reaffirmed across each prior peer, this entry stays
+		// inside the namespace opened by API-0208 and **must not**
+		// back-reference any closed prior-tag namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json > /notification.createResend
+		// > post`: a **POST** with **no parameters** and a **REQUIRED
+		// request body** whose schema declares **eleven REQUIRED non-
+		// nullable fields** — three plain strings (`name`, `apiKey`,
+		// `fromAddress`), seven plain booleans (`appBuildError`,
+		// `databaseBackup`, `volumeBackup`, `dokployRestart`,
+		// `appDeploy`, `dockerCleanup`, `serverThreshold`), and one
+		// `array<string>` (`toAddresses`) — with **zero optional
+		// siblings**. Responses 200/400/401/403/500 — the spec does
+		// **not** declare 404 on this operation, matching the cross-
+		// tag create-mutation precedent on API-0189 `mounts-create`,
+		// API-0209..API-0215 `notification-create*`, API-0268
+		// `port-create`, API-0292 `project-create`, API-0298
+		// `redirects-create`, API-0325 `schedule-create`, and
+		// API-0331 `security-create` (Dokploy create POSTs do not
+		// surface missing-target legs because there is no target-by-
+		// id to miss). The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort.
+		//
+		// **Slug style — kebab-case inherited from API-0209/API-0210/
+		// API-0211/API-0212/API-0213/API-0214/API-0215.** Per the
+		// per-tag-slug-style rule fixed by the kickoff multi-camel
+		// entry API-0209 `notification-createCustom` (→
+		// `create-custom`) and propagated through `create-discord`,
+		// `create-email`, `create-gotify`, `create-lark`,
+		// `create-ntfy`, and `create-pushover`, this peer takes
+		// `create-resend` and the remaining notification/* siblings
+		// (API-0217 `create-slack`, API-0218 `create-telegram`, …)
+		// inherit kebab-case as well.
+		//
+		// **Body composition:**
+		//   - **REQUIRED — closed all-required shape, no optional
+		//     tail.** Returns to the closed-shape all-required
+		//     convention seeded by API-0210 `notification-createDiscord`
+		//     (ten scalar slots), extended by API-0211
+		//     `notification-createEmail` (fourteen slots with one
+		//     number and one array-of-string), API-0212
+		//     `notification-createGotify` (eleven slots, one number),
+		//     API-0213 `notification-createLark` (nine pure-scalar
+		//     slots), and API-0214 `notification-createNtfy` (eleven
+		//     slots with one number and one body-borne secret), after
+		//     the partially-required detour at API-0215
+		//     `notification-createPushover`. API-0216 lands at eleven
+		//     slots with **zero numbers** and **one array-of-string**,
+		//     pivoting from Email's fourteen-slot mix and Ntfy's
+		//     eleven-slot one-number shape to the first closed all-
+		//     required notification/* fixture that ships an array slot
+		//     **without** a numeric companion. Every property the
+		//     spec lists is REQUIRED, so the fixture populates all
+		//     eleven slots and the wire-level invariant check
+		//     exercises the closed-shape path with no optional keys
+		//     to drop.
+		//     - `name` (plain string). Carries the deterministic-but-
+		//       clearly-fake
+		//       `notification-cov-create-resend-0216-name` value,
+		//       keyed to the
+		//       `notification-cov-create-resend-0216-<field>`
+		//       namespace inherited from API-0209..API-0215.
+		//     - `apiKey` (plain string). **Carries a transport
+		//       secret.** Like `webhookUrl` on API-0210/0213, the
+		//       `password` on Email peers (API-0211 / future SMTP-
+		//       backed siblings), `accessToken` on API-0214
+		//       `createNtfy`, and `userKey`+`apiToken` on API-0215
+		//       `createPushover`, the per-account Resend API key is
+		//       embedded directly in the request body; the yalla
+		//       request-body forwarder ships the bytes verbatim to
+		//       the upstream Dokploy host, so the redactor in
+		//       `internal/api` operates on the **rendered --json
+		//       output** (response envelopes, error payloads, and
+		//       tracing) and **not** on the request body. The fixture
+		//       value `notification-cov-create-resend-0216-api-key`
+		//       is a deterministic non-secret marker bearing no
+		//       resemblance to a real Resend `re_*` token — agents
+		//       cribbing this fixture as a template should always
+		//       substitute their own real Resend API key via
+		//       `--input`, never inline it in source.
+		//     - `fromAddress` (plain string). The Resend transactional
+		//       sender address. The fixture supplies a reserved-TLD
+		//       address on `example.invalid` (RFC 6761) so a future
+		//       email-shape validator stays satisfied without risking
+		//       a real DNS lookup or SMTP egress to a third-party
+		//       Resend domain. This continues the
+		//       `endpoint`/`webhookUrl`/`fromAddress`/`serverUrl`
+		//       URL-fixture convention seeded across the
+		//       notification/* roster (and matches the same
+		//       `fromAddress` slot on API-0211 `createEmail`).
+		//     - `toAddresses` (`array<string>`). Resend recipient
+		//       list. The fixture supplies a single deterministic
+		//       reserved-TLD recipient
+		//       (`agents-0216@notification-cov-create-resend-0216.example.invalid`)
+		//       to keep the array-leg of the schema exercised at the
+		//       wire level without growing the fixture beyond a
+		//       single canonical recipient. Mirrors the
+		//       `toAddresses`-array fixture seeded at API-0211
+		//       `createEmail` — the **first cross-tag array-of-string
+		//       slot in the notification/* roster** — and is the
+		//       second notification/* fixture to ship one. Plain
+		//       array of plain strings; no `minItems`/`maxItems`
+		//       constraints in the schema, so a single-entry list
+		//       satisfies the wire-level invariant.
+		//     - `appBuildError`, `databaseBackup`, `volumeBackup`,
+		//       `dokployRestart`, `appDeploy`, `dockerCleanup`,
+		//       `serverThreshold` (seven plain booleans) — `true`
+		//       branch on every slot to mirror an "alert me on every
+		//       category" agent-typical Resend configuration. The
+		//       seventh-boolean slot (`serverThreshold`) returns here
+		//       after the closed-shape detour through API-0212
+		//       `createGotify` (which swapped it for `decoration`)
+		//       and API-0214 `createNtfy` (which dropped it
+		//       entirely), confirming the per-spec rule reaffirmed
+		//       across the roster that only the transport-agnostic
+		//       core six (`appBuildError`, `databaseBackup`,
+		//       `volumeBackup`, `dokployRestart`, `appDeploy`,
+		//       `dockerCleanup`) remain stable across notification/*
+		//       siblings; every other slot must be re-verified per
+		//       spec.
+		//
+		// **Shape positioning — closed all-required POST
+		// create-mutation, body REQUIRED, eleven-field flat payload
+		// mixing three strings, seven booleans, and one
+		// array-of-string, zero optional tail.** Functionally
+		// distinct from the partially-required API-0209
+		// `notification-createCustom`, the closed all-required scalar-
+		// only API-0210 `notification-createDiscord` (ten slots, no
+		// number, no array), the larger closed all-required API-0211
+		// `notification-createEmail` (fourteen slots with one number
+		// **and** one array-of-string), the eleven-slot mixed-scalar-
+		// and-number API-0212 `notification-createGotify`, the pure-
+		// scalar nine-slot API-0213 `notification-createLark`, the
+		// eleven-slot one-number-with-secret API-0214
+		// `notification-createNtfy`, and the partially-required three-
+		// secret API-0215 `notification-createPushover` (three
+		// required strings + ten-sibling optional tail). API-0216 is
+		// the **second notification/* fixture to ship an
+		// array-of-string slot** (after API-0211 `createEmail`) and
+		// the **first to ship one in a closed all-required eleven-
+		// slot shape without any numeric companion** — distinct from
+		// `createEmail`'s fourteen-slot one-number-one-array mix and
+		// from every other closed-shape peer (which carry no array
+		// at all).
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set, so the
+		// 404→CodeNotFound override is structurally inapplicable.
+		// `*-create` here is a body-bearing imperative-action POST
+		// and stays on the 401→CodeAuth invariant locked by every
+		// imperative-action peer already covered.
+		SampleBody: json.RawMessage(`{
+			"name": "notification-cov-create-resend-0216-name",
+			"apiKey": "notification-cov-create-resend-0216-api-key",
+			"fromAddress": "agents-0216@notification-cov-create-resend-0216.example.invalid",
+			"toAddresses": [
+				"agents-0216-rcpt@notification-cov-create-resend-0216.example.invalid"
+			],
+			"appBuildError": true,
+			"databaseBackup": true,
+			"volumeBackup": true,
+			"dokployRestart": true,
+			"appDeploy": true,
+			"dockerCleanup": true,
+			"serverThreshold": true
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,

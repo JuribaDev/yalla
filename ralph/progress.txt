@@ -25686,3 +25686,57 @@ forward-reference lesson before assuming any field shape.
       API-0445 kickoff). Future volumeBackups/* peers must keep using
       `volBackups-cov-*` for fixture tokens.
 ---
+
+## 2026-05-09 - API-0216
+- **Implemented**: Coverage entry for `notification-createResend` (POST
+  /notification.createResend) in the shared coverage harness. The single
+  fixture entry drives success-leg, schema, manifest, and failure-leg
+  assertions through the shared `coveredAPIOperations` table.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — added the API-0216 entry
+    immediately after API-0215 `notification-createPushover` and before the
+    API-0246 `organization-active` entry. The fixture covers an eleven-slot
+    closed-all-required POST body: three plain strings (`name`, `apiKey`,
+    `fromAddress`), seven plain booleans (`appBuildError`, `databaseBackup`,
+    `volumeBackup`, `dokployRestart`, `appDeploy`, `dockerCleanup`,
+    `serverThreshold`), and one `array<string>` (`toAddresses`). Body uses
+    deterministic, clearly-fake `notification-cov-create-resend-0216-*`
+    values keyed to the per-tag namespace inherited from
+    API-0209..API-0215. The `fromAddress` and `toAddresses` slots use
+    reserved-TLD `example.invalid` (RFC 6761) addresses so a future
+    email-shape validator stays satisfied without DNS lookups or SMTP
+    egress. `apiKey` carries a transport secret (Resend `re_*` token slot)
+    and is documented in-place as a request-body secret that the
+    `internal/api` redactor does not touch — agents must substitute their
+    own secret via `--input`.
+  - `ralph/prd.json` — set US-0216 `passes: true`.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages PASS.
+  - `go test -race ./...` — all packages PASS.
+- **Tools NOT available locally**: `goimports`, `golangci-lint`,
+  `staticcheck`, `govulncheck`, `goreleaser` — same baseline as prior
+  iterations.
+- **Remaining risks / follow-ups**:
+  - Keeps the per-tag fixture-isolation namespace
+    `notification-cov-create-resend-0216-*` clean for any future
+    notification/* sibling that might reference it.
+  - Future `notification-update*` flavours can crib this fixture as the
+    array-of-string + closed-all-required template.
+- **Learnings for future iterations**:
+  - createResend is the **second** notification/* fixture to ship an
+    `array<string>` slot (after API-0211 `createEmail`) and the **first
+    closed-all-required eleven-slot fixture without a numeric companion**
+    — distinct from createEmail's fourteen-slot one-number-one-array mix
+    and from every other closed-shape peer (which carry no array at all).
+  - The shared `coveredAPIOperations` harness in
+    `internal/cli/api_coverage_test.go` is purely additive — no per-
+    operation success/failure scaffolding is required because the table-
+    driven loop materialises all assertions (registry presence, manifest
+    coverage, success leg, failure leg, schema retrievability) from the
+    fixture record.
+  - The cross-tag 401→CodeAuth invariant continues to hold for every
+    create-mutation POST that omits 404 from its response set.
+---
