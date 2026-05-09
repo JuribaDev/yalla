@@ -33366,6 +33366,147 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0321",
+		OperationID: "registry-testRegistryById",
+		Method:      http.MethodPost,
+		Path:        "/registry.testRegistryById",
+		Tag:         "registry",
+		// Sixth entry on the registry/* coverage roster, immediately
+		// following API-0316 `registry-all`, API-0317
+		// `registry-create`, API-0318 `registry-one`, API-0319
+		// `registry-remove`, and API-0320 `registry-testRegistry`,
+		// and completing the forward reference embedded in API-0320's
+		// closing comment ("The next case in the PRD-ordered priority-5
+		// backlog is API-0321 `registry-testRegistryById` (declared a
+		// **POST** per the spec preview; the next contributor must re-
+		// verify the spec against `internal/api/data/openapi.json` per
+		// the forward-reference lesson before assuming any field shape,
+		// and will continue inside the `registry-cov-*` per-tag fixture-
+		// isolation namespace opened by API-0316 — consume slugs of the
+		// form `registry-cov-testRegistryById-0321-*`)"). Continues
+		// inside the `registry-cov-*` per-tag fixture-isolation
+		// namespace opened by API-0316 and **must not** back-reference
+		// any closed prior-tag namespace (`admin-cov-*`, `ai-cov-*`,
+		// `app-cov-*`, `backup-cov-*`, `bb-cov-*`, `cert-cov-*`,
+		// `clu-cov-*`, `compose-cov-*`, `deployment-cov-*`,
+		// `dest-cov-*`, `docker-cov-*`, `domain-cov-*`,
+		// `environment-cov-*`, `gitea-cov-*`, `github-cov-*`,
+		// `gitlab-cov-*`, `mariadb-cov-*`, `mongo-cov-*`,
+		// `mounts-cov-*`, `mysql-cov-*`, `org-cov-*`, `patch-cov-*`,
+		// `port-cov-*`, `postgres-cov-*`, `preview-cov-*`,
+		// `proj-cov-*`, `redirects-cov-*`, `redis-cov-*`,
+		// `security-cov-*`, `set-cov-*`, `srv-cov-*`, `swarm-cov-*`,
+		// `usr-cov-*`) per the per-tag isolation rule originally
+		// established at API-0246 `organization-active`.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json` >
+		// `/registry.testRegistryById` > `post`: method POST, tag
+		// registry, **no parameters**, requestBody REQUIRED with
+		// `application/json`, responses 200/400/401/403/500. The 200
+		// response is `{}` with `additionalProperties: false`, matching
+		// every prior covered peer in the empty-success cohort.
+		// **No 404** is declared on this operation, mirroring the
+		// precedent on every prior covered body-bearing dry-run /
+		// connectivity-probe POST (e.g. API-0056
+		// `bitbucket-testConnection`, API-0137 `gitea-testConnection`,
+		// API-0320 `registry-testRegistry`) whose validation-only
+		// failure mode collapses into 400/validation under Dokploy's
+		// tRPC convention rather than a dedicated 404 leg.
+		//
+		// **Request body schema:** the schema is a flat object with
+		// **two OPTIONAL string fields** (`registryId`, `serverId`) —
+		// the schema declares **no `required` array**, so neither
+		// field is strictly required, but the requestBody envelope
+		// itself is REQUIRED. The fixture below supplies BOTH optional
+		// fields per the API-0137 `gitea-testConnection` zero-required-
+		// two-optional precedent, where the optional surface is the
+		// **entire** schema surface and saturating it gives the
+		// `len(tc.SampleBody) > 0` body-forwarding leg something to
+		// assert. Neither field is credential-shaped (both are plain
+		// id-typed scalars), so the API-0317 `registry-create` /
+		// API-0320 `registry-testRegistry` "minimal-required-only"
+		// credential-redaction-safety carve-out does not apply here.
+		// The fixture literals carry the
+		// `<tag>-cov-<slug>-<storyID>-<field>` suffix for `git grep`
+		// traceability and so the redactor test family at
+		// `internal/cli/redaction_security_test.go` can extend coverage
+		// onto this case without re-deriving the literals.
+		//
+		// **Shape positioning — zero-required-two-optional POST
+		// connectivity-probe / dry-run mutation, body REQUIRED.**
+		// Cardinality- and type-identical to API-0137
+		// `gitea-testConnection` (zero required + two optional flat
+		// strings); the **simplest** registry/* POST shape, distinct
+		// from the four-required-field API-0320 `registry-testRegistry`
+		// connectivity probe (the by-id variant identifies the existing
+		// registry record by its already-persisted credentials rather
+		// than re-supplying them). Functionally a `*-test*-byId`
+		// connectivity-probe rather than a persisting `*-create`, but
+		// the on-the-wire shape and 401-default failure family align
+		// with every prior covered body-bearing POST.
+		//
+		// **Family choice — harness-default 401 → CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so the
+		// 404 → CodeNotFound override is structurally inapplicable
+		// (matching every prior covered body-bearing POST without a
+		// dedicated 404 leg). The 404 → CodeNotFound override slot for
+		// the registry/* tag arc was already consumed at API-0318
+		// `registry-one`, so this entry **must not** re-claim it.
+		// 400 → CodeInvalidInput is *technically* available — a payload
+		// supplying a non-string `registryId` or `serverId` would fail
+		// server-side validation — but the harness reserves 400
+		// representatives for stories where payload validation is the
+		// operation's *uniquely distinguishing* failure mode. A
+		// conventional connectivity-probe collapses to type-checking,
+		// so the harness-default 401 → CodeAuth failure leg remains the
+		// most representative single failure mode every authenticated
+		// Dokploy operation must re-prove, and is consistent with the
+		// 401 → CodeAuth choice locked in by the registry/* kickoff at
+		// API-0316 `registry-all` and reasserted by API-0317
+		// `registry-create`, API-0319 `registry-remove`, and API-0320
+		// `registry-testRegistry`.
+		//
+		// **Fixture token base** `registry-cov-testRegistryById-0321`
+		// follows the `<tag>-cov-<slug>-<storyID>` convention shared
+		// across every prior registry/* peer (API-0316..API-0320) and
+		// preserves the operationId's camelCase slug `testRegistryById`
+		// per the camelCase-slug precedent at API-0053
+		// `bb-cov-getBranches-0053`, API-0054 `bb-cov-getRepos-0054`,
+		// API-0056 `bb-cov-testConn-0056`, and API-0320
+		// `registry-cov-testRegistry-0320`. Verified non-colliding with
+		// API-0316's `registry-cov-all-0316-*`, API-0317's
+		// `registry-cov-create-0317-*`, API-0318's
+		// `registry-cov-one-0318-*`, API-0319's
+		// `registry-cov-remove-0319-*`, and API-0320's
+		// `registry-cov-testRegistry-0320-*` literals (different slug +
+		// storyID → unique under the `<tag>-cov-<slug>-<storyID>`
+		// rule). The full-tag-name slug prefix `registry-` remains
+		// unambiguously distinct from the lexically-adjacent full-tag-
+		// name `redirects-cov-*` and `redis-cov-*` namespaces closed at
+		// API-0301 / API-0315 respectively.
+		//
+		// The next case in the PRD-ordered priority-5 backlog is
+		// API-0322 `registry-update` (declared a **POST** per the spec
+		// preview; the next contributor must re-verify the spec against
+		// `internal/api/data/openapi.json` per the forward-reference
+		// lesson before assuming any field shape, and will continue
+		// inside the `registry-cov-*` per-tag fixture-isolation
+		// namespace opened by API-0316 — consume slugs of the form
+		// `registry-cov-update-0322-*`).
+		SampleBody: json.RawMessage(`{
+			"registryId": "registry-cov-testRegistryById-0321-registryId",
+			"serverId": "registry-cov-testRegistryById-0321-serverId"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0323",
 		OperationID: "rollback-delete",
 		Method:      http.MethodPost,
