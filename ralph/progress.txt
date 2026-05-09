@@ -29218,3 +29218,73 @@ forward-reference lesson before assuming any field shape.
     needed beyond confirming neither component is reused inside the
     open per-tag namespace.
 ---
+
+## 2026-05-09 09:30 UTC - API-0320
+
+- Implemented Cover registry-testRegistry (POST /registry.testRegistry).
+- Files changed:
+  - internal/cli/api_coverage_test.go: appended new apiCoverageCase entry
+    (StoryID API-0320, OperationID registry-testRegistry, POST,
+    Tag registry, REQUIRED application/json body with four REQUIRED
+    fields — username (credential-shaped), password (credential-shaped),
+    registryUrl, registryType (single-valued enum "cloud") — and three
+    OPTIONAL fields registryName / imagePrefix / serverId deliberately
+    omitted per the minimal-required-only fixture rule. Inserted between
+    API-0319 registry-remove and API-0323 rollback-delete to preserve
+    PRD ordering.
+  - ralph/prd.json: flipped API-0320.passes = true.
+  - ralph/progress.txt: this entry.
+- Verification run:
+  - gofmt -w .                          clean
+  - go mod tidy                         clean
+  - go vet ./...                        clean
+  - go test ./...                       all packages PASS
+  - go test -race ./...                 all packages PASS
+  - Targeted: go test ./internal/cli/... -run 'TestAPICoverage_.*/API-0320'
+    fired all 5 subtests (RegistryInvariants, SchemaCommandWorks,
+    ManifestListsOperation, SuccessRoundTrip, RepresentativeFailure)
+    against operationId registry-testRegistry — all PASS.
+  - golangci-lint, staticcheck, govulncheck, goreleaser: not installed
+    locally, skipped per Codebase Patterns missing-tool documentation
+    rule.
+- Results: API-0320 acceptance criteria satisfied. Operation present in
+  registry with POST + /registry.testRegistry + tag registry; raw API
+  call works through harness fixture; schema get works; manifest lists
+  the operation; success and 401-default representative failure both
+  re-proven by the per-tag isolated httptest fixture.
+- Remaining risks or follow-ups: none for API-0320. Optional fields
+  (registryName, imagePrefix, serverId) intentionally not fixtured;
+  expanding to optional-field positive coverage is a follow-up story
+  per the load-bearing minimal-required-only rule.
+- **Learnings for future iterations:**
+  - **`registry-testRegistry` body diverges from `registry-create`** in
+    one critical way: `registryName` is REQUIRED on `registry-create`
+    (API-0317) but **OPTIONAL** on `registry-testRegistry` (API-0320).
+    Future contributors who copy a sibling's fixture must always re-
+    verify per-field required/optional status against
+    `internal/api/data/openapi.json` rather than assuming sibling
+    parity inside the same tag arc. Same applies to `imagePrefix` —
+    REQUIRED-but-nullable on registry-create, plain OPTIONAL here.
+  - **CamelCase slug precedent reaffirmed.** Multi-segment camelCase
+    operationIds preserve the operationId tail's case in the slug
+    (`registry-cov-testRegistry-0320-*`, matching the API-0053
+    `bb-cov-getBranches-0053-*` / API-0056 `bb-cov-testConn-0056-*`
+    family). Do NOT kebab-case an already-camelCased slug — the
+    forward-reference comment in API-0319's closing block locked the
+    `testRegistry` form before the next contributor saw the file.
+  - **404→CodeNotFound override slot for the registry/* arc was already
+    consumed at API-0318 `registry-one`.** Every subsequent registry/*
+    entry (API-0319 onward, including API-0320) **must** retain the
+    harness-default 401→CodeAuth failure leg unless the spec explicitly
+    declares a 404 response — which `registry-testRegistry` does not
+    (response set 200/400/401/403/500). Connectivity-probe / dry-run
+    POSTs collapse to 400/validation under tRPC convention, so 404 is
+    structurally inapplicable on this shape.
+  - **Minimal-required-only fixture rule is load-bearing for credential
+    redaction.** `username` and `password` are credential-shaped, so the
+    fixture surface should never carry value-bearing strings outside
+    REQUIRED slots. Optional `registryName`, `imagePrefix`, and
+    `serverId` are intentionally absent so future redaction audits at
+    `internal/cli/redaction_security_test.go` can extend onto this case
+    without re-deriving any additional literals.
+---
