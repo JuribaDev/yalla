@@ -23461,3 +23461,61 @@ forward-reference lesson before assuming any field shape.
     reintroduce 404; this divergence is structural and consistent
     with every prior covered tag.
 ---
+
+## 2026-05-09 - API-0306
+- Implemented coverage for `redis-one` (GET /redis.one). The OpenAPI
+  registry already advertises this operationId via the auto-generated
+  spec at `internal/api/data/openapi.json`, so the only change needed
+  was a new `apiCoverageCase` fixture in
+  `internal/cli/api_coverage_test.go` that locks the per-operation
+  contract: registry presence, schema reachability, manifest inclusion,
+  an httptest-backed success exchange, and a representative failure
+  path.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (added `redis-one` fixture
+    block immediately after the API-0305 `redis-move` entry and before
+    the API-0331 `security-create` kickoff)
+  - `ralph/prd.json` (flipped `API-0306.passes` to `true`)
+  - `ralph/progress.txt` (this entry)
+- Verification run from repo root:
+  - `gofmt -w .` → clean
+  - `go mod tidy` → no diff
+  - `go vet ./...` → clean
+  - `go test ./...` → all 9 packages pass
+  - `go test -race ./...` → all 9 packages pass (cli takes 3.25s under -race)
+  - Optional tools (`goimports`, `golangci-lint`, `staticcheck`,
+    `govulncheck`, `goreleaser`) — not installed locally; skipped per
+    the documented baseline.
+- Remaining risks/follow-ups:
+  - Next priority-4 redis story is API-0307 `redis-rebuild` (POST
+    /redis.rebuild). The forward-reference comment block in this entry
+    points the next contributor at it inside the same `redis-cov-*`
+    namespace.
+- **Learnings for future iterations:**
+  - The `apiCoverageCase` entry for a canonical `*-one` by-id GET is
+    almost a structural clone of `postgres-one` (API-0276) — only the
+    tag prefix, story ID, fixture token, and forward references
+    change. Both `mariadb-one`, `mongo-one`, `mysql-one`,
+    `postgres-one`, `gitea-one`, and `server-one` form the precedent
+    chain that justifies the 404 → CodeNotFound failure-leg override
+    on the canonical by-id GET.
+  - `redis-one`'s spec declares 404 in the response set (the prior
+    four redis/* peers — `redis-changeStatus`, `redis-create`,
+    `redis-deploy`, `redis-move` — do not), which is the structural
+    signal that this is the right peer to claim the 404 override
+    inside the redis/* roster.
+  - For GET-with-query operations, the harness uses the `SampleQuery`
+    field (`map[string][]string`) rather than `SampleBody`, and the
+    success leg verifies the param via `r.URL.Query().Get(...)` so
+    the CLI → API client → httptest server propagation is observed
+    end-to-end. No SampleBody is required (and the spec doesn't
+    declare a `requestBody` for any GET in this OpenAPI document).
+  - The fixture token convention `<tag>-cov-<slug>-<storyID>-<field>`
+    with a `-fixture` suffix on the canonical `*-one` peer keeps the
+    literal greppable and visually distinct from POST-body literals
+    that omit `-fixture` (e.g. `redis-cov-move-0305-redisId`).
+  - PRD edits should keep the diff minimal: a single `false` →
+    `true` flip on the target story's `passes` key. Use a Python
+    json round-trip with `indent=2` and a trailing newline to match
+    the existing file shape.
+---
