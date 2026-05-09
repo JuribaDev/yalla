@@ -25937,6 +25937,174 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0266",
+		OperationID: "patch-toggleEnabled",
+		Method:      http.MethodPost,
+		Path:        "/patch.toggleEnabled",
+		Tag:         "patch",
+		// Eleventh entry in the patch/* roster, immediately
+		// following API-0256 `patch-byEntityId`, API-0257
+		// `patch-cleanPatchRepos`, API-0258 `patch-create`,
+		// API-0259 `patch-delete`, API-0260 `patch-ensureRepo`,
+		// API-0261 `patch-markFileForDeletion`, API-0262
+		// `patch-one`, API-0263 `patch-readRepoDirectories`,
+		// API-0264 `patch-readRepoFile`, and API-0265
+		// `patch-saveFileAsPatch`, continuing inside the
+		// `patch-cov-*` per-tag fixture-isolation namespace
+		// opened at API-0256. Per the per-tag fixture-isolation
+		// rule reasserted at every prior patch/* story, this
+		// entry **must not** back-reference any closed prior-tag
+		// namespace (`admin-cov-*`, `ai-cov-*`, `app-cov-*`,
+		// `backup-cov-*`, `bb-cov-*`, `cert-cov-*`, `clu-cov-*`,
+		// `compose-cov-*`, `deployment-cov-*`, `dest-cov-*`,
+		// `docker-cov-*`, `domain-cov-*`, `environment-cov-*`,
+		// `git-cov-*`, `mounts-cov-*`, `notification-cov-*`,
+		// `org-cov-*`, `proj-cov-*`, `set-cov-*`, or `srv-cov-*`);
+		// the final patch/* peer (API-0267 `patch-update`) should
+		// grep this block to inherit the `patch-cov-*` slug
+		// namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /patch.toggleEnabled
+		// > post`: a **POST** with **zero parameters** (no query,
+		// no path, no header) and a **REQUIRED** `requestBody`
+		// (`requestBody.required = true`) carrying a JSON object
+		// whose inner schema declares **two REQUIRED scalars** —
+		// a non-nullable plain string (`patchId`, no `format` /
+		// `pattern`) and a non-nullable boolean (`enabled`) —
+		// and **zero optional fields**. Responses
+		// 200/400/401/403/500 — note the **absence of 404**,
+		// mirroring the canonical mutating-POST cohort response
+		// set at API-0257 `patch-cleanPatchRepos`, API-0258
+		// `patch-create`, API-0259 `patch-delete`, API-0260
+		// `patch-ensureRepo`, API-0261
+		// `patch-markFileForDeletion`, and API-0265
+		// `patch-saveFileAsPatch` rather than the by-id-flavoured
+		// 404-bearing GET response set at API-0256
+		// `patch-byEntityId` / API-0262 `patch-one` / API-0263
+		// `patch-readRepoDirectories` / API-0264
+		// `patch-readRepoFile`. The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort.
+		//
+		// **Shape positioning — required-body POST with two
+		// required scalars (plain-string id + boolean toggle),
+		// zero parameters, zero optional surface.** The
+		// patchId-plus-boolean toggle pair is structurally
+		// distinct from every patch/* peer covered to date:
+		// API-0259 `patch-delete` carries a single-required-
+		// `patchId` (lone-id-string only), API-0257
+		// `patch-cleanPatchRepos` carries a single-optional-
+		// `serverId`, API-0260 `patch-ensureRepo` carries
+		// id-plus-type, API-0261 `patch-markFileForDeletion`
+		// carries id-plus-type-plus-filePath, API-0265
+		// `patch-saveFileAsPatch` carries the
+		// id-plus-type-plus-filePath-plus-content quadruple plus
+		// optional `patchType` discriminator, API-0258
+		// `patch-create` carries a required-string-pair head plus
+		// optional discriminator enum / boolean / two
+		// nullable-string ids, and API-0256 `patch-byEntityId` /
+		// API-0262 `patch-one` / API-0263
+		// `patch-readRepoDirectories` / API-0264
+		// `patch-readRepoFile` are GETs with query parameters
+		// rather than request bodies. The boolean `enabled` field
+		// here is the first **required**-boolean wire-shape leg
+		// in the patch/* roster — API-0258 `patch-create`
+		// declares an `enabled` boolean too, but as an *optional*
+		// field, so this entry establishes the required-boolean
+		// precedent inside the `patch-cov-*` namespace.
+		//
+		// **No optional surface to handle.** The schema declares
+		// zero optional fields, so the canonical "minimum-
+		// required-fields" payload that the success-leg
+		// assertion in `runAPICoverageSuccess` is designed to
+		// validate is identical to the maximally-populated
+		// payload here — there is no every-optional-populated
+		// expansion to consider, in contrast to API-0265
+		// `patch-saveFileAsPatch`'s deliberately-omitted
+		// `patchType` optional or API-0258 `patch-create`'s
+		// optional discriminator / boolean / nullable-id fan-out.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `patch-cov-toggle-enabled-0266` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared
+		//     across every per-tag roster and is unique
+		//     (verified: no collisions with API-0256
+		//     `patch-cov-by-entity-id-0256`, API-0257
+		//     `patch-cov-cleanPatchRepos-0257`, API-0258
+		//     `patch-cov-create-0258`, API-0259
+		//     `patch-cov-delete-0259`, API-0260
+		//     `patch-cov-ensure-repo-0260`, API-0261
+		//     `patch-cov-mark-file-for-deletion-0261`, API-0262
+		//     `patch-cov-one-0262`, API-0263
+		//     `patch-cov-read-repo-directories-0263`, API-0264
+		//     `patch-cov-read-repo-file-0264`, or API-0265
+		//     `patch-cov-save-file-as-patch-0265`, and orthogonal
+		//     to every prior tag's `*-cov-*` namespaces).
+		//   * `patchId` carries the deterministic fixture token
+		//     `patch-cov-toggle-enabled-0266` so the wire payload
+		//     is uniquely identifiable in test output and cannot
+		//     collide with any production patch identifier. The
+		//     schema constrains the field to `type: string` only
+		//     (no `format` or `pattern`), so a fixture-shaped
+		//     identifier is structurally valid.
+		//   * `enabled` is fixed to `true`. Either boolean value
+		//     would satisfy the wire-shape contract; choosing
+		//     `true` keeps the fixture deterministic and matches
+		//     the natural enable-toggle direction implied by the
+		//     operation name without privileging one branch over
+		//     the other. A future contract-test extension that
+		//     exercises both boolean legs (`true` and `false`
+		//     explicitly) should add a sibling case rather than
+		//     mutating this one.
+		//
+		// **Family choice — harness-default 401→CodeAuth
+		// retained.** The spec omits 404 from the response set
+		// (POST-style toggle on this Dokploy surface emits 400
+		// for an unknown `patchId` rather than 404 — the by-id
+		// GETs at API-0256 / API-0262 / API-0263 / API-0264
+		// carry 404 because they are *lookups*, not mutations),
+		// so the 404→CodeNotFound override is structurally
+		// inapplicable. 400→CodeInvalidInput is *technically*
+		// available — a payload that omits either required
+		// scalar or supplies a non-boolean `enabled` would fail
+		// server-side validation — but the harness reserves 400
+		// representatives for stories where payload validation
+		// is the operation's *uniquely distinguishing* failure
+		// mode, and the success-leg fixture above always carries
+		// both required scalars with structurally valid types,
+		// so the validator surface is not exercised on the
+		// failure leg. Auth is the universal failure mode every
+		// authenticated Dokploy operation must re-prove, so the
+		// harness-default 401→CodeAuth failure leg
+		// (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""`
+		// → CodeAuth) stays the most informative representative
+		// — same call as the patch/* peers at API-0256,
+		// API-0257, API-0258, API-0259, API-0260, API-0261,
+		// API-0262, API-0263, API-0264, and API-0265.
+		//
+		// The final case in the patch/* roster per PRD ordering
+		// is API-0267 `patch-update` (declared a **POST** per
+		// the spec preview); the next contributor must re-verify
+		// the spec against `internal/api/data/openapi.json >
+		// /patch.update > post` per the forward-reference lesson
+		// before assuming any field shape, and will continue
+		// inside the `patch-cov-*` per-tag fixture-isolation
+		// namespace inherited from API-0256 and continued here.
+		SampleBody: json.RawMessage(`{
+			"patchId": "patch-cov-toggle-enabled-0266",
+			"enabled": true
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0268",
 		OperationID: "port-create",
 		Method:      http.MethodPost,

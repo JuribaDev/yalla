@@ -28706,3 +28706,135 @@ forward-reference lesson before assuming any field shape.
     explicitly disambiguate them so a future grep on `patchType`
     does not conflate the two surfaces.
 ---
+
+## 2026-05-09 - API-0266 patch-toggleEnabled
+- Implemented: covered the eleventh patch/* roster entry,
+  `patch-toggleEnabled` (POST /patch.toggleEnabled), inside the
+  per-tag `patch-cov-*` fixture-isolation namespace opened at
+  API-0256 and continued through API-0257..API-0265. Added a
+  single new entry to the apiCoverageCases table in
+  `internal/cli/api_coverage_test.go` between API-0265
+  `patch-saveFileAsPatch` and the cross-tag boundary at API-0268
+  `port-create`. The harness drives both the success leg (200
+  + empty-object body) and the harness-default failure leg
+  (401→CodeAuth) with no harness modifications required.
+- Spec re-verified directly against
+  `internal/api/data/openapi.json > /patch.toggleEnabled > post`
+  per the API-0345..API-0444 forward-reference lesson: a POST
+  with **zero parameters** and a **REQUIRED** request body
+  carrying a JSON object whose schema declares **two REQUIRED
+  scalars** — `patchId` (plain string, no `format`/`pattern`)
+  and `enabled` (boolean) — and **zero optional fields**.
+  Responses 200/400/401/403/500 with **no 404**, matching the
+  canonical mutating-POST cohort response set at API-0257
+  `patch-cleanPatchRepos` / API-0258 `patch-create` / API-0259
+  `patch-delete` / API-0260 `patch-ensureRepo` / API-0261
+  `patch-markFileForDeletion` / API-0265 `patch-saveFileAsPatch`,
+  not the by-id-flavoured 404-bearing GET set at API-0256 /
+  API-0262 / API-0263 / API-0264. The 200 schema is `{}` with
+  `additionalProperties: false`, matching every prior
+  empty-success peer.
+- Shape positioning: required-body POST with two required
+  scalars (plain-string id + boolean toggle), zero parameters,
+  zero optional surface — first **required**-boolean wire-shape
+  leg in the patch/* roster (API-0258 `patch-create` declares
+  `enabled` too, but as an *optional* field). No structural
+  precedent in the namespace combines plain-string id + required
+  boolean exactly this way; closest neighbours are API-0259
+  `patch-delete` (lone-id-string only, no boolean) and API-0258
+  `patch-create` (string-pair head + optional boolean).
+- Failure leg: harness-default 401→CodeAuth retained. The spec
+  omits 404 (POST-style toggle on this Dokploy surface emits 400
+  for an unknown `patchId` rather than 404 — the by-id GETs at
+  API-0256/API-0262/API-0263/API-0264 carry 404 only because they
+  are *lookups*, not mutations), so the 404→CodeNotFound
+  override is structurally inapplicable. 400→CodeInvalidInput is
+  technically available but the harness reserves 400
+  representatives for stories where payload validation is the
+  uniquely distinguishing failure mode; the success-leg fixture
+  here always carries both required scalars with structurally
+  valid types, so the validator surface is not exercised on the
+  failure leg. Auth remains the universal failure mode every
+  authenticated Dokploy operation must re-prove.
+- Fixture token base: `patch-cov-toggle-enabled-0266`. Verified
+  unique against every prior `patch-cov-*` token (API-0256
+  `patch-cov-by-entity-id-0256`, API-0257
+  `patch-cov-cleanPatchRepos-0257`, API-0258
+  `patch-cov-create-0258`, API-0259 `patch-cov-delete-0259`,
+  API-0260 `patch-cov-ensure-repo-0260`, API-0261
+  `patch-cov-mark-file-for-deletion-0261`, API-0262
+  `patch-cov-one-0262`, API-0263
+  `patch-cov-read-repo-directories-0263`, API-0264
+  `patch-cov-read-repo-file-0264`, API-0265
+  `patch-cov-save-file-as-patch-0265`) and orthogonal to every
+  prior tag's `*-cov-*` namespace.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (+1 case, ~178 lines
+    including rationale comments).
+  - `ralph/prd.json` (`API-0266.passes = true`).
+  - `ralph/progress.txt` (this entry).
+- Verification run:
+  - `gofmt -w .` — clean (`gofmt -l .` reports no diff).
+  - `go mod tidy` — clean (no new deps).
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages OK (`internal/cli` 1.534s).
+  - `go test -race ./...` — all packages OK (`internal/cli`
+    3.406s).
+  - `go build ./...` — clean.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` not installed locally; skipped per the
+    document-rather-than-silently-skip rule.
+- Remaining risks / follow-ups:
+  - 32 priority-5 API stories still pending; next in PRD order
+    is API-0267 `patch-update` (POST per spec preview) which
+    closes the patch/* roster. The next contributor must
+    re-verify the spec against
+    `internal/api/data/openapi.json > /patch.update > post`
+    before assuming any field shape (the spec preview shows a
+    seven-field surface with single-required `patchId` plus six
+    optional fields including a `{create, update, delete}`
+    enum, two booleans/strings, and a nullable `updatedAt`),
+    and continue inside the `patch-cov-*` per-tag
+    fixture-isolation namespace until the patch/* roster
+    closes.
+- **Learnings for future iterations:**
+  - **Required-boolean POST body is a new wire-shape leg in
+    the patch/* roster.** API-0258 `patch-create` already
+    carries an `enabled` boolean but as an *optional* field,
+    so the success-leg fixture there can omit it without
+    affecting structural validity. Here `enabled` is required,
+    so the wire payload must always include it; we picked
+    `true` to match the natural enable-toggle direction
+    implied by the operation name. A future contract-test
+    extension that exercises both boolean legs (`true` and
+    `false` explicitly) should add a sibling case rather than
+    mutating this one — same rule we used at API-0265 for the
+    optional `patchType` enum.
+  - **No-optional-surface POST bodies skip the
+    every-optional-populated expansion entirely.** When the
+    schema declares zero optional fields the canonical
+    "minimum-required-fields" payload that
+    `runAPICoverageSuccess` validates is identical to the
+    maximally-populated payload, so there is no expansion
+    decision to document — in contrast to API-0265
+    `patch-saveFileAsPatch` (deliberate omission of the
+    optional `patchType` discriminator) or API-0258
+    `patch-create` (optional discriminator / boolean /
+    nullable-id fan-out).
+  - **Mutating-POST cohort response set canonical at
+    200/400/401/403/500.** Every patch/* mutation covered to
+    date (API-0257/0258/0259/0260/0261/0265/0266) carries the
+    same response set with no 404 — Dokploy POSTs that mutate
+    state route unknown-target errors through 400, not 404.
+    The 404-bearing shape is reserved for the by-id GET cohort
+    (API-0256/0262/0263/0264). Future patch/* contributors
+    should keep the 401→CodeAuth harness-default representative
+    for both shapes unless a story has a *uniquely
+    distinguishing* validator surface that justifies a 400 leg.
+  - **Per-tag fixture-token uniqueness audit must enumerate
+    every prior entry in the `patch-cov-*` namespace, not just
+    the most recent.** The roster now has ten prior fixture
+    tokens; future contributors must grep the entire namespace
+    before picking a slug to avoid silent collision in subtest
+    names that run in parallel via `t.Parallel`.
+---
