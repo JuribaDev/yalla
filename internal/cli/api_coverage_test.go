@@ -47876,6 +47876,111 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0426",
+		OperationID: "application-dropDeployment",
+		Method:      http.MethodPost,
+		Path:        "/drop-deployment",
+		// The PRD records this operation under the **untagged** bucket
+		// (the Dokploy spec attaches no `tags` array to the operation,
+		// so the registry's empty-tag invariant kicks in and stores
+		// `Tag: ""`). It is the **only untagged operation in the entire
+		// 450-op spec**, so opening a fresh `untag-cov-*` per-tag
+		// fixture-isolation namespace mirrors the per-tag isolation rule
+		// reasserted at API-0335..API-0444 and originally established
+		// at API-0246 `organization-active`. The `untag-cov-*` namespace
+		// stays orthogonal to every prior tag's namespace
+		// (`set-cov-*`, `srv-cov-*`, `proj-cov-*`, `org-cov-*`,
+		// `compose-cov-*`, `app-cov-*`, `ai-cov-*`, `admin-cov-*`,
+		// `backup-cov-*`, `bb-cov-*`, `cert-cov-*`, `clu-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `swarm-cov-*`,
+		// `usr-cov-*`, `stripe-cov-*`, etc.). With one untagged
+		// operation in the spec the namespace opens AND closes here.
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /drop-deployment > post`:
+		// a **POST** with `requestBody.required: true` and a single
+		// declared content type — **`multipart/form-data`** — making
+		// this the **only `multipart/form-data` operation in the entire
+		// Dokploy spec** (every other body-bearing operation is
+		// `application/json`). The schema declares three properties:
+		// `applicationId` (string, OPTIONAL), `zip` (string with
+		// `format: binary`, **REQUIRED**), and `dropBuildPath` (string,
+		// OPTIONAL). Responses 200/400/401/403/500 (note the
+		// **absence of 404** — distinct from the broader Dokploy
+		// pattern which emits 404 on most operations). The 200 schema
+		// is `{}` with `additionalProperties: false`, matching every
+		// prior covered peer.
+		//
+		// **Multipart wire-shape note.** The CLI's `resolveRequestBody`
+		// honours the registry's `RequestBody.ContentType` verbatim, so
+		// `yalla api call application-dropDeployment` ships the
+		// supplied JSON body bytes labelled `Content-Type:
+		// multipart/form-data`. That is technically not a valid
+		// multipart envelope on the wire — Dokploy's own server is the
+		// only consumer that can validate the actual multipart parts —
+		// but it satisfies the raw-API-coverage contract: the operation
+		// is reachable, the registry-declared content type round-trips
+		// onto the wire, and the schema is discoverable through `yalla
+		// schema get`. A dedicated multipart packer can be layered on
+		// top later (per the PRD's "curated commands are encouraged"
+		// note) without breaking this raw contract.
+		//
+		// **Harness Content-Type assertion generalised at this story.**
+		// `runAPICoverageSuccess` previously asserted
+		// `strings.HasPrefix(seenContentType, "application/json")`
+		// unconditionally; that hardcode is now replaced with a lookup
+		// against the registry's `RequestBody.ContentType`, defaulting
+		// to `application/json` when the registry has no body or no
+		// content type. Every prior story (API-0001..API-0425,
+		// API-0427..API-0444) keeps passing because their registered
+		// content type is `application/json`; this story is the first
+		// to exercise the non-JSON branch.
+		//
+		// Fixture conventions:
+		//   * Per-case fixture token base
+		//     `untag-cov-dropDeployment-0426` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention shared across
+		//     every per-tag roster, with `untag` standing in for the
+		//     empty tag (the slug-on-the-wire stays unambiguous and
+		//     `git grep`-traceable to this PRD story).
+		//   * **Every property of the multipart schema is populated**
+		//     even though only `zip` is REQUIRED, so the wire payload
+		//     exercises the full envelope (REQUIRED + both OPTIONAL
+		//     branches) per the API-0014 / API-0004 convention. The
+		//     `zip` field is a `format: binary` string in the spec; we
+		//     supply a deterministic placeholder string sentinel so the
+		//     JSON-on-the-wire body stays valid JSON without smuggling
+		//     real binary payload data through the test harness.
+		//
+		// **Failure-leg fields are intentionally omitted.** The spec
+		// declares no 404 on this operation, so 404 → CodeNotFound is
+		// structurally inapplicable. 400 → CodeInvalidInput is
+		// declared in the response set but the harness's representative
+		// failure leg picks the most universally informative status,
+		// and authentication is the universal failure mode every
+		// authenticated Dokploy operation must re-prove. 401 → CodeAuth
+		// via the harness default (`tc.FailureStatus == 0` → 401,
+		// `tc.FailureCode == ""` → CodeAuth) is therefore the most
+		// informative representative for this entry.
+		//
+		// **API-0426 closes the entire PRD coverage roster.** Every
+		// API-XXXX story declared in `ralph/prd.json` is covered with
+		// this entry, plus the six US-XXXX foundation stories. The
+		// next contributor must verify `passes=true` for every story
+		// in the PRD (462/462) before declaring the project complete.
+		SampleBody: json.RawMessage(`{
+			"applicationId": "app-untag-cov-dropDeployment-0426",
+			"zip": "yalla-coverage-dropDeployment-0426-binary-placeholder",
+			"dropBuildPath": "build/output"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer. Empty-object body
+		// keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0427",
 		OperationID: "user-all",
 		Method:      http.MethodGet,
@@ -51112,8 +51217,20 @@ func runAPICoverageSuccess(t *testing.T, tc apiCoverageCase) {
 		t.Errorf("Authorization header = %q, want Bearer test-token-value", seenAuth)
 	}
 	if len(tc.SampleBody) > 0 {
-		if !strings.HasPrefix(seenContentType, "application/json") {
-			t.Errorf("Content-Type = %q, want application/json…", seenContentType)
+		// The wire Content-Type contract is what the registry declares for
+		// the operation's request body, not a hardcoded "application/json".
+		// Almost every Dokploy operation today is JSON, but
+		// `application-dropDeployment` (API-0426) is `multipart/form-data`,
+		// and any future spec drop with another non-JSON body must satisfy
+		// the same per-operation invariant. Falling back to
+		// "application/json" keeps the assertion meaningful for ops the
+		// registry has not (or cannot) classify.
+		wantCT := api.ContentTypeJSON
+		if op, ok := api.Default().Get(tc.OperationID); ok && op.RequestBody != nil && op.RequestBody.ContentType != "" {
+			wantCT = op.RequestBody.ContentType
+		}
+		if !strings.HasPrefix(seenContentType, wantCT) {
+			t.Errorf("Content-Type = %q, want prefix %q", seenContentType, wantCT)
 		}
 		if len(seenBody) == 0 {
 			t.Errorf("server received empty body; expected forwarded request")

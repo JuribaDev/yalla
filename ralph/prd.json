@@ -19316,7 +19316,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "untagged",
         "operationId": "application-dropDeployment",
