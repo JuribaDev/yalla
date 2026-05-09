@@ -24043,3 +24043,80 @@ forward-reference lesson before assuming any field shape.
     `redis-one`. Body-bearing imperative-action POSTs that omit 404 from their
     response set stay on the harness-default 401→CodeAuth failure leg.
 ---
+
+## 2026-05-09 - API-0312 (redis-search)
+- Added `coveredAPIOperations` entry for API-0312 in
+  `internal/cli/api_coverage_test.go`, inserted immediately after
+  API-0311 `redis-saveExternalPort` and before API-0331
+  `security-create`. The new case completes the redis/* coverage
+  roster's first all-optional GET since the canonical by-id
+  API-0306 `redis-one`, and follows the cross-tag `*-search`
+  precedent locked in at API-0170 `mariadb-search`, API-0184
+  `mongo-search`, API-0204 `mysql-search`, and API-0282
+  `postgres-search`.
+- Wire shape: GET, no request body, eight OPTIONAL query params
+  per the spec at `/redis.search > get`: `q`, `name`, `appName`,
+  `description`, `projectId`, `environmentId` (strings) and
+  `limit`, `offset` (numbers, defaults 20/0). 200 response is
+  `{}` with `additionalProperties:false`. Spec declares
+  200/400/401/403/404/500. The 404 → CodeNotFound override is
+  *technically* applicable but reserved for the canonical by-id
+  `*-one` peer (already consumed by API-0306 `redis-one`); the
+  harness-default 401 → CodeAuth representative-failure leg is
+  retained per the API-0170/API-0184/API-0204/API-0282
+  `*-search` GET precedent.
+- Fixture token base `redis-cov-search-0312`. SampleQuery
+  populates a representative subset of four params (`q`,
+  `projectId`, `limit`, `offset`) covering the three semantic
+  axes (free-text search, scoped filter, numeric pagination)
+  exactly as the cross-tag `*-search` peers do; remaining four
+  optional string filters are byte-for-byte identical in shape
+  so omitting them does not lose any unique CLI/API code-path
+  exercise. Numeric values use the canonical decimal grammar
+  (`"5"` / `"0"`).
+- Files changed:
+  - internal/cli/api_coverage_test.go (+~210 lines)
+  - ralph/prd.json (passes:true on API-0312)
+  - ralph/progress.txt (this entry)
+- Verification run from the repository root:
+  - gofmt -w . — clean.
+  - go mod tidy — clean.
+  - go vet ./... — pass.
+  - go test ./... — pass.
+  - go test -race ./... — pass.
+  - goimports / golangci-lint / staticcheck / govulncheck /
+    goreleaser — not installed locally; documented as missing
+    per the per-iteration policy.
+- Remaining risks or follow-ups:
+  - 98 priority-4 API-coverage stories remain. The next
+    PRD-ordered redis/* peer is API-0313 `redis-start` — a POST
+    declared in the spec preview; the next contributor must
+    re-verify the spec at `internal/api/data/openapi.json`
+    > `/redis.start` > `post` per the forward-reference lesson
+    before assuming any field shape, and will continue inside
+    the `redis-cov-*` per-tag fixture-isolation namespace
+    opened at API-0302.
+- Learnings for future iterations:
+  - The all-optional-query `*-search` GET family with eight
+    parameters is byte-for-byte identical across mariadb /
+    mongo / mysql / postgres / redis tags: `q`, `name`,
+    `appName`, `description`, `projectId`, `environmentId`,
+    `limit`, `offset` with the same types and defaults. New
+    `*-search` stories on this 8-param shape can clone the
+    postgres-search block (API-0282) almost verbatim modulo the
+    tag, path, and per-tag fixture-isolation namespace prefix.
+  - The 8-param `*-search` representative slice convention:
+    populate four (`q`, `projectId`, `limit`, `offset`) covering
+    free-text / scoped-filter / numeric-pagination axes. Adding
+    the remaining four string filters does not exercise any
+    new code path on the CLI → API client → httptest server
+    round-trip. Locked in at API-0170 and re-applied here.
+  - The 404 → CodeNotFound override for `*-search` GETs is
+    structurally available (the spec declares 404) but reserved
+    for the per-tag canonical by-id `*-one` GET peer; the
+    `*-search` representative-failure leg stays on the
+    harness-default 401 → CodeAuth across mariadb / mongo /
+    mysql / postgres / redis. Preserves the redis/* roster's
+    401→CodeAuth invariant kicked off at API-0302
+    `redis-changeStatus`.
+---
