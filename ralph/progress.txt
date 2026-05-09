@@ -28177,3 +28177,27 @@ forward-reference lesson before assuming any field shape.
     API-0387 precedent) so the body-forwarding round-trip
     assertion remains meaningful.
 ---
+
+## 2026-05-09 - API-0258
+- Added api_coverage_test.go entry for `patch-create` (POST /patch.create, tag patch).
+- Inserted in PRD order between API-0257 `patch-cleanPatchRepos` and API-0268 `port-create`, continuing the per-tag `patch-cov-*` fixture-isolation namespace opened at API-0256.
+- SampleBody populates the two REQUIRED inner strings (`filePath`, `content`) plus three of the four optional fields (`type=create`, `enabled=true`, `applicationId`); `composeId` deliberately omitted to exercise the optional-and-omitted axis on one of the two `anyOf{string,null}` ids.
+- SuccessResponse `{}` matches the spec's `additionalProperties:false` empty-object 200 and the empty-success cohort across the patch/* roster.
+- Failure leg: harness-default 401→CodeAuth (no 404 in spec; 400 validator surface is not the canonical distinguishing failure mode here).
+- Files changed:
+  * internal/cli/api_coverage_test.go (new test entry)
+  * ralph/prd.json (passes: true for API-0258)
+  * ralph/progress.txt (this entry)
+- Verification run:
+  * gofmt -w . — clean
+  * go mod tidy — clean
+  * go vet ./... — clean
+  * go test ./... — all packages pass
+  * go test -race ./... — all packages pass
+- Remaining risks / follow-ups: none — manifest/registry are auto-projected from `internal/api/data/openapi.json`, so no separate registry edit was needed. golangci-lint / staticcheck / govulncheck / goreleaser not installed in this environment; baseline `go vet` + `go test` + `go test -race` all pass.
+- **Learnings for future iterations:**
+  - The `apiCoverage` harness is the ONLY edit point for new API operations: registry, schema, manifest, and `yalla api call` raw-execution paths are all driven from `internal/api/data/openapi.json` via `internal/api/registry.go` at runtime, so adding a coverage case to `internal/cli/api_coverage_test.go` is sufficient to satisfy the PRD acceptance criteria.
+  - Each per-tag roster opens a `<tag>-cov-*` fixture-isolation namespace at its first entry and **must** stay strictly per-tag — never back-reference a closed prior-tag namespace's literals when picking sample tokens.
+  - For required-body POSTs with optional `anyOf{string,null}` id fields, the convention is to populate one and OMIT the sibling so the JSON-serialiser's omit-field branch is exercised on the wire.
+  - The harness's failure-leg default is 401→CodeAuth; only override (`tc.FailureStatus` / `tc.FailureCode`) when the spec genuinely makes a different status the canonical distinguishing failure (e.g. 404 for by-id GETs whose response set contains 404, or 400 when the operation's *defining* failure mode is payload validation).
+---
