@@ -24900,3 +24900,72 @@ forward-reference lesson before assuming any field shape.
     project-create, port-create, mounts-create). Nothing in createEmail
     needs the 404→CodeNotFound override.
 ---
+## 2026-05-09 05:30 UTC - API-0212
+- Implemented contract coverage for POST /notification.createGotify (Dokploy
+  `notification-createGotify`).
+- Files changed:
+  - internal/cli/api_coverage_test.go — appended apiCoverageCase entry
+    (StoryID=API-0212) immediately after API-0211, sorted by StoryID.
+    Sample body materialises all 11 REQUIRED fields per the spec
+    (`internal/api/data/openapi.json > /notification.createGotify > post`):
+    three plain strings (`name`, `serverUrl`, `appToken`), one number
+    (`priority` = 5, the Gotify "normal" default), and seven plain
+    booleans (`appBuildError`/`databaseBackup`/`volumeBackup`/
+    `dokployRestart`/`appDeploy`/`dockerCleanup`/`decoration`). Fixture
+    values stay inside the `notification-cov-create-gotify-0212-<field>`
+    namespace and use the RFC 6761 `example.invalid` reserved TLD for the
+    Gotify server URL so a future URL-shape validator stays satisfied
+    without risking real DNS/HTTPS egress. SuccessResponse is `{}` per
+    the additionalProperties:false success schema.
+  - ralph/prd.json — flipped `passes: false` -> `true` for API-0212.
+  - ralph/progress.txt — this entry.
+- Verification run from the repo root:
+  - gofmt -w .                            : clean
+  - go mod tidy                           : clean (no diff)
+  - go vet ./...                          : clean
+  - go test ./...                         : ok (all 9 packages)
+  - go test -race ./...                   : ok (all 9 packages)
+- Tools not installed locally and therefore documented-as-skipped (per the
+  Codebase Patterns rule): goimports, golangci-lint, staticcheck,
+  govulncheck, goreleaser. Same set as every prior API-0XXX story.
+- Remaining risks / follow-ups:
+  - None for this story. The next-in-queue notification/* siblings
+    (API-0213 createLark, API-0214 createNtfy, API-0215 createPushover,
+    API-0216 createResend, …) can crib this entry's fixture namespace,
+    but **must re-verify their seventh boolean** per the spec — Gotify
+    swaps Discord/Email's `serverThreshold` slot for `decoration`, so
+    the seven-shared-boolean cohort is no longer stable across the tag.
+- **Learnings for future iterations:**
+  - The notification/* roster's seventh boolean slot is **not stable**:
+    Discord and Email carry `serverThreshold`; Gotify replaces it with
+    `decoration`. The transport-agnostic core six (`appBuildError`,
+    `databaseBackup`, `volumeBackup`, `dokployRestart`, `appDeploy`,
+    `dockerCleanup`) remain stable, but future notification/* peers
+    must re-verify the seventh boolean per the spec rather than
+    cribbing from a sibling — slug-prefix-is-not-shape applies inside
+    the same tag, not just across tags.
+  - createGotify lands a fourth notification/* shape family: closed
+    all-required mixing scalar strings + one number + booleans **with
+    no array slot** (cf. createDiscord which had no number/array,
+    createEmail which had a number AND an array<string>). Future peers
+    in the notification/* roster that ship transport-specific non-
+    scalar fields (`createSlack` channel array, `createTeams` connector
+    list, etc.) should grep this entry first for the mixed-scalar-and-
+    number all-required convention.
+  - `priority` is the second number-typed field in the notification/*
+    roster after createEmail's `smtpPort`; using transport-canonical
+    midrange values (587 for SMTP submission, 5 for Gotify "normal"
+    priority on 0–10) keeps a future numeric-range validator satisfied
+    without binding the test to a high- or low-priority deployment
+    opinion.
+  - The secret-shaped-field convention reasserted at API-0211
+    (`password`) holds for `appToken` here: REQUIRED credential fields
+    in request bodies are forwarded verbatim by the harness, so the
+    entry's comment must call out that the redactor only operates on
+    rendered --json output and that fixture tokens must be clearly-
+    fake.
+  - The 401→CodeAuth + no-404 invariants for body-bearing imperative-
+    action POSTs continue to hold across the notification/* create
+    cohort (createCustom, createDiscord, createEmail, createGotify).
+    Nothing in createGotify needs the 404→CodeNotFound override.
+---
