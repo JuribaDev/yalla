@@ -45862,6 +45862,205 @@ var coveredAPIOperations = []apiCoverageCase{
 		// remains in force for the rest of the sso/* arc.
 	},
 	{
+		StoryID:     "API-0414",
+		OperationID: "sso-update",
+		Method:      http.MethodPost,
+		Path:        "/sso.update",
+		Tag:         "sso",
+		// Ninth entry on the sso/* coverage roster and the
+		// **fifth mutation** of the sso/* arc — succeeds the arc
+		// opener API-0406 `sso-addTrustedOrigin` (single-required-
+		// string-scalar POST imperative-action mutation), the
+		// second mutation API-0407 `sso-deleteProvider` (also
+		// single-required-string-scalar POST), the parameter-free
+		// read API-0408 `sso-getTrustedOrigins` (the first
+		// read-only leaf), the parameter-free list read API-0409
+		// `sso-listProviders` (the second read-only leaf), the
+		// canonical by-id GET API-0410 `sso-one` (the
+		// 404→CodeNotFound override home for the sso/* tag arc),
+		// the multi-required-field register/create POST API-0411
+		// `sso-register`, the destructive imperative-action POST
+		// API-0412 `sso-removeTrustedOrigin` (single-required-
+		// string-scalar), and the third read-only leaf API-0413
+		// `sso-showSignInWithSSO` (parameter-free, body-free
+		// action-style probe GET). Consumes the forward reference
+		// embedded in API-0413's closing comment ("the priority-5
+		// backlog continues at API-0414 `sso-update` (declared a
+		// **POST** per the spec preview, the next mutation of the
+		// sso/* arc that — per the harness-default reservation
+		// locked in here — should revert to 401 → CodeAuth as a
+		// representative-failure slot, the 404→CodeNotFound
+		// override having been consumed at API-0410 `sso-one`)").
+		// Stays within the open `sso-cov-*` namespace opened by
+		// API-0406 `sso-addTrustedOrigin` per the per-tag
+		// isolation rule originally established at API-0246
+		// `organization-active`; **must not** back-reference any
+		// closed prior-tag namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json` > `/sso.update` >
+		// `post`: method POST, tag sso, **no parameters** (no path
+		// placeholders, no query string), and a REQUIRED
+		// `application/json` request body. Responses
+		// 200/400/401/403/500 — **404 is absent** from the response
+		// set (consistent with the body-bearing update mutation
+		// shape; missing-target failure modes collapse into
+		// 400/validation under Dokploy's tRPC convention rather
+		// than a dedicated 404 leg, mirroring the multi-required-
+		// field register/create precedent at API-0411
+		// `sso-register` and the destructive-action precedent at
+		// API-0412 `sso-removeTrustedOrigin`). The 200 schema is
+		// `{}` with `additionalProperties: false`, matching every
+		// prior covered peer in the empty-success cohort.
+		//
+		// **Request body schema (top-level fields):**
+		//   - REQUIRED `providerId` (plain string). Identifies the
+		//     SSO provider record being updated — the addressable
+		//     subject of this mutation lives in the body, not in
+		//     a path or query parameter (consistent with Dokploy's
+		//     tRPC mutation convention).
+		//   - REQUIRED `issuer` (plain string). Identifies the SSO
+		//     issuer URL/identifier on the updated record.
+		//   - REQUIRED `domains` (array of plain strings). The
+		//     domain set bound to the updated provider.
+		//   - OPTIONAL `oidcConfig` (object — REQUIRED-when-present
+		//     `clientId` + `clientSecret`, with further optional
+		//     OIDC endpoint fields and a nested mapping subtree).
+		//   - OPTIONAL `samlConfig` (object — REQUIRED-when-present
+		//     `entryPoint` + `cert` + `callbackUrl` + `spMetadata`,
+		//     with further optional SAML metadata fields).
+		//   - OPTIONAL `organizationId` (plain string).
+		//   - OPTIONAL `overrideUserInfo` (boolean).
+		//
+		// The fixture supplies a `<tag>-cov-<slug>-<storyID>`-
+		// conformant literal for each REQUIRED field so the
+		// success-leg byte-for-byte body comparison verifies the
+		// CLI propagated the body verbatim.
+		//
+		// **Shape positioning — multi-required-field POST update
+		// mutation, body REQUIRED, optional alternative auth
+		// configs.** The minimum-required envelope supplies the
+		// three top-level REQUIRED fields (`providerId`, `issuer`,
+		// `domains`) and intentionally omits the OPTIONAL
+		// `oidcConfig`/`samlConfig`/`organizationId`/
+		// `overrideUserInfo` siblings — the spec gates `oidcConfig`
+		// and `samlConfig` as alternative auth configurations whose
+		// own REQUIRED-when-present subtrees would otherwise
+		// dominate the fixture, and supplying neither keeps the
+		// fixture minimally valid against the top-level required
+		// set. This mirrors the API-0411 `sso-register` minimum-
+		// required envelope (identical top-level REQUIRED tuple
+		// `providerId`/`issuer`/`domains`, identical OPTIONAL
+		// sibling set) and the API-0001 `admin-setupMonitoring`
+		// "minimal-but-valid shape so a future schema validator
+		// will not reject the fixture" precedent. Structurally
+		// distinct from the single-required-string-scalar mutators
+		// at API-0406 `sso-addTrustedOrigin`, API-0407
+		// `sso-deleteProvider`, and API-0412
+		// `sso-removeTrustedOrigin` (all one-REQUIRED-field
+		// shapes); the multi-required-field cardinality places
+		// this entry alongside API-0411 in the multi-required-
+		// field POST family — the slug-stem distinction
+		// (`update` vs `register`) does not change the fixture
+		// shape per the slug-stem-is-not-shape lesson reasserted
+		// at API-0371..API-0444 (here happily reaffirmed: the
+		// shape genuinely matches because the spec genuinely
+		// matches, not because the slug stem suggested it).
+		//
+		// **Family choice — harness-default 401→CodeAuth retained
+		// per the API-0410 reservation.** The spec omits 404 from
+		// the response set (per above), so the 404→CodeNotFound
+		// override is structurally inapplicable; and the canonical
+		// 404→CodeNotFound representative-failure slot for the
+		// sso/* tag arc was already consumed at API-0410 `sso-one`
+		// per the reservation locked in at API-0408 and API-0409.
+		// 400 → CodeInvalidInput is *technically* available but
+		// the harness reserves 400 representatives for stories
+		// where payload validation is the operation's *uniquely
+		// distinguishing* failure mode, which an update-style
+		// mutation with multiple non-trivial REQUIRED fields is
+		// not (every authenticated mutation must validate inputs;
+		// 400 carries no per-operation discrimination). The
+		// harness-default 401→CodeAuth failure leg therefore
+		// remains the most representative single failure mode
+		// every authenticated Dokploy operation must re-prove,
+		// matching the 401→CodeAuth choice locked in by the sso/*
+		// arc opener (API-0406 `sso-addTrustedOrigin`) and
+		// continued at every prior sso/* peer (API-0407
+		// `sso-deleteProvider`, API-0408 `sso-getTrustedOrigins`,
+		// API-0409 `sso-listProviders`, API-0411 `sso-register`,
+		// API-0412 `sso-removeTrustedOrigin`, and API-0413
+		// `sso-showSignInWithSSO`).
+		//
+		// Fixture conventions:
+		//   * Multi-required-field minimal envelope — the spec
+		//     declares optional `oidcConfig`/`samlConfig`/
+		//     `organizationId`/`overrideUserInfo` siblings but
+		//     each optional subtree carries its own REQUIRED-when-
+		//     present nested set, so a "every-optional-populated"
+		//     fixture would balloon the literal without exercising
+		//     a different success path. The minimum-required
+		//     envelope IS the byte-for-byte assertion target.
+		//     Same precedent as API-0411 `sso-register`.
+		//   * Per-case fixture token base `sso-cov-update-0414`
+		//     follows the `<tag>-cov-<slug>-<storyID>` convention
+		//     (verified non-colliding with API-0406's
+		//     `sso-cov-addTrustedOrigin-0406-*`, API-0407's
+		//     `sso-cov-deleteProvider-0407-*`, API-0408's
+		//     `sso-cov-getTrustedOrigins-0408` reservation,
+		//     API-0409's `sso-cov-listProviders-0409` reservation,
+		//     API-0410's `sso-cov-one-0410-*`, API-0411's
+		//     `sso-cov-register-0411-*`, API-0412's
+		//     `sso-cov-removeTrustedOrigin-0412-*`, API-0413's
+		//     `sso-cov-showSignInWithSSO-0413` reservation, the
+		//     forthcoming `sso-cov-updateTrustedOrigin-0415` slug
+		//     reserved for the next sso/* peer, and no collisions
+		//     with the cross-tag `set-cov-*`, `srv-cov-*`,
+		//     `proj-cov-*`, `org-cov-*`, `compose-cov-*`,
+		//     `app-cov-*`, `ai-cov-*`, `admin-cov-*`,
+		//     `backup-cov-*`, `bb-cov-*`, `cert-cov-*`,
+		//     `sshKey-cov-*`, etc. namespaces).
+		//   * Deterministic-but-clearly-fake `-fixture` suffix on
+		//     every body literal keeps diffs readable and lets any
+		//     future schema validator's failure messages point at
+		//     the offending field — consistent with every prior
+		//     sso/* mutator's body-literal precedent (API-0406,
+		//     API-0407, API-0411, API-0412).
+		SampleBody: json.RawMessage(`{
+			"providerId": "sso-cov-update-0414-providerId-fixture",
+			"issuer": "sso-cov-update-0414-issuer-fixture",
+			"domains": ["sso-cov-update-0414-domains-fixture"]
+		}`),
+		// 200 response in the spec is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort. Empty-object
+		// body keeps the success-leg envelope assertion focused
+		// on `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+		//
+		// **sso/* roster continues.** Per the PRD ordering at the
+		// time of this commit, the priority-5 backlog continues at
+		// API-0415 `sso-updateTrustedOrigin` (declared a **POST**
+		// per the spec preview, the next mutation of the sso/*
+		// arc that — per the harness-default reservation locked
+		// in here — should revert to 401 → CodeAuth as a
+		// representative-failure slot, the 404→CodeNotFound
+		// override having been consumed at API-0410 `sso-one`).
+		// The next contributor must re-verify the spec against
+		// `internal/api/data/openapi.json` >
+		// `/sso.updateTrustedOrigin` > `post` per the forward-
+		// reference lesson before assuming any field shape (in
+		// particular: REQUIRED/OPTIONAL field gating and whether
+		// the body shape mirrors the multi-required-field POST at
+		// API-0411 `sso-register` / API-0414 `sso-update` or the
+		// single-required-string-scalar mutators at API-0406 /
+		// API-0407 / API-0412), and **must not** reuse any closed
+		// prior-tag namespace; the open `sso-cov-*` namespace
+		// remains in force for the rest of the sso/* arc.
+	},
+	{
 		StoryID:     "API-0423",
 		OperationID: "swarm-getNodeApps",
 		Method:      http.MethodGet,

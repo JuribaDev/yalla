@@ -30515,3 +30515,90 @@ forward-reference lesson before assuming any field shape.
     response payloads to envelope-only for action probes. Expect
     the same `{}` 200 shape on any future action-verb GET.
 ---
+
+## 2026-05-09 - API-0414
+- Implemented coverage for API operation `sso-update` (POST /sso.update).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended one `apiCoverageCase`
+    literal between API-0413 `sso-showSignInWithSSO` and the swarm/* roster
+    opener API-0423 `swarm-getNodeApps`. Body fixture mirrors API-0411
+    `sso-register`'s minimum-required envelope (same top-level REQUIRED
+    tuple `providerId`/`issuer`/`domains`, same OPTIONAL `oidcConfig`/
+    `samlConfig`/`organizationId`/`overrideUserInfo` siblings intentionally
+    omitted). `SuccessResponse: \`{}\`` per the empty-success cohort.
+    Default failure leg (401 → CodeAuth) per the API-0410 reservation —
+    the spec omits 404 from the response set (200/400/401/403/500), so the
+    404→CodeNotFound override is structurally inapplicable.
+  - `ralph/prd.json` — flipped API-0414 `passes` to true.
+  - `ralph/progress.txt` — this entry.
+- Verification:
+  - `gofmt -w .` (clean)
+  - `go mod tidy` (no changes)
+  - `go vet ./...` (clean)
+  - `go test ./...` PASS
+  - `go test -race ./...` PASS
+  - Targeted: `go test ./internal/cli/ -run 'API-0414|APICoverage'`
+    PASS (1.088s) — RegistryInvariants, SchemaCommandWorks,
+    ManifestListsOperation, SuccessRoundTrip, RepresentativeFailure
+    all green for the new entry.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, and
+    `goreleaser` are not installed locally; documented per the
+    Codebase-Patterns convention rather than silently skipped.
+- Results: API-0414 acceptance criteria satisfied. Operation present
+  in OpenAPI registry with method POST, path /sso.update, tag sso;
+  raw API call works through the harness body-bearing path
+  (`yalla api call sso-update --input request.json --json`); schema
+  get works; manifest lists the operation; success and 401→CodeAuth
+  representative failure both proven by httptest fixtures.
+- Remaining risks / follow-ups:
+  - 9 priority-5 API coverage stories still failing (next:
+    API-0415 `sso-updateTrustedOrigin`, the next mutation of the
+    sso/* arc — the next contributor must re-verify the spec
+    against `internal/api/data/openapi.json > /sso.updateTrustedOrigin
+    > post` before assuming any field shape).
+- **Learnings for future iterations:**
+  - **Spec-shape match is not slug-stem inference.** /sso.update
+    happens to share the exact top-level REQUIRED tuple
+    (`providerId`/`issuer`/`domains`) AND identical OPTIONAL sibling
+    set (`oidcConfig`/`samlConfig`/`organizationId`/`overrideUserInfo`)
+    with /sso.register at API-0411. The shape match was confirmed by
+    re-reading the spec against `internal/api/data/openapi.json >
+    /sso.update > post`, NOT by inferring from the shared `sso-`
+    operation prefix or the `update` slug stem. The slug-stem-is-not-
+    shape lesson reasserted at API-0371..API-0444 stays in force —
+    when the shape genuinely matches, it matches because the spec
+    matches, not because the slug stem suggested it.
+  - **Multi-required-field UPDATE mutations collapse 404 into 400/
+    validation.** Even though `sso-update` semantically targets an
+    addressable subject (the `providerId` body field selects the
+    record being updated), the spec declares 200/400/401/403/500 with
+    **404 absent** — Dokploy's tRPC mutation convention folds
+    missing-target failures into 400/validation under the body-
+    bearing UPDATE shape rather than splitting them out into a
+    dedicated 404 leg. Same precedent as API-0411 `sso-register` and
+    every prior body-bearing sso/* mutator (API-0406, API-0407,
+    API-0412). The 404→CodeNotFound override therefore stays
+    consumed at API-0410 `sso-one` and the harness-default
+    401→CodeAuth remains the most representative failure leg.
+  - **The `addressable subject lives in the body` shape.** Unlike
+    the canonical by-id reader API-0410 `sso-one` (where
+    `providerId` is a query parameter), `sso-update` carries
+    `providerId` as a REQUIRED body field. This is consistent with
+    Dokploy's tRPC mutation convention (mutations carry their target
+    selector in the body, queries carry it in query params), and
+    aligns with API-0411 `sso-register` (where `providerId` is also
+    a REQUIRED body field — a register operation that supplies its
+    own ID rather than receiving one from the server). The fixture
+    convention `sso-cov-update-0414-providerId-fixture` makes this
+    visible at byte-comparison time.
+  - **The 4th and 5th sso/* mutations split into different shape
+    families.** API-0412 `sso-removeTrustedOrigin` is single-
+    required-string-scalar (`origin`); API-0414 `sso-update` is
+    multi-required-field (mirrors API-0411). The fact that both are
+    POST mutations under the same tag does NOT pre-determine the
+    body shape — per-operation re-verification is mandatory and
+    sibling peers within the same tag arc do **not** share request-
+    body shape (the eleven-flip body-axis history of the settings/*
+    `clean*` sub-roster at API-0353..API-0362 is the standing
+    reminder of this).
+---
