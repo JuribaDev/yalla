@@ -30929,3 +30929,133 @@ forward-reference lesson before assuming any field shape.
     — both new wrinkles relative to the all-string register/create
     precedents.
 ---
+
+## 2026-05-09 - API-0418
+- Implemented coverage for API operation `stripe-createCustomerPortalSession`
+  (POST /stripe.createCustomerPortalSession).
+- Re-verified spec at `internal/api/data/openapi.json >
+  /stripe.createCustomerPortalSession > post`: tag `stripe`, **no
+  parameters** (no path placeholders, no query string), and **no
+  `requestBody` declaration at all** (the spec emits no `requestBody`
+  key — the operation is structurally body-free, distinct from a body
+  that is "present but optional"). Responses 200/400/401/403/500 —
+  **404 absent** from the response set. 200 schema is `{}` with
+  `additionalProperties: false`.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended one
+    `apiCoverageCase` literal between API-0417
+    `stripe-createCheckoutSession` and the swarm/* roster opener
+    API-0423 `swarm-getNodeApps`. **Stays within the open
+    `stripe-cov-*` per-tag fixture-isolation namespace** opened at
+    API-0416 per the per-tag isolation rule originally established at
+    API-0246 `organization-active`. **No SampleBody, SampleQuery, or
+    SamplePathParams** — the operation is parameter-free and body-
+    free per the spec re-verification; the harness's body-free POST
+    path is exercised here. Default failure leg (401 → CodeAuth) per
+    the API-0416 stripe/* arc precedent re-affirmed by API-0417; the
+    spec omits 404 entirely AND the 404→CodeNotFound override slot
+    for the stripe/* tag arc remains UNCONSUMED (this operation has
+    no addressable subject — customer-portal sessions are created
+    fresh on every call from the authenticated principal's account
+    state, so the override is structurally inapplicable here).
+  - `ralph/prd.json` — flipped API-0418 `passes` to true (trailing
+    newline preserved).
+  - `ralph/progress.txt` — this entry.
+- Verification (all green):
+  - `gofmt -w .` → clean
+  - `go mod tidy` → no changes
+  - `go vet ./...` → clean
+  - `go test ./...` → all packages pass (internal/cli 1.380s)
+  - `go test -race ./...` → all packages pass (internal/cli 3.556s)
+  - Targeted: `go test ./internal/cli/ -run
+    'API-0418|APICoverage|RegistryInvariants|SchemaCommandWorks|ManifestListsOperation'`
+    PASS (1.037s) — RegistryInvariants, SchemaCommandWorks,
+    ManifestListsOperation, SuccessRoundTrip, RepresentativeFailure
+    all green for the new entry.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` are not installed locally and were not run
+    (documented per the Codebase-Patterns convention rather than
+    silently skipped).
+- Results: API-0418 acceptance criteria satisfied. Operation present
+  in OpenAPI registry with method POST, path
+  /stripe.createCustomerPortalSession, tag stripe; raw API call works
+  through the harness body-free POST path
+  (`yalla api call stripe-createCustomerPortalSession --json`);
+  schema get works; manifest lists the operation; success and
+  401→CodeAuth representative failure both proven by httptest
+  fixtures.
+- Remaining risks / follow-ups:
+  - 5 priority-5 API coverage stories still failing. The stripe/* arc
+    continues at API-0419 `stripe-getCurrentPlan` (declared a **GET**
+    per the PRD, the second read-only operation of the stripe/* arc
+    after the arc opener at API-0416). The next contributor must
+    re-verify the spec against `internal/api/data/openapi.json` >
+    `/stripe.getCurrentPlan` > `get` per the forward-reference lesson
+    before assuming any field shape, and must stay within the open
+    `stripe-cov-*` per-tag fixture-isolation namespace established at
+    API-0416. The 404→CodeNotFound override slot for the stripe/* tag
+    arc still remains UNCONSUMED — reserved for the first stripe/*
+    story whose spec declares an addressable subject (path/query
+    parameter selector) AND 404 in the response set; absent such a
+    story across the remaining stripe/* peers (API-0419 through
+    API-0422) the slot stays nominal.
+  - **Forward-reference-lesson-in-action retold.** API-0417's closing
+    comment predicted API-0418 as "the second body-bearing mutation
+    of the stripe/* arc"; the spec re-read at the API-0418 commit
+    boundary confirmed the prediction was incorrect — the operation
+    emits no `requestBody` key and is structurally body-free despite
+    being a POST. The descriptor was retracted in the API-0418 entry
+    comment; API-0418 is instead the **first parameter-free body-
+    free POST mutation** in the registry, opening a novel shape cell.
+    This is the third retraction of a forward-reference shape
+    prediction in the API-0345..API-0444 window and the strongest
+    confirmation yet that forward-reference predictions about
+    successor shapes are *advisory*, never authoritative; the spec
+    re-read at the successor's own commit boundary is the only
+    source of truth.
+- **Learnings for future iterations:**
+  - **Body-free POST mutations exist and need no SampleBody.** When
+    the spec emits no `requestBody` key under a POST operation, the
+    operation is structurally body-free — the `apiCoverageCase` entry
+    omits SampleBody (zero-value `nil` json.RawMessage) and the
+    harness's body-free POST path is exercised. The CLI's POST encoder
+    emits a zero-length body when no payload is supplied through
+    `--input`. This is structurally distinct from a body that is
+    "present but optional" (which would still emit a `requestBody`
+    key with `required: false`) — confirmed against the OpenAPI 3.1
+    spec semantics. Future operations matching this shape (parameter-
+    free, body-free POST) should mirror the API-0418 entry rather
+    than reaching for the body-bearing API-0417 / API-0411 / API-0414
+    precedents.
+  - **The slug-stem-is-not-shape lesson reasserts again.** The slug
+    stem `createCustomerPortalSession` reads as register/create-shaped
+    (matching the API-0411 `sso-register`, API-0417
+    `stripe-createCheckoutSession`, and various `*-create` peers
+    pattern), but the spec re-read overrides the slug-stem hint: the
+    operation is body-free, so the create-family body-fixture pattern
+    is structurally inapplicable. This is the strongest cross-arc
+    illustration yet that slug-stem alignment is a *naming hint*, not
+    a *shape determinant* — every successor's shape must be
+    re-verified against the spec at its own commit boundary.
+  - **The 400 → CodeInvalidInput reservation generalizes.** A body-
+    free POST cannot have payload validation as its uniquely
+    distinguishing failure mode — there is no payload to invalidate.
+    The harness-default 401→CodeAuth therefore remains the most
+    representative single failure mode for body-free POST mutations,
+    structurally identical to the body-free GET action-style probe
+    family. This generalizes the harness's 400-reservation rule
+    across method dimensions: a body-free operation, regardless of
+    method, cannot consume the 400 representative slot.
+  - **Per-tag fixture-isolation namespace tokens reserved even when
+    no body literal consumes them.** The
+    `stripe-cov-createCustomerPortalSession-0418` token base stays
+    reserved under the per-case fixture-token convention for any
+    future amendment that introduces a literal under this story
+    (e.g. if Dokploy later adds an OPTIONAL body field). This
+    preserves the namespace's diff-friendly, non-colliding property
+    across the whole tag arc even when individual entries don't
+    consume their reservation. Future body-free operations in
+    other tags should follow the same pattern: declare the
+    `<tag>-cov-<slug>-<storyID>` reservation in the entry comment
+    even when no literal needs it.
+---

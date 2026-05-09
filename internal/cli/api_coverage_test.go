@@ -46565,6 +46565,191 @@ var coveredAPIOperations = []apiCoverageCase{
 		// through API-0422) the slot stays nominal.
 	},
 	{
+		StoryID:     "API-0418",
+		OperationID: "stripe-createCustomerPortalSession",
+		Method:      http.MethodPost,
+		Path:        "/stripe.createCustomerPortalSession",
+		Tag:         "stripe",
+		// Third entry on the stripe/* coverage roster — succeeds
+		// API-0417 `stripe-createCheckoutSession` (parameter-free POST
+		// register/create mutation, REQUIRED four-field exhaustive
+		// body of mixed scalar types — string-enum, plain string,
+		// number, boolean — the first body-bearing mutation of the
+		// stripe/* arc) which itself succeeded the arc opener at
+		// API-0416 `stripe-canCreateMoreServers` (parameter-free,
+		// body-free action-style probe GET, the read-only kickoff
+		// that established the per-tag `stripe-cov-*` fixture-
+		// isolation namespace and locked in the harness-default
+		// 401→CodeAuth representative-failure precedent for the
+		// stripe/* arc). Consumes the forward reference embedded in
+		// API-0417's closing comment ("the priority-5 backlog
+		// continues at API-0418 `stripe-createCustomerPortalSession`
+		// (declared a **POST** per the PRD, the second body-bearing
+		// mutation of the stripe/* arc). The next contributor must
+		// re-verify the spec against `internal/api/data/openapi.json`
+		// > `/stripe.createCustomerPortalSession` > `post` per the
+		// forward-reference lesson before assuming any field shape,
+		// and **must not** reuse any closed prior-tag namespace; the
+		// open `stripe-cov-*` namespace remains in force for the rest
+		// of the stripe/* arc"). Stays within the open `stripe-cov-*`
+		// namespace opened by API-0416 `stripe-canCreateMoreServers`
+		// per the per-tag isolation rule originally established at
+		// API-0246 `organization-active`; **must not** back-reference
+		// any closed prior-tag namespace (most recently the now-closed
+		// `sso-cov-*` opened at API-0406 and closed at API-0415).
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json` >
+		// `/stripe.createCustomerPortalSession` > `post`: method POST,
+		// tag stripe, **no parameters** (no path placeholders, no
+		// query string), and **no `requestBody` declaration at all**
+		// (the spec emits no `requestBody` key — the operation is
+		// structurally body-free, distinct from a body that is
+		// "present but optional"). Responses 200/400/401/403/500 —
+		// **404 is absent** from the response set (consistent with
+		// the action-style mutation shape — a customer-portal session
+		// is created fresh on every call from the authenticated
+		// principal's account state with no addressable subject to be
+		// "not found"; the 404 vocabulary item is reserved for by-id
+		// retrievals like API-0410 `sso-one` across tags). The 200
+		// schema is `{}` with `additionalProperties: false`, matching
+		// every prior covered peer in the empty-success cohort
+		// (API-0058 `certificates-all`, API-0408
+		// `sso-getTrustedOrigins`, API-0409 `sso-listProviders`,
+		// API-0413 `sso-showSignInWithSSO`, API-0416
+		// `stripe-canCreateMoreServers`, API-0417
+		// `stripe-createCheckoutSession`).
+		//
+		// **The forward reference's "second body-bearing mutation"
+		// descriptor — superseded by spec re-read.** API-0417's
+		// closing comment predicted API-0418 as "the second body-
+		// bearing mutation of the stripe/* arc"; the spec re-read
+		// at this commit boundary confirms the prediction was
+		// incorrect — the operation emits no `requestBody` key and
+		// is structurally body-free despite being a POST. This is
+		// exactly the forward-reference-lesson-in-action that earlier
+		// arcs reasserted at API-0345..API-0444: forward-reference
+		// predictions about successor shapes are *advisory*, never
+		// authoritative; the spec re-read at the successor's own
+		// commit boundary is the only source of truth. The "second
+		// body-bearing mutation" descriptor is hereby retracted;
+		// API-0418 is instead the **first parameter-free body-free
+		// POST mutation in the stripe/* arc** — a novel shape cell
+		// within the arc, structurally distinct from both API-0416
+		// (parameter-free body-free GET) and API-0417 (parameter-free
+		// POST with REQUIRED body).
+		//
+		// **Shape positioning — parameter-free body-free POST
+		// mutation.** Method-wise distinct from API-0416
+		// `stripe-canCreateMoreServers` (parameter-free body-free
+		// **GET** action-style probe — the read shape) and from
+		// API-0417 `stripe-createCheckoutSession` (parameter-free
+		// POST with REQUIRED multi-scalar exhaustive body — the
+		// body-bearing mutation shape). API-0418 sits in a third
+		// shape cell: parameter-free, body-free, but **POST** rather
+		// than GET — a "fire-and-receive" mutation that takes no
+		// inputs because the operation's effect is fully determined
+		// by the authenticated principal's account state (the
+		// customer-portal session URL is bound to the caller's
+		// existing Stripe customer record on the server side). Cross-
+		// tag, the closest prior shape precedent is the action-style
+		// probe family (API-0413 `sso-showSignInWithSSO`, API-0408
+		// `sso-getTrustedOrigins`, API-0409 `sso-listProviders`,
+		// API-0058 `certificates-all`, API-0416
+		// `stripe-canCreateMoreServers`) but those were all **GETs**;
+		// API-0418 is the first registry entry whose envelope is
+		// fully empty (no parameters, no body) AND whose method is
+		// **POST**, opening a new family cell: the **parameter-free
+		// body-free POST mutation**. Per the slug-stem-is-not-shape
+		// lesson reasserted at API-0371..API-0444, the slug stem
+		// `createCustomerPortalSession` reads as register/create-
+		// shaped but the spec re-read overrides the slug-stem hint:
+		// the operation is body-free, so the create-family body-
+		// fixture pattern from API-0417 / API-0411 `sso-register` /
+		// API-0414 `sso-update` is structurally inapplicable here.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained per
+		// the API-0416 stripe/* arc precedent.** The spec omits 404
+		// from the response set (per above), so the 404→CodeNotFound
+		// override is structurally inapplicable; and the
+		// 404→CodeNotFound override slot for the stripe/* tag arc
+		// remains UNCONSUMED at the arc opener (API-0416
+		// `stripe-canCreateMoreServers`) — reserved for the first
+		// stripe/* story whose spec declares an addressable subject
+		// (path/query parameter selector) AND 404 in the response
+		// set, which API-0418 is structurally not (no parameters, no
+		// addressable subject — the customer-portal session is
+		// created fresh on every call). 400 → CodeInvalidInput is
+		// *technically* available but the harness reserves 400
+		// representatives for stories where payload validation is
+		// the operation's *uniquely distinguishing* failure mode —
+		// which a body-free POST cannot be by construction (there is
+		// no payload to invalidate). The harness-default 401→CodeAuth
+		// failure leg therefore remains the most representative
+		// single failure mode every authenticated Dokploy operation
+		// must re-prove, matching the 401→CodeAuth precedent locked
+		// in by the stripe/* arc opener at API-0416
+		// `stripe-canCreateMoreServers` and re-affirmed by API-0417
+		// `stripe-createCheckoutSession`.
+		//
+		// Fixture conventions:
+		//   * No SampleBody, SampleQuery, or SamplePathParams — the
+		//     operation is parameter-free and body-free per the spec
+		//     re-verification. The harness's body-free POST path is
+		//     exercised here; the byte-for-byte body comparison the
+		//     harness performs reduces to "request body is empty"
+		//     (the CLI's POST encoder emits a zero-length body when
+		//     no payload is supplied through `--input`).
+		//   * Per-case fixture token base
+		//     `stripe-cov-createCustomerPortalSession-0418` follows
+		//     the `<tag>-cov-<slug>-<storyID>` convention and stays
+		//     reserved for any future amendment that introduces a
+		//     literal under this story (e.g. if Dokploy later adds
+		//     an OPTIONAL body field). Verified non-colliding with
+		//     API-0416's `stripe-cov-canCreateMoreServers-0416`,
+		//     API-0417's `stripe-cov-createCheckoutSession-0417`,
+		//     and with the forthcoming
+		//     `stripe-cov-getCurrentPlan-0419` /
+		//     `stripe-cov-getInvoices-0420` /
+		//     `stripe-cov-getProducts-0421` /
+		//     `stripe-cov-upgradeSubscription-0422` slugs reserved
+		//     for upcoming stripe/* peers, and no collisions with
+		//     the now-closed `sso-cov-*`, `set-cov-*`, `srv-cov-*`,
+		//     `proj-cov-*`, `org-cov-*`, `compose-cov-*`,
+		//     `app-cov-*`, `ai-cov-*`, `admin-cov-*`,
+		//     `backup-cov-*`, `bb-cov-*`, `cert-cov-*`,
+		//     `clu-cov-*`, `deployment-cov-*`, `dest-cov-*`,
+		//     `usr-cov-*`, `swarm-cov-*`, `sshKey-cov-*`, etc.
+		//     namespaces.
+		//
+		// 200 response in the spec is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort. Empty-object body keeps
+		// the success-leg envelope assertion focused on `data.method`
+		// / `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+		//
+		// **stripe/* roster continues.** Per the PRD ordering at the
+		// time of this commit, the priority-5 backlog continues at
+		// API-0419 `stripe-getCurrentPlan` (declared a **GET** per
+		// the PRD, the second read-only operation of the stripe/*
+		// arc after the arc opener at API-0416
+		// `stripe-canCreateMoreServers`). The next contributor must
+		// re-verify the spec against `internal/api/data/openapi.json`
+		// > `/stripe.getCurrentPlan` > `get` per the forward-
+		// reference lesson before assuming any field shape, and
+		// **must not** reuse any closed prior-tag namespace; the
+		// open `stripe-cov-*` namespace remains in force for the
+		// rest of the stripe/* arc. The 404→CodeNotFound override
+		// slot for the stripe/* tag arc still remains UNCONSUMED —
+		// reserved for the first stripe/* story whose spec declares
+		// an addressable subject (path/query parameter selector) AND
+		// 404 in the response set; absent such a story across the
+		// remaining stripe/* peers (API-0419 through API-0422) the
+		// slot stays nominal.
+	},
+	{
 		StoryID:     "API-0423",
 		OperationID: "swarm-getNodeApps",
 		Method:      http.MethodGet,
