@@ -27900,3 +27900,79 @@ forward-reference lesson before assuming any field shape.
     alerting slots that earlier transports surfaced, exactly mirroring
     its `create*` precedent at API-0217.
 ---
+## 2026-05-09 - API-0244 - notification-updateTeams
+- Added covered-operation case for `notification-updateTeams` in
+  `internal/cli/api_coverage_test.go` immediately after the API-0243
+  `notification-updateSlack` entry, slotted in storyID-sorted order
+  before the API-0246 `organization-active` block.
+- Spec re-verified against `internal/api/data/openapi.json >
+  /notification.updateTeams > post`: POST, no parameters, REQUIRED body
+  with two REQUIRED plain strings (`notificationId`, `teamsId`) and a
+  ten-sibling optional tail (seven booleans `appBuildError`,
+  `databaseBackup`, `volumeBackup`, `dokployRestart`, `appDeploy`,
+  `dockerCleanup`, `serverThreshold`; two plain strings `name`,
+  `webhookUrl`; one scope-anchor string `organizationId`). Responses
+  200/400/401/403/500 — no 404 (matches the rest of the
+  notification/* `update*` cohort and broader Dokploy tRPC
+  missing-target → 400 convention).
+- Body composition follows the `update*` cohort house style locked at
+  API-0235 and reaffirmed by API-0236..API-0243: two-required + every-
+  optional-populated, every value anchored on the per-storyID namespace
+  `notification-cov-update-teams-0244-<field>`. Optional siblings are
+  derived from API-0218 `notification-createTeams` (seven shared
+  category booleans + `name` + `webhookUrl`) plus the `update*`-only
+  `organizationId` scope anchor.
+- `webhookUrl` placeholder uses an RFC 6761 `example.invalid` host on
+  the `outlook.office.example.invalid` subdomain — Microsoft Teams
+  incoming-webhook URLs are bearer-style secrets, the request-body
+  forwarder ships bytes verbatim, and the redactor only operates on
+  rendered `--json` output. Agents must substitute their own webhook
+  via `--input` and never inline real `webhookUrl` material in source.
+- Failure family: harness-default 401→CodeAuth retained (no 404 in
+  spec, body-bearing imperative-action POST stays on the cohort
+  invariant locked since API-0209).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (new API-0244 case after the
+    API-0243 entry, before API-0246)
+  - `ralph/prd.json` (`API-0244.passes: true`)
+  - `ralph/progress.txt` (this entry)
+- Verification:
+  - `gofmt -w .` — clean
+  - `go vet ./...` — clean
+  - `go test ./...` — pass
+  - `go test -race ./...` — pass (`internal/cli` 3.454s)
+  - `go mod tidy` — clean
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — not installed locally, skipped per repo convention.
+- Remaining risks / follow-ups:
+  - API-0245 `notification-updateTelegram` is the last unclaimed
+    notification/* `update*` peer; it must re-derive its optional tail
+    from API-0219 `notification-createTelegram` rather than from this
+    entry, per the API-0235 cohort closing rule reaffirmed across
+    API-0236..API-0244.
+- **Learnings for future iterations:**
+  - **Teams is a webhook-driven HTTP transport** (HTTP POST to a
+    Microsoft-issued Outlook/Office incoming-webhook URL); every
+    SMTP slot (`smtpServer`, `smtpPort`, `username`, `password`),
+    every email recipient slot (`fromAddress`, `toAddresses`), and
+    every retry-tuning slot (`priority`, `expire`, `retry`) is
+    structurally absent — Teams pairs the canonical seven category
+    booleans with just `name` + `webhookUrl`.
+  - **Teams drops Slack's `channel` string** because the
+    Outlook/Office incoming-webhook URL itself encodes the
+    destination channel rather than carrying it as a separate field.
+    Net result: Teams' optional tail is exactly Slack's minus
+    `channel`, i.e. ten siblings instead of eleven.
+  - The notification/* `update*` cohort discipline of "re-derive
+    optional tail from matching `create*`, never inherit from a
+    sibling `update*` entry" continues to hold — Teams' fields trace
+    to API-0218 `notification-createTeams` exactly, plus the
+    `update*`-only `organizationId` scope anchor.
+  - `webhookUrl` is a bearer-style secret in disguise — anyone
+    holding the URL can post to the Teams channel. Fixture uses an
+    RFC 6761 `example.invalid` host so cribbing agents are forced to
+    substitute via `--input`.
+  - **No `goimports`/`golangci-lint`/`staticcheck`/`govulncheck`/
+    `goreleaser` locally** (still — same state as API-0240..API-0243).
+    Documented explicitly per repo policy; never silently skipped.
+---
