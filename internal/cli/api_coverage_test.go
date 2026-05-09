@@ -18795,6 +18795,178 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0214",
+		OperationID: "notification-createNtfy",
+		Method:      http.MethodPost,
+		Path:        "/notification.createNtfy",
+		Tag:         "notification",
+		// Seventh entry in the notification/* coverage roster, continuing
+		// inside the `notification-cov-*` per-tag fixture-isolation
+		// namespace opened by API-0208 `notification-all` and extended
+		// by API-0209 `notification-createCustom`, API-0210
+		// `notification-createDiscord`, API-0211
+		// `notification-createEmail`, API-0212
+		// `notification-createGotify`, and API-0213
+		// `notification-createLark`. Per the per-tag isolation rule
+		// reaffirmed across each prior peer, this entry stays inside
+		// the namespace opened by API-0208 and **must not**
+		// back-reference any closed prior-tag namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json > /notification.createNtfy
+		// > post`: a **POST** with **no parameters** and a **REQUIRED
+		// request body** whose schema declares **eleven REQUIRED non-
+		// nullable fields** — four plain strings (`name`, `serverUrl`,
+		// `topic`, `accessToken`), six plain booleans
+		// (`appBuildError`, `databaseBackup`, `volumeBackup`,
+		// `dokployRestart`, `appDeploy`, `dockerCleanup`), and one
+		// plain number (`priority`) — with **zero optional siblings**.
+		// Responses 200/400/401/403/500 — the spec does **not**
+		// declare 404 on this operation, matching the cross-tag
+		// create-mutation precedent on API-0189 `mounts-create`,
+		// API-0209..API-0213 `notification-create*`, API-0268
+		// `port-create`, API-0292 `project-create`, API-0298
+		// `redirects-create`, API-0325 `schedule-create`, and
+		// API-0331 `security-create` (Dokploy create POSTs do not
+		// surface missing-target legs because there is no
+		// target-by-id to miss). The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort.
+		//
+		// **Slug style — kebab-case inherited from API-0209/API-0210/
+		// API-0211/API-0212/API-0213.** Per the per-tag-slug-style
+		// rule fixed by the kickoff multi-camel entry API-0209
+		// `notification-createCustom` (→ `create-custom`) and
+		// propagated through `create-discord`, `create-email`,
+		// `create-gotify`, and `create-lark`, this peer takes
+		// `create-ntfy` and the remaining notification/* siblings
+		// (API-0215 `create-pushover`, API-0216 `create-resend`, …)
+		// inherit kebab-case as well.
+		//
+		// **Body composition:**
+		//   - **REQUIRED — closed all-required shape, no optional
+		//     tail.** Inherits the closed-shape all-required convention
+		//     seeded by API-0210 `notification-createDiscord` (ten
+		//     scalar slots), extended by API-0211
+		//     `notification-createEmail` (fourteen slots, one array,
+		//     one number), API-0212 `notification-createGotify`
+		//     (eleven slots, one number), and API-0213
+		//     `notification-createLark` (nine pure-scalar slots, no
+		//     number). API-0214 lands at eleven slots with one number
+		//     and no array, sitting between `createGotify` (eleven
+		//     slots, one number) and `createLark` (nine slots, no
+		//     number) on the closed-shape continuum. Every property
+		//     the spec lists is REQUIRED, so the fixture populates all
+		//     eleven slots and the wire-level invariant check
+		//     exercises the closed-shape path with no optional keys to
+		//     drop.
+		//     - `name` (plain string). Carries the deterministic-but-
+		//       clearly-fake `notification-cov-create-ntfy-0214-name`
+		//       value, keyed to the
+		//       `notification-cov-create-ntfy-0214-<field>` namespace
+		//       inherited from API-0209..API-0213.
+		//     - `serverUrl` (plain string). The fixture supplies a
+		//       reserved-TLD URL on `example.invalid` (RFC 6761) so a
+		//       future URL-shape validator stays satisfied without
+		//       risking a real DNS lookup or HTTPS egress to a third-
+		//       party ntfy server. This continues the
+		//       `endpoint`/`webhookUrl`/`fromAddress`/`serverUrl` URL-
+		//       fixture convention seeded across the notification/*
+		//       roster. Note: ntfy `serverUrl` itself is not a secret
+		//       (it just identifies the broker host); the per-broker
+		//       authentication credential is `accessToken` below.
+		//     - `topic` (plain string). The ntfy publish channel name;
+		//       fixture uses
+		//       `notification-cov-create-ntfy-0214-topic` to keep the
+		//       per-field namespace stable. Topics on a public ntfy
+		//       broker are a low-entropy access-control surface in
+		//       practice, but at the wire level this is just a string
+		//       and the fixture treats it as such.
+		//     - `accessToken` (plain string). **Carries a transport
+		//       secret.** Like `webhookUrl` on API-0210/0213 and
+		//       `password` on Email peers (API-0211 / future SMTP-
+		//       backed siblings), the per-broker bearer token is
+		//       embedded directly in the request body; the yalla
+		//       request-body forwarder ships the bytes verbatim to the
+		//       upstream Dokploy host, so the redactor in
+		//       `internal/api` operates on the **rendered --json
+		//       output** (response envelopes, error payloads, and
+		//       tracing) and **not** on the request body. Agents
+		//       cribbing this fixture as a template should always
+		//       substitute their own real ntfy access token via
+		//       `--input`, never inline it in source. The fixture
+		//       value `notification-cov-create-ntfy-0214-token` is a
+		//       deterministic non-secret marker.
+		//     - `appBuildError`, `databaseBackup`, `volumeBackup`,
+		//       `dokployRestart`, `appDeploy`, `dockerCleanup` (six
+		//       plain booleans) — `true` branch on every slot to
+		//       mirror an "alert me on every category" agent-typical
+		//       ntfy configuration. **Note: this entry drops the
+		//       seventh-boolean slot** that Discord/Email/Lark all
+		//       carried (`serverThreshold`) and that Gotify swapped
+		//       for `decoration`. ntfy uses `priority` (a number,
+		//       below) instead of any seventh boolean, confirming the
+		//       per-spec rule reaffirmed at API-0212/API-0213 that
+		//       only the transport-agnostic core six (`appBuildError`,
+		//       `databaseBackup`, `volumeBackup`, `dokployRestart`,
+		//       `appDeploy`, `dockerCleanup`) remain stable across
+		//       notification/* siblings; every other slot must be
+		//       re-verified per spec.
+		//     - `priority` (plain number). ntfy message priority on
+		//       the 1..5 scale where 3 is the broker default. Fixture
+		//       uses `3` to land on the canonical neutral value and
+		//       avoid any future numeric-bound validator that might
+		//       reject 0 or 6+. Plain number — not integer, not
+		//       bounded in the JSON schema — so the fixture stays a
+		//       JSON number literal and does not depend on the
+		//       upstream broker's tighter int-range expectation.
+		//
+		// **Shape positioning — closed all-required POST
+		// create-mutation, body REQUIRED, eleven-field flat scalar
+		// payload with one number slot and zero array slot, zero
+		// optional tail.** Functionally distinct from the partially-
+		// required API-0209 `notification-createCustom`, the closed
+		// all-required scalar-only API-0210 `notification-createDiscord`
+		// (ten slots, no number), the larger closed all-required
+		// API-0211 `notification-createEmail` (fourteen slots with one
+		// number and one array-of-string), the eleven-slot mixed-
+		// scalar-and-number API-0212 `notification-createGotify`, and
+		// the pure-scalar nine-slot API-0213 `notification-createLark`.
+		// API-0214 matches API-0212's eleven-slot one-number cardinality
+		// while pivoting from Gotify's `priority`+`decoration` mix to
+		// ntfy's `priority`+`accessToken`+`topic` triad — the first
+		// closed all-required notification/* entry to ship a numeric
+		// priority alongside a body-borne secret token without an
+		// array slot.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set, so the
+		// 404→CodeNotFound override is structurally inapplicable.
+		// `*-create` here is a body-bearing imperative-action POST and
+		// stays on the 401→CodeAuth invariant locked by every
+		// imperative-action peer already covered.
+		SampleBody: json.RawMessage(`{
+			"name": "notification-cov-create-ntfy-0214-name",
+			"serverUrl": "https://notification-cov-create-ntfy-0214.example.invalid",
+			"topic": "notification-cov-create-ntfy-0214-topic",
+			"accessToken": "notification-cov-create-ntfy-0214-token",
+			"priority": 3,
+			"appBuildError": true,
+			"databaseBackup": true,
+			"volumeBackup": true,
+			"dokployRestart": true,
+			"appDeploy": true,
+			"dockerCleanup": true
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,

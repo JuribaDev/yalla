@@ -25475,3 +25475,63 @@ forward-reference lesson before assuming any field shape.
     rationale so future agents do not file noise tickets against
     `internal/api/redactor.go`.
 ---
+
+## 2026-05-09 - API-0214
+- Added coverage fixture for `notification-createNtfy` (POST
+  `/notification.createNtfy`) inside the `notification-cov-*` per-tag
+  isolation namespace seeded by API-0208 and extended through
+  API-0213.
+- Spec (re-verified against `internal/api/data/openapi.json`): POST,
+  zero parameters, REQUIRED body with eleven REQUIRED non-nullable
+  fields — four strings (`name`, `serverUrl`, `topic`, `accessToken`),
+  six booleans (`appBuildError`, `databaseBackup`, `volumeBackup`,
+  `dokployRestart`, `appDeploy`, `dockerCleanup`), and one number
+  (`priority`). Zero optional siblings. Responses
+  200/400/401/403/500. 200 schema is `{}` with
+  `additionalProperties: false`.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (added `API-0214` entry between
+    `API-0213` and `API-0246`).
+  - `ralph/prd.json` (flipped `passes` to `true` for API-0214).
+- Verification:
+  - `gofmt -w .` clean.
+  - `go mod tidy` clean.
+  - `go vet ./...` clean.
+  - `go test ./...` PASS.
+  - `go test -race ./...` PASS.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` not installed locally — skipped per the established
+    convention; documented here rather than silently skipped.
+- Family choice: spec omits 404, so the 404→CodeNotFound override is
+  structurally inapplicable. Stays on the harness-default
+  401→CodeAuth invariant locked by every body-bearing imperative-
+  action POST already covered.
+- Remaining risks / follow-ups: none. Next notification/* peer is
+  API-0215 `notification-createPushover`; the kebab-case slug rule
+  (`create-pushover`) and `notification-cov-*` namespace continue
+  unchanged.
+- **Learnings for future iterations:**
+  - The seventh-boolean slot in notification/* `create*` payloads is
+    **not** a stable convention. Discord/Email/Lark all carried
+    `serverThreshold`; Gotify swapped it for `decoration`; ntfy drops
+    it entirely and uses a numeric `priority` instead. Only the
+    transport-agnostic core six (`appBuildError`, `databaseBackup`,
+    `volumeBackup`, `dokployRestart`, `appDeploy`, `dockerCleanup`)
+    are shape-stable across siblings. **Always re-verify against
+    `internal/api/data/openapi.json` per the API-0345..API-0444
+    forward-reference lesson; never assume the prior peer's seventh
+    slot persists.**
+  - ntfy `accessToken` is a transport secret embedded directly in the
+    request body, joining `webhookUrl` (Discord/Lark) and `password`
+    (Email) on the body-borne-secret list. The yalla request
+    forwarder ships request bodies verbatim; redaction operates on
+    the rendered `--json` output (response envelopes, error payloads,
+    tracing) not on outgoing request bodies. Document this in the
+    fixture comments so future agents do not inline real tokens.
+  - Fixture priority `3` lands on the canonical neutral value of
+    ntfy's 1..5 priority scale and avoids any future numeric-bound
+    validator that might reject 0 or 6+. The JSON schema declares
+    `priority` as a plain `number`, not bounded — but the upstream
+    broker enforces 1..5, so picking a mid-range integer is the
+    safest deterministic choice.
+---
