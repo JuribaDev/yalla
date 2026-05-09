@@ -22289,6 +22289,151 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0303",
+		OperationID: "redis-create",
+		Method:      http.MethodPost,
+		Path:        "/redis.create",
+		Tag:         "redis",
+		// Second entry on the redis/* coverage roster, immediately
+		// following API-0302 `redis-changeStatus` and completing the
+		// forward reference embedded in that entry's comment block
+		// ("The next case in the PRD-ordered priority-4 backlog is
+		// API-0303 `redis-create`"). Continues inside the
+		// `redis-cov-*` per-tag fixture-isolation namespace opened by
+		// API-0302 and **must not** back-reference any closed prior-tag
+		// namespace (`admin-cov-*`, `ai-cov-*`, `app-cov-*`,
+		// `backup-cov-*`, `bb-cov-*`, `cert-cov-*`, `clu-cov-*`,
+		// `compose-cov-*`, `deployment-cov-*`, `dest-cov-*`,
+		// `docker-cov-*`, `domain-cov-*`, `environment-cov-*`,
+		// `gitea-cov-*`, `github-cov-*`, `gitlab-cov-*`,
+		// `mariadb-cov-*`, `mongo-cov-*`, `mounts-cov-*`,
+		// `mysql-cov-*`, `org-cov-*`, `port-cov-*`, `postgres-cov-*`,
+		// `preview-cov-*`, `proj-cov-*`, `redirects-cov-*`,
+		// `security-cov-*`, `set-cov-*`, `srv-cov-*`, `swarm-cov-*`,
+		// `usr-cov-*`) per the per-tag isolation rule reasserted at
+		// API-0335..API-0444 and originally established at API-0246
+		// `organization-active`.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json` > `/redis.create` >
+		// `post`: method POST, tag redis, **no parameters**,
+		// requestBody REQUIRED with `application/json`, responses
+		// 200/400/401/403/500. The 200 response is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort. **No 404** is declared on
+		// this operation, mirroring the precedent on every prior
+		// covered `*-create` mutation — API-0118 `domain-create`,
+		// API-0125 `environment-create`, API-0131 `gitea-create`,
+		// API-0161 `mariadb-create`, API-0175 `mongo-create`,
+		// API-0195 `mysql-create`, API-0273 `postgres-create`,
+		// API-0298 `redirects-create`, and API-0331 `security-create`
+		// (a `*-create` mutation has no by-id read leg, so missing-
+		// target collapses into 400/validation under Dokploy's tRPC
+		// convention).
+		//
+		// **Request body schema (REQUIRED top-level fields):**
+		//   - REQUIRED `name` (string)
+		//   - REQUIRED `databasePassword` (string) — credential-shaped
+		//     scalar; the fixture below supplies a deterministic-but-
+		//     clearly-fake `redis-cov-create-0303-databasePassword`
+		//     literal so a future credential-redaction audit reads the
+		//     value as a *fixture token*, never a real secret. The
+		//     literal carries the `<tag>-cov-<slug>-<storyID>-<field>`
+		//     suffix for `git grep` traceability and so the redactor
+		//     test family at `internal/cli/redaction_security_test.go`
+		//     can extend coverage onto this case without re-deriving
+		//     the literal.
+		//   - REQUIRED `environmentId` (string)
+		//   - **OPTIONAL fields deliberately omitted** (`appName`
+		//     (string), `dockerImage` (string, default `redis:8`),
+		//     `description` (anyOf [string, null]), `serverId` (anyOf
+		//     [string, null])). Per the API-0131 `gitea-create` /
+		//     API-0161 `mariadb-create` / API-0175 `mongo-create`
+		//     minimal-required-only fixture rule (load-bearing for
+		//     credential-redaction safety), the OPTIONAL configuration
+		//     tail is **intentionally omitted** so a future credential-
+		//     redaction audit cannot regress on a fixture that hard-
+		//     codes any value beyond the REQUIRED `databasePassword`
+		//     slot. The same minimal-required-only rule applies to
+		//     API-0118 `domain-create`, API-0122 `domain-update`,
+		//     API-0125 `environment-create`, API-0131 `gitea-create`,
+		//     API-0161 `mariadb-create`, API-0175 `mongo-create`,
+		//     API-0195 `mysql-create`, API-0273 `postgres-create`,
+		//     and API-0331 `security-create`. Future contributors
+		//     adding optional-field coverage should do so in a
+		//     follow-up story rather than expanding this minimal
+		//     positive case.
+		//
+		// **Shape positioning — three-required-string-scalar POST
+		// create-mutation with optional extension fields, body
+		// REQUIRED.** The three REQUIRED slots are all plain
+		// non-nullable `type: string` (no `anyOf` / `nullable` / enum
+		// constraints). One narrower than the four-required-string-
+		// scalar API-0175 `mongo-create` precedent and two narrower
+		// than the five-required-string-scalar API-0161 `mariadb-
+		// create` / API-0195 `mysql-create` / API-0273 `postgres-
+		// create` precedents: redis is a single-instance KV store
+		// with no user authentication or pre-named database concept
+		// at create-time, so both the `databaseName` slot (mariadb /
+		// mysql / postgres) and the `databaseUser` slot (mariadb /
+		// mongo / mysql / postgres) drop out of redis-create's
+		// REQUIRED projection. The harness's `len(tc.SampleBody) > 0`
+		// gate at `runAPICoverageSuccess` activates the JSON content-
+		// type and byte-for-byte body comparison legs; this fixture
+		// supplies all three REQUIRED fields so the success path
+		// verifies the CLI propagated the body verbatim.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so
+		// the 404→CodeNotFound override is structurally inapplicable
+		// (matching every prior covered `*-create` mutation —
+		// API-0118 `domain-create`, API-0125 `environment-create`,
+		// API-0131 `gitea-create`, API-0161 `mariadb-create`,
+		// API-0175 `mongo-create`, API-0195 `mysql-create`,
+		// API-0273 `postgres-create`, API-0298 `redirects-create`,
+		// API-0331 `security-create`). 400→CodeInvalidInput is
+		// *technically* available — a payload that omits one of the
+		// three REQUIRED fields would fail server-side validation —
+		// but the harness reserves 400 representatives for stories
+		// where payload validation is the operation's *uniquely
+		// distinguishing* failure mode. A conventional `*-create`
+		// mutation collapses to type-checking, so the harness-default
+		// 401→CodeAuth failure leg remains the most representative
+		// single failure mode every authenticated Dokploy operation
+		// must re-prove, and is consistent with the 401→CodeAuth
+		// choice locked in by the redis/* kickoff at API-0302
+		// `redis-changeStatus`.
+		//
+		// **Fixture token base** `redis-cov-create-0303` follows the
+		// established `<tag>-cov-<slug>-<storyID>` deterministic-but-
+		// clearly-fake naming convention and is verified non-colliding
+		// with API-0302's `redis-cov-changeStatus-0302` literals. The
+		// full-tag-name slug prefix `redis-` is unambiguously distinct
+		// from the lexically-adjacent full-tag-name `redirects-cov-*`
+		// namespace closed at API-0301, satisfying the
+		// `<tag>-cov-<slug>-<storyID>` uniqueness rule.
+		//
+		// The next case in the PRD-ordered priority-4 backlog is
+		// API-0304 `redis-deploy` (declared a **POST** per the spec
+		// preview; the next contributor must re-verify the spec
+		// against `internal/api/data/openapi.json` per the forward-
+		// reference lesson before assuming any field shape, and will
+		// continue inside the `redis-cov-*` per-tag fixture-isolation
+		// namespace opened by API-0302).
+		SampleBody: json.RawMessage(`{
+			"name": "redis-cov-create-0303",
+			"databasePassword": "redis-cov-create-0303-databasePassword",
+			"environmentId": "redis-cov-create-0303-environmentId"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0331",
 		OperationID: "security-create",
 		Method:      http.MethodPost,

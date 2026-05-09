@@ -23149,3 +23149,104 @@ forward-reference lesson before assuming any field shape.
     `redis-cov-*` from `redirects-cov-*` even though the two tag names
     share a 5-char prefix; no extra disambiguation suffix is needed.
 ---
+
+## 2026-05-09 - API-0303 - Cover redis-create (POST /redis.create)
+- Implemented redis-create contract coverage. This is the second entry on
+  the redis/* coverage roster, immediately following the API-0302
+  redis-changeStatus kickoff and continuing inside the `redis-cov-*`
+  per-tag fixture-isolation namespace. Completes the forward reference
+  embedded in API-0302's closing block.
+- Files changed:
+  - internal/cli/api_coverage_test.go: added apiCoverageCase for
+    redis-create inserted in StoryID order between API-0302
+    redis-changeStatus and API-0331 security-create.
+  - ralph/prd.json: flipped API-0303.passes to true.
+  - ralph/progress.txt: this entry.
+- Spec re-verified against `internal/api/data/openapi.json` >
+  `/redis.create` > `post`: method POST, tag redis, no parameters,
+  requestBody REQUIRED with application/json. **Three REQUIRED top-
+  level fields** — `name` (string), `databasePassword` (string),
+  `environmentId` (string). Four optional fields — `appName` (string),
+  `dockerImage` (string, default `redis:8`), `description`
+  (anyOf [string, null]), `serverId` (anyOf [string, null]). Responses
+  200/400/401/403/500 with the 200 body `{}`
+  (`additionalProperties: false`). **No 404** declared — mirroring
+  every prior covered `*-create` mutation precedent (API-0118
+  domain-create, API-0125 environment-create, API-0131 gitea-create,
+  API-0161 mariadb-create, API-0175 mongo-create, API-0195
+  mysql-create, API-0273 postgres-create, API-0298 redirects-create,
+  API-0331 security-create).
+- Shape positioning: three-required-string-scalar POST create-mutation
+  with optional extension fields, body REQUIRED. **One narrower than
+  the four-required-string-scalar API-0175 mongo-create precedent**
+  (no `databaseUser`) and **two narrower than the
+  five-required-string-scalar mariadb/mysql/postgres-create precedents**
+  (no `databaseName`, no `databaseUser`). Redis is a single-instance
+  KV store with no user authentication or pre-named database concept
+  at create-time, which structurally explains the slimmer required
+  projection.
+- Family choice: harness-default 401→CodeAuth retained. Spec omits 404
+  (404→CodeNotFound override structurally inapplicable to *-create
+  mutations); 400→CodeInvalidInput is technically available but the
+  harness reserves 400 representatives for stories where payload
+  validation is the *uniquely distinguishing* failure mode. A
+  conventional `*-create` mutation collapses to type-checking, so
+  401→CodeAuth remains the most representative single failure mode,
+  consistent with the redis/* kickoff at API-0302.
+- Per the API-0131 / API-0161 / API-0175 minimal-required-only fixture
+  rule (load-bearing for credential-redaction safety), the OPTIONAL
+  configuration tail is **intentionally omitted** so a future
+  credential-redaction audit cannot regress on a fixture that
+  hard-codes any value beyond the REQUIRED `databasePassword` slot.
+- Fixture token base `redis-cov-create-0303` follows the
+  `<tag>-cov-<slug>-<storyID>` convention. The `databasePassword`
+  literal carries the `<tag>-cov-<slug>-<storyID>-<field>` suffix
+  for `git grep` traceability and so the redactor test family at
+  `internal/cli/redaction_security_test.go` can extend coverage
+  without re-deriving the literal. No collisions with API-0302's
+  `redis-cov-changeStatus-0302` literals; full-tag-name slug `redis-`
+  unambiguously distinct from `redirects-cov-*`.
+- Verification run: gofmt -l . (clean), go mod tidy (clean), go vet
+  ./... (clean), go test ./... (all green: internal/cli 1.454s),
+  go test -race ./... (all green: internal/cli 3.192s).
+  goimports/golangci-lint/staticcheck/govulncheck/goreleaser remain
+  not installed locally; documented previously.
+- Remaining risks or follow-ups: redis/* roster has nine more peers
+  on the priority-4 backlog (API-0304..API-0312 redis-deploy through
+  redis-update); each must continue inside the `redis-cov-*` namespace
+  and re-verify the spec per the forward-reference lesson. Optional-
+  field coverage (`appName`, `dockerImage`, `description`, `serverId`)
+  for redis-create is deferred to a future story per the minimal-
+  required-only rule.
+- **Learnings for future iterations:**
+  - The database-engine `*-create` family has a structural hierarchy:
+    redis-create has 3 required strings (name, databasePassword,
+    environmentId); mongo-create has 4 (adds databaseUser);
+    mariadb/mysql/postgres-create have 5 (add databaseName).
+    The differences map directly onto each engine's data model:
+    redis is a single-instance KV store (no user, no named DB);
+    mongo creates databases lazily on first write (no name) but
+    requires a user; relational engines need both a user and a
+    pre-named DB. This hierarchy also explains why redis-create
+    can re-use the API-0175 mongo-create comment template wholesale
+    — same family, narrower projection.
+  - When opening a new tag's `*-create` peer (here: redis-create
+    after the redis/* kickoff at API-0302 redis-changeStatus), the
+    closest-peer to look up in the harness is the same-family
+    `*-create` from a sibling database tag, not the same-tag
+    kickoff: API-0302 redis-changeStatus is structurally a
+    *-changeStatus (two-required-scalar status mutation) while
+    API-0303 redis-create is structurally a *-create (three-or-more-
+    required-string create mutation). Cross-tag family precedent
+    beats same-tag opener precedent for shape inheritance, while
+    same-tag opener precedent governs fixture-namespace isolation
+    and family-choice (401→CodeAuth) consistency.
+  - The minimal-required-only fixture rule (omit optional fields on
+    `*-create` peers) is reasserted across every covered create
+    mutation regardless of tag — its credential-redaction safety
+    rationale applies uniformly because every database-engine
+    create POST has a `databasePassword` field, and every config-
+    type create POST has at least one fields-with-secrets adjacency
+    risk. Future contributors adding redis-update / redis-saveX
+    coverage should expect to reuse this rule verbatim.
+---
