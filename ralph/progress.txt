@@ -28322,3 +28322,84 @@ forward-reference lesson before assuming any field shape.
     the OpenAPI spec directly rather than copying field shapes from a
     sibling story.
 ---
+
+## 2026-05-09 - API-0261
+- Implemented per-operation coverage for `patch-markFileForDeletion`
+  (POST /patch.markFileForDeletion, tag `patch`).
+- Added a single `apiCoverageCase` literal to
+  `internal/cli/api_coverage_test.go` between API-0260
+  (`patch-ensureRepo`) and the next existing entry API-0268
+  (`port-create`), preserving StoryID-sorted order. The harness
+  around `coveredAPIOperations` automatically asserts registry
+  presence (id/method/path/tag), schema reachability, manifest
+  inclusion, an httptest-backed success exchange, and a
+  representative 401→CodeAuth failure leg — no new harness code
+  was needed.
+- Files changed:
+  - internal/cli/api_coverage_test.go (insert API-0261 case)
+  - ralph/prd.json (flip passes:true for API-0261)
+  - ralph/progress.txt (this entry)
+- Verification run from repo root:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean (no diff).
+  - `go vet ./...` — clean.
+  - `go test ./...` — pass (cli 1.562s).
+  - `go test -race ./...` — pass (cli 3.355s).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` are not installed locally; documented as missing
+    per the standing convention.
+- Spec verification: re-read `internal/api/data/openapi.json >
+  /patch.markFileForDeletion > post` directly. POST, zero
+  parameters, REQUIRED request body with three required scalars
+  — `id` (plain string), `type` (string enum
+  {`application`, `compose`}, no default), and `filePath` (plain
+  string) — and zero optional fields. Response set
+  200/400/401/403/500 (no 404). The 200 schema is `{}` with
+  `additionalProperties: false`, matching every prior covered
+  peer in the empty-success cohort.
+- Shape positioning: the id-plus-type-plus-filePath triple is
+  structurally distinct from the patch/* peers covered to date.
+  API-0260 `patch-ensureRepo` carries the same id-plus-type pair
+  *without* `filePath`; this case is the strict extension of
+  that shape with a single additional required string scalar.
+- Family choice: harness-default 401→CodeAuth retained. The
+  spec omits 404 (mutating POST cohort), so 404→CodeNotFound is
+  structurally inapplicable. 400→CodeInvalidInput is technically
+  available but reserved for stories where payload validation is
+  the operation's uniquely distinguishing failure mode; auth is
+  the universal failure mode here.
+- Fixture: `id` =
+  `patch-cov-mark-file-for-deletion-0261`, `type` =
+  `application`, `filePath` =
+  `patch-cov-mark-file-for-deletion-0261.txt`. Token is unique
+  within the `patch-cov-*` per-tag namespace and orthogonal to
+  every prior tag's `*-cov-*` namespaces.
+- Remaining risks: none for this story. The next patch/* peer
+  is API-0262 `patch-one`, declared a **GET** per the spec
+  preview — the next contributor must re-verify the spec
+  against `internal/api/data/openapi.json > /patch.one > get`
+  per the forward-reference lesson before assuming any field
+  shape.
+- **Learnings for future iterations:**
+  - The `apiCoverageCase` harness is fully sufficient for any
+    POST with a required body and an empty-`{}` 200 response —
+    no new harness primitives were needed for the
+    three-required-scalars shape.
+  - When extending an immediately-prior peer's shape with one
+    additional required field (here API-0260 +
+    `filePath`), it is faster to copy the peer's case and add
+    the new field to both the comment block and the
+    `SampleBody` than to rewrite the comment from scratch — the
+    structural delta is a one-line schema diff and the
+    family-choice rationale carries over verbatim.
+  - The `patch-cov-*` per-tag namespace established at API-0256
+    continues to work cleanly for the sixth entry; per-case
+    slug bases derived from the operation kebab-case
+    (`mark-file-for-deletion`) plus the StoryID suffix remain
+    collision-free with the five prior patch/* peers.
+  - Forward-reference lesson holds: the next peer in PRD order
+    is API-0262 `patch-one`, which is declared a GET per the
+    spec preview — must be verified directly against
+    `openapi.json > /patch.one > get` before the next
+    contributor inserts its case.
+---
