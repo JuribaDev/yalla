@@ -27775,3 +27775,59 @@ forward-reference lesson before assuming any field shape.
   - **Pushover priority canonical values:** the upstream Pushover API accepts the closed interval [-2, 2]; the create schema codifies `default: 0` ("Normal") which is the natural pick for an every-optional-populated mid-band fixture. Avoid `priority: 5` (the ntfy/gotify mid-band) — it is out of range for Pushover and would fail any future validator that pushes the schema through a stricter checker.
   - **No `goimports`/`golangci-lint`/`staticcheck`/`govulncheck`/`goreleaser` locally** (still — same state as API-0240). Document explicitly in progress.txt; do not silently skip.
 ---
+
+## 2026-05-09 - API-0242 - Cover notification-updateResend (POST /notification.updateResend)
+- Added apiCoverageCase entry for `notification-updateResend` in
+  `internal/cli/api_coverage_test.go`, the **eighth member of the
+  notification/* `update*` mutation-by-id cohort** opened by API-0235
+  `notification-updateCustom` and extended by API-0236..API-0241.
+- Spec re-verified against `internal/api/data/openapi.json >
+  /notification.updateResend > post`: a POST with no parameters and a
+  REQUIRED body whose schema declares two REQUIRED non-nullable plain
+  string fields (`notificationId`, `resendId`) plus a twelve-sibling
+  optional tail (seven plain booleans, three plain strings, one array-
+  of-string `toAddresses`, one `organizationId` scope anchor).
+  Responses: 200/400/401/403/500. The 200 schema is `{}` with
+  `additionalProperties: false`, matching the empty-success cohort.
+- Slug `update-resend`, fixture namespace
+  `notification-cov-update-resend-0242-<field>`. Body fixture mirrors
+  the API-0216 `notification-createResend` precedent one-for-one (plus
+  the `update*`-only `organizationId` scope anchor) per the API-0235
+  closing rule reaffirmed by API-0236..API-0241: every `update*` peer
+  re-derives its optional tail from the matching `create*` sibling
+  rather than back-referencing the closed `test*` cohort or any other
+  transport flavour.
+- Family choice: harness-default 401→CodeAuth retained — spec omits
+  404, so `*-updateResend` stays on the body-bearing imperative-action
+  POST family invariant locked across notification/*
+  (API-0209..API-0220, API-0222..API-0241).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — new API-0242 entry inserted
+    between API-0241 (`notification-updatePushover`) and API-0246
+    (`organization-active`).
+  - `ralph/prd.json` — marked API-0242 `passes: true`.
+  - `ralph/progress.txt` — this entry.
+- Verification: `gofmt -w .`, `go mod tidy`, `go vet ./...`,
+  `go test ./...`, `go test -race ./...` — all clean.
+- Remaining risks / follow-ups: none. Next pending notification/*
+  `update*` cohort member is API-0243 `notification-updateSlack`,
+  which must re-derive its optional tail from API-0217
+  `notification-createSlack` per the cohort house style.
+- **Learnings for future iterations:**
+  - The notification/* `update*` cohort is mechanical: shape =
+    `{notificationId, <transport>Id} (REQUIRED) + every-optional-
+    populated tail mirrored from the matching create* + organizationId`.
+    Walk the schema once, copy the prior story's prose with the per-
+    transport tweaks (which booleans/strings/numbers/arrays each
+    transport declares), and the entry writes itself.
+  - `serverThreshold` boolean is shared across email/lark/pushover/
+    resend transports — all four declare it in their notification
+    base schema. Discord and ntfy do not.
+  - Resend's `apiKey` is the only credential field on this transport
+    (no `password`/`userKey` pair) — it's an HTTP-API transport, not
+    SMTP. Drop every SMTP connection slot the email transport
+    carries.
+  - The `notification-cov-<slug>-<storyID>-<field>` fixture-isolation
+    namespace remains the durable golden-leak greppable: every literal
+    in the SampleBody is anchored on it.
+---

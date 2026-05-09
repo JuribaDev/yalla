@@ -23276,6 +23276,189 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0242",
+		OperationID: "notification-updateResend",
+		Method:      http.MethodPost,
+		Path:        "/notification.updateResend",
+		Tag:         "notification",
+		// Thirty-fifth entry on the notification/* coverage roster
+		// and the **eighth member of the notification/* `update*`
+		// mutation-by-id cohort** opened by API-0235
+		// `notification-updateCustom`, extended by API-0236
+		// `notification-updateDiscord`, reaffirmed by API-0237
+		// `notification-updateEmail`, API-0238
+		// `notification-updateGotify`, API-0239
+		// `notification-updateLark`, API-0240
+		// `notification-updateNtfy`, and API-0241
+		// `notification-updatePushover`. Per the API-0235 closing
+		// note (reaffirmed by API-0236..API-0241), every `update*`
+		// peer must mirror the kickoff entry's two-required + every-
+		// optional-populated shape and re-derive the optional-
+		// sibling list from the matching `notification-create*`
+		// precedent (here API-0216 `notification-createResend`)
+		// rather than back-referencing the closed `test*` cohort
+		// (API-0224..API-0234) or any other transport flavour. Stays
+		// inside the `notification-cov-*` per-tag fixture-isolation
+		// namespace seeded at API-0208 `notification-all` and
+		// extended across API-0209..API-0241.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json >
+		// /notification.updateResend > post`: a **POST** with **no
+		// parameters** and a **REQUIRED request body** whose schema
+		// declares **two REQUIRED non-nullable plain string fields**
+		// (`notificationId`, `resendId`) alongside a twelve-sibling
+		// optional tail covering seven plain booleans
+		// (`appBuildError`, `databaseBackup`, `volumeBackup`,
+		// `dokployRestart`, `appDeploy`, `dockerCleanup`,
+		// `serverThreshold`), three plain strings (`name`, `apiKey`,
+		// `fromAddress`), one array-of-string (`toAddresses`), and
+		// one plain string scope-anchor (`organizationId`).
+		// Responses 200/400/401/403/500 — the spec does **not**
+		// declare 404 on this operation, matching the notification/*
+		// `update*` cohort kickoff API-0235 and the API-0236..
+		// API-0241 siblings, plus the broader cross-tag update-by-id
+		// mutation precedent (Dokploy's tRPC convention collapses
+		// missing-target into 400/validation rather than surfacing a
+		// 404 leg). The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort.
+		//
+		// **Slug style — kebab-case inherited from the notification/*
+		// per-tag-slug-style rule fixed by the kickoff multi-camel
+		// entry API-0209 `notification-createCustom` (→
+		// `create-custom`) and reaffirmed by API-0235
+		// `notification-updateCustom` (→ `update-custom`), API-0236
+		// `notification-updateDiscord` (→ `update-discord`), API-0237
+		// `notification-updateEmail` (→ `update-email`), API-0238
+		// `notification-updateGotify` (→ `update-gotify`), API-0239
+		// `notification-updateLark` (→ `update-lark`), API-0240
+		// `notification-updateNtfy` (→ `update-ntfy`), and API-0241
+		// `notification-updatePushover` (→ `update-pushover`).** This
+		// entry takes `update-resend` as the slug stem (two
+		// kebab-cased segments mirrored from `updateResend`). The
+		// fixture namespace is `notification-cov-update-resend-0242-
+		// <field>`, mirroring the `notification-cov-<slug>-<storyID>-
+		// <field>` discipline locked by API-0208..API-0241.
+		//
+		// **Body composition — two-required + every-optional-
+		// populated.** Per the notification/* `update*` cohort house
+		// style locked by API-0235 and reaffirmed by API-0236..
+		// API-0241 (every-optional-populated, every value anchored
+		// on the per-storyID namespace), all twelve optional siblings
+		// are populated so the wire fixture exercises the full
+		// update payload, not just the by-id minimum.
+		//   - **REQUIRED `notificationId`** (plain non-nullable
+		//     string). The persisted-notifier target identifier;
+		//     re-uses the same field name as API-0235..API-0241,
+		//     anchored on this story's
+		//     `notification-cov-update-resend-0242-<field>` namespace
+		//     so the literal stays greppable per-story.
+		//   - **REQUIRED `resendId`** (plain non-nullable string).
+		//     Persisted-notifier discriminator for the resend
+		//     transport flavour; mirrors the API-0235 `customId` /
+		//     API-0236 `discordId` / API-0237 `emailId` / API-0238
+		//     `gotifyId` / API-0239 `larkId` / API-0240 `ntfyId` /
+		//     API-0241 `pushoverId` positioning where the second
+		//     required scalar addresses the transport-specific
+		//     sibling row (`resend_notifications` here). Same
+		//     per-storyID anchor pattern.
+		//   - **OPTIONAL — every-optional-populated.** Mirrors the
+		//     API-0216 `notification-createResend` field set
+		//     one-for-one (seven shared category booleans on `true`,
+		//     plain strings `name`, `apiKey`, `fromAddress`, and
+		//     array-of-string `toAddresses` carrying a single
+		//     RFC 6761 `example.invalid` mailbox) plus the
+		//     additional `organizationId` scope anchor that surfaces
+		//     only on the `update*` family (not on `create*`, per
+		//     the API-0236 observation reaffirmed by API-0237..
+		//     API-0241). Every value is anchored on the per-storyID
+		//     namespace so a future leak in a golden file remains
+		//     greppable without colliding with the API-0216
+		//     `create*` literals or the API-0235..API-0241
+		//     `update-custom` / `update-discord` / `update-email` /
+		//     `update-gotify` / `update-lark` / `update-ntfy` /
+		//     `update-pushover` literals. The `apiKey` slot carries
+		//     a clearly-fake `notification-cov-update-resend-0242-
+		//     api-key` placeholder per the API-0216 callout — the
+		//     yalla request-body forwarder ships request bytes
+		//     verbatim and the redactor only operates on rendered
+		//     `--json` output, so agents cribbing this fixture must
+		//     substitute their own Resend API key via `--input` and
+		//     never inline real `apiKey` material in source. The
+		//     `serverThreshold` boolean is shared with the email
+		//     (API-0237), lark (API-0239), and pushover (API-0241)
+		//     transports — Resend supports per-host alerting on
+		//     resource thresholds via the same notification base
+		//     schema.
+		//
+		// **Shape positioning — two-required (two plain strings) POST
+		// mutation-by-id with twelve-sibling optional tail (seven
+		// booleans + three strings + one array-of-string + one scope
+		// anchor), body REQUIRED.** Functionally distinct from the
+		// API-0235 kickoff (seven booleans + two strings + one
+		// nested `map[string]string` `headers` + one scope anchor),
+		// the API-0236 sibling (eight booleans incl. shared
+		// `decoration` + two strings + one scope anchor), the
+		// API-0237 sibling (seven booleans incl. `serverThreshold` +
+		// five strings + one number + one array-of-string + one
+		// scope anchor), the API-0238 sibling (seven booleans incl.
+		// shared `decoration` + three strings + one number + one
+		// scope anchor), the API-0239 sibling (seven booleans incl.
+		// `serverThreshold` + two strings + one scope anchor), the
+		// API-0240 sibling (six booleans + four strings + one number
+		// + one scope anchor), and the API-0241 sibling (seven
+		// booleans incl. `serverThreshold` + three strings + one
+		// plain number + two nullable numbers + one scope anchor) —
+		// the Resend transport pairs the canonical seven category
+		// booleans (incl. `serverThreshold`) with three Resend-
+		// specific delivery strings (`name`, `apiKey`, `fromAddress`)
+		// and the email-style `toAddresses` array, dropping every
+		// SMTP connection slot (`smtpServer`, `smtpPort`, `username`,
+		// `password`) since Resend is an HTTP-API transport rather
+		// than an SMTP submission transport. Future notification/*
+		// `update*` peers (API-0243 `notification-updateSlack`,
+		// API-0244 `notification-updateTeams`, …) must re-derive
+		// their optional tail from the matching
+		// `notification-create*` sibling rather than inheriting from
+		// this entry, since each transport flavour declares its own
+		// subset of the notification base schema.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (Dokploy's tRPC
+		// convention collapses missing-target into 400/validation),
+		// so the 404→CodeNotFound override is structurally
+		// inapplicable. `*-updateResend` here is a body-bearing
+		// imperative-action POST and stays on the 401→CodeAuth
+		// invariant locked across every imperative-action
+		// notification/* peer (API-0209..API-0220, API-0222..
+		// API-0241), keeping authentication as the universal
+		// failure surface for the notification/* `update*` cohort.
+		SampleBody: json.RawMessage(`{
+			"notificationId": "notification-cov-update-resend-0242-notificationId",
+			"resendId": "notification-cov-update-resend-0242-resendId",
+			"name": "notification-cov-update-resend-0242-name",
+			"apiKey": "notification-cov-update-resend-0242-api-key",
+			"fromAddress": "notification-cov-update-resend-0242-from@example.invalid",
+			"toAddresses": ["notification-cov-update-resend-0242-to@example.invalid"],
+			"appBuildError": true,
+			"databaseBackup": true,
+			"volumeBackup": true,
+			"dokployRestart": true,
+			"appDeploy": true,
+			"dockerCleanup": true,
+			"serverThreshold": true,
+			"organizationId": "notification-cov-update-resend-0242-organizationId"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the empty-
+		// success cohort. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` / `data.status`
+		// rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,
