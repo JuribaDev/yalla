@@ -38597,6 +38597,116 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0446",
+		OperationID: "volumeBackups-delete",
+		Method:      http.MethodPost,
+		Path:        "/volumeBackups.delete",
+		Tag:         "volumeBackups",
+		// Second priority-4 volumeBackups/* peer — inherits the
+		// `volBackups-cov-*` per-tag fixture-isolation namespace
+		// opened at API-0445 `volumeBackups-create` (note the
+		// abbreviated `volBackups` fixture-prefix decision locked
+		// at the kickoff entry — the full `volumeBackups` tag name
+		// is preserved in OperationID, Method, Path, and Tag fields,
+		// so the abbreviated fixture prefix has no correctness
+		// impact, only diff-friendliness). Per the per-tag fixture-
+		// isolation rule established at API-0188
+		// `mounts-allNamedByApplicationId`, API-0246
+		// `organization-active`, API-0268 `port-create`, API-0290
+		// `project-all`, API-0298 `redirects-create`, API-0325
+		// `schedule-create`, API-0331 `security-create`, and
+		// reasserted at API-0445 `volumeBackups-create`, this entry
+		// stays inside the `volBackups-cov-*` namespace and **must
+		// not** back-reference any closed prior-tag namespace
+		// (`admin-cov-*`, `ai-cov-*`, `app-cov-*`, `auth-cov-*`,
+		// `backup-cov-*`, `bb-cov-*`, `cert-cov-*`, `clu-cov-*`,
+		// `compose-cov-*`, `deployment-cov-*`, `dest-cov-*`,
+		// `discord-cov-*`, `docker-cov-*`, `domain-cov-*`,
+		// `email-cov-*`, `gh-cov-*`, `git-cov-*`, `gitea-cov-*`,
+		// `gitlab-cov-*`, `mariadb-cov-*`, `mongo-cov-*`,
+		// `mounts-cov-*`, `mysql-cov-*`, `notif-cov-*`, `org-cov-*`,
+		// `port-cov-*`, `postgres-cov-*`, `preview-cov-*`,
+		// `proj-cov-*`, `redirects-cov-*`, `redis-cov-*`,
+		// `rollback-cov-*`, `schedule-cov-*`, `security-cov-*`,
+		// `set-cov-*`, `srv-cov-*`, `swarm-cov-*`, `usr-cov-*`).
+		// Subsequent volumeBackups/* peers (API-0447
+		// `volumeBackups-list`, API-0448 `volumeBackups-one`,
+		// API-0449 `volumeBackups-runManually`, API-0450
+		// `volumeBackups-update`) should grep this block and the
+		// API-0445 `volumeBackups-create` kickoff to continue
+		// inheriting the volumeBackups/* slug namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json > /volumeBackups.delete >
+		// post`: a **POST** with **no parameters** and a **REQUIRED
+		// request body** whose schema declares **one REQUIRED non-
+		// nullable plain string field** `volumeBackupId` with **zero
+		// optional fields**. Responses 200/400/401/403/500 — **no
+		// 404** is declared, mirroring the action-on-known-id POST
+		// precedent reasserted across every body-bearing
+		// imperative-action POST already covered (e.g. API-0326
+		// `schedule-delete`, API-0323 `rollback-delete`, API-0309
+		// `redis-remove`, API-0179 `mongo-remove`) whose missing-
+		// target failure mode collapses into 400/validation under
+		// Dokploy's tRPC convention rather than a dedicated 404 leg.
+		// The 200 response is `{}` with `additionalProperties:
+		// false`, matching the empty-success cohort.
+		//
+		// **Body composition:**
+		//   - **REQUIRED:** `volumeBackupId` (plain string).
+		//     Identifies the volumeBackup record to delete. The
+		//     fixture below supplies a deterministic-but-clearly-fake
+		//     `volBackups-cov-delete-0446-volumeBackupId` literal
+		//     carrying the `<tag>-cov-<slug>-<storyID>-<field>`
+		//     suffix for `git grep` traceability.
+		//   - **No optional fields exist on this operation**, so the
+		//     fixture saturates the entire schema surface with the
+		//     single REQUIRED scalar.
+		//
+		// **Shape positioning — single-required-string-scalar POST
+		// destructive-action mutation, body REQUIRED, no optional
+		// tail.** Cardinality- and type-identical to API-0326
+		// `schedule-delete` (the schedule/* mirror precedent for
+		// this slot), API-0323 `rollback-delete`, API-0309
+		// `redis-remove`, API-0179 `mongo-remove`, and the rest of
+		// the single-required-`<tag>Id` body family (one REQUIRED
+		// plain string slot, zero optional slots). The schedule/*
+		// roster's near-mirror structure (predicted at API-0445)
+		// holds: schedule-delete required `scheduleId`, this entry
+		// requires `volumeBackupId` — same cardinality, same family,
+		// id-name swapped per the entity.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so
+		// the 404→CodeNotFound override is structurally
+		// inapplicable. The volumeBackups/* tag's 404→CodeNotFound
+		// representative remains pinned to API-0448
+		// `volumeBackups-one` per the canonical by-id-sibling
+		// convention (mirroring API-0328 `schedule-one` for the
+		// schedule/* tag). `*-delete` here is a body-bearing
+		// destructive POST and stays on the 401→CodeAuth invariant
+		// locked by every destructive-action peer already covered.
+		//
+		// **Fixture token base** `volBackups-cov-delete-0446` follows
+		// the established `<tag>-cov-<slug>-<storyID>` deterministic-
+		// but-clearly-fake naming convention pre-reserved by the
+		// API-0445 kickoff banner. Single-segment slug `delete` has
+		// no internal capitalisation so the kebab-vs-camel slug-
+		// style choice deferred to API-0449
+		// `volumeBackups-runManually` (the first multi-camel-segment
+		// volumeBackups/* slug) remains unaffected here.
+		SampleBody: json.RawMessage(`{
+			"volumeBackupId": "volBackups-cov-delete-0446-volumeBackupId"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the empty-
+		// success cohort. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

@@ -25314,3 +25314,94 @@ forward-reference lesson before assuming any field shape.
     this fixture must be tightened to populate only the slot
     matching the chosen serviceType.
 ---
+
+## 2026-05-09 - API-0446 (volumeBackups-delete)
+- Implemented contract coverage for POST /volumeBackups.delete (Dokploy
+  `volumeBackups-delete`), the second priority-4 volumeBackups/* peer
+  and the first single-required-string-scalar destructive POST on the
+  tag. The volumeBackups/* roster is now 2/6 covered (API-0445/0446).
+- Files changed:
+  - internal/cli/api_coverage_test.go — appended apiCoverageCase entry
+    (StoryID=API-0446) immediately after API-0445 `volumeBackups-create`
+    and before the slice's closing brace, sorted by StoryID. Single-
+    required-string-scalar destructive POST: `SampleBody` materialises
+    the lone REQUIRED field per the spec
+    (`internal/api/data/openapi.json > /volumeBackups.delete > post`)
+    — `volumeBackupId` (plain string), value
+    `volBackups-cov-delete-0446-volumeBackupId` per the
+    `<tag>-cov-<slug>-<storyID>-<field>` naming convention. Inherits
+    the abbreviated `volBackups` fixture-prefix decision locked at
+    API-0445 (token base `volBackups-cov-delete-0446` was pre-reserved
+    by the API-0445 kickoff banner). Single-segment slug `delete` →
+    no camelCase decision needed (the volumeBackups/* slug-style
+    decision is deferred to API-0449 `volumeBackups-runManually`,
+    which will be the first multi-camel-segment slug on the tag).
+    No 404 declared on this op, so harness-default 401→CodeAuth
+    failure leg retained (the schedule/* mirror precedent at API-0326
+    `schedule-delete` follows the same default — body-bearing
+    destructive POSTs collapse missing-target to 400/validation under
+    Dokploy's tRPC convention). SuccessResponse is `{}` per the
+    additionalProperties:false success schema.
+  - ralph/prd.json — flipped `passes: false` -> `true` for API-0446.
+  - ralph/progress.txt — this entry.
+- Verification run from the repo root:
+  - gofmt -l .                            : clean (no diff)
+  - go mod tidy                           : clean (no diff)
+  - go vet ./...                          : clean
+  - go test ./internal/cli ./internal/api
+      -run 'TestAPICoverage|TestManifest|TestRegistry|TestSchema'
+      -count=1                             : ok — confirms registry,
+                                            schema, manifest, success-
+                                            leg, and failure-leg
+                                            invariants all hold for
+                                            `volumeBackups-delete`.
+  - go test ./... -count=1                : ok (all 9 packages)
+  - go test -race ./... -count=1          : ok (all 9 packages)
+- Tools not installed locally and therefore documented-as-skipped (per
+  the Codebase Patterns rule): goimports, golangci-lint, staticcheck,
+  govulncheck, goreleaser. Same set as every prior API-0XXX story.
+- Outcome: 80 stories remain pending (81 → 80). The volumeBackups/*
+  roster is now 2/6 covered; the next priority-4 entry is API-0447
+  `volumeBackups-list` (GET /volumeBackups.list), expected to be a
+  read-only GET-shaped op per the schedule/* mirror precedent at
+  API-0327 `schedule-list`.
+- Remaining risks / follow-ups:
+  - None for this story. Future volumeBackups/* peers (API-0447..
+    API-0450) should grep this entry's slug-namespace banner along
+    with API-0445 to inherit the `volBackups-cov-*` namespace and
+    the abbreviated `volBackups` fixture-prefix decision.
+  - The schedule/* mirror prediction made at API-0445 holds on the
+    delete slot: schedule-delete required `scheduleId`, this entry
+    required `volumeBackupId` — same single-required-string-scalar
+    cardinality with id-name swapped per the entity. Future *-list,
+    *-one, *-runManually, and *-update peers on volumeBackups/*
+    should expect (but re-verify) the schedule/* mirror to continue
+    holding shape-for-shape.
+- **Learnings for future iterations:**
+  - **The schedule/* → volumeBackups/* near-mirror predicted at
+    API-0445 holds on the delete slot.** Both expose a single
+    REQUIRED `<entity>Id` plain-string body with no optional tail,
+    no parameters, and no 404 leg (responses 200/400/401/403/500).
+    Promotes the schedule-delete shape verbatim with id-name swap.
+    Future *-create-vs-*-update delta (the *id field flips from
+    OPTIONAL on *-create to REQUIRED on *-update, locked at
+    API-0330) should also hold for API-0450 `volumeBackups-update`
+    vs API-0445 `volumeBackups-create`.
+  - **Pre-reserved fixture tokens land cleanly.** The API-0445
+    kickoff banner pre-reserved `volBackups-cov-delete-0446`
+    verbatim, and this entry simply ratifies it (analogous to the
+    API-0327 `schedule-list` banner pre-reserving
+    `schedule-cov-runManually-0329` for API-0329). The pre-
+    reservation pattern eliminates any per-entry naming decision
+    and keeps the per-tag fixture surface deterministic across
+    contributors.
+  - **Body-bearing destructive POST family invariant reasserted.**
+    Every covered destructive `*-delete` / `*-remove` POST without a
+    declared 404 stays on the 401→CodeAuth representative-failure
+    default (API-0179 `mongo-remove`, API-0309 `redis-remove`,
+    API-0323 `rollback-delete`, API-0326 `schedule-delete`, and now
+    API-0446 `volumeBackups-delete`). The 404→CodeNotFound override
+    is reserved for by-id-sibling GETs (e.g. API-0328
+    `schedule-one`; the volumeBackups/* counterpart will be
+    API-0448 `volumeBackups-one`).
+---
