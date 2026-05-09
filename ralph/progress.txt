@@ -27725,3 +27725,28 @@ forward-reference lesson before assuming any field shape.
     harness entry — no registry, manifest, or schema-doc code
     needed to change.
 ---
+
+## 2026-05-09 - API-0240
+- Implemented coverage for `notification-updateNtfy` (POST /notification.updateNtfy).
+- Added a new `apiCoverageCase` entry to `internal/cli/api_coverage_test.go` with a two-required (`notificationId`, `ntfyId`) plus every-optional-populated SampleBody covering the twelve-sibling optional tail (six base booleans, four plain strings `name`/`serverUrl`/`topic`/`accessToken`, one `priority` number, one `organizationId` scope anchor) and the canonical empty-success `{}` body. Slug stem `update-ntfy`; namespace `notification-cov-update-ntfy-0240-<field>`.
+- Re-derived the optional set from API-0214 `notification-createNtfy` per the cohort house style (do not back-reference `test*` or sibling `update*` flavours).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended API-0240 entry between API-0239 and API-0246.
+  - `ralph/prd.json` — flipped API-0240 `passes: false → true`.
+  - `ralph/progress.txt` — this entry.
+- Verification (run from repo root):
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass (`internal/cli` 1.415s).
+  - `go test -race ./...` — all packages pass (`internal/cli` 3.368s).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser` not installed locally; documented as missing per repo policy, not silently skipped.
+- Remaining risks / follow-ups: none for this story. Future ntfy/* curated commands (when added) should reuse `notification-cov-update-ntfy-0240-<field>` literals only as wire fixtures; production code paths must source identifiers from real input.
+- **Learnings for future iterations:**
+  - The notification/* `update*` cohort house style is "two-required + every-optional-populated", with the optional set re-derived from the matching `notification-create*` entry — **never** back-referenced from a sibling `update*` flavour or the closed `test*` cohort (API-0224..API-0234). This keeps each transport's wire fixture honest about what its schema actually carries.
+  - ntfy carries **neither** `serverThreshold` (email/lark only) **nor** `decoration` (discord/gotify only) — its delivery model is HTTP topic-push, not webhook decoration or threshold-triggered SMTP.
+  - The `priority` slot on ntfy is a `number` (matching gotify), populated as the canonical mid-band `5` so the wire fixture stays inside the documented 1..5 ntfy priority window without colliding with the gotify literal.
+  - Reserved-TLD `example.invalid` (RFC 6761) on `serverUrl` keeps a future URL-shape validator satisfied without risking real DNS / HTTPS egress to a third-party ntfy host.
+  - The harness-default 401→CodeAuth invariant holds for every body-bearing imperative-action notification/* POST (API-0209..API-0220, API-0222..API-0240); 404→CodeNotFound is structurally inapplicable because Dokploy's tRPC convention collapses missing-target into 400/validation.
+  - Verification baseline (`gofmt -w .`, `go mod tidy`, `go vet`, `go test`, `go test -race`) stays under 5s per package locally; race mode roughly doubles `internal/cli` wall-clock — budget accordingly when iterating.
+---
