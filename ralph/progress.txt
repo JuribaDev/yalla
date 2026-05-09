@@ -28255,3 +28255,70 @@ forward-reference lesson before assuming any field shape.
     likely), API-0263..API-0267, all inside the `patch-cov-*`
     namespace.
 ---
+
+## 2026-05-09 - API-0260
+- Implemented per-operation coverage for `patch-ensureRepo` (POST /patch.ensureRepo, tag `patch`).
+- Added a single `apiCoverageCase` literal to `internal/cli/api_coverage_test.go` between
+  API-0259 (`patch-delete`) and the next existing entry API-0268 (`port-create`),
+  preserving StoryID-sorted order. The harness around `coveredAPIOperations`
+  automatically asserts registry presence (id/method/path/tag), schema
+  reachability, manifest inclusion, an httptest-backed success exchange,
+  and a representative 401→CodeAuth failure leg — no new harness code
+  was needed.
+- Files changed:
+  - internal/cli/api_coverage_test.go (insert API-0260 case)
+  - ralph/prd.json (flip passes:true for API-0260)
+  - ralph/progress.txt (this entry)
+- Verification run from repo root:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean (no diff).
+  - `go vet ./...` — clean.
+  - `go test ./...` — pass (cli 1.566s).
+  - `go test -race ./...` — pass (cli 3.358s).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`
+    are not installed locally; documented as missing per the standing
+    convention.
+- Spec verification: re-read `internal/api/data/openapi.json >
+  /patch.ensureRepo > post` directly. POST, zero parameters, REQUIRED
+  request body with two required scalars — `id` (plain string) and
+  `type` (string enum {`application`, `compose`}, no default) — and
+  zero optional fields. Response set 200/400/401/403/500 (no 404). The
+  200 schema is `{}` with `additionalProperties: false`, matching every
+  prior empty-success peer.
+- Fixture: per-case token `patch-cov-ensure-repo-0260` follows the
+  `<tag>-cov-<slug>-<storyID>` convention; verified no collision with
+  earlier `patch-cov-*` siblings (`patch-cov-by-entity-id-0256`,
+  `patch-cov-cleanPatchRepos-0257`, `patch-cov-create-0258`,
+  `patch-cov-delete-0259`) or any prior tag's namespace. `type`
+  fixed to `"application"` (first enum member) for fixture
+  determinism.
+- Failure-leg family: kept harness-default 401→CodeAuth. 404 is
+  structurally inapplicable (response set omits 404, mutating POST
+  cohort like API-0257/0258/0259); 400→CodeInvalidInput is technically
+  reachable but reserved for stories where payload validation is the
+  uniquely distinguishing failure mode, which this two-required-scalar
+  body is not.
+- Remaining risks / follow-ups: API-0261 `patch-markFileForDeletion`
+  is the next patch/* roster entry per PRD ordering — next contributor
+  must re-verify the spec against
+  `internal/api/data/openapi.json > /patch.markFileForDeletion > post`
+  (forward-reference lesson) before assuming any field shape, and
+  must continue inside the `patch-cov-*` per-tag fixture-isolation
+  namespace.
+- **Learnings for future iterations:**
+  - Adding a new API-XXXX coverage story requires *only* appending one
+    `apiCoverageCase` literal in `internal/cli/api_coverage_test.go`;
+    no registry/schema/manifest code changes are needed because the
+    OpenAPI registry is loaded from `internal/api/data/openapi.json`
+    and the harness derives schema/manifest reachability from that
+    single source.
+  - Preserve StoryID-sorted order in `coveredAPIOperations` for
+    diff-friendliness — the existing comment at the top of the slice
+    is load-bearing.
+  - The verbose comment block on each entry encodes per-tag
+    fixture-isolation rules and forward-reference spec re-verification
+    discipline. Keep both: the per-tag `*-cov-*` slug namespace must
+    not bleed across tag boundaries, and every new entry must re-read
+    the OpenAPI spec directly rather than copying field shapes from a
+    sibling story.
+---
