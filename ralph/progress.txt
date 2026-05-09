@@ -30269,3 +30269,42 @@ forward-reference lesson before assuming any field shape.
     override slot). Always re-verify per-operation against the
     spec before inheriting from this entry.
 ---
+
+## 2026-05-09 - API-0409
+- Implemented coverage for `sso-listProviders` (GET /sso.listProviders).
+- Re-verified spec at `internal/api/data/openapi.json > /sso.listProviders > get`:
+  parameter-free, body-free GET; tag `sso`; responses 200/400/401/403/404/500;
+  200 schema is `{}` with `additionalProperties: false`.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (added one `apiCoverageCase` entry).
+  - `ralph/prd.json` (flipped API-0409 `passes` to true).
+  - `ralph/progress.txt` (this entry).
+- Verification (all green):
+  - `gofmt -w .`, `go mod tidy`, `go vet ./...`
+  - `go test ./...` and `go test -race ./...`
+  - `goimports`/`golangci-lint`/`staticcheck`/`govulncheck`/`goreleaser`
+    remain not-installed locally and were skipped (per the established
+    documentation rule).
+- Remaining risks / follow-ups: none for this story. Forward reference for
+  API-0410 `sso-one` recorded in the entry's closing comment: it should
+  consume the still-open `404→CodeNotFound` representative-failure slot
+  for the sso/* tag arc (mirroring the canonical by-id reader pattern of
+  API-0055 `bitbucket-one`). Spec re-verification against `/sso.one > get`
+  is still mandatory — confirm whether the `providerId` selector is a
+  path placeholder or a query parameter before wiring `Sample*` fields.
+- **Learnings for future iterations:**
+  - The fourth consecutive sso/* entry confirms the established rhythm:
+    parameter-free, body-free GETs are pure copy-the-shape additions —
+    every `Sample*` field is omitted, success defaults to 200/`{}` and
+    failure defaults to 401→CodeAuth, and the only mandatory work is
+    spec re-verification + the closing-comment forward reference for the
+    next story.
+  - The `<tag>-cov-<slug>-<storyID>` slug discipline still applies to
+    parameter-free entries (here `sso-cov-listProviders-0409`) even
+    though the slug is never embedded in any wire payload — it remains
+    claimed for the per-tag uniqueness audit.
+  - The 404→CodeNotFound slot reservation chain across the sso/* arc
+    (API-0408 reserved, API-0409 re-reserved, API-0410 to consume) is
+    now an explicit two-link audit trail that the next contributor can
+    follow without re-deriving the structural argument from scratch.
+---

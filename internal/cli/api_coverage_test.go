@@ -45133,6 +45133,125 @@ var coveredAPIOperations = []apiCoverageCase{
 		// terse.
 	},
 	{
+		StoryID:     "API-0409",
+		OperationID: "sso-listProviders",
+		Method:      http.MethodGet,
+		Path:        "/sso.listProviders",
+		Tag:         "sso",
+		// Fourth entry on the sso/* coverage roster, immediately
+		// following API-0408 `sso-getTrustedOrigins` (the first
+		// read-only leaf of the sso/* arc). Consumes the forward
+		// reference embedded in API-0408's closing comment ("the
+		// priority-5 backlog continues at API-0409
+		// `sso-listProviders` (declared a **GET** with no parameters
+		// and no body per the spec preview, the second read-only
+		// leaf of the sso/* arc, structurally identical to this
+		// entry)"). Stays within the open `sso-cov-*` namespace
+		// opened by API-0406 `sso-addTrustedOrigin` per the per-tag
+		// isolation rule originally established at API-0246
+		// `organization-active`; **must not** back-reference any
+		// closed prior-tag namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json` > `/sso.listProviders`
+		// > `get`: method GET, tag sso, **no parameters** (no path
+		// placeholders, no query string), **no requestBody**, and a
+		// 200/400/401/403/404/500 response set. The 200 schema is
+		// `{}` with `additionalProperties: false`, matching the
+		// empty-success convention shared by every prior covered
+		// list-style GET (e.g. API-0058 `certificates-all`,
+		// API-0376 `settings-isUserSubscribed`, and the immediate
+		// prior peer API-0408 `sso-getTrustedOrigins`).
+		//
+		// **Shape positioning — parameter-free, body-free list-style
+		// GET, the second read-only leaf of the sso/* arc.** This is
+		// structurally identical to the immediate prior peer API-0408
+		// `sso-getTrustedOrigins` (also a parameter-free, body-free
+		// GET) and structurally distinct from the sso/* arc openers
+		// API-0406 `sso-addTrustedOrigin` and API-0407
+		// `sso-deleteProvider` (both single-required-string-scalar
+		// POST imperative-action mutations). The cross-tag precedent
+		// for this shape is API-0058 `certificates-all` (the
+		// canonical no-params/no-body/list-GET opener for its arc),
+		// with every other parameter-free list GET (API-0006
+		// `ai-getAll`, API-0376 `settings-isUserSubscribed`,
+		// API-0383 `settings-reloadRedis`, API-0408
+		// `sso-getTrustedOrigins`) consumed as a peer precedent.
+		// Because no parameters or body are declared, every
+		// case-level `Sample*` field is intentionally omitted —
+		// `buildCoverageInputArgs` returns an empty slice and
+		// `yalla api call sso-listProviders --json` exercises the
+		// no-input-flag path.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec *does* declare 404 for this operation, but
+		// `sso-listProviders` is a *list* endpoint with **no
+		// addressable subject** — there is no `{providerId}`-style
+		// placeholder or `providerId` query parameter that could
+		// resolve to "not found". Following the precedent locked in
+		// by API-0058 `certificates-all` and continued at API-0408
+		// `sso-getTrustedOrigins` ("404 → CodeNotFound slot is *not*
+		// claimed here — list endpoint with no addressable
+		// subject"), the 404→CodeNotFound override is structurally
+		// inapplicable here even though 404 is in the response
+		// vocabulary. The canonical 404→CodeNotFound
+		// representative-failure slot for the sso/* tag arc remains
+		// reserved for the upcoming API-0410 `sso-one` entry (the
+		// canonical by-id reader, mirroring API-0055
+		// `bitbucket-one`'s and the upcoming API-0060
+		// `certificates-one`'s claim of that slot in their
+		// respective tag arcs). Future contributor on API-0410
+		// should consume that reservation by setting
+		// `FailureStatus: http.StatusNotFound` and `FailureCode:
+		// yerr.CodeNotFound` on the API-0410 case literal —
+		// per-operation re-verification against `/sso.one > get`
+		// is still mandatory before inheriting from this entry.
+		// 400 → CodeInvalidInput is *technically* available but the
+		// harness reserves 400 representatives for stories where
+		// payload validation is the operation's *uniquely
+		// distinguishing* failure mode, which a parameter-free read
+		// cannot be. So the harness-default 401→CodeAuth failure
+		// leg remains the most representative single failure mode
+		// every authenticated Dokploy operation must re-prove,
+		// matching the 401→CodeAuth choice locked in by the sso/*
+		// arc opener (API-0406 `sso-addTrustedOrigin`) and continued
+		// at API-0407 `sso-deleteProvider` and API-0408
+		// `sso-getTrustedOrigins`.
+		//
+		// **No per-case fixture token consumed.** Parameter-free,
+		// body-free GETs carry no `Sample*` literals, so the
+		// `<tag>-cov-<slug>-<storyID>` slug
+		// `sso-cov-listProviders-0409` is reserved nominally —
+		// claimed by this entry under the per-tag uniqueness audit
+		// but never embedded in any wire payload (mirroring the
+		// minimal-literal pattern established by API-0058
+		// `certificates-all` and most recently consumed by API-0408
+		// `sso-getTrustedOrigins`). Verified non-colliding with the
+		// open sso/* namespace (distinct slug `listProviders` and
+		// storyID `0409` → unique under the
+		// `<tag>-cov-<slug>-<storyID>` rule) and with every closed
+		// prior-tag namespace (different tag prefix and storyID).
+		//
+		// **sso/* roster continues.** Per the PRD ordering at the
+		// time of this commit, the priority-5 backlog continues at
+		// API-0410 `sso-one` (declared a **GET** per the spec
+		// preview, the canonical by-id reader of the sso/* arc
+		// that — per the reservation locked in here and at
+		// API-0408 `sso-getTrustedOrigins` — should consume the
+		// 404→CodeNotFound representative-failure slot for the
+		// sso/* tag arc). The next contributor must re-verify the
+		// spec against `internal/api/data/openapi.json` > `/sso.one`
+		// > `get` per the forward-reference lesson before assuming
+		// any field shape (in particular: confirm whether the
+		// `providerId` selector is a path placeholder or a query
+		// parameter), and **must not** reuse any closed prior-tag
+		// namespace; the open `sso-cov-*` namespace remains in
+		// force for the rest of the sso/* arc. Defaulting to 200 /
+		// `{}` for success and 401 → CodeAuth for failure keeps
+		// this entry maximally terse.
+	},
+	{
 		StoryID:     "API-0423",
 		OperationID: "swarm-getNodeApps",
 		Method:      http.MethodGet,
