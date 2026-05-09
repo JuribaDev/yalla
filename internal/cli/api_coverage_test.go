@@ -20839,6 +20839,154 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0228",
+		OperationID: "notification-testLarkConnection",
+		Method:      http.MethodPost,
+		Path:        "/notification.testLarkConnection",
+		Tag:         "notification",
+		// Twenty-first entry on the notification/* coverage roster,
+		// staying inside the `notification-cov-*` per-tag fixture-
+		// isolation namespace seeded at API-0208 `notification-all` and
+		// extended across API-0209..API-0227. Per the per-tag isolation
+		// rule reaffirmed across each prior peer this entry stays
+		// inside the namespace opened by API-0208 and **must not**
+		// back-reference any closed prior-tag namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json >
+		// /notification.testLarkConnection > post`: a **POST** with
+		// **no parameters** and a **REQUIRED request body** whose
+		// schema declares **a single REQUIRED non-nullable plain string
+		// slot** — REQUIRED `webhookUrl`. There are **zero optional
+		// siblings**. Responses 200/400/401/403/500 — the spec does
+		// **not** declare 404 on this operation, matching the
+		// connectivity-validation precedent re-asserted by the cohort
+		// opener API-0224 `notification-testCustomConnection` and the
+		// peers API-0225 `notification-testDiscordConnection` /
+		// API-0226 `notification-testEmailConnection` / API-0227
+		// `notification-testGotifyConnection` (the family is "validate
+		// the agent-supplied transport descriptor", with no by-id
+		// target to miss). The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort.
+		//
+		// **Slug style — kebab-case inherited from API-0209/API-0210/
+		// API-0211/API-0212/API-0213/API-0214/API-0215/API-0216/
+		// API-0217/API-0218/API-0219, the GET-cohort opener API-0220
+		// `notification-getEmailProviders` (→ `get-email-providers`),
+		// the `*Id`-filtered GET-cohort opener API-0221
+		// `notification-one`, the action-receiver POST opener API-0222
+		// `notification-receiveNotification` (→ `receive-notification`),
+		// the by-id mutation cohort opener API-0223
+		// `notification-remove`, the `test*` connectivity-validation
+		// POST cohort opener API-0224 `notification-testCustomConnection`
+		// (→ `test-custom-connection`), the second cohort member
+		// API-0225 `notification-testDiscordConnection`
+		// (→ `test-discord-connection`), the third cohort member
+		// API-0226 `notification-testEmailConnection`
+		// (→ `test-email-connection`), and the fourth cohort member
+		// API-0227 `notification-testGotifyConnection`
+		// (→ `test-gotify-connection`).** Per the per-tag-slug-style
+		// rule fixed by the kickoff multi-camel entry API-0209
+		// `notification-createCustom` (→ `create-custom`), this entry
+		// takes `test-lark-connection` as the slug stem (three
+		// kebab-cased segments mirrored from `testLarkConnection`).
+		// The fixture namespace is
+		// `notification-cov-test-lark-connection-0228-<field>`,
+		// mirroring the `notification-cov-<slug>-<storyID>-<field>`
+		// discipline locked by API-0208..API-0227. **This entry is the
+		// fifth member of the notification/* `test*` connectivity-
+		// validation POST cohort opened by API-0224** — peers
+		// API-0229..API-0234 (`testNtfyConnection`,
+		// `testPushoverConnection`, `testResendConnection`,
+		// `testSlackConnection`, `testTeamsConnection`,
+		// `testTelegramConnection`) inherit the same slug style and
+		// harness-default 401→CodeAuth failure leg.
+		//
+		// **Body composition — single-required, zero-optional, the
+		// REQUIRED field populated.** This is the **narrowest possible
+		// body shape** in the notification/* `test*` cohort — only the
+		// inline webhook descriptor URL — distinguishing it from every
+		// prior cohort member and establishing the cohort's minimal-
+		// surface invariant. Mirrors the Lark descriptor portion of
+		// the create sibling API-0213 `notification-createLark` so the
+		// cross-entry diff against the persisted-notifier sibling stays
+		// focused on the structural delta (this entry omits the `name`
+		// REQUIRED slot and the seven optional `*Notify`/`*Backup`/
+		// `*Cleanup`/`*Threshold`/`*Restart` boolean tail because the
+		// spec for `*-testLarkConnection` declares neither — the
+		// operation is a pure connectivity probe of an inline transport
+		// descriptor, not a persisted notifier configuration).
+		//   - **REQUIRED `webhookUrl`** (plain non-nullable string).
+		//     URL-bearing field — anchored on `example.invalid`
+		//     (RFC 6761 reserved TLD) per the cross-tag URL-anchor
+		//     rule re-asserted by API-0224's `endpoint`, API-0225's
+		//     `webhookUrl`, and API-0227's `serverUrl` so the fixture
+		//     cannot accidentally egress to a real Lark/Feishu webhook
+		//     endpoint during tests. The token follows the per-tag
+		//     `notification-cov-<slug>-<storyID>-<field>` discipline
+		//     and re-uses the `webhookUrl` field-name precedent set by
+		//     API-0225 `notification-testDiscordConnection` so the
+		//     cross-entry diff against that cohort peer stays focused
+		//     on the structural delta (the API-0225 entry adds an
+		//     optional `decoration` boolean tail; this entry omits it
+		//     because the spec declares zero optional fields).
+		//
+		// **Optional siblings — none.** The every-optional-populated
+		// convention is structurally inapplicable here because the
+		// spec declares zero optional fields on this operation. This
+		// distinguishes the entry from API-0224 (one optional nested
+		// `map[string]string`), API-0225 (one optional plain boolean),
+		// API-0227 (one optional plain boolean on a wider required
+		// tuple), and from API-0226's six-required-zero-optional
+		// SMTP-shape — the no-optional-siblings convention is shared
+		// with API-0226 but at minimum-cardinality (one required
+		// string vs. six). Future peers in the cohort with similarly-
+		// flat single-required-only schemas can grep this entry for
+		// the minimum-surface convention.
+		//
+		// **Shape positioning — single-required-string POST
+		// connectivity-validation, body REQUIRED.** Functionally
+		// distinct from the cohort opener API-0224
+		// `notification-testCustomConnection` (single-required-string
+		// + optional nested `map[string]string`), the second cohort
+		// member API-0225 `notification-testDiscordConnection`
+		// (single-required-string + optional plain boolean), the
+		// third member API-0226 `notification-testEmailConnection`
+		// (six-required, zero-optional), and the fourth member
+		// API-0227 `notification-testGotifyConnection` (three-
+		// required + one-optional). This entry establishes the
+		// notification/* tag's **minimum-surface** REQUIRED-only
+		// shape for the `test*` cohort — a single inline webhook URL
+		// — an analogue future single-endpoint probes (e.g.
+		// `testNtfyConnection`, `testSlackConnection`,
+		// `testTeamsConnection` if those resolve to similarly-flat
+		// shapes) can mirror without re-deriving the URL-anchor or
+		// no-optional-siblings conventions.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set, so the
+		// 404→CodeNotFound override is structurally inapplicable
+		// (no by-id target to miss; the agent supplies the transport
+		// descriptor inline). `*-testLarkConnection` here is a
+		// body-bearing imperative-action POST and stays on the
+		// 401→CodeAuth invariant locked across every imperative-
+		// action notification/* peer (API-0209..API-0220, API-0222,
+		// API-0223, API-0224, API-0225, API-0226, API-0227), keeping
+		// authentication as the universal failure surface for the
+		// notification/* `test*` connectivity-validation POST cohort.
+		SampleBody: json.RawMessage(`{
+			"webhookUrl": "https://notification-cov-test-lark-connection-0228-webhook.example.invalid"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the empty-
+		// success cohort. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` / `data.status`
+		// rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,

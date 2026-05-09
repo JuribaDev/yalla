@@ -26669,3 +26669,126 @@ forward-reference lesson before assuming any field shape.
   - The cohort-opener forward reference list in API-0224's comment now extends through API-0227 — the opener still names peers by ID, and each cohort member's comment back-references the opener and prior members. Future peers (API-0228 `testLarkConnection`, API-0229 `testNtfyConnection`, …) should continue the chain by listing the cohort opener and **all** prior cohort members in their preamble.
   - The slug `test-gotify-connection` follows the same three-kebab-segment derivation (`testGotifyConnection` → `test-gotify-connection`) re-asserted across API-0224..API-0226, so the per-tag-slug-style rule fixed by API-0209 `notification-createCustom` (→ `create-custom`) still holds with no exception needed.
 ---
+
+## 2026-05-09 - API-0228 (Cover notification-testLarkConnection, POST /notification.testLarkConnection)
+- Implemented Dokploy API operation coverage for
+  `notification-testLarkConnection`. This is the **fifth member** of
+  the notification/* `test*` connectivity-validation POST cohort
+  opened by API-0224 `notification-testCustomConnection` and
+  continued by API-0225 (`testDiscordConnection`), API-0226
+  (`testEmailConnection`), and API-0227 (`testGotifyConnection`).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended a new
+    `apiCoverageCase` entry directly after API-0227 and before
+    API-0246. Slug stem `test-lark-connection`; fixture namespace
+    `notification-cov-test-lark-connection-0228-<field>`. The body
+    fixture pins a single REQUIRED `webhookUrl` literal anchored on
+    `example.invalid` (RFC 6761) so the test cannot egress to a real
+    Lark/Feishu webhook. `SuccessResponse: "{}"` per the empty-
+    success cohort convention. No `FailureStatus` / `FailureCode`
+    overrides — the spec response set is 200/400/401/403/500 (no
+    404), so the harness-default 401→CodeAuth representative failure
+    leg applies.
+  - `ralph/prd.json` — flipped `API-0228.passes` from `false` to
+    `true`.
+  - `ralph/progress.txt` — this entry.
+- The `apiCoverageCase` harness automatically asserts: registry
+  presence (operationId/method/path/tag), schema reachability via
+  `yalla schema get`, manifest inclusion via `yalla manifest --json`,
+  an httptest-backed success exchange (`yalla api call ... --input
+  ... --json` with `yalla.output.v1`), and a 401→CodeAuth
+  representative failure leg with `yalla.error.v1` envelope and
+  non-zero exit code. No new harness changes were required.
+- Verification run (from repo root):
+  - `gofmt -w .` ✅ (no diff; `gofmt -l .` empty)
+  - `go mod tidy` ✅
+  - `go vet ./...` ✅
+  - `go test ./...` ✅ (all packages pass; internal/cli 1.582s)
+  - `go test -race ./...` ✅ (all packages pass; internal/cli 3.315s)
+  - Targeted: `go test -run 'TestAPICoverage_*\/API-0228'` ✅ — all
+    five harness gates (`RegistryInvariants`, `SchemaCommandWorks`,
+    `ManifestListsOperation`, `SuccessRoundTrip`,
+    `RepresentativeFailure`) pass for the new operationId.
+  - `goimports` / `golangci-lint` / `staticcheck` / `govulncheck` /
+    `goreleaser`: not installed locally — skipped per documented
+    pattern (note in Codebase Patterns section).
+- Body composition (per spec re-verified against
+  `internal/api/data/openapi.json > /notification.testLarkConnection
+  > post`):
+  - **Single REQUIRED non-nullable plain string slot** —
+    `webhookUrl`. The fixture supplies a deterministic-but-clearly-
+    fake real-shape https URL on the `example.invalid` reserved TLD
+    (RFC 6761) anchored under the per-tag `notification-cov-<slug>-
+    <storyID>-<field>` discipline. URL-anchor convention re-applied
+    from API-0224 `endpoint`, API-0225 `webhookUrl`, and API-0227
+    `serverUrl`.
+  - **Zero optional siblings** — every-optional-populated convention
+    is structurally inapplicable. This entry is the **narrowest
+    possible body shape** in the notification/* `test*` cohort: a
+    single inline webhook URL, no booleans, no nested maps, no
+    secret-bearing tokens. This minimum-surface invariant is new for
+    the cohort — distinct from API-0224 (single-required-string +
+    optional nested `map[string]string`), API-0225 (single-required-
+    string + optional plain boolean), API-0226 (six-required, zero-
+    optional), and API-0227 (three-required + one-optional).
+- Spec response set is 200/400/401/403/500 (no 404), so the
+  harness-default 401→CodeAuth failure leg applies — the
+  404→CodeNotFound override is structurally inapplicable for
+  connectivity-validation operations (no by-id target to miss; agent
+  supplies the transport descriptor inline). This matches the cohort
+  opener API-0224 and every subsequent peer (API-0225, API-0226,
+  API-0227). Spec digest `EmbeddedSpecSHA256` is unchanged (no spec
+  bump) so no companion edits to `ralph/prd.json > sourceApi.sha256`
+  or `expectedOperationCount` were required.
+- Story count after this entry: 462 total, 402 passing, 60 still
+  failing.
+- Remaining risks / follow-ups:
+  - 6 sibling `notification.test*Connection` operations remain
+    (API-0229 `testNtfyConnection`, API-0230 `testPushoverConnection`,
+    API-0231 `testResendConnection`, API-0232 `testSlackConnection`,
+    API-0233 `testTeamsConnection`, API-0234 `testTelegramConnection`)
+    and should reuse this slug + 401→CodeAuth pattern.
+  - The next pending story by priority is API-0229
+    `notification-testNtfyConnection` (priority=5). Subsequent peers
+    can grep this entry for the **minimum-surface no-optional-
+    siblings convention** if they resolve to similarly-flat single-
+    REQUIRED-string-only schemas. Where the spec adds optional
+    booleans (e.g. `decoration`-style tails), peers should mirror
+    API-0225/API-0227 instead.
+- **Learnings for future iterations:**
+  - **Minimum-surface body shape established for the notification/*
+    `test*` cohort.** Where prior peers covered single-required-
+    string + optional nested map (API-0224), single-required-string
+    + optional boolean (API-0225), six-required zero-optional
+    (API-0226), and three-required + one-optional (API-0227), this
+    entry establishes the cohort's **narrowest** wire shape: a lone
+    inline `webhookUrl`. Peers facing similarly-flat schemas
+    (subsequent Ntfy/Slack/Teams probes if those resolve to
+    single-required-only shapes) can mirror this entry's body
+    composition verbatim — only the slug stem, fixture-namespace
+    storyID segment, and webhook host literal need to change. For
+    peers with optional tails, mirror API-0225 or API-0227 instead.
+  - **`webhookUrl` field-name precedent re-used.** API-0225
+    `notification-testDiscordConnection` and this entry both pin a
+    single REQUIRED `webhookUrl` slot. The cross-entry diff against
+    API-0225 is therefore exactly one delta: API-0225 has an
+    optional `decoration` boolean tail; this entry does not. Future
+    cohort members re-using the `webhookUrl` field-name should
+    cross-reference both entries to confirm the optional-tail
+    presence/absence policy matches the spec.
+  - **Cohort-opener forward reference list now extends through
+    API-0228.** The API-0224 opener's comment names cohort peers by
+    ID up through API-0234, and each subsequent member back-
+    references the opener and prior members (this entry follows
+    that discipline by naming API-0224 through API-0227 in its
+    Slug-style and Shape-positioning blocks). The next cohort member
+    API-0229 should append `API-0228 (→ test-lark-connection)` to
+    its Slug-style back-reference and update its Shape-positioning
+    block to include the API-0228 minimum-surface positioning row.
+  - **PRD update mechanics — preserve indent.** The `ralph/prd.json`
+    file uses 2-space indent. When flipping `passes: true` via a
+    Python script, detect the existing indent (regex on first
+    quoted-key line) before writing back so the diff stays a clean
+    1-line `passes: false` → `passes: true` change rather than
+    re-indenting the entire 462-story document.
+---
