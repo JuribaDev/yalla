@@ -30406,3 +30406,47 @@ forward-reference lesson before assuming any field shape.
     must be cross-checked against every closed *and* still-reserved sso/*
     slug before being claimed.
 ---
+
+## 2026-05-09 - API-0412
+- Implemented coverage for API operation `sso-removeTrustedOrigin`
+  (POST /sso.removeTrustedOrigin).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended an `apiCoverageCase`
+    literal after API-0411 with the single-required-string-scalar POST
+    body fixture (`origin`), `SuccessResponse: {}`, default failure leg
+    (401 → CodeAuth) per the API-0410 reservation. Shape is structurally
+    identical to the arc opener API-0406 `sso-addTrustedOrigin`.
+  - `ralph/prd.json` — flipped API-0412 `passes` to true.
+  - `ralph/progress.txt` — this entry.
+- Verification:
+  - `gofmt -w .` → clean
+  - `go mod tidy` → no changes
+  - `go vet ./...` → clean
+  - `go test ./...` → all packages pass (internal/cli 1.592s)
+  - `go test -race ./...` → all packages pass (internal/cli 3.495s)
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` are not installed locally and were not run.
+- Remaining risks / follow-ups: none specific to API-0412. The sso/* arc
+  continues at API-0413 `sso-showSignInWithSSO`; per-operation
+  re-verification against
+  `internal/api/data/openapi.json > /sso.showSignInWithSSO > get` is
+  mandatory before the next contributor mirrors body shape (or
+  parameter set) from peers.
+- **Learnings for future iterations:**
+  - `sso-removeTrustedOrigin` is a perfect structural twin of the arc
+    opener API-0406 `sso-addTrustedOrigin` — same single REQUIRED
+    `origin` string scalar, same 200/400/401/403/500 response set, no
+    404. The destructive-imperative-action POST family across Dokploy
+    consistently uses single-required-string-scalar bodies under the
+    tRPC `<resource>.<verb>` route convention; expect the same shape
+    again at API-0415 `sso-updateTrustedOrigin` if its key field is
+    similarly degenerate.
+  - The 401 → CodeAuth harness default remains the right failure leg
+    for any sso/* mutator: 404 is reserved for the by-id GET at
+    API-0410 `sso-one`, the spec omits 404 entirely from this POST,
+    and 400 representatives are reserved for stories where payload
+    validation is the operation's *uniquely distinguishing* failure
+    mode (which a conventional imperative-action mutation is not).
+  - Editing `ralph/prd.json` via `json.dump` strips the trailing
+    newline; restore it explicitly so the diff stays minimal.
+---
