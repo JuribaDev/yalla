@@ -29662,3 +29662,108 @@ forward-reference lesson before assuming any field shape.
     against `/sshKey.generate > post` before assuming any field shape
     and consume slugs of the form `sshKey-cov-generate-0402-*`.
 ---
+
+## 2026-05-09 - API-0402 (sshKey-generate)
+- Implemented coverage case for `sshKey-generate` (POST /sshKey.generate),
+  the third entry on the sshKey/* coverage roster, consuming the forward
+  reference left by API-0401 `sshKey-create`.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended a single
+    `apiCoverageCase` literal between API-0401 (`sshKey-create`) and
+    API-0423 (`swarm-getNodeApps`), preserving PRD-ordered priority-5
+    placement. Continues the `sshKey-cov-*` per-tag fixture-isolation
+    namespace opened by API-0400; fixture token base
+    `sshKey-cov-generate-0402` declared in the comment only (no payload
+    field carries it because the body fixture is `{}`).
+  - `ralph/prd.json` — flipped `userStories[id=API-0402].passes` to
+    `true`.
+  - `ralph/progress.txt` — this entry (append-only).
+- Verification run (from repo root):
+  - `gofmt -w .` — clean (`gofmt -l .` reports no diff).
+  - `go mod tidy` — clean (no new deps).
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages PASS (`internal/cli` 1.333s).
+  - `go test -race ./...` — all packages PASS (`internal/cli` 3.504s).
+  - Targeted: `go test ./internal/cli -run
+    'TestAPICoverage_.*/API-0402' -v` — all 5 subtests
+    (RegistryInvariants, SchemaCommandWorks, ManifestListsOperation,
+    SuccessRoundTrip, RepresentativeFailure) PASS against operationId
+    `sshKey-generate`.
+  - Optional `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser`: not installed locally; skipped per the
+    document-rather-than-silently-skip rule.
+- Spec verification — re-read
+  `internal/api/data/openapi.json > /sshKey.generate > post`: method
+  POST, tag sshKey, **no parameters**, requestBody REQUIRED with
+  `application/json`, responses 200/400/401/403/500. The 200 response
+  is `{}` with `additionalProperties: false`. The body schema declares
+  one OPTIONAL property `type` (string enum `["rsa", "ed25519"]`) and
+  **no `required` array** — i.e. the body itself is required but every
+  field inside it is optional. Per the minimal-required-only fixture
+  rule, the OPTIONAL `type` slot is omitted and `{}` is supplied as
+  the minimal schema-conforming body.
+- Results: API-0402 acceptance criteria satisfied. Operation present
+  in the OpenAPI registry with POST + /sshKey.generate + tag sshKey;
+  raw API call works through the harness no-input path; schema get
+  works; manifest lists the operation; success and 401-default
+  representative failure both re-proven by the per-tag isolated
+  httptest fixture.
+- Family choice: body-required-but-no-required-fields POST mutation;
+  structurally novel within the sshKey/* arc. Distinct from the four-
+  required-string-scalar API-0401 `sshKey-create` precedent it follows
+  (API-0401 supplies four REQUIRED fields, API-0402 supplies zero), and
+  from every prior covered `*-create` mutation (all of which declare at
+  least one REQUIRED string scalar). The empty-object `{}` body still
+  activates the harness's `len(tc.SampleBody) > 0` byte-equivalence
+  gate (2 bytes) — JSON content-type and byte-for-byte body comparison
+  legs both run, with the comparison reducing to "server received `{}`"
+  which proves the CLI emits a valid empty JSON object rather than
+  silently skipping the body. Harness-default 401 → CodeAuth retained;
+  the 404 → CodeNotFound override slot is **still reserved for the
+  upcoming API-0403 `sshKey-one`** (the canonical by-id reader) per
+  API-0400's closing reservation.
+- Remaining risks / follow-ups:
+  - The OPTIONAL `type` enum (`rsa` / `ed25519`) is not exercised by
+    this minimal positive case; a future story can layer optional-enum
+    coverage if the redactor or schema-validation test family ever
+    requires it.
+  - The next case in the PRD-ordered priority-5 backlog is API-0403
+    `sshKey-one` (declared a **GET** with a single REQUIRED query
+    parameter per the spec preview — the canonical by-id reader for
+    the sshKey/* tag arc, claiming the 404→CodeNotFound override slot
+    reserved by API-0400). The next contributor must re-verify the
+    spec against `internal/api/data/openapi.json` > `/sshKey.one` >
+    `get` per the forward-reference lesson before assuming any query
+    parameter shape (in particular the parameter name — `sshKeyId`
+    is the conventional Dokploy by-id query parameter name but the
+    spec must be re-checked) and consume slugs of the form
+    `sshKey-cov-one-0403-*`.
+- **Learnings for future iterations:**
+  - Patterns: a `requestBody.required: true` schema with **no
+    `required` array** is a body-required-but-no-required-fields shape.
+    The minimal schema-conforming body is `{}`. Supplying `{}` (2
+    bytes) **does** trigger the harness's `len(tc.SampleBody) > 0`
+    gate and runs the JSON content-type assertion plus byte-for-byte
+    body comparison — the comparison just reduces to "server received
+    `{}`". This proves the CLI emits a valid empty JSON object rather
+    than silently skipping the body. Future body-required-but-empty
+    operations should follow this `SampleBody: json.RawMessage(\`{}\`)`
+    precedent.
+  - Patterns: the minimal-required-only fixture rule is general — it
+    applies whether the body has zero, one, or many OPTIONAL fields.
+    For `sshKey-generate`, the OPTIONAL `type` enum is omitted (not
+    set to `null`, not set to a value); explicit `null` is reserved
+    for REQUIRED-but-nullable slots (e.g. API-0317 `registry-create`'s
+    `imagePrefix`).
+  - Patterns: when a body fixture is `{}` (no string slots to embed
+    the `<tag>-cov-<slug>-<storyID>-<field>` token base), declare the
+    token base in the case's comment for `git grep` traceability even
+    though no payload field carries it. This matches the API-0400
+    `sshKey-all` namespace-opener pattern.
+  - Useful context: with API-0402 done, three pending sshKey/* peers
+    remain (API-0403 `sshKey-one`, API-0404 `sshKey-remove`, API-0405
+    `sshKey-update`) plus the sso/* (10 stories), stripe/* (~5
+    stories), and remaining trailing tags. The next contributor on
+    API-0403 must re-verify the spec against `/sshKey.one > get`
+    before assuming the by-id query parameter name.
+---

@@ -18281,7 +18281,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "sshKey",
         "operationId": "sshKey-generate",

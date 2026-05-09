@@ -44299,6 +44299,130 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0402",
+		OperationID: "sshKey-generate",
+		Method:      http.MethodPost,
+		Path:        "/sshKey.generate",
+		Tag:         "sshKey",
+		// Third entry on the sshKey/* coverage roster, immediately
+		// following API-0401 `sshKey-create` and consuming the forward
+		// reference embedded in that entry's closing comment ("the
+		// next case in the PRD-ordered priority-5 backlog is API-0402
+		// `sshKey-generate` (declared a **POST** per the spec
+		// preview, continuing the body-bearing sshKey/* mutator
+		// chain)"). Continues inside the `sshKey-cov-*` per-tag
+		// fixture-isolation namespace opened by API-0400 and **must
+		// not** back-reference any closed prior-tag namespace
+		// (`admin-cov-*`, `ai-cov-*`, `app-cov-*`, `backup-cov-*`,
+		// `bb-cov-*`, `cert-cov-*`, `clu-cov-*`, `compose-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `docker-cov-*`,
+		// `domain-cov-*`, `environment-cov-*`, `gitea-cov-*`,
+		// `github-cov-*`, `gitlab-cov-*`, `mariadb-cov-*`,
+		// `mongo-cov-*`, `mounts-cov-*`, `mysql-cov-*`, `org-cov-*`,
+		// `patch-cov-*`, `port-cov-*`, `postgres-cov-*`,
+		// `preview-cov-*`, `proj-cov-*`, `redirects-cov-*`,
+		// `redis-cov-*`, `registry-cov-*`, `rollback-cov-*`,
+		// `security-cov-*`, `set-cov-*`, `srv-cov-*`, `swarm-cov-*`,
+		// `usr-cov-*`) per the per-tag isolation rule originally
+		// established at API-0246 `organization-active`.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json` > `/sshKey.generate` >
+		// `post`: method POST, tag sshKey, **no parameters**,
+		// requestBody REQUIRED with `application/json`, responses
+		// 200/400/401/403/500. The 200 response is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort. **No 404** is
+		// declared on this operation, so the 404→CodeNotFound
+		// override slot remains structurally inapplicable here and
+		// is **still reserved for the upcoming API-0403
+		// `sshKey-one`** (the canonical by-id reader) per API-0400's
+		// closing reservation and API-0401's relay.
+		//
+		// **Request body schema (NO REQUIRED top-level fields):**
+		//   - OPTIONAL `type` (string, enum `["rsa", "ed25519"]`).
+		//     The body itself is `requestBody.required: true`, but
+		//     the schema declares **no** `required` array, so every
+		//     property is OPTIONAL. Per the minimal-required-only
+		//     fixture rule (load-bearing for credential-redaction
+		//     safety and re-anchored at API-0131 `gitea-create` /
+		//     API-0161 `mariadb-create` / API-0175 `mongo-create` /
+		//     API-0303 `redis-create` / API-0317 `registry-create` /
+		//     API-0401 `sshKey-create`), this OPTIONAL slot is
+		//     **intentionally omitted** — `{}` is the minimal
+		//     schema-conforming body for a body-required-but-no-
+		//     required-fields request shape, and confirms the
+		//     harness's `len(tc.SampleBody) > 0` byte-equivalence
+		//     gate triggers on a non-empty (2-byte) JSON literal
+		//     just as it does on multi-field bodies. A future story
+		//     can layer optional-enum coverage by toggling the
+		//     `type` slot through `rsa`/`ed25519` if the redactor or
+		//     schema-validation test family ever requires it.
+		//
+		// **Shape positioning — body-required-but-no-required-fields
+		// POST mutation; structurally novel within the sshKey/* arc.**
+		// Distinct from the four-required-string-scalar API-0401
+		// `sshKey-create` precedent it immediately follows (API-0401
+		// supplies four REQUIRED fields, API-0402 supplies zero),
+		// and from every prior covered `*-create` mutation cited
+		// in API-0401's positioning note (all of which declare at
+		// least one REQUIRED string scalar). The empty-object `{}`
+		// body still activates the harness's `len(tc.SampleBody) >
+		// 0` gate (2 bytes), so the JSON content-type assertion and
+		// the byte-for-byte body comparison legs both run; the
+		// comparison reduces to "server received `{}`" which proves
+		// the CLI emits a valid empty JSON object rather than
+		// silently skipping the body.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so
+		// the 404→CodeNotFound override is structurally
+		// inapplicable. 400→CodeInvalidInput is *technically*
+		// available — a payload sending a non-enum `type` value
+		// would fail server-side validation — but the harness
+		// reserves 400 representatives for stories where payload
+		// validation is the operation's *uniquely distinguishing*
+		// failure mode. A `*-generate` mutation collapses to
+		// type-checking, so the harness-default 401→CodeAuth
+		// failure leg remains the most representative single
+		// failure mode every authenticated Dokploy operation must
+		// re-prove, consistent with API-0400 `sshKey-all` and
+		// API-0401 `sshKey-create`.
+		//
+		// **Fixture token base** `sshKey-cov-generate-0402` follows
+		// the established `<tag>-cov-<slug>-<storyID>` deterministic-
+		// but-clearly-fake naming convention. Because the body
+		// fixture is `{}` (no string slots to embed the token in),
+		// the token base is **declared in this comment only** for
+		// `git grep` traceability; no payload field carries it.
+		// This matches the API-0400 `sshKey-all` namespace-opener
+		// pattern where the token base was likewise not embedded
+		// because the operation had no payload to embed it in.
+		//
+		// The next case in the PRD-ordered priority-5 backlog is
+		// API-0403 `sshKey-one` (declared a **GET** with a single
+		// REQUIRED query parameter per the spec preview — the
+		// canonical by-id reader for the sshKey/* tag arc, claiming
+		// the 404→CodeNotFound override slot reserved by API-0400).
+		// The next contributor must re-verify the spec against
+		// `internal/api/data/openapi.json` > `/sshKey.one` > `get`
+		// per the forward-reference lesson before assuming any
+		// query parameter shape (in particular the parameter name
+		// — `sshKeyId` is the conventional Dokploy by-id query
+		// parameter name but the spec must be re-checked), and
+		// will continue inside the `sshKey-cov-*` per-tag fixture-
+		// isolation namespace opened by API-0400 (consume slugs of
+		// the form `sshKey-cov-one-0403-*`).
+		SampleBody: json.RawMessage(`{}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0423",
 		OperationID: "swarm-getNodeApps",
 		Method:      http.MethodGet,
