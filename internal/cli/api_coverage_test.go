@@ -44423,6 +44423,128 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0403",
+		OperationID: "sshKey-one",
+		Method:      http.MethodGet,
+		Path:        "/sshKey.one",
+		Tag:         "sshKey",
+		// Fourth entry on the sshKey/* coverage roster, immediately
+		// following API-0402 `sshKey-generate` and consuming the
+		// forward reference embedded in that entry's closing comment
+		// ("The next case in the PRD-ordered priority-5 backlog is
+		// API-0403 `sshKey-one` (declared a **GET** with a single
+		// REQUIRED query parameter per the spec preview — the
+		// canonical by-id reader for the sshKey/* tag arc, claiming
+		// the 404→CodeNotFound override slot reserved by API-0400)").
+		// Continues inside the `sshKey-cov-*` per-tag fixture-
+		// isolation namespace opened by API-0400 `sshKey-all` and
+		// **must not** back-reference any closed prior-tag namespace
+		// (`admin-cov-*`, `ai-cov-*`, `app-cov-*`, `backup-cov-*`,
+		// `bb-cov-*`, `cert-cov-*`, `clu-cov-*`, `compose-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `docker-cov-*`,
+		// `domain-cov-*`, `environment-cov-*`, `gitea-cov-*`,
+		// `github-cov-*`, `gitlab-cov-*`, `mariadb-cov-*`,
+		// `mongo-cov-*`, `mounts-cov-*`, `mysql-cov-*`, `org-cov-*`,
+		// `patch-cov-*`, `port-cov-*`, `postgres-cov-*`,
+		// `preview-cov-*`, `proj-cov-*`, `redirects-cov-*`,
+		// `redis-cov-*`, `registry-cov-*`, `rollback-cov-*`,
+		// `security-cov-*`, `set-cov-*`, `srv-cov-*`, `swarm-cov-*`,
+		// `usr-cov-*`) per the per-tag isolation rule originally
+		// established at API-0246 `organization-active`.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json` > `/sshKey.one` > `get`:
+		// method GET, tag sshKey, **exactly one** parameter
+		// (`sshKeyId`, `in: query`, `required: true`,
+		// `schema.type: string`), no requestBody, responses
+		// 200/400/401/403/404/500. The 200 response is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort. The 404 leg is
+		// declared on this operation, so the 404→CodeNotFound
+		// override slot reserved by API-0400 `sshKey-all` for this
+		// canonical by-id reader is structurally available **and
+		// claimed here**.
+		//
+		// **Family choice — 404→CodeNotFound override claimed.**
+		// The harness already supports the override natively
+		// (`runAPICoverageFailure` reads `tc.FailureStatus` /
+		// `tc.FailureCode` and falls back to 401 / CodeAuth when
+		// either is zero) so no harness change is needed; we simply
+		// opt in via the two struct fields. This is the **ninth**
+		// roster-level act on the by-id-reader 404 reservation,
+		// after API-0136 `gitea-one`, API-0164 `mariadb-one`,
+		// API-0178 `mongo-one`, API-0198 `mysql-one`, API-0276
+		// `postgres-one`, API-0306 `redis-one`, API-0342
+		// `server-one`, and API-0318 `registry-one`. 400 →
+		// CodeInvalidInput stays reserved for stories where payload
+		// validation is the operation's distinguishing failure
+		// mode; this entry's single-string-param query surface is
+		// too generic to claim that distinguishing shape, exactly
+		// as on the eight prior `*-one` peers.
+		//
+		// **Fixture conventions:**
+		//   * Per the API-0010 / API-0014 / API-0249 / API-0292 /
+		//     API-0297 / API-0052 / API-0053 every-optional-populated
+		//     rule, this entry has **zero optional parameters** so
+		//     the rule is trivially satisfied — the fixture supplies
+		//     exactly the single REQUIRED scalar `sshKeyId` and
+		//     nothing else. The harness's success-leg
+		//     `r.URL.Query()` round-trip observes this end-to-end
+		//     through the CLI → API client → httptest server path.
+		//   * Per-case fixture token base `sshKey-cov-one-0403`
+		//     follows the `<tag>-cov-<slug>-<storyID>` convention
+		//     shared across every prior sshKey/* peer
+		//     (API-0400..API-0402) and the cross-tag `*-cov-one-*`
+		//     by-id-reader precedents (API-0060 `certificates-one`,
+		//     API-0136 `gitea-one`, API-0164 `mariadb-one`,
+		//     API-0178 `mongo-one`, API-0198 `mysql-one`, API-0262
+		//     `patch-one`, API-0276 `postgres-one`, API-0306
+		//     `redis-one`, API-0318 `registry-one`, and API-0342
+		//     `server-one`). The full-tag-name slug prefix `sshKey-`
+		//     stays unambiguously lexically-adjacent to its peers
+		//     even though the canonical Dokploy tag uses the camel-
+		//     cased form `sshKey` rather than the lower-case form
+		//     used by most other tags.
+		//   * **No optional parameters.** Single REQUIRED scalar
+		//     `sshKeyId` (string) — fixture value
+		//     `sshKey-cov-one-0403-sshKeyId-fixture` embeds the
+		//     token base for `git grep` traceability and surfaces
+		//     in the success-leg `r.URL.Query().Get("sshKeyId")`
+		//     round-trip the harness performs.
+		//
+		// The successor priority-5 peer in the sshKey/* roster is
+		// API-0404 `sshKey-remove` (declared a **POST** per the
+		// spec preview, returning to the body-bearing sshKey/*
+		// mutator chain after this brief by-id-reader detour). The
+		// next contributor must re-verify the spec against
+		// `internal/api/data/openapi.json` > `/sshKey.remove` >
+		// `post` per the forward-reference lesson before assuming
+		// any field shape, and will continue inside the
+		// `sshKey-cov-*` per-tag fixture-isolation namespace opened
+		// by API-0400 (consume slugs of the form
+		// `sshKey-cov-remove-0404-*`).
+		SampleQuery: map[string][]string{
+			"sshKeyId": {"sshKey-cov-one-0403-sshKeyId-fixture"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+		// Failure-leg override: this is the canonical home for the
+		// 404 → CodeNotFound representative-failure assertion
+		// reserved at API-0400 for `sshKey-one`, and follows the
+		// precedent set by API-0136 `gitea-one`, API-0164
+		// `mariadb-one`, API-0178 `mongo-one`, API-0198 `mysql-one`,
+		// API-0276 `postgres-one`, API-0306 `redis-one`, API-0318
+		// `registry-one`, and API-0342 `server-one`. See the
+		// design-rationale block above for the full justification.
+		FailureStatus: http.StatusNotFound,
+		FailureCode:   yerr.CodeNotFound,
+	},
+	{
 		StoryID:     "API-0423",
 		OperationID: "swarm-getNodeApps",
 		Method:      http.MethodGet,

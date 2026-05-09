@@ -29767,3 +29767,83 @@ forward-reference lesson before assuming any field shape.
     API-0403 must re-verify the spec against `/sshKey.one > get`
     before assuming the by-id query parameter name.
 ---
+## 2026-05-09 - API-0403 sshKey-one
+- Implemented: covered Dokploy API operation `sshKey-one` (GET
+  `/sshKey.one`) end-to-end through the existing data-driven harness in
+  `internal/cli/api_coverage_test.go`. Single case literal inserted in
+  PRD-priority order between API-0402 `sshKey-generate` and API-0423
+  `swarm-getNodeApps`. Method GET, tag sshKey, exactly one parameter
+  (`sshKeyId`, `in: query`, `required: true`, `schema.type: string`),
+  no requestBody, responses 200/400/401/403/404/500.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (+~120 lines: API-0403 case
+    literal — `SampleQuery: {"sshKeyId": ["sshKey-cov-one-0403-sshKeyId-fixture"]}`,
+    `SuccessResponse: "{}"`, `FailureStatus: http.StatusNotFound`,
+    `FailureCode: yerr.CodeNotFound`).
+  - `ralph/prd.json` (`API-0403.passes: false → true`).
+  - `ralph/progress.txt` (this entry).
+- Verification run:
+  - `gofmt -w .` clean.
+  - `goimports`: not installed (documented; previously logged as a
+    repo-wide gap).
+  - `go mod tidy` clean.
+  - `go vet ./...` clean.
+  - `go test ./...` — all packages PASS.
+  - `go test -race ./...` — all packages PASS.
+  - Targeted `go test ./internal/cli/ -run 'TestAPICoverage_(RegistryInvariants|SchemaCommandWorks|ManifestListsOperation|SuccessRoundTrip|RepresentativeFailure)' -v`:
+    all five `API-0403/sshKey-one` subtests PASS.
+- Results: API-0403 acceptance criteria satisfied. Operation is present
+  in the OpenAPI registry with method GET, path `/sshKey.one`, tag
+  `sshKey`; raw API call works through the harness no-input path
+  (`yalla api call sshKey-one --input request.json --json`); schema get
+  works; manifest lists the operation; success and 404→CodeNotFound
+  representative failure both proven by the harness.
+- Family choice: 404→CodeNotFound override **claimed** as forecast at
+  API-0400 `sshKey-all`'s closing reservation and API-0402
+  `sshKey-generate`'s relay. This is the ninth roster-level act on the
+  by-id-reader 404 reservation, joining API-0136 `gitea-one`, API-0164
+  `mariadb-one`, API-0178 `mongo-one`, API-0198 `mysql-one`, API-0276
+  `postgres-one`, API-0306 `redis-one`, API-0342 `server-one`, and
+  API-0318 `registry-one`.
+- Fixture token base `sshKey-cov-one-0403` consumes the `sshKey-cov-*`
+  per-tag namespace opened at API-0400 `sshKey-all`. The token base
+  embeds in the single REQUIRED query parameter via the value
+  `sshKey-cov-one-0403-sshKeyId-fixture`, surfaced through the
+  harness's `r.URL.Query().Get("sshKeyId")` round-trip.
+- Remaining risks or follow-ups: none for this story. The next
+  pending sshKey/* peer in PRD priority-5 order is API-0404
+  `sshKey-remove` (POST per the spec preview, returning to the
+  body-bearing mutator chain after this brief by-id-reader detour).
+  The `sshKey-cov-*` namespace remains open; the next entry will use
+  slugs of the form `sshKey-cov-remove-0404-*`.
+- **Learnings for future iterations:**
+  - The 404→CodeNotFound override slot is conventionally reserved at
+    the tag-arc opener (`*-all`) and claimed at the canonical by-id
+    reader (`*-one`). When implementing a `*-one` story for any tag,
+    check the corresponding `*-all` opener's closing comment for the
+    explicit reservation, then re-verify that the spec's response set
+    actually carries a 404 leg before opting in.
+  - The harness gate for query-only GETs is `tc.SampleQuery` (a
+    `map[string][]string`); no `SampleBody` is needed and no
+    `SamplePathParams` is needed when the parameter is `in: query`.
+    The fixture value embeds the `<tag>-cov-<slug>-<storyID>-<field>`
+    token base directly in the string slot for `git grep`
+    traceability.
+  - Per-tag fixture-isolation namespaces are opened at the tag-arc
+    opener and remain open until every priority-N peer in the tag is
+    complete. Future contributors must keep slugs of the form
+    `<tag>-cov-<slug>-<storyID>` and **must not** back-reference any
+    closed prior-tag namespace.
+  - When the previous entry's closing comment forecasts a parameter
+    name (e.g. "the parameter name — `sshKeyId` is the conventional
+    Dokploy by-id query parameter name but the spec must be re-
+    checked"), the implementing contributor must re-verify against
+    `internal/api/data/openapi.json` before assuming. For
+    `/sshKey.one`, the forecast `sshKeyId` was confirmed.
+  - `expectedOperationCount` (in `internal/api/registry_test.go` and
+    `internal/cli/api_cmd_test.go`) does **not** change for
+    coverage-story stories — those constants only move when the
+    embedded OpenAPI document itself changes. Coverage stories add
+    `apiCoverageCase` literals; they do not add operations to the
+    registry.
+---
