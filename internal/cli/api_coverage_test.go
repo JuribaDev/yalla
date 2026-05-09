@@ -18138,6 +18138,137 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0210",
+		OperationID: "notification-createDiscord",
+		Method:      http.MethodPost,
+		Path:        "/notification.createDiscord",
+		Tag:         "notification",
+		// Third entry in the notification/* coverage roster, continuing
+		// inside the `notification-cov-*` per-tag fixture-isolation
+		// namespace opened by API-0208 `notification-all` and extended
+		// by API-0209 `notification-createCustom`. Per the per-tag
+		// isolation rule established at API-0188
+		// `mounts-allNamedByApplicationId`, API-0246
+		// `organization-active`, API-0268 `port-create`, API-0290
+		// `project-all`, API-0298 `redirects-create`, API-0302
+		// `redis-changeStatus`, API-0323 `rollback-delete`, and API-0325
+		// `schedule-create`, this entry stays inside the namespace opened
+		// by API-0208 and **must not** back-reference any closed prior-
+		// tag namespace (`admin-cov-*`, `ai-cov-*`, `app-cov-*`,
+		// `backup-cov-*`, `bb-cov-*`, `cert-cov-*`, `clu-cov-*`,
+		// `compose-cov-*`, `deployment-cov-*`, `dest-cov-*`,
+		// `docker-cov-*`, `domain-cov-*`, `environment-cov-*`,
+		// `gitea-cov-*`, `github-cov-*`, `gitlab-cov-*`, `mariadb-cov-*`,
+		// `mongo-cov-*`, `mounts-cov-*`, `mysql-cov-*`, `org-cov-*`,
+		// `port-cov-*`, `postgres-cov-*`, `preview-cov-*`, `proj-cov-*`,
+		// `redirects-cov-*`, `redis-cov-*`, `rollback-cov-*`,
+		// `schedule-cov-*`, `security-cov-*`, `set-cov-*`, `srv-cov-*`,
+		// `swarm-cov-*`, `usr-cov-*`).
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json > /notification.createDiscord
+		// > post`: a **POST** with **no parameters** and a **REQUIRED
+		// request body** whose schema declares **ten REQUIRED
+		// non-nullable fields** — two plain strings (`name`,
+		// `webhookUrl`) and eight plain booleans (`appBuildError`,
+		// `databaseBackup`, `volumeBackup`, `dokployRestart`,
+		// `appDeploy`, `dockerCleanup`, `serverThreshold`,
+		// `decoration`) — with **zero optional siblings**. Responses
+		// 200/400/401/403/500 — the spec does **not** declare 404 on
+		// this operation, matching the cross-tag create-mutation
+		// precedent on API-0189 `mounts-create`, API-0209
+		// `notification-createCustom`, API-0268 `port-create`,
+		// API-0292 `project-create`, API-0298 `redirects-create`,
+		// API-0325 `schedule-create`, and API-0331 `security-create`
+		// (Dokploy create POSTs do not surface missing-target legs
+		// because there is no target-by-id to miss). The 200 schema is
+		// `{}` with `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort.
+		//
+		// **Slug style — kebab-case inherited from API-0209.** Per the
+		// per-tag-slug-style rule fixed by the kickoff multi-camel
+		// entry API-0209 `notification-createCustom`
+		// (→ `create-custom`), this peer takes `create-discord` and
+		// the remaining notification/* siblings (API-0211
+		// `create-email`, API-0212 `create-gotify`, API-0213
+		// `create-lark`, …) inherit kebab-case as well.
+		//
+		// **Body composition:**
+		//   - **REQUIRED — closed all-required shape, no optional
+		//     tail.** Functionally distinct from API-0209
+		//     `notification-createCustom`, which split its body into
+		//     two-required-strings + eight optional siblings: Discord
+		//     promotes every property to REQUIRED, so the fixture
+		//     populates all ten slots and the wire-level invariant
+		//     check exercises the closed-shape path with no optional
+		//     keys to drop.
+		//     - `name` (plain string), `webhookUrl` (plain string).
+		//       The fixture supplies deterministic-but-clearly-fake
+		//       values keyed to the
+		//       `notification-cov-create-discord-0210-<field>`
+		//       namespace. `webhookUrl` carries a real-shape https
+		//       URL on the `example.invalid` reserved TLD (RFC 6761)
+		//       so a future URL-shape validator wired into the
+		//       harness still accepts it without risking a real DNS
+		//       lookup or wire egress to a third-party host. This
+		//       extends the `endpoint`/`webhookUrl` URL-fixture
+		//       convention seeded by API-0209.
+		//     - `appBuildError`, `databaseBackup`, `volumeBackup`,
+		//       `dokployRestart`, `appDeploy`, `dockerCleanup`,
+		//       `serverThreshold`, `decoration` (eight plain
+		//       booleans) — `true` branch on every slot to mirror an
+		//       "alert me on every category, with embed decoration"
+		//       agent-typical Discord configuration. The
+		//       `decoration` flag is the only field unique to
+		//       Discord among the notification/* siblings; future
+		//       peers (`createEmail`, `createGotify`, …) will swap
+		//       it for transport-specific keys but keep the seven
+		//       shared category booleans.
+		//
+		// **Shape positioning — closed all-required POST
+		// create-mutation, body REQUIRED, ten-field flat scalar
+		// payload, zero optional tail.** Functionally distinct from
+		// the partially-required API-0209 `notification-createCustom`
+		// (two-required-string + eight-optional-boolean + nested
+		// `map[string]string`), the closed-shape three-string
+		// API-0331 `security-create` (zero optional fields, but only
+		// three slots), the deep optional tail of API-0325
+		// `schedule-create` (anyOf-string-null + enums + boolean),
+		// and the create-with-anyOf API-0298 `redirects-create`.
+		// `notification-createDiscord` is the first cross-tag
+		// fixture to land a closed all-required ten-slot scalar
+		// body; future peers in the notification/* roster that also
+		// declare every property REQUIRED (`createGotify`,
+		// `createNtfy`, etc., per the spec) should grep this entry
+		// first for the all-required-no-optional-tail convention.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set, so the
+		// 404→CodeNotFound override is structurally inapplicable.
+		// `*-create` here is a body-bearing imperative-action POST
+		// and stays on the 401→CodeAuth invariant locked by every
+		// imperative-action peer already covered.
+		SampleBody: json.RawMessage(`{
+			"name": "notification-cov-create-discord-0210-name",
+			"webhookUrl": "https://example.invalid/notification-cov-create-discord-0210-webhook",
+			"appBuildError": true,
+			"databaseBackup": true,
+			"volumeBackup": true,
+			"dokployRestart": true,
+			"appDeploy": true,
+			"dockerCleanup": true,
+			"serverThreshold": true,
+			"decoration": true
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,

@@ -24715,3 +24715,67 @@ forward-reference lesson before assuming any field shape.
     override is only used when the spec actually declares a 404
     response.
 ---
+
+## 2026-05-09 - API-0210
+- **Implemented**: Coverage for `notification-createDiscord` (POST
+  /notification.createDiscord) — third entry in the notification/* roster,
+  staying inside the `notification-cov-*` per-tag fixture-isolation namespace
+  opened by API-0208 `notification-all` and extended by API-0209
+  `notification-createCustom`. Adds the deterministic request/response fixture
+  to the table-driven harness; `yalla api call notification-createDiscord
+  --input request.json --json` and `yalla schema get notification-createDiscord
+  --json` now have unit-level contract coverage for both the success and
+  401→CodeAuth representative-failure legs.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended a new `apiCoverageCase`
+    entry between API-0209 and API-0246 with a 10-required-field flat scalar
+    body (two strings + eight booleans, **zero optional siblings** —
+    structurally distinct from API-0209 which had two-required-strings + an
+    eight-optional-boolean tail + nested `map[string]string`). Slug
+    `create-discord` inherits the kebab-case style fixed by API-0209.
+    `webhookUrl` reuses the `example.invalid` reserved-TLD URL convention
+    seeded by API-0209's `endpoint`. Comment block forward-references the
+    remaining notification/* peers (API-0211 `create-email`, API-0212
+    `create-gotify`, API-0213 `create-lark`, …) as kebab-case inheritors.
+  - `ralph/prd.json` — flipped `API-0210.passes` to `true`.
+  - `ralph/progress.txt` — this entry.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — no changes.
+  - `go vet ./...` — clean.
+  - `go test ./...` — `ok` across every package (`internal/cli` 1.385s).
+  - `go test -race ./...` — `ok` across every package (`internal/cli` 3.239s).
+- **Tools NOT available locally**: `goimports`, `golangci-lint`,
+  `staticcheck`, `govulncheck`, `goreleaser` (unchanged from prior
+  iterations).
+- **Remaining risks / follow-ups**:
+  - The next priority-5 case is API-0211 `notification-createEmail` (POST).
+    The spec declares its own per-transport schema (SMTP host, port,
+    username, password, fromAddress, toAddresses, etc.); contributors
+    must re-verify the body shape against
+    `internal/api/data/openapi.json > /notification.createEmail > post`
+    independently per the slug-prefix-is-not-shape lesson. The slug
+    `create-email` is already locked kebab-case by the per-tag rule fixed
+    at API-0209.
+  - 88 PRD stories remain unpassed.
+- **Learnings for future iterations:**
+  - Notification create-* operations diverge sharply per transport:
+    `createCustom` is half-required + half-optional with a nested
+    `map[string]string`; `createDiscord` is closed all-required (every
+    property in `required`) with zero optional fields. Do not assume a
+    notification create-* peer mirrors the previous one — always re-read
+    the spec.
+  - For closed all-required POSTs, the wire fixture must populate every
+    declared property; the harness will not synthesise defaults for
+    missing required keys and the success-leg invariant check exercises
+    the body verbatim.
+  - The kebab-case slug rule for the notification/* tag is now confirmed
+    by two consecutive entries (API-0209 `create-custom`, API-0210
+    `create-discord`); future peers MUST keep this style.
+  - The `example.invalid` reserved-TLD URL convention is now a confirmed
+    fixture pattern across the notification/* roster — anywhere the spec
+    declares a URL-shaped string field (`endpoint`, `webhookUrl`,
+    `serverUrl`, etc.), use `https://example.invalid/<namespace>-<field>`
+    so a future URL-shape validator accepts it without risking real DNS
+    lookups or wire egress.
+---

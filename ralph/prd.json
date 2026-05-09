@@ -9913,7 +9913,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-createDiscord",
