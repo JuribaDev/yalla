@@ -25877,3 +25877,106 @@ forward-reference lesson before assuming any field shape.
     404→CodeNotFound override stays structurally inapplicable when the
     spec declares no missing-target leg.
 ---
+
+## 2026-05-09 - API-0219 - Cover notification-createTelegram (POST /notification.createTelegram)
+- **Implemented**: Coverage entry for `notification-createTelegram` (POST
+  /notification.createTelegram) in the shared coverage harness. The single
+  fixture entry drives success-leg, schema, manifest, and failure-leg
+  assertions through the shared `coveredAPIOperations` table.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — added the API-0219 entry
+    immediately after API-0218 `notification-createTeams` and before the
+    API-0246 `organization-active` entry. The fixture covers an
+    eleven-slot closed-all-required POST body: four plain strings
+    (`name`, `botToken`, `chatId`, `messageThreadId`) and seven plain
+    booleans (`appBuildError`, `databaseBackup`, `volumeBackup`,
+    `dokployRestart`, `appDeploy`, `dockerCleanup`, `serverThreshold`).
+    Tokens stay inside the per-tag
+    `notification-cov-create-telegram-0219-*` namespace. The `botToken`
+    slot uses the unallocatable all-zero BotFather bot-id leg
+    (`0000000000:notification-cov-create-telegram-0219-bot-token`) so a
+    misconfigured fixture cannot egress to a real Telegram bot. `chatId`
+    and `messageThreadId` carry the deterministic sentinel value `"0"`
+    (typed as string per the spec to keep negative supergroup IDs safe
+    across JSON int boundaries).
+  - `ralph/prd.json` — flipped `passes` to `true` for API-0219.
+- **Verification run** (from repo root):
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — no changes.
+  - `go vet ./...` — clean.
+  - `go build ./...` — clean.
+  - `go test ./... -count=1` — all packages pass; `internal/cli` 1.777s.
+  - `go test -race ./... -count=1` — all packages pass; `internal/cli`
+    3.515s.
+  - Focused `TestAPICoverage_RegistryInvariants/API-0219/notification-createTelegram`
+    — PASS (0.00s).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` not installed locally; left to CI per prior
+    iterations (documented missing rather than silently skipped).
+- **Results**: API-0219 now has `passes: true` in `ralph/prd.json`. The
+  new coverage row drives all five harness assertions (registry presence,
+  manifest coverage, schema retrievability, success leg, failure leg).
+  Story count: 462 total, 390 passing, 72 still failing.
+- **Remaining risks / follow-ups**:
+  - The `botToken` slot embeds a per-bot Telegram secret in the request
+    body. Like every prior body-borne secret in the notification/* roster
+    (Discord/Lark/Slack/Teams `webhookUrl`, Email `password`, Ntfy
+    `accessToken`, Pushover `userKey`+`apiToken`, Resend `apiKey`),
+    this is a request-body field forwarded verbatim by yalla; the
+    redactor in `internal/api` only operates on the rendered `--json`
+    envelope (response and tracing), not on the request body. The fixture
+    uses an unallocatable all-zero bot-id prefix so no real bot is
+    committed; agent consumers cribbing this fixture as a `--input`
+    template must substitute their own bot token, never inline it in
+    source.
+  - The next priority-5 notification/* peer is API-0220
+    `notification-getEmailProviders` — a parameter-free GET, not a
+    `*-create`. API-0219 closes the notification/* `create-*` cohort;
+    API-0220 opens a new verb cohort and should grep the cross-tag
+    parameter-free GET precedent (API-0006 `ai-getAll`, API-0098
+    `deployment-allCentralized`, API-0246 `organization-active`)
+    rather than the `create-*` chain.
+- **Learnings for future iterations**:
+  - `notification-createTelegram` is the **first eleven-slot
+    four-string-seven-boolean pure-scalar closed-shape notification/*
+    fixture**. No prior peer ships four REQUIRED string slots in a
+    single create body, and no prior peer reaches eleven slots without
+    either a number, an array, or a body-borne nested object. Previous
+    eleven-slot peers — API-0212 `createGotify` (one number), API-0214
+    `createNtfy` (one number + body-borne secret), API-0216
+    `createResend` (one array-of-string) — all reached eleven via
+    non-scalar slots. API-0219 reaches eleven purely by adding more
+    string slots. Future `*-create` peers needing four or more
+    REQUIRED string slots in a flat closed shape should grep this entry
+    as the canonical reference.
+  - Dokploy types Telegram `chatId` and `messageThreadId` as plain
+    `string`, not as integers — even though Telegram itself returns
+    these as 64-bit ints in its own API. The schema choice is
+    deliberate: negative supergroup chat IDs (`-100xxxxxxxxxx`) and
+    forum-topic IDs would otherwise risk JSON int-boundary precision
+    loss. Always emit string values when populating these slots, and
+    document the JSON-int-boundary rationale for any future peer that
+    maps an upstream integer-ish ID into a string slot.
+  - Telegram bot tokens follow the canonical `<bot_id>:<35-char-secret>`
+    shape. The unallocatable all-zero bot-id leg (`0000000000:...`) is
+    a safe sentinel — BotFather will never issue this prefix, so a
+    leaked fixture cannot route to a real bot. Future peers shipping
+    transport tokens with structured prefixes (e.g. AWS keys, GitHub
+    PATs, Stripe keys) should hunt for analogous unallocatable-prefix
+    sentinels rather than inventing arbitrary garbage strings — the
+    structural shape preserves wire-format realism for downstream
+    parsers while keeping the secret inert.
+  - Per-spec rule reaffirmed once more: only the transport-agnostic
+    core six booleans (`appBuildError`, `databaseBackup`,
+    `volumeBackup`, `dokployRestart`, `appDeploy`, `dockerCleanup`)
+    remain stable across notification/* siblings. Telegram keeps
+    `serverThreshold` (joining Slack/Resend/Lark/Gotify/Pushover/Teams);
+    Discord swaps it for `decoration`; Ntfy drops it entirely.
+  - API-0219 closes the notification/* `create-*` cohort — every
+    subsequent notification/* peer (API-0220 `getEmailProviders`,
+    API-0221 `one`, API-0222 `receiveNotification`, API-0223
+    `remove`, and the `test*` / `update*` family) belongs to a
+    different verb cohort. The kebab-case slug-style rule fixed by the
+    kickoff API-0209 `create-custom` is no longer in active extension
+    inside this tag; new verb cohorts open their own slug anchors.
+---

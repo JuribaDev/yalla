@@ -19694,6 +19694,201 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0219",
+		OperationID: "notification-createTelegram",
+		Method:      http.MethodPost,
+		Path:        "/notification.createTelegram",
+		Tag:         "notification",
+		// Twelfth entry in the notification/* coverage roster, continuing
+		// inside the `notification-cov-*` per-tag fixture-isolation
+		// namespace opened by API-0208 `notification-all` and extended by
+		// API-0209 `notification-createCustom`, API-0210
+		// `notification-createDiscord`, API-0211 `notification-createEmail`,
+		// API-0212 `notification-createGotify`, API-0213
+		// `notification-createLark`, API-0214 `notification-createNtfy`,
+		// API-0215 `notification-createPushover`, API-0216
+		// `notification-createResend`, API-0217 `notification-createSlack`,
+		// and API-0218 `notification-createTeams`. Per the per-tag
+		// isolation rule reaffirmed across each prior peer, this entry
+		// stays inside the namespace opened by API-0208 and **must not**
+		// back-reference any closed prior-tag namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-reference
+		// lesson** against
+		// `internal/api/data/openapi.json > /notification.createTelegram >
+		// post`: a **POST** with **no parameters** and a **REQUIRED
+		// request body** whose schema declares **eleven REQUIRED non-
+		// nullable fields** — four plain strings (`name`, `botToken`,
+		// `chatId`, `messageThreadId`) and seven plain booleans
+		// (`appBuildError`, `databaseBackup`, `volumeBackup`,
+		// `dokployRestart`, `appDeploy`, `dockerCleanup`,
+		// `serverThreshold`) — with **zero optional siblings**. Responses
+		// 200/400/401/403/500 — the spec does **not** declare 404 on this
+		// operation, matching the cross-tag create-mutation precedent on
+		// API-0189 `mounts-create`, API-0209..API-0218
+		// `notification-create*`, API-0268 `port-create`, API-0292
+		// `project-create`, API-0298 `redirects-create`, API-0325
+		// `schedule-create`, and API-0331 `security-create` (Dokploy
+		// create POSTs do not surface missing-target legs because there is
+		// no target-by-id to miss). The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior covered peer
+		// in the empty-success cohort.
+		//
+		// **Slug style — kebab-case inherited from API-0209/API-0210/
+		// API-0211/API-0212/API-0213/API-0214/API-0215/API-0216/API-0217/
+		// API-0218.** Per the per-tag-slug-style rule fixed by the kickoff
+		// multi-camel entry API-0209 `notification-createCustom` (→
+		// `create-custom`) and propagated through `create-discord`,
+		// `create-email`, `create-gotify`, `create-lark`,
+		// `create-ntfy`, `create-pushover`, `create-resend`,
+		// `create-slack`, and `create-teams`, this peer takes
+		// `create-telegram` and **closes the notification/* `create-*`
+		// cohort** — every subsequent notification/* peer (API-0220
+		// `getEmailProviders`, API-0221 `one`, API-0222
+		// `receiveNotification`, API-0223 `remove`, and the
+		// `test*` / `update*` family) belongs to a different verb cohort
+		// and will open its own slug-style anchors as needed.
+		//
+		// **Body composition:**
+		//   - **REQUIRED — closed all-required shape, no optional tail.**
+		//     Returns to the closed-shape all-required convention seeded
+		//     by API-0210 `notification-createDiscord` (ten scalar slots:
+		//     eight booleans + two strings), extended by API-0211
+		//     `notification-createEmail` (fourteen slots with one number
+		//     and one array-of-string), API-0212
+		//     `notification-createGotify` (eleven slots, one number),
+		//     API-0213 `notification-createLark` (nine pure-scalar slots),
+		//     API-0214 `notification-createNtfy` (eleven slots with one
+		//     number and one body-borne secret), API-0216
+		//     `notification-createResend` (eleven slots with one
+		//     array-of-string), API-0217 `notification-createSlack` (ten
+		//     pure-scalar slots with three strings), and API-0218
+		//     `notification-createTeams` (nine pure-scalar slots with two
+		//     strings), after the partially-required detour at API-0215
+		//     `notification-createPushover`. API-0219 lands at **eleven
+		//     slots** with **zero numbers**, **zero arrays**, and a
+		//     **four-string + seven-boolean** scalar-only mix — the
+		//     **first notification/* fixture to ship a four-string
+		//     closed-all-required pure-scalar shape**, distinct from
+		//     API-0210 `createDiscord` (two strings), API-0213
+		//     `createLark` (two strings), API-0217 `createSlack` (three
+		//     strings), and API-0218 `createTeams` (two strings). Every
+		//     property the spec lists is REQUIRED, so the fixture
+		//     populates all eleven slots and the wire-level invariant
+		//     check exercises the closed-shape path with no optional keys
+		//     to drop.
+		//     - `name` (plain string). Carries the deterministic-but-
+		//       clearly-fake
+		//       `notification-cov-create-telegram-0219-name` value, keyed
+		//       to the
+		//       `notification-cov-create-telegram-0219-<field>` namespace
+		//       inherited from API-0209..API-0218.
+		//     - `botToken` (plain string). **Carries a transport
+		//       secret.** Like the `webhookUrl` on API-0210
+		//       `createDiscord`, API-0213 `createLark`, API-0217
+		//       `createSlack`, and API-0218 `createTeams`, the
+		//       `password` on API-0211 `createEmail`, the
+		//       `accessToken` on API-0214 `createNtfy`, the
+		//       `userKey`+`apiToken` on API-0215 `createPushover`, and
+		//       the `apiKey` on API-0216 `createResend`, the per-bot
+		//       Telegram bot token is embedded directly in the request
+		//       body; the yalla request-body forwarder ships the bytes
+		//       verbatim to the upstream Dokploy host, so the redactor in
+		//       `internal/api` operates on the **rendered --json output**
+		//       (response envelopes, error payloads, and tracing) and
+		//       **not** on the request body. Telegram bot tokens follow
+		//       the canonical `<bot_id>:<35-char-secret>` shape; the
+		//       fixture value
+		//       `0000000000:notification-cov-create-telegram-0219-bot-token`
+		//       uses the all-zero bot-id leg (an unallocatable BotFather
+		//       prefix) and a deterministic per-fixture marker for the
+		//       secret leg so a misconfigured fixture cannot egress to a
+		//       real Telegram bot. Agents cribbing this fixture as a
+		//       template should always substitute their own real bot token
+		//       via `--input`, never inline it in source.
+		//     - `chatId` (plain string). Telegram chat identifier — the
+		//       spec types this as `string` (Telegram itself returns chat
+		//       IDs as 64-bit integers, but the Dokploy schema declares
+		//       string to keep negative supergroup IDs safe across JSON
+		//       int boundaries). Carries the deterministic value `0` to
+		//       mark the fixture as a sentinel non-routable target inside
+		//       the per-fixture namespace; agents should override via
+		//       `--input` with a real chat ID.
+		//     - `messageThreadId` (plain string). Telegram message-thread
+		//       (topic) identifier inside a forum supergroup — typed as
+		//       `string` for the same JSON-int-boundary reason as
+		//       `chatId`. Carries `0` as a sentinel non-routable thread
+		//       marker; agents should override via `--input` when
+		//       targeting a real forum topic.
+		//     - `appBuildError`, `databaseBackup`, `volumeBackup`,
+		//       `dokployRestart`, `appDeploy`, `dockerCleanup`,
+		//       `serverThreshold` (seven plain booleans) — `true` branch
+		//       on every slot to mirror an "alert me on every category"
+		//       agent-typical Telegram configuration. The seventh-boolean
+		//       slot (`serverThreshold`) carries through from API-0216
+		//       `createResend`, API-0217 `createSlack`, and API-0218
+		//       `createTeams`, and confirms the per-spec rule reaffirmed
+		//       across the roster that only the transport-agnostic core
+		//       six (`appBuildError`, `databaseBackup`, `volumeBackup`,
+		//       `dokployRestart`, `appDeploy`, `dockerCleanup`) remain
+		//       stable across notification/* siblings; every other slot
+		//       must be re-verified per spec (Telegram, Teams, Slack,
+		//       Resend, Lark, Gotify, Pushover all keep `serverThreshold`;
+		//       Discord swaps it for `decoration`; Ntfy drops it
+		//       entirely).
+		//
+		// **Shape positioning — closed all-required POST create-mutation,
+		// body REQUIRED, eleven-field flat payload mixing four strings and
+		// seven booleans, zero optional tail, zero numbers, zero arrays.**
+		// Functionally distinct from the partially-required API-0209
+		// `notification-createCustom`, the closed all-required two-string-
+		// eight-boolean API-0210 `notification-createDiscord`, the larger
+		// closed all-required API-0211 `notification-createEmail`
+		// (fourteen slots with one number and one array), the eleven-slot
+		// mixed-scalar-and-number API-0212 `notification-createGotify`,
+		// the nine-slot pure-scalar API-0213 `notification-createLark`,
+		// the eleven-slot one-number-with-secret API-0214
+		// `notification-createNtfy`, the partially-required three-secret
+		// API-0215 `notification-createPushover`, the eleven-slot one-
+		// array API-0216 `notification-createResend`, the ten-slot three-
+		// string scalar-only API-0217 `notification-createSlack`, and the
+		// nine-slot two-string scalar-only API-0218
+		// `notification-createTeams`. API-0219 is the **first eleven-slot
+		// four-string-seven-boolean pure-scalar closed-shape
+		// notification/* fixture** — no prior peer ships four string slots
+		// in a single create body, and no prior peer reaches eleven slots
+		// without either a number, an array, or a body-borne nested
+		// object. This makes API-0219 the canonical reference for any
+		// future `*-create` peer that needs to ship four or more REQUIRED
+		// string slots in a flat closed shape.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.** The
+		// spec omits 404 from the response set, so the 404→CodeNotFound
+		// override is structurally inapplicable. `*-create` here is a
+		// body-bearing imperative-action POST and stays on the
+		// 401→CodeAuth invariant locked by every imperative-action peer
+		// already covered.
+		SampleBody: json.RawMessage(`{
+			"name": "notification-cov-create-telegram-0219-name",
+			"botToken": "0000000000:notification-cov-create-telegram-0219-bot-token",
+			"chatId": "0",
+			"messageThreadId": "0",
+			"appBuildError": true,
+			"databaseBackup": true,
+			"volumeBackup": true,
+			"dokployRestart": true,
+			"appDeploy": true,
+			"dockerCleanup": true,
+			"serverThreshold": true
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the empty-success
+		// cohort. Empty-object body keeps the success-leg envelope
+		// assertion focused on `data.method` / `data.status` rather than
+		// payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,
