@@ -25405,3 +25405,73 @@ forward-reference lesson before assuming any field shape.
     `schedule-one`; the volumeBackups/* counterpart will be
     API-0448 `volumeBackups-one`).
 ---
+## 2026-05-09 - API-0213 — notification-createLark (POST /notification.createLark)
+- Implemented coverage entry in `internal/cli/api_coverage_test.go` for the
+  sixth notification/* operation. The operation is data-driven via the
+  embedded `internal/api/data/openapi.json` registry (already present), so
+  the only product change needed was a `coveredAPIOperations` slice entry
+  with a fixture body, success-leg empty `{}` response, and the
+  documentation-as-code rationale block.
+- Spec verified directly against `internal/api/data/openapi.json >
+  /notification.createLark > post`: POST, no parameters, REQUIRED body,
+  nine REQUIRED non-nullable fields (two strings: `name`, `webhookUrl`;
+  seven booleans: `appBuildError`, `databaseBackup`, `volumeBackup`,
+  `dokployRestart`, `appDeploy`, `dockerCleanup`, `serverThreshold`),
+  zero optional siblings, responses 200/400/401/403/500. The 200 schema
+  is `{}` with `additionalProperties: false`. No 404 leg, so the
+  401→CodeAuth invariant default applies and 404→CodeNotFound override
+  is structurally inapplicable (consistent with prior create-mutation
+  POSTs API-0189/API-0209/API-0210/API-0211/API-0212/API-0268/API-0292/
+  API-0298/API-0325/API-0331).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (added API-0213 entry between
+    API-0212 `notification-createGotify` and API-0246
+    `organization-active`).
+  - `ralph/prd.json` (set `passes: true`).
+  - `ralph/progress.txt` (this entry).
+- Verification run from repo root:
+  - `gofmt -w .` → clean.
+  - `go mod tidy` → clean.
+  - `go vet ./...` → clean.
+  - `go test ./...` → all packages OK; `internal/cli` 1.514s.
+  - `go test -race ./...` → all packages OK; `internal/cli` 3.248s.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` not installed locally — documented as missing per the
+    long-standing convention, not silently skipped.
+- Remaining risks/follow-ups: the `webhookUrl` slot embeds a per-team
+  Lark/Feishu bot token in the URL path; this is a request-body field
+  forwarded verbatim by yalla, so the redactor in `internal/api`
+  operates on the rendered `--json` envelope (response and tracing) and
+  not on the request body. The fixture uses the reserved-TLD
+  `example.invalid` host so no real bot URL is committed; agent
+  consumers cribbing this fixture as a `--input` template must
+  substitute their own webhook URL.
+- **Learnings for future iterations:**
+  - The seventh-boolean slot in the notification/* family is **not
+    stable** and must be re-verified per operation: Discord/Email/Lark
+    carry `serverThreshold`, Gotify swaps it for `decoration` per spec.
+    Future peers (`createNtfy`, `createPushover`, `createResend`,
+    `createSlack`, `createTeams`, `createTelegram`) must each grep the
+    spec for the seventh-slot identity before assuming
+    `serverThreshold` (or `decoration`) persists. The transport-
+    agnostic core six (`appBuildError`, `databaseBackup`,
+    `volumeBackup`, `dokployRestart`, `appDeploy`, `dockerCleanup`)
+    have been stable across all six covered notification/* peers so
+    far.
+  - `notification-createLark` is the first cross-tag fixture to land a
+    closed all-required body of mixed strings and booleans only — no
+    number, no array, no nested object — in a single REQUIRED layer.
+    Future notification/* roster entries with similar pure-scalar
+    transport semantics (Pushover/Resend/etc., subject to per-spec
+    re-verification) can grep this entry for the convention.
+  - The `notification-cov-create-<transport>-<id>-<field>` fixture
+    namespace continues from API-0209/API-0210/API-0211/API-0212. Slug
+    style stays kebab-case (`create-lark`) per the per-tag-slug-style
+    rule fixed by API-0209 `notification-createCustom`.
+  - Webhook-URL fields that embed transport secrets (Lark/Feishu bot
+    token, Discord webhook secret, Custom webhook URL) cannot be
+    redacted by the response-side redactor — this is a request-body
+    contract limitation, not a bug. Document loudly in the per-entry
+    rationale so future agents do not file noise tickets against
+    `internal/api/redactor.go`.
+---
