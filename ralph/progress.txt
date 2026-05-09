@@ -25191,3 +25191,126 @@ forward-reference lesson before assuming any field shape.
     optional-tail peers should default to this shape unless the spec
     forces otherwise.
 ---
+
+## 2026-05-09 - API-0445 (volumeBackups-create)
+- Implemented contract coverage for POST /volumeBackups.create (Dokploy
+  `volumeBackups-create`), the kickoff entry on the priority-4
+  volumeBackups/* coverage roster (six peers: API-0445..API-0450).
+  Opens a fresh `volBackups-cov-*` per-tag fixture-isolation namespace
+  rather than back-referencing the (structurally near-mirror)
+  schedule/* fixtures across the tag boundary, per the API-0330
+  follow-up note and the per-tag isolation rule established at
+  API-0188 / API-0246 / API-0268 / API-0290 / API-0298 / API-0325 /
+  API-0331.
+- Files changed:
+  - internal/cli/api_coverage_test.go — appended apiCoverageCase entry
+    (StoryID=API-0445) immediately after API-0444 `user-update` (the
+    previous final slot before this entry), sorted by StoryID.
+    Five-required-string-scalar POST shape with deep optional tail:
+    `SampleBody` materialises all 19 fields per the spec
+    (`internal/api/data/openapi.json > /volumeBackups.create > post`)
+    — 5 REQUIRED plain strings (`name`, `volumeName`, `prefix`,
+    `cronExpression`, `destinationId`) plus the every-optional-
+    populated 14-field tail (`serviceType` = `application`, `appName`,
+    `serviceName`, `turnOff` = false, `keepLatestCount` = 7, `enabled`
+    = true, `applicationId`, `postgresId`, `mariadbId`, `mongoId`,
+    `mysqlId`, `redisId`, `composeId`, `createdAt` = RFC 3339
+    timestamp). `serviceType: "application"` chosen to keep the
+    fixture internally consistent with the populated `applicationId`
+    slot (mirroring the API-0040 backup-create + API-0325
+    schedule-create pattern of pairing enum branches with their
+    populated id siblings). Single-segment slug `create` → no
+    camelCase decision needed (the volumeBackups/* slug-style
+    decision is deferred to API-0449 `volumeBackups-runManually`,
+    which is the first multi-camel-segment slug on the tag).
+    No 404 in the response set, so harness-default 401→CodeAuth
+    retained. SuccessResponse is `{}` per the
+    additionalProperties:false success schema.
+  - ralph/prd.json — flipped `passes: false` -> `true` for API-0445.
+  - ralph/progress.txt — this entry.
+- Verification run from the repo root:
+  - gofmt -l .                            : clean (no diff)
+  - go mod tidy                           : clean (no diff)
+  - go vet ./...                          : clean
+  - go test ./internal/cli ./internal/api
+      -run 'TestAPICoverage|TestManifest|TestRegistry|TestSchema'
+      -count=1                             : ok — confirms registry,
+                                            schema, manifest, success-
+                                            leg, and failure-leg
+                                            invariants all hold for
+                                            `volumeBackups-create`.
+  - go test ./... -count=1                : ok (all 9 packages)
+  - go test -race ./... -count=1          : ok (all 9 packages)
+- Tools not installed locally and therefore documented-as-skipped (per
+  the Codebase Patterns rule): goimports, golangci-lint, staticcheck,
+  govulncheck, goreleaser. Same set as every prior API-0XXX story.
+- Outcome: 81 stories remain pending (82 → 81). The volumeBackups/*
+  roster is now 1/6 covered; the next priority-4 entry is API-0446
+  `volumeBackups-delete` (POST /volumeBackups.delete), expected to be
+  a single-required-string-scalar destructive-action POST per the
+  schedule/* mirror precedent at API-0326 `schedule-delete`.
+- Remaining risks / follow-ups:
+  - None for this story. Future volumeBackups/* peers (API-0446..
+    API-0450) should grep this entry's slug-namespace banner to
+    inherit the `volBackups-cov-*` namespace and the abbreviated
+    `volBackups` fixture-prefix decision (see Learnings below).
+  - API-0449 `volumeBackups-runManually` will be the first multi-
+    camel-segment slug to land on the volumeBackups/* tag. Per the
+    AGENTS.md per-tag-slug-style rule and the schedule/* precedent
+    at API-0329 (camelCase suffix preservation,
+    `schedule-cov-runManually-0329-*`), the recommended decision is
+    camelCase preservation: `volBackups-cov-runManually-0449-*`.
+- **Learnings for future iterations:**
+  - **Abbreviated tag-prefix in fixture namespace.** This is the
+    first per-tag namespace where the fixture prefix abbreviates the
+    tag name: `volBackups-cov-*` (not `volumeBackups-cov-*`). The
+    full `volumeBackups` tag name is preserved verbatim in the
+    OperationID, Method, Path, and Tag fields of the apiCoverageCase
+    literal — the abbreviation only affects the fixture string
+    namespace. This decision keeps the SampleBody literal diff-
+    friendly (each field key is suffixed with the per-field tag, so
+    keeping the prefix short reduces line width). Future
+    volumeBackups/* peers MUST inherit this `volBackups-cov-*`
+    abbreviation. Future tags with similarly long names (e.g. any
+    multi-word camelCase tag) may apply the same pattern, but the
+    abbreviation choice is per-tag and must be locked at the
+    kickoff entry (this one) and reasserted across the roster.
+  - **The volumeBackups/* roster is structurally a near-mirror of
+    the schedule/* roster.** Both expose the same operationId set
+    (`*-create`, `*-delete`, `*-list`, `*-one`, `*-runManually`,
+    `*-update`); both `*-create` declare the every-optional-
+    populated optional tail; both `*-update` add an extra REQUIRED
+    `*Id` slot to the create shape (the canonical *-update vs
+    *-create delta locked at API-0330). However, the body schemas
+    are NOT identical — volumeBackups-create has 5 required strings
+    (vs. schedule-create's 3) and a different optional tail
+    composition (anyOf-number-null `keepLatestCount`, anyOf-boolean-
+    null `enabled`, plain boolean `turnOff`, multi-id slots for
+    every Dokploy database type). Future contributors must re-verify
+    against the spec rather than wholesale copying schedule/*
+    fixtures.
+  - **First five-required-string-scalar POST shape on the coverage
+    table.** Promotes the API-0325 three-required-scalar shape and
+    the API-0330 four-required-scalar shape. The progression
+    suggests Dokploy's *-create endpoints scale REQUIRED string
+    slots with the entity's identification surface (schedule
+    requires only its scheduling fields; volumeBackups requires
+    additionally the volume name, prefix, and destination).
+  - **Multi-id-slot every-optional-populated tail.** The
+    volumeBackups-create body declares seven distinct `*Id` slots
+    (`applicationId`, `postgresId`, `mariadbId`, `mongoId`,
+    `mysqlId`, `redisId`, `composeId`) — one per Dokploy service
+    type the backup can target. The fixture populates ALL of them
+    with deterministic strings, NOT just the one matching
+    `serviceType: "application"`. Rationale: the every-optional-
+    populated convention is byte-level (the harness asserts the
+    body verbatim) and the schema does not enforce the
+    serviceType↔id internal consistency at the type system level.
+    A future server-side validator would likely reject a payload
+    with seven populated id slots for a `serviceType: "application"`
+    backup, but until that validator exists, the every-optional-
+    populated rule wins. If a future spec revision adds
+    `oneOf`-style discriminator constraints to the body schema,
+    this fixture must be tightened to populate only the slot
+    matching the chosen serviceType.
+---

@@ -38409,6 +38409,194 @@ var coveredAPIOperations = []apiCoverageCase{
 		// entry, so no axis inheritance applies.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:     "API-0445",
+		OperationID: "volumeBackups-create",
+		Method:      http.MethodPost,
+		Path:        "/volumeBackups.create",
+		Tag:         "volumeBackups",
+		// Kickoff entry for the priority-4 volumeBackups/* coverage
+		// roster — opens a fresh `volBackups-cov-*` per-tag fixture-
+		// isolation namespace after the schedule/* tag closed at
+		// API-0330 `schedule-update` (6/6) and after API-0444
+		// `user-update` closed the priority-4 prefix. Per the per-tag
+		// fixture-isolation rule established at API-0188
+		// `mounts-allNamedByApplicationId`, API-0246
+		// `organization-active`, API-0268 `port-create`, API-0290
+		// `project-all`, API-0298 `redirects-create`, API-0325
+		// `schedule-create`, and API-0331 `security-create`, this
+		// entry deliberately stands alone and **must not** back-
+		// reference any closed prior-tag namespace (`admin-cov-*`,
+		// `ai-cov-*`, `app-cov-*`, `auth-cov-*`, `backup-cov-*`,
+		// `bb-cov-*`, `cert-cov-*`, `clu-cov-*`, `compose-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `discord-cov-*`,
+		// `docker-cov-*`, `domain-cov-*`, `email-cov-*`, `gh-cov-*`,
+		// `git-cov-*`, `gitea-cov-*`, `gitlab-cov-*`, `mariadb-cov-*`,
+		// `mongo-cov-*`, `mounts-cov-*`, `mysql-cov-*`, `notif-cov-*`,
+		// `org-cov-*`, `port-cov-*`, `postgres-cov-*`, `preview-cov-*`,
+		// `proj-cov-*`, `redirects-cov-*`, `redis-cov-*`,
+		// `rollback-cov-*`, `schedule-cov-*`, `security-cov-*`,
+		// `set-cov-*`, `srv-cov-*`, `swarm-cov-*`, `usr-cov-*`).
+		// Subsequent volumeBackups/* peers (API-0446
+		// `volumeBackups-delete`, API-0447 `volumeBackups-list`,
+		// API-0448 `volumeBackups-one`, API-0449
+		// `volumeBackups-runManually`, API-0450
+		// `volumeBackups-update`) should grep this block first to
+		// inherit the volumeBackups/* slug namespace. The
+		// volumeBackups/* operationId set is structurally a near-
+		// mirror of the schedule/* roster (create, delete, list, one,
+		// runManually, update); per the API-0330 follow-up note,
+		// fresh `volBackups-cov-*` namespace was chosen rather than
+		// cross-referencing schedule/* fixtures across the tag
+		// boundary.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json > /volumeBackups.create >
+		// post`: a **POST** with **no parameters** and a **REQUIRED
+		// request body** whose schema declares **five REQUIRED non-
+		// nullable plain string fields** (`name`, `volumeName`,
+		// `prefix`, `cronExpression`, `destinationId`) alongside a
+		// deep optional tail of fourteen siblings. Distinct from the
+		// three-required-string-scalar precedent at API-0325
+		// `schedule-create` (15-field optional tail) and the four-
+		// required-string-scalar precedent at API-0330
+		// `schedule-update` (12-field optional tail) — volumeBackups-
+		// create is the first five-required-string-scalar POST shape
+		// to land in the coverage table. Responses 200/400/401/403/
+		// 500 — the spec does **not** declare 404 on this operation,
+		// matching the cross-tag create-mutation precedent on
+		// API-0189 `mounts-create`, API-0268 `port-create`, API-0292
+		// `project-create`, API-0298 `redirects-create`, API-0325
+		// `schedule-create`, and API-0331 `security-create` (Dokploy
+		// create POSTs do not surface missing-target legs because
+		// there is no target-by-id to miss). The 200 schema is `{}`
+		// with `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort.
+		//
+		// **Body composition:**
+		//   - **REQUIRED:** `name` (plain string), `volumeName`
+		//     (plain string), `prefix` (plain string),
+		//     `cronExpression` (plain string), `destinationId` (plain
+		//     string). The fixture supplies deterministic-but-
+		//     clearly-fake values keyed to the
+		//     `volBackups-cov-create-0445-<field>` namespace.
+		//     `cronExpression` carries a real-shape cron string
+		//     (`"0 4 * * *"`) so a future schema validator wired into
+		//     the harness still accepts it.
+		//   - **OPTIONAL — every-optional-populated.** Per the
+		//     *-create convention from API-0014, API-0040, API-0069,
+		//     API-0292, and API-0325, all fourteen optional siblings
+		//     are populated so the wire fixture exercises the full
+		//     create payload, not just the minimum:
+		//     - `serviceType` (enum: application|postgres|mysql|
+		//       mariadb|mongo|redis|compose) — `"application"` branch
+		//       chosen to keep the fixture internally consistent with
+		//       the populated `applicationId` slot (mirroring the
+		//       API-0040 backup-create `databaseType: "postgres"` +
+		//       `postgresId` precedent and the API-0325
+		//       schedule-create `scheduleType: "application"` +
+		//       `applicationId` precedent).
+		//     - `appName` (plain string).
+		//     - `serviceName` (anyOf [string, null]) — string branch
+		//       per the AGENTS.md "anyOf [string, null] → send
+		//       string branch" rule.
+		//     - `turnOff` (plain boolean) — `false` branch.
+		//     - `keepLatestCount` (anyOf [number, null]) — number
+		//       branch (deterministic small integer).
+		//     - `enabled` (anyOf [boolean, null]) — boolean branch
+		//       (`true`).
+		//     - `applicationId` / `postgresId` / `mariadbId` /
+		//       `mongoId` / `mysqlId` / `redisId` / `composeId` (each
+		//       anyOf [string, null]) — string branch on every slot.
+		//     - `createdAt` (plain string) — RFC 3339 literal so a
+		//       future schema validator accepts the timestamp shape.
+		//
+		// **Shape positioning — five-required-string-scalar POST
+		// create-mutation, body REQUIRED, deep optional tail with
+		// enum + anyOf-string-null + anyOf-number-null + anyOf-
+		// boolean-null + plain boolean.** First five-required-string-
+		// scalar POST in the coverage table — promotes the API-0325
+		// `schedule-create` three-required-scalar shape and the
+		// API-0330 `schedule-update` four-required-scalar shape by
+		// adding two more REQUIRED slots (`volumeName`, `prefix`,
+		// `destinationId` here vs. only `cronExpression` shared with
+		// schedule-create). Functionally a volumeBackups/* analogue
+		// of API-0040 `backup-create` (deep optional tail, enum
+		// branch kept internally consistent with its populated id
+		// slot). The slug `volBackups-cov-create-0445` follows the
+		// established `<tag>-cov-<slug>-<storyID>` naming convention
+		// for deterministic fixtures, with `volBackups` chosen as
+		// the abbreviated tag prefix (the full `volumeBackups` tag
+		// name is preserved in OperationID, Method, Path, and Tag
+		// fields, so the abbreviated fixture prefix has no
+		// correctness impact — only diff-friendliness).
+		//
+		// **Slug style for volumeBackups/* — kebab-case.** Single-
+		// segment slug `create` carries no internal capitalisation,
+		// so no kebab-vs-camel decision is needed here. The first
+		// multi-camel-segment slug to land on this tag will be
+		// `volumeBackups-runManually` at API-0449; per the AGENTS.md
+		// per-tag-slug-style rule (and the schedule/* precedent at
+		// API-0329 which locked camelCase suffix preservation), that
+		// future contributor must decide kebab vs camel at that
+		// point. Recommended decision: camelCase suffix preservation
+		// (`volBackups-cov-runManually-0449`) to inherit the
+		// schedule/* precedent given the structural mirror.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so
+		// the 404→CodeNotFound override is structurally inapplicable.
+		// The volumeBackups/* tag's 404→CodeNotFound representative
+		// will be pinned to API-0448 `volumeBackups-one` per the
+		// canonical by-id-sibling convention (mirroring API-0328
+		// `schedule-one` for the schedule/* tag). `*-create` here is
+		// a body-bearing create-mutation POST and stays on the
+		// 401→CodeAuth invariant locked by every body-bearing
+		// create-mutation peer already covered (e.g. API-0189
+		// `mounts-create`, API-0268 `port-create`, API-0292
+		// `project-create`, API-0298 `redirects-create`, API-0325
+		// `schedule-create`, API-0331 `security-create`).
+		//
+		// **Fixture token base** `volBackups-cov-create-0445` follows
+		// the established `<tag>-cov-<slug>-<storyID>` deterministic-
+		// but-clearly-fake naming convention. Verified: no collisions
+		// with any prior tag namespace listed above. Reserves a slot
+		// for API-0446 `volumeBackups-delete` (`volBackups-cov-
+		// delete-0446`), API-0447 `volumeBackups-list`
+		// (`volBackups-cov-list-0447`), API-0448 `volumeBackups-one`
+		// (`volBackups-cov-one-0448`), API-0449 `volumeBackups-
+		// runManually` (`volBackups-cov-runManually-0449`), and
+		// API-0450 `volumeBackups-update` (`volBackups-cov-
+		// update-0450`).
+		SampleBody: json.RawMessage(`{
+			"name": "volBackups-cov-create-0445-name",
+			"volumeName": "volBackups-cov-create-0445-volumeName",
+			"prefix": "volBackups-cov-create-0445-prefix",
+			"serviceType": "application",
+			"appName": "volBackups-cov-create-0445-appName",
+			"serviceName": "volBackups-cov-create-0445-serviceName",
+			"turnOff": false,
+			"cronExpression": "0 4 * * *",
+			"keepLatestCount": 7,
+			"enabled": true,
+			"applicationId": "volBackups-cov-create-0445-applicationId",
+			"postgresId": "volBackups-cov-create-0445-postgresId",
+			"mariadbId": "volBackups-cov-create-0445-mariadbId",
+			"mongoId": "volBackups-cov-create-0445-mongoId",
+			"mysqlId": "volBackups-cov-create-0445-mysqlId",
+			"redisId": "volBackups-cov-create-0445-redisId",
+			"composeId": "volBackups-cov-create-0445-composeId",
+			"createdAt": "2026-05-09T00:00:00Z",
+			"destinationId": "volBackups-cov-create-0445-destinationId"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the empty-
+		// success cohort. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's
