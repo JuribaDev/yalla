@@ -27229,3 +27229,121 @@ forward-reference lesson before assuming any field shape.
     clean with a one-line semantic diff; never rewrite the full PRD
     file.
 ---
+
+## 2026-05-09T05:00Z - API-0234 (Cover notification-testTelegramConnection, POST /notification.testTelegramConnection)
+- **What was implemented**: Added an `apiCoverageCase` entry for the
+  Dokploy `notification-testTelegramConnection` operation (`POST
+  /notification.testTelegramConnection`) inside
+  `internal/cli/api_coverage_test.go`. Operation is the **eleventh
+  and closing member** of the notification/* `test*` connectivity-
+  validation POST cohort opened by API-0224 and the 27th
+  notification/* coverage entry overall (API-0208..API-0234
+  inclusive). With API-0234 landing, every cohort peer named in the
+  API-0224 opener's forward-reference list now passes — the cohort
+  is fully closed; the next pending notification/* story (API-0235
+  `notification-updateCustom`) opens a new shape family
+  (mutation-by-id with persisted-notifier body, not connectivity-
+  validation transport-descriptor).
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended a new
+    `apiCoverageCase` entry directly after API-0233 and before
+    API-0246. Slug stem `test-telegram-connection`; fixture
+    namespace `notification-cov-test-telegram-connection-0234-
+    <field>`. The body fixture pins three REQUIRED non-nullable
+    plain-string slots (`botToken`, `chatId`, `messageThreadId`)
+    with deterministic `notification-cov-*` literals — zero
+    OPTIONAL siblings per the spec. `SuccessResponse: "{}"` per the
+    empty-success cohort convention. No `FailureStatus` /
+    `FailureCode` overrides — the spec response set is
+    200/400/401/403/500 (no 404), so the harness-default 401→
+    CodeAuth representative failure leg applies unchanged.
+  - `ralph/prd.json` — single-line flip API-0234 `passes: false` →
+    `passes: true`.
+  - `ralph/progress.txt` — this append.
+- The `apiCoverageCase` harness automatically asserts: registry
+  presence (operationId/method/path/tag), schema reachability via
+  `yalla schema get`, manifest inclusion via `yalla manifest --json`,
+  an httptest-backed success exchange (`yalla api call ... --input
+  ... --json` with `yalla.output.v1`), and a 401→CodeAuth
+  representative failure leg with `yalla.error.v1` envelope and
+  non-zero exit code. No new harness changes were required.
+- **Verification run** (from repo root):
+  - `gofmt -l .` → clean (empty).
+  - `go vet ./...` → clean.
+  - `go mod tidy` → no diff.
+  - Targeted `go test ./internal/cli/ -run 'TestAPICoverage_.*/API-0234' -count=1 -v`
+    → all five subtests pass:
+      - `TestAPICoverage_RegistryInvariants/API-0234/notification-testTelegramConnection` PASS
+      - `TestAPICoverage_SchemaCommandWorks/API-0234/notification-testTelegramConnection` PASS
+      - `TestAPICoverage_ManifestListsOperation/API-0234/notification-testTelegramConnection` PASS
+      - `TestAPICoverage_SuccessRoundTrip/API-0234/notification-testTelegramConnection` PASS
+      - `TestAPICoverage_RepresentativeFailure/API-0234/notification-testTelegramConnection` PASS
+  - `go test ./...` → all packages pass; internal/cli 1.353s.
+  - `go test -race ./...` → all packages pass; internal/cli 3.428s.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — not installed locally; same documented gap as
+    API-0224..API-0233.
+- **Body composition** (per spec re-verified against
+  `internal/api/data/openapi.json > /notification.testTelegramConnection
+  > post`):
+  - REQUIRED `botToken` (string) → secret-bearing (Telegram Bot API
+    tokens of shape `<bot-id>:<base64-key>` are the bot's primary
+    credential). Deterministic non-realistic literal anchored on the
+    per-tag `notification-cov-<slug>-<storyID>-<field>` discipline.
+  - REQUIRED `chatId` (string) — schema-string projection (Telegram's
+    wire protocol allows numeric chat IDs but the spec pins the
+    field as `string`).
+  - REQUIRED `messageThreadId` (string) — same schema-string
+    projection caveat. Telegram supergroup-topic routing identifier;
+    required at the schema layer per the spec even though it's only
+    meaningful when `chatId` resolves to a forum-enabled supergroup.
+  - Zero OPTIONAL siblings — every-optional-populated convention
+    structurally inapplicable.
+- Story count after this entry: 462 total, 407 passing, 55 still
+  failing.
+- **Remaining risks / follow-ups**: None for this story. The
+  notification/* `test*` connectivity-validation POST cohort
+  (API-0224..API-0234) is now fully closed. The next pending
+  notification/* story by priority is API-0235
+  `notification-updateCustom` (priority=5), which opens a new shape
+  family — body-bearing mutation-by-id POST with a persisted-
+  notifier descriptor — and should re-derive its slug stem and
+  body composition from the `notification-create*` mutation
+  precedents established at API-0209..API-0219 rather than back-
+  referencing this `test*` cohort.
+- **Learnings for future iterations**:
+  - **Cohort closure marker.** When a story closes a cohort
+    (API-0234 closes the notification/* `test*` cohort opened by
+    API-0224), the closing entry should explicitly state in its
+    preamble that the cohort is fully closed and name the next
+    notification/* shape family that opens (here API-0235
+    `notification-updateCustom`, mutation-by-id with persisted-
+    notifier body). This signals to future iterations not to
+    blindly back-reference the closed cohort when implementing
+    a story under a different shape family.
+  - **Three-required-string body cardinality (bot-credential
+    flavour).** API-0234 is the second cohort entry to carry a
+    three-required-string body (after API-0231
+    `notification-testResendConnection`), but with three plain
+    strings rather than two-strings-plus-one-array-of-string. The
+    cross-entry diff confirms that `cardinality` (3 required, 0
+    optional) and `field shape` (plain string vs. array-of-string
+    slot) are independent dimensions in the cohort's positioning
+    block — future peers should explicitly note both.
+  - **Schema-string vs. wire-numeric divergence (Telegram chatId /
+    messageThreadId).** Both fields project as JSON Schema
+    `string` in the spec even though Telegram's wire protocol
+    accepts numeric chat IDs. The fixture supplies string literals
+    matching the schema projection — never coerce to a number for
+    the wire side, since the harness enforces the schema layer
+    not the upstream wire layer. Future spec-string fields whose
+    underlying API documents accept numeric values should follow
+    this rule (string in the schema → string in the fixture).
+  - **PRD flip via regex anchor when JSON is large.** The
+    `ralph/prd.json` file is ~1.7MB and 462 stories deep; the
+    flip used a Python regex anchored on `"id": "API-0234"` to
+    locate the story object then a substring slice on the trailing
+    `"passes": false` to flip exactly one line. The 2-space indent
+    is preserved by the surgical slice — no full-file rewrite
+    risk.
+---

@@ -21895,6 +21895,218 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0234",
+		OperationID: "notification-testTelegramConnection",
+		Method:      http.MethodPost,
+		Path:        "/notification.testTelegramConnection",
+		Tag:         "notification",
+		// Twenty-seventh entry on the notification/* coverage roster,
+		// staying inside the `notification-cov-*` per-tag fixture-
+		// isolation namespace seeded at API-0208 `notification-all`
+		// and extended across API-0209..API-0233. Per the per-tag
+		// isolation rule reaffirmed across each prior peer this
+		// entry stays inside the namespace opened by API-0208 and
+		// **must not** back-reference any closed prior-tag namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json >
+		// /notification.testTelegramConnection > post`: a **POST**
+		// with **no parameters** and a **REQUIRED request body**
+		// whose schema declares **three REQUIRED non-nullable plain
+		// string slots and zero OPTIONAL siblings** — REQUIRED
+		// `botToken` (string), REQUIRED `chatId` (string), and
+		// REQUIRED `messageThreadId` (string). Responses
+		// 200/400/401/403/500 — the spec does **not** declare 404
+		// on this operation, matching the connectivity-validation
+		// precedent re-asserted by the cohort opener API-0224
+		// `notification-testCustomConnection` and the peers
+		// API-0225 `notification-testDiscordConnection` / API-0226
+		// `notification-testEmailConnection` / API-0227
+		// `notification-testGotifyConnection` / API-0228
+		// `notification-testLarkConnection` / API-0229
+		// `notification-testNtfyConnection` / API-0230
+		// `notification-testPushoverConnection` / API-0231
+		// `notification-testResendConnection` / API-0232
+		// `notification-testSlackConnection` / API-0233
+		// `notification-testTeamsConnection` (the family is
+		// "validate the agent-supplied transport descriptor", with
+		// no by-id target to miss). The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort.
+		//
+		// **Slug style — kebab-case inherited from API-0209/
+		// API-0210/API-0211/API-0212/API-0213/API-0214/API-0215/
+		// API-0216/API-0217/API-0218/API-0219, the GET-cohort opener
+		// API-0220 `notification-getEmailProviders`
+		// (→ `get-email-providers`), the `*Id`-filtered GET-cohort
+		// opener API-0221 `notification-one`, the action-receiver
+		// POST opener API-0222 `notification-receiveNotification`
+		// (→ `receive-notification`), the by-id mutation cohort
+		// opener API-0223 `notification-remove`, the `test*`
+		// connectivity-validation POST cohort opener API-0224
+		// `notification-testCustomConnection`
+		// (→ `test-custom-connection`), the second cohort member
+		// API-0225 `notification-testDiscordConnection`
+		// (→ `test-discord-connection`), the third cohort member
+		// API-0226 `notification-testEmailConnection`
+		// (→ `test-email-connection`), the fourth cohort member
+		// API-0227 `notification-testGotifyConnection`
+		// (→ `test-gotify-connection`), the fifth cohort member
+		// API-0228 `notification-testLarkConnection`
+		// (→ `test-lark-connection`), the sixth cohort member
+		// API-0229 `notification-testNtfyConnection`
+		// (→ `test-ntfy-connection`), the seventh cohort member
+		// API-0230 `notification-testPushoverConnection`
+		// (→ `test-pushover-connection`), the eighth cohort member
+		// API-0231 `notification-testResendConnection`
+		// (→ `test-resend-connection`), the ninth cohort member
+		// API-0232 `notification-testSlackConnection`
+		// (→ `test-slack-connection`), and the tenth cohort member
+		// API-0233 `notification-testTeamsConnection`
+		// (→ `test-teams-connection`).** Per the per-tag-slug-
+		// style rule fixed by the kickoff multi-camel entry
+		// API-0209 `notification-createCustom` (→ `create-custom`),
+		// this entry takes `test-telegram-connection` as the slug
+		// stem (three kebab-cased segments mirrored from
+		// `testTelegramConnection`). The fixture namespace is
+		// `notification-cov-test-telegram-connection-0234-<field>`,
+		// mirroring the `notification-cov-<slug>-<storyID>-<field>`
+		// discipline locked by API-0208..API-0233. **This entry is
+		// the eleventh and closing member of the notification/*
+		// `test*` connectivity-validation POST cohort opened by
+		// API-0224** — every cohort peer (API-0224..API-0234) now
+		// passes, fully closing the cohort opener's forward-
+		// reference list. The next pending notification/* story
+		// API-0235 `notification-updateCustom` opens a new shape
+		// family (mutation-by-id with persisted-notifier body, not
+		// connectivity-validation transport-descriptor) and should
+		// re-derive its slug stem and body composition from the
+		// `notification-create*` mutation precedents established at
+		// API-0209..API-0219 rather than back-referencing this
+		// `test*` cohort.
+		//
+		// **Body composition — three-required, zero-optional, every
+		// REQUIRED field populated.** Re-asserts the cohort's
+		// **three-required-string** body cardinality — first
+		// established by API-0231 `notification-testResendConnection`
+		// (three required: `apiKey`, `fromAddress`, `toAddresses`).
+		// Distinct in operation semantics (Telegram Bot API
+		// `sendMessage` vs. Resend transactional-email API) and in
+		// field shapes (Telegram is three plain strings; Resend
+		// has one array-of-string `toAddresses` slot) but
+		// structurally similar to API-0231 in body cardinality
+		// (3 required, 0 optional). Distinct from every other
+		// cohort member: API-0224 (single-required-string + one
+		// optional nested `map[string]string`), API-0225 (single-
+		// required-string + one optional plain boolean), API-0226
+		// (six-required, zero-optional SMTP shape), API-0227
+		// (three-required + one optional plain boolean — note the
+		// optional-tail delta vs. this entry), API-0228 (single-
+		// required), API-0229 (four-required, zero-optional),
+		// API-0230 (three-required + two optional nullable-number
+		// — again an optional-tail delta vs. this entry), API-0232
+		// (two-required), and API-0233 (single-required). Mirrors
+		// the persisted-notifier sibling shape for the Telegram
+		// transport without re-deriving the per-tag slug
+		// conventions.
+		//   - **REQUIRED `botToken`** (plain non-nullable string).
+		//     **Secret-bearing field** — Telegram Bot API tokens
+		//     follow the on-wire shape `<bot-id>:<base64-key>` and
+		//     act as the primary credential for any
+		//     `https://api.telegram.org/bot<token>/<method>` call;
+		//     a leak would let an attacker impersonate the bot
+		//     against any chat it has been invited into. The
+		//     fixture supplies a deterministic non-realistic
+		//     literal anchored on the per-tag
+		//     `notification-cov-<slug>-<storyID>-<field>`
+		//     discipline so a future leak in a golden file remains
+		//     greppable without colliding with the real
+		//     `<digits>:<base64>` token shape and without
+		//     producing a false-positive against any real Telegram
+		//     bot. Mirrors the secret-bearing token convention re-
+		//     asserted by API-0224 `secretToken`, API-0227
+		//     `appToken`, API-0229 `accessToken`, API-0231
+		//     `apiKey`, and API-0232 `botToken` (Slack uses an
+		//     identically-named field, but the on-wire shape is
+		//     different — the literal stays distinct via the per-
+		//     storyID anchor).
+		//   - **REQUIRED `chatId`** (plain non-nullable string —
+		//     **schema-string, not number**, despite Telegram's
+		//     wire protocol allowing numeric chat IDs; the spec
+		//     pins the projection here as `string` so the fixture
+		//     supplies a string literal). Identifier slot — the
+		//     deterministic `notification-cov-*` literal keeps the
+		//     fixture greppable and the `chatId` field name signals
+		//     the routing target without committing the test to a
+		//     real Telegram channel. Distinct from API-0229
+		//     `topic` and API-0230 `userKey` (each is a different
+		//     identifier flavour with its own per-storyID anchor).
+		//   - **REQUIRED `messageThreadId`** (plain non-nullable
+		//     string — same schema-string projection caveat as
+		//     `chatId`). Telegram supergroup-topic routing
+		//     identifier; required at the schema layer per the
+		//     spec even though it's only meaningful when `chatId`
+		//     resolves to a forum-enabled supergroup. Same per-
+		//     storyID anchor pattern; supplies a deterministic
+		//     literal that signals the field role to a reader of
+		//     the fixture without ever touching a real supergroup
+		//     thread.
+		//
+		// **Optional siblings — none.** The every-optional-
+		// populated convention is structurally inapplicable here
+		// because the spec declares zero optional fields on this
+		// operation. This matches the no-optional-siblings
+		// precedent set by API-0226 (six-required), API-0228
+		// (single-required), API-0229 (four-required), API-0231
+		// (three-required), API-0232 (two-required), and API-0233
+		// (single-required), distinguishing the entry from the
+		// optional-bearing peers API-0224 (one optional nested
+		// `map[string]string`), API-0225 (one optional plain
+		// boolean), API-0227 (one optional plain boolean), and
+		// API-0230 (two optional nullable-number siblings).
+		//
+		// **Shape positioning — three-required (three plain
+		// strings) POST connectivity-validation, body REQUIRED.**
+		// Re-asserts the notification/* tag's **three-required-
+		// string** body cardinality for the `test*` cohort first
+		// set by API-0231 — same body cardinality (3 required, 0
+		// optional) but distinct field shapes (this entry is
+		// three plain strings; API-0231 is two strings plus one
+		// array-of-string). Future bot-credentialed notifier
+		// probes (e.g. Mastodon Bot, Matrix bot, if those were
+		// ever added to the spec) can mirror this entry without
+		// re-deriving the per-tag slug or token-anchor
+		// conventions.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set, so the
+		// 404→CodeNotFound override is structurally inapplicable
+		// (no by-id target to miss; the agent supplies the
+		// transport descriptor inline). `*-testTelegramConnection`
+		// here is a body-bearing imperative-action POST and stays
+		// on the 401→CodeAuth invariant locked across every
+		// imperative-action notification/* peer (API-0209..API-0220,
+		// API-0222, API-0223, API-0224, API-0225, API-0226,
+		// API-0227, API-0228, API-0229, API-0230, API-0231,
+		// API-0232, API-0233), keeping authentication as the
+		// universal failure surface for the notification/* `test*`
+		// connectivity-validation POST cohort and closing the
+		// cohort with the same failure-leg invariant the opener
+		// established.
+		SampleBody: json.RawMessage(`{
+			"botToken": "notification-cov-test-telegram-connection-0234-botToken",
+			"chatId": "notification-cov-test-telegram-connection-0234-chatId",
+			"messageThreadId": "notification-cov-test-telegram-connection-0234-messageThreadId"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the empty-
+		// success cohort. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` / `data.status`
+		// rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,
