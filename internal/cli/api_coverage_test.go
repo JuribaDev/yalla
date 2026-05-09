@@ -23956,6 +23956,218 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0311",
+		OperationID: "redis-saveExternalPort",
+		Method:      http.MethodPost,
+		Path:        "/redis.saveExternalPort",
+		Tag:         "redis",
+		// Tenth entry on the redis/* coverage roster, immediately
+		// following API-0310 `redis-saveEnvironment` and completing
+		// the forward reference embedded in that entry's comment
+		// block ("The next case in the PRD-ordered priority-4
+		// backlog is API-0311 `redis-saveExternalPort`"). Continues
+		// inside the `redis-cov-*` per-tag fixture-isolation
+		// namespace opened by API-0302 `redis-changeStatus` and
+		// **must not** back-reference any closed prior-tag namespace
+		// (`admin-cov-*`, `ai-cov-*`, `app-cov-*`, `backup-cov-*`,
+		// `bb-cov-*`, `cert-cov-*`, `clu-cov-*`, `compose-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `docker-cov-*`,
+		// `domain-cov-*`, `environment-cov-*`, `gitea-cov-*`,
+		// `github-cov-*`, `gitlab-cov-*`, `mariadb-cov-*`,
+		// `mongo-cov-*`, `mounts-cov-*`, `mysql-cov-*`,
+		// `org-cov-*`, `port-cov-*`, `postgres-cov-*`,
+		// `preview-cov-*`, `proj-cov-*`, `redirects-cov-*`,
+		// `security-cov-*`, `set-cov-*`, `srv-cov-*`,
+		// `swarm-cov-*`, `usr-cov-*`) per the per-tag isolation
+		// rule reasserted at API-0335..API-0444 and originally
+		// established at API-0246 `organization-active`.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json` >
+		// `/redis.saveExternalPort` > `post`: method POST, tag
+		// redis, **no parameters**, requestBody REQUIRED with
+		// `application/json` and **two REQUIRED top-level fields**
+		// — `redisId` (plain string) and `externalPort`
+		// (`anyOf:[number,null]`, i.e. nullable number).
+		// Responses 200/400/401/403/500. The 200 response is `{}`
+		// with `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort. **No 404** is
+		// declared on this operation, mirroring the action-on-
+		// known-id POST precedent reasserted across the
+		// mariadb/mongo/mysql/postgres `*-saveExternalPort` family
+		// (API-0169 `mariadb-saveExternalPort`, API-0183
+		// `mongo-saveExternalPort`, API-0203
+		// `mysql-saveExternalPort`, API-0281
+		// `postgres-saveExternalPort`) and across every body-
+		// bearing imperative-action redis POST already covered
+		// (API-0302 `redis-changeStatus`, API-0303 `redis-create`,
+		// API-0304 `redis-deploy`, API-0305 `redis-move`,
+		// API-0307 `redis-rebuild`, API-0308 `redis-reload`,
+		// API-0309 `redis-remove`, API-0310
+		// `redis-saveEnvironment`) whose missing-target failure
+		// mode collapses into 400/validation under Dokploy's tRPC
+		// convention rather than a dedicated 404 leg. The 404
+		// override therefore reverts to inapplicable here — its
+		// sole activation site for the redis/* roster remains
+		// API-0306 `redis-one`, the canonical by-id GET peer.
+		//
+		// **Cross-tag wire-shape lineage.** The `<tag>Id` +
+		// nullable-number `externalPort` saveExternalPort pairing
+		// is the canonical external-port-save-shape recurrence
+		// across Dokploy's service tags — verified against the
+		// OpenAPI spec to be present on
+		// `/mariadb.saveExternalPort` (`mariadbId`,
+		// `externalPort`), `/mongo.saveExternalPort` (`mongoId`,
+		// `externalPort`), `/mysql.saveExternalPort` (`mysqlId`,
+		// `externalPort`), `/postgres.saveExternalPort`
+		// (`postgresId`, `externalPort`), and
+		// `/redis.saveExternalPort` (`redisId`, `externalPort`).
+		// Within the covered roster the direct precedents are
+		// API-0169 `mariadb-saveExternalPort`, API-0183
+		// `mongo-saveExternalPort`, API-0203
+		// `mysql-saveExternalPort`, and API-0281
+		// `postgres-saveExternalPort`, all of which carry the
+		// tag-specific resource id as the first REQUIRED scalar
+		// and the nullable `externalPort` as the second REQUIRED
+		// slot exactly as `/redis.saveExternalPort` does.
+		// redis-saveExternalPort is therefore byte-for-byte
+		// cardinality-identical to those peer entries modulo the
+		// resource-id field name (`redisId` instead of
+		// `mariadbId` / `mongoId` / `mysqlId` / `postgresId`).
+		// The slug-prefix-is-not-shape rule still applies — the
+		// spec was re-verified per-operation rather than
+		// transitively inherited from the prior
+		// `*-saveExternalPort` peers.
+		//
+		// **Request body schema (REQUIRED top-level fields):**
+		//   - REQUIRED `redisId` (string) — resource id scalar;
+		//     the fixture below supplies a deterministic-but-
+		//     clearly-fake
+		//     `redis-cov-save-external-port-0311-redisId` literal
+		//     carrying the
+		//     `<tag>-cov-<slug>-<storyID>-<field>` suffix for
+		//     `git grep` traceability. Slug `save-external-port`
+		//     follows the kebab-case style established at
+		//     API-0169 `mariadb-cov-save-external-port-0169` for
+		//     the analogous `*-saveExternalPort` family.
+		//   - REQUIRED `externalPort` (`anyOf:[number,null]`) —
+		//     TCP port scalar; the fixture supplies a non-null
+		//     integer literal `25311` so the success leg exercises
+		//     the populated branch of the `anyOf` rather than
+		//     relying on `null`. The value is a valid TCP port
+		//     (1..65535) with the storyID `0311` embedded in the
+		//     low digits, mirroring the API-0169
+		//     `mariadb-saveExternalPort` precedent of populating
+		//     the `anyOf` branch with a realistic value while
+		//     still encoding the storyID for `git grep`
+		//     traceability. (A pure string-suffix token is not
+		//     applicable here because the slot's populated branch
+		//     is `type: number`, not `type: string`; the
+		//     integer-with-embedded-storyID convention was
+		//     established at API-0169 and is reasserted here for
+		//     the redis/* peer.)
+		//   - **No OPTIONAL fields declared.** The schema is a
+		//     strict two-required-scalar request; cardinality-
+		//     identical to API-0310 `redis-saveEnvironment`
+		//     (`redisId`, `env`) modulo the second slot's typed
+		//     branch (`anyOf:[number,null]` here vs.
+		//     `anyOf:[string,null]` on saveEnvironment), and
+		//     cardinality-identical to API-0308 `redis-reload`
+		//     (`redisId`, `appName`) modulo the second slot's
+		//     nullability and type.
+		//
+		// **Shape positioning — two-required-scalar POST external-
+		// port-save mutation, body REQUIRED.** The first REQUIRED
+		// slot is a plain non-nullable `type: string` (no `anyOf`
+		// / `nullable` / enum constraints), structurally identical
+		// to the `redisId` slot on API-0302 `redis-changeStatus`,
+		// API-0304 `redis-deploy`, API-0305 `redis-move`, API-0307
+		// `redis-rebuild`, API-0308 `redis-reload`, API-0309
+		// `redis-remove`, and API-0310 `redis-saveEnvironment`.
+		// The second REQUIRED slot is `anyOf:[number,null]`,
+		// matching the API-0169 `mariadb-saveExternalPort`,
+		// API-0183 `mongo-saveExternalPort`, API-0203
+		// `mysql-saveExternalPort`, and API-0281
+		// `postgres-saveExternalPort` `externalPort` precedents
+		// — and contrasting with API-0310 `redis-saveEnvironment`'s
+		// `anyOf:[string,null]` `env` slot (different `anyOf`
+		// branch type). The harness's `len(tc.SampleBody) > 0`
+		// gate at `runAPICoverageSuccess` activates the JSON
+		// content-type and byte-for-byte body comparison legs;
+		// this fixture supplies both REQUIRED fields in the spec-
+		// declared property order so the success path verifies
+		// the CLI propagated the body verbatim, including the
+		// unquoted JSON number `25311` (the raw-API path is
+		// type-agnostic at the CLI level — the body is forwarded
+		// as opaque bytes).
+		//
+		// **Family choice — harness-default 401→CodeAuth
+		// retained.** The spec omits 404 from the response set
+		// (per above), so the 404→CodeNotFound override is
+		// structurally inapplicable. The 404→CodeNotFound override
+		// slot was already consumed for the redis/* roster by
+		// API-0306 `redis-one` per the per-tag opener design
+		// header which reserves 404 representatives **specifically
+		// for the canonical by-id `*-one` peer**;
+		// `*-saveExternalPort` is an imperative-action POST and
+		// stays on the 401→CodeAuth invariant locked by the
+		// kickoff at API-0302 `redis-changeStatus` and reasserted
+		// at API-0303 `redis-create`, API-0304 `redis-deploy`,
+		// API-0305 `redis-move`, API-0307 `redis-rebuild`,
+		// API-0308 `redis-reload`, API-0309 `redis-remove`, and
+		// API-0310 `redis-saveEnvironment`. The cross-tag
+		// `*-saveExternalPort` precedent chain at API-0169
+		// `mariadb-saveExternalPort`, API-0183
+		// `mongo-saveExternalPort`, API-0203
+		// `mysql-saveExternalPort`, and API-0281
+		// `postgres-saveExternalPort` likewise locks
+		// 401→CodeAuth.
+		//
+		// **Fixture token base**
+		// `redis-cov-save-external-port-0311` follows the
+		// established `<tag>-cov-<slug>-<storyID>`
+		// deterministic-but-clearly-fake naming convention and is
+		// verified non-colliding with API-0302's
+		// `redis-cov-changeStatus-0302`, API-0303's
+		// `redis-cov-create-0303`, API-0304's
+		// `redis-cov-deploy-0304-redisId`, API-0305's
+		// `redis-cov-move-0305-redisId` /
+		// `redis-cov-move-0305-targetEnvironmentId`, API-0306's
+		// `redis-cov-one-0306-redisId-fixture`, API-0307's
+		// `redis-cov-rebuild-0307-redisId`, API-0308's
+		// `redis-cov-reload-0308-redisId` /
+		// `redis-cov-reload-0308-appName`, API-0309's
+		// `redis-cov-remove-0309-redisId`, and API-0310's
+		// `redis-cov-save-environment-0310-redisId` /
+		// `redis-cov-save-environment-0310-env` literals
+		// (different slug + storyID → unique under the
+		// `<tag>-cov-<slug>-<storyID>` rule). The full-tag-name
+		// slug prefix `redis-` is unambiguously distinct from the
+		// lexically-adjacent full-tag-name `redirects-cov-*`
+		// namespace closed at API-0301, satisfying the
+		// `<tag>-cov-<slug>-<storyID>` uniqueness rule.
+		//
+		// The next case in the PRD-ordered priority-4 backlog is
+		// API-0312 `redis-search` (declared a **GET** per the spec
+		// preview — the first GET on the redis/* roster since
+		// API-0306 `redis-one`; the next contributor must re-verify
+		// the spec against `internal/api/data/openapi.json` per
+		// the forward-reference lesson before assuming any field
+		// shape, and will continue inside the `redis-cov-*`
+		// per-tag fixture-isolation namespace opened by API-0302).
+		SampleBody: json.RawMessage(`{
+			"redisId": "redis-cov-save-external-port-0311-redisId",
+			"externalPort": 25311
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0331",
 		OperationID: "security-create",
 		Method:      http.MethodPost,

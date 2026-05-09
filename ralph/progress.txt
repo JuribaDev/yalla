@@ -23991,3 +23991,55 @@ forward-reference lesson before assuming any field shape.
     no extra wiring needed beyond setting `SampleBody` and
     `SuccessResponse`.
 ---
+
+## 2026-05-09 - API-0311 (redis-saveExternalPort)
+- Added `coveredAPIOperations` entry for API-0311 in `internal/cli/api_coverage_test.go`,
+  inserted immediately after API-0310 `redis-saveEnvironment` and before API-0331
+  `security-create`. The new case follows the redis/* per-tag fixture-isolation
+  pattern opened at API-0302 and the cross-tag `*-saveExternalPort` precedent first
+  established at API-0169 `mariadb-saveExternalPort`.
+- Wire shape: two-required-scalar POST mutation, body REQUIRED, no parameters.
+  REQUIRED `redisId` (string) and REQUIRED `externalPort` (`anyOf:[number,null]`)
+  per the spec at `/redis.saveExternalPort > post`. Success response is the empty-
+  object cohort `{}` with `additionalProperties:false`. Spec declares
+  200/400/401/403/500 — no 404, so the harness-default 401→CodeAuth failure leg is
+  retained (404 override remains pinned to API-0306 `redis-one`).
+- Fixture token base `redis-cov-save-external-port-0311`. SampleBody supplies the
+  populated `anyOf:[number,null]` branch with the integer `25311` (storyID encoded
+  in the low digits of a valid TCP port, mirroring API-0169's `25169`). Field
+  `redisId` is `redis-cov-save-external-port-0311-redisId` for `git grep`
+  traceability.
+- Files changed:
+  - internal/cli/api_coverage_test.go (+217 lines)
+  - ralph/prd.json (passes:true on API-0311)
+  - ralph/progress.txt (this entry)
+- Verification run from the repository root:
+  - gofmt -w . — clean.
+  - go mod tidy — clean.
+  - go vet ./... — pass.
+  - go test ./... — pass.
+  - go test -race ./... — pass.
+  - goimports / golangci-lint / staticcheck / govulncheck / goreleaser — not
+    installed locally; documented as missing per the per-iteration policy.
+- Remaining risks or follow-ups:
+  - 99 priority-4 API-coverage stories remain. The next PRD-ordered redis/* peer
+    is API-0312 `redis-search` — a GET with no request body and OPTIONAL query
+    parameters; the next contributor must re-verify the spec at
+    `internal/api/data/openapi.json` > `/redis.search` > `get` per the
+    forward-reference lesson before assuming any field shape, and will continue
+    inside the `redis-cov-*` per-tag fixture-isolation namespace.
+- Learnings for future iterations:
+  - The `*-saveExternalPort` family is a direct one-to-one shape across tags
+    (mariadb/mongo/mysql/postgres/redis): two REQUIRED top-level fields, the
+    tag-specific `<tag>Id` plain string and the nullable-number `externalPort`.
+    Future `*-saveExternalPort` stories can reuse this exact two-scalar fixture
+    layout modulo the resource-id field name.
+  - The `anyOf:[number,null]` populated-branch convention: use a valid TCP port
+    (1..65535) with the storyID's last four digits embedded in the low digits
+    (`25<storyDigits>`). This convention was established at API-0169 and
+    reasserted here for the redis/* peer; subsequent `*-saveExternalPort` stories
+    on other tags should reuse it.
+  - The redis/* roster's 404→CodeNotFound override remains pinned to API-0306
+    `redis-one`. Body-bearing imperative-action POSTs that omit 404 from their
+    response set stay on the harness-default 401→CodeAuth failure leg.
+---
