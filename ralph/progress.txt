@@ -23775,3 +23775,80 @@ forward-reference lesson before assuming any field shape.
     entries (API-0156/API-0157/API-0159) or by the boolean-only
     API-0158 body.
 ---
+## 2026-05-09 - API-0308
+- Implemented Cover redis-reload (POST /redis.reload) using the
+  established `coveredAPIOperations` table-driven harness in
+  `internal/cli/api_coverage_test.go`.
+- Files changed:
+  - `internal/cli/api_coverage_test.go`: appended a new entry between
+    API-0307 `redis-rebuild` and API-0331 `security-create`, supplying
+    the two REQUIRED top-level string scalars (`redisId`, `appName`)
+    with the deterministic-but-clearly-fake fixture tokens
+    `redis-cov-reload-0308-redisId` and `redis-cov-reload-0308-appName`
+    per the `<tag>-cov-<slug>-<storyID>-<field>` convention. Body
+    shape is byte-for-byte cardinality-identical to API-0278
+    `postgres-reload` (the canonical two-required-string-scalar
+    by-id-plus-appName reload-mutation POST), and the failure leg
+    returns to the harness-default 401 → CodeAuth now that API-0306
+    has consumed the redis/* tag's reserved 404 → CodeNotFound
+    override slot.
+  - `ralph/prd.json`: flipped API-0308 `passes` to `true`.
+  - `ralph/progress.txt`: this entry.
+- Verification: `gofmt -l .` (clean), `go mod tidy` (no diff),
+  `go vet ./...` (clean), `go test ./...` (all 9 packages pass), and
+  `go test -race ./...` (all 9 packages pass; cli takes 3.135s under
+  -race) all run from the repo root. Targeted
+  `go test -run TestAPICoverage/API-0308 -v ./internal/cli/...`
+  exercises all five harness contracts (registry invariants, schema
+  reachability, manifest inclusion, success round-trip, and
+  representative 401 → CodeAuth failure leg) and they all pass.
+  Optional tools (`goimports`, `golangci-lint`, `staticcheck`,
+  `govulncheck`, `goreleaser`) remain not installed locally;
+  documented previously.
+- Remaining risks or follow-ups: none specific to this story. The
+  next pending priority-4 story is API-0309 `redis-remove` (POST
+  /redis.remove), already forward-referenced in this entry's comment
+  block. The next contributor must re-verify the spec against
+  `internal/api/data/openapi.json` per the established
+  forward-reference lesson before assuming any field shape, and will
+  continue inside the `redis-cov-*` per-tag fixture-isolation
+  namespace opened by API-0302.
+- **Learnings for future iterations:**
+  - The OpenAPI spec at `internal/api/data/openapi.json` for
+    `/redis.reload` declares TWO REQUIRED top-level string scalars
+    (`redisId`, `appName`) with no optional fields, exactly matching
+    the cross-tag `*-reload` precedent chain at API-0166
+    `mariadb-reload`, API-0180 `mongo-reload`, API-0200
+    `mysql-reload`, and API-0278 `postgres-reload`. The
+    `<tag>Id + appName` dual-required-scalar reload pairing is the
+    canonical reload-shape across the Dokploy database tags
+    (mariadb, mongo, mysql, postgres, redis) and remains
+    byte-for-byte cardinality-identical modulo the resource-id field
+    name. Future contributors covering the remaining database `*-reload`
+    POST stories can lean on this template — the fixture token must
+    use a unique `<tag>-cov-<slug>-<storyID>` triple, but the body /
+    response shape and failure-leg defaulting carry over verbatim.
+  - The redis/* tag's 404 → CodeNotFound override slot was claimed
+    once-and-only-once by API-0306 `redis-one`; subsequent redis/*
+    POST entries (API-0307 `redis-rebuild`, API-0308 `redis-reload`,
+    and the upcoming API-0309..API-0315 except API-0312
+    `redis-search`) revert to the harness-default 401 → CodeAuth
+    representative-failure leg unless their spec uniquely declares a
+    different distinguishing failure shape (none observed in the
+    spec for the remaining redis/* POST entries beyond `redis-search`
+    which is a GET).
+  - The `*-reload` cross-tag precedent chain is now API-0166
+    `mariadb-reload`, API-0180 `mongo-reload`, API-0200
+    `mysql-reload`, API-0278 `postgres-reload`, and API-0308
+    `redis-reload` — all five peers share the canonical
+    two-required-string-scalar `<tag>Id + appName` body, no 404
+    response, and the harness-default 401 → CodeAuth failure leg.
+    The slug-prefix-is-not-shape rule was respected: the spec was
+    re-verified per-operation rather than transitively inherited from
+    the prior `*-reload` peers.
+  - The spec-declared property order is `(redisId, appName)`; the
+    SampleBody fixture preserves this order so a future contract-
+    style diff against the spec's property table reads top-to-bottom
+    without reordering noise. This matches the API-0166 / API-0180 /
+    API-0200 / API-0278 precedent.
+---

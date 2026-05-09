@@ -23385,6 +23385,191 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0308",
+		OperationID: "redis-reload",
+		Method:      http.MethodPost,
+		Path:        "/redis.reload",
+		Tag:         "redis",
+		// Seventh entry on the redis/* coverage roster, immediately
+		// following API-0307 `redis-rebuild` and completing the
+		// forward reference embedded in that entry's comment block
+		// ("The next case in the PRD-ordered priority-4 backlog is
+		// API-0308 `redis-reload`"). Continues inside the
+		// `redis-cov-*` per-tag fixture-isolation namespace opened
+		// by API-0302 `redis-changeStatus` and **must not**
+		// back-reference any closed prior-tag namespace
+		// (`admin-cov-*`, `ai-cov-*`, `app-cov-*`, `backup-cov-*`,
+		// `bb-cov-*`, `cert-cov-*`, `clu-cov-*`, `compose-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `docker-cov-*`,
+		// `domain-cov-*`, `environment-cov-*`, `gitea-cov-*`,
+		// `github-cov-*`, `gitlab-cov-*`, `mariadb-cov-*`,
+		// `mongo-cov-*`, `mounts-cov-*`, `mysql-cov-*`,
+		// `org-cov-*`, `port-cov-*`, `postgres-cov-*`,
+		// `preview-cov-*`, `proj-cov-*`, `redirects-cov-*`,
+		// `security-cov-*`, `set-cov-*`, `srv-cov-*`,
+		// `swarm-cov-*`, `usr-cov-*`) per the per-tag isolation
+		// rule reasserted at API-0335..API-0444 and originally
+		// established at API-0246 `organization-active`.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json` > `/redis.reload` >
+		// `post`: method POST, tag redis, **no parameters**,
+		// requestBody REQUIRED with `application/json` and **two
+		// REQUIRED top-level string scalars** (`redisId`,
+		// `appName`) and **no optional fields**, responses
+		// 200/400/401/403/500. The 200 response is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort. **No 404** is
+		// declared on this operation, mirroring the
+		// action-on-known-id POST precedent reasserted at
+		// API-0162 `mariadb-deploy`, API-0166 `mariadb-reload`,
+		// API-0180 `mongo-reload`, API-0200 `mysql-reload`,
+		// API-0274 `postgres-deploy`, API-0277 `postgres-rebuild`,
+		// API-0278 `postgres-reload`, API-0302
+		// `redis-changeStatus`, API-0304 `redis-deploy`, and
+		// API-0307 `redis-rebuild` (a body-bearing imperative-
+		// action POST whose missing-target failure mode collapses
+		// into 400/validation under Dokploy's tRPC convention
+		// rather than a dedicated 404 leg). 404 remains exclusive
+		// to the canonical by-id `*-one` GET peer covered at
+		// API-0306 `redis-one` for this tag.
+		//
+		// **Cross-tag wire-shape lineage.** The `<tag>Id + appName`
+		// dual-required-scalar reload pairing is the canonical
+		// reload-shape recurrence across the Dokploy database
+		// tags — verified against the OpenAPI spec to be present
+		// on `/application.reload` (`appName + applicationId`),
+		// `/mariadb.reload` (`mariadbId + appName`),
+		// `/mongo.reload` (`mongoId + appName`),
+		// `/mysql.reload` (`mysqlId + appName`),
+		// `/postgres.reload` (`postgresId + appName`), and
+		// `/redis.reload` (`redisId + appName`). Within the
+		// covered roster the direct precedents are API-0166
+		// `mariadb-reload`, API-0180 `mongo-reload`, API-0200
+		// `mysql-reload`, and API-0278 `postgres-reload`, all of
+		// which pair the tag-specific resource id with `appName`
+		// exactly as `/redis.reload` does. redis-reload is
+		// therefore byte-for-byte cardinality-identical to those
+		// peer entries modulo the resource-id field name
+		// (`redisId` instead of `mariadbId` / `mongoId` /
+		// `mysqlId` / `postgresId`). The slug-prefix-is-not-shape
+		// rule still applies — the spec was re-verified per-
+		// operation rather than transitively inherited from the
+		// prior `*-reload` peers.
+		//
+		// **Request body schema (REQUIRED top-level fields):**
+		//   - REQUIRED `redisId` (string) — resource id scalar;
+		//     the fixture below supplies a deterministic-but-
+		//     clearly-fake `redis-cov-reload-0308-redisId`
+		//     literal carrying the
+		//     `<tag>-cov-<slug>-<storyID>-<field>` suffix for
+		//     `git grep` traceability.
+		//   - REQUIRED `appName` (string) — companion deployment-
+		//     name scalar identifying the docker app name to
+		//     reload; the fixture supplies a clearly-fake
+		//     `redis-cov-reload-0308-appName` literal under the
+		//     same suffix convention. The spec lists the property
+		//     order as (`redisId`, `appName`); the fixture
+		//     preserves the spec-declared order so a future
+		//     contract-style diff against the spec's property
+		//     table reads top-to-bottom without reordering noise
+		//     (matching the API-0166 / API-0180 / API-0200 /
+		//     API-0278 precedent).
+		//   - **No OPTIONAL fields declared.** The schema is a
+		//     strict two-scalar request, byte-for-byte cardinality-
+		//     identical to API-0305 `redis-move`'s
+		//     (`redisId`, `targetEnvironmentId`) request shape and
+		//     narrower than the multi-required-scalar API-0303
+		//     `redis-create`. The harness's
+		//     `len(tc.SampleBody) > 0` gate at
+		//     `runAPICoverageSuccess` activates the JSON
+		//     content-type and byte-for-byte body comparison legs;
+		//     this fixture supplies BOTH REQUIRED fields verbatim
+		//     so the success path verifies the CLI propagated the
+		//     multi-field body without reordering, dropping, or
+		//     mutating either scalar. Omitting either field would
+		//     weaken the success leg without any compensating
+		//     signal, per the API-0166 `mariadb-reload`
+		//     two-required-scalar lesson.
+		//
+		// **Shape positioning — two-required-string-scalar POST
+		// imperative-action reload-mutation, body REQUIRED.** Both
+		// REQUIRED slots are plain non-nullable `type: string`
+		// (no `anyOf` / `nullable` / enum constraints),
+		// structurally identical to the two-scalar `redis-move`
+		// body and to the `mariadb-reload` / `mongo-reload` /
+		// `mysql-reload` / `postgres-reload` peer reload entries.
+		// Within the redis/* roster this is the second appearance
+		// of a two-required-scalar POST shape after API-0305
+		// `redis-move`.
+		//
+		// **Family choice — return to harness-default 401 →
+		// CodeAuth.** API-0306 `redis-one` claimed the redis/*
+		// namespace's reserved 404 → CodeNotFound override (per
+		// the per-tag opener design at API-0302
+		// `redis-changeStatus` reserving 404 for the canonical
+		// by-id `*-one` peer), and that override slot is
+		// **single-use per tag**. API-0308 `redis-reload`
+		// therefore reverts to the harness-default 401 → CodeAuth
+		// representative-failure leg, consistent with API-0302
+		// `redis-changeStatus`, API-0303 `redis-create`, API-0304
+		// `redis-deploy`, API-0305 `redis-move`, and API-0307
+		// `redis-rebuild`. The spec omits 404 from the response
+		// set (per above), so the 404 → CodeNotFound override is
+		// structurally inapplicable here. 400 → CodeInvalidInput
+		// is *technically* available — a payload that omits
+		// either REQUIRED scalar would fail server-side
+		// validation — but the harness reserves 400
+		// representatives for stories where payload validation is
+		// the operation's *uniquely distinguishing* failure mode.
+		// A conventional imperative-action POST collapses to
+		// type-checking, so the harness-default 401 → CodeAuth
+		// failure leg remains the most representative single
+		// failure mode every authenticated Dokploy operation must
+		// re-prove, and is consistent with the 401 → CodeAuth
+		// choice locked in by the `*-reload` cross-tag precedent
+		// chain at API-0166 `mariadb-reload`, API-0180
+		// `mongo-reload`, API-0200 `mysql-reload`, and API-0278
+		// `postgres-reload`.
+		//
+		// **Fixture token base** `redis-cov-reload-0308` follows
+		// the established `<tag>-cov-<slug>-<storyID>`
+		// deterministic-but-clearly-fake naming convention and is
+		// verified non-colliding with API-0302's
+		// `redis-cov-changeStatus-0302`, API-0303's
+		// `redis-cov-create-0303`, API-0304's
+		// `redis-cov-deploy-0304-redisId`, API-0305's
+		// `redis-cov-move-0305-redisId` /
+		// `redis-cov-move-0305-targetEnvironmentId`, API-0306's
+		// `redis-cov-one-0306-redisId-fixture`, and API-0307's
+		// `redis-cov-rebuild-0307-redisId` literals (different
+		// slug + storyID → unique under the
+		// `<tag>-cov-<slug>-<storyID>` rule). The full-tag-name
+		// slug prefix `redis-` is unambiguously distinct from the
+		// lexically-adjacent full-tag-name `redirects-cov-*`
+		// namespace closed at API-0301, satisfying the
+		// `<tag>-cov-<slug>-<storyID>` uniqueness rule.
+		//
+		// The next case in the PRD-ordered priority-4 backlog is
+		// API-0309 `redis-remove` (declared a **POST** per the
+		// spec preview; the next contributor must re-verify the
+		// spec against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field
+		// shape, and will continue inside the `redis-cov-*`
+		// per-tag fixture-isolation namespace opened by API-0302).
+		SampleBody: json.RawMessage(`{
+			"redisId": "redis-cov-reload-0308-redisId",
+			"appName": "redis-cov-reload-0308-appName"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0331",
 		OperationID: "security-create",
 		Method:      http.MethodPost,
