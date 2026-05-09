@@ -23745,6 +23745,217 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0310",
+		OperationID: "redis-saveEnvironment",
+		Method:      http.MethodPost,
+		Path:        "/redis.saveEnvironment",
+		Tag:         "redis",
+		// Ninth entry on the redis/* coverage roster, immediately
+		// following API-0309 `redis-remove` and completing the
+		// forward reference embedded in that entry's comment block
+		// ("The next case in the PRD-ordered priority-4 backlog is
+		// API-0310 `redis-saveEnvironment`"). Continues inside the
+		// `redis-cov-*` per-tag fixture-isolation namespace opened
+		// by API-0302 `redis-changeStatus` and **must not**
+		// back-reference any closed prior-tag namespace
+		// (`admin-cov-*`, `ai-cov-*`, `app-cov-*`, `backup-cov-*`,
+		// `bb-cov-*`, `cert-cov-*`, `clu-cov-*`, `compose-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `docker-cov-*`,
+		// `domain-cov-*`, `environment-cov-*`, `gitea-cov-*`,
+		// `github-cov-*`, `gitlab-cov-*`, `mariadb-cov-*`,
+		// `mongo-cov-*`, `mounts-cov-*`, `mysql-cov-*`,
+		// `org-cov-*`, `port-cov-*`, `postgres-cov-*`,
+		// `preview-cov-*`, `proj-cov-*`, `redirects-cov-*`,
+		// `security-cov-*`, `set-cov-*`, `srv-cov-*`,
+		// `swarm-cov-*`, `usr-cov-*`) per the per-tag isolation
+		// rule reasserted at API-0335..API-0444 and originally
+		// established at API-0246 `organization-active`.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json` >
+		// `/redis.saveEnvironment` > `post`: method POST, tag
+		// redis, **no parameters**, requestBody REQUIRED with
+		// `application/json` and **two REQUIRED top-level fields**
+		// — `redisId` (plain string) and `env`
+		// (`anyOf:[string,null]`, i.e. nullable string).
+		// Responses 200/400/401/403/500. The 200 response is `{}`
+		// with `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort. **No 404** is
+		// declared on this operation, mirroring the action-on-
+		// known-id POST precedent reasserted across the
+		// application/mariadb/mongo/mysql/postgres
+		// `*-saveEnvironment` family (API-0030
+		// `application-saveEnvironment`, API-0168
+		// `mariadb-saveEnvironment`, API-0182
+		// `mongo-saveEnvironment`, API-0202
+		// `mysql-saveEnvironment`, API-0280
+		// `postgres-saveEnvironment`) and across every body-
+		// bearing imperative-action redis POST already covered
+		// (API-0302 `redis-changeStatus`, API-0303 `redis-create`,
+		// API-0304 `redis-deploy`, API-0305 `redis-move`,
+		// API-0307 `redis-rebuild`, API-0308 `redis-reload`,
+		// API-0309 `redis-remove`) whose missing-target failure
+		// mode collapses into 400/validation under Dokploy's tRPC
+		// convention rather than a dedicated 404 leg. The 404
+		// override therefore reverts to inapplicable here — its
+		// sole activation site for the redis/* roster remains
+		// API-0306 `redis-one`, the canonical by-id GET peer.
+		//
+		// **Cross-tag wire-shape lineage.** The `<tag>Id` +
+		// nullable-string `env` saveEnvironment pairing is the
+		// canonical environment-save-shape recurrence across
+		// Dokploy's service tags — verified against the OpenAPI
+		// spec to be present on `/application.saveEnvironment`
+		// (`applicationId`, `env`), `/mariadb.saveEnvironment`
+		// (`mariadbId`, `env`), `/mongo.saveEnvironment`
+		// (`mongoId`, `env`), `/mysql.saveEnvironment`
+		// (`mysqlId`, `env`), `/postgres.saveEnvironment`
+		// (`postgresId`, `env`), and `/redis.saveEnvironment`
+		// (`redisId`, `env`). Within the covered roster the direct
+		// precedents are API-0030 `application-saveEnvironment`,
+		// API-0168 `mariadb-saveEnvironment`, API-0182
+		// `mongo-saveEnvironment`, API-0202
+		// `mysql-saveEnvironment`, and API-0280
+		// `postgres-saveEnvironment`, all of which carry the
+		// tag-specific resource id as the first REQUIRED scalar
+		// and the nullable `env` blob as the second REQUIRED slot
+		// exactly as `/redis.saveEnvironment` does.
+		// redis-saveEnvironment is therefore byte-for-byte
+		// cardinality-identical to those peer entries modulo the
+		// resource-id field name (`redisId` instead of
+		// `applicationId` / `mariadbId` / `mongoId` / `mysqlId` /
+		// `postgresId`). The slug-prefix-is-not-shape rule still
+		// applies — the spec was re-verified per-operation rather
+		// than transitively inherited from the prior
+		// `*-saveEnvironment` peers.
+		//
+		// **Request body schema (REQUIRED top-level fields):**
+		//   - REQUIRED `redisId` (string) — resource id scalar;
+		//     the fixture below supplies a deterministic-but-
+		//     clearly-fake
+		//     `redis-cov-save-environment-0310-redisId` literal
+		//     carrying the
+		//     `<tag>-cov-<slug>-<storyID>-<field>` suffix for
+		//     `git grep` traceability. Slug `save-environment`
+		//     follows the kebab-case style established at
+		//     API-0168 `mariadb-cov-save-environment-0168` and
+		//     reasserted at API-0202
+		//     `mysql-cov-save-environment-0202` and API-0280
+		//     `postgres-cov-save-environment-0280` for the same
+		//     `*-saveEnvironment` family.
+		//   - REQUIRED `env` (`anyOf:[string,null]`) — env-vars
+		//     blob scalar; the fixture supplies a non-null string
+		//     literal `redis-cov-save-environment-0310-env` so
+		//     the byte-for-byte body comparison leg verifies the
+		//     CLI propagated the multi-field body without
+		//     reordering, dropping, or mutating either scalar.
+		//     The nullable branch is intentionally *not* exercised
+		//     on the success leg because the harness's
+		//     `len(tc.SampleBody) > 0` gate would still trigger
+		//     with a `null` env, but a non-null string better
+		//     stress-tests the body-pass-through path and keeps
+		//     parity with API-0030 `application-saveEnvironment`,
+		//     API-0168 `mariadb-saveEnvironment`, API-0182
+		//     `mongo-saveEnvironment`, API-0202
+		//     `mysql-saveEnvironment`, and API-0280
+		//     `postgres-saveEnvironment` fixtures whose `env` slots
+		//     are all populated with non-null string literals.
+		//   - **No OPTIONAL fields declared.** The schema is a
+		//     strict two-required-scalar request; cardinality-
+		//     identical to API-0308 `redis-reload` (`redisId`,
+		//     `appName`) modulo the second slot's nullable type,
+		//     and one REQUIRED slot wider than API-0304
+		//     `redis-deploy` / API-0307 `redis-rebuild` /
+		//     API-0309 `redis-remove` (single `redisId` only).
+		//
+		// **Shape positioning — two-required-scalar POST
+		// environment-save mutation, body REQUIRED.** The first
+		// REQUIRED slot is a plain non-nullable `type: string` (no
+		// `anyOf` / `nullable` / enum constraints), structurally
+		// identical to the `redisId` slot on API-0302
+		// `redis-changeStatus`, API-0304 `redis-deploy`, API-0305
+		// `redis-move`, API-0307 `redis-rebuild`, API-0308
+		// `redis-reload`, and API-0309 `redis-remove`. The second
+		// REQUIRED slot is `anyOf:[string,null]`, matching the
+		// API-0030 `application-saveEnvironment`, API-0168
+		// `mariadb-saveEnvironment`, API-0182
+		// `mongo-saveEnvironment`, API-0202
+		// `mysql-saveEnvironment`, and API-0280
+		// `postgres-saveEnvironment` `env` precedents. The
+		// harness's `len(tc.SampleBody) > 0` gate at
+		// `runAPICoverageSuccess` activates the JSON content-type
+		// and byte-for-byte body comparison legs; this fixture
+		// supplies both REQUIRED fields in the spec-declared
+		// property order so the success path verifies the CLI
+		// propagated the body verbatim.
+		//
+		// **Family choice — harness-default 401→CodeAuth
+		// retained.** The spec omits 404 from the response set
+		// (per above), so the 404→CodeNotFound override is
+		// structurally inapplicable. The 404→CodeNotFound override
+		// slot was already consumed for the redis/* roster by
+		// API-0306 `redis-one` per the per-tag opener design
+		// header which reserves 404 representatives **specifically
+		// for the canonical by-id `*-one` peer**;
+		// `*-saveEnvironment` is an imperative-action POST and
+		// stays on the 401→CodeAuth invariant locked by the
+		// kickoff at API-0302 `redis-changeStatus` and reasserted
+		// at API-0303 `redis-create`, API-0304 `redis-deploy`,
+		// API-0305 `redis-move`, API-0307 `redis-rebuild`,
+		// API-0308 `redis-reload`, and API-0309 `redis-remove`.
+		// (API-0306 `redis-one` overrode to 404→CodeNotFound
+		// because the spec itself first declared 404 on the
+		// canonical by-id GET; that override does not generalise
+		// to body-bearing POSTs whose specs omit 404.) The
+		// cross-tag `*-saveEnvironment` precedent chain at
+		// API-0030 `application-saveEnvironment`, API-0168
+		// `mariadb-saveEnvironment`, API-0182
+		// `mongo-saveEnvironment`, API-0202
+		// `mysql-saveEnvironment`, and API-0280
+		// `postgres-saveEnvironment` likewise locks 401→CodeAuth.
+		//
+		// **Fixture token base** `redis-cov-save-environment-0310`
+		// follows the established `<tag>-cov-<slug>-<storyID>`
+		// deterministic-but-clearly-fake naming convention and is
+		// verified non-colliding with API-0302's
+		// `redis-cov-changeStatus-0302`, API-0303's
+		// `redis-cov-create-0303`, API-0304's
+		// `redis-cov-deploy-0304-redisId`, API-0305's
+		// `redis-cov-move-0305-redisId` /
+		// `redis-cov-move-0305-targetEnvironmentId`, API-0306's
+		// `redis-cov-one-0306-redisId-fixture`, API-0307's
+		// `redis-cov-rebuild-0307-redisId`, API-0308's
+		// `redis-cov-reload-0308-redisId` /
+		// `redis-cov-reload-0308-appName`, and API-0309's
+		// `redis-cov-remove-0309-redisId` literals (different
+		// slug + storyID → unique under the
+		// `<tag>-cov-<slug>-<storyID>` rule). The full-tag-name
+		// slug prefix `redis-` is unambiguously distinct from the
+		// lexically-adjacent full-tag-name `redirects-cov-*`
+		// namespace closed at API-0301, satisfying the
+		// `<tag>-cov-<slug>-<storyID>` uniqueness rule.
+		//
+		// The next case in the PRD-ordered priority-4 backlog is
+		// API-0311 `redis-saveExternalPort` (declared a **POST**
+		// per the spec preview; the next contributor must
+		// re-verify the spec against
+		// `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field
+		// shape, and will continue inside the `redis-cov-*`
+		// per-tag fixture-isolation namespace opened by API-0302).
+		SampleBody: json.RawMessage(`{
+			"redisId": "redis-cov-save-environment-0310-redisId",
+			"env": "redis-cov-save-environment-0310-env"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0331",
 		OperationID: "security-create",
 		Method:      http.MethodPost,

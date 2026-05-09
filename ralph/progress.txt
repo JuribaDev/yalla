@@ -23934,3 +23934,60 @@ forward-reference lesson before assuming any field shape.
     the same shape (e.g. redis-start, redis-stop typically take only
     `redisId`).
 ---
+
+
+## 2026-05-09 03:55 UTC - API-0310
+- Implemented Cover redis-saveEnvironment (POST /redis.saveEnvironment).
+- The operation was already present in the embedded OpenAPI registry
+  (`internal/api/data/openapi.json`) so `yalla api operations`,
+  `yalla schema get redis-saveEnvironment`, `yalla api call
+  redis-saveEnvironment`, and `yalla manifest --json` all already
+  surfaced it; this story added the missing coverage-harness fixture
+  that proves the wire contract end-to-end.
+- Files changed:
+  - internal/cli/api_coverage_test.go: appended the `API-0310`
+    `apiCoverageCase` entry between `API-0309` `redis-remove` and
+    `API-0331` `security-create`. Sample body fills both REQUIRED
+    fields (`redisId`, nullable-string `env`) using the
+    `redis-cov-save-environment-0310-{redisId,env}` deterministic-
+    fake namespace; `SuccessResponse: `{}`` matches the spec's
+    `additionalProperties: false` empty-object 200.
+  - ralph/prd.json: flipped `API-0310.passes` to `true`.
+  - ralph/progress.txt: appended this entry.
+- Verification run:
+  - `gofmt -w .`
+  - `go mod tidy` (clean)
+  - `go vet ./...` (clean)
+  - `go test ./...` (all packages PASS)
+  - `go test -race ./...` (all packages PASS)
+  - goimports / golangci-lint / staticcheck / govulncheck / goreleaser
+    are still not installed locally — same documented gap as prior
+    iterations.
+- Results: success-leg (200 + JSON body propagation + envelope), and
+  representative failure-leg (401 -> CodeAuth -> exit code 4) covered
+  by the shared coverage-harness drivers (`runAPICoverageSuccess` and
+  `runAPICoverageAuthFailure` in `internal/cli/api_coverage_test.go`).
+- Remaining risks or follow-ups: none -- the entry follows the exact
+  postgres/mariadb/mongo/mysql/application `*-saveEnvironment`
+  precedent. The next priority-4 story is API-0311
+  `redis-saveExternalPort` and remains within the open
+  `redis-cov-*` per-tag fixture-isolation namespace.
+- **Learnings for future iterations:**
+  - The `*-saveEnvironment` family is byte-for-byte cardinality-
+    identical across application/mariadb/mongo/mysql/postgres/redis
+    tags: two REQUIRED top-level fields -- `<tag>Id` (plain string)
+    and `env` (`anyOf:[string,null]`) -- and a `{}` 200 with
+    `additionalProperties:false`. New `*-saveEnvironment` stories
+    can clone the postgres-saveEnvironment block (API-0280) almost
+    verbatim, modulo the resource-id field name and the
+    `<tag>-cov-save-environment-<storyID>` fixture namespace.
+  - 404 -> CodeNotFound override is **not** available on these
+    operations -- the spec omits 404 entirely, and the per-tag
+    override slot is reserved for the canonical by-id `*-one` GET
+    peer (already consumed by API-0306 `redis-one` for the
+    redis/* roster).
+  - The harness's `len(tc.SampleBody) > 0` gate auto-activates the
+    JSON content-type leg and the byte-for-byte body comparison;
+    no extra wiring needed beyond setting `SampleBody` and
+    `SuccessResponse`.
+---
