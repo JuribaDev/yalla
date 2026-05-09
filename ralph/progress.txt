@@ -25803,3 +25803,77 @@ forward-reference lesson before assuming any field shape.
   - The cross-tag 401→CodeAuth invariant continues to hold for every
     create-mutation POST that omits 404 from its response set.
 ---
+
+## 2026-05-09 - API-0218 - Cover notification-createTeams (POST /notification.createTeams)
+- **Implemented**: Coverage entry for `notification-createTeams` (POST
+  /notification.createTeams) in the shared coverage harness. The single
+  fixture entry drives success-leg, schema, manifest, and failure-leg
+  assertions through the shared `coveredAPIOperations` table.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — added the API-0218 entry
+    immediately after API-0217 `notification-createSlack` and before the
+    API-0246 `organization-active` entry. The fixture covers a nine-slot
+    closed-all-required POST body: two plain strings (`name`, `webhookUrl`)
+    and seven plain booleans (`appBuildError`, `databaseBackup`,
+    `volumeBackup`, `dokployRestart`, `appDeploy`, `dockerCleanup`,
+    `serverThreshold`). Tokens stay inside the per-tag
+    `notification-cov-create-teams-0218-*` namespace. The `webhookUrl`
+    slot uses a reserved-TLD (RFC 6761) `outlook.office.example.invalid`
+    host so a misconfigured fixture cannot egress to a real Microsoft
+    Teams connector.
+  - `ralph/prd.json` — flipped `passes` to `true` for API-0218.
+- **Verification run** (from repo root):
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — no changes.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass; `internal/cli` 1.489s.
+  - `go test -race ./...` — all packages pass; `internal/cli` 3.297s.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` not installed locally; left to CI per prior iterations.
+- **Results**: API-0218 now has `passes: true` in `ralph/prd.json` and the
+  new coverage row drives all five assertions (registry presence, manifest
+  coverage, success leg, failure leg, schema retrievability).
+- **Remaining risks / follow-ups**:
+  - The `webhookUrl` slot embeds a per-channel Microsoft Teams incoming-
+    webhook secret in the URL path. Like every prior body-borne secret in
+    the notification/* roster (Discord/Lark/Slack `webhookUrl`, Email
+    `password`, Ntfy `accessToken`, Pushover `userKey`+`apiToken`,
+    Resend `apiKey`), this is a request-body field forwarded verbatim by
+    yalla; the redactor in `internal/api` only operates on the rendered
+    `--json` envelope (response and tracing), not on the request body.
+    The fixture uses the reserved-TLD `example.invalid` host so no real
+    webhook is committed; agent consumers cribbing this fixture as a
+    `--input` template must substitute their own webhook URL via
+    `--input`, never inline it in source.
+- **Learnings for future iterations**:
+  - `notification-createTeams` is the **second nine-slot two-string-
+    seven-boolean pure-scalar closed-shape notification/* fixture**
+    after API-0213 `notification-createLark`. The two share an
+    identical wire shape (same nine REQUIRED fields, same types, same
+    closed-shape contract) but differ in transport target (Microsoft
+    Teams vs. Lark/Feishu) and per-fixture namespace. When future peers
+    grep this entry as a template, the structural twin is API-0213,
+    not API-0217 (Slack adds a `channel` slot for ten total).
+  - Per-spec rule reaffirmed: only the transport-agnostic core six
+    booleans (`appBuildError`, `databaseBackup`, `volumeBackup`,
+    `dokployRestart`, `appDeploy`, `dockerCleanup`) remain stable
+    across notification/* siblings. Teams keeps `serverThreshold`
+    (joining Slack/Resend/Lark/Gotify); Discord swaps it for
+    `decoration`; Ntfy drops it entirely. Always re-verify the seventh
+    boolean per spec — never copy-paste from a sibling without
+    confirming.
+  - Slug-style for kebab-cased Cobra surfaces continues to track the
+    per-tag-slug-style rule fixed by API-0209: `create-teams` here, with
+    API-0219 `create-telegram` and remaining notification/* siblings to
+    inherit kebab-case.
+  - The shared `coveredAPIOperations` harness in
+    `internal/cli/api_coverage_test.go` remains purely additive — no
+    per-operation success/failure scaffolding is required because the
+    table-driven loop materialises all assertions (registry presence,
+    manifest coverage, success leg, failure leg, schema retrievability)
+    from the fixture record alone.
+  - Cross-tag 401→CodeAuth invariant continues to hold for every
+    create-mutation POST that omits 404 from its response set — the
+    404→CodeNotFound override stays structurally inapplicable when the
+    spec declares no missing-target leg.
+---

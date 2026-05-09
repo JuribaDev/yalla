@@ -19530,6 +19530,170 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0218",
+		OperationID: "notification-createTeams",
+		Method:      http.MethodPost,
+		Path:        "/notification.createTeams",
+		Tag:         "notification",
+		// Eleventh entry in the notification/* coverage roster, continuing
+		// inside the `notification-cov-*` per-tag fixture-isolation
+		// namespace opened by API-0208 `notification-all` and extended by
+		// API-0209 `notification-createCustom`, API-0210
+		// `notification-createDiscord`, API-0211 `notification-createEmail`,
+		// API-0212 `notification-createGotify`, API-0213
+		// `notification-createLark`, API-0214 `notification-createNtfy`,
+		// API-0215 `notification-createPushover`, API-0216
+		// `notification-createResend`, and API-0217
+		// `notification-createSlack`. Per the per-tag isolation rule
+		// reaffirmed across each prior peer, this entry stays inside the
+		// namespace opened by API-0208 and **must not** back-reference any
+		// closed prior-tag namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-reference
+		// lesson** against
+		// `internal/api/data/openapi.json > /notification.createTeams >
+		// post`: a **POST** with **no parameters** and a **REQUIRED
+		// request body** whose schema declares **nine REQUIRED non-
+		// nullable fields** — two plain strings (`name`, `webhookUrl`) and
+		// seven plain booleans (`appBuildError`, `databaseBackup`,
+		// `volumeBackup`, `dokployRestart`, `appDeploy`, `dockerCleanup`,
+		// `serverThreshold`) — with **zero optional siblings**. Responses
+		// 200/400/401/403/500 — the spec does **not** declare 404 on this
+		// operation, matching the cross-tag create-mutation precedent on
+		// API-0189 `mounts-create`, API-0209..API-0217
+		// `notification-create*`, API-0268 `port-create`, API-0292
+		// `project-create`, API-0298 `redirects-create`, API-0325
+		// `schedule-create`, and API-0331 `security-create` (Dokploy
+		// create POSTs do not surface missing-target legs because there is
+		// no target-by-id to miss). The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior covered peer
+		// in the empty-success cohort.
+		//
+		// **Slug style — kebab-case inherited from API-0209/API-0210/
+		// API-0211/API-0212/API-0213/API-0214/API-0215/API-0216/API-0217.**
+		// Per the per-tag-slug-style rule fixed by the kickoff multi-camel
+		// entry API-0209 `notification-createCustom` (→ `create-custom`)
+		// and propagated through `create-discord`, `create-email`,
+		// `create-gotify`, `create-lark`, `create-ntfy`, `create-pushover`,
+		// `create-resend`, and `create-slack`, this peer takes
+		// `create-teams` and the remaining notification/* siblings
+		// (API-0219 `create-telegram`, …) inherit kebab-case as well.
+		//
+		// **Body composition:**
+		//   - **REQUIRED — closed all-required shape, no optional tail.**
+		//     Returns to the closed-shape all-required convention seeded
+		//     by API-0210 `notification-createDiscord` (ten scalar slots:
+		//     eight booleans + two strings), extended by API-0211
+		//     `notification-createEmail` (fourteen slots with one number
+		//     and one array-of-string), API-0212
+		//     `notification-createGotify` (eleven slots, one number),
+		//     API-0213 `notification-createLark` (nine pure-scalar slots),
+		//     API-0214 `notification-createNtfy` (eleven slots with one
+		//     number and one body-borne secret), API-0216
+		//     `notification-createResend` (eleven slots with one
+		//     array-of-string), and API-0217 `notification-createSlack`
+		//     (ten pure-scalar slots with three strings), after the
+		//     partially-required detour at API-0215
+		//     `notification-createPushover`. API-0218 lands at **nine
+		//     slots** with **zero numbers**, **zero arrays**, and a
+		//     **two-string + seven-boolean** scalar-only mix — structurally
+		//     identical to API-0213 `notification-createLark` (also a
+		//     nine-slot two-string-seven-boolean closed-all-required
+		//     shape) but distinct in **transport target** (Microsoft Teams
+		//     incoming-webhook URL vs. Lark/Feishu bot URL) and **slot
+		//     namespace** (`notification-cov-create-teams-0218-*`).
+		//     Every property the spec lists is REQUIRED, so the fixture
+		//     populates all nine slots and the wire-level invariant check
+		//     exercises the closed-shape path with no optional keys to
+		//     drop.
+		//     - `name` (plain string). Carries the deterministic-but-
+		//       clearly-fake `notification-cov-create-teams-0218-name`
+		//       value, keyed to the
+		//       `notification-cov-create-teams-0218-<field>` namespace
+		//       inherited from API-0209..API-0217.
+		//     - `webhookUrl` (plain string). **Carries a transport
+		//       secret.** Like the same-named slot on API-0210
+		//       `createDiscord`, API-0213 `createLark`, and API-0217
+		//       `createSlack`, the `password` on API-0211 `createEmail`,
+		//       the `accessToken` on API-0214 `createNtfy`, the
+		//       `userKey`+`apiToken` on API-0215 `createPushover`, and
+		//       the `apiKey` on API-0216 `createResend`, the per-channel
+		//       Microsoft Teams incoming-webhook URL is embedded directly
+		//       in the request body; the yalla request-body forwarder
+		//       ships the bytes verbatim to the upstream Dokploy host, so
+		//       the redactor in `internal/api` operates on the **rendered
+		//       --json output** (response envelopes, error payloads, and
+		//       tracing) and **not** on the request body. The fixture
+		//       value
+		//       `https://outlook.office.example.invalid/webhook/notification-cov-create-teams-0218`
+		//       is a deterministic non-secret marker on a reserved-TLD
+		//       host (RFC 6761 `example.invalid`) bearing no resemblance
+		//       to a real `https://outlook.office.com/webhook/...` Teams
+		//       connector URL — agents cribbing this fixture as a template
+		//       should always substitute their own real Teams webhook URL
+		//       via `--input`, never inline it in source. This continues
+		//       the `endpoint`/`webhookUrl`/`fromAddress`/`serverUrl` URL-
+		//       fixture convention seeded across the notification/* roster.
+		//     - `appBuildError`, `databaseBackup`, `volumeBackup`,
+		//       `dokployRestart`, `appDeploy`, `dockerCleanup`,
+		//       `serverThreshold` (seven plain booleans) — `true` branch
+		//       on every slot to mirror an "alert me on every category"
+		//       agent-typical Teams configuration. The seventh-boolean
+		//       slot (`serverThreshold`) carries through from API-0216
+		//       `createResend` and API-0217 `createSlack` and confirms the
+		//       per-spec rule reaffirmed across the roster that only the
+		//       transport-agnostic core six (`appBuildError`,
+		//       `databaseBackup`, `volumeBackup`, `dokployRestart`,
+		//       `appDeploy`, `dockerCleanup`) remain stable across
+		//       notification/* siblings; every other slot must be re-
+		//       verified per spec (Teams, Slack, Resend, Lark, Gotify all
+		//       keep `serverThreshold`; Discord swaps it for `decoration`;
+		//       Ntfy drops it entirely).
+		//
+		// **Shape positioning — closed all-required POST create-mutation,
+		// body REQUIRED, nine-field flat payload mixing two strings and
+		// seven booleans, zero optional tail, zero numbers, zero arrays.**
+		// Functionally distinct from the partially-required API-0209
+		// `notification-createCustom`, the closed all-required two-string-
+		// eight-boolean API-0210 `notification-createDiscord`, the larger
+		// closed all-required API-0211 `notification-createEmail` (fourteen
+		// slots with one number and one array), the eleven-slot mixed-
+		// scalar-and-number API-0212 `notification-createGotify`, the
+		// eleven-slot one-number-with-secret API-0214
+		// `notification-createNtfy`, the partially-required three-secret
+		// API-0215 `notification-createPushover`, the eleven-slot one-
+		// array API-0216 `notification-createResend`, and the ten-slot
+		// three-string scalar-only API-0217 `notification-createSlack`.
+		// API-0218 is the **second nine-slot two-string-seven-boolean
+		// pure-scalar closed-shape notification/* fixture after API-0213
+		// `createLark`** — the two share an identical wire shape but
+		// differ in transport target and per-fixture namespace.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.** The
+		// spec omits 404 from the response set, so the 404→CodeNotFound
+		// override is structurally inapplicable. `*-create` here is a
+		// body-bearing imperative-action POST and stays on the
+		// 401→CodeAuth invariant locked by every imperative-action peer
+		// already covered.
+		SampleBody: json.RawMessage(`{
+			"name": "notification-cov-create-teams-0218-name",
+			"webhookUrl": "https://outlook.office.example.invalid/webhook/notification-cov-create-teams-0218",
+			"appBuildError": true,
+			"databaseBackup": true,
+			"volumeBackup": true,
+			"dokployRestart": true,
+			"appDeploy": true,
+			"dockerCleanup": true,
+			"serverThreshold": true
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the empty-success
+		// cohort. Empty-object body keeps the success-leg envelope
+		// assertion focused on `data.method` / `data.status` rather than
+		// payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,
