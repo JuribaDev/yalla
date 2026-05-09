@@ -29847,3 +29847,112 @@ forward-reference lesson before assuming any field shape.
     `apiCoverageCase` literals; they do not add operations to the
     registry.
 ---
+
+## 2026-05-09 - API-0404 sshKey-remove
+- Implemented: covered Dokploy API operation `sshKey-remove` (POST
+  `/sshKey.remove`) end-to-end through the existing data-driven harness
+  in `internal/cli/api_coverage_test.go`. Single `apiCoverageCase`
+  literal inserted in PRD-priority order between API-0403 `sshKey-one`
+  and API-0423 `swarm-getNodeApps`. Method POST, tag sshKey, no
+  parameters, requestBody REQUIRED with `application/json`, responses
+  200/400/401/403/500. Single REQUIRED top-level body field `sshKeyId`
+  (plain string); zero optional fields. Fifth entry on the sshKey/*
+  coverage roster, consuming the forward reference left by API-0403.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (+~135 lines: API-0404 case
+    literal — `SampleBody`:
+    `{"sshKeyId": "sshKey-cov-remove-0404-sshKeyId-fixture"}`,
+    `SuccessResponse: "{}"`; no `FailureStatus` / `FailureCode`
+    override → harness-default 401→CodeAuth retained).
+  - `ralph/prd.json` — flipped `userStories[id=API-0404].passes` to
+    `true`.
+  - `ralph/progress.txt` — this entry (append-only).
+- Verification run (from repo root):
+  - `gofmt -w .` clean (`gofmt -l .` empty).
+  - `go mod tidy` clean (no new deps).
+  - `go vet ./...` clean.
+  - `go test ./...` — all packages PASS (`internal/cli` 1.413s).
+  - `go test -race ./...` — all packages PASS (`internal/cli`
+    3.506s).
+  - Targeted `go test ./internal/cli -run
+    'TestAPICoverage_(RegistryInvariants|SchemaCommandWorks|ManifestListsOperation|SuccessRoundTrip|RepresentativeFailure)/API-0404'
+    -v`: all five `API-0404/sshKey-remove` subtests PASS.
+  - Optional `goimports`, `golangci-lint`, `staticcheck`,
+    `govulncheck`, and `goreleaser` not installed locally;
+    documented previously, no change.
+- Results: API-0404 acceptance criteria satisfied. Operation is present
+  in the OpenAPI registry with method POST, path `/sshKey.remove`,
+  tag `sshKey`; raw API call works through the harness no-input path
+  (`yalla api call sshKey-remove --input request.json --json`); schema
+  get works; manifest lists the operation; success and 401→CodeAuth
+  representative failure both proven by the harness.
+- Spec verification — re-read
+  `internal/api/data/openapi.json > /sshKey.remove > post`: method
+  POST, tag sshKey, **no parameters**, requestBody REQUIRED with
+  `application/json`, responses 200/400/401/403/500. The 200
+  response is `{}` with `additionalProperties: false`. Body schema
+  declares one REQUIRED string property `sshKeyId` and no optional
+  fields. **No 404** declared, mirroring every prior covered
+  destructive-POST `*-remove` peer (API-0179 `mongo-remove`,
+  API-0309 `redis-remove`, API-0319 `registry-remove`, API-0344
+  `server-remove`).
+- Family choice: harness-default 401→CodeAuth retained. The
+  404→CodeNotFound override slot for the sshKey/* tag arc was claimed
+  at API-0403 `sshKey-one`, so this entry must not re-claim it.
+  400→CodeInvalidInput is technically available (omitting REQUIRED
+  `sshKeyId` would fail server-side validation) but is reserved for
+  stories where payload validation is the operation's uniquely
+  distinguishing failure mode; a conventional `*-remove` mutation
+  collapses to type-checking, so 401→CodeAuth remains the most
+  representative single failure mode and stays consistent with the
+  401→CodeAuth choice locked in by API-0400 `sshKey-all`,
+  API-0401 `sshKey-create`, and API-0402 `sshKey-generate`.
+- Fixture token base `sshKey-cov-remove-0404` consumes the
+  `sshKey-cov-*` per-tag fixture-isolation namespace opened at
+  API-0400 `sshKey-all`. The token base embeds in the single
+  REQUIRED body field via the value
+  `sshKey-cov-remove-0404-sshKeyId-fixture`, surfaced through the
+  harness's byte-for-byte body comparison leg activated by
+  `len(tc.SampleBody) > 0` at `runAPICoverageSuccess`. Verified
+  non-colliding with API-0401's `sshKey-cov-create-0401-*`,
+  API-0402's `sshKey-cov-generate-0402-*` (declared in comment
+  only), and API-0403's `sshKey-cov-one-0403-*` literals.
+- Remaining risks or follow-ups: none for this story. The next
+  pending sshKey/* peer in PRD priority-5 order is API-0405
+  `sshKey-update` (POST per the spec preview, continuing the
+  body-bearing sshKey/* mutator chain). The `sshKey-cov-*`
+  namespace remains open; the next entry will use slugs of the form
+  `sshKey-cov-update-0405-*`. Per a quick spec preview, the body
+  schema declares REQUIRED `sshKeyId` (the same `<id>` field as
+  this entry) plus optional `name`, `description`, and
+  `lastUsedAt` slots — implementing contributor must re-verify
+  per the forward-reference lesson and decide minimal-required-only
+  vs every-optional-populated coverage.
+- **Learnings for future iterations:**
+  - The destructive-POST `*-remove` shape is now a stable cross-tag
+    family with at least five precedents (API-0179 `mongo-remove`,
+    API-0309 `redis-remove`, API-0319 `registry-remove`,
+    API-0344 `server-remove`, API-0404 `sshKey-remove`). All
+    share: POST, no parameters, body REQUIRED with single REQUIRED
+    `<entity>Id` string, responses 200/400/401/403/500 (no 404),
+    200 = `{}` with `additionalProperties: false`. Coverage
+    collapses to a one-line `SampleBody` and the harness-default
+    401→CodeAuth failure leg. New tags adopting this family can
+    re-use this entry's structure verbatim with slug + storyID +
+    `<entity>Id` substitutions.
+  - When the by-id-reader (`*-one`) sits **before** `*-remove`
+    on the PRD-priority order (as here for sshKey/*, where API-0403
+    `sshKey-one` precedes API-0404 `sshKey-remove`), the
+    404→CodeNotFound reservation opened at the tag-arc opener
+    (`*-all`) is consumed by `*-one`, leaving `*-remove` to
+    fall back to the harness-default 401→CodeAuth. Contributors
+    must check the `*-one` entry's claim before considering any
+    override on `*-remove` — re-claiming would violate the
+    one-canonical-claimant rule.
+  - The minimal-required-only fixture rule (load-bearing for
+    credential-redaction safety) applies trivially when the spec
+    declares **zero** optional fields: the fixture saturates the
+    schema with all REQUIRED slots and the rule is automatically
+    satisfied. No future story can regress on this case by
+    hard-coding an optional value.
+---
