@@ -27588,3 +27588,70 @@ forward-reference lesson before assuming any field shape.
   - `password`-bearing fixtures need an in-comment redaction-scope
     callout to keep future agents from inlining real credentials.
 ---
+
+## 2026-05-09 — API-0238 (notification-updateGotify)
+- Added apiCoverageCase entry for `notification-updateGotify` — fourth
+  member of the notification/* `update*` mutation-by-id cohort opened
+  by API-0235 `notification-updateCustom`, extended by API-0236
+  `notification-updateDiscord`, and reaffirmed by API-0237
+  `notification-updateEmail`.
+- Body fixture pins two REQUIRED non-nullable plain string slots
+  (`notificationId`, `gotifyId`) plus a twelve-sibling every-optional-
+  populated tail mirroring the API-0212 `notification-createGotify`
+  precedent (seven shared category booleans incl. `decoration` on
+  `true`, plain strings `name`/`serverUrl` (RFC 6761
+  `example.invalid` host)/`appToken`, plain number `priority` on `5`
+  matching the API-0212 mid-band Gotify priority) plus the
+  `update*`-only `organizationId` scope anchor.
+- Shape diverges from API-0235 (seven booleans + two strings + nested
+  `headers` map + organizationId), API-0236 (eight booleans incl.
+  shared `decoration` + two strings + organizationId), and API-0237
+  (seven booleans incl. `serverThreshold` + five strings + one number
+  + array-of-string `toAddresses` + organizationId) by pairing
+  Gotify-specific delivery slots (`serverUrl`, `appToken`, `priority`
+  number) with the shared `decoration` boolean while dropping the
+  email-only SMTP connection slots and the array-of-string
+  `toAddresses` — reflecting Gotify's HTTP-push delivery shape vs.
+  SMTP's connection-oriented delivery and discord's webhook-only
+  delivery.
+- `appToken` slot carries a clearly-fake
+  `notification-cov-update-gotify-0238-app-token` placeholder per the
+  API-0212 callout — yalla forwards request bytes verbatim and the
+  redactor only operates on rendered `--json` output, so agents
+  cribbing this fixture must substitute their own secret material via
+  `--input` and never inline real credentials in source.
+- Files changed: `internal/cli/api_coverage_test.go`, `ralph/prd.json`,
+  `ralph/progress.txt`.
+- Verified: `gofmt -l .` (clean), `go mod tidy` (no-op), `go vet ./...`
+  (clean), `go test ./...` (pass), `go test -race ./...` (pass).
+  Targeted `TestAPICoverage_.*/API-0238` subtests pass for registry
+  invariants, schema reachability, manifest inclusion, success round-
+  trip, and 401→CodeAuth representative failure leg.
+- Remaining risks: none for this story. Slug stem `update-gotify` is
+  now locked; API-0239..API-0245 must re-derive their optional tail
+  from their matching `notification-create*` precedent rather than
+  inheriting from this entry, since each transport flavour declares
+  its own subset of the notification base schema (e.g., lark's
+  webhookUrl-only delivery, ntfy's topic+server pair, pushover's
+  user/app token pair, resend's API-key + from/to mailboxes, slack's
+  channel array, teams's connector list, telegram's bot token + chat
+  id pair).
+- **Learnings for future iterations:**
+  - Gotify's optional tail re-derives one-for-one from the API-0212
+    `create*` precedent (eleven all-required slots) plus the
+    `update*`-only `organizationId` anchor — twelve siblings total.
+    No new field types vs. API-0212; the only delta is the required-
+    vs-optional flip and the scope anchor.
+  - `decoration` is **shared** across discord (API-0210/API-0236) and
+    gotify (API-0212/API-0238) — it is NOT a discord-only marker.
+    Future cross-cohort comparisons should call it the
+    "decoration-bearing transport flavours" rather than label it
+    discord-only.
+  - The `priority` number slot stays on `5` to mirror the API-0212
+    fixture; mid-band Gotify priorities (1–10 typical) keep the wire
+    fixture realistic without anchoring on the protocol's highest
+    severity.
+  - `appToken`-bearing fixtures need an in-comment redaction-scope
+    callout (mirrors the API-0237 `password` callout) to keep future
+    agents from inlining real credentials.
+---
