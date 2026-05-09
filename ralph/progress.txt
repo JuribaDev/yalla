@@ -27148,3 +27148,84 @@ forward-reference lesson before assuming any field shape.
     cross-entry comments.
 
 ---
+
+## 2026-05-09T04:08Z - API-0233
+
+- **What was implemented**: Added an `apiCoverageCase` entry for the
+  Dokploy `notification-testTeamsConnection` operation (`POST
+  /notification.testTeamsConnection`) inside
+  `internal/cli/api_coverage_test.go`. Operation is the **tenth
+  member** of the notification/* `test*` connectivity-validation POST
+  cohort opened by API-0224 and the 26th overall entry on the
+  notification/* coverage roster (after API-0208..API-0232). Re-asserts
+  the cohort's **single-required-string + zero-optional** body shape
+  (first established by API-0228 `notification-testLarkConnection`)
+  with a single REQUIRED `webhookUrl` (https URL anchored on
+  `example.invalid` reserved TLD per RFC 6761). Slug stem is
+  `test-teams-connection`; fixture namespace
+  `notification-cov-test-teams-connection-0233-<field>` follows the
+  per-tag isolation discipline locked since API-0208.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended API-0233 entry
+    between API-0232 (`notification-testSlackConnection`) and
+    API-0246 (`organization-active`).
+  - `ralph/prd.json` — flipped `passes` for API-0233 to `true`
+    (single-line edit preserving 2-space indent).
+  - `ralph/progress.txt` — this entry.
+- **Verification run** (from repo root):
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - Targeted: `go test ./internal/cli/ -run 'TestAPICoverage_.*/API-0233' -count=1 -v` —
+    all five harness gates PASS (`RegistryInvariants`,
+    `SchemaCommandWorks`, `ManifestListsOperation`,
+    `SuccessRoundTrip`, `RepresentativeFailure`).
+  - `go test ./...` — all packages OK (`internal/cli` 1.426s).
+  - `go test -race ./...` — all packages OK (`internal/cli` 3.392s).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — not installed locally, skipped per documented
+    baseline.
+- **Results**: Story passes. Story count after this entry: 462
+  total, 406 passing, 56 still failing.
+- **Remaining risks or follow-ups**: None. The remaining `test*`
+  cohort peer is API-0234 (`testTelegramConnection`). It will close
+  the cohort opener API-0224's forward-reference list
+  (API-0231..API-0234), and once it lands, the next notification/*
+  story is API-0235 `notification-updateCustom` which opens a new
+  shape family (mutation by-id, not connectivity-validation).
+- **Learnings for future iterations:**
+  - **Body-shape re-assertion across same-cardinality cohort
+    members.** API-0233 (Microsoft Teams) and API-0228 (Lark/Feishu)
+    share the exact same body shape: 1 REQUIRED `webhookUrl`, 0
+    OPTIONAL siblings. The cohort opener convention has been
+    "every entry establishes a new body shape", but this is the
+    first **re-assertion** entry — same cardinality, same field
+    name, distinct webhook-host family. Treat the cross-entry diff
+    as a transport/host delta only, not a structural delta. Future
+    notifier-probes that share `webhookUrl` cardinality (e.g.
+    Mattermost/RocketChat if added to spec) should grep API-0228
+    or API-0233 — whichever is closer in transport semantics —
+    rather than re-deriving.
+  - **Microsoft Teams `webhook.office.com` URL family.** Real Teams
+    incoming-webhook URLs have a distinctive
+    `/webhookb2/<guid>@<tenant-guid>/IncomingWebhook/<connector-id>/<base64-key>`
+    path shape with **two** GUID components and a base64 key —
+    structurally distinct from Slack's `T<id>/B<id>/<base62>` path.
+    The deterministic `notification-cov-*` literal under
+    `example.invalid` keeps the fixture greppable and avoids any
+    false-positive detection by future redaction-shape validators
+    that learn either family's path pattern.
+  - **Cohort opener forward-reference list — penultimate close.**
+    The API-0224 opener's forward-reference list named
+    API-0231..API-0234 explicitly. Adding API-0233 here closes the
+    third-of-four forward references (after API-0231 and API-0232).
+    Only API-0234 (`testTelegramConnection`) remains; once it lands,
+    the cohort is fully closed and future notification/* stories
+    open new shape families.
+  - **Indent-preserving PRD flip discipline still holds via direct
+    text replacement.** Used a single Edit replacing the surrounding
+    block of `"passes": false,` with `"passes": true,` for the
+    API-0233 story object. The 2-space-indented JSON file stays
+    clean with a one-line semantic diff; never rewrite the full PRD
+    file.
+---
