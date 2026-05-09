@@ -24662,3 +24662,56 @@ forward-reference lesson before assuming any field shape.
     in DNS, so even if a future harness change inadvertently
     triggers a real network call, no third-party host is contacted.
 ---
+
+## 2026-05-09 - API-0326 - Cover schedule-delete (POST /schedule.delete)
+- Added `coveredAPIOperations` entry for `schedule-delete` between API-0325
+  `schedule-create` and API-0331 `security-create` in
+  `internal/cli/api_coverage_test.go`. Continues the `schedule-cov-*`
+  per-tag fixture-isolation namespace opened by API-0325.
+- Spec re-verified against `internal/api/data/openapi.json > /schedule.delete
+  > post`: POST, no parameters, REQUIRED body with one REQUIRED non-nullable
+  plain string field `scheduleId`, no optional fields, responses
+  200/400/401/403/500 (no 404 declared). Identical wire shape to API-0323
+  `rollback-delete`, API-0309 `redis-remove`, API-0179 `mongo-remove`.
+- `SampleBody` saturates the single REQUIRED string with
+  `schedule-cov-delete-0326-scheduleId`. `SuccessResponse` is the empty
+  object `{}` matching the spec's `additionalProperties: false`.
+- 401→CodeAuth harness default retained (no 404 in spec).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (added one entry)
+  - `ralph/prd.json` (set `passes: true` on API-0326)
+  - `ralph/progress.txt` (this entry)
+- Verification run from repo root:
+  - `gofmt -w internal/cli/api_coverage_test.go` — clean
+  - `go mod tidy` — clean
+  - `go vet ./...` — pass
+  - `go test ./... -count=1` — pass (all 9 packages)
+  - `go test -race ./... -count=1` — pass (all 9 packages)
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`, and
+    `goreleaser` not installed locally; documented as missing per the
+    Codebase Patterns convention. CI must run them.
+- Remaining risks / follow-ups: API-0327 `schedule-list` is the next
+  priority-4 schedule/* peer and should inherit the `schedule-cov-*`
+  namespace opened by API-0325 and continued here. It is a GET (no body),
+  so the next contributor should re-verify the `/schedule.list` shape
+  against `internal/api/data/openapi.json` and diverge from this entry's
+  POST-with-body precedent accordingly.
+- **Learnings for future iterations:**
+  - Adding a Dokploy raw-API operation that already exists in the
+    OpenAPI registry only requires a new `coveredAPIOperations` test
+    case; the registry, manifest, schema, and api-call commands pick
+    it up automatically. No code outside the test file is needed for
+    this story type.
+  - Insertion point follows numeric `StoryID` order. The block before
+    API-0331 `security-create` is the correct slot for the entire
+    schedule/* run (API-0325..API-0330).
+  - Per-tag fixture-isolation rule — keep `<tag>-cov-<slug>-<storyID>`
+    fixture tokens scoped to the open tag namespace; never reach across
+    a closed prior-tag namespace. Comment block enumerating closed
+    namespaces is reused near-verbatim from API-0323/API-0325 so the
+    `git grep` audit trail stays continuous.
+  - For single-required-`<tag>Id` POSTs with no 404 leg in the spec,
+    keep the harness-default 401→CodeAuth family. The 404→CodeNotFound
+    override is only used when the spec actually declares a 404
+    response.
+---

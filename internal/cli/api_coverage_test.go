@@ -25423,6 +25423,100 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0326",
+		OperationID: "schedule-delete",
+		Method:      http.MethodPost,
+		Path:        "/schedule.delete",
+		Tag:         "schedule",
+		// Second priority-4 schedule/* peer — inherits the
+		// `schedule-cov-*` per-tag fixture-isolation namespace
+		// opened at API-0325 `schedule-create`. Per the per-tag
+		// fixture-isolation rule established at API-0188
+		// `mounts-allNamedByApplicationId`, API-0246
+		// `organization-active`, API-0268 `port-create`, API-0290
+		// `project-all`, API-0298 `redirects-create`, API-0302
+		// `redis-changeStatus`, and API-0323 `rollback-delete`,
+		// this entry stays inside the `schedule-cov-*` namespace
+		// and **must not** back-reference any closed prior-tag
+		// namespace (`admin-cov-*`, `ai-cov-*`, `app-cov-*`,
+		// `backup-cov-*`, `bb-cov-*`, `cert-cov-*`, `clu-cov-*`,
+		// `compose-cov-*`, `deployment-cov-*`, `dest-cov-*`,
+		// `docker-cov-*`, `domain-cov-*`, `environment-cov-*`,
+		// `gitea-cov-*`, `github-cov-*`, `gitlab-cov-*`,
+		// `mariadb-cov-*`, `mongo-cov-*`, `mounts-cov-*`,
+		// `mysql-cov-*`, `org-cov-*`, `port-cov-*`,
+		// `postgres-cov-*`, `preview-cov-*`, `proj-cov-*`,
+		// `redirects-cov-*`, `redis-cov-*`, `rollback-cov-*`,
+		// `security-cov-*`, `set-cov-*`, `srv-cov-*`,
+		// `swarm-cov-*`, `usr-cov-*`). Subsequent schedule/* peers
+		// (API-0327 `schedule-list`, API-0328 `schedule-one`,
+		// API-0329 `schedule-runManually`, API-0330
+		// `schedule-update`) should grep this block and the
+		// API-0325 `schedule-create` kickoff to continue inheriting
+		// the schedule/* slug namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json > /schedule.delete > post`:
+		// a **POST** with **no parameters** and a **REQUIRED request
+		// body** whose schema declares **one REQUIRED non-nullable
+		// plain string field** `scheduleId` with **zero optional
+		// fields**. Responses 200/400/401/403/500 — **no 404** is
+		// declared, mirroring the action-on-known-id POST precedent
+		// reasserted across every body-bearing imperative-action POST
+		// already covered (e.g. API-0323 `rollback-delete`, API-0309
+		// `redis-remove`, API-0179 `mongo-remove`) whose
+		// missing-target failure mode collapses into 400/validation
+		// under Dokploy's tRPC convention rather than a dedicated 404
+		// leg. The 200 response is `{}` with `additionalProperties:
+		// false`, matching the empty-success cohort.
+		//
+		// **Body composition:**
+		//   - **REQUIRED:** `scheduleId` (plain string). Identifies
+		//     the schedule record to delete. The fixture below
+		//     supplies a deterministic-but-clearly-fake
+		//     `schedule-cov-delete-0326-scheduleId` literal carrying
+		//     the `<tag>-cov-<slug>-<storyID>-<field>` suffix for
+		//     `git grep` traceability.
+		//   - **No optional fields exist on this operation**, so the
+		//     fixture saturates the entire schema surface with the
+		//     single REQUIRED scalar.
+		//
+		// **Shape positioning — single-required-string-scalar POST
+		// destructive-action mutation, body REQUIRED, no optional
+		// tail.** Cardinality- and type-identical to API-0323
+		// `rollback-delete`, API-0309 `redis-remove`, API-0179
+		// `mongo-remove`, and the rest of the
+		// single-required-`<tag>Id` body family (one REQUIRED plain
+		// string slot, zero optional slots). Functionally a
+		// destructive-action `*-delete` slug; the on-the-wire shape
+		// and 401-default failure family are identical.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so
+		// the 404→CodeNotFound override is structurally
+		// inapplicable. `*-delete` here is a body-bearing
+		// destructive POST and stays on the 401→CodeAuth invariant
+		// locked by every destructive-action peer already covered.
+		//
+		// **Fixture token base** `schedule-cov-delete-0326` follows
+		// the established `<tag>-cov-<slug>-<storyID>` deterministic-
+		// but-clearly-fake naming convention. Single-segment slug
+		// `delete` has no internal capitalisation so the
+		// kebab-vs-camel slug-style choice deferred to API-0329
+		// `schedule-runManually` (the first multi-camel-segment
+		// schedule/* slug) remains unaffected here.
+		SampleBody: json.RawMessage(`{
+			"scheduleId": "schedule-cov-delete-0326-scheduleId"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0331",
 		OperationID: "security-create",
 		Method:      http.MethodPost,
