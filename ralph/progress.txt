@@ -23686,3 +23686,92 @@ forward-reference lesson before assuming any field shape.
     single-required-string-scalar `redisId`-equivalent body, no 404
     response, and the harness-default 401 → CodeAuth failure leg.
 ---
+
+## 2026-05-09 - API-0159
+- Implemented Cover licenseKey-validate (POST /licenseKey.validate)
+  using the established `coveredAPIOperations` table-driven harness in
+  `internal/cli/api_coverage_test.go`. Spec re-verified against
+  `internal/api/data/openapi.json` > `/licenseKey.validate` > `post`:
+  no `requestBody` field at all, zero parameters, responses
+  200/400/401/403/500 (no 404 declared), 200 schema is `{}` with
+  `additionalProperties: false`. The forward-reference comment in
+  API-0158 incorrectly predicted "POST with a body"; per the
+  established forward-reference correction pattern (API-0157 corrected
+  API-0156, API-0158 corrected API-0157), this entry documents the
+  correction explicitly: this operation is structurally a no-body
+  no-params POST, byte-for-byte identical to API-0155
+  `licenseKey-deactivate` modulo OperationID, Path, and StoryID.
+- Files changed:
+  - `internal/cli/api_coverage_test.go`: appended a new entry between
+    API-0158 `licenseKey-updateEnterpriseSettings` and API-0160
+    `mariadb-changeStatus` per the StoryID-sorted slice rule. No
+    `SampleBody`, no `SampleQuery`, no `SamplePathParams` (degenerate
+    no-input shape). `SuccessResponse: "{}"` matches the empty-success
+    cohort. Failure leg defaults to 401 → CodeAuth (no 404 in spec
+    means 404 → CodeNotFound override is structurally inapplicable;
+    400 → CodeInvalidInput stays reserved for distinguishing payload-
+    validation failures, which a no-body POST does not have).
+  - `ralph/prd.json`: flipped API-0159 `passes` to `true`.
+  - `ralph/progress.txt`: this entry.
+- Verification: `gofmt -w .`, `go mod tidy` (no diff), `go vet ./...`,
+  `go test ./...`, and `go test -race ./...` all pass. Targeted
+  `go test -run TestAPICoverage -v ./internal/cli/...` exercises all
+  five `API-0159/licenseKey-validate` subtests
+  (registry invariants, schema reachability, manifest inclusion,
+  success round-trip, representative 401 → CodeAuth failure leg) and
+  they all pass.
+- Remaining risks or follow-ups: none specific to this story. The
+  next pending priority-5 story is API-0208 `notification-all` (GET
+  /notification.all), which opens a brand-new `notification-cov-*`
+  per-tag fixture-isolation namespace. (API-0160..API-0207 are
+  priority-4 mariadb/* and mongo/* stories already covered ahead of
+  this priority-5 backlog — confirmed by PRD scan: only API-0208+ is
+  pending after API-0159.)
+- **Learnings for future iterations:**
+  - The licenseKey/* tag now contains TWO no-body POST entries:
+    API-0155 `licenseKey-deactivate` and API-0159 `licenseKey-validate`.
+    Both are byte-for-byte structurally identical (no requestBody, no
+    params, response set 200/400/401/403/500, empty `{}` success
+    body) and both retain the harness-default 401 → CodeAuth failure
+    leg. The API-0155 entry was the first such case on the
+    licenseKey/* roster; API-0159 is the second.
+  - The cross-tag no-body POST cohort across `coveredAPIOperations`
+    is now 11 members: API-0155 (`licenseKey-deactivate`), API-0354
+    (`settings-cleanAllDeploymentQueue`, the canonical pattern),
+    API-0357 (`settings-cleanMonitoring`), API-0358
+    (`settings-cleanRedis`), API-0359 (`settings-cleanSSHPrivateKey`),
+    API-0370 (`settings-getUpdateData`), API-0383
+    (`settings-reloadRedis`), API-0384 (`settings-reloadServer`),
+    API-0393 (`settings-updateServer`), API-0432
+    (`user-generateToken`), and API-0159 (`licenseKey-validate`). All
+    eleven peers share the canonical no-body no-params POST shape and
+    the harness-default 401 → CodeAuth failure leg. Future
+    contributors covering remaining no-body POSTs (e.g.
+    `/stripe.createCustomerPortalSession` if it is left uncovered)
+    can lean on this template — the only diff is StoryID,
+    OperationID, Path, and Tag scalars.
+  - Forward-reference comments in this codebase are explicitly
+    flagged as speculative ("declared a POST with a body **per the
+    spec preview**"; "the next contributor must re-verify the spec
+    ... before assuming any field shape"). The forward-reference
+    correction pattern is well-established at this point: when the
+    spec re-verification contradicts the prediction, the new entry
+    documents the correction in its comment block under a
+    **Forward-reference correction** heading. API-0157 corrected
+    API-0156's prediction, API-0158 corrected API-0157's, and now
+    API-0159 corrects API-0158's. This is the canonical defence
+    against speculative spec assumptions silently propagating across
+    the coverage roster.
+  - With API-0159, the licenseKey/* per-tag roster is now complete:
+    API-0154 (activate, body-bearing POST), API-0155 (deactivate,
+    no-body POST), API-0156 (getEnterpriseSettings, no-body GET),
+    API-0157 (haveValidLicenseKey, no-body GET), API-0158
+    (updateEnterpriseSettings, body-bearing POST with one optional
+    boolean), and API-0159 (validate, no-body POST). The
+    `licenseKey-cov-*` per-tag fixture-isolation namespace remains
+    open at API-0154's `licenseKey-cov-activate-0154-licenseKey` and
+    API-0155's `licenseKey-cov-deactivate-0155-licenseKey` literals;
+    no new on-the-wire fixture tokens were minted by the no-body
+    entries (API-0156/API-0157/API-0159) or by the boolean-only
+    API-0158 body.
+---

@@ -11497,6 +11497,139 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0159",
+		OperationID: "licenseKey-validate",
+		Method:      http.MethodPost,
+		Path:        "/licenseKey.validate",
+		Tag:         "licenseKey",
+		// Sixth entry on the licenseKey/* coverage roster, inheriting
+		// the `licenseKey-cov-*` per-tag fixture-isolation namespace
+		// opened by API-0154 `licenseKey-activate`, reasserted by
+		// API-0155 `licenseKey-deactivate`, and continued through
+		// API-0156 `licenseKey-getEnterpriseSettings`, API-0157
+		// `licenseKey-haveValidLicenseKey`, and API-0158
+		// `licenseKey-updateEnterpriseSettings`. Per the per-tag
+		// isolation rule reasserted at API-0335..API-0444 and
+		// originally established at API-0246 `organization-active`,
+		// this entry **must not** back-reference any closed prior-tag
+		// namespace (`set-cov-*`, `srv-cov-*`, `proj-cov-*`,
+		// `org-cov-*`, `compose-cov-*`, `app-cov-*`, `ai-cov-*`,
+		// `admin-cov-*`, `backup-cov-*`, `bb-cov-*`, `cert-cov-*`,
+		// `clu-cov-*`, `deployment-cov-*`, `dest-cov-*`,
+		// `docker-cov-*`, `domain-cov-*`, `environment-cov-*`,
+		// `gitea-cov-*`, `github-cov-*`, `gitlab-cov-*`,
+		// `gitProvider-cov-*`, `mariadb-cov-*`, `mongo-cov-*`,
+		// `mounts-cov-*`, `mysql-cov-*`, `swarm-cov-*`, `usr-cov-*`,
+		// etc.). Sandwiched between API-0158
+		// `licenseKey-updateEnterpriseSettings` and API-0160
+		// `mariadb-changeStatus` (the priority-4 mariadb/* tag kickoff)
+		// per the StoryID-sorted slice rule.
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json` > `/licenseKey.validate` >
+		// `post`: a **POST** with **no `requestBody` field at all**
+		// (structurally stronger than `requestBody.required = false`
+		// carrying an optional body — here the spec declares no
+		// request body schema whatsoever, so the operation is a true
+		// no-input POST) and **zero parameters** (no query, no path,
+		// no header). Responses 200/400/401/403/500 — note the
+		// **absence of 404**, mirroring API-0154 `licenseKey-activate`
+		// and API-0155 `licenseKey-deactivate` and matching the
+		// imperative-action POST cohort whose spec lacks a dedicated
+		// missing-target failure leg (validation collapses into 400
+		// under Dokploy's tRPC convention). The 200 schema is `{}`
+		// with `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort.
+		//
+		// **Forward-reference correction.** API-0158's comment
+		// predicted this entry would be a **POST with a body** per
+		// the spec preview but explicitly cautioned against assuming
+		// the field shape. The re-verification confirmed the caution:
+		// this operation has *no* request body at all, degenerating
+		// from API-0154 `licenseKey-activate` and API-0155
+		// `licenseKey-deactivate`'s single-required-string-scalar
+		// shape (`{licenseKey}`) and from API-0158
+		// `licenseKey-updateEnterpriseSettings`'s zero-required /
+		// one-optional-boolean shape, into the parameter-free no-body
+		// POST cohort. The harness handles it correctly: when
+		// `len(tc.SampleBody) == 0`, `runAPICoverageSuccess` skips
+		// the `Content-Type` and body-round-trip assertions (see the
+		// `if len(tc.SampleBody) > 0` guard) and the success leg
+		// still asserts method, path, Authorization header, empty
+		// query string, schema_version, data.operation_id,
+		// data.method, and data.status — all the wire-level
+		// invariants the agent contract guarantees for `yalla api
+		// call licenseKey-validate --json`.
+		//
+		// **Cohort positioning — second licenseKey/* no-body POST.**
+		// API-0159 `licenseKey-validate` is byte-for-byte structurally
+		// identical to API-0155 `licenseKey-deactivate` (the first
+		// licenseKey/* no-body POST and the second member of the
+		// cross-tag no-body POST cohort overall, after API-0354
+		// `settings-cleanAllDeploymentQueue` established the canonical
+		// pattern). Both share: parameter-free no-body POST, no 404
+		// declared, response set 200/400/401/403/500, empty `{}`
+		// success body. The per-tag no-body POST cohort precedent
+		// chain on the licenseKey/* roster is now API-0155
+		// `licenseKey-deactivate` → API-0159 `licenseKey-validate`,
+		// and the cross-tag no-body POST precedent chain across
+		// `coveredAPIOperations` is API-0155 → API-0354
+		// `settings-cleanAllDeploymentQueue` → API-0357
+		// `settings-cleanMonitoring` → API-0358 `settings-cleanRedis`
+		// → API-0359 `settings-cleanSSHPrivateKey` → API-0370
+		// `settings-getUpdateData` → API-0383 `settings-reloadRedis`
+		// → API-0384 `settings-reloadServer` → API-0393
+		// `settings-updateServer` → API-0432 `user-generateToken` →
+		// API-0159 `licenseKey-validate`. All eleven peers share the
+		// canonical no-body no-params POST shape and the harness-
+		// default 401 → CodeAuth failure leg.
+		//
+		// **No fixture string needed.** With zero parameters and no
+		// body, there is no slot for a `licenseKey-cov-validate-0159`
+		// deterministic-but-clearly-fake fixture token. The per-tag
+		// `licenseKey-cov-*` namespace stays opened by API-0154 and
+		// reasserted via comment-block reference here without any
+		// new on-the-wire literals. Future licenseKey/* peers that
+		// *do* carry inputs must continue minting
+		// `licenseKey-cov-<slug>-<storyID>` fixtures within this
+		// namespace per the established `<tag>-cov-<slug>-<storyID>`
+		// convention.
+		//
+		// **Failure leg — harness-default 401 → CodeAuth retained.**
+		// 404 → CodeNotFound is **not available** here at all (no 404
+		// in the spec, mirroring API-0154 / API-0155 / API-0158), so
+		// the 404 → CodeNotFound override is structurally
+		// inapplicable. 400 → CodeInvalidInput stays reserved for
+		// stories where payload validation is the operation's
+		// distinguishing failure mode; a parameter-free no-body POST
+		// has no payload to validate, so the harness-default 401 →
+		// CodeAuth failure leg remains the most representative single
+		// failure mode (`tc.FailureStatus == 0` → 401,
+		// `tc.FailureCode == ""` → CodeAuth) and reasserts the auth
+		// invariant for the licenseKey/* namespace at this entry.
+		// (License validation — like activation, deactivation, and
+		// enterprise-settings reads/writes — must still pass the
+		// bearer header before any license-key state inspection, per
+		// the spec's `Authorization: []` security requirement.)
+		//
+		// The next case in the priority-5 backlog after this entry is
+		// API-0208 `notification-all` (declared a **GET** per the spec
+		// preview, opening a brand-new `notification-cov-*` per-tag
+		// namespace); the next contributor must re-verify the spec
+		// against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape.
+		// (API-0160..API-0207 are priority-4 mariadb/* and mongo/*
+		// stories already covered ahead of this priority-5 backlog.)
+		//
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0160",
 		OperationID: "mariadb-changeStatus",
 		Method:      http.MethodPost,
