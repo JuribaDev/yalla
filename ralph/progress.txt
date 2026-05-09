@@ -24779,3 +24779,54 @@ forward-reference lesson before assuming any field shape.
     so a future URL-shape validator accepts it without risking real DNS
     lookups or wire egress.
 ---
+
+## 2026-05-09 - API-0327 (schedule-list)
+- Added per-operation coverage entry for `schedule-list` (GET
+  `/schedule.list`) at `internal/cli/api_coverage_test.go` between the
+  schedule-delete (API-0326) and security-create (API-0331) blocks,
+  preserving StoryID-sorted ordering.
+- The new case is the **first GET-shaped entry on the schedule/* roster**
+  and exercises the harness's two-required-query-parameter wire
+  propagation path: `id` (plain string, fixture
+  `schedule-cov-list-0327-id`) plus `scheduleType` (four-value enum,
+  fixture picks first enum value `application`). The harness's
+  `runAPICoverageSuccess` re-reads `r.URL.Query()` and asserts both
+  key/value pairs survive verbatim through the CLI → API client →
+  httptest server path.
+- **Failure-leg family choice:** even though the spec declares 404 on
+  this operation, the per-tag opener convention reserves
+  404 → CodeNotFound for the canonical by-id sibling at API-0328
+  `schedule-one`. This list-style getter inherits the harness default
+  401 → CodeAuth, mirroring API-0054
+  `bitbucket-getBitbucketRepositories` (scoped-list GET) and
+  contrasting with API-0055 `bitbucket-one` (by-id GET, 404 override).
+- Files changed: `internal/cli/api_coverage_test.go`,
+  `ralph/prd.json` (`passes: true` for API-0327), `ralph/progress.txt`.
+- Verification run: `gofmt -w .`, `go mod tidy`, `go vet ./...`,
+  `go test ./...`, `go test -race ./...` — all green. `goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, and `goreleaser`
+  remain not installed locally and were skipped per the documented
+  baseline.
+- Remaining risks: none specific to this story. The next priority-4
+  schedule/* peers (API-0328 `schedule-one` by-id GET with the 404
+  override, API-0329 `schedule-runManually` mutation, API-0330
+  `schedule-update`) inherit the `schedule-cov-*` namespace established
+  by API-0325 and reasserted here.
+- **Learnings for future iterations:**
+  - For multi-required-query GETs, populating `SampleQuery` with one
+    entry per required parameter is sufficient — the harness re-reads
+    `r.URL.Query()` and asserts every populated key/value pair
+    survives, so there is no need to materialise a request body or a
+    query-only `--input` JSON literal.
+  - When a GET spec declares 404 but the operation is a list-style /
+    scoped-list getter (filtered by parent id, returning a collection),
+    the convention is to **omit** the `FailureStatus` /
+    `FailureCode` overrides and inherit the harness default
+    401 → CodeAuth. Reserve 404 → CodeNotFound for the canonical
+    by-id sibling (`*-one`) on the same tag. Precedents: API-0054 vs
+    API-0055 (bitbucket), API-0290 (project-all), API-0335
+    (server-all).
+  - Enum-typed query parameters: pick the **first enum value** in the
+    spec for the fixture, matching the deterministic-first-enum pick
+    convention reasserted at API-0325 `schedule-create`.
+---

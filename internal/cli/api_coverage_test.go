@@ -25648,6 +25648,130 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0327",
+		OperationID: "schedule-list",
+		Method:      http.MethodGet,
+		Path:        "/schedule.list",
+		Tag:         "schedule",
+		// Third priority-4 schedule/* peer and the **first GET-shaped**
+		// entry on the schedule/* coverage roster — succeeds the
+		// request-body POSTs at API-0325 `schedule-create` (kickoff,
+		// every-optional-populated 11-field body) and API-0326
+		// `schedule-delete` (single-required-string-scalar destructive
+		// action). Inherits the `schedule-cov-*` per-tag fixture-
+		// isolation namespace opened at API-0325. Per the per-tag
+		// fixture-isolation rule established at API-0188
+		// `mounts-allNamedByApplicationId`, API-0246
+		// `organization-active`, API-0268 `port-create`, API-0290
+		// `project-all`, API-0298 `redirects-create`, API-0331
+		// `security-create`, and reasserted at API-0325
+		// `schedule-create`, this entry stays inside the
+		// `schedule-cov-*` namespace and **must not** back-reference
+		// any closed prior-tag namespace (`admin-cov-*`, `ai-cov-*`,
+		// `app-cov-*`, `auth-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		// `cluster-cov-*`, `compose-cov-*`, `deployment-cov-*`,
+		// `destination-cov-*`, `discord-cov-*`, `docker-cov-*`,
+		// `domain-cov-*`, `email-cov-*`, `gh-cov-*`, `git-cov-*`,
+		// `gitea-cov-*`, `gitlab-cov-*`, `mariadb-cov-*`, `mongo-cov-*`,
+		// `mounts-cov-*`, `mysql-cov-*`, `notif-cov-*`, `org-cov-*`,
+		// `port-cov-*`, `postgres-cov-*`, `preview-cov-*`,
+		// `proj-cov-*`, `redirects-cov-*`, `redis-cov-*`,
+		// `rollback-cov-*`, `security-cov-*`, `set-cov-*`,
+		// `srv-cov-*`, `swarm-cov-*`, `usr-cov-*`). Subsequent
+		// schedule/* peers (API-0328 `schedule-one`, API-0329
+		// `schedule-runManually`, API-0330 `schedule-update`) should
+		// grep this block and the API-0325/API-0326 kickoff/delete
+		// pair to continue inheriting the schedule/* slug namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json > /schedule.list > get`:
+		// a **GET** with **no request body** and **two REQUIRED
+		// query parameters** — `id` (plain string) and `scheduleType`
+		// (string with a four-value enum: `application`, `compose`,
+		// `server`, `dokploy-server`). Responses 200/400/401/403/
+		// **404**/500 — a 404 leg is declared, but per the
+		// list-style-getter convention reasserted at API-0054
+		// `bitbucket-getBitbucketRepositories` (scoped-list GET),
+		// API-0290 `project-all` (fleet list), API-0335 `server-all`
+		// (fleet list), and the bitbucket/* roster's split between
+		// API-0054 (list, 401-default) and API-0055 `bitbucket-one`
+		// (by-id, 404-override), the 404 → CodeNotFound representative
+		// is reserved for the canonical by-id sibling at API-0328
+		// `schedule-one`, **not** this filter-by-parent-id list
+		// endpoint. The 200 response is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort.
+		//
+		// **Query composition:**
+		//   - **REQUIRED:** `id` (plain string). Identifies the
+		//     parent resource whose schedules are being listed
+		//     (interpretation depends on `scheduleType` — e.g. an
+		//     application id when `scheduleType=application`, a
+		//     compose id when `scheduleType=compose`). The fixture
+		//     below supplies a deterministic-but-clearly-fake
+		//     `schedule-cov-list-0327-id` literal carrying the
+		//     `<tag>-cov-<slug>-<storyID>-<field>` suffix for
+		//     `git grep` traceability.
+		//   - **REQUIRED:** `scheduleType` (string, four-value enum
+		//     `application` | `compose` | `server` | `dokploy-server`).
+		//     The fixture picks `application` — the first enum
+		//     value, matching the deterministic-first-enum pick
+		//     convention reasserted at API-0325 `schedule-create`'s
+		//     own `scheduleType` enum population. The harness's
+		//     `runAPICoverageSuccess` re-reads `r.URL.Query()` and
+		//     asserts every populated `SampleQuery` key/value pair
+		//     survives verbatim, so the wire query string proves
+		//     end-to-end propagation through the CLI → API client →
+		//     httptest server path for both required slots.
+		//   - **No optional query parameters exist on this
+		//     operation**, so the fixture saturates the entire
+		//     query-parameter surface with the two REQUIRED slots.
+		//
+		// **Shape positioning — two-required-query GET list-style
+		// getter, no request body, plain-string + four-value-enum
+		// query mix.** Mirrors the multi-required-query GET
+		// precedent on API-0053 `bitbucket-getBitbucketBranches`
+		// (three-param GET), and the scoped-list-getter precedent
+		// on API-0054 `bitbucket-getBitbucketRepositories`
+		// (single-required-query scoped list). Closes the
+		// minimum-query-surface-with-an-enum slot for the
+		// schedule/* roster; the by-id GET shape is reserved for
+		// API-0328 `schedule-one`.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// Even though the spec declares 404 on this operation, the
+		// per-tag opener convention reserves 404 → CodeNotFound for
+		// the canonical by-id sibling (API-0328 `schedule-one`), not
+		// for this filter-by-parent-id list endpoint. Auth is the
+		// universal failure mode every Dokploy operation must re-
+		// prove, so 401 → CodeAuth via the harness default
+		// (`tc.FailureStatus == 0` → 401, `tc.FailureCode == ""` →
+		// CodeAuth) stays the most informative representative for a
+		// list-style getter, mirroring API-0054
+		// `bitbucket-getBitbucketRepositories`.
+		//
+		// **Fixture token base** `schedule-cov-list-0327` follows
+		// the established `<tag>-cov-<slug>-<storyID>` convention
+		// and consumes the slot reserved by the API-0325 kickoff
+		// header (verified: no collisions with
+		// `schedule-cov-create-0325-*` or
+		// `schedule-cov-delete-0326-*`, and reserves the slug
+		// namespace for the upcoming `schedule-cov-one-0328`,
+		// `schedule-cov-runManually-0329`, and
+		// `schedule-cov-update-0330` peers).
+		SampleQuery: map[string][]string{
+			"id":           {"schedule-cov-list-0327-id"},
+			"scheduleType": {"application"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0331",
 		OperationID: "security-create",
 		Method:      http.MethodPost,
