@@ -22126,19 +22126,160 @@ var coveredAPIOperations = []apiCoverageCase{
 		//
 		// API-0301 closes the priority-3 redirects/* roster (all four
 		// redirects/* operations are now covered: `redirects-create`,
-		// `redirects-delete`, `redirects-one`, `redirects-update`).
-		// The next pending PRD-ordered priority-3 backlog entry is
-		// API-0331 `security-create`, which opens a new tag fixture-
-		// isolation namespace `security-cov-*`; the next contributor
-		// must re-verify the spec against
-		// `internal/api/data/openapi.json` per the forward-reference
-		// lesson before assuming any field shape, and **must not**
-		// back-reference the `redirects-cov-*` namespace closed here.
+		// `redirects-delete`, `redirects-one`, `redirects-update`) and
+		// also closes the priority-3 backlog as a whole (the historical
+		// "next priority-3 entry" forward-reference to API-0331
+		// `security-create` has since been honoured at API-0331; the
+		// security/* roster is now fully covered downstream). The next
+		// pending PRD-ordered priority-4 backlog entry is therefore
+		// API-0302 `redis-changeStatus`, which opens a new tag fixture-
+		// isolation namespace `redis-cov-*`; the next contributor must
+		// re-verify the spec against `internal/api/data/openapi.json`
+		// per the forward-reference lesson before assuming any field
+		// shape, and **must not** back-reference the `redirects-cov-*`
+		// namespace closed here.
 		SampleBody: json.RawMessage(`{
 			"redirectId": "redirects-cov-update-0301",
 			"regex": "^/redirects-cov-update-0301/(.*)$",
 			"replacement": "/redirects-cov-update-0301-target/$1",
 			"permanent": false
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
+		StoryID:     "API-0302",
+		OperationID: "redis-changeStatus",
+		Method:      http.MethodPost,
+		Path:        "/redis.changeStatus",
+		Tag:         "redis",
+		// Kickoff entry for the redis/* coverage roster — opens a fresh
+		// `redis-cov-*` per-tag fixture-isolation namespace after
+		// API-0301 `redirects-update` closed the priority-3 redirects/*
+		// arc and the priority-3 backlog as a whole (security/* having
+		// already been covered downstream at API-0331..API-0334). Per
+		// the per-tag fixture-isolation rule originally established at
+		// API-0246 `organization-active` and reasserted by every prior
+		// tag opener (API-0188 `mounts-allNamedByApplicationId`, API-0268
+		// `port-create`, API-0272 `postgres-changeStatus`, API-0286
+		// `previewDeployment-all`, API-0290 `project-all`, API-0298
+		// `redirects-create`, API-0335 `server-all`), this entry
+		// deliberately stands alone and **must not** back-reference any
+		// closed prior-tag namespace (`admin-cov-*`, `ai-cov-*`,
+		// `app-cov-*`, `backup-cov-*`, `bb-cov-*`, `cert-cov-*`,
+		// `clu-cov-*`, `compose-cov-*`, `deployment-cov-*`,
+		// `dest-cov-*`, `docker-cov-*`, `domain-cov-*`,
+		// `environment-cov-*`, `gitea-cov-*`, `github-cov-*`,
+		// `gitlab-cov-*`, `mariadb-cov-*`, `mongo-cov-*`,
+		// `mounts-cov-*`, `mysql-cov-*`, `org-cov-*`, `port-cov-*`,
+		// `postgres-cov-*`, `preview-cov-*`, `proj-cov-*`,
+		// `redirects-cov-*`, `security-cov-*`, `set-cov-*`,
+		// `srv-cov-*`, `swarm-cov-*`, `usr-cov-*`). Subsequent redis/*
+		// peers (API-0303 `redis-create`, API-0304 `redis-deploy`,
+		// API-0305 `redis-move`, API-0306 `redis-one`, …, up to
+		// `redis-update`) should grep this block first to inherit the
+		// redis/* slug namespace rather than copying any other prior-
+		// tag fixtures across the tag boundary. Note that the literal
+		// `redirects-cov-*` is the most lexically-similar adjacent
+		// namespace and is explicitly enumerated above per the per-tag
+		// isolation rule — `redis-cov-*` (this entry's namespace) is
+		// the full tag name and is unambiguously distinct from the
+		// full-tag-name `redirects-cov-*` literal, so no slug-prefix
+		// disambiguation is needed.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json` > `/redis.changeStatus` >
+		// `post`: method POST, tag redis, **no parameters**, requestBody
+		// REQUIRED with `application/json`, responses
+		// 200/400/401/403/500. The 200 response is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort. **No 404** is declared —
+		// status-mutation operations gate on the *body-supplied*
+		// resource id (`redisId`) which the spec models through 400
+		// (validation) and 403 (RBAC) rather than 404, so 404→
+		// CodeNotFound coverage has no canonical home in the
+		// `redis-changeStatus` failure surface (mirroring the
+		// precedent locked in by API-0160 `mariadb-changeStatus`,
+		// API-0174 `mongo-changeStatus`, API-0194
+		// `mysql-changeStatus`, and API-0272 `postgres-changeStatus`,
+		// the structurally identical sibling-tag peers).
+		//
+		// **Request body schema (REQUIRED top-level fields):**
+		//   - REQUIRED `redisId` (string)
+		//   - REQUIRED `applicationStatus` (string, enum:
+		//     `idle` | `running` | `done` | `error`)
+		//   - **No optional fields.** Like API-0160
+		//     `mariadb-changeStatus`, API-0174 `mongo-changeStatus`,
+		//     API-0194 `mysql-changeStatus`, and API-0272
+		//     `postgres-changeStatus`, redis-changeStatus has zero
+		//     optional fields, so the API-0131 `gitea-create`
+		//     minimal-required-only fixture rule is trivially
+		//     satisfied. The fixture supplies exactly the two REQUIRED
+		//     fields and nothing else; the harness's
+		//     `len(tc.SampleBody) > 0` gate at `runAPICoverageSuccess`
+		//     activates the JSON content-type and byte-for-byte body
+		//     comparison legs.
+		//
+		// **Enum value pick.** `applicationStatus: "idle"` is one of
+		// the four spec-declared enum values and is the safest
+		// representative for a no-op status transition; the harness
+		// only asserts byte-for-byte body propagation, so the choice
+		// is orthogonal to the contract leg but must remain a member
+		// of the spec-declared enum. Identical pick to API-0160
+		// `mariadb-changeStatus`, API-0174 `mongo-changeStatus`,
+		// API-0194 `mysql-changeStatus`, and API-0272
+		// `postgres-changeStatus` for cross-tag consistency on the
+		// `*-changeStatus` family.
+		//
+		// **Shape positioning — two-required-string-scalar POST
+		// imperative-action status-mutation, body REQUIRED.** The two
+		// REQUIRED slots are a plain non-nullable `type: string`
+		// (`redisId`) plus an enum-constrained string
+		// (`applicationStatus`). Structurally identical to the
+		// API-0160 / API-0174 / API-0194 / API-0272 `*-changeStatus`
+		// bodies; the only wire-shape distinction is the resource-id
+		// field name.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so the
+		// 404→CodeNotFound override is structurally inapplicable.
+		// 400→CodeInvalidInput is *technically* available — a payload
+		// that omits one of the two REQUIRED fields would fail server-
+		// side validation — but the harness reserves 400 representatives
+		// for stories where payload validation is the operation's
+		// *uniquely distinguishing* failure mode. A status-mutation that
+		// gates on a body-supplied id collapses to type-checking, so the
+		// harness-default 401→CodeAuth failure leg remains the most
+		// representative single failure mode every authenticated Dokploy
+		// operation must re-prove. Pinning the bearer-token check at
+		// the kickoff entry locks the auth invariant for the entire
+		// `redis-cov-*` namespace.
+		//
+		// **Fixture token base** `redis-cov-changeStatus-0302` follows
+		// the established `<tag>-cov-<slug>-<storyID>` deterministic-
+		// but-clearly-fake naming convention. No prior redis-tagged
+		// fixture exists, so there are no same-tag collision constraints
+		// to avoid (the namespace opens here). The full-tag-name slug
+		// prefix `redis-` is unambiguously distinct from the
+		// lexically-adjacent full-tag-name `redirects-cov-*` namespace
+		// closed at API-0301, satisfying the
+		// `<tag>-cov-<slug>-<storyID>` uniqueness rule.
+		//
+		// The next case in the PRD-ordered priority-4 backlog is
+		// API-0303 `redis-create` (declared a **POST** per the spec
+		// preview; the next contributor must re-verify the spec against
+		// `internal/api/data/openapi.json` per the forward-reference
+		// lesson before assuming any field shape, and will continue
+		// inside the `redis-cov-*` per-tag fixture-isolation namespace
+		// opened here).
+		SampleBody: json.RawMessage(`{
+			"redisId": "redis-cov-changeStatus-0302",
+			"applicationStatus": "idle"
 		}`),
 		// 200 response in the spec is `{}` with `additionalProperties:
 		// false`, matching every prior covered peer in the

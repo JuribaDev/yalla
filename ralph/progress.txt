@@ -23092,3 +23092,60 @@ forward-reference lesson before assuming any field shape.
     convention by structural inapplicability rather than
     deliberate choice.
 ---
+
+## 2026-05-09 - API-0302
+- Implemented redis-changeStatus contract coverage. This is the
+  kickoff entry for the redis/* coverage roster and opens the
+  `redis-cov-*` per-tag fixture-isolation namespace, completing the
+  forward reference embedded in API-0301 redirects-update's closing
+  block (rewritten in this commit since API-0301's original
+  forward-ref pointed at the now-completed API-0331 security-create).
+- Files changed:
+  - internal/cli/api_coverage_test.go: added apiCoverageCase for
+    redis-changeStatus inserted in StoryID order between API-0301
+    redirects-update and API-0331 security-create; rewrote API-0301's
+    closing forward-reference comment to flag API-0302 as the next
+    pending priority-4 backlog entry now that the priority-3 backlog
+    is fully covered.
+  - ralph/prd.json: flipped API-0302.passes to true.
+  - ralph/progress.txt: this entry.
+- Body schema: two REQUIRED scalars (redisId string, applicationStatus
+  enum {idle|running|done|error}) — structurally identical to the
+  cross-tag *-changeStatus family at API-0160 (mariadb), API-0174
+  (mongo), API-0194 (mysql), and API-0272 (postgres) modulo the
+  resource-id field name. Failure leg keeps harness defaults (401 ->
+  CodeAuth) per the *-changeStatus family precedent: spec omits 404
+  and payload validation collapses to type-checking on a body-supplied
+  id.
+- Fixture token redis-cov-changeStatus-0302 follows the
+  <tag>-cov-<slug>-<storyID> convention; full-tag-name slug `redis-`
+  is unambiguously distinct from the lexically-adjacent full-tag-name
+  `redirects-cov-*` namespace closed at API-0301.
+- Verification run: gofmt -w . (clean), go mod tidy (clean), go vet
+  ./... (clean), go test ./... (all green), go test -race ./... (all
+  green). goimports/golangci-lint/staticcheck/govulncheck/goreleaser
+  remain not installed locally; documented previously.
+- Remaining risks or follow-ups: redis/* roster has many more peers
+  on the priority-4 backlog (API-0303..API-0312 redis-create through
+  redis-update); each must continue inside the `redis-cov-*` namespace
+  opened here and re-verify the spec against
+  `internal/api/data/openapi.json` per the forward-reference lesson.
+- Learnings for future iterations:
+  - When a tag opener is a *-changeStatus operation, the cross-tag
+    template at API-0160/0174/0194/0272 is a near-clone — only the
+    resource-id field name and the slug-prefix collision check change.
+    Following that template kept this entry mechanical.
+  - When a previous entry's closing forward-reference points to an
+    operation that has since been covered (API-0301 -> API-0331), the
+    new entry should rewrite that closing block rather than leaving
+    the stale forward-reference dangling. Future contributors can grep
+    for "next pending PRD-ordered priority-N backlog entry" to find
+    these dangling forward-refs.
+  - Priority semantics in the PRD: priority numbers are ascending (1
+    is highest, 5 is lowest). The remaining not-passed backlog now
+    consists of priority-4 (28 stories, redis/*) and priority-5 (84
+    stories) entries — all priority-3 work is complete.
+  - The full-tag-name slug-prefix convention safely disambiguates
+    `redis-cov-*` from `redirects-cov-*` even though the two tag names
+    share a 5-char prefix; no extra disambiguation suffix is needed.
+---
