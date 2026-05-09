@@ -23250,3 +23250,53 @@ forward-reference lesson before assuming any field shape.
     risk. Future contributors adding redis-update / redis-saveX
     coverage should expect to reuse this rule verbatim.
 ---
+
+## 2026-05-09 - API-0304
+- **Implemented**: Coverage for Dokploy operation `redis-deploy`
+  (POST /redis.deploy). Appended a single `apiCoverageCase` to the
+  `coveredAPIOperations` table in `internal/cli/api_coverage_test.go`,
+  inheriting the redis/* per-tag fixture-isolation namespace
+  (`redis-cov-*`) opened by API-0302 `redis-changeStatus`. The
+  harness's five-part contract (registry invariants, schema
+  reachability, manifest inclusion, success round-trip, representative
+  401→CodeAuth failure leg) is exercised automatically by the new
+  entry.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended API-0304
+    `redis-deploy` case between API-0303 `redis-create` and
+    API-0331 `security-create`. Body fixture supplies the single
+    REQUIRED `redisId` scalar with the deterministic-but-clearly-fake
+    token `redis-cov-deploy-0304-redisId` per the established
+    `<tag>-cov-<slug>-<storyID>-<field>` naming convention.
+    `SuccessResponse: "{}"` matches the spec's empty-success cohort.
+  - `ralph/prd.json` — set API-0304 `passes: true`.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass (`internal/cli` 1.330s).
+  - `go test -race ./...` — all packages pass (`internal/cli` 3.392s).
+  - Targeted: the five `TestAPICoverage_*` suites all run new
+    `API-0304/redis-deploy` subtests and pass.
+- **Tools NOT available locally** (unchanged): `goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`.
+- **Remaining risks / follow-ups**:
+  - None specific to redis-deploy. The next priority-4 case is
+    API-0305 `redis-move` and the comment block forward-references
+    it; the next contributor must re-verify the spec against
+    `internal/api/data/openapi.json` per the established
+    forward-reference lesson before assuming any field shape.
+- **Learnings for future iterations**:
+  - The redis/* roster's `*-deploy` schema is structurally identical
+    to API-0162 `mariadb-deploy`, API-0176 `mongo-deploy`, API-0196
+    `mysql-deploy`, and API-0274 `postgres-deploy` — a single
+    REQUIRED string `<tag>Id` scalar with no optional fields. This
+    is the canonical single-required-string-scalar imperative-action
+    POST shape. Future `*-deploy` peers across other tags can copy
+    this fixture template directly, only swapping the field name and
+    fixture token.
+  - `go test ./internal/cli -run 'API-0304'` matches nothing because
+    the subtest names are formatted as `Test.../API-0304/<opID>`.
+    Use `-run 'TestAPICoverage'` and grep for `0304` to verify only
+    the new entry's subtests pass.
+---
