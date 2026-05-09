@@ -31219,3 +31219,155 @@ forward-reference lesson before assuming any field shape.
     The 401→CodeAuth harness-default failure leg is now the third-
     re-proven precedent every stripe/* peer should re-prove.
 ---
+
+## 2026-05-09 - API-0420
+- Implemented coverage for API operation `stripe-getInvoices`
+  (GET /stripe.getInvoices).
+- Re-verified spec at `internal/api/data/openapi.json >
+  /stripe.getInvoices > get`: tag `stripe`, **no parameters**
+  (no path placeholders, no query string), **no `requestBody`
+  declaration at all** (the spec emits no `requestBody` key —
+  parameter-free, body-free read). Responses
+  200/400/401/403/404/500. 200 schema is `{}` with
+  `additionalProperties: false`. Wire-shape-identical to the
+  arc opener at API-0416 `stripe-canCreateMoreServers` and the
+  immediately-prior API-0419 `stripe-getCurrentPlan`.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended one
+    `apiCoverageCase` literal between API-0419
+    `stripe-getCurrentPlan` and the swarm/* roster opener
+    API-0423 `swarm-getNodeApps`. **Stays within the open
+    `stripe-cov-*` per-tag fixture-isolation namespace** opened at
+    API-0416 per the per-tag isolation rule originally established
+    at API-0246 `organization-active`. **No SampleBody, SampleQuery,
+    or SamplePathParams** — the operation is parameter-free and
+    body-free per the spec re-verification; the harness's parameter-
+    free body-free GET path is exercised here. Default failure leg
+    (401 → CodeAuth) per the API-0416 stripe/* arc precedent
+    re-affirmed by API-0417, API-0418, and API-0419, now re-proven
+    for the fourth consecutive time within the arc; the spec
+    declares 404 in the response set BUT the 404→CodeNotFound
+    override slot for the stripe/* tag arc remains UNCONSUMED —
+    this operation has no addressable subject (no path placeholder,
+    no query selector), the "invoices" collection is fully
+    determined by the authenticated principal's account state, so
+    the override is structurally inapplicable here per the
+    API-0413 / API-0416 / API-0419 reasoning chain.
+  - `ralph/prd.json` — flipped API-0420 `passes` to true (trailing
+    newline preserved).
+  - `ralph/progress.txt` — this entry.
+- Verification (all green):
+  - `gofmt -w .` → clean
+  - `go mod tidy` → no changes
+  - `go vet ./...` → clean
+  - `go test ./...` → all packages pass (internal/cli 3.254s)
+  - `go test -race ./...` → all packages pass (internal/cli 4.992s)
+  - Targeted: `go test ./internal/cli/ -run
+    'API-0420|APICoverage|RegistryInvariants|SchemaCommandWorks|ManifestListsOperation|SuccessRoundTrip|RepresentativeFailure'`
+    PASS (0.920s) — RegistryInvariants, SchemaCommandWorks,
+    ManifestListsOperation, SuccessRoundTrip, RepresentativeFailure
+    all green for the new entry.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` are not installed locally and were not run
+    (documented per the Codebase-Patterns convention rather than
+    silently skipped).
+- Results: API-0420 acceptance criteria satisfied. Operation present
+  in OpenAPI registry with method GET, path /stripe.getInvoices,
+  tag stripe; raw API call works through the harness parameter-free
+  body-free GET path (`yalla api call stripe-getInvoices --json`);
+  schema get works; manifest lists the operation; success and
+  401→CodeAuth representative failure both proven by httptest
+  fixtures.
+- Remaining risks / follow-ups:
+  - 3 priority-5 API coverage stories still failing. The stripe/* arc
+    continues at API-0421 `stripe-getProducts` (declared a **GET**
+    per the PRD, the fourth read-only operation of the stripe/*
+    arc). The next contributor must re-verify the spec against
+    `internal/api/data/openapi.json` > `/stripe.getProducts` >
+    `get` per the forward-reference lesson before assuming any
+    field shape. `getProducts` reads as a **list-style GET family
+    stem** (plural noun) like `getInvoices` covered here — but the
+    slug-stem-as-shape-predictor was decisively retracted at the
+    API-0420 commit boundary when `stripe-getInvoices` turned out to
+    be parameter-free and body-free despite its plural-noun list-
+    style stem. The wire shape of `getProducts` *may* be
+    parameter-free body-free (matching `getInvoices` /
+    `getCurrentPlan` / `canCreateMoreServers`) OR *may* include
+    query parameters — re-verify, do not infer from the stripe/*
+    GET pattern established so far. Stays within the open
+    `stripe-cov-*` per-tag fixture-isolation namespace established
+    at API-0416. The 404→CodeNotFound override slot for the
+    stripe/* tag arc still remains UNCONSUMED — reserved for the
+    first stripe/* story whose spec declares an addressable
+    subject AND 404 in the response set; absent such a story
+    across the remaining stripe/* peers (API-0421, API-0422) the
+    slot stays nominal across the whole arc and rolls forward to
+    the next tag arc. The 401→CodeAuth harness-default failure
+    leg is now the fourth-re-proven precedent every stripe/* peer
+    should re-prove.
+- **Learnings for future iterations:**
+  - **Slug-stem-is-not-shape lesson reasserts at the third stripe/*
+    GET in a row, this time decisively retracting a forward-
+    reference prediction.** API-0419's closing comment correctly
+    HEDGED its prediction for API-0420 (`getInvoices`) — "may
+    include query parameters (filtering / pagination)" — *because*
+    the slug stem `getInvoices` reads as a list-collection GET that
+    conventionally accepts filter/pagination query parameters. The
+    spec re-read at the API-0420 commit boundary RETRACTS the
+    speculative query-parameter clause: zero parameters, zero
+    requestBody, identical to API-0416 / API-0419 wire shape. This
+    is the cleanest illustration in the stripe/* arc that **the
+    forward-reference hedge convention works as intended** — the
+    prediction was advisory, the spec re-read at the successor's
+    commit boundary was authoritative, and the hedge ("re-verify,
+    do not infer") explicitly invited the retraction. Future
+    forward-reference comments should preserve this hedge style
+    when the slug-stem semantic intent does not uniquely determine
+    the wire shape.
+  - **Empty-success-cohort GETs stack four-deep within stripe/*
+    now.** API-0416 `canCreateMoreServers` (probe), API-0418
+    `createCustomerPortalSession` (body-free POST), API-0419
+    `getCurrentPlan` (state-fetch), and API-0420 `getInvoices`
+    (list-collection) all consume the parameter-free, body-free,
+    `200 → {}` empty-envelope shape. The cross-tag empty-success
+    cohort now spans API-0058 `certificates-all`, API-0408
+    `sso-getTrustedOrigins`, API-0409 `sso-listProviders`,
+    API-0413 `sso-showSignInWithSSO`, and the four stripe/* GETs/
+    body-free POST. This shape is the **single most heavily
+    populated cell** in the coverage matrix — agents can rely on
+    its registry-invariants behaviour as the lowest-risk integration
+    surface.
+  - **Stripe arc 404 reservation reaffirmed (fourth time).** The
+    404→CodeNotFound override slot for the stripe/* tag arc remains
+    UNCONSUMED after API-0420. The spec declares 404 in the
+    response set, but every stripe/* peer covered so far is either
+    a probe (`canCreateMoreServers`), a fresh-each-call mutation
+    (`createCheckoutSession`, `createCustomerPortalSession`), or a
+    state-projection read (`getCurrentPlan`, `getInvoices`) — none
+    of which addresses an external resource that may not exist.
+    The remaining stripe/* peers (API-0421 `getProducts`,
+    API-0422 `upgradeSubscription`) per their slug stems also do
+    not obviously address an addressable subject — `getProducts`
+    is a list-collection projection of the catalog/account state
+    and `upgradeSubscription` is a fresh-each-call mutation
+    against the principal's subscription state — but the spec
+    re-read at each commit boundary is authoritative. If none of
+    the remaining peers declares an addressable subject, the slot
+    stays nominal across the whole stripe/* arc and rolls forward
+    to the next tag arc. The 401→CodeAuth harness-default failure
+    leg is now the fourth-re-proven precedent every stripe/* peer
+    should re-prove.
+  - **Forward-reference hedge convention validated.** This is the
+    second commit boundary in the stripe/* arc where a forward-
+    reference prediction had to be revisited (the first was
+    API-0417→API-0418, where the "second body-bearing mutation"
+    descriptor was retracted because API-0418's spec re-read
+    revealed a body-free POST). API-0419→API-0420 is the first
+    where the prediction was **already explicitly hedged** (the
+    "may include query parameters ... re-verify, do not infer"
+    clause), so the retraction was structurally graceful rather
+    than corrective. This is exactly the convention future
+    contributors should follow when projecting forward to a slug
+    stem whose semantic intent does not uniquely determine the
+    wire shape.
+---
