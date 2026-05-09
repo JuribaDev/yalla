@@ -31059,3 +31059,163 @@ forward-reference lesson before assuming any field shape.
     `<tag>-cov-<slug>-<storyID>` reservation in the entry comment
     even when no literal needs it.
 ---
+
+## 2026-05-09 - API-0419
+- Implemented coverage for API operation `stripe-getCurrentPlan`
+  (GET /stripe.getCurrentPlan).
+- Re-verified spec at `internal/api/data/openapi.json >
+  /stripe.getCurrentPlan > get`: tag `stripe`, **no parameters**
+  (no path placeholders, no query string), **no `requestBody`
+  declaration** (parameter-free, body-free read). Responses
+  200/400/401/403/404/500. 200 schema is `{}` with
+  `additionalProperties: false`. Wire-shape-identical to the
+  arc opener at API-0416 `stripe-canCreateMoreServers`.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended one
+    `apiCoverageCase` literal between API-0418
+    `stripe-createCustomerPortalSession` and the swarm/* roster
+    opener API-0423 `swarm-getNodeApps`. **Stays within the open
+    `stripe-cov-*` per-tag fixture-isolation namespace** opened at
+    API-0416 per the per-tag isolation rule originally established
+    at API-0246 `organization-active`. **No SampleBody, SampleQuery,
+    or SamplePathParams** — the operation is parameter-free and
+    body-free per the spec re-verification; the harness's parameter-
+    free body-free GET path is exercised here. Default failure leg
+    (401 → CodeAuth) per the API-0416 stripe/* arc precedent
+    re-affirmed by API-0417 and API-0418, now re-proven for the
+    third consecutive time within the arc; the spec declares 404
+    in the response set BUT the 404→CodeNotFound override slot
+    for the stripe/* tag arc remains UNCONSUMED — this operation
+    has no addressable subject (no path placeholder, no query
+    selector), the "current plan" is fully determined by the
+    authenticated principal's account state, so the override is
+    structurally inapplicable here per the API-0413 / API-0416
+    reasoning chain.
+  - `ralph/prd.json` — flipped API-0419 `passes` to true (trailing
+    newline preserved).
+  - `ralph/progress.txt` — this entry.
+- Verification (all green):
+  - `gofmt -w .` → clean
+  - `go mod tidy` → no changes
+  - `go vet ./...` → clean
+  - `go test ./...` → all packages pass (internal/cli 1.417s)
+  - `go test -race ./...` → all packages pass (internal/cli 3.513s)
+  - Targeted: `go test ./internal/cli/ -run
+    'API-0419|APICoverage|RegistryInvariants|SchemaCommandWorks|ManifestListsOperation|SuccessRoundTrip|RepresentativeFailure'`
+    PASS (0.925s) — RegistryInvariants, SchemaCommandWorks,
+    ManifestListsOperation, SuccessRoundTrip, RepresentativeFailure
+    all green for the new entry.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` are not installed locally and were not run
+    (documented per the Codebase-Patterns convention rather than
+    silently skipped).
+- Results: API-0419 acceptance criteria satisfied. Operation present
+  in OpenAPI registry with method GET, path /stripe.getCurrentPlan,
+  tag stripe; raw API call works through the harness parameter-free
+  body-free GET path (`yalla api call stripe-getCurrentPlan --json`);
+  schema get works; manifest lists the operation; success and
+  401→CodeAuth representative failure both proven by httptest
+  fixtures.
+- Remaining risks / follow-ups:
+  - 4 priority-5 API coverage stories still failing. The stripe/* arc
+    continues at API-0420 `stripe-getInvoices` (declared a **GET**
+    per the PRD, the third read-only operation of the stripe/* arc).
+    The next contributor must re-verify the spec against
+    `internal/api/data/openapi.json` > `/stripe.getInvoices` > `get`
+    per the forward-reference lesson before assuming any field
+    shape — note that `getInvoices` reads as a **list-style GET
+    family stem** (plural noun), structurally distinct from the
+    singular state-fetch `getCurrentPlan` covered here, so the wire
+    shape may include query parameters (filtering / pagination /
+    cursor) that this entry does not. The contributor must stay
+    within the open `stripe-cov-*` per-tag fixture-isolation
+    namespace established at API-0416. The 404→CodeNotFound override
+    slot for the stripe/* tag arc still remains UNCONSUMED —
+    reserved for the first stripe/* story whose spec declares an
+    addressable subject (path/query parameter selector) AND 404 in
+    the response set; absent such a story across the remaining
+    stripe/* peers (API-0420 through API-0422) the slot stays
+    nominal.
+  - **Forward-reference-prediction-confirmed retold.** API-0418's
+    closing comment predicted API-0419 as "declared a **GET** per
+    the PRD, the second read-only operation of the stripe/* arc
+    after the arc opener at API-0416 `stripe-canCreateMoreServers`".
+    The spec re-read at the API-0419 commit boundary CONFIRMS the
+    prediction in full — method GET, parameter-free, body-free,
+    identical response set. Contrast with the API-0417→API-0418
+    boundary where API-0417's "second body-bearing mutation"
+    descriptor was retracted because API-0418's spec re-read
+    revealed a body-free POST. The lesson stands: forward-reference
+    predictions remain advisory, never authoritative — always
+    re-verify against the spec at the successor's commit boundary;
+    the predictions' hit-rate across the stripe/* arc so far is
+    50% (API-0418 retracted; API-0419 confirmed).
+- **Learnings for future iterations:**
+  - **Slug-stem semantic intent is independent of wire shape.** The
+    stripe/* arc's third covered GET (`getCurrentPlan`) reads as a
+    canonical-by-id GET family stem ("fetch resource X by selector")
+    yet the spec declares no addressable subject — the "current
+    plan" is fully determined by the authenticated principal's
+    account state. This is the **strongest illustration in the
+    stripe/* arc so far** that slug-stem semantic intent (`get*` =
+    state-fetch, `canCreate*` = boolean-probe, `list*` = collection
+    enumeration, etc.) is a *naming hint*, NOT a *wire-shape
+    determinant*. The slug-stem-is-not-shape lesson reasserted at
+    API-0371..API-0444 holds at this commit boundary too. Future
+    contributors must always re-read the spec to confirm shape; the
+    slug stem may suggest the family but never determines it.
+  - **Action-state fetch GET ≡ action-style probe GET (wire-shape).**
+    `stripe-getCurrentPlan` and `stripe-canCreateMoreServers` differ
+    in slug-stem semantic intent ("what is my current plan?" vs
+    "can I create more servers?") but are wire-shape-identical:
+    parameter-free, body-free, 200 `{}`, responses
+    200/400/401/403/404/500. Both are session-bound state projections
+    of the authenticated principal's account; the 404 leg in the
+    response set is harness-default in both cases because neither
+    operation has an addressable subject. Expect the same shape on
+    any future state-fetch / state-probe GETs across Dokploy where
+    the answer is account-state-determined rather than addressable-
+    resource-determined.
+  - **404→CodeNotFound override remains a by-id-GET-only construct
+    — third stripe/* re-affirmation.** Even when 404 is declared in
+    a state-fetch GET's response set, the 404→CodeNotFound override
+    does not apply — the override is reserved exclusively for
+    canonical by-id GET reads where a path/query parameter
+    explicitly addresses a resource that may not exist (most recent
+    precedent: API-0410 `sso-one`). For state-fetch / probe-style
+    GETs the 404 leg remains harness-default and the representative-
+    failure choice falls back to 401→CodeAuth. This rule was
+    established at API-0413 `sso-showSignInWithSSO`, opened in the
+    stripe/* arc at API-0416 `stripe-canCreateMoreServers`, and is
+    now re-affirmed for the third consecutive time within the
+    stripe/* arc at API-0419.
+  - **Per-tag fixture-isolation namespace tokens reserved even when
+    no body literal consumes them — cross-method consistency.** The
+    `stripe-cov-getCurrentPlan-0419` token base stays reserved under
+    the per-case fixture-token convention for any future amendment
+    that introduces a literal under this story (e.g. if Dokploy
+    later adds an OPTIONAL query parameter or response payload
+    field). This preserves the namespace's diff-friendly, non-
+    colliding property across the whole tag arc. The reservation
+    convention applies uniformly across method (GET/POST), shape
+    (probe/state-fetch/list-style/by-id/mutation), and consumption
+    state (consumed/nominal). The stripe/* arc has now demonstrated
+    nominal-only reservations at three consecutive entries
+    (API-0416 GET, API-0418 body-free POST, API-0419 GET), and
+    consumed reservation at one (API-0417 multi-required-field
+    body-bearing POST). Future body-free or query-free entries
+    in any tag should follow this pattern uniformly.
+  - **stripe/* arc reservations continue:** the 404→CodeNotFound
+    override slot remains UNCONSUMED — reserved for the first
+    stripe/* story whose spec declares an addressable subject AND
+    404 in the response set. Across the remaining peers (API-0420
+    `getInvoices`, API-0421 `getProducts`, API-0422
+    `upgradeSubscription`) the slug-stem hints suggest two list-
+    style GETs and one body-bearing mutation, none of which obviously
+    address an addressable subject — but the spec re-read at each
+    commit boundary is authoritative. If none of the remaining peers
+    declares an addressable subject, the slot stays nominal across
+    the whole stripe/* arc and rolls forward to the next tag arc.
+    The 401→CodeAuth harness-default failure leg is now the third-
+    re-proven precedent every stripe/* peer should re-prove.
+---
