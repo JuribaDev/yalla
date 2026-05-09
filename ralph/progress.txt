@@ -28606,3 +28606,103 @@ forward-reference lesson before assuming any field shape.
     be enforced even when the predecessor looks like a near-perfect
     template.
 ---
+
+## 2026-05-09 - API-0265
+- Added per-operation coverage entry for `patch-saveFileAsPatch`
+  (POST /patch.saveFileAsPatch) in
+  `internal/cli/api_coverage_test.go`. The new struct slots into the
+  append-only `coveredAPIOperations` registry between API-0264
+  (`patch-readRepoFile`) and API-0268 (`port-create`), continuing
+  inside the `patch-cov-*` per-tag fixture-isolation namespace
+  opened at API-0256.
+- Spec re-verified directly against `internal/api/data/openapi.json
+  > /patch.saveFileAsPatch > post`: POST with **zero parameters**
+  and a **REQUIRED** request body declaring **four REQUIRED
+  scalars** (`id` plain string, `type` enum
+  `application`|`compose`, `filePath` plain string, `content` plain
+  string) plus **one OPTIONAL** discriminator (`patchType` enum
+  `create`|`update` with default `update`). Response set
+  200/400/401/403/500 — **no 404**, matching the mutating-POST
+  cohort precedent at API-0257/API-0258/API-0259/API-0260/API-0261.
+  The 200 schema is `{}` with `additionalProperties: false`,
+  matching every prior covered peer in the empty-success cohort.
+  Wire-shape positioning: structurally extends the API-0261
+  `patch-markFileForDeletion` triple (`id`, `type`, `filePath`) by
+  one additional required string scalar (`content`) plus one
+  optional enum-with-default (`patchType`) — first patch/* entry to
+  carry both a four-required-scalar head and a non-empty optional
+  surface.
+- Fixture id base: `patch-cov-save-file-as-patch-0265`. `type`
+  fixed to `application` (first enum member, matches the
+  discriminator choice locked in by API-0256/0260/0261/0263/0264).
+  `filePath` fixed to `patch-cov-save-file-as-patch-0265.txt`
+  (mirrors API-0261's `.txt` convention; semantically inert).
+  `content` fixed to `patch-cov-save-file-as-patch-0265-content`
+  (single-line UTF-8, no escaping concerns). `patchType`
+  deliberately omitted from the wire payload to exercise the
+  canonical "minimum-required-fields" success path; the spec
+  declares a `update` default that the server will apply.
+- Failure leg kept on the harness-default 401→`E_AUTH` mode,
+  mirroring every prior patch/* peer (API-0256..API-0264). 404 is
+  structurally inapplicable (no 404 on this op); 400 is technically
+  available but reserved for stories where payload validation is
+  the operation's uniquely distinguishing failure mode.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (added API-0265 entry)
+  - `ralph/prd.json` (API-0265 `passes` -> true)
+  - `ralph/progress.txt` (this entry)
+- Verification run from repo root:
+  - `gofmt -w .` -- clean
+  - `go mod tidy` -- no changes
+  - `go vet ./...` -- clean
+  - `go test ./...` -- all packages ok (cli 1.586s)
+  - `go test -race ./...` -- all packages ok (cli 3.459s)
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` not installed locally; skipped per the
+    document-rather-than-silently-skip rule.
+- Remaining risks / follow-ups:
+  - 33 priority-5 API stories still pending; next in PRD order is
+    API-0266 `patch-toggleEnabled` (POST per spec preview). The
+    next contributor must re-verify the spec against
+    `internal/api/data/openapi.json > /patch.toggleEnabled > post`
+    before assuming any field shape, and continue inside the
+    `patch-cov-*` per-tag fixture-isolation namespace.
+  - The 400->`CodeInvalidInput` failure-leg variant remains
+    untested for this operation (and for every prior id-bearing
+    POST in the patch/* roster); a future contract-test extension
+    that exercises the validator surface should add a sibling case
+    rather than mutating this one.
+  - The optional-`patchType` populated-leg (both `create` and
+    `update` enum values) is not exercised by this fixture; a
+    sibling case for both legs is the right vehicle if/when both
+    become a meaningful coverage delta.
+- **Learnings for future iterations:**
+  - When extending an immediately-prior peer's POST body shape with
+    one additional required string scalar (here API-0261 +
+    `content`) plus one optional enum-with-default, the harness is
+    fully sufficient with no new primitives: copy the peer's case,
+    add the required field to `SampleBody`, and document the
+    optional field's omission in the rationale block. The
+    `len(tc.SampleBody) > 0` gate already validates that the wire
+    body matches verbatim; the optional field's default is server-
+    side and irrelevant to the success-leg projection.
+  - The `<tag>-cov-<slug>-<storyID>` fixture id base remains
+    collision-free across the patch/* roster (now nine entries,
+    counting from API-0256). Future patch/* peers (API-0266,
+    API-0267) should grep the namespace before picking a slug.
+  - Forward-reference rule held: re-reading
+    `openapi.json > /patch.saveFileAsPatch > post` directly caught
+    the four-required-scalar-plus-optional-with-default shape that
+    a naive copy from API-0261 (the closest predecessor) would
+    have missed. Required field `content` is the structural delta
+    over API-0261, and optional field `patchType` is the
+    meta-shape delta — both must be reflected in the comment block
+    even though only `content` appears in the wire payload.
+  - The `patchType` enum (`create`|`update`) is **not** the same
+    as the patch-action enum on API-0258 `patch-create`'s optional
+    `patchType` field (which is `{create, modify, delete}`). Two
+    different patch/* operations carry two differently-valued
+    enums under the same field name — the rationale comment must
+    explicitly disambiguate them so a future grep on `patchType`
+    does not conflate the two surfaces.
+---
