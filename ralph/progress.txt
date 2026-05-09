@@ -23852,3 +23852,85 @@ forward-reference lesson before assuming any field shape.
     without reordering noise. This matches the API-0166 / API-0180 /
     API-0200 / API-0278 precedent.
 ---
+## 2026-05-09 - API-0309
+- Implemented Cover redis-remove (POST /redis.remove) using the
+  established `coveredAPIOperations` table-driven harness in
+  `internal/cli/api_coverage_test.go`.
+- Files changed:
+  - `internal/cli/api_coverage_test.go`: appended a new entry between
+    API-0308 `redis-reload` and API-0331 `security-create`, supplying
+    the lone REQUIRED top-level string scalar `redisId` with the
+    deterministic-but-clearly-fake fixture token
+    `redis-cov-remove-0309-redisId` per the
+    `<tag>-cov-<slug>-<storyID>-<field>` convention. Body shape is
+    byte-for-byte cardinality-identical to API-0167 `mariadb-remove`,
+    API-0181 `mongo-remove`, API-0201 `mysql-remove`, and API-0279
+    `postgres-remove` (the canonical single-required-string-scalar
+    `<tag>Id` `*-remove` POST), and the failure leg sticks with the
+    harness-default 401 → CodeAuth because the redis/* tag's reserved
+    404 → CodeNotFound override slot was already consumed by API-0306
+    `redis-one` and the spec omits 404 from the response set anyway.
+  - `ralph/prd.json`: flipped API-0309 `passes` to `true`.
+  - `ralph/progress.txt`: this entry.
+- Verification: `gofmt -w .` (clean), `go mod tidy` (no diff),
+  `go vet ./...` (clean), `go test ./...` (all 9 packages pass), and
+  `go test -race ./...` (all 9 packages pass; cli takes 3.485s under
+  -race) all run from the repo root. Targeted
+  `go test -run TestAPICoverage -count=1 ./internal/cli/...`
+  exercises all five harness contracts (registry invariants, schema
+  reachability, manifest inclusion, success round-trip, and
+  representative 401 → CodeAuth failure leg) and they all pass.
+  Optional tools (`goimports`, `golangci-lint`, `staticcheck`,
+  `govulncheck`, `goreleaser`) remain not installed locally;
+  documented previously.
+- Remaining risks or follow-ups: none specific to this story. The
+  next pending priority-4 story is API-0310 `redis-saveEnvironment`
+  (POST /redis.saveEnvironment), already forward-referenced in this
+  entry's comment block. The next contributor must re-verify the
+  spec against `internal/api/data/openapi.json` per the established
+  forward-reference lesson before assuming any field shape, and will
+  continue inside the `redis-cov-*` per-tag fixture-isolation
+  namespace opened by API-0302.
+- **Learnings for future iterations:**
+  - The OpenAPI spec at `internal/api/data/openapi.json` for
+    `/redis.remove` declares a SINGLE REQUIRED top-level string
+    scalar `redisId` with no optional fields, exactly matching the
+    cross-tag `*-remove` precedent chain at API-0167 `mariadb-remove`,
+    API-0181 `mongo-remove`, API-0201 `mysql-remove`, and API-0279
+    `postgres-remove`. The lone `<tag>Id` required-scalar pairing is
+    the canonical remove-shape across the Dokploy database tags
+    (mariadb, mongo, mysql, postgres, redis) and remains byte-for-byte
+    cardinality-identical modulo the resource-id field name. Future
+    contributors covering `*-remove` POST stories on other database
+    tags can lean on this template — the fixture token must use a
+    unique `<tag>-cov-<slug>-<storyID>` triple, but the body /
+    response shape and failure-leg defaulting carry over verbatim.
+  - The `*-remove` cross-tag precedent chain is now API-0167
+    `mariadb-remove`, API-0181 `mongo-remove`, API-0201
+    `mysql-remove`, API-0279 `postgres-remove`, and API-0309
+    `redis-remove` — all five peers share the canonical
+    single-required-string-scalar `<tag>Id` body, no 404 response,
+    and the harness-default 401 → CodeAuth failure leg. The
+    slug-prefix-is-not-shape rule was respected: the spec was
+    re-verified per-operation rather than transitively inherited
+    from the prior `*-remove` peers.
+  - The redis/* tag's 404 → CodeNotFound override slot remains
+    consumed by API-0306 `redis-one` and is not re-claimable; every
+    subsequent redis/* POST entry (API-0307 `redis-rebuild`,
+    API-0308 `redis-reload`, and now API-0309 `redis-remove`)
+    therefore reverts to the harness-default 401 → CodeAuth
+    representative-failure leg. This single-use-per-tag rule is
+    locked in across the codebase and should not be revisited per
+    redis/* story unless a future operation's spec uniquely declares
+    a 404 of its own (none observed in the remaining redis/* POSTs
+    through API-0315).
+  - Within the redis/* roster, single-required-string-scalar POST
+    bodies now appear at API-0304 `redis-deploy`
+    (`redisId`), API-0307 `redis-rebuild` (`redisId`), and API-0309
+    `redis-remove` (`redisId`). These three peers share the
+    identical body cardinality and serialise to byte-equivalent
+    fixtures modulo the slug+storyID suffix — a useful micro-
+    template for the remaining redis/* mutation POSTs that follow
+    the same shape (e.g. redis-start, redis-stop typically take only
+    `redisId`).
+---
