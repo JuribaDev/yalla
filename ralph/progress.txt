@@ -31513,3 +31513,30 @@ forward-reference lesson before assuming any field shape.
     for API-0426 `application-dropDeployment` (the only remaining
     open story).
 ---
+
+## 2026-05-09 - API-0422 (stripe-upgradeSubscription)
+- Implemented Dokploy `stripe-upgradeSubscription` (POST /stripe.upgradeSubscription) coverage entry in `internal/cli/api_coverage_test.go`, the seventh and final entry of the stripe/* arc opened at API-0416.
+- Spec re-verified against `internal/api/data/openapi.json` > `/stripe.upgradeSubscription` > `post`: parameter-free, body REQUIRED with three required fields — `tier` (enum: "hobby", "startup"), `serverQuantity` (number), `isAnnual` (boolean). Responses 200/400/401/403/500 (404 absent). 200 schema is `{}` empty-success cohort.
+- Fixture body literal supplies all three required fields: tier="hobby" (deterministic enum value present in BOTH API-0417 and API-0422 enums), serverQuantity=1, isAnnual=false.
+- Failure leg: harness-default 401→CodeAuth retained per the stripe/* arc precedent (API-0416..API-0421); 404→CodeNotFound override slot closes UNCONSUMED for the entire stripe/* arc and rolls forward.
+- Per-tag fixture-isolation namespace `stripe-cov-*` opened at API-0416 closes with this entry; no closed-namespace back-references; no Sample* sentinel literals consumed since the body's three required fields are all spec-constrained typed scalars (enum string, number, boolean) that do not admit free-form sentinels.
+- **Forward-reference prediction CONFIRMED**: API-0421's closing comment correctly predicted body-bearing POST shape; API-0422 joins API-0417 in the body-bearing stripe/* mutation cohort.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (added API-0422 entry between API-0421 and API-0423)
+  - `ralph/prd.json` (set passes=true for API-0422)
+- Verification run:
+  - `gofmt -w .` → clean
+  - `goimports -w internal/cli/api_coverage_test.go` → clean (tool present)
+  - `go mod tidy` → clean
+  - `go vet ./...` → clean
+  - `go test ./...` → ok all packages
+  - `go test -race ./...` → ok all packages
+- Remaining risks or follow-ups:
+  - Only API-0426 (`application-dropDeployment`) remains as the final priority-5 backlog story; it carries a `multipart/form-data` request body (binary `zip` file plus string fields) — the harness fixture path may need a new shape. Re-verify the spec against `internal/api/data/openapi.json` > `/drop-deployment` > `post` before assuming any field shape.
+- **Learnings for future iterations:**
+  - **Enum-subset shape (API-0417 vs API-0422)**: API-0417 `stripe-createCheckoutSession.tier` enum carries `"legacy"`, `"hobby"`, `"startup"`; API-0422 `stripe-upgradeSubscription.tier` enum is the strict subset `"hobby"`, `"startup"`. Picking `"hobby"` is the only deterministic literal valid against BOTH enums — useful when sharing fixtures across closely related operations. The `"legacy"` literal is structurally a grandfathered historical tier with no forward-migration path, consistent with its absence from the upgrade endpoint.
+  - **Slug-stem-is-not-shape lesson reasserted for POSTs**: `upgradeSubscription` reads as an action verb on a singular noun and could equally have been wired body-free (target plan as query parameter) or body-bearing. Always re-verify against the spec — never infer wire shape from the slug stem. Same lesson previously reasserted for GET shapes at API-0419/0420/0421.
+  - **stripe/* arc closes at API-0422**: the full stripe/* arc spans seven entries (API-0416..API-0422). The 404→CodeNotFound override slot stays UNCONSUMED across the entire arc because no stripe/* operation declares both an addressable subject AND 404 in its response set — Dokploy's stripe/* surface uniformly addresses the calling session's subscription implicitly via the auth token rather than via path/query selectors.
+  - **Family cell occupancy update**: the "mixed-scalar-types, every-field-REQUIRED, exhaustive-envelope POST mutation" family cell opened by API-0417 now has two occupants — one four-required-field (API-0417 with extra `productId` plain string) and one three-required-field (API-0422 without the plain-string scalar). The cell admits any number of required fields >= 2 spanning >= 2 scalar types, with no OPTIONAL siblings.
+  - **No `-fixture` sentinel applies when all required fields are spec-constrained typed scalars**: the API-0417 precedent's `-fixture` suffix only appeared on its `productId` plain-string field. API-0422 carries no plain-string field and therefore consumes no sentinel literal — the per-case fixture token base `stripe-cov-upgradeSubscription-0422` stays reserved nominally only.
+---

@@ -47259,6 +47259,216 @@ var coveredAPIOperations = []apiCoverageCase{
 		// whole arc and rolls forward to the next tag arc.
 	},
 	{
+		StoryID:     "API-0422",
+		OperationID: "stripe-upgradeSubscription",
+		Method:      http.MethodPost,
+		Path:        "/stripe.upgradeSubscription",
+		Tag:         "stripe",
+		// Seventh and **final** entry on the stripe/* coverage
+		// roster, closing the stripe/* arc opened at API-0416
+		// `stripe-canCreateMoreServers`. Succeeds the read-only GET
+		// cluster (API-0419 `stripe-getCurrentPlan`, API-0420
+		// `stripe-getInvoices`, API-0421 `stripe-getProducts`) and
+		// returns the arc to the body-bearing mutation cohort
+		// previously visited at API-0417
+		// `stripe-createCheckoutSession`. Consumes the forward
+		// reference embedded in API-0421's closing comment ("the
+		// priority-5 backlog continues at API-0422
+		// `stripe-upgradeSubscription` ... wire shape *very likely*
+		// includes a request body ... MUST be re-verified against
+		// the spec since prior stripe/* POSTs split between
+		// body-bearing (API-0417 `stripe-createCheckoutSession`) and
+		// body-free (API-0418 `stripe-createCustomerPortalSession`)
+		// — the slug-stem-is-not-shape lesson applies to POST shape
+		// just as it does to GET shape"). Stays within the open
+		// `stripe-cov-*` per-tag fixture-isolation namespace
+		// established at API-0416 per the per-tag isolation rule
+		// originally established at API-0246 `organization-active`;
+		// **must not** back-reference any closed prior-tag namespace
+		// (most recently the now-closed `sso-cov-*` opened at
+		// API-0406 and closed at API-0415).
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json` >
+		// `/stripe.upgradeSubscription` > `post`: method POST, tag
+		// stripe, **no parameters** (no path placeholders, no query
+		// string), and a REQUIRED `application/json` request body.
+		// Responses 200/400/401/403/500 — **404 is absent** from the
+		// response set (consistent with the body-bearing
+		// state-mutation shape; an upgrade applied to the calling
+		// session's subscription has no addressable subject to be
+		// "not found", the 404 vocabulary item being reserved for
+		// by-id retrievals like API-0410 `sso-one` across tags). The
+		// 200 schema is `{}` with `additionalProperties: false`,
+		// matching every prior covered peer in the empty-success
+		// cohort. The forward-reference prediction from API-0421 is
+		// **CONFIRMED** at this commit boundary: API-0422 is indeed
+		// a body-bearing POST (joining API-0417 in the body-bearing
+		// stripe/* mutation cohort, distinct from API-0418's
+		// body-free POST) — yet another data point reinforcing the
+		// slug-stem-is-not-shape lesson, since "upgradeSubscription"
+		// reads as an action verb on a singular noun and could
+		// equally have been wired body-free with the target plan
+		// encoded as a query parameter.
+		//
+		// **Request body schema (top-level fields, every field
+		// REQUIRED — no OPTIONAL siblings):**
+		//   - REQUIRED `tier` (string ENUM constrained to one of
+		//     `"hobby"`, `"startup"`). Identifies the subscription
+		//     tier the upgrade targets. Note this is a **strict
+		//     subset** of the API-0417 `stripe-createCheckoutSession`
+		//     `tier` enum (`"legacy"`, `"hobby"`, `"startup"`) — the
+		//     spec re-read at this commit boundary confirms the
+		//     `"legacy"` literal is **not** an accepted upgrade
+		//     target, consistent with `"legacy"` being a grandfathered
+		//     historical tier no longer offered as a forward
+		//     migration. The fixture picks `"hobby"` as a
+		//     deterministic enum value present in BOTH API-0417 and
+		//     API-0422 enums so a future cross-fixture validator
+		//     (which would reject any non-enum string) cannot reject
+		//     the fixture; an enum-conformant literal is structurally
+		//     mandatory and is therefore *not* a free-form
+		//     `<tag>-cov-<slug>-<storyID>`-conformant sentinel (the
+		//     convention bends here only because the spec's enum
+		//     constraint is non-negotiable, mirroring the
+		//     enum-handling precedent absorbed at API-0417 and
+		//     across earlier enum-bearing fixtures elsewhere in this
+		//     registry).
+		//   - REQUIRED `serverQuantity` (number). The number of
+		//     servers being purchased under the upgraded subscription.
+		//     The fixture supplies a deterministic small positive
+		//     integer (`1`) so the body literal stays minimally valid
+		//     against the JSON-Schema number type without
+		//     overcommitting to any tier-specific quantity floor or
+		//     ceiling that the spec does not actually declare —
+		//     identical to the API-0417 precedent.
+		//   - REQUIRED `isAnnual` (boolean). Toggles annual vs
+		//     monthly billing. The fixture supplies `false` so the
+		//     literal stays minimally valid against the JSON-Schema
+		//     boolean type; the boolean choice is semantically
+		//     neutral for the byte-for-byte body comparison the
+		//     harness performs — identical to the API-0417 precedent.
+		//
+		// The fixture supplies a literal for each of the three
+		// REQUIRED fields so the success-leg byte-for-byte body
+		// comparison verifies the CLI propagated the body verbatim.
+		//
+		// **Shape positioning — multi-required-field POST state-
+		// mutation, body REQUIRED, no OPTIONAL siblings, mixed
+		// scalar types (enum-string + number + boolean).**
+		// Structurally a **subset shape** of API-0417
+		// `stripe-createCheckoutSession`'s four-required-field
+		// envelope (which carried the additional REQUIRED `productId`
+		// plain string): API-0422 drops the plain-string scalar
+		// dimension and keeps the enum-string + number + boolean
+		// triple. This is the second occupant of the
+		// **mixed-scalar-types, every-field-REQUIRED, exhaustive-
+		// envelope POST mutation** family cell opened by API-0417
+		// — the family cell has now seen one four-required-field
+		// occupant and one three-required-field occupant, both with
+		// no OPTIONAL siblings. The slug stem `upgradeSubscription`
+		// reads as an action verb on a singular noun (state-mutation
+		// family across tags), but per the slug-stem-is-not-shape
+		// lesson reasserted at API-0371..API-0444, the family
+		// placement is confirmed by re-reading the spec, NOT by
+		// inferring from the slug stem.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained
+		// per the API-0416 stripe/* arc precedent.** The spec omits
+		// 404 from the response set (per above), so the
+		// 404→CodeNotFound override is structurally inapplicable;
+		// and the 404→CodeNotFound override slot for the stripe/*
+		// tag arc remains UNCONSUMED at the arc opener (API-0416
+		// `stripe-canCreateMoreServers`) — the slot stays nominal
+		// across the whole stripe/* arc and rolls forward to the
+		// next tag arc since API-0422 is structurally not a
+		// candidate (no parameters, no addressable subject — the
+		// upgrade targets the calling session's subscription
+		// implicitly via the auth token). 400 → CodeInvalidInput is
+		// *technically* available but the harness reserves 400
+		// representatives for stories where payload validation is
+		// the operation's *uniquely distinguishing* failure mode,
+		// which a state-mutation POST with multiple non-trivial
+		// REQUIRED fields is not (every authenticated mutation must
+		// validate inputs; 400 carries no per-operation
+		// discrimination). The harness-default 401→CodeAuth failure
+		// leg therefore remains the most representative single
+		// failure mode every authenticated Dokploy operation must
+		// re-prove, matching the 401→CodeAuth precedent locked in
+		// by the stripe/* arc opener at API-0416 and re-proven by
+		// API-0417, API-0418, API-0419, API-0420, and API-0421 for
+		// the **seventh and final** consecutive time within the arc.
+		//
+		// Fixture conventions:
+		//   * Multi-required-field exhaustive envelope — the spec
+		//     declares **no** OPTIONAL siblings, so unlike the
+		//     API-0411 `sso-register` / API-0414 `sso-update`
+		//     minimum-required precedent (where optional subtrees
+		//     were intentionally omitted), the API-0422 envelope IS
+		//     the byte-for-byte assertion target by construction —
+		//     identical to the API-0417 precedent.
+		//   * Per-case fixture token base
+		//     `stripe-cov-upgradeSubscription-0422` follows the
+		//     `<tag>-cov-<slug>-<storyID>` convention (reserved
+		//     nominally only since the body's three required fields
+		//     are all spec-constrained to typed scalars — enum
+		//     string, number, boolean — none of which admits a
+		//     free-form sentinel literal). Verified non-colliding
+		//     with every prior tag's namespace AND with the prior
+		//     stripe/* peers' `stripe-cov-canCreateMoreServers-0416`
+		//     / `stripe-cov-createCheckoutSession-0417` /
+		//     `stripe-cov-createCustomerPortalSession-0418` /
+		//     `stripe-cov-getCurrentPlan-0419` /
+		//     `stripe-cov-getInvoices-0420` /
+		//     `stripe-cov-getProducts-0421` reservations, and no
+		//     collisions with the now-closed `sso-cov-*`,
+		//     `set-cov-*`, `srv-cov-*`, `proj-cov-*`, `org-cov-*`,
+		//     `compose-cov-*`, `app-cov-*`, `ai-cov-*`,
+		//     `admin-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		//     `cert-cov-*`, `clu-cov-*`, `deployment-cov-*`,
+		//     `dest-cov-*`, `usr-cov-*`, `swarm-cov-*`,
+		//     `sshKey-cov-*`, etc. namespaces.
+		//   * No deterministic-but-clearly-fake `-fixture` suffix is
+		//     applied to any field literal because all three
+		//     required fields are spec-constrained to typed scalars
+		//     (enum string, number, boolean) that do not admit a
+		//     free-form sentinel — the API-0417 precedent's
+		//     `-fixture` suffix appeared only on its `productId`
+		//     plain-string field, which API-0422 does not carry.
+		SampleBody: json.RawMessage(`{
+				"tier": "hobby",
+				"serverQuantity": 1,
+				"isAnnual": false
+			}`),
+		// 200 response in the spec is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort. Empty-object
+		// body keeps the success-leg envelope assertion focused on
+		// `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+		//
+		// **stripe/* roster CLOSED at this entry.** API-0422 is the
+		// final priority-5 stripe/* story per the PRD ordering at
+		// the time of this commit; the stripe/* arc that opened at
+		// API-0416 spans seven entries (API-0416..API-0422) and
+		// closes here. The `stripe-cov-*` per-tag fixture-isolation
+		// namespace closes with this entry and is added to the
+		// closed-namespaces ledger documented above. The next
+		// entry on the coverage roster (API-0423
+		// `swarm-getNodeApps`) belongs to the swarm/* tag arc and
+		// MUST open a fresh `swarm-cov-*` per-tag fixture-isolation
+		// namespace per the per-tag isolation rule originally
+		// established at API-0246 `organization-active`. The
+		// 404→CodeNotFound override slot for the stripe/* tag arc
+		// closes UNCONSUMED — no stripe/* story across the seven-
+		// entry arc declared an addressable subject AND 404 in the
+		// response set; the slot rolls forward to the swarm/* tag
+		// arc, where the next contributor must re-evaluate
+		// candidacy against the swarm/* response sets.
+	},
+	{
 		StoryID:     "API-0423",
 		OperationID: "swarm-getNodeApps",
 		Method:      http.MethodGet,
