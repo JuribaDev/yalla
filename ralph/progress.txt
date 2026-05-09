@@ -30450,3 +30450,68 @@ forward-reference lesson before assuming any field shape.
   - Editing `ralph/prd.json` via `json.dump` strips the trailing
     newline; restore it explicitly so the diff stays minimal.
 ---
+
+## 2026-05-09 - API-0413
+- Implemented coverage for `sso-showSignInWithSSO`
+  (GET /sso.showSignInWithSSO).
+- Re-verified spec at `internal/api/data/openapi.json >
+  /sso.showSignInWithSSO > get`: parameter-free, body-free GET; tag
+  `sso`; responses 200/400/401/403/404/500; 200 schema is `{}` with
+  `additionalProperties: false`.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended one
+    `apiCoverageCase` entry between API-0412 `sso-removeTrustedOrigin`
+    and the swarm/* roster opener API-0423 `swarm-getNodeApps`. No
+    `Sample*` literals consumed (mirrors the minimal-literal pattern
+    of API-0058 `certificates-all`, API-0408 `sso-getTrustedOrigins`,
+    API-0409 `sso-listProviders`). The 200 schema is `{}`. 404 IS
+    in the spec response set but the 404→CodeNotFound override is
+    structurally inapplicable (no addressable subject — action-style
+    probe with no selector); the canonical 404 slot for the sso/*
+    arc was already consumed at API-0410 `sso-one`. Harness-default
+    401→CodeAuth failure leg retained. Fixture token slug
+    `sso-cov-showSignInWithSSO-0413` is reserved nominally only.
+  - `ralph/prd.json` — flipped API-0413 `passes` to true (trailing
+    newline preserved).
+  - `ralph/progress.txt` — this entry.
+- Verification (all green):
+  - `gofmt -w .` → clean
+  - `go mod tidy` → no changes
+  - `go vet ./...` → clean
+  - `go test ./...` → all packages pass (internal/cli 1.730s)
+  - `go test -race ./...` → all packages pass (internal/cli 4.284s)
+  - Targeted: `go test ./internal/cli/ -run 'API-0413|APICoverage'`
+    PASS (0.908s) — RegistryInvariants, SchemaCommandWorks,
+    ManifestListsOperation, SuccessRoundTrip, RepresentativeFailure
+    all green for the new entry.
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` are not installed locally and were not run
+    (documented per the Codebase-Patterns convention rather than
+    silently skipped).
+- Remaining risks / follow-ups:
+  - 10 priority-5 API coverage stories still failing (next:
+    API-0414 `sso-update`, the next mutation of the sso/* arc).
+- **Learnings for future iterations:**
+  - The third parameter-free body-free GET in the sso/* arc continues
+    the sequence opened by API-0408 `sso-getTrustedOrigins` and
+    extended by API-0409 `sso-listProviders`: each is a pure
+    copy-the-shape addition where every `Sample*` field is omitted,
+    success defaults to 200/`{}` and failure defaults to 401→CodeAuth.
+    The sso/* tag's read-only leaf cohort is structurally homogeneous
+    despite operationId-suffix divergence (`getTrustedOrigins`,
+    `listProviders`, `showSignInWithSSO`).
+  - The 404→CodeNotFound representative-failure slot reservation
+    chain across the sso/* arc is now: API-0408 reserved → API-0409
+    re-reserved → API-0410 consumed (canonical by-id reader) →
+    API-0413 inapplicable (no addressable subject, slot already
+    consumed at API-0410). Future read-only sso/* peers cannot
+    re-claim the slot once consumed — the precedent is one-shot
+    per tag arc, mirroring API-0055 `bitbucket-one` and the upcoming
+    API-0060 `certificates-one`.
+  - `sso-showSignInWithSSO` is an action-style probe (a GET that
+    triggers a server-side check or redirect probe rather than
+    returning a resource); its 200 schema is still `{}` despite
+    the action verb because Dokploy's tRPC convention collapses
+    response payloads to envelope-only for action probes. Expect
+    the same `{}` 200 shape on any future action-verb GET.
+---

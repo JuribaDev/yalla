@@ -45734,6 +45734,134 @@ var coveredAPIOperations = []apiCoverageCase{
 		// rest of the sso/* arc.
 	},
 	{
+		StoryID:     "API-0413",
+		OperationID: "sso-showSignInWithSSO",
+		Method:      http.MethodGet,
+		Path:        "/sso.showSignInWithSSO",
+		Tag:         "sso",
+		// Eighth entry on the sso/* coverage roster and the
+		// **third read-only leaf** of the sso/* arc — succeeds the
+		// arc opener API-0406 `sso-addTrustedOrigin` (single-
+		// required-string-scalar POST imperative-action mutation),
+		// the second mutation API-0407 `sso-deleteProvider` (also
+		// single-required-string-scalar POST), the first read-only
+		// leaf API-0408 `sso-getTrustedOrigins` (parameter-free,
+		// body-free list-style GET), the second read-only leaf
+		// API-0409 `sso-listProviders` (parameter-free, body-free
+		// list-style GET), the canonical by-id GET API-0410
+		// `sso-one` (the 404→CodeNotFound override home for the
+		// sso/* tag arc), the multi-required-field register/create
+		// POST API-0411 `sso-register`, and the destructive
+		// imperative-action POST API-0412 `sso-removeTrustedOrigin`
+		// (single-required-string-scalar). Consumes the forward
+		// reference embedded in API-0412's closing comment ("the
+		// priority-5 backlog continues at API-0413
+		// `sso-showSignInWithSSO` (declared a **GET** per the spec
+		// preview, the third read-only leaf of the sso/* arc that
+		// — per the harness-default reservation locked in here —
+		// should revert to 401 → CodeAuth as a representative-
+		// failure slot, the 404→CodeNotFound override having been
+		// consumed at API-0410 `sso-one`)"). Stays within the open
+		// `sso-cov-*` namespace opened by API-0406
+		// `sso-addTrustedOrigin` per the per-tag isolation rule
+		// originally established at API-0246
+		// `organization-active`; **must not** back-reference any
+		// closed prior-tag namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json` >
+		// `/sso.showSignInWithSSO` > `get`: method GET, tag sso,
+		// **no parameters** (no path placeholders, no query
+		// string), **no requestBody**, and a 200/400/401/403/404/500
+		// response set. The 200 schema is `{}` with
+		// `additionalProperties: false`, matching the empty-success
+		// convention shared by every prior covered list-style GET
+		// (e.g. API-0058 `certificates-all`, API-0376
+		// `settings-isUserSubscribed`, and the immediate prior
+		// read-only sso/* peers API-0408 `sso-getTrustedOrigins`
+		// and API-0409 `sso-listProviders`).
+		//
+		// **Shape positioning — parameter-free, body-free GET, the
+		// third read-only leaf of the sso/* arc.** This is
+		// structurally identical to API-0408 `sso-getTrustedOrigins`
+		// and API-0409 `sso-listProviders` (both parameter-free,
+		// body-free GETs), and structurally distinct from the
+		// canonical by-id GET API-0410 `sso-one` (single-required-
+		// string-scalar query parameter) and from the sso/* arc
+		// mutators API-0406 `sso-addTrustedOrigin`, API-0407
+		// `sso-deleteProvider`, API-0411 `sso-register`, and
+		// API-0412 `sso-removeTrustedOrigin`. The cross-tag
+		// precedent for this shape is API-0058 `certificates-all`
+		// (the canonical no-params/no-body GET opener for its arc).
+		// Because no parameters or body are declared, every
+		// case-level `Sample*` field is intentionally omitted —
+		// `buildCoverageInputArgs` returns an empty slice and
+		// `yalla api call sso-showSignInWithSSO --json` exercises
+		// the no-input-flag path.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained
+		// per the API-0408/API-0409 reservation chain.** The spec
+		// *does* declare 404 for this operation, but
+		// `sso-showSignInWithSSO` is an action-style probe with
+		// **no addressable subject** — there is no `{providerId}`-
+		// style placeholder or selector query parameter that could
+		// resolve to "not found". Following the precedent locked in
+		// by API-0058 `certificates-all` and continued at API-0408
+		// `sso-getTrustedOrigins` and API-0409 `sso-listProviders`
+		// ("404 → CodeNotFound slot is *not* claimed here — read
+		// endpoint with no addressable subject"), the
+		// 404→CodeNotFound override is structurally inapplicable
+		// here even though 404 is in the response vocabulary. The
+		// canonical 404→CodeNotFound representative-failure slot
+		// for the sso/* tag arc was consumed at API-0410 `sso-one`
+		// (the canonical by-id reader, mirroring API-0055
+		// `bitbucket-one`). 400 → CodeInvalidInput is *technically*
+		// available but the harness reserves 400 representatives
+		// for stories where payload validation is the operation's
+		// *uniquely distinguishing* failure mode, which a
+		// parameter-free read cannot be. So the harness-default
+		// 401→CodeAuth failure leg remains the most representative
+		// single failure mode every authenticated Dokploy operation
+		// must re-prove, matching the 401→CodeAuth choice locked in
+		// by the sso/* arc opener (API-0406 `sso-addTrustedOrigin`)
+		// and continued at every prior sso/* peer.
+		//
+		// **No per-case fixture token consumed.** Parameter-free,
+		// body-free GETs carry no `Sample*` literals, so the
+		// `<tag>-cov-<slug>-<storyID>` slug
+		// `sso-cov-showSignInWithSSO-0413` is reserved nominally —
+		// claimed by this entry under the per-tag uniqueness audit
+		// but never embedded in any wire payload (mirroring the
+		// minimal-literal pattern established by API-0058
+		// `certificates-all` and continued at API-0408
+		// `sso-getTrustedOrigins` and API-0409 `sso-listProviders`).
+		// Verified non-colliding with the open sso/* namespace
+		// (distinct slug `showSignInWithSSO` and storyID `0413` →
+		// unique under the `<tag>-cov-<slug>-<storyID>` rule) and
+		// with every closed prior-tag namespace (different tag
+		// prefix and storyID).
+		//
+		// **sso/* roster continues.** Per the PRD ordering at the
+		// time of this commit, the priority-5 backlog continues at
+		// API-0414 `sso-update` (declared a **POST** per the spec
+		// preview, the next mutation of the sso/* arc that — per
+		// the harness-default reservation locked in here — should
+		// revert to 401 → CodeAuth as a representative-failure
+		// slot, the 404→CodeNotFound override having been consumed
+		// at API-0410 `sso-one`). The next contributor must
+		// re-verify the spec against
+		// `internal/api/data/openapi.json` > `/sso.update` > `post`
+		// per the forward-reference lesson before assuming any
+		// field shape (in particular: REQUIRED/OPTIONAL field
+		// gating and whether the body shape mirrors the
+		// register/create POST at API-0411 `sso-register` or the
+		// single-required-string-scalar mutators at API-0406 /
+		// API-0407 / API-0412), and **must not** reuse any closed
+		// prior-tag namespace; the open `sso-cov-*` namespace
+		// remains in force for the rest of the sso/* arc.
+	},
+	{
 		StoryID:     "API-0423",
 		OperationID: "swarm-getNodeApps",
 		Method:      http.MethodGet,
