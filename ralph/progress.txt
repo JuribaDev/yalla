@@ -26640,3 +26640,32 @@ forward-reference lesson before assuming any field shape.
   - When a cohort member has zero optional fields, the every-optional-populated convention is **structurally inapplicable**, not silently violated. The comment block must explicitly call out the no-optional-siblings status so future cohort members and reviewers don't read the entry as a violation. This entry establishes that pattern for the notification/* `test*` cohort and any other future tag's connectivity-validation cohort with a fully-required schema can grep this entry for the wording.
   - SMTP-port literal `587` should be inherited verbatim from the create sibling — picking a different port (e.g. 25, 465, 2525) without a spec reason creates cross-entry diff noise and risks a future SMTP-port-shape validator rejecting the fixture as a non-submission port. The IANA-registered submission port (RFC 6409) is the canonical choice.
 ---
+
+
+## 2026-05-09 - API-0227 (Cover notification-testGotifyConnection, POST /notification.testGotifyConnection)
+- Implemented Dokploy API operation coverage for `notification-testGotifyConnection`. This is the **fourth** member of the notification/* `test*` connectivity-validation POST cohort opened by API-0224 `notification-testCustomConnection`, continued by API-0225 `notification-testDiscordConnection` and API-0226 `notification-testEmailConnection`.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — added `apiCoverageCase` entry inserted between API-0226 and API-0246, slug `test-gotify-connection`, fixture namespace `notification-cov-test-gotify-connection-0227-<field>`.
+  - `ralph/prd.json` (set `passes: true` for API-0227 only).
+  - `ralph/progress.txt` (this entry).
+- The `apiCoverageCase` harness automatically asserts: registry presence (operationId/method/path/tag), schema reachability via `yalla schema get`, manifest inclusion via `yalla manifest --json`, an httptest-backed success exchange (`yalla api call ... --input ... --json` with `yalla.output.v1`), and a 401→CodeAuth representative failure leg with `yalla.error.v1` envelope and non-zero exit code. No new harness changes were required.
+- Verification run (from repo root):
+  - gofmt -w . ✅ (no diff; `gofmt -l .` empty)
+  - go mod tidy ✅
+  - go vet ./... ✅
+  - go test ./... ✅ (all packages pass; internal/cli 1.629s)
+  - go test -race ./... ✅ (all packages pass; internal/cli 3.436s)
+  - goimports / golangci-lint / staticcheck / govulncheck / goreleaser: not installed locally — skipped per documented pattern (note in Codebase Patterns section).
+- Body composition (per spec re-verified against `internal/api/data/openapi.json > /notification.testGotifyConnection > post`):
+  - REQUIRED `serverUrl` (string) → fixture uses an `https://...example.invalid` URL (RFC 6761) per the cross-tag URL-anchor rule re-asserted by API-0224's `endpoint` and API-0225's `webhookUrl`. Avoids any risk of egress to a real Gotify server during tests.
+  - REQUIRED `appToken` (string) → secret-bearing field, deterministic non-realistic literal so a leak in a future golden file remains greppable without producing a false-positive redaction.
+  - REQUIRED `priority` (number) → pinned to `5` (Gotify's documented 0..10-scale midpoint), the more-discriminating value over JSON's number-zero default.
+  - OPTIONAL `decoration` (boolean) → populated with `true` per the every-optional-populated convention re-asserted by API-0225's `decoration` boolean tail.
+- Spec digest `EmbeddedSpecSHA256` is unchanged (no spec bump) so no companion edits to `internal/api/data/openapi.json > sourceApi.sha256` or `expectedOperationCount` were required.
+- Failure leg: harness-default 401→CodeAuth retained — spec omits 404 (no by-id target to miss; the agent supplies the Gotify transport descriptor inline), matching the cohort opener API-0224 / second member API-0225 / third member API-0226 family choice.
+- **Learnings for future iterations:**
+  - The Gotify entry is the first cohort member to combine the URL-anchor rule (API-0224/API-0225 inheritance) **with** a populated optional boolean tail (API-0225 inheritance) **and** a non-zero numeric REQUIRED slot — the resulting "two strings + one number + one optional boolean" shape is the closest analogue future Pushover-/Ntfy-/Telegram-style probes will reach for. Future peers in the cohort with similar mid-width REQUIRED-tuple-with-optional-tail schemas should grep this entry first.
+  - For numeric REQUIRED slots in connectivity-validation POSTs, prefer the documented application-layer midpoint (here `5` on Gotify's 0..10 priority scale) over an arbitrary non-zero. This both signals correct semantic intent to a future spec-aware validator and remains distinguishable from JSON's number-zero default.
+  - The cohort-opener forward reference list in API-0224's comment now extends through API-0227 — the opener still names peers by ID, and each cohort member's comment back-references the opener and prior members. Future peers (API-0228 `testLarkConnection`, API-0229 `testNtfyConnection`, …) should continue the chain by listing the cohort opener and **all** prior cohort members in their preamble.
+  - The slug `test-gotify-connection` follows the same three-kebab-segment derivation (`testGotifyConnection` → `test-gotify-connection`) re-asserted across API-0224..API-0226, so the per-tag-slug-style rule fixed by API-0209 `notification-createCustom` (→ `create-custom`) still holds with no exception needed.
+---

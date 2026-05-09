@@ -20695,6 +20695,150 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0227",
+		OperationID: "notification-testGotifyConnection",
+		Method:      http.MethodPost,
+		Path:        "/notification.testGotifyConnection",
+		Tag:         "notification",
+		// Twentieth entry on the notification/* coverage roster, staying
+		// inside the `notification-cov-*` per-tag fixture-isolation
+		// namespace seeded at API-0208 `notification-all` and extended
+		// across API-0209..API-0226. Per the per-tag isolation rule
+		// reaffirmed across each prior peer this entry stays inside the
+		// namespace opened by API-0208 and **must not** back-reference
+		// any closed prior-tag namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json >
+		// /notification.testGotifyConnection > post`: a **POST** with
+		// **no parameters** and a **REQUIRED request body** whose schema
+		// declares **three REQUIRED non-nullable plain slots and one
+		// OPTIONAL non-nullable plain slot** — REQUIRED `serverUrl`
+		// (string), `appToken` (string), `priority` (number); OPTIONAL
+		// `decoration` (boolean). Responses 200/400/401/403/500 — the
+		// spec does **not** declare 404 on this operation, matching the
+		// connectivity-validation precedent re-asserted by the cohort
+		// opener API-0224 `notification-testCustomConnection` and the
+		// peers API-0225 `notification-testDiscordConnection` /
+		// API-0226 `notification-testEmailConnection` (the family is
+		// "validate the agent-supplied transport descriptor", with no
+		// by-id target to miss). The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort.
+		//
+		// **Slug style — kebab-case inherited from API-0209/API-0210/
+		// API-0211/API-0212/API-0213/API-0214/API-0215/API-0216/
+		// API-0217/API-0218/API-0219, the GET-cohort opener API-0220
+		// `notification-getEmailProviders` (→ `get-email-providers`),
+		// the `*Id`-filtered GET-cohort opener API-0221
+		// `notification-one`, the action-receiver POST opener API-0222
+		// `notification-receiveNotification` (→ `receive-notification`),
+		// the by-id mutation cohort opener API-0223
+		// `notification-remove`, the `test*` connectivity-validation
+		// POST cohort opener API-0224 `notification-testCustomConnection`
+		// (→ `test-custom-connection`), the second cohort member
+		// API-0225 `notification-testDiscordConnection`
+		// (→ `test-discord-connection`), and the third cohort member
+		// API-0226 `notification-testEmailConnection`
+		// (→ `test-email-connection`).** Per the per-tag-slug-style
+		// rule fixed by the kickoff multi-camel entry API-0209
+		// `notification-createCustom` (→ `create-custom`), this entry
+		// takes `test-gotify-connection` as the slug stem (three
+		// kebab-cased segments mirrored from `testGotifyConnection`).
+		// The fixture namespace is
+		// `notification-cov-test-gotify-connection-0227-<field>`,
+		// mirroring the `notification-cov-<slug>-<storyID>-<field>`
+		// discipline locked by API-0208..API-0226. **This entry is the
+		// fourth member of the notification/* `test*` connectivity-
+		// validation POST cohort opened by API-0224** — peers
+		// API-0228..API-0234 (`testLarkConnection`, `testNtfyConnection`,
+		// `testPushoverConnection`, `testResendConnection`,
+		// `testSlackConnection`, `testTeamsConnection`,
+		// `testTelegramConnection`) inherit the same slug style and
+		// harness-default 401→CodeAuth failure leg.
+		//
+		// **Body composition — three-required + one-optional, every
+		// REQUIRED field populated and the single OPTIONAL field
+		// populated per the cross-tag every-optional-populated
+		// convention re-asserted by API-0224/API-0225.** Mirrors the
+		// Gotify descriptor shape established by the create sibling
+		// API-0212 `notification-createGotify` so the cross-entry diff
+		// against the persisted-notifier sibling stays focused on the
+		// structural delta (this entry omits the `name` REQUIRED slot
+		// and the seven optional `*Notify` boolean tail because the
+		// spec for `*-testGotifyConnection` declares neither — the
+		// operation is a pure connectivity probe of an inline transport
+		// descriptor, not a persisted notifier configuration).
+		//   - **REQUIRED `serverUrl`** (plain non-nullable string).
+		//     URL-bearing field — anchored on `example.invalid`
+		//     (RFC 6761 reserved TLD) per the cross-tag URL-anchor
+		//     rule re-asserted by API-0224's `endpoint` and API-0225's
+		//     `webhookUrl` so the fixture cannot accidentally egress to
+		//     a real Gotify instance during tests. The token follows
+		//     the per-tag `notification-cov-<slug>-<storyID>-<field>`
+		//     discipline.
+		//   - **REQUIRED `appToken`** (plain non-nullable string).
+		//     Deterministic literal token. **Secret-bearing field** —
+		//     the `redaction_security_test.go` harness redacts any
+		//     value matching the configured token-shape on every
+		//     visible writer (`--json` / human / `--verbose`). The
+		//     fixture token is intentionally non-realistic so a leak
+		//     in a future test golden file remains greppable without
+		//     producing a false-positive redaction.
+		//   - **REQUIRED `priority`** (plain non-nullable number).
+		//     Pinned to `5` — Gotify's documented default priority
+		//     midpoint on its 0..10 scale. `5` is the more-
+		//     discriminating value over JSON's number-zero default,
+		//     keeping the on-wire fixture distinguishable from an
+		//     omitted-key parse.
+		//   - **OPTIONAL `decoration`** (plain non-nullable boolean).
+		//     Populated with `true` per the every-optional-populated
+		//     convention re-asserted by API-0225's `decoration`
+		//     boolean tail; `true` is the more-discriminating value
+		//     over JSON's bool zero default, protecting future spec
+		//     validators against silently coalescing an omitted
+		//     optional with an explicit-false.
+		//
+		// **Shape positioning — three-required (two strings + one
+		// number) plus one-optional-boolean POST connectivity-
+		// validation, body REQUIRED.** Functionally distinct from the
+		// cohort opener API-0224 `notification-testCustomConnection`
+		// (single-required-string + optional nested
+		// `map[string]string`), the second cohort member API-0225
+		// `notification-testDiscordConnection` (single-required-string
+		// + optional plain boolean), and the third member API-0226
+		// `notification-testEmailConnection` (six-required, zero-
+		// optional). This entry establishes the notification/* tag's
+		// mid-width REQUIRED-tuple-with-optional-boolean-tail shape
+		// for the `test*` cohort, an analogue future Pushover-/Ntfy-
+		// style probes can mirror.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set, so the
+		// 404→CodeNotFound override is structurally inapplicable
+		// (no by-id target to miss; the agent supplies the transport
+		// descriptor inline). `*-testGotifyConnection` here is a
+		// body-bearing imperative-action POST and stays on the
+		// 401→CodeAuth invariant locked across every imperative-
+		// action notification/* peer (API-0209..API-0220, API-0222,
+		// API-0223, API-0224, API-0225, API-0226), keeping
+		// authentication as the universal failure surface for the
+		// notification/* `test*` connectivity-validation POST cohort.
+		SampleBody: json.RawMessage(`{
+			"serverUrl": "https://notification-cov-test-gotify-connection-0227-server.example.invalid",
+			"appToken": "notification-cov-test-gotify-connection-0227-app-token",
+			"priority": 5,
+			"decoration": true
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the empty-
+		// success cohort. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` / `data.status`
+		// rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,
