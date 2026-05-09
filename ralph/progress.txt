@@ -28460,3 +28460,79 @@ forward-reference lesson before assuming any field shape.
     patch/* roster already has six prior fixture tokens; future
     contributors should grep the namespace before picking a slug.
 ---
+
+## 2026-05-09 - API-0263
+- Added per-operation coverage entry for `patch-readRepoDirectories`
+  (GET /patch.readRepoDirectories) in
+  `internal/cli/api_coverage_test.go`. The new struct slots into the
+  append-only `coveredAPIOperations` registry between API-0262
+  (`patch-one`) and API-0268 (`port-create`), continuing inside the
+  `patch-cov-*` per-tag fixture-isolation namespace opened at
+  API-0256.
+- Spec re-verified against `internal/api/data/openapi.json >
+  /patch.readRepoDirectories > get`: GET with **three REQUIRED query
+  parameters** (`id` plain string, `type` enum
+  `application`|`compose`, `repoPath` plain string), no request body,
+  and 200/400/401/403/404/500 responses. The 200 schema is `{}` with
+  `additionalProperties: false`, matching the empty-success cohort.
+  Three-required-query GET is a new harness shape — prior peers
+  (API-0256 two-required-query, API-0262 single-required-query) lock
+  the within-tag cohort but no prior cross-tag GET exercises three
+  required query parameters.
+- Fixture id base: `patch-cov-read-repo-directories-0263`. `type` set
+  to `application` (first enum member, matches API-0256's
+  discriminator choice). `repoPath` set to a fixture-style relative
+  path that doubles as the slug — keeps the fixture portable and
+  inside the `patch-cov-*` namespace.
+- Failure leg kept on the harness-default 401→`E_AUTH` mode (mirrors
+  API-0005, API-0113, API-0115, API-0256, API-0262 — id-bearing GETs
+  that also declare 404 yet treat bearer-token enforcement as the
+  representative failure).
+- Files changed:
+  - `internal/cli/api_coverage_test.go` (added API-0263 entry)
+  - `ralph/prd.json` (API-0263 `passes` → true)
+  - `ralph/progress.txt` (this entry)
+- Verification run from repo root:
+  - `gofmt -w internal/cli/api_coverage_test.go` — clean
+  - `go mod tidy` — no changes
+  - `go vet ./...` — clean
+  - `go test ./...` — all packages ok
+  - `go test -race ./...` — all packages ok
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` not installed locally; skipped per the
+    document-rather-than-silently-skip rule.
+- Remaining risks / follow-ups:
+  - 35 priority-5 API stories still pending; next in PRD order is
+    API-0264 `patch-readRepoFile` (GET per spec preview). The next
+    contributor must re-verify the spec against
+    `internal/api/data/openapi.json > /patch.readRepoFile > get`
+    before assuming any field shape, and continue inside the
+    `patch-cov-*` per-tag fixture-isolation namespace.
+  - The 404→`CodeNotFound` failure-leg variant remains untested for
+    this operation. A future contract-test extension that exercises
+    the not-found path should add a sibling case rather than
+    mutating this one.
+- **Learnings for future iterations:**
+  - The `coveredAPIOperations` registry handles three-required-query
+    GETs the same way it handles single- and two-required-query GETs:
+    populate `SampleQuery` with all required keys, leave `SampleBody`
+    empty, and the harness forwards the full query map via the
+    `--input` JSON `query` field. No new harness machinery needed.
+  - When an enum-constrained query parameter recurs across sibling
+    operations (here: `type` `application`|`compose`, also seen on
+    API-0256 `patch-byEntityId`), pick the **same** enum member as
+    the prior in-tag peer (`application`, the first declaration-order
+    member) so the discriminator choice stays consistent and a
+    future "exercise both legs" extension can add sibling cases
+    without retro-mutating.
+  - Three-required-query GETs are a first-of-kind shape in the
+    harness as of this story — call it out in the entry comment so
+    the next forward-reference scan (API-0345..API-0444 lesson)
+    finds the precedent immediately rather than re-deriving it.
+  - Fixture id reuse for two parameters (here `id` and `repoPath`
+    both set to `patch-cov-read-repo-directories-0263`) is fine
+    when both are plain strings without semantic constraints; the
+    success-leg assertion at `runAPICoverageSuccess` re-reads
+    `r.URL.Query()` and matches each key independently, so identical
+    values do not collide.
+---
