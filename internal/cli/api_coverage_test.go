@@ -44148,6 +44148,157 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0401",
+		OperationID: "sshKey-create",
+		Method:      http.MethodPost,
+		Path:        "/sshKey.create",
+		Tag:         "sshKey",
+		// Second entry on the sshKey/* coverage roster, immediately
+		// following API-0400 `sshKey-all` and completing the forward
+		// reference embedded in that entry's closing comment ("The
+		// successor priority-5 peer in the sshKey/* roster is
+		// API-0401 `sshKey-create` (declared a **POST** with a
+		// REQUIRED JSON body per the spec preview)"). Continues
+		// inside the `sshKey-cov-*` per-tag fixture-isolation
+		// namespace opened by API-0400 and **must not** back-
+		// reference any closed prior-tag namespace (`admin-cov-*`,
+		// `ai-cov-*`, `app-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		// `cert-cov-*`, `clu-cov-*`, `compose-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `docker-cov-*`,
+		// `domain-cov-*`, `environment-cov-*`, `gitea-cov-*`,
+		// `github-cov-*`, `gitlab-cov-*`, `mariadb-cov-*`,
+		// `mongo-cov-*`, `mounts-cov-*`, `mysql-cov-*`, `org-cov-*`,
+		// `patch-cov-*`, `port-cov-*`, `postgres-cov-*`,
+		// `preview-cov-*`, `proj-cov-*`, `redirects-cov-*`,
+		// `redis-cov-*`, `registry-cov-*`, `rollback-cov-*`,
+		// `security-cov-*`, `set-cov-*`, `srv-cov-*`, `swarm-cov-*`,
+		// `usr-cov-*`) per the per-tag isolation rule originally
+		// established at API-0246 `organization-active`.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json` > `/sshKey.create` >
+		// `post`: method POST, tag sshKey, **no parameters**,
+		// requestBody REQUIRED with `application/json`, responses
+		// 200/400/401/403/500. The 200 response is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort. **No 404** is
+		// declared on this operation, mirroring the precedent on
+		// every prior covered `*-create` mutation — API-0118
+		// `domain-create`, API-0125 `environment-create`, API-0131
+		// `gitea-create`, API-0161 `mariadb-create`, API-0175
+		// `mongo-create`, API-0195 `mysql-create`, API-0273
+		// `postgres-create`, API-0298 `redirects-create`, API-0303
+		// `redis-create`, API-0317 `registry-create`, and API-0331
+		// `security-create` (a `*-create` mutation has no by-id
+		// read leg, so missing-target collapses into 400/
+		// validation under Dokploy's tRPC convention).
+		//
+		// **Request body schema (REQUIRED top-level fields):**
+		//   - REQUIRED `name` (string)
+		//   - REQUIRED `privateKey` (string) — credential-shaped
+		//     scalar; the fixture below supplies a deterministic-
+		//     but-clearly-fake `sshKey-cov-create-0401-privateKey`
+		//     literal carrying the `<tag>-cov-<slug>-<storyID>-
+		//     <field>` suffix for `git grep` traceability and so
+		//     the redactor test family at
+		//     `internal/cli/redaction_security_test.go` can extend
+		//     coverage onto this case without re-deriving the
+		//     literal. Note: the spec types `privateKey` as a
+		//     plain `string` (not a multi-line PEM block); a
+		//     bare token is therefore schema-conforming and is
+		//     preferred over a fake PEM blob to keep the fixture
+		//     trivially redaction-grep-able.
+		//   - REQUIRED `publicKey` (string) — credential-shaped
+		//     scalar; same naming convention as `privateKey`.
+		//   - REQUIRED `organizationId` (string)
+		//   - **OPTIONAL field deliberately omitted**
+		//     (`description` (`anyOf: [string, null]`)). Per the
+		//     API-0131 `gitea-create` / API-0161 `mariadb-create` /
+		//     API-0175 `mongo-create` / API-0303 `redis-create` /
+		//     API-0317 `registry-create` minimal-required-only
+		//     fixture rule (load-bearing for credential-redaction
+		//     safety), the OPTIONAL `description` slot is
+		//     **intentionally omitted** so a future credential-
+		//     redaction audit cannot regress on a fixture that
+		//     hard-codes any value beyond the REQUIRED slots.
+		//     Future contributors adding optional-field coverage
+		//     should do so in a follow-up story rather than
+		//     expanding this minimal positive case.
+		//
+		// **Shape positioning — four-required-string-scalar POST
+		// create-mutation with two credential-shaped scalars; body
+		// REQUIRED.** Cardinally identical to the four-required-
+		// string-scalar API-0175 `mongo-create` precedent (no enum,
+		// no nullable). Distinct from the three-required-string-
+		// scalar API-0303 `redis-create` precedent, the five-
+		// required-string-scalar API-0161 `mariadb-create` /
+		// API-0195 `mysql-create` / API-0273 `postgres-create`
+		// precedents, and the five-required-field-with-enum-and-
+		// nullable API-0317 `registry-create` precedent. The
+		// harness's `len(tc.SampleBody) > 0` gate at
+		// `runAPICoverageSuccess` activates the JSON content-type
+		// and byte-for-byte body comparison legs; this fixture
+		// supplies all four REQUIRED fields so the success path
+		// verifies the CLI propagated the body verbatim.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so
+		// the 404→CodeNotFound override is structurally
+		// inapplicable (matching every prior covered `*-create`
+		// mutation cited above). 400→CodeInvalidInput is
+		// *technically* available — a payload that omits one of
+		// the four REQUIRED fields would fail server-side
+		// validation — but the harness reserves 400
+		// representatives for stories where payload validation is
+		// the operation's *uniquely distinguishing* failure mode.
+		// A conventional `*-create` mutation collapses to type-
+		// checking, so the harness-default 401→CodeAuth failure
+		// leg remains the most representative single failure mode
+		// every authenticated Dokploy operation must re-prove, and
+		// is consistent with the 401→CodeAuth choice locked in by
+		// the sshKey/* kickoff at API-0400 `sshKey-all`. The
+		// 404→CodeNotFound override slot is **still reserved for
+		// the upcoming API-0403 `sshKey-one` entry** (the
+		// canonical by-id reader) per API-0400's closing
+		// reservation.
+		//
+		// **Fixture token base** `sshKey-cov-create-0401` follows
+		// the established `<tag>-cov-<slug>-<storyID>` deterministic-
+		// but-clearly-fake naming convention and is verified non-
+		// colliding with any prior tag's namespace (the full-tag-
+		// name slug prefix `sshKey-` is unambiguously distinct
+		// from every prior closed namespace, satisfying the
+		// `<tag>-cov-<slug>-<storyID>` uniqueness rule).
+		//
+		// The next case in the PRD-ordered priority-5 backlog is
+		// API-0402 `sshKey-generate` (declared a **POST** per the
+		// spec preview, continuing the body-bearing sshKey/*
+		// mutator chain). The next contributor must re-verify the
+		// spec against
+		// `internal/api/data/openapi.json` > `/sshKey.generate` >
+		// `post` per the forward-reference lesson before assuming
+		// any field shape (in particular the request body shape —
+		// `generate` semantics typically imply server-side key
+		// material synthesis, so the request body is likely
+		// minimal or absent), and will continue inside the
+		// `sshKey-cov-*` per-tag fixture-isolation namespace
+		// opened by API-0400 (consume slugs of the form
+		// `sshKey-cov-generate-0402-*`).
+		SampleBody: json.RawMessage(`{
+			"name": "sshKey-cov-create-0401",
+			"privateKey": "sshKey-cov-create-0401-privateKey",
+			"publicKey": "sshKey-cov-create-0401-publicKey",
+			"organizationId": "sshKey-cov-create-0401-organizationId"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0423",
 		OperationID: "swarm-getNodeApps",
 		Method:      http.MethodGet,

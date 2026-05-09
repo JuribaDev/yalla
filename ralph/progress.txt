@@ -29563,3 +29563,102 @@ forward-reference lesson before assuming any field shape.
     exactly (responses 200/400/401/403/404/500, 200 = `{}` with
     `additionalProperties: false`).
 ---
+
+## 2026-05-09 09:42 +03 - API-0401
+- Implemented coverage case for `sshKey-create` (POST /sshKey.create), the
+  second entry on the sshKey/* coverage roster, completing the forward
+  reference left by API-0400 `sshKey-all`.
+- Files changed:
+    - `internal/cli/api_coverage_test.go` — added one `apiCoverageCase`
+      literal between API-0400 (`sshKey-all`) and API-0423
+      (`swarm-getNodeApps`), preserving PRD-ordered priority-5 placement.
+      Continues the `sshKey-cov-*` per-tag fixture-isolation namespace
+      opened by API-0400; fixture token base `sshKey-cov-create-0401`
+      with credential-shaped `privateKey`/`publicKey` literals carrying
+      the `<tag>-cov-<slug>-<storyID>-<field>` suffix for `git grep`
+      traceability and downstream redactor-test extensibility.
+    - `ralph/prd.json` — flipped `userStories[id=API-0401].passes` to
+      `true`.
+    - `ralph/progress.txt` — this entry (append-only).
+- Verification run: `gofmt -w .`, `go mod tidy`, `go vet ./...`,
+  `go test ./...`, `go test -race ./...`. All pass. Targeted run
+  `go test ./internal/cli -run 'TestAPICoverage' -v` shows all five
+  subtests for API-0401 PASS (RegistryInvariants, SchemaCommandWorks,
+  ManifestListsOperation, SuccessRoundTrip, RepresentativeFailure).
+  Optional `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+  and `goreleaser` remain not installed locally and were skipped per
+  the documented baseline.
+- Spec verification — re-read
+  `internal/api/data/openapi.json > /sshKey.create > post`: method
+  POST, tag sshKey, **no parameters**, requestBody REQUIRED with
+  `application/json`, responses 200/400/401/403/500. The 200 response
+  is `{}` with `additionalProperties: false`. Required body fields:
+  `name`, `privateKey`, `publicKey`, `organizationId` (all plain
+  strings); optional nullable `description` (`anyOf: [string, null]`)
+  intentionally omitted per the minimal-required-only fixture rule
+  established at API-0131 / API-0161 / API-0175 / API-0303 / API-0317.
+- Family choice: harness-default 401→CodeAuth representative-failure
+  retained. **No 404** declared on this operation, so the
+  404→CodeNotFound override is structurally inapplicable (matching
+  every prior `*-create` precedent — API-0118, API-0125, API-0131,
+  API-0161, API-0175, API-0195, API-0273, API-0298, API-0303,
+  API-0317, API-0331). The 404→CodeNotFound override slot for the
+  sshKey/* tag arc is **still reserved for the upcoming API-0403
+  `sshKey-one`** (the canonical by-id reader), per API-0400's
+  closing reservation.
+- Shape positioning: four-required-string-scalar POST create-mutation
+  with two credential-shaped scalars; cardinally identical to the
+  API-0175 `mongo-create` precedent (no enum, no nullable) and
+  distinct from the three-required-string-scalar API-0303
+  `redis-create` precedent, the five-required-string-scalar
+  API-0161/API-0195/API-0273 precedents, and the five-required-field
+  API-0317 `registry-create` precedent (single-valued enum +
+  nullable-but-required). The harness's `len(tc.SampleBody) > 0` gate
+  activates the JSON content-type and byte-for-byte body comparison
+  legs.
+- Remaining risks / follow-ups: optional `description` field is not
+  exercised by this minimal positive case; a future story can layer
+  optional-field coverage if the redactor or schema-validation test
+  family ever requires it. The forward reference to API-0402
+  `sshKey-generate` is now embedded in this case's closing comment;
+  the next contributor must re-verify the spec against
+  `/sshKey.generate > post` before assuming any field shape (in
+  particular the request body shape — `generate` semantics typically
+  imply server-side key-material synthesis, so the body is likely
+  minimal or absent).
+- **Learnings for future iterations:**
+  - Patterns: the canonical pattern for any `*-create` mutation in
+    Dokploy is now stable across 12 prior covered peers — the
+    Codebase-Patterns invariant "no 404 on `*-create`" holds, so the
+    404→CodeNotFound override slot is *always* reserved for the
+    sibling by-id reader (here API-0403 `sshKey-one`).
+  - Patterns: when a request body declares an OPTIONAL nullable slot
+    (`anyOf: [string, null]`) alongside REQUIRED scalars, the
+    minimal-required-only fixture rule says **omit it** — do not
+    fabricate either a string value or an explicit `null`. Explicit
+    `null` is reserved for slots that are REQUIRED-but-nullable
+    (e.g. API-0317 `registry-create`'s `imagePrefix`), where the
+    null branch is the only minimal-conforming value.
+  - Patterns: for credential-shaped scalars (`privateKey`,
+    `publicKey`, `password`, `username`, ...), supply a deterministic-
+    but-clearly-fake literal carrying the `<tag>-cov-<slug>-<storyID>-
+    <field>` suffix so `git grep` traceability and the redactor
+    test family at `internal/cli/redaction_security_test.go` can
+    extend coverage onto the case without re-deriving the literal.
+    Even though `privateKey` is conventionally a multi-line PEM block,
+    the spec types it as `string` so a bare token is schema-conforming
+    and is preferred — keeps the fixture trivially redaction-grep-able.
+  - Gotcha: the harness's `len(tc.SampleBody) > 0` gate is the only
+    switch that activates the JSON content-type and byte-for-byte
+    body-comparison legs of `runAPICoverageSuccess`; omitting the
+    `SampleBody` field on a POST-with-required-body case silently
+    skips those assertions, so always supply at minimum the REQUIRED
+    fields when the spec declares `requestBody.required: true`.
+  - Useful context: with API-0401 done, four pending sshKey/* peers
+    remain (API-0402 `sshKey-generate`, API-0403 `sshKey-one`,
+    API-0404 `sshKey-remove`, API-0405 `sshKey-update`) plus the
+    sso/* (10 stories), stripe/* (~5 stories), and remaining trailing
+    tags. The next contributor on API-0402 must re-verify the spec
+    against `/sshKey.generate > post` before assuming any field shape
+    and consume slugs of the form `sshKey-cov-generate-0402-*`.
+---
