@@ -45252,6 +45252,154 @@ var coveredAPIOperations = []apiCoverageCase{
 		// this entry maximally terse.
 	},
 	{
+		StoryID:     "API-0410",
+		OperationID: "sso-one",
+		Method:      http.MethodGet,
+		Path:        "/sso.one",
+		Tag:         "sso",
+		// Fifth entry on the sso/* coverage roster and the
+		// **canonical by-id GET** in the sso/* tag — succeeds the
+		// arc opener at API-0406 `sso-addTrustedOrigin`
+		// (single-required-string-scalar POST imperative-action
+		// mutation), the second mutation at API-0407
+		// `sso-deleteProvider` (also single-required-string-scalar
+		// POST), the parameter-free read at API-0408
+		// `sso-getTrustedOrigins` (the first read-only leaf of the
+		// sso/* arc), and the parameter-free list read at API-0409
+		// `sso-listProviders` (the second read-only leaf). Consumes
+		// the forward reference embedded in API-0408's and API-0409's
+		// closing comments ("the canonical 404→CodeNotFound
+		// representative-failure slot for the sso/* tag arc remains
+		// reserved for the upcoming API-0410 `sso-one` entry (the
+		// canonical by-id reader, mirroring API-0055
+		// `bitbucket-one`'s and the upcoming API-0060
+		// `certificates-one`'s claim of that slot in their
+		// respective tag arcs). Future contributor on API-0410
+		// should consume that reservation by setting
+		// `FailureStatus: http.StatusNotFound` and `FailureCode:
+		// yerr.CodeNotFound` on the API-0410 case literal —
+		// per-operation re-verification against `/sso.one > get`
+		// is still mandatory before inheriting from this entry.").
+		// Stays within the open `sso-cov-*` namespace opened by
+		// API-0406 `sso-addTrustedOrigin` per the per-tag isolation
+		// rule originally established at API-0246
+		// `organization-active`; **must not** back-reference any
+		// closed prior-tag namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json` > `/sso.one` > `get`:
+		// method GET, tag sso, **one query parameter** and **no
+		// request body** (GETs in this OpenAPI document never carry
+		// a `requestBody` field). The single parameter per the spec:
+		//   - REQUIRED scalar: `providerId` (plain string, query).
+		// Typed `string` with no `anyOf` / `nullable` / enum
+		// constraints. **No optional siblings** — wire shape is
+		// byte-for-byte identical to API-0055 `bitbucket-one`'s
+		// 1-required-string-query envelope and to API-0054
+		// `bitbucket-getBitbucketRepositories`'s single-required-
+		// query GET. Responses 200/400/401/403/404/500 — the
+		// **404 stays present** and is the canonical semantic
+		// failure mode for a by-id retrieval (an addressable
+		// `providerId` selector that resolves to "not found"),
+		// resolving the forward-reference reservation locked in by
+		// API-0408 and API-0409. The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer; the success-leg envelope assertion stays
+		// focused on `data.method` / `data.status` rather than
+		// payload projection. Confirms (per the API-0409 spec-shape
+		// instruction) that `providerId` is a **query parameter**,
+		// not a path placeholder — so `SamplePathParams` is
+		// intentionally omitted and the harness's
+		// `runAPICoverageSuccess` re-reads `r.URL.Query()` to
+		// confirm the CLI propagated the param verbatim.
+		//
+		// **Family choice — canonical by-id GET, the 404 override
+		// home in sso/*.** API-0408 `sso-getTrustedOrigins` and
+		// API-0409 `sso-listProviders` both reserved 404 →
+		// CodeNotFound for "the canonical by-id sibling (here
+		// API-0410 `sso-one`), not for parameter-free read leaves
+		// with no addressable subject". This entry consumes that
+		// reservation — the override mirrors the precedent set at
+		// API-0055 `bitbucket-one`, API-0342 `server-one`, and
+		// reserved earlier at API-0290 / API-0294 / API-0335 for
+		// the `*-one` shape across tags. Future sso/* peers
+		// (API-0411 `sso-register`, API-0412
+		// `sso-removeTrustedOrigin`, API-0413
+		// `sso-showSignInWithSSO`, API-0414 `sso-update`) are
+		// expected to revert to the harness default 401 → CodeAuth
+		// (the eleven-flip body-axis history of the settings/*
+		// `clean*` sub-roster at API-0353..API-0362 is the standing
+		// reminder that per-operation re-verification is mandatory
+		// and sibling peers do **not** share request-body shape).
+		//
+		// Fixture conventions:
+		//   * Single required scalar — no every-optional-populated
+		//     rule applies because the spec declares no optional
+		//     siblings. The minimum-required envelope IS the whole
+		//     envelope. Same shape as API-0055 `bitbucket-one`'s
+		//     wire query string (each exhaustive by virtue of the
+		//     spec).
+		//   * Per-case fixture token base `sso-cov-one-0410`
+		//     follows the `<tag>-cov-<slug>-<storyID>` convention
+		//     (verified: no collisions with API-0406's
+		//     `sso-cov-addTrustedOrigin-0406-*`, API-0407's
+		//     `sso-cov-deleteProvider-0407-*`, API-0408's
+		//     `sso-cov-getTrustedOrigins-0408` reservation,
+		//     API-0409's `sso-cov-listProviders-0409` reservation,
+		//     the forthcoming `sso-cov-register-0411` /
+		//     `sso-cov-removeTrustedOrigin-0412` /
+		//     `sso-cov-showSignInWithSSO-0413` /
+		//     `sso-cov-update-0414` slugs reserved for upcoming
+		//     sso/* peers, and no collisions with the cross-tag
+		//     `set-cov-*`, `srv-cov-*`, `proj-cov-*`, `org-cov-*`,
+		//     `compose-cov-*`, `app-cov-*`, `ai-cov-*`,
+		//     `admin-cov-*`, `backup-cov-*`, `bb-cov-*`,
+		//     `cert-cov-*`, etc. namespaces).
+		//   * Deterministic-but-clearly-fake value (`-fixture`
+		//     suffix on `providerId`) keeps diffs readable and lets
+		//     any future schema validator's failure messages point
+		//     at the offending field — consistent with the
+		//     API-0021..API-0023 query-shaped GET precedent and
+		//     API-0055 `bitbucket-one`'s single-required-query
+		//     literal.
+		SampleQuery: map[string][]string{
+			"providerId": {"sso-cov-one-0410-providerId-fixture"},
+		},
+		// 200 response in the spec is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+		// Failure-leg override: this is the canonical home for the
+		// 404 → CodeNotFound representative-failure assertion
+		// reserved at API-0408's and API-0409's design-rationale
+		// headers for the sso/* by-id peer. Mirrors the API-0055
+		// `bitbucket-one` and API-0342 `server-one` 404-override
+		// precedent across tags. A missing-resource by-id
+		// retrieval is the most informative failure to exercise
+		// here; auth failures stay covered fleet-wide by the
+		// cross-tag default 401 → CodeAuth path.
+		FailureStatus: http.StatusNotFound,
+		FailureCode:   yerr.CodeNotFound,
+		//
+		// **sso/* roster continues.** Per the PRD ordering at the
+		// time of this commit, the priority-5 backlog continues at
+		// API-0411 `sso-register` (declared a **POST** per the spec
+		// preview, the third mutation of the sso/* arc that — per
+		// the harness-default reservation locked in here — should
+		// revert to 401 → CodeAuth as a representative-failure
+		// slot, the 404→CodeNotFound override having been consumed
+		// at this entry). The next contributor must re-verify the
+		// spec against `internal/api/data/openapi.json` >
+		// `/sso.register` > `post` per the forward-reference
+		// lesson before assuming any field shape, and **must not**
+		// reuse any closed prior-tag namespace; the open
+		// `sso-cov-*` namespace remains in force for the rest of
+		// the sso/* arc.
+	},
+	{
 		StoryID:     "API-0423",
 		OperationID: "swarm-getNodeApps",
 		Method:      http.MethodGet,

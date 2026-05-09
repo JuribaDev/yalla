@@ -30308,3 +30308,59 @@ forward-reference lesson before assuming any field shape.
     now an explicit two-link audit trail that the next contributor can
     follow without re-deriving the structural argument from scratch.
 ---
+
+## 2026-05-09 - API-0410
+- Added per-operation contract coverage entry for `sso-one` (GET /sso.one)
+  to `internal/cli/api_coverage_test.go`, immediately after API-0409
+  `sso-listProviders` and before API-0423 `swarm-getNodeApps`.
+- Spec re-verified against `internal/api/data/openapi.json > /sso.one >
+  get`: GET, single REQUIRED query parameter `providerId` (plain string,
+  no anyOf/nullable/enum), no requestBody, responses
+  200/400/401/403/404/500, 200 schema is `{}` with
+  `additionalProperties: false`. Confirmed (per the API-0409 spec-shape
+  instruction) that `providerId` is a query parameter, not a path
+  placeholder.
+- Consumed the 404→CodeNotFound representative-failure reservation
+  locked in by API-0408 `sso-getTrustedOrigins` and reaffirmed at
+  API-0409 `sso-listProviders` for the canonical sso/* by-id reader,
+  mirroring the cross-tag precedents at API-0055 `bitbucket-one` and
+  API-0342 `server-one`. `FailureStatus = http.StatusNotFound`,
+  `FailureCode = yerr.CodeNotFound`.
+- Fixture token base `sso-cov-one-0410` follows the
+  `<tag>-cov-<slug>-<storyID>` per-tag fixture-isolation namespace
+  opened at API-0406 `sso-addTrustedOrigin`. Single
+  `providerId: sso-cov-one-0410-providerId-fixture` query value;
+  no body, no path params.
+- Closing comment forwards to API-0411 `sso-register` (a POST per the
+  spec preview, expected to revert to harness-default 401 → CodeAuth
+  since the 404→CodeNotFound slot is now consumed).
+- Files changed: `internal/cli/api_coverage_test.go`, `ralph/prd.json`
+  (passes false → true for API-0410), `ralph/progress.txt`.
+- Verification run from repo root:
+  - `gofmt -w .` — clean (no rewrites).
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages OK.
+  - `go test -race ./...` — all packages OK (cli race ran 3.579s).
+  - `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser` — still not installed locally; documented at
+    repo bootstrap.
+- Remaining risks / follow-ups: 13 stories still `passes:false`. The
+  next sso/* peer (API-0411 `sso-register`) must re-verify its own
+  spec shape against `/sso.register > post` before assuming any field
+  surface — the per-operation re-verification rule from
+  API-0345..API-0444 stays in force.
+- **Learnings for future iterations:**
+  - The per-tag 404→CodeNotFound override is reserved for the canonical
+    `*-one` by-id reader, not for parameter-free or list-style read
+    leaves with no addressable subject. The reservation is locked in
+    by the prior list/leaf entries' design-rationale headers and must
+    be consumed exactly once per tag at the by-id GET.
+  - When a GET declares a single REQUIRED string query parameter, the
+    coverage entry only needs `SampleQuery` populated — `SampleBody`
+    and `SamplePathParams` stay nil. The harness's
+    `runAPICoverageSuccess` re-reads `r.URL.Query()` to confirm the
+    CLI propagated each value verbatim.
+  - Editing `ralph/prd.json` via `json.dump` strips the trailing
+    newline; restore it explicitly so the diff stays minimal.
+---
