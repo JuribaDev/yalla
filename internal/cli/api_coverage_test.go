@@ -17897,6 +17897,117 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0208",
+		OperationID: "notification-all",
+		Method:      http.MethodGet,
+		Path:        "/notification.all",
+		Tag:         "notification",
+		// Kickoff entry for the notification/* coverage roster — this
+		// is the first notification-tagged operation to ship contract
+		// coverage and opens a brand-new `notification-cov-*` per-tag
+		// fixture-isolation namespace. Per the per-tag isolation rule
+		// originally established at API-0246 `organization-active` and
+		// reasserted at every cross-tag boundary since (and most
+		// recently at API-0312 `redis-search`'s comment block), this
+		// entry **must not** back-reference any closed prior-tag
+		// namespace (`mariadb-cov-*`, `mongo-cov-*`, `mysql-cov-*`,
+		// `set-cov-*`, `srv-cov-*`, `proj-cov-*`, `org-cov-*`,
+		// `compose-cov-*`, `app-cov-*`, `ai-cov-*`, `admin-cov-*`,
+		// `backup-cov-*`, `bb-cov-*`, `cert-cov-*`, `clu-cov-*`,
+		// `deployment-cov-*`, `dest-cov-*`, `docker-cov-*`,
+		// `domain-cov-*`, `environment-cov-*`, `gitea-cov-*`,
+		// `github-cov-*`, `gitlab-cov-*`, `mounts-cov-*`,
+		// `swarm-cov-*`, `usr-cov-*`, `redis-cov-*`, etc.). Its forward
+		// reference was forecast at API-0157 `licenseKey-validate`'s
+		// closing comment ("The next case in the priority-5 backlog
+		// after this entry is API-0208 `notification-all` (declared a
+		// **GET** per the spec preview, opening a brand-new
+		// `notification-cov-*` per-tag namespace)") — that forecast is
+		// honoured here.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json` > `/notification.all` >
+		// `get`: method GET, tag notification, **zero parameters**
+		// (the spec omits the `parameters` array entirely on this
+		// operation), **no request body** (GETs in this OpenAPI
+		// document never carry a `requestBody` field), and responses
+		// 200/400/401/403/404/500. The 200 response is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort.
+		//
+		// **Shape positioning — parameter-free GET, no body.** Cross-
+		// tag identical to the canonical parameter-free GET precedents
+		// at API-0006 `ai-getAll`, API-0033
+		// `application-readTraefikConfig`, API-0098
+		// `deployment-allCentralized`, API-0100
+		// `deployment-queueList`, API-0246 `organization-active`, and
+		// API-0440 `user-haveRootAccess` — operations that resolve
+		// purely from the bearer token with no caller-supplied input.
+		// `notification-all` lists every notification destination
+		// configured for the principal's organization, deriving the
+		// scope from the bearer alone. The harness's
+		// `len(tc.SampleBody) == 0 && len(tc.SampleQuery) == 0 &&
+		// len(tc.SamplePathParams) == 0` gate at
+		// `buildCoverageInputArgs` skips the temp-file `--input` write
+		// entirely, and `runAPICoverageSuccess` re-asserts an empty
+		// `r.URL.RawQuery` and absent request body on the wire. The
+		// canonical agent invocation is therefore
+		// `yalla api call notification-all --input '{}' --json` with
+		// an empty closed-shape `--input` document (the literal `{}`
+		// is the smallest valid JSON object the CLI accepts; the
+		// harness exercises the no-input path by leaving every
+		// `Sample*` field unset).
+		//
+		// **Family choice — harness-default 401 → CodeAuth retained.**
+		// Although the spec declares 404 on this operation, the
+		// 404 → CodeNotFound representative is **structurally
+		// inapplicable** here: the operation accepts no resource
+		// identifier — the listing is derived from the bearer
+		// principal alone — so there is no `--input` payload the CLI
+		// can supply that would surface a missing resource. The 404
+		// in the spec exists only as a defensive declaration.
+		// Likewise 400 → CodeInvalidInput is **not available** here
+		// at all — the operation has zero parameters and no request
+		// body, so no payload can be syntactically invalid; the 400
+		// in the spec is similarly defensive and cannot be exercised
+		// through any input the CLI can supply. 401 → CodeAuth via
+		// the harness default (`tc.FailureStatus == 0` → 401,
+		// `tc.FailureCode == ""` → CodeAuth) therefore remains the
+		// most representative single failure mode every authenticated
+		// Dokploy operation must re-prove, and locks in the kickoff
+		// auth invariant for the notification/* namespace.
+		//
+		// **No `SampleBody` / `SampleQuery` / `SamplePathParams`
+		// populated.** Leaving these unset is the explicit
+		// parameter-free-GET signal the harness reads to skip
+		// fixture-file generation. Future notification/* peers
+		// (API-0209 `notification-createCustom`, API-0210
+		// `notification-createDiscord`, API-0211
+		// `notification-createEmail`, API-0212
+		// `notification-createGotify`, etc.) should grep this entry
+		// first when extending the namespace, then re-verify each
+		// operation's spec independently per the slug-prefix-is-not-
+		// shape lesson reasserted across the user/* roster — the
+		// shared `notification-` operation-stem does not imply a
+		// carried-over body or parameter shape.
+		//
+		// The next case in the PRD-ordered priority-5 backlog is
+		// API-0209 `notification-createCustom` (declared a **POST**
+		// per the spec preview, continuing inside the same
+		// `notification-cov-*` per-tag namespace opened here); the
+		// next contributor must re-verify the spec against
+		// `internal/api/data/openapi.json` per the forward-reference
+		// lesson before assuming any field shape.
+		//
+		// 200 response in the spec is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort. Empty-object body keeps
+		// the success-leg envelope assertion focused on `data.method`
+		// / `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,

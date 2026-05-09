@@ -24268,3 +24268,57 @@ forward-reference lesson before assuming any field shape.
     omit 404 from their response set continue to use the harness-
     default 401→CodeAuth failure leg.
 ---
+
+## 2026-05-09 - API-0208
+- Implemented contract coverage for `notification-all` (GET /notification.all),
+  the kickoff entry for the new `notification/*` per-tag namespace.
+- Files changed:
+  - `internal/cli/api_coverage_test.go` — appended the API-0208 entry to
+    `coveredAPIOperations`, sorted between API-0207 (mysql-update) and
+    API-0246 (organization-active). Parameter-free GET shape: no
+    `SampleBody`, `SampleQuery`, or `SamplePathParams`; harness-default
+    401→CodeAuth failure leg retained per the per-tag-kickoff rule.
+  - `ralph/prd.json` — flipped `passes` to true for API-0208.
+- Verification run:
+  - `gofmt -w .` clean (the gofmt diagnostic on `ralph/prd.json` is
+    expected; gofmt only formats Go files).
+  - `go mod tidy` clean.
+  - `go vet ./...` clean.
+  - `go test ./...` green across all packages.
+  - `go test -race ./...` green across all packages.
+  - `go test ./internal/cli -run TestAPICoverage|TestManifest -count=1`
+    green — confirms registry, schema, manifest, success-leg, and
+    failure-leg invariants all hold for `notification-all`.
+- Remaining risks: none specific to this story. Future
+  `notification-cov-*` entries (API-0209..API-0224 per the priority-5
+  backlog) must re-verify each operation's spec independently per the
+  slug-prefix-is-not-shape lesson — `notification-createCustom`,
+  `*-createDiscord`, `*-createEmail`, etc. all carry distinct request
+  schemas.
+- **Learnings for future iterations:**
+  - When inserting a new API-XXXX entry whose StoryID slots between two
+    existing entries (here API-0207 → API-0246), Edit anchored on the
+    closing brace of the prior entry plus the opening brace of the next
+    entry remains the cleanest insertion pattern. The
+    `coveredAPIOperations` slice is StoryID-sorted by convention, and
+    out-of-order priority backlogs are handled via the StoryID order
+    (priority-5 API-0208 sits before priority-4 API-0246 because the
+    sort key is the numeric StoryID, not the priority field).
+  - The forward-reference comments at API-0157 `licenseKey-validate`
+    accurately predicted API-0208 `notification-all` as the next
+    priority-5 backlog entry. Trusting these forward-reference forecasts
+    (after re-verifying the spec) saved a full PRD scan.
+  - For parameter-free GETs (no parameters, no body, bearer-only auth),
+    leaving every `Sample*` field unset is the explicit harness signal
+    to skip fixture-file generation. The canonical agent invocation
+    becomes `yalla api call <opId> --input '{}' --json` — note that the
+    literal empty-object `--input` document is only required at the CLI
+    layer, not at the harness level (the harness's `buildCoverageInputArgs`
+    returns no flags when all `Sample*` fields are empty).
+  - 404→CodeNotFound override is structurally inapplicable to
+    parameter-free GETs even when the spec declares a 404 response,
+    because there's no resource identifier the CLI could supply to
+    surface a missing resource. The harness-default 401→CodeAuth leg
+    therefore correctly captures the operation's representative failure
+    mode.
+---
