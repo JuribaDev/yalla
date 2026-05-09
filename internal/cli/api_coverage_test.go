@@ -26260,6 +26260,152 @@ var coveredAPIOperations = []apiCoverageCase{
 		FailureCode:   yerr.CodeNotFound,
 	},
 	{
+		StoryID:     "API-0329",
+		OperationID: "schedule-runManually",
+		Method:      http.MethodPost,
+		Path:        "/schedule.runManually",
+		Tag:         "schedule",
+		// Fifth priority-4 schedule/* peer and the **first
+		// multi-camel-segment slug** to land on the schedule/*
+		// tag — succeeds the request-body POSTs at API-0325
+		// `schedule-create` (kickoff, every-optional-populated
+		// 11-field body) and API-0326 `schedule-delete` (single-
+		// required-string-scalar destructive action), the two-
+		// required-query list-style getter at API-0327
+		// `schedule-list`, and the canonical by-id GET with the
+		// 404→CodeNotFound override at API-0328 `schedule-one`.
+		// Inherits the `schedule-cov-*` per-tag fixture-isolation
+		// namespace opened at API-0325. Per the per-tag fixture-
+		// isolation rule established at API-0188
+		// `mounts-allNamedByApplicationId`, API-0246
+		// `organization-active`, API-0268 `port-create`, API-0290
+		// `project-all`, API-0298 `redirects-create`, API-0331
+		// `security-create`, and reasserted at API-0325
+		// `schedule-create`, API-0327 `schedule-list`, and
+		// API-0328 `schedule-one`, this entry stays inside the
+		// `schedule-cov-*` namespace and **must not** back-
+		// reference any closed prior-tag namespace (`admin-cov-*`,
+		// `ai-cov-*`, `app-cov-*`, `auth-cov-*`, `backup-cov-*`,
+		// `bb-cov-*`, `cluster-cov-*`, `compose-cov-*`,
+		// `deployment-cov-*`, `destination-cov-*`,
+		// `discord-cov-*`, `docker-cov-*`, `domain-cov-*`,
+		// `email-cov-*`, `gh-cov-*`, `git-cov-*`, `gitea-cov-*`,
+		// `gitlab-cov-*`, `mariadb-cov-*`, `mongo-cov-*`,
+		// `mounts-cov-*`, `mysql-cov-*`, `notif-cov-*`,
+		// `org-cov-*`, `port-cov-*`, `postgres-cov-*`,
+		// `preview-cov-*`, `proj-cov-*`, `redirects-cov-*`,
+		// `redis-cov-*`, `rollback-cov-*`, `security-cov-*`,
+		// `set-cov-*`, `srv-cov-*`, `swarm-cov-*`, `usr-cov-*`).
+		// The remaining schedule/* peer (API-0330
+		// `schedule-update`) should grep this block and the
+		// API-0325/API-0326/API-0327/API-0328 quartet to continue
+		// inheriting the schedule/* slug namespace.
+		//
+		// **Slug-style decision — camelCase locked for schedule/*.**
+		// `runManually` is the first multi-camel-segment slug to
+		// land on the schedule/* tag, so per the per-tag slug-style
+		// rule documented in `internal/cli/AGENTS.md` ("Per-tag
+		// fixture-namespace slug style is locked in by the FIRST
+		// multi-camel-segment slug landed on each tag and must
+		// stay consistent within that tag thereafter"), this entry
+		// **decides the schedule/* slug style**. The convention
+		// chosen is **camelCase suffix preservation**, mirroring
+		// the mongo/* precedent (`mongo-cov-saveEnvironment-0182`,
+		// `mongo-cov-saveExternalPort-0183`) rather than the
+		// mariadb/* kebab-case approach
+		// (`mariadb-cov-save-environment-0168`). The camelCase
+		// pre-reservation `schedule-cov-runManually-0329` was
+		// already announced verbatim in API-0327
+		// `schedule-list`'s slug-namespace banner (search the
+		// `coveredAPIOperations` slice for the literal token
+		// `schedule-cov-runManually-0329`), so honouring that
+		// reservation keeps cross-entry references stable. Future
+		// schedule/* contributors landing additional multi-camel-
+		// segment slugs (none currently in the priority-4 backlog
+		// past API-0330 `schedule-update`, which has a single-
+		// segment slug) **must** preserve the operationId's
+		// camelCase suffix verbatim, e.g.
+		// `schedule-cov-fooBarBaz-NNNN-<field>`.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json > /schedule.runManually
+		// > post`: a **POST** with **no parameters** and a
+		// **REQUIRED request body** whose schema declares **one
+		// REQUIRED non-nullable plain string field** `scheduleId`
+		// with **zero optional fields**. Responses 200/400/401/
+		// 403/500 — **no 404** is declared, mirroring the
+		// action-on-known-id POST precedent reasserted across
+		// every body-bearing imperative-action POST already
+		// covered (e.g. API-0326 `schedule-delete`, API-0323
+		// `rollback-delete`, API-0309 `redis-remove`, API-0179
+		// `mongo-remove`) whose missing-target failure mode
+		// collapses into 400/validation under Dokploy's tRPC
+		// convention rather than a dedicated 404 leg. The 200
+		// response is `{}` with `additionalProperties: false`,
+		// matching the empty-success cohort.
+		//
+		// **Body composition:**
+		//   - **REQUIRED:** `scheduleId` (plain string).
+		//     Identifies the schedule record to execute on
+		//     demand. The fixture below supplies a deterministic-
+		//     but-clearly-fake
+		//     `schedule-cov-runManually-0329-scheduleId` literal
+		//     carrying the
+		//     `<tag>-cov-<slug>-<storyID>-<field>` suffix for
+		//     `git grep` traceability and honouring the camelCase
+		//     slug-style decision locked above.
+		//   - **No optional fields exist on this operation**, so
+		//     the fixture saturates the entire schema surface
+		//     with the single REQUIRED scalar.
+		//
+		// **Shape positioning — single-required-string-scalar
+		// POST imperative-action mutation, body REQUIRED, no
+		// optional tail.** Cardinality- and type-identical to
+		// API-0326 `schedule-delete`, API-0323 `rollback-delete`,
+		// API-0309 `redis-remove`, API-0179 `mongo-remove`, and
+		// the rest of the single-required-`<tag>Id` body family
+		// (one REQUIRED plain string slot, zero optional slots).
+		// Functionally a manual-trigger imperative-action slug
+		// (`runManually` invokes the cron job out-of-cycle); the
+		// on-the-wire shape and 401-default failure family are
+		// identical to the destructive-action `*-delete` peer at
+		// API-0326.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (per above),
+		// so the 404→CodeNotFound override is structurally
+		// inapplicable. The schedule/* tag's 404→CodeNotFound
+		// representative is already pinned to API-0328
+		// `schedule-one` per the canonical by-id-sibling
+		// convention. `runManually` here is a body-bearing
+		// imperative-action POST and stays on the 401→CodeAuth
+		// invariant locked by every action-on-known-id peer
+		// already covered.
+		//
+		// **Fixture token base** `schedule-cov-runManually-0329`
+		// follows the established `<tag>-cov-<slug>-<storyID>`
+		// deterministic-but-clearly-fake naming convention and
+		// consumes the slot pre-reserved by the API-0327
+		// `schedule-list` slug-namespace banner. Verified: no
+		// collisions with `schedule-cov-create-0325-*`,
+		// `schedule-cov-delete-0326-*`,
+		// `schedule-cov-list-0327-*`, or
+		// `schedule-cov-one-0328-*`, and reserves nothing for
+		// API-0330 `schedule-update` (single-segment slug, no
+		// camelCase decision needed).
+		SampleBody: json.RawMessage(`{
+			"scheduleId": "schedule-cov-runManually-0329-scheduleId"
+		}`),
+		// 200 response in the spec is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort. Empty-object
+		// body keeps the success-leg envelope assertion focused
+		// on `data.method` / `data.status` rather than payload
+		// projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0331",
 		OperationID: "security-create",
 		Method:      http.MethodPost,

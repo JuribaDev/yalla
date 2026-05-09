@@ -25017,3 +25017,77 @@ forward-reference lesson before assuming any field shape.
     `bitbucket-one` `bb-cov-one-0055-bitbucketId-fixture` literal pattern
     for the `<tag>-cov-<slug>-<storyID>-<field>-fixture` traceable token.
 ---
+
+## 2026-05-09 - API-0329 (schedule-runManually)
+- Implemented contract coverage for POST /schedule.runManually (Dokploy
+  `schedule-runManually`), the fifth priority-4 schedule/* peer and the
+  first multi-camel-segment slug to land on the schedule/* tag.
+- Files changed:
+  - internal/cli/api_coverage_test.go — appended apiCoverageCase entry
+    (StoryID=API-0329) immediately after API-0328 `schedule-one` and
+    before API-0331 `security-create`, sorted by StoryID. Single-required-
+    string-scalar POST shape: `SampleBody` is the deterministic-but-
+    clearly-fake `{"scheduleId":"schedule-cov-runManually-0329-scheduleId"}`
+    literal under the `schedule-cov-*` per-tag fixture-isolation namespace
+    opened at API-0325 `schedule-create`. `SuccessResponse` is `{}` per
+    the spec's empty-success cohort. No 404 declared on this op, so the
+    harness-default 401→CodeAuth failure leg is retained per the
+    body-bearing imperative-action POST invariant. The schedule/* 404
+    representative stays pinned to API-0328 `schedule-one`.
+  - ralph/prd.json — flipped `passes` to true for API-0329.
+- Verification run:
+  - gofmt -l .                            : clean (no diff)
+  - go mod tidy                           : clean (no diff)
+  - go vet ./...                          : clean
+  - go test ./...                         : ok (all 9 packages)
+  - go test -race ./...                   : ok (all 9 packages)
+  - go test ./internal/cli ./internal/api -run
+    'TestAPICoverage|TestManifest|TestRegistry' -count=1 : ok — confirms
+    registry, schema, manifest, success-leg, and failure-leg invariants
+    all hold for `schedule-runManually`.
+- Tools not installed locally and therefore documented-as-skipped (per the
+  Codebase Patterns rule): goimports, golangci-lint, staticcheck,
+  govulncheck, goreleaser. Same set as every prior API-0XXX story.
+- Outcome: 83 priority-* stories remain pending (84 → 83). The schedule/*
+  roster is now 5/6 covered (API-0325/API-0326/API-0327/API-0328/API-0329
+  green); only API-0330 `schedule-update` remains. The next priority-4
+  entry is API-0330 `schedule-update` (POST /schedule.update), which
+  closes the schedule/* arc.
+- Remaining risks / follow-ups:
+  - None for this story. API-0330 `schedule-update` should crib this
+    entry's namespace and inherit the camelCase slug-style decision
+    locked here (single-segment slug `update`, so no decision needed
+    for itself, but future schedule/* multi-camel-segment slugs MUST
+    preserve the operationId's camelCase suffix verbatim per the
+    rule documented in the API-0329 entry).
+- **Learnings for future iterations:**
+  - The schedule/* tag's slug-style decision is now **camelCase
+    suffix preservation**, locked by API-0329 `schedule-runManually`
+    (`schedule-cov-runManually-0329-*`). This mirrors the mongo/*
+    precedent rather than the mariadb/* / notification/* kebab-case
+    approach. Future schedule/* peers landing additional multi-
+    camel-segment slugs MUST follow this convention.
+  - API-0329 honours a **pre-emptive slug-namespace reservation**:
+    API-0327 `schedule-list`'s slug-namespace banner already
+    announced the literal token `schedule-cov-runManually-0329`
+    verbatim, so the camelCase decision was effectively pre-
+    committed by the prior author and API-0329 simply ratifies it.
+    This is a useful pattern: future per-tag openers and intermediate
+    peers can pre-reserve fixture tokens in their slug-namespace
+    banners to lock-in style decisions before the deciding entry
+    lands, as long as the decision is documented in the eventual
+    entry's slug-style banner.
+  - schedule-runManually is the third entry on the **single-
+    required-`scheduleId` body family** within the schedule/* tag
+    (after API-0326 `schedule-delete` and the `scheduleId` query
+    in API-0328 `schedule-one`). The cross-tag peer is the
+    single-required-`<tag>Id` body shape covered exhaustively at
+    API-0179 `mongo-remove`, API-0309 `redis-remove`, API-0323
+    `rollback-delete`, etc.
+  - Imperative-action POST mutations (`*-runManually`,
+    `*-deploy`, `*-redeploy`, `*-stop`, `*-start`, etc.) follow
+    the same on-the-wire contract as destructive-action POST
+    mutations (`*-delete`, `*-remove`): single REQUIRED string-
+    scalar id, `{}` success body, no 404 declared. The 401-default
+    failure leg is the canonical representative for all of them.
+---
