@@ -21371,6 +21371,195 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0231",
+		OperationID: "notification-testResendConnection",
+		Method:      http.MethodPost,
+		Path:        "/notification.testResendConnection",
+		Tag:         "notification",
+		// Twenty-fourth entry on the notification/* coverage roster,
+		// staying inside the `notification-cov-*` per-tag fixture-
+		// isolation namespace seeded at API-0208 `notification-all`
+		// and extended across API-0209..API-0230. Per the per-tag
+		// isolation rule reaffirmed across each prior peer this
+		// entry stays inside the namespace opened by API-0208 and
+		// **must not** back-reference any closed prior-tag namespace.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json >
+		// /notification.testResendConnection > post`: a **POST**
+		// with **no parameters** and a **REQUIRED request body**
+		// whose schema declares **three REQUIRED non-nullable plain
+		// slots and zero OPTIONAL siblings** — REQUIRED `apiKey`
+		// (string), `fromAddress` (string), `toAddresses` (array of
+		// string). Responses 200/400/401/403/500 — the spec does
+		// **not** declare 404 on this operation, matching the
+		// connectivity-validation precedent re-asserted by the
+		// cohort opener API-0224 `notification-testCustomConnection`
+		// and the peers API-0225 `notification-testDiscordConnection`
+		// / API-0226 `notification-testEmailConnection` / API-0227
+		// `notification-testGotifyConnection` / API-0228
+		// `notification-testLarkConnection` / API-0229
+		// `notification-testNtfyConnection` / API-0230
+		// `notification-testPushoverConnection` (the family is
+		// "validate the agent-supplied transport descriptor", with
+		// no by-id target to miss). The 200 schema is `{}` with
+		// `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort.
+		//
+		// **Slug style — kebab-case inherited from API-0209/
+		// API-0210/API-0211/API-0212/API-0213/API-0214/API-0215/
+		// API-0216/API-0217/API-0218/API-0219, the GET-cohort opener
+		// API-0220 `notification-getEmailProviders`
+		// (→ `get-email-providers`), the `*Id`-filtered GET-cohort
+		// opener API-0221 `notification-one`, the action-receiver
+		// POST opener API-0222 `notification-receiveNotification`
+		// (→ `receive-notification`), the by-id mutation cohort
+		// opener API-0223 `notification-remove`, the `test*`
+		// connectivity-validation POST cohort opener API-0224
+		// `notification-testCustomConnection`
+		// (→ `test-custom-connection`), the second cohort member
+		// API-0225 `notification-testDiscordConnection`
+		// (→ `test-discord-connection`), the third cohort member
+		// API-0226 `notification-testEmailConnection`
+		// (→ `test-email-connection`), the fourth cohort member
+		// API-0227 `notification-testGotifyConnection`
+		// (→ `test-gotify-connection`), the fifth cohort member
+		// API-0228 `notification-testLarkConnection`
+		// (→ `test-lark-connection`), the sixth cohort member
+		// API-0229 `notification-testNtfyConnection`
+		// (→ `test-ntfy-connection`), and the seventh cohort member
+		// API-0230 `notification-testPushoverConnection`
+		// (→ `test-pushover-connection`).** Per the per-tag-slug-
+		// style rule fixed by the kickoff multi-camel entry
+		// API-0209 `notification-createCustom` (→ `create-custom`),
+		// this entry takes `test-resend-connection` as the slug stem
+		// (three kebab-cased segments mirrored from
+		// `testResendConnection`). The fixture namespace is
+		// `notification-cov-test-resend-connection-0231-<field>`,
+		// mirroring the `notification-cov-<slug>-<storyID>-<field>`
+		// discipline locked by API-0208..API-0230. **This entry is
+		// the eighth member of the notification/* `test*`
+		// connectivity-validation POST cohort opened by API-0224**
+		// — peers API-0232..API-0234 (`testSlackConnection`,
+		// `testTeamsConnection`, `testTelegramConnection`) inherit
+		// the same slug style and harness-default 401→CodeAuth
+		// failure leg.
+		//
+		// **Body composition — three-required, zero-optional, every
+		// REQUIRED field populated.** Mirrors the email-transport
+		// shape established by the third cohort member API-0226
+		// `notification-testEmailConnection` and shares the
+		// `toAddresses` (array-of-string) and `fromAddress` (string)
+		// pair with that entry verbatim — the cross-entry diff
+		// against API-0226 stays focused on the structural delta
+		// (this entry omits the SMTP descriptor quartet
+		// `smtpServer`/`smtpPort`/`username`/`password` because
+		// Resend authenticates with a single bearer-style API key
+		// rather than SMTP credentials, replacing the four-tuple
+		// with a single REQUIRED `apiKey` slot).
+		//   - **REQUIRED `apiKey`** (plain non-nullable string).
+		//     Deterministic literal token following the per-tag
+		//     `notification-cov-<slug>-<storyID>-<field>`
+		//     discipline. **Secret-bearing field** — Resend API keys
+		//     are bearer credentials for the Resend transactional
+		//     email API, mirroring the `apiToken` precedent set by
+		//     API-0227 `notification-testGotifyConnection` /
+		//     API-0230 `notification-testPushoverConnection` and
+		//     the `accessToken` precedent set by API-0229
+		//     `notification-testNtfyConnection`. The fixture token
+		//     is intentionally non-realistic (kebab-shaped, not the
+		//     `re_<base62>` Resend format) so a leak in a future
+		//     test golden file remains greppable without producing
+		//     a false-positive redaction.
+		//   - **REQUIRED `fromAddress`** (plain non-nullable
+		//     string). Deterministic
+		//     `<local>@<host>.example.invalid` literal mirroring the
+		//     API-0226 `fromAddress` convention so the cross-entry
+		//     diff against the SMTP-shaped email-transport peer
+		//     stays focused on the credential-tuple delta. The
+		//     `example.invalid` reserved TLD (RFC 6761) keeps the
+		//     fixture safe against any future address-shape
+		//     validator wired into the harness without risking a
+		//     real DNS lookup or wire egress to a third-party SMTP
+		//     relay.
+		//   - **REQUIRED `toAddresses`** (non-nullable array of
+		//     non-nullable strings). Single-entry array carrying a
+		//     deterministic `<local>@<host>.example.invalid`
+		//     literal so the JSON serialisation is order-stable and
+		//     the wire-level array-shape assertion is unambiguous.
+		//     Mirrors the API-0226 single-entry-array convention
+		//     for the same `toAddresses` field on the same email-
+		//     transport family.
+		//
+		// **Optional siblings — none.** The every-optional-populated
+		// convention is structurally inapplicable here because the
+		// spec declares zero optional fields on this operation.
+		// This matches the no-optional-siblings precedent set by
+		// API-0226 (six-required) and API-0228 (single-required),
+		// distinguishing the entry from the optional-bearing peers
+		// API-0224 (one optional nested `map[string]string`),
+		// API-0225 (one optional plain boolean), API-0227 (one
+		// optional plain boolean), and API-0230 (two optional
+		// nullable-number siblings).
+		//
+		// **Shape positioning — three-required (two strings + one
+		// array-of-string) POST connectivity-validation, body
+		// REQUIRED.** Functionally distinct from the cohort opener
+		// API-0224 `notification-testCustomConnection` (single-
+		// required-string + optional nested `map[string]string`),
+		// the second cohort member API-0225
+		// `notification-testDiscordConnection` (single-required-
+		// string + optional plain boolean), the third member
+		// API-0226 `notification-testEmailConnection` (six-required,
+		// zero-optional), the fourth member API-0227
+		// `notification-testGotifyConnection` (three-required + one-
+		// optional-boolean), the fifth member API-0228
+		// `notification-testLarkConnection` (single-required-string,
+		// zero-optional), the sixth member API-0229
+		// `notification-testNtfyConnection` (four-required, zero-
+		// optional), and the seventh member API-0230
+		// `notification-testPushoverConnection` (three-required +
+		// two-optional-nullable-number). This entry establishes the
+		// notification/* tag's **three-required-with-array-of-
+		// string** shape for the `test*` cohort — the first cohort
+		// member with an array-of-string in a three-required tuple
+		// — an analogue future bearer-keyed transactional-email
+		// probes (e.g. SendGrid/Mailgun/Postmark, if those were
+		// ever to be added to the spec) can mirror without re-
+		// deriving the URL-anchor or every-optional-populated
+		// conventions. The three-required-tuple cardinality is
+		// shared with API-0227 (which adds one optional plain
+		// boolean) and API-0230 (which adds two optional nullable-
+		// number siblings); the array-of-string-without-SMTP-quartet
+		// invariant is established for the first time by this entry.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set, so the
+		// 404→CodeNotFound override is structurally inapplicable
+		// (no by-id target to miss; the agent supplies the
+		// transport descriptor inline). `*-testResendConnection`
+		// here is a body-bearing imperative-action POST and stays
+		// on the 401→CodeAuth invariant locked across every
+		// imperative-action notification/* peer (API-0209..API-0220,
+		// API-0222, API-0223, API-0224, API-0225, API-0226,
+		// API-0227, API-0228, API-0229, API-0230), keeping
+		// authentication as the universal failure surface for the
+		// notification/* `test*` connectivity-validation POST
+		// cohort.
+		SampleBody: json.RawMessage(`{
+			"apiKey": "notification-cov-test-resend-connection-0231-api-key",
+			"fromAddress": "notification-cov-test-resend-connection-0231-from@example.invalid",
+			"toAddresses": ["notification-cov-test-resend-connection-0231-to@example.invalid"]
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the empty-
+		// success cohort. Empty-object body keeps the success-leg
+		// envelope assertion focused on `data.method` / `data.status`
+		// rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,

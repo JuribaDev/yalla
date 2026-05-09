@@ -26989,3 +26989,102 @@ forward-reference lesson before assuming any field shape.
     change; full file rewrite would risk re-indenting the entire
     462-story document.
 ---
+
+## 2026-05-09T03:57Z - API-0231
+
+- **What was implemented**: Added an `apiCoverageCase` entry for the
+  Dokploy `notification-testResendConnection` operation (`POST
+  /notification.testResendConnection`) inside
+  `internal/cli/api_coverage_test.go`. Operation is the **eighth
+  member** of the notification/* `test*` connectivity-validation POST
+  cohort opened by API-0224 and the 24th notification/* coverage
+  entry overall (API-0208..API-0231 inclusive). The entry exercises
+  the `coveredAPIOperations` table-driven harness across all five
+  subtests: `TestAPICoverage_RegistryInvariants`,
+  `TestAPICoverage_SchemaCommandWorks`,
+  `TestAPICoverage_ManifestListsOperation`,
+  `TestAPICoverage_SuccessRoundTrip`, and
+  `TestAPICoverage_RepresentativeFailure` — covering registry
+  presence, schema command, manifest listing, success round-trip,
+  and 401→`E_AUTH` representative-failure leg.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` (+193 lines, one new
+    `apiCoverageCase` entry inserted between API-0230 and the
+    organization/* opener API-0246).
+  - `ralph/prd.json` (single-line flip: API-0231 `passes: false` →
+    `passes: true`).
+  - `ralph/progress.txt` (this append).
+- **Verification run** (from repo root):
+  - `gofmt -l .` → clean.
+  - `go vet ./...` → clean.
+  - `go mod tidy` → no diff.
+  - `go test ./...` → all packages pass.
+  - `go test -race ./...` → all packages pass.
+  - Targeted `go test ./internal/cli/ -run TestAPICoverage -count=1
+    -v` confirms five subtests pass under the
+    `API-0231/notification-testResendConnection` name:
+      - `TestAPICoverage_RegistryInvariants/API-0231/...` PASS
+      - `TestAPICoverage_SchemaCommandWorks/API-0231/...` PASS
+      - `TestAPICoverage_ManifestListsOperation/API-0231/...` PASS
+      - `TestAPICoverage_SuccessRoundTrip/API-0231/...` PASS
+      - `TestAPICoverage_RepresentativeFailure/API-0231/...` PASS
+  - Tools NOT run because they remain uninstalled locally:
+    `goimports`, `golangci-lint`, `staticcheck`, `govulncheck`,
+    `goreleaser`. Same documented gap as API-0224..API-0230.
+- **Remaining risks or follow-ups**: None for this story. The next
+  cohort peer is API-0232 `notification-testSlackConnection`. It
+  should:
+  - Append `API-0231 (→ test-resend-connection)` to its Slug-style
+    back-reference block and extend the Shape-positioning block to
+    include the API-0231 three-required-with-array-of-string row.
+  - Continue the cohort opener's forward-reference list (the
+    API-0224 opener already names API-0231..API-0234 explicitly, so
+    no opener edit is needed).
+- **Learnings for future iterations:**
+  - **Body-shape choice — bearer-key vs SMTP-quartet credential
+    delta.** The Resend transactional-email API authenticates with
+    a single bearer-style `apiKey` rather than the four-tuple SMTP
+    credentials (`smtpServer`/`smtpPort`/`username`/`password`)
+    used by API-0226 `notification-testEmailConnection`. The
+    fixture deliberately mirrors API-0226's `fromAddress` /
+    `toAddresses` pair verbatim (single-entry array, deterministic
+    `<local>@<host>.example.invalid` literals on the RFC 6761
+    reserved TLD) so the cross-entry diff against API-0226 stays
+    focused on the credential-tuple delta — replacing four SMTP
+    fields with one bearer key. Future bearer-keyed transactional-
+    email probes (e.g. SendGrid, Mailgun, Postmark, if added to
+    the spec) can mirror this entry without re-deriving the email-
+    address shape conventions.
+  - **`example.invalid` reserved TLD is the canonical safe-egress
+    sentinel for any email-shape fixture in this harness.** Both
+    API-0226 (`smtpServer` + `from`/`toAddresses`) and API-0231
+    (`from`/`toAddresses`) use it. Any future fixture carrying an
+    SMTP host or email-shape literal should pick it up — never
+    `example.com` (which has live MX records and would risk a real
+    DNS lookup) or a TLD a future address-shape validator might
+    reject.
+  - **Three-required tuple has now been observed in three distinct
+    optional-tail shapes.** API-0227 (three-required + one optional
+    plain boolean), API-0230 (three-required + two optional
+    nullable-number siblings), and API-0231 (three-required, zero
+    optional). The cardinality-three-required invariant is the
+    spine; the optional-tail variation is the structural delta.
+    Future cohort entries that share the cardinality-three-required
+    spine should explicitly note which prior peers they share the
+    spine with and which optional-tail shape they carry, so the
+    cross-entry diff stays focused on the optional-tail delta.
+  - **Cohort opener forward-reference list now closes a member.**
+    The API-0224 opener's forward-reference list named
+    API-0231..API-0234 explicitly, so adding API-0231 here
+    "closes" that forward reference for the eighth slot. Each
+    subsequent member through API-0234 should continue to back-
+    reference the opener and the prior members; once API-0234
+    lands, the cohort is fully closed and the next notification/*
+    story (API-0235 `notification-updateCustom`) opens a new shape
+    family (mutation by-id, not connectivity-validation).
+  - **Indent-preserving PRD flip discipline still holds via direct
+    text replacement.** Used a single-line `Edit` with the exact
+    `"passes": false,` → `"passes": true,` slice for the API-0231
+    story object. The 2-space-indented JSON file stays clean with a
+    one-line diff; never rewrite the full PRD file.
+---
