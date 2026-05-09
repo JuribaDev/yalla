@@ -18008,6 +18008,136 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0209",
+		OperationID: "notification-createCustom",
+		Method:      http.MethodPost,
+		Path:        "/notification.createCustom",
+		Tag:         "notification",
+		// Second entry in the notification/* coverage roster, continuing
+		// inside the `notification-cov-*` per-tag fixture-isolation
+		// namespace opened by API-0208 `notification-all` (the kickoff
+		// parameter-free GET). Per the per-tag isolation rule established
+		// at API-0188 `mounts-allNamedByApplicationId`, API-0246
+		// `organization-active`, API-0268 `port-create`, API-0290
+		// `project-all`, API-0298 `redirects-create`, API-0302
+		// `redis-changeStatus`, API-0323 `rollback-delete`, and API-0325
+		// `schedule-create`, this entry stays inside the namespace opened
+		// by API-0208 and **must not** back-reference any closed prior-
+		// tag namespace (`admin-cov-*`, `ai-cov-*`, `app-cov-*`,
+		// `backup-cov-*`, `bb-cov-*`, `cert-cov-*`, `clu-cov-*`,
+		// `compose-cov-*`, `deployment-cov-*`, `dest-cov-*`,
+		// `docker-cov-*`, `domain-cov-*`, `environment-cov-*`,
+		// `gitea-cov-*`, `github-cov-*`, `gitlab-cov-*`, `mariadb-cov-*`,
+		// `mongo-cov-*`, `mounts-cov-*`, `mysql-cov-*`, `org-cov-*`,
+		// `port-cov-*`, `postgres-cov-*`, `preview-cov-*`, `proj-cov-*`,
+		// `redirects-cov-*`, `redis-cov-*`, `rollback-cov-*`,
+		// `schedule-cov-*`, `security-cov-*`, `set-cov-*`, `srv-cov-*`,
+		// `swarm-cov-*`, `usr-cov-*`).
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json > /notification.createCustom >
+		// post`: a **POST** with **no parameters** and a **REQUIRED
+		// request body** whose schema declares **two REQUIRED
+		// non-nullable plain string fields** (`name`, `endpoint`)
+		// alongside an eight-sibling optional tail covering seven plain
+		// booleans (`appBuildError`, `databaseBackup`, `volumeBackup`,
+		// `dokployRestart`, `appDeploy`, `dockerCleanup`,
+		// `serverThreshold`) and one nested string-valued map
+		// (`headers`: `map[string]string` per the
+		// `propertyNames`/`additionalProperties` pair). Responses
+		// 200/400/401/403/500 — the spec does **not** declare 404 on
+		// this operation, matching the cross-tag create-mutation
+		// precedent on API-0189 `mounts-create`, API-0268 `port-create`,
+		// API-0292 `project-create`, API-0298 `redirects-create`,
+		// API-0325 `schedule-create`, and API-0331 `security-create`
+		// (Dokploy create POSTs do not surface missing-target legs
+		// because there is no target-by-id to miss). The 200 schema is
+		// `{}` with `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort.
+		//
+		// **Slug style for notification/* — kebab-case.** This is the
+		// first multi-camel-segment slug to land on this tag
+		// (`createCustom`), so per the AGENTS.md per-tag-slug-style
+		// rule the decision is fixed here as kebab and inherited by
+		// the rest of the notification/* roster: future peers
+		// (API-0210 `notification-createDiscord` → `create-discord`,
+		// API-0211 `notification-createEmail` → `create-email`,
+		// API-0212 `notification-createGotify` → `create-gotify`,
+		// API-0213 `notification-createLark` → `create-lark`, …)
+		// must use kebab-case slugs to stay consistent with this
+		// kickoff multi-camel entry.
+		//
+		// **Body composition:**
+		//   - **REQUIRED:** `name` (plain string), `endpoint` (plain
+		//     string). The fixture supplies deterministic-but-clearly-
+		//     fake values keyed to the
+		//     `notification-cov-create-custom-0209-<field>` namespace.
+		//     `endpoint` carries a real-shape https URL on the
+		//     `example.invalid` reserved TLD (RFC 6761) so a future
+		//     URL-shape validator wired into the harness still
+		//     accepts it without risking a real DNS lookup or wire
+		//     egress to a third-party host.
+		//   - **OPTIONAL — every-optional-populated.** Per the
+		//     *-create convention from API-0014, API-0040, API-0069,
+		//     API-0292, and API-0325, all eight optional siblings
+		//     are populated so the wire fixture exercises the full
+		//     create payload, not just the minimum:
+		//     - `appBuildError`, `databaseBackup`, `volumeBackup`,
+		//       `dokployRestart`, `appDeploy`, `dockerCleanup`,
+		//       `serverThreshold` (each plain boolean) — `true`
+		//       branch on every slot to mirror an "alert me on every
+		//       category" agent-typical configuration.
+		//     - `headers` (object<string,string>) — single-entry map
+		//       so the JSON serialisation is deterministic and the
+		//       round-trip through `--input` preserves the nested
+		//       string-valued map shape (the spec's
+		//       `propertyNames: {type: string}` plus
+		//       `additionalProperties: {type: string}` pair).
+		//
+		// **Shape positioning — two-required-string-scalar POST
+		// create-mutation, body REQUIRED, all-boolean optional tail
+		// plus one nested `map[string]string`.** Functionally distinct
+		// from the closed-shape three-string API-0331 `security-create`
+		// (zero optional fields), the deep optional tail of API-0325
+		// `schedule-create` (anyOf-string-null + enums + boolean), and
+		// the create-with-anyOf API-0298 `redirects-create`.
+		// `notification-createCustom` is the first cross-tag fixture
+		// to combine REQUIRED-string-scalars with a nested
+		// string-valued map in the optional tail; future peers that
+		// also declare a `map[string]string` field
+		// (`notification-update*` flavours, etc.) should grep this
+		// entry first for the deterministic single-entry-map
+		// convention.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set, so the
+		// 404→CodeNotFound override is structurally inapplicable.
+		// `*-create` here is a body-bearing imperative-action POST
+		// and stays on the 401→CodeAuth invariant locked by every
+		// imperative-action peer already covered.
+		SampleBody: json.RawMessage(`{
+			"name": "notification-cov-create-custom-0209-name",
+			"endpoint": "https://example.invalid/notification-cov-create-custom-0209-endpoint",
+			"appBuildError": true,
+			"databaseBackup": true,
+			"volumeBackup": true,
+			"dokployRestart": true,
+			"appDeploy": true,
+			"dockerCleanup": true,
+			"serverThreshold": true,
+			"headers": {
+				"X-Notification-Source": "notification-cov-create-custom-0209-header"
+			}
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0246",
 		OperationID: "organization-active",
 		Method:      http.MethodGet,

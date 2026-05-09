@@ -24591,3 +24591,74 @@ forward-reference lesson before assuming any field shape.
     namespace will span all six entries, then close before the
     volumeBackups/* arc opens at API-0445.
 ---
+
+## 2026-05-09 - API-0209
+- **Implemented**: Coverage for `notification-createCustom` (POST
+  /notification.createCustom) — second entry in the notification/* roster,
+  staying inside the `notification-cov-*` per-tag fixture-isolation namespace
+  opened by API-0208 `notification-all`. Adds the deterministic
+  request/response fixture to the table-driven harness; `yalla api call
+  notification-createCustom --input request.json --json` and `yalla schema get
+  notification-createCustom --json` now have unit-level contract coverage for
+  both the success and 401→CodeAuth representative-failure legs.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended a new `apiCoverageCase`
+    entry between API-0208 and API-0246 with method POST, path
+    `/notification.createCustom`, tag `notification`, two REQUIRED
+    string-scalar body fields (`name`, `endpoint`) and an
+    every-optional-populated tail (seven plain booleans plus a
+    single-entry `headers` `map[string]string`). Slug namespace fixed
+    as kebab-case (`notification-cov-create-custom-0209-<field>`) on
+    this first multi-camel-segment entry per the AGENTS.md
+    per-tag-slug-style rule. The optional `endpoint` URL uses the
+    `example.invalid` reserved TLD so a future URL-shape validator
+    accepts it without risking a real DNS lookup.
+  - `ralph/prd.json` — set US API-0209 `passes: true`.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./internal/cli/ -run 'TestAPICoverage' -count=1` — `ok`.
+  - `go test ./...` — `ok` across every package.
+  - `go test -race ./...` — `ok` across every package.
+- **Tools NOT available locally**: `goimports`, `golangci-lint`,
+  `staticcheck`, `govulncheck`, `goreleaser` (unchanged from prior
+  iterations).
+- **Remaining risks / follow-ups**:
+  - The next priority-5 case in the PRD is API-0210
+    `notification-createDiscord` (POST). It will inherit the
+    kebab-case slug namespace fixed here (`create-discord`) and the
+    `notification-cov-*` per-tag fixture-isolation namespace opened
+    by API-0208. The contributor must re-verify the body schema
+    independently per the slug-prefix-is-not-shape lesson — Discord
+    and Custom destinations share the operation-stem `notification-`
+    but the bodies diverge (Discord adds `webhookUrl`/`decoration`
+    and drops `endpoint`/`headers`).
+- **Learnings for future iterations**:
+  - `notification-createCustom` is the first cross-tag fixture to
+    combine REQUIRED-string-scalars with a nested
+    `map[string]string` field in the optional tail. The
+    deterministic single-entry-map convention used here
+    (`{"X-Notification-Source": "..."}`) keeps the JSON
+    serialisation order stable and is the recommended pattern for
+    every future peer that declares a `propertyNames`/
+    `additionalProperties` string-valued map (notably the
+    `notification-update*` flavours when they land).
+  - `notification-createCustom` is also the first notification/*
+    POST: the per-tag slug-style decision (kebab vs camel) that the
+    AGENTS.md rule defers to "the first multi-camel-segment slug to
+    land on the tag" lands here. Kebab-case
+    (`notification-cov-create-custom-0209-*`) is now locked for the
+    rest of the notification/* roster — API-0210, API-0211,
+    API-0212, API-0213 must follow suit.
+  - Spec response set is 200/400/401/403/500 — no 404 — matching
+    the cross-tag create-mutation precedent on every previously
+    covered `*-create` POST. The harness-default 401→CodeAuth
+    representative-failure leg therefore stays the right choice;
+    the 404→CodeNotFound override is structurally inapplicable
+    (no target-by-id to miss on a create POST).
+  - The `example.invalid` reserved TLD (RFC 6761) is the safest
+    placeholder for any URL-shaped fixture field. It cannot resolve
+    in DNS, so even if a future harness change inadvertently
+    triggers a real network call, no third-party host is contacted.
+---
