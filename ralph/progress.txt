@@ -23357,3 +23357,107 @@ forward-reference lesson before assuming any field shape.
     the 404 gates on global state (settings unprovisioned, license absent)
     rather than a body-supplied resource id.
 ---
+
+## 2026-05-09 - API-0305
+- **Implemented**: Coverage for Dokploy operation `redis-move`
+  (POST /redis.move). Appended a single `apiCoverageCase` to the
+  `coveredAPIOperations` table in `internal/cli/api_coverage_test.go`,
+  inheriting the redis/* per-tag fixture-isolation namespace
+  (`redis-cov-*`) opened by API-0302 `redis-changeStatus`. The
+  harness's five-part contract (registry invariants, schema
+  reachability, manifest inclusion, success round-trip, representative
+  401→CodeAuth failure leg) is exercised automatically by the new
+  entry.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended API-0305
+    `redis-move` case between API-0304 `redis-deploy` and
+    API-0331 `security-create`. Body fixture supplies the two
+    REQUIRED string scalars (`redisId`, `targetEnvironmentId`) with
+    deterministic-but-clearly-fake tokens
+    `redis-cov-move-0305-redisId` and
+    `redis-cov-move-0305-targetEnvironmentId` per the established
+    `<tag>-cov-<slug>-<storyID>-<field>` naming convention.
+    `SuccessResponse: "{}"` matches the spec's empty-success cohort.
+  - `ralph/prd.json` — set API-0305 `passes: true`.
+- **Spec re-verified** against `internal/api/data/openapi.json` >
+  `/redis.move` > `post`: method POST, tag redis, no parameters,
+  requestBody REQUIRED with application/json. Two REQUIRED top-level
+  string scalars: `redisId`, `targetEnvironmentId`. No optional
+  fields. Responses 200/400/401/403/500; 200 is `{}` with
+  `additionalProperties: false`. **No 404** declared, mirroring the
+  action-on-known-id POST precedent reasserted across every covered
+  `*-move` peer (API-0020 application-move, API-0083 compose-move,
+  API-0163 mariadb-move, API-0177 mongo-move, API-0197 mysql-move,
+  API-0275 postgres-move).
+- **Shape positioning**: two-required-string-scalar POST imperative-
+  action move-mutation. **New shape inside the redis/* roster** —
+  prior redis/* entries carried single-id POST (API-0302
+  `redis-changeStatus`, API-0304 `redis-deploy`) or three-required-
+  scalar create POST (API-0303 `redis-create`). The two-required-
+  string-scalar move shape is the resource-relocation signature
+  shared with every covered `*-move` peer (`<tag>Id` +
+  `targetEnvironmentId`, both REQUIRED strings, no optional fields).
+- **Family choice**: harness-default 401→CodeAuth retained. Spec
+  omits 404 (404→CodeNotFound override structurally inapplicable to
+  body-bearing imperative-action POST). 400→CodeInvalidInput is
+  technically available but the harness reserves 400 representatives
+  for stories where payload validation is the *uniquely
+  distinguishing* failure mode. A move-mutation collapses to type-
+  checking, so the harness-default 401→CodeAuth failure leg remains
+  the most representative single failure mode, consistent with the
+  401→CodeAuth choice locked in at API-0302..API-0304 across the
+  redis/* arc.
+- **Fixture token base** `redis-cov-move-0305` follows the
+  `<tag>-cov-<slug>-<storyID>` convention. Verified non-colliding
+  with API-0302's `redis-cov-changeStatus-0302`, API-0303's
+  `redis-cov-create-0303`, and API-0304's `redis-cov-deploy-0304`
+  literals (different slug + storyID → unique). Full-tag-name slug
+  prefix `redis-` unambiguously distinct from lexically-adjacent
+  `redirects-cov-*`.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages pass (`internal/cli` 1.464s).
+  - `go test -race ./...` — all packages pass (`internal/cli` 3.173s).
+  - Targeted: the five `TestAPICoverage_*` suites all run new
+    `API-0305/redis-move` subtests and pass.
+- **Tools NOT available locally** (unchanged): `goimports`,
+  `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`.
+- **Remaining risks / follow-ups**:
+  - None specific to redis-move. The next priority-4 case is
+    API-0306 `redis-one` (a GET with single REQUIRED query param
+    `redisId` and a 200/400/401/403/404/500 response set — note the
+    re-introduction of a 404 leg for by-id reads). The comment block
+    forward-references it; the next contributor must re-verify the
+    spec against `internal/api/data/openapi.json` per the established
+    forward-reference lesson before assuming any field shape.
+- **Learnings for future iterations**:
+  - The `*-move` family across all covered tags ships an *identical*
+    two-required-string-scalar request body shape: `<tag>Id` +
+    `targetEnvironmentId`, both REQUIRED strings, zero optional
+    fields. application-move, compose-move, mariadb-move, mongo-move,
+    mysql-move, postgres-move, and now redis-move are
+    structurally interchangeable apart from the per-tag id field
+    name. Future `*-move` peers (none currently uncovered, but the
+    pattern would generalize to any new `*.move` operation Dokploy
+    introduces) can copy this fixture template directly, only
+    swapping the field name and fixture token.
+  - The redis/* roster now carries three structurally-distinct
+    request shapes: single-required-string-scalar (API-0302
+    `redis-changeStatus`, API-0304 `redis-deploy`), three-required-
+    string-scalar create (API-0303 `redis-create`), and two-required-
+    string-scalar move (API-0305 `redis-move`). Each shape entered
+    the roster on its first appearance and the harness assertions
+    stay shape-agnostic, so the 401→CodeAuth failure leg remains
+    representative regardless of body cardinality.
+  - The spec's response set for `*-move` (200/400/401/403/500, no
+    404) is consistent across every database-engine `*-move` peer
+    (mariadb/mongo/mysql/postgres/redis). This is structurally
+    identical to the `*-deploy` cohort and reflects that body-
+    bearing imperative-action POSTs in Dokploy's tRPC convention
+    fold missing-target failures into 400/validation rather than
+    surfacing a dedicated 404. Read-paths (e.g. API-0306 `redis-one`)
+    reintroduce 404; this divergence is structural and consistent
+    with every prior covered tag.
+---

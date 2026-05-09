@@ -22663,6 +22663,145 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0305",
+		OperationID: "redis-move",
+		Method:      http.MethodPost,
+		Path:        "/redis.move",
+		Tag:         "redis",
+		// Fourth entry on the redis/* coverage roster, immediately
+		// following API-0304 `redis-deploy` and completing the
+		// forward reference embedded in that entry's comment block
+		// ("The next case in the PRD-ordered priority-4 backlog is
+		// API-0305 `redis-move`"). Continues inside the
+		// `redis-cov-*` per-tag fixture-isolation namespace opened by
+		// API-0302 `redis-changeStatus` and **must not** back-reference
+		// any closed prior-tag namespace (`admin-cov-*`, `ai-cov-*`,
+		// `app-cov-*`, `backup-cov-*`, `bb-cov-*`, `cert-cov-*`,
+		// `clu-cov-*`, `compose-cov-*`, `deployment-cov-*`,
+		// `dest-cov-*`, `docker-cov-*`, `domain-cov-*`,
+		// `environment-cov-*`, `gitea-cov-*`, `github-cov-*`,
+		// `gitlab-cov-*`, `mariadb-cov-*`, `mongo-cov-*`,
+		// `mounts-cov-*`, `mysql-cov-*`, `org-cov-*`, `port-cov-*`,
+		// `postgres-cov-*`, `preview-cov-*`, `proj-cov-*`,
+		// `redirects-cov-*`, `security-cov-*`, `set-cov-*`,
+		// `srv-cov-*`, `swarm-cov-*`, `usr-cov-*`) per the per-tag
+		// isolation rule reasserted at API-0335..API-0444 and
+		// originally established at API-0246 `organization-active`.
+		//
+		// **Spec re-verified per the API-0345..API-0444 forward-
+		// reference lesson** against
+		// `internal/api/data/openapi.json` > `/redis.move` > `post`:
+		// method POST, tag redis, **no parameters**, requestBody
+		// REQUIRED with `application/json` and **two** REQUIRED
+		// top-level scalars `redisId` (string) and
+		// `targetEnvironmentId` (string), responses
+		// 200/400/401/403/500. The 200 response is `{}` with
+		// `additionalProperties: false`, matching every prior covered
+		// peer in the empty-success cohort. **No 404** is declared on
+		// this operation, mirroring the action-on-known-id POST
+		// precedent reasserted at API-0020 `application-move`,
+		// API-0083 `compose-move`, API-0162 `mariadb-deploy`,
+		// API-0163 `mariadb-move`, API-0176 `mongo-deploy`, API-0177
+		// `mongo-move`, API-0196 `mysql-deploy`, API-0197
+		// `mysql-move`, API-0274 `postgres-deploy`, API-0275
+		// `postgres-move`, API-0302 `redis-changeStatus`, and
+		// API-0304 `redis-deploy` (a body-bearing imperative-action
+		// POST whose missing-target failure mode collapses into
+		// 400/validation under Dokploy's tRPC convention rather than
+		// a dedicated 404 leg).
+		//
+		// **Request body schema (REQUIRED top-level fields):**
+		//   - REQUIRED `redisId` (string) — opaque, non-nullable,
+		//     non-enum scalar identifying the source redis resource
+		//     to move; the fixture below supplies a deterministic-
+		//     but-clearly-fake `redis-cov-move-0305-redisId` literal
+		//     carrying the `<tag>-cov-<slug>-<storyID>-<field>`
+		//     suffix for `git grep` traceability.
+		//   - REQUIRED `targetEnvironmentId` (string) — opaque,
+		//     non-nullable, non-enum scalar identifying the
+		//     destination environment to move the resource into; the
+		//     fixture below supplies
+		//     `redis-cov-move-0305-targetEnvironmentId` per the same
+		//     `<tag>-cov-<slug>-<storyID>-<field>` convention.
+		//   - **No optional fields.** redis-move has zero optional
+		//     fields, so the API-0131 `gitea-create` minimal-required-
+		//     only fixture rule is trivially satisfied. The fixture
+		//     supplies exactly the two REQUIRED fields and nothing
+		//     else; the harness's `len(tc.SampleBody) > 0` gate at
+		//     `runAPICoverageSuccess` activates the JSON content-type
+		//     and byte-for-byte body comparison legs.
+		//
+		// **Shape positioning — two-required-string-scalar POST
+		// imperative-action move-mutation, body REQUIRED.** Both
+		// REQUIRED slots are plain non-nullable `type: string` (no
+		// `anyOf` / `nullable` / enum constraints). This is a *new*
+		// shape inside the redis/* roster — the prior redis/*
+		// entries carried either a single-id POST (API-0302
+		// `redis-changeStatus`, API-0304 `redis-deploy`) or a
+		// three-required-scalar create POST (API-0303 `redis-create`,
+		// the redis-engine variant of the database-engine `*-create`
+		// family). The two-required-string-scalar move shape is the
+		// resource-relocation signature shared with `application-move`,
+		// `compose-move`, `mariadb-move`, `mongo-move`, `mysql-move`,
+		// and `postgres-move` (every covered `*-move` peer ships
+		// exactly this shape — `<tag>Id` + `targetEnvironmentId`,
+		// both REQUIRED strings, no optional fields). The harness
+		// assertions stay shape-agnostic so the 401→CodeAuth failure
+		// leg remains the representative single failure mode
+		// regardless.
+		//
+		// **Family choice — harness-default 401→CodeAuth retained.**
+		// The spec omits 404 from the response set (per above), so
+		// the 404→CodeNotFound override is structurally inapplicable.
+		// 400→CodeInvalidInput is *technically* available — a
+		// payload that omits either `redisId` or
+		// `targetEnvironmentId` would fail server-side validation —
+		// but the harness reserves 400 representatives for stories
+		// where payload validation is the operation's *uniquely
+		// distinguishing* failure mode. A move-mutation that gates
+		// on body-supplied ids collapses to type-checking, so the
+		// harness-default 401→CodeAuth failure leg remains the most
+		// representative single failure mode every authenticated
+		// Dokploy operation must re-prove, and is consistent with
+		// the 401→CodeAuth choice locked in by the redis/* kickoff
+		// at API-0302 `redis-changeStatus` and continued at
+		// API-0303 `redis-create` and API-0304 `redis-deploy`.
+		//
+		// **Fixture token base** `redis-cov-move-0305` follows the
+		// established `<tag>-cov-<slug>-<storyID>` deterministic-but-
+		// clearly-fake naming convention and is verified non-colliding
+		// with API-0302's `redis-cov-changeStatus-0302`, API-0303's
+		// `redis-cov-create-0303`, and API-0304's
+		// `redis-cov-deploy-0304` literals (different slug + storyID
+		// → unique under the `<tag>-cov-<slug>-<storyID>` rule). The
+		// full-tag-name slug prefix `redis-` is unambiguously
+		// distinct from the lexically-adjacent full-tag-name
+		// `redirects-cov-*` namespace closed at API-0301, satisfying
+		// the `<tag>-cov-<slug>-<storyID>` uniqueness rule.
+		//
+		// The next case in the PRD-ordered priority-4 backlog is
+		// API-0306 `redis-one` (declared a **GET** per the spec
+		// preview, with a single REQUIRED query parameter `redisId`
+		// and a 200/400/401/403/404/500 response set — note the
+		// re-introduction of a 404 leg, structurally consistent with
+		// every covered tag's by-id read path; the next contributor
+		// must re-verify the spec against
+		// `internal/api/data/openapi.json` per the forward-reference
+		// lesson before assuming any field shape, and will continue
+		// inside the `redis-cov-*` per-tag fixture-isolation
+		// namespace opened by API-0302).
+		SampleBody: json.RawMessage(`{
+			"redisId": "redis-cov-move-0305-redisId",
+			"targetEnvironmentId": "redis-cov-move-0305-targetEnvironmentId"
+		}`),
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0331",
 		OperationID: "security-create",
 		Method:      http.MethodPost,
