@@ -28021,3 +28021,70 @@ forward-reference lesson before assuming any field shape.
     declare; mirroring this difference verbatim from the spec keeps
     the every-optional-populated discipline honest.
 ---
+
+## 2026-05-09 - API-0256 - patch-byEntityId
+- **Implemented**: Coverage entry for `patch-byEntityId`
+  (GET `/patch.byEntityId`), the **first entry on the patch/* roster**.
+  Opens the `patch-cov-*` per-tag fixture-isolation namespace,
+  sandwiched between API-0255 `organization-updateMemberRole`
+  (closing organization/*) and API-0268 `port-create` (opening
+  port/*).
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — appended the API-0256 case
+    immediately after the API-0255 entry, before the API-0268
+    `port-create` block. Two-required-query GET shape with
+    `id` (plain string, anchored to
+    `patch-cov-by-entity-id-0256`) and `type` (enum-constrained
+    string, set to `application` — the first enum member in spec
+    declaration order; `compose` is the only other admissible
+    value). Empty body, empty `{}` success response, harness-default
+    401→CodeAuth failure family.
+  - `ralph/prd.json` — set US API-0256 `passes: true`.
+- **Verification run**:
+  - `gofmt -w .` — clean.
+  - `go mod tidy` — clean.
+  - `go vet ./...` — clean.
+  - `go test ./...` — all packages OK (`internal/cli` 1.427s).
+  - `go test -race ./...` — all packages OK (`internal/cli` 3.313s).
+  - Optional tools (`goimports`, `golangci-lint`, `staticcheck`,
+    `govulncheck`, `goreleaser`) remain unavailable locally per the
+    documented baseline; CI's `security` job covers them.
+- **Remaining risks / follow-ups**:
+  - API-0257 `patch-cleanPatchRepos` is the next patch/* peer
+    (declared a POST per spec preview). It must continue inside the
+    `patch-cov-*` namespace opened here and re-verify the spec
+    against `internal/api/data/openapi.json` before assuming any
+    field shape, per the API-0345..API-0444 forward-reference
+    lesson.
+  - The patch/* roster runs API-0256..API-0267 per `prd.json`.
+    Future contributors should grep this block first to inherit the
+    `patch-cov-*` slug namespace rather than copying organization/*
+    `org-cov-*` or port/* `port-cov-*` fixtures across the tag
+    boundary.
+- **Learnings for future iterations**:
+  - **Two-required-query GET is a new sub-shape on the id-bearing
+    GET cohort.** API-0115 `domain-byApplicationId` established the
+    single-required-query GET precedent (one plain-string id
+    parameter); API-0256 extends that precedent by carrying a
+    second required query parameter (`type`) which is also
+    enum-constrained. The harness already supports multi-key
+    `SampleQuery` via the standard `map[string][]string` shape, so
+    no harness change was needed — but future enum-bearing query
+    parameters must pick a deterministic single value (we picked
+    the first enum member in spec declaration order, `application`)
+    rather than rotating across enum members per run, which would
+    make golden-output diffs noisy.
+  - **Enum query parameters do not change the failure-family
+    decision.** The 404→CodeNotFound override is technically
+    applicable (an unknown `id`/`type` pair is a structurally valid
+    not-found case), but the bearer-token enforcement runs before
+    any entity lookup, so the harness-default 401→CodeAuth failure
+    leg stays representative — same call as the API-0005 /
+    API-0113 / API-0115 / API-0116 id-bearing GET precedents.
+  - **The patch/* tag opens a short roster.** Per `prd.json` the
+    patch/* coverage block runs API-0256..API-0267 (patch-byEntityId
+    through patch-update). Future contributors should treat this as
+    a tightly-scoped tag arc and avoid pulling in cross-tag idioms
+    from the much larger notification/* (API-0208..API-0245) or
+    organization/* (API-0246..API-0255) rosters.
+---

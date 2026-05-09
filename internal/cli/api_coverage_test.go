@@ -24620,6 +24620,107 @@ var coveredAPIOperations = []apiCoverageCase{
 		SuccessResponse: `{}`,
 	},
 	{
+		StoryID:     "API-0256",
+		OperationID: "patch-byEntityId",
+		Method:      http.MethodGet,
+		Path:        "/patch.byEntityId",
+		Tag:         "patch",
+		// **First entry in the patch/* roster** and the kickoff for
+		// the tag's id-bearing GET cohort. Opens the `patch-cov-*`
+		// per-tag fixture-isolation namespace and **must not**
+		// back-reference any closed `admin-cov-*`, `ai-cov-*`,
+		// `app-cov-*`, `backup-cov-*`, `bb-cov-*`, `cert-cov-*`,
+		// `clu-cov-*`, `compose-cov-*`, `deployment-cov-*`,
+		// `dest-cov-*`, `docker-cov-*`, `domain-cov-*`,
+		// `environment-cov-*`, `git-cov-*`, `mounts-cov-*`,
+		// `notification-cov-*`, `org-cov-*`, `proj-cov-*`,
+		// `set-cov-*`, or `srv-cov-*` namespace, per the
+		// per-tag-isolation rule reasserted at the API-0255 closing
+		// note for organization/*. Sandwiched between API-0255
+		// `organization-updateMemberRole` (closing organization/*)
+		// and API-0268 `port-create` (opening port/*), patch/* is a
+		// short-roster tag whose remaining members are API-0257
+		// `patch-cleanPatchRepos`, API-0258..API-0267 (the rest of
+		// the patch/* coverage block per `prd.json`); future
+		// patch/* contributors should grep this block first to
+		// inherit the `patch-cov-*` slug namespace rather than
+		// copying organization/* `org-cov-*` or port/* `port-cov-*`
+		// fixtures across the tag boundary.
+		//
+		// **Spec re-verified per the API-0345..API-0444
+		// forward-reference lesson** against
+		// `internal/api/data/openapi.json > /patch.byEntityId
+		// > get`: a **GET** with **two REQUIRED query parameters**
+		// (`id` plain string, `type` enum string constrained to
+		// `application` | `compose`), **no request body**, and
+		// responses 200/400/401/403/404/500. The 200 schema is `{}`
+		// with `additionalProperties: false`, matching every prior
+		// covered peer in the empty-success cohort. The previous
+		// organization/* roster's POST/body shape (API-0255
+		// `organization-updateMemberRole`) is irrelevant here: the
+		// wire shape resets to a parameter-bearing GET, mirroring
+		// the cross-tag id-bearing GET precedent set by API-0005
+		// (`ai-get`), API-0113 (`docker-getStackContainersByAppName`),
+		// and most directly API-0115 (`domain-byApplicationId`) —
+		// with the distinguishing tweak that this entry carries a
+		// **two-required-query** payload (one plain string id plus
+		// one enum-constrained discriminator) rather than the
+		// single-required-query shape the API-0115 precedent
+		// established.
+		//
+		// **Shape positioning — two-required-query GET, no body.**
+		// The harness forwards `SampleQuery` via the `--input` JSON
+		// `query` field, and the success-leg assertion at
+		// `runAPICoverageSuccess` re-reads `r.URL.Query()` to confirm
+		// the CLI propagated both `id` and `type` verbatim. The
+		// `len(tc.SampleBody) > 0` gate stays inert so no
+		// content-type / body byte-comparison legs activate, exactly
+		// as on prior id-bearing GET peers (API-0005, API-0113,
+		// API-0115, API-0116). The `type` enum value below picks
+		// `application` (the first enum member in the spec's
+		// declaration order) as the deterministic discriminator —
+		// `compose` is the only other admissible value, and a
+		// future contract test extension that exercises both legs
+		// should add a sibling case rather than mutating this one.
+		//
+		// **Family choice — 404→CodeNotFound representative
+		// available but harness-default 401→CodeAuth retained.**
+		// The spec declares 404 on this operation (an unknown
+		// `id`/`type` pair is a structurally valid not-found case),
+		// so the 404→CodeNotFound override is *technically*
+		// applicable. We deliberately stick with the
+		// harness-default 401→CodeAuth failure leg, however, to
+		// mirror the API-0005 (`ai-get`), API-0113
+		// (`docker-getStackContainersByAppName`), and API-0115
+		// (`domain-byApplicationId`) precedents — id-bearing GETs
+		// that also declare 404 yet keep the universal `E_AUTH`
+		// mode as the representative failure (bearer-token
+		// enforcement runs before any entity lookup). Per the
+		// established `<tag>-cov-<slug>-<storyID>`
+		// deterministic-but-clearly-fake naming convention, the
+		// fixture id base `patch-cov-by-entity-id-0256` keeps
+		// `git grep` traceable to this PRD story and reserves the
+		// `patch-cov-*` namespace for the upcoming sibling stories.
+		//
+		// The next case in the PRD-ordered priority-5 backlog is
+		// API-0257 `patch-cleanPatchRepos` (declared a **POST** per
+		// the spec preview; the next contributor must re-verify the
+		// spec against `internal/api/data/openapi.json` per the
+		// forward-reference lesson before assuming any field shape,
+		// and will continue inside the `patch-cov-*` per-tag
+		// fixture-isolation namespace opened here).
+		SampleQuery: map[string][]string{
+			"id":   {"patch-cov-by-entity-id-0256"},
+			"type": {"application"},
+		},
+		// 200 response in the spec is `{}` with `additionalProperties:
+		// false`, matching every prior covered peer in the
+		// empty-success cohort. Empty-object body keeps the
+		// success-leg envelope assertion focused on `data.method` /
+		// `data.status` rather than payload projection.
+		SuccessResponse: `{}`,
+	},
+	{
 		StoryID:     "API-0268",
 		OperationID: "port-create",
 		Method:      http.MethodPost,
