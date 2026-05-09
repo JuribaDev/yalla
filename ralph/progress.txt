@@ -25740,3 +25740,66 @@ forward-reference lesson before assuming any field shape.
   - The cross-tag 401→CodeAuth invariant continues to hold for every
     create-mutation POST that omits 404 from its response set.
 ---
+
+## 2026-05-09 - API-0217
+- **Implemented**: Coverage entry for `notification-createSlack` (POST
+  /notification.createSlack) in the shared coverage harness. The single
+  fixture entry drives success-leg, schema, manifest, and failure-leg
+  assertions through the shared `coveredAPIOperations` table.
+- **Files changed**:
+  - `internal/cli/api_coverage_test.go` — added the API-0217 entry
+    immediately after API-0216 `notification-createResend` and before the
+    API-0246 `organization-active` entry. The fixture covers a ten-slot
+    closed-all-required POST body: three plain strings (`name`,
+    `webhookUrl`, `channel`) and seven plain booleans (`appBuildError`,
+    `databaseBackup`, `volumeBackup`, `dokployRestart`, `appDeploy`,
+    `dockerCleanup`, `serverThreshold`). Tokens stay inside the per-tag
+    `notification-cov-*` namespace and the new fixture-local
+    `notification-cov-create-slack-0217-*` slug. Webhook URL uses the
+    reserved-TLD `hooks.slack.example.invalid` host (RFC 6761) so a
+    misconfigured fixture cannot egress to a real Slack workspace.
+  - `ralph/prd.json` — flipped `passes` to `true` for API-0217.
+- **Verification run** (from repo root):
+  - `gofmt -w .` — clean
+  - `go mod tidy` — no changes
+  - `go vet ./...` — clean
+  - `go test ./...` — all packages pass
+  - `go test -race ./...` — all packages pass
+  - `goimports`/`golangci-lint`/`staticcheck`/`govulncheck`/`goreleaser`
+    not installed locally; left to CI per prior iterations' note.
+- **Results**: API-0217 now has `passes: true` in `ralph/prd.json` and the
+  new coverage row drives all five assertions (registry presence,
+  manifest coverage, schema retrievability, success leg, failure leg)
+  through the shared harness.
+- **Remaining risks or follow-ups**:
+  - None. The fixture sits inside the per-tag namespace
+    `notification-cov-create-slack-0217-*` and is decoupled from any
+    other entry. Future `notification-createTeams` /
+    `notification-createTelegram` peers should crib this fixture when
+    they share the same closed all-required scalar-only shape but must
+    re-verify the spec because Discord swapped `serverThreshold` for
+    `decoration` and Ntfy dropped it entirely — the cross-tag rule is
+    "verify per-spec, never assume by family".
+- **Learnings for future iterations**:
+  - createSlack is the **second** notification/* fixture to ship a
+    closed all-required scalar-only shape (after API-0210
+    `createDiscord`) and the **first** to ship that scalar-only shape
+    with **three** string slots — Discord ships two strings (`name` +
+    `webhookUrl`); Slack adds `channel` and trades Discord's
+    `decoration` boolean for the third string. Net slot count stays at
+    ten because the swap is one-for-one (boolean → string), not
+    additive.
+  - The per-spec rule reaffirmed across the roster — only the
+    transport-agnostic core six (`appBuildError`, `databaseBackup`,
+    `volumeBackup`, `dokployRestart`, `appDeploy`, `dockerCleanup`)
+    remain stable across notification/* siblings — held again for
+    Slack: `serverThreshold` returns (matching Resend), Discord's
+    `decoration` does not appear, and no Slack-specific notification
+    boolean was introduced.
+  - The shared `coveredAPIOperations` harness in
+    `internal/cli/api_coverage_test.go` is purely additive — no per-
+    operation success/failure scaffolding is required because the table-
+    driven loop materialises all assertions from the fixture record.
+  - The cross-tag 401→CodeAuth invariant continues to hold for every
+    create-mutation POST that omits 404 from its response set.
+---
