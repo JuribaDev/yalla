@@ -91,15 +91,59 @@ type apiCallClientArgs struct {
 // Retries default to zero because Dokploy's POST surface is mutating: an
 // agent that wants idempotent retries can opt in via a future flag, but
 // the safe default is exactly one attempt per call.
+//
+// Auth scheme + base-path prefix are resolved from the embedded OpenAPI
+// document via [resolveAPIClientDefaults] so the wire transport tracks
+// the spec automatically: a future Dokploy spec drop that switches auth
+// types or relocates the API mount point applies without a code change
+// at this call site.
 var apiCallClientFactory = func(args apiCallClientArgs) (*api.Client, error) {
+	scheme, headerName, basePath := resolveAPIClientDefaults(api.Default())
 	cc := api.ClientConfig{
-		BaseURL:    args.Config.BaseURL,
-		Token:      args.Config.Token,
-		UserAgent:  "yalla/" + args.Build.Version,
-		Timeout:    args.Timeout,
-		MaxRetries: 0,
+		BaseURL:        args.Config.BaseURL,
+		Token:          args.Config.Token,
+		AuthScheme:     scheme,
+		AuthHeaderName: headerName,
+		BasePathPrefix: basePath,
+		UserAgent:      "yalla/" + args.Build.Version,
+		Timeout:        args.Timeout,
+		MaxRetries:     0,
 	}
 	return api.NewClient(cc)
+}
+
+// resolveAPIClientDefaults projects the registry's primary security
+// scheme and server path into the [api.ClientConfig] values that drive
+// the HTTP transport. The function returns zero values when the spec
+// declares no global security or no server path, so the client falls
+// back to its legacy Bearer + bare-BaseURL behaviour.
+//
+// Recognised scheme combinations:
+//   - apiKey + in:header   → AuthSchemeAPIKeyHeader, header from spec.
+//   - http  + scheme:bearer → AuthSchemeBearer.
+//
+// Anything else returns the unspecified scheme so the client uses its
+// Bearer fallback rather than producing a malformed request.
+func resolveAPIClientDefaults(reg *api.Registry) (api.AuthScheme, string, string) {
+	basePath := ""
+	if reg != nil {
+		basePath = reg.ServerPath
+	}
+	if reg == nil {
+		return api.AuthSchemeUnspecified, "", basePath
+	}
+	scheme, ok := reg.PrimarySecurityScheme()
+	if !ok {
+		return api.AuthSchemeUnspecified, "", basePath
+	}
+	switch {
+	case scheme.Type == "apiKey" && strings.EqualFold(scheme.In, "header"):
+		return api.AuthSchemeAPIKeyHeader, scheme.HeaderName, basePath
+	case scheme.Type == "http" && strings.EqualFold(scheme.Scheme, "bearer"):
+		return api.AuthSchemeBearer, "", basePath
+	default:
+		return api.AuthSchemeUnspecified, "", basePath
+	}
 }
 
 func newAPICallCommand() *cobra.Command {
@@ -259,10 +303,12 @@ func runAPICall(ctx context.Context, r *output.Renderer, reg *api.Registry, cfg 
 		}
 	}
 
-	targetURL := joinAPIURL(cfg.BaseURL, resolvedPath, query)
+	scheme, headerName, basePath := resolveAPIClientDefaults(reg)
+	effectiveBase := applyServerPath(cfg.BaseURL, basePath)
+	targetURL := joinAPIURL(effectiveBase, resolvedPath, query)
 
 	if opts.DryRun {
-		return emitAPICallDryRun(r, op, targetURL, headers, body, contentType, cfg)
+		return emitAPICallDryRun(r, op, targetURL, headers, body, contentType, cfg, scheme, headerName)
 	}
 
 	cli, err := apiCallClientFactory(apiCallClientArgs{
@@ -337,6 +383,35 @@ func resolveRequestBody(op api.Operation, body json.RawMessage) ([]byte, string,
 		ct = op.RequestBody.ContentType
 	}
 	return []byte(body), ct, nil
+}
+
+// applyServerPath mirrors the prefix logic in [api.NewClient]: when the
+// caller-supplied BaseURL has no path of its own (empty or "/"), the
+// spec's server path is prepended so the dry-run URL and the live wire
+// URL agree on byte-for-byte composition. An explicit BaseURL path wins
+// for the same reason as in NewClient — reverse-proxied installs.
+//
+// Returns the input verbatim when prefix is empty, when BaseURL is empty
+// (dry-run with no --base-url is the documented "show-me-the-path" mode),
+// or when BaseURL fails to parse (the dry-run renderer surfaces the raw
+// string anyway, so a parse error is recoverable).
+func applyServerPath(baseURL, prefix string) string {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" || baseURL == "" {
+		return baseURL
+	}
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return baseURL
+	}
+	if u.Path != "" && u.Path != "/" {
+		return baseURL
+	}
+	if !strings.HasPrefix(prefix, "/") {
+		prefix = "/" + prefix
+	}
+	u.Path = strings.TrimSuffix(prefix, "/")
+	return u.String()
 }
 
 // joinAPIURL returns the full URL the executor would send the request to.
@@ -441,9 +516,13 @@ func emitAPICallSuccess(r *output.Renderer, op api.Operation, targetURL string, 
 }
 
 // emitAPICallDryRun renders the resolved request without sending it. The
-// Authorization header is rendered with [REDACTED] in place of the bearer
-// value so a `--dry-run --json` envelope is safe to log or paste.
-func emitAPICallDryRun(r *output.Renderer, op api.Operation, targetURL string, headers http.Header, body []byte, contentType string, cfg *config.Config) error {
+// active auth header is rendered with the redaction sentinel in place of
+// the secret value so a `--dry-run --json` envelope is safe to log or
+// paste. The scheme + header name come from the same resolver the live
+// client uses, so the dry-run header matches the wire header byte for
+// byte — agents diffing dry-run vs live no longer see a phantom
+// "Authorization" entry that the server would never receive.
+func emitAPICallDryRun(r *output.Renderer, op api.Operation, targetURL string, headers http.Header, body []byte, contentType string, cfg *config.Config, scheme api.AuthScheme, headerName string) error {
 	h := headers.Clone()
 	if h == nil {
 		h = http.Header{}
@@ -451,8 +530,11 @@ func emitAPICallDryRun(r *output.Renderer, op api.Operation, targetURL string, h
 	if len(body) > 0 && h.Get(api.HeaderContentType) == "" {
 		h.Set(api.HeaderContentType, contentType)
 	}
-	if cfg.HasToken() && h.Get(api.HeaderAuthorization) == "" {
-		h.Set(api.HeaderAuthorization, "Bearer "+output.Sentinel)
+	if cfg.HasToken() {
+		authHeader, authValue := dryRunAuthRedaction(scheme, headerName)
+		if h.Get(authHeader) == "" {
+			h.Set(authHeader, authValue)
+		}
 	}
 
 	docHeaders := make(map[string][]string, len(h))
@@ -494,6 +576,24 @@ func emitAPICallDryRun(r *output.Renderer, op api.Operation, targetURL string, h
 	}
 	r.Human(strings.TrimRight(sb.String(), "\n"))
 	return nil
+}
+
+// dryRunAuthRedaction returns the (header name, sentinel value) pair the
+// dry-run renderer should use for the resolved auth scheme. APIKey
+// schemes carry the raw token, so the sentinel replaces the value
+// outright; bearer schemes keep the "Bearer " prefix so the rendered
+// envelope still reads like a real Authorization header to a human.
+func dryRunAuthRedaction(scheme api.AuthScheme, headerName string) (string, string) {
+	switch scheme {
+	case api.AuthSchemeAPIKeyHeader:
+		h := strings.TrimSpace(headerName)
+		if h == "" {
+			h = api.DefaultAPIKeyHeader
+		}
+		return h, output.Sentinel
+	default:
+		return api.HeaderAuthorization, "Bearer " + output.Sentinel
+	}
 }
 
 // errAsTyped narrows a generic error into a *yerr.Error. Anything

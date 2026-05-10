@@ -51177,7 +51177,7 @@ func runAPICoverageSuccess(t *testing.T, tc apiCoverageCase) {
 	srv := setupAPICallServer(t, func(w http.ResponseWriter, r *http.Request) {
 		seenMethod = r.Method
 		seenPath = r.URL.Path
-		seenAuth = r.Header.Get("Authorization")
+		seenAuth = r.Header.Get(api.DefaultAPIKeyHeader)
 		seenContentType = r.Header.Get("Content-Type")
 		seenQuery = r.URL.Query()
 		body, err := io.ReadAll(r.Body)
@@ -51210,11 +51210,12 @@ func runAPICoverageSuccess(t *testing.T, tc apiCoverageCase) {
 	if err != nil {
 		t.Fatalf("substitutePathParams: %v", err)
 	}
-	if seenPath != resolvedPath {
-		t.Errorf("server path = %q, want %q", seenPath, resolvedPath)
+	wantPath := coverageWirePath(resolvedPath)
+	if seenPath != wantPath {
+		t.Errorf("server path = %q, want %q", seenPath, wantPath)
 	}
-	if seenAuth != "Bearer test-token-value" {
-		t.Errorf("Authorization header = %q, want Bearer test-token-value", seenAuth)
+	if seenAuth != "test-token-value" {
+		t.Errorf("%s header = %q, want test-token-value", api.DefaultAPIKeyHeader, seenAuth)
 	}
 	if len(tc.SampleBody) > 0 {
 		// The wire Content-Type contract is what the registry declares for

@@ -36,9 +36,15 @@ func (e *fakeNetError) Error() string { return e.msg }
 
 // setupAPICallServer is the canonical test harness for `yalla api call`.
 // It spins up an httptest.Server with the supplied handler, points
-// YALLA_BASE_URL at it, and seeds a fake YALLA_TOKEN so the executor does
-// not reject auth-required operations up front. The server is auto-closed
-// via t.Cleanup.
+// YALLA_BASE_URL at it, and seeds a fake YALLA_TOKEN so the executor
+// does not reject auth-required operations up front. The server is
+// auto-closed via t.Cleanup.
+//
+// Wire paths exercised by tests include the spec-declared server path
+// (e.g. "/api") because the factory transparently injects it when the
+// user-supplied BaseURL has no path of its own — exactly mirroring what
+// happens in production. Use [coverageWirePath] to compute the expected
+// path so tests stay portable when the spec moves the server prefix.
 func setupAPICallServer(t *testing.T, handler http.HandlerFunc) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(handler)
@@ -48,16 +54,34 @@ func setupAPICallServer(t *testing.T, handler http.HandlerFunc) *httptest.Server
 	return srv
 }
 
+// coverageWirePath returns the URL path the live executor will hit for
+// an operation path. It mirrors the production join logic
+// ([api.NewClient] + [api.Client.resolvePath]) so per-op tests stay
+// readable: callers compare `seenPath` against `coverageWirePath(op)`
+// without re-implementing the prefix rule.
+func coverageWirePath(opPath string) string {
+	prefix := api.Default().ServerPath
+	if prefix == "" {
+		return opPath
+	}
+	if opPath == "" {
+		return prefix
+	}
+	return prefix + opPath
+}
+
 func TestAPICall_Success_JSON(t *testing.T) {
 	var (
 		seenMethod string
 		seenPath   string
+		seenAPIKey string
 		seenAuth   string
 	)
 	setupAPICallServer(t, func(w http.ResponseWriter, r *http.Request) {
 		seenMethod = r.Method
 		seenPath = r.URL.Path
-		seenAuth = r.Header.Get("Authorization")
+		seenAPIKey = r.Header.Get(api.DefaultAPIKeyHeader)
+		seenAuth = r.Header.Get(api.HeaderAuthorization)
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-Request-Id", "req-12345")
 		w.WriteHeader(http.StatusOK)
@@ -74,11 +98,18 @@ func TestAPICall_Success_JSON(t *testing.T) {
 	if seenMethod != http.MethodGet {
 		t.Errorf("server method = %q, want GET", seenMethod)
 	}
-	if seenPath != "/project.all" {
-		t.Errorf("server path = %q, want /project.all", seenPath)
+	wantPath := coverageWirePath("/project.all")
+	if seenPath != wantPath {
+		t.Errorf("server path = %q, want %q", seenPath, wantPath)
 	}
-	if seenAuth != "Bearer test-token-value" {
-		t.Errorf("Authorization header = %q, want Bearer test-token-value", seenAuth)
+	if seenAPIKey != "test-token-value" {
+		t.Errorf("%s header = %q, want test-token-value", api.DefaultAPIKeyHeader, seenAPIKey)
+	}
+	// The Bearer transport was retired in favour of the spec-declared
+	// apiKey header; assert it is no longer present so a regression that
+	// re-attaches Authorization fails loudly.
+	if seenAuth != "" {
+		t.Errorf("Authorization header should be empty under apiKey scheme; got %q", seenAuth)
 	}
 
 	var env struct {
@@ -142,12 +173,21 @@ func TestAPICall_DryRun_PrintsResolvedRequest(t *testing.T) {
 	if env.Data.Method != http.MethodPost {
 		t.Errorf("method = %q", env.Data.Method)
 	}
-	if env.Data.URL != "https://dokploy.example.com/application.deploy" {
+	// Dry-run URL mirrors live behaviour: a bare-host BaseURL gets the
+	// spec's server path ("/api") prepended so agents diffing dry-run vs
+	// live see byte-identical URLs.
+	if env.Data.URL != "https://dokploy.example.com/api/application.deploy" {
 		t.Errorf("url = %q", env.Data.URL)
 	}
-	auth := env.Data.Headers["Authorization"]
-	if len(auth) != 1 || !strings.Contains(auth[0], output.Sentinel) {
-		t.Errorf("Authorization should be redacted; got %v", auth)
+	// The active scheme is apiKey-in-header, so the redacted entry lives
+	// under the canonicalised "X-Api-Key" key. http.Header canonicalises
+	// dashes to title-case at JSON marshal time.
+	apiKey := env.Data.Headers[http.CanonicalHeaderKey(api.DefaultAPIKeyHeader)]
+	if len(apiKey) != 1 || !strings.Contains(apiKey[0], output.Sentinel) {
+		t.Errorf("%s should be redacted; got %v", api.DefaultAPIKeyHeader, apiKey)
+	}
+	if _, ok := env.Data.Headers["Authorization"]; ok {
+		t.Errorf("Authorization should not appear in dry-run under apiKey scheme; headers=%v", env.Data.Headers)
 	}
 	if !strings.Contains(string(env.Data.Body), "applicationId") {
 		t.Errorf("body missing applicationId: %s", string(env.Data.Body))

@@ -80,6 +80,44 @@ const (
 	// response bodies. Other media types are accepted on the response path
 	// (the body is captured verbatim) but never produced by the client.
 	ContentTypeJSON = "application/json"
+
+	// DefaultAPIKeyHeader is the wire header used by [AuthSchemeAPIKeyHeader]
+	// when [ClientConfig.AuthHeaderName] is empty. Dokploy's OpenAPI spec
+	// declares this exact casing (`x-api-key`) and the production server
+	// rejects requests that use Bearer in its place, so the constant is
+	// part of the public contract.
+	DefaultAPIKeyHeader = "x-api-key"
+)
+
+// AuthScheme controls how [ClientConfig.Token] is attached to outgoing
+// requests. The value is meant to be derived from the OpenAPI security
+// scheme so a future spec drop that switches Dokploy to a different
+// transport (Basic, OAuth2, signed headers) can be supported by adding a
+// constant here without touching every CLI call site.
+//
+// String forms are part of the public contract — tests may match on
+// them. New schemes should be added as additional constants rather than
+// repurposing existing values.
+type AuthScheme string
+
+// AuthScheme values. The zero value is treated as [AuthSchemeBearer] so
+// pre-existing tests and any caller that has not been updated keep their
+// previous behavior; production callers should pass an explicit scheme
+// resolved from the OpenAPI document.
+const (
+	// AuthSchemeUnspecified preserves the legacy default. Equivalent to
+	// [AuthSchemeBearer] at runtime.
+	AuthSchemeUnspecified AuthScheme = ""
+
+	// AuthSchemeBearer sends `Authorization: Bearer <token>`. Used when
+	// the OpenAPI spec declares an HTTP-bearer security scheme.
+	AuthSchemeBearer AuthScheme = "bearer"
+
+	// AuthSchemeAPIKeyHeader sends a single header carrying the raw
+	// token (no scheme prefix). The header name defaults to
+	// [DefaultAPIKeyHeader]; override via [ClientConfig.AuthHeaderName]
+	// when the spec declares a custom name.
+	AuthSchemeAPIKeyHeader AuthScheme = "apiKeyHeader"
 )
 
 // ClientConfig is the resolved input to [NewClient]. The CLI layer builds it
@@ -91,11 +129,34 @@ type ClientConfig struct {
 	// preserved when joining with the per-request Path.
 	BaseURL string
 
-	// Token is the bearer token forwarded as `Authorization: Bearer <token>`.
-	// An empty Token disables the header so unauthenticated probes are
-	// possible. The value is never embedded in client-produced error
+	// Token is the API token forwarded to Dokploy. Its placement on the
+	// wire is controlled by [ClientConfig.AuthScheme]:
+	//   - [AuthSchemeBearer]         → `Authorization: Bearer <token>`
+	//   - [AuthSchemeAPIKeyHeader]   → `<AuthHeaderName>: <token>`
+	// An empty Token disables auth entirely so unauthenticated probes
+	// stay possible. The value is never embedded in client-produced error
 	// messages; the output redactor scrubs it as a defence-in-depth.
 	Token string
+
+	// AuthScheme controls how Token is attached. Empty falls back to
+	// [AuthSchemeBearer] so existing tests and any caller that has not
+	// been updated keep their previous behavior.
+	AuthScheme AuthScheme
+
+	// AuthHeaderName overrides the header name when AuthScheme is
+	// [AuthSchemeAPIKeyHeader]. Empty falls back to [DefaultAPIKeyHeader].
+	// Ignored for any other scheme.
+	AuthHeaderName string
+
+	// BasePathPrefix is prepended to the per-request Path when the
+	// caller-supplied BaseURL has no path component. Use the path
+	// component of the OpenAPI `servers[0].url` (e.g. "/api") so a user
+	// who pastes only their host into YALLA_BASE_URL still hits the API
+	// router instead of the upstream SPA. An explicit BaseURL path
+	// (anything other than "" or "/") wins so reverse-proxied installs
+	// (e.g. `https://example.com/dokploy/api`) continue to work without
+	// extra configuration.
+	BasePathPrefix string
 
 	// UserAgent is forwarded as the User-Agent header. Callers should pass
 	// `"yalla/<version>"` to keep the CLI traceable in Dokploy access logs.
@@ -124,12 +185,14 @@ type ClientConfig struct {
 // Client is the immutable, concurrency-safe Dokploy HTTP client. Construct
 // once per command invocation via [NewClient] and pass the pointer down.
 type Client struct {
-	baseURL    *url.URL
-	token      string
-	userAgent  string
-	httpClient *http.Client
-	maxRetries int
-	retryBase  time.Duration
+	baseURL        *url.URL
+	token          string
+	authScheme     AuthScheme
+	authHeaderName string
+	userAgent      string
+	httpClient     *http.Client
+	maxRetries     int
+	retryBase      time.Duration
 }
 
 // NewClient validates the config and returns a ready-to-use client. A bad
@@ -151,6 +214,31 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 	}
 	if u.Host == "" {
 		return nil, yerr.New(yerr.CodeConfig, "Dokploy base URL is missing a host")
+	}
+
+	// Apply the spec-derived path prefix only when the user-supplied URL
+	// has no path of its own. A non-trivial Path (anything beyond "/")
+	// is the user's explicit intent — typically a reverse-proxied
+	// install — and must not be overwritten by the default.
+	if prefix := strings.TrimSpace(cfg.BasePathPrefix); prefix != "" && (u.Path == "" || u.Path == "/") {
+		if !strings.HasPrefix(prefix, "/") {
+			prefix = "/" + prefix
+		}
+		u.Path = strings.TrimSuffix(prefix, "/")
+	}
+
+	// Resolve the auth scheme. The zero value maps to Bearer for
+	// backward compatibility with tests and pre-existing callers; named
+	// schemes pass through verbatim so an unknown value would surface
+	// (the doOnce switch falls back to Bearer for unknown schemes too,
+	// so unknown is a no-op rather than a panic).
+	scheme := cfg.AuthScheme
+	if scheme == AuthSchemeUnspecified {
+		scheme = AuthSchemeBearer
+	}
+	authHeader := strings.TrimSpace(cfg.AuthHeaderName)
+	if scheme == AuthSchemeAPIKeyHeader && authHeader == "" {
+		authHeader = DefaultAPIKeyHeader
 	}
 
 	timeout := cfg.Timeout
@@ -181,19 +269,58 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 	}
 
 	return &Client{
-		baseURL:    u,
-		token:      strings.TrimSpace(cfg.Token),
-		userAgent:  ua,
-		httpClient: httpClient,
-		maxRetries: retries,
-		retryBase:  retryBase,
+		baseURL:        u,
+		token:          strings.TrimSpace(cfg.Token),
+		authScheme:     scheme,
+		authHeaderName: authHeader,
+		userAgent:      ua,
+		httpClient:     httpClient,
+		maxRetries:     retries,
+		retryBase:      retryBase,
 	}, nil
 }
 
-// HasToken reports whether the client carries a non-empty bearer token.
+// HasToken reports whether the client carries a non-empty token.
 // Useful for callers that want to short-circuit before issuing a request
 // against an authenticated endpoint.
 func (c *Client) HasToken() bool { return c != nil && c.token != "" }
+
+// AuthHeaderName returns the wire header that will carry the token for
+// the current scheme: "Authorization" for [AuthSchemeBearer], the
+// configured API-key name (defaulting to [DefaultAPIKeyHeader]) for
+// [AuthSchemeAPIKeyHeader]. Used by the dry-run renderer to know which
+// header to scrub. Returns "" for a nil client.
+func (c *Client) AuthHeaderName() string {
+	if c == nil {
+		return ""
+	}
+	switch c.authScheme {
+	case AuthSchemeAPIKeyHeader:
+		if c.authHeaderName != "" {
+			return c.authHeaderName
+		}
+		return DefaultAPIKeyHeader
+	default:
+		return HeaderAuthorization
+	}
+}
+
+// AuthHeaderValue returns the literal value the client would attach to
+// the wire request for the given token under the current scheme. The
+// dry-run renderer never calls this with the real token (it substitutes
+// the redaction sentinel first), so the function never leaks secrets on
+// its own. Returns "" for a nil client.
+func (c *Client) AuthHeaderValue(token string) string {
+	if c == nil {
+		return ""
+	}
+	switch c.authScheme {
+	case AuthSchemeAPIKeyHeader:
+		return token
+	default:
+		return "Bearer " + token
+	}
+}
 
 // BaseURL returns the resolved base URL string. Stable across the client's
 // lifetime; safe to use in diagnostic output (no token component).
@@ -519,8 +646,24 @@ func (c *Client) doOnce(ctx context.Context, method string, target *url.URL, req
 		}
 		httpReq.Header.Set(HeaderContentType, ct)
 	}
-	if c.token != "" && httpReq.Header.Get(HeaderAuthorization) == "" {
-		httpReq.Header.Set(HeaderAuthorization, "Bearer "+c.token)
+	// Auth header. Caller-supplied headers always win (the loop above
+	// already populated them) so an explicit Authorization or x-api-key
+	// in req.Headers bypasses both branches.
+	if c.token != "" {
+		switch c.authScheme {
+		case AuthSchemeAPIKeyHeader:
+			h := c.authHeaderName
+			if h == "" {
+				h = DefaultAPIKeyHeader
+			}
+			if httpReq.Header.Get(h) == "" {
+				httpReq.Header.Set(h, c.token)
+			}
+		default: // AuthSchemeBearer / AuthSchemeUnspecified
+			if httpReq.Header.Get(HeaderAuthorization) == "" {
+				httpReq.Header.Set(HeaderAuthorization, "Bearer "+c.token)
+			}
+		}
 	}
 	if c.userAgent != "" && httpReq.Header.Get(HeaderUserAgent) == "" {
 		httpReq.Header.Set(HeaderUserAgent, c.userAgent)

@@ -644,3 +644,155 @@ type roundTripperFunc func(*http.Request) (*http.Response, error)
 func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) {
 	return f(r)
 }
+
+// TestClient_AttachesAPIKeyHeaderForAPIKeyScheme covers the new auth
+// transport: with [api.AuthSchemeAPIKeyHeader] the client sends the
+// raw token in the configured header (defaulting to `x-api-key`) and
+// must NOT set Authorization. The Dokploy production server rejects
+// Bearer auth, so a regression that re-attaches Authorization would
+// silently break every authenticated call.
+func TestClient_AttachesAPIKeyHeaderForAPIKeyScheme(t *testing.T) {
+	const token = "apikey-token-1234"
+	var (
+		gotAuth   string
+		gotAPIKey string
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get(api.HeaderAuthorization)
+		gotAPIKey = r.Header.Get(api.DefaultAPIKeyHeader)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := api.NewClient(api.ClientConfig{
+		BaseURL:    srv.URL,
+		Token:      token,
+		AuthScheme: api.AuthSchemeAPIKeyHeader,
+		UserAgent:  "yalla/test",
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	if _, err := c.Do(t.Context(), &api.Request{Method: "GET", Path: "/whoami"}); err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	if gotAuth != "" {
+		t.Errorf("Authorization should be empty under apiKey scheme; got %q", gotAuth)
+	}
+	if gotAPIKey != token {
+		t.Errorf("%s = %q, want %q", api.DefaultAPIKeyHeader, gotAPIKey, token)
+	}
+	if got := c.AuthHeaderName(); got != api.DefaultAPIKeyHeader {
+		t.Errorf("AuthHeaderName() = %q, want %q", got, api.DefaultAPIKeyHeader)
+	}
+}
+
+// TestClient_AttachesAPIKeyHeaderHonoursCustomName lets the spec
+// declare a custom header name (e.g. `X-Tenant-Token`) without
+// touching client code. Override via [api.ClientConfig.AuthHeaderName].
+func TestClient_AttachesAPIKeyHeaderHonoursCustomName(t *testing.T) {
+	const token = "apikey-custom-2345"
+	const customHeader = "X-Tenant-Token"
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get(customHeader)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := api.NewClient(api.ClientConfig{
+		BaseURL:        srv.URL,
+		Token:          token,
+		AuthScheme:     api.AuthSchemeAPIKeyHeader,
+		AuthHeaderName: customHeader,
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	if _, err := c.Do(t.Context(), &api.Request{Method: "GET", Path: "/probe"}); err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	if got != token {
+		t.Errorf("%s = %q, want %q", customHeader, got, token)
+	}
+	if got := c.AuthHeaderName(); got != customHeader {
+		t.Errorf("AuthHeaderName() = %q, want %q", got, customHeader)
+	}
+}
+
+// TestClient_BasePathPrefixApplied confirms that a host-only BaseURL
+// (the typical YALLA_BASE_URL of `https://host`) is auto-prefixed with
+// the spec's server path so the wire URL still hits the API router. The
+// Dokploy SPA at the root would 404 every request without this rule.
+func TestClient_BasePathPrefixApplied(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := api.NewClient(api.ClientConfig{
+		BaseURL:        srv.URL, // bare host, no path
+		BasePathPrefix: "/api",
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	if _, err := c.Do(t.Context(), &api.Request{Method: "GET", Path: "/project.all"}); err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	if gotPath != "/api/project.all" {
+		t.Errorf("path = %q, want /api/project.all", gotPath)
+	}
+}
+
+// TestClient_BasePathPrefixIgnoredWhenBaseURLHasPath protects the
+// reverse-proxy use case: if the user pastes `https://example.com/dokploy/api`
+// into YALLA_BASE_URL, the explicit path must win over the spec default.
+// Auto-injecting the prefix would relocate the request and break the
+// install.
+func TestClient_BasePathPrefixIgnoredWhenBaseURLHasPath(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(srv.Close)
+
+	c, err := api.NewClient(api.ClientConfig{
+		BaseURL:        srv.URL + "/dokploy/api",
+		BasePathPrefix: "/api", // should be ignored
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	if _, err := c.Do(t.Context(), &api.Request{Method: "GET", Path: "/project.all"}); err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	if gotPath != "/dokploy/api/project.all" {
+		t.Errorf("path = %q, want /dokploy/api/project.all (explicit BaseURL path wins)", gotPath)
+	}
+}
+
+// TestClient_AuthSchemeUnspecifiedFallsBackToBearer locks the
+// backwards-compatibility contract: leaving AuthScheme zero must keep
+// emitting `Authorization: Bearer <token>`, the legacy default that
+// pre-existing tests and external callers still depend on.
+func TestClient_AuthSchemeUnspecifiedFallsBackToBearer(t *testing.T) {
+	var got string
+	c, _ := withTestServer(t, "legacy-token-7890", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get(api.HeaderAuthorization)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	if _, err := c.Do(t.Context(), &api.Request{Method: "GET", Path: "/health"}); err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	if got != "Bearer legacy-token-7890" {
+		t.Errorf("Authorization = %q, want Bearer legacy-token-7890", got)
+	}
+	if name := c.AuthHeaderName(); name != api.HeaderAuthorization {
+		t.Errorf("AuthHeaderName() = %q, want %q", name, api.HeaderAuthorization)
+	}
+}

@@ -40,6 +40,125 @@ func TestDefault_ParsesEmbeddedSpec(t *testing.T) {
 	}
 }
 
+// TestDefault_ServerPathFromEmbeddedSpec locks the spec's server path
+// to "/api". The path is part of the public wire contract: the HTTP
+// client prepends it whenever the user-supplied YALLA_BASE_URL has no
+// path of its own, so a drift here would silently relocate every
+// production request.
+func TestDefault_ServerPathFromEmbeddedSpec(t *testing.T) {
+	r := Default()
+	if r.ServerPath != "/api" {
+		t.Errorf("ServerPath = %q, want %q", r.ServerPath, "/api")
+	}
+}
+
+// TestDefault_PrimarySecuritySchemeIsAPIKey pins the security scheme
+// the client uses by default. The Dokploy server rejects Bearer auth in
+// favour of the spec-declared `x-api-key` header, so any drift here
+// signals either an upstream auth migration we have not absorbed yet or
+// a parser regression that would silently break every authenticated
+// call.
+func TestDefault_PrimarySecuritySchemeIsAPIKey(t *testing.T) {
+	r := Default()
+	scheme, ok := r.PrimarySecurityScheme()
+	if !ok {
+		t.Fatal("PrimarySecurityScheme returned !ok; embedded spec declares a global apiKey requirement")
+	}
+	if scheme.Type != "apiKey" {
+		t.Errorf("scheme.Type = %q, want apiKey", scheme.Type)
+	}
+	if !strings.EqualFold(scheme.In, "header") {
+		t.Errorf("scheme.In = %q, want header", scheme.In)
+	}
+	if !strings.EqualFold(scheme.HeaderName, "x-api-key") {
+		t.Errorf("scheme.HeaderName = %q, want x-api-key", scheme.HeaderName)
+	}
+}
+
+// TestLoad_PrimarySecuritySchemeAbsent confirms the registry tolerates a
+// spec that declares no global `security` block: callers (the HTTP
+// client builder) fall back to the legacy Bearer transport rather than
+// panicking, so a partially-spec'd document can still feed yalla.
+func TestLoad_PrimarySecuritySchemeAbsent(t *testing.T) {
+	spec := []byte(`{
+		"openapi":"3.1.0",
+		"info":{"title":"x","version":"0"},
+		"paths":{}
+	}`)
+	r, err := Load(spec)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if _, ok := r.PrimarySecurityScheme(); ok {
+		t.Error("PrimarySecurityScheme should return false when the spec declares no global security")
+	}
+	if r.ServerPath != "" {
+		t.Errorf("ServerPath = %q, want empty when spec declares no servers", r.ServerPath)
+	}
+}
+
+// TestLoad_PrimarySecuritySchemeDangling exercises the case where the
+// global `security[0]` references a scheme name that
+// `components.securitySchemes` does not declare. The Dokploy spec does
+// the inverse (per-op refs to a missing "Authorization") but a future
+// drop could reverse them; either way the client must fall back to the
+// legacy Bearer transport rather than crash.
+func TestLoad_PrimarySecuritySchemeDangling(t *testing.T) {
+	spec := []byte(`{
+		"openapi":"3.1.0",
+		"info":{"title":"x","version":"0"},
+		"security":[{"missingScheme":[]}],
+		"paths":{}
+	}`)
+	r, err := Load(spec)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if _, ok := r.PrimarySecurityScheme(); ok {
+		t.Error("PrimarySecurityScheme should return false when the referenced scheme is undeclared")
+	}
+}
+
+// TestLoad_ServerPathExtractsPathOnly verifies that only the path
+// component of the first declared server URL contributes to the
+// registry. The host placeholder Dokploy ships in its servers block
+// (`https://your-dokploy-instance.com/api`) is meaningless against a
+// real install — yalla pulls the host from YALLA_BASE_URL.
+func TestLoad_ServerPathExtractsPathOnly(t *testing.T) {
+	spec := []byte(`{
+		"openapi":"3.1.0",
+		"info":{"title":"x","version":"0"},
+		"servers":[{"url":"https://placeholder.example.com/api/"}],
+		"paths":{}
+	}`)
+	r, err := Load(spec)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if r.ServerPath != "/api" {
+		t.Errorf("ServerPath = %q, want /api (trailing slash trimmed)", r.ServerPath)
+	}
+}
+
+// TestLoad_ServerPathRootIsEmpty normalises the "/" path to "" so
+// callers can use a plain non-empty check rather than a string compare
+// to detect "no prefix needed".
+func TestLoad_ServerPathRootIsEmpty(t *testing.T) {
+	spec := []byte(`{
+		"openapi":"3.1.0",
+		"info":{"title":"x","version":"0"},
+		"servers":[{"url":"https://placeholder.example.com/"}],
+		"paths":{}
+	}`)
+	r, err := Load(spec)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if r.ServerPath != "" {
+		t.Errorf("ServerPath = %q, want empty for root path", r.ServerPath)
+	}
+}
+
 func TestDefault_OperationCountMatchesPRD(t *testing.T) {
 	r := Default()
 	if r.Len() != expectedOperationCount {

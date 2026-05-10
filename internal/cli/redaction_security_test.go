@@ -43,15 +43,17 @@ func assertNoLeak(t *testing.T, label, stdout, stderr string) {
 
 // TestRedaction_AuthErrorEnvelopeNeverEchoesToken covers the typed-error
 // rendering path (yalla.error.v1 envelope plus the human "Error [CODE]"
-// banner). A 401 from Dokploy sometimes echoes the bearer back in its
-// response body — yalla must scrub it before the renderer touches stderr.
+// banner). A 401 from Dokploy sometimes echoes the inbound API key back
+// in its response body — yalla must scrub it before the renderer touches
+// stderr. The active scheme is apiKey-in-header (`x-api-key`), so the
+// server echoes that header rather than Authorization.
 func TestRedaction_AuthErrorEnvelopeNeverEchoesToken(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Echo the Authorization header verbatim into the body so a
-		// missing redactor would surface the secret in the envelope.
+		// Echo the apiKey header verbatim into the body so a missing
+		// redactor would surface the secret in the envelope.
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte(`{"error":"unauthorized","received":"` + r.Header.Get(api.HeaderAuthorization) + `"}`))
+		_, _ = w.Write([]byte(`{"error":"unauthorized","received":"` + r.Header.Get(api.DefaultAPIKeyHeader) + `"}`))
 	}))
 	t.Cleanup(srv.Close)
 	t.Setenv(config.EnvBaseURL, srv.URL)
@@ -79,10 +81,12 @@ func TestRedaction_AuthErrorEnvelopeNeverEchoesToken(t *testing.T) {
 	}
 }
 
-// TestRedaction_DryRunEnvelopeScrubsAuthorization is a focused regression
+// TestRedaction_DryRunEnvelopeScrubsAuthHeader is a focused regression
 // for the dry-run path: the resolved request envelope must replace the
-// Bearer value with the sentinel rather than the original token.
-func TestRedaction_DryRunEnvelopeScrubsAuthorization(t *testing.T) {
+// auth header value with the sentinel rather than the original token.
+// Under the apiKey-in-header scheme that header is `x-api-key` (Go
+// canonicalises the wire form to "X-Api-Key" in human output).
+func TestRedaction_DryRunEnvelopeScrubsAuthHeader(t *testing.T) {
 	t.Setenv(config.EnvBaseURL, "https://dokploy.example.com")
 	t.Setenv(config.EnvToken, secretSentinel)
 	withTempConfig(t, "")
@@ -101,8 +105,9 @@ func TestRedaction_DryRunEnvelopeScrubsAuthorization(t *testing.T) {
 		t.Fatalf("Execute (human): %v (stderr=%q)", err, stderr)
 	}
 	assertNoLeak(t, "dry-run-human", stdout, stderr)
-	if !strings.Contains(stdout, "Authorization: "+output.Sentinel) {
-		t.Errorf("expected human dry-run to render Authorization: %s; stdout=%q", output.Sentinel, stdout)
+	wantHeader := http.CanonicalHeaderKey(api.DefaultAPIKeyHeader) + ": " + output.Sentinel
+	if !strings.Contains(stdout, wantHeader) {
+		t.Errorf("expected human dry-run to render %s; stdout=%q", wantHeader, stdout)
 	}
 }
 

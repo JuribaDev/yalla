@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -105,6 +106,35 @@ type Response struct {
 // OAuth scope list (always empty for API key auth, kept for fidelity).
 type SecurityRequirement map[string][]string
 
+// SecurityScheme is a yalla-flavoured projection of a single OpenAPI
+// security scheme declared in `components.securitySchemes`. The fields
+// cover the two scheme types Dokploy declares today (apiKey-in-header and
+// HTTP bearer); other types parse with empty auxiliary fields and a
+// faithful Type so future spec drops do not silently regress.
+//
+// JSON tags use snake_case so the same shape can be emitted in
+// `yalla manifest --json` without a separate DTO.
+type SecurityScheme struct {
+	// Name is the key used in `components.securitySchemes`
+	// (e.g. "apiKey" for the Dokploy spec).
+	Name string `json:"name"`
+
+	// Type is the OpenAPI scheme type ("apiKey", "http", "oauth2", ...).
+	Type string `json:"type"`
+
+	// In is the apiKey location ("header", "query", "cookie") or empty
+	// for non-apiKey types.
+	In string `json:"in,omitempty"`
+
+	// HeaderName is the apiKey header / query parameter / cookie name
+	// (e.g. "x-api-key"). Empty for non-apiKey types.
+	HeaderName string `json:"header_name,omitempty"`
+
+	// Scheme is the HTTP auth scheme ("bearer", "basic") or empty for
+	// non-HTTP types.
+	Scheme string `json:"scheme,omitempty"`
+}
+
 // Registry is the parsed, indexed view of the OpenAPI document. Construct
 // it once via Load() (or Default() for the embedded copy) and pass the
 // pointer wherever it is needed; the type is immutable after construction
@@ -118,12 +148,35 @@ type Registry struct {
 	// matches EmbeddedSpecSHA256; for Load() it matches the input bytes.
 	SHA256 string
 
+	// ServerPath is the path component of the first declared OpenAPI
+	// server URL (e.g. "/api" for Dokploy). Empty when the spec declares
+	// no server or the server URL has no path. Callers prepend this to a
+	// host-only base URL (the typical YALLA_BASE_URL of `https://host`)
+	// so the request still hits the API router instead of the upstream
+	// SPA. An explicit user-supplied path takes precedence to keep
+	// reverse-proxied installs (e.g. `https://example.com/dokploy/api`)
+	// working without a flag.
+	ServerPath string
+
 	// ops is the canonical operation list, sorted by OperationID for
 	// deterministic JSON output.
 	ops []Operation
 
 	// byID indexes ops for O(1) Get(operationId) lookup.
 	byID map[string]int
+
+	// securitySchemes maps scheme name → parsed scheme. Indexed once at
+	// load time so PrimarySecurityScheme is a cheap map lookup.
+	securitySchemes map[string]SecurityScheme
+
+	// primarySchemeName is the scheme name from the first global security
+	// requirement (`security[0]`), or empty when the spec declares no
+	// global security. Per-operation security overrides are intentionally
+	// NOT used here: the Dokploy spec's per-op `security` blocks
+	// reference an undeclared "Authorization" scheme that the live server
+	// rejects, so the document-level `apiKey` requirement is the only
+	// one we trust to drive the wire transport.
+	primarySchemeName string
 }
 
 // Load parses an OpenAPI 3.1 document into a Registry. The bytes must be
@@ -203,13 +256,81 @@ func Load(spec []byte) (*Registry, error) {
 	}
 
 	sum := sha256.Sum256(spec)
+
+	// Server path: the first declared server URL contributes only its
+	// path component (e.g. "/api"). The host/scheme is supplied by the
+	// user via YALLA_BASE_URL — the spec's placeholder host is meaningless
+	// for a real install. A "/" path is normalised to "" so callers can
+	// treat empty as "no prefix needed".
+	serverPath := ""
+	if len(doc.Servers) > 0 {
+		if p, perr := serverPathOf(doc.Servers[0].URL); perr == nil {
+			serverPath = p
+		}
+	}
+
+	// Security schemes: project every declared scheme into the public
+	// SecurityScheme shape. Unknown types still land in the map so the
+	// manifest emitter sees them; only the recognised types (apiKey,
+	// http) are actionable by the client.
+	schemes := make(map[string]SecurityScheme, len(doc.Components.SecuritySchemes))
+	for name, raw := range doc.Components.SecuritySchemes {
+		schemes[name] = SecurityScheme{
+			Name:       name,
+			Type:       raw.Type,
+			In:         raw.In,
+			HeaderName: raw.Name,
+			Scheme:     raw.Scheme,
+		}
+	}
+
+	// Primary scheme: the first key of the first global security
+	// requirement. OpenAPI permits multiple alternative requirements;
+	// yalla treats only the first as canonical because no Dokploy
+	// install has ever needed more than one.
+	primary := ""
+	for _, req := range doc.Security {
+		for k := range req {
+			primary = k
+			break
+		}
+		if primary != "" {
+			break
+		}
+	}
+
 	return &Registry{
-		Title:   doc.Info.Title,
-		Version: doc.Info.Version,
-		SHA256:  hex.EncodeToString(sum[:]),
-		ops:     ops,
-		byID:    idx,
+		Title:             doc.Info.Title,
+		Version:           doc.Info.Version,
+		SHA256:            hex.EncodeToString(sum[:]),
+		ServerPath:        serverPath,
+		ops:               ops,
+		byID:              idx,
+		securitySchemes:   schemes,
+		primarySchemeName: primary,
 	}, nil
+}
+
+// serverPathOf returns the path component of an OpenAPI server URL.
+// "/" is normalised to "" so callers can treat the result as
+// "no prefix needed" with a simple zero-value check. A trailing slash is
+// stripped for the same reason — joining `"/api"` with `"/foo"` gives
+// `"/api/foo"` directly, no double-slash. The function tolerates a
+// scheme-less or relative server URL: only the parsed Path matters.
+func serverPathOf(serverURL string) (string, error) {
+	s := strings.TrimSpace(serverURL)
+	if s == "" {
+		return "", nil
+	}
+	u, err := url.Parse(s)
+	if err != nil {
+		return "", err
+	}
+	p := u.Path
+	if p == "" || p == "/" {
+		return "", nil
+	}
+	return strings.TrimSuffix(p, "/"), nil
 }
 
 // Default returns the lazily-constructed registry built from EmbeddedSpec.
@@ -266,6 +387,40 @@ func (r *Registry) IDs() []string {
 	return out
 }
 
+// PrimarySecurityScheme returns the resolved scheme referenced by the
+// document-level `security[0]`. The boolean is false when the spec
+// declares no global security or when the referenced scheme is missing
+// from `components.securitySchemes` (which the Dokploy spec does for the
+// stale per-operation "Authorization" references).
+//
+// Callers (most importantly the HTTP client builder in `internal/cli`)
+// branch on the returned scheme to decide which header carries the
+// token. A `false` return means "fall back to the legacy Bearer
+// transport"; the registry never mutates client behaviour silently.
+func (r *Registry) PrimarySecurityScheme() (SecurityScheme, bool) {
+	if r == nil || r.primarySchemeName == "" {
+		return SecurityScheme{}, false
+	}
+	s, ok := r.securitySchemes[r.primarySchemeName]
+	return s, ok
+}
+
+// SecuritySchemes returns a fresh copy of every parsed security scheme
+// keyed by name. The copy isolates callers from registry internals so a
+// future manifest emitter can mutate its working set without bleeding
+// back into the singleton Registry. Order is map-iteration order;
+// callers that need a stable list should sort the keys themselves.
+func (r *Registry) SecuritySchemes() map[string]SecurityScheme {
+	if r == nil || len(r.securitySchemes) == 0 {
+		return map[string]SecurityScheme{}
+	}
+	out := make(map[string]SecurityScheme, len(r.securitySchemes))
+	for k, v := range r.securitySchemes {
+		out[k] = v
+	}
+	return out
+}
+
 // Tags returns the unique tag set in alphabetical order. The empty-tag
 // untagged operation is reported as "" so callers can decide whether to
 // surface or filter it.
@@ -291,14 +446,41 @@ var canonicalMethods = []string{
 }
 
 // rawDoc is the minimal subset of the OpenAPI document the registry parses
-// directly. Anything more (servers, security globals, components.schemas)
-// is preserved as raw JSON via the per-operation Schema fields.
+// directly. Component schemas (the `components.schemas` namespace, $defs,
+// etc.) are still preserved as raw JSON via the per-operation Schema
+// fields; only fields the runtime client actually branches on get an
+// explicit struct here.
 type rawDoc struct {
 	Info struct {
 		Title   string `json:"title"`
 		Version string `json:"version"`
 	} `json:"info"`
+	Servers    []rawServer           `json:"servers"`
+	Security   []SecurityRequirement `json:"security"`
+	Components struct {
+		SecuritySchemes map[string]rawSecurityScheme `json:"securitySchemes"`
+	} `json:"components"`
 	Paths map[string]map[string]json.RawMessage `json:"paths"`
+}
+
+// rawServer mirrors a single OpenAPI `servers[]` entry. Only the URL is
+// material to the runtime; description and `variables` are intentionally
+// dropped because yalla never substitutes server variables — the user's
+// YALLA_BASE_URL is the substitution.
+type rawServer struct {
+	URL string `json:"url"`
+}
+
+// rawSecurityScheme mirrors a single OpenAPI `components.securitySchemes`
+// entry. The four fields cover the only types Dokploy declares; the
+// projection layer copies them verbatim into [SecurityScheme] so an
+// unsupported type still appears in the registry without surprising the
+// client (which only acts on the recognised combinations).
+type rawSecurityScheme struct {
+	Type   string `json:"type"`
+	In     string `json:"in"`
+	Name   string `json:"name"`
+	Scheme string `json:"scheme"`
 }
 
 // rawOperation captures the OpenAPI operation fields the registry projects.

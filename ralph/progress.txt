@@ -31657,3 +31657,150 @@ forward-reference lesson before assuming any field shape.
     `coveredAPIOperations` slice now contains 444 entries plus the six
     foundation stories, totalling 462/462 stories at `passes=true`.
 ---
+
+## 2026-05-10 - fix: align HTTP transport with Dokploy spec (auth + server path)
+
+- **Why:** First end-to-end test against a real Dokploy install
+  (`https://ploy.jsa.sa`) revealed two transport-level bugs that made
+  every authenticated call fail. The CLI built clean and parsed inputs
+  correctly, but the wire request was off by both *header* and *path*:
+    1. Auth header: yalla hardcoded `Authorization: Bearer <token>` even
+       though the OpenAPI spec declares a global `apiKey` security scheme
+       in header `x-api-key`. Dokploy's production server rejects Bearer
+       (HTTP 401) and only honours the spec-declared header.
+    2. Base URL: the spec's `servers[0].url` is
+       `https://your-dokploy-instance.com/api`, i.e. the API is mounted
+       under `/api`. yalla joined the user's `YALLA_BASE_URL` directly
+       with the operation path, so a host-only base URL hit the SPA at
+       the root and returned 404 with an HTML body.
+  Both are silent contract violations: the CLI surfaced typed errors but
+  no authenticated operation could ever succeed against an unmodified
+  Dokploy install.
+
+- **What changed (no PRD story; bug-fix flow):**
+  - `internal/api/registry.go`:
+    - New `SecurityScheme` projection of `components.securitySchemes`
+      (Type/In/HeaderName/Scheme) with snake_case JSON tags ready for
+      `yalla manifest --json`.
+    - `Registry.ServerPath` parses the path component of `servers[0].url`
+      (normalises `"/"` → `""`, trims trailing `/`).
+    - `Registry.PrimarySecurityScheme()` returns the resolved scheme for
+      the document-level `security[0]`. Returns `(_, false)` when the
+      reference is dangling (e.g. the Dokploy spec's stale per-op
+      `Authorization` references) so callers can fall back rather than
+      crash.
+    - `Registry.SecuritySchemes()` returns a fresh copy of the parsed
+      map for future manifest emission.
+    - Per-op `security` blocks are intentionally NOT consulted at the
+      transport layer — the upstream spec ships with a 450/450
+      reference to an undeclared `Authorization` scheme that the live
+      server rejects, so only the document-level requirement is trusted.
+  - `internal/api/client.go`:
+    - New `AuthScheme` type with constants
+      `AuthSchemeBearer` / `AuthSchemeAPIKeyHeader` (zero-value
+      `AuthSchemeUnspecified` falls back to Bearer for backward
+      compatibility — every pre-existing test passes unchanged).
+    - `DefaultAPIKeyHeader = "x-api-key"` (the casing matches the
+      Dokploy spec verbatim).
+    - `ClientConfig.AuthScheme`, `AuthHeaderName`, `BasePathPrefix`
+      added; the `doOnce` Bearer block became a `switch` on the scheme.
+    - `NewClient` injects `BasePathPrefix` into the parsed BaseURL only
+      when the user-supplied URL has no path of its own (`""` or `"/"`).
+      An explicit user path wins, so reverse-proxied installs keep
+      working without flag gymnastics.
+    - New accessors `Client.AuthHeaderName()` / `AuthHeaderValue()`
+      let the dry-run renderer redact the right header without
+      duplicating the scheme-→-header rule.
+  - `internal/cli/api_call_cmd.go`:
+    - New `resolveAPIClientDefaults(reg)` projects the registry's
+      primary scheme + server path into the `ClientConfig` shape. The
+      transport tracks the spec automatically: a future Dokploy spec
+      drop that switches auth or relocates the API mount applies
+      without touching this call site.
+    - `apiCallClientFactory` now wires `AuthScheme`, `AuthHeaderName`,
+      `BasePathPrefix` from the resolver.
+    - `runAPICall` mirrors the prefix into the dry-run URL via the new
+      `applyServerPath(baseURL, prefix)` helper so `--dry-run` and the
+      live wire produce byte-identical URLs.
+    - `emitAPICallDryRun` now redacts the active scheme's header
+      (Authorization for bearer, the configured apiKey header for
+      apiKey) via `dryRunAuthRedaction`.
+
+- **Tests:**
+  - `internal/api/registry_test.go`: 6 new tests
+    (`TestDefault_ServerPathFromEmbeddedSpec`,
+    `TestDefault_PrimarySecuritySchemeIsAPIKey`,
+    `TestLoad_PrimarySecuritySchemeAbsent`,
+    `TestLoad_PrimarySecuritySchemeDangling`,
+    `TestLoad_ServerPathExtractsPathOnly`,
+    `TestLoad_ServerPathRootIsEmpty`).
+  - `internal/api/client_test.go`: 5 new tests
+    (`TestClient_AttachesAPIKeyHeaderForAPIKeyScheme`,
+    `TestClient_AttachesAPIKeyHeaderHonoursCustomName`,
+    `TestClient_BasePathPrefixApplied`,
+    `TestClient_BasePathPrefixIgnoredWhenBaseURLHasPath`,
+    `TestClient_AuthSchemeUnspecifiedFallsBackToBearer`).
+  - `internal/cli/api_call_cmd_test.go`:
+    - `TestAPICall_Success_JSON` now asserts `x-api-key: <token>` on
+      the wire and zero `Authorization`. Path assertion goes through
+      a new `coverageWirePath(opPath)` helper that consults
+      `api.Default().ServerPath`.
+    - `TestAPICall_DryRun_PrintsResolvedRequest` asserts the
+      `https://...example.com/api/...` URL and the redacted
+      `X-Api-Key` entry in the dry-run envelope.
+  - `internal/cli/api_coverage_test.go`: harness updated in one place
+    (`runAPICoverageSuccess`) — the apiKey header check + path
+    assertion via `coverageWirePath` propagate to all 444 covered
+    operations without per-case edits.
+  - `internal/cli/redaction_security_test.go`:
+    - `TestRedaction_AuthErrorEnvelopeNeverEchoesToken`: server now
+      echoes the `x-api-key` value (the redactor already covers this
+      header pattern at `internal/output/redact.go`).
+    - `TestRedaction_DryRunEnvelopeScrubsAuthorization` renamed to
+      `TestRedaction_DryRunEnvelopeScrubsAuthHeader` and asserts
+      `X-Api-Key: [REDACTED]` instead of `Authorization: [REDACTED]`.
+
+- **Quality gates:**
+  - `gofmt -w`: clean.
+  - `go vet ./...`: clean.
+  - `go mod tidy`: no changes.
+  - `go test ./...`: PASS in 0.59s + 2.25s (api + cli + 7 other pkgs).
+  - `go test -race ./...`: PASS in 1.67s + 4.12s (race-detector clean).
+  - `golangci-lint`, `staticcheck`, `govulncheck`, `goreleaser`: not
+    installed in this environment (documented per the agent contract).
+
+- **Live verification against `https://ploy.jsa.sa`:**
+  - `yalla --json api call project-all` (no `--input`, no `/api` in
+    BaseURL) → HTTP 200, 2 projects returned, 437 ms, URL resolved to
+    `https://ploy.jsa.sa/api/project.all` automatically.
+  - Reverse-proxy variant (`YALLA_BASE_URL=https://ploy.jsa.sa/api`)
+    also returns HTTP 200; explicit path wins as designed.
+  - `yalla --json api call project-all --dry-run` shows
+    `X-Api-Key: [REDACTED]` and the prefixed URL — agents diffing
+    dry-run vs live see byte-identical output.
+
+- **Learnings:**
+  - **The OpenAPI spec already had the answers.** Both fixes are
+    *spec-driven*: the client now reads `servers[0].url` and
+    `components.securitySchemes` at registry-build time and threads
+    them into `ClientConfig`. No hardcoded `"/api"` or `"x-api-key"`
+    string lives in non-spec code; updating the spec updates the wire
+    transport.
+  - **Spec drift safety net.** The Dokploy spec ships with every
+    operation referencing an undeclared `Authorization` security
+    scheme. `PrimarySecurityScheme()` returning `(_, false)` for
+    dangling references — together with the global-only resolution
+    rule — means a future spec that fixes the per-op refs is a no-op
+    upgrade for the client.
+  - **Backward compatibility is cheap when the zero value is the legacy
+    behaviour.** The `AuthScheme` zero value defaulting to Bearer let
+    every pre-existing api-package test pass unchanged. Only the cli
+    package needed updates, and the harness change was a single line
+    in `runAPICoverageSuccess` that propagated to all 444 ops.
+  - **`coverageWirePath` belongs in the harness.** Originally I tried
+    appending the prefix to the BaseURL in `setupAPICallServer` so per-
+    op tests would keep checking bare paths. That hid the prefix from
+    the assertion entirely — the test would have stopped catching a
+    regression that broke the prefix injection. Surfacing it via a
+    helper keeps assertions honest about the wire path.
+---
