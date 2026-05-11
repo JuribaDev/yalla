@@ -1,0 +1,5 @@
+test/
+binaries/
+node_modules/
+*.tgz
+.gitignore

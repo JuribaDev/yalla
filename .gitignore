@@ -1,0 +1,21 @@
+# Build artifacts
+/dist/
+/bin/
+yalla
+yalla.exe
+
+# Go test caches and coverage
+*.out
+*.test
+coverage.txt
+
+# npm wrapper runtime artefacts (downloaded at install time)
+/npm/binaries/
+/npm/node_modules/
+/npm/yalla-cli-*.tgz
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp

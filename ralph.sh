@@ -1,6 +1,6 @@
 #!/bin/bash
 # Ralph Wiggum - Long-running AI agent loop
-# Usage: ./ralph.sh [max_iterations]
+# Usage: ./ralph.sh [max_iterations_label]
 
 set -e
 
@@ -73,31 +73,29 @@ if [ ! -f "$PROGRESS_FILE" ]; then
   echo "---" >> "$PROGRESS_FILE"
 fi
 
-echo "Starting Ralph - Max iterations: $MAX_ITERATIONS"
+echo "Starting Ralph - runs until all PRD stories pass"
 
-for i in $(seq 1 $MAX_ITERATIONS); do
+i=1
+while true; do
   echo ""
   echo "═══════════════════════════════════════════════════════"
-  echo "  Ralph Iteration $i of $MAX_ITERATIONS"
+  echo "  Ralph Iteration $i"
   echo "═══════════════════════════════════════════════════════"
 
   # Run Claude Code with the ralph prompt
   PROMPT=$(cat "$SCRIPT_DIR/prompt.md")
   OUTPUT=$(claude -p --dangerously-skip-permissions "$PROMPT" 2>&1 | tee /dev/stderr) || true
 
-  # Check for completion signal
-  if echo "$OUTPUT" | grep -q "<promise>COMPLETE</promise>"; then
+  # Stop only when the PRD says every story is complete.
+  REMAINING_STORIES=$(jq '[.userStories[] | select(.passes != true)] | length' "$PRD_FILE")
+  if [ "$REMAINING_STORIES" -eq 0 ]; then
     echo ""
     echo "Ralph completed all tasks!"
-    echo "Completed at iteration $i of $MAX_ITERATIONS"
+    echo "Completed at iteration $i"
     exit 0
   fi
 
-  echo "Iteration $i complete. Continuing..."
+  echo "Iteration $i complete. Remaining stories: $REMAINING_STORIES. Continuing..."
   sleep 2
+  i=$((i + 1))
 done
-
-echo ""
-echo "Ralph reached max iterations ($MAX_ITERATIONS) without completing all tasks."
-echo "Check $PROGRESS_FILE for status."
-exit 1

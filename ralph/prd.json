@@ -1,6 +1,6 @@
 {
   "project": "Yalla-Dokploy-Agent-First-CLI",
-  "branchName": "ralph/yalla-cli",
+  "branchName": "ralph/claude-yalla",
   "description": "Build Yalla, a production-grade Go CLI for Dokploy that is first-class for AI agents, covers every Dokploy OpenAPI operation, ships as native cross-platform binaries, and has a strong verification loop.",
   "sourceApi": {
     "path": "/Users/juribadev/projects/poc/dokploy/openapi.json",
@@ -189,7 +189,7 @@
       ],
       "type": "foundation",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Start here. This story creates the skeleton every API story depends on."
     },
     {
@@ -206,7 +206,7 @@
       ],
       "type": "foundation",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "This is the most important agent-first contract."
     },
     {
@@ -223,7 +223,7 @@
       ],
       "type": "foundation",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Do not spread config reads through command code. Load once and pass typed config down."
     },
     {
@@ -239,7 +239,7 @@
       ],
       "type": "foundation",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "OpenAPI sha256: 09999cf46fa7504ca2bc7539d8b1e6817da3d612964a5f83fe404dd32c56c7c7"
     },
     {
@@ -256,7 +256,7 @@
       ],
       "type": "foundation",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "This is the universal safety net for all Dokploy APIs."
     },
     {
@@ -273,7 +273,7 @@
       ],
       "type": "foundation",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Keep HTTP behavior testable without a live Dokploy server."
     },
     {
@@ -289,7 +289,7 @@
       ],
       "type": "foundation",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "AI agents should be able to inspect capabilities without scraping help text."
     },
     {
@@ -305,7 +305,7 @@
       ],
       "type": "foundation",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Do this before adding many operation stories so later work stays consistent."
     },
     {
@@ -322,7 +322,7 @@
       ],
       "type": "foundation",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Normal users and agents must not need Go installed."
     },
     {
@@ -339,7 +339,7 @@
       ],
       "type": "foundation",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Self-update is allowed only for unmanaged/manual binaries."
     },
     {
@@ -355,7 +355,7 @@
       ],
       "type": "foundation",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "The CLI will handle production infrastructure credentials. Treat leaks as release blockers."
     },
     {
@@ -371,7 +371,7 @@
       ],
       "type": "foundation",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Use clear names. Do not optimize for clever short aliases."
     },
     {
@@ -390,7 +390,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "admin",
         "operationId": "admin-setupMonitoring",
@@ -432,7 +432,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "ai",
         "operationId": "ai-create",
@@ -474,7 +474,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "ai",
         "operationId": "ai-delete",
@@ -516,7 +516,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "ai",
         "operationId": "ai-deploy",
@@ -558,7 +558,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "ai",
         "operationId": "ai-get",
@@ -606,7 +606,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "ai",
         "operationId": "ai-getAll",
@@ -647,7 +647,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "ai",
         "operationId": "ai-getModels",
@@ -701,7 +701,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "ai",
         "operationId": "ai-one",
@@ -749,7 +749,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "ai",
         "operationId": "ai-suggest",
@@ -791,7 +791,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "ai",
         "operationId": "ai-update",
@@ -833,7 +833,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "application",
         "operationId": "application-cancelDeployment",
@@ -875,7 +875,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "application",
         "operationId": "application-cleanQueues",
@@ -917,7 +917,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "application",
         "operationId": "application-clearDeployments",
@@ -959,7 +959,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "application",
         "operationId": "application-create",
@@ -1001,7 +1001,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "application",
         "operationId": "application-delete",
@@ -1043,7 +1043,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "application",
         "operationId": "application-deploy",
@@ -1085,7 +1085,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "application",
         "operationId": "application-disconnectGitProvider",
@@ -1127,7 +1127,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "application",
         "operationId": "application-killBuild",
@@ -1169,7 +1169,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "application",
         "operationId": "application-markRunning",
@@ -1211,7 +1211,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "application",
         "operationId": "application-move",
@@ -1253,7 +1253,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "application",
         "operationId": "application-one",
@@ -1301,7 +1301,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "application",
         "operationId": "application-readAppMonitoring",
@@ -1349,7 +1349,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "application",
         "operationId": "application-readTraefikConfig",
@@ -1397,7 +1397,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "application",
         "operationId": "application-redeploy",
@@ -1439,7 +1439,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "application",
         "operationId": "application-refreshToken",
@@ -1481,7 +1481,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "application",
         "operationId": "application-reload",
@@ -1523,7 +1523,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "application",
         "operationId": "application-saveBitbucketProvider",
@@ -1565,7 +1565,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "application",
         "operationId": "application-saveBuildType",
@@ -1607,7 +1607,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "application",
         "operationId": "application-saveDockerProvider",
@@ -1649,7 +1649,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "application",
         "operationId": "application-saveEnvironment",
@@ -1691,7 +1691,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "application",
         "operationId": "application-saveGiteaProvider",
@@ -1733,7 +1733,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "application",
         "operationId": "application-saveGithubProvider",
@@ -1775,7 +1775,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "application",
         "operationId": "application-saveGitlabProvider",
@@ -1817,7 +1817,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "application",
         "operationId": "application-saveGitProvider",
@@ -1859,7 +1859,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "application",
         "operationId": "application-search",
@@ -1967,7 +1967,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "application",
         "operationId": "application-start",
@@ -2009,7 +2009,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "application",
         "operationId": "application-stop",
@@ -2051,7 +2051,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "application",
         "operationId": "application-update",
@@ -2093,7 +2093,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "application",
         "operationId": "application-updateTraefikConfig",
@@ -2135,7 +2135,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "backup",
         "operationId": "backup-create",
@@ -2177,7 +2177,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "backup",
         "operationId": "backup-listBackupFiles",
@@ -2237,7 +2237,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "backup",
         "operationId": "backup-manualBackupCompose",
@@ -2279,7 +2279,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "backup",
         "operationId": "backup-manualBackupMariadb",
@@ -2321,7 +2321,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "backup",
         "operationId": "backup-manualBackupMongo",
@@ -2363,7 +2363,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "backup",
         "operationId": "backup-manualBackupMySql",
@@ -2405,7 +2405,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "backup",
         "operationId": "backup-manualBackupPostgres",
@@ -2447,7 +2447,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "backup",
         "operationId": "backup-manualBackupWebServer",
@@ -2489,7 +2489,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "backup",
         "operationId": "backup-one",
@@ -2537,7 +2537,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "backup",
         "operationId": "backup-remove",
@@ -2579,7 +2579,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "backup",
         "operationId": "backup-update",
@@ -2621,7 +2621,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "bitbucket",
         "operationId": "bitbucket-bitbucketProviders",
@@ -2662,7 +2662,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "bitbucket",
         "operationId": "bitbucket-create",
@@ -2704,7 +2704,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "bitbucket",
         "operationId": "bitbucket-getBitbucketBranches",
@@ -2764,7 +2764,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "bitbucket",
         "operationId": "bitbucket-getBitbucketRepositories",
@@ -2812,7 +2812,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "bitbucket",
         "operationId": "bitbucket-one",
@@ -2860,7 +2860,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "bitbucket",
         "operationId": "bitbucket-testConnection",
@@ -2902,7 +2902,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "bitbucket",
         "operationId": "bitbucket-update",
@@ -2944,7 +2944,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "certificates",
         "operationId": "certificates-all",
@@ -2985,7 +2985,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "certificates",
         "operationId": "certificates-create",
@@ -3027,7 +3027,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "certificates",
         "operationId": "certificates-one",
@@ -3075,7 +3075,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "certificates",
         "operationId": "certificates-remove",
@@ -3117,7 +3117,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "cluster",
         "operationId": "cluster-addManager",
@@ -3165,7 +3165,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "cluster",
         "operationId": "cluster-addWorker",
@@ -3213,7 +3213,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "cluster",
         "operationId": "cluster-getNodes",
@@ -3261,7 +3261,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "cluster",
         "operationId": "cluster-removeWorker",
@@ -3303,7 +3303,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "compose",
         "operationId": "compose-cancelDeployment",
@@ -3345,7 +3345,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "compose",
         "operationId": "compose-cleanQueues",
@@ -3387,7 +3387,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "compose",
         "operationId": "compose-clearDeployments",
@@ -3429,7 +3429,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "compose",
         "operationId": "compose-create",
@@ -3471,7 +3471,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "compose",
         "operationId": "compose-delete",
@@ -3513,7 +3513,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "compose",
         "operationId": "compose-deploy",
@@ -3555,7 +3555,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "compose",
         "operationId": "compose-deployTemplate",
@@ -3597,7 +3597,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "compose",
         "operationId": "compose-disconnectGitProvider",
@@ -3639,7 +3639,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "compose",
         "operationId": "compose-fetchSourceType",
@@ -3681,7 +3681,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "compose",
         "operationId": "compose-getConvertedCompose",
@@ -3729,7 +3729,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "compose",
         "operationId": "compose-getDefaultCommand",
@@ -3777,7 +3777,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "compose",
         "operationId": "compose-getTags",
@@ -3825,7 +3825,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "compose",
         "operationId": "compose-import",
@@ -3867,7 +3867,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "compose",
         "operationId": "compose-isolatedDeployment",
@@ -3909,7 +3909,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "compose",
         "operationId": "compose-killBuild",
@@ -3951,7 +3951,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "compose",
         "operationId": "compose-loadMountsByService",
@@ -4005,7 +4005,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "compose",
         "operationId": "compose-loadServices",
@@ -4059,7 +4059,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "compose",
         "operationId": "compose-move",
@@ -4101,7 +4101,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "compose",
         "operationId": "compose-one",
@@ -4149,7 +4149,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "compose",
         "operationId": "compose-processTemplate",
@@ -4191,7 +4191,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "compose",
         "operationId": "compose-randomizeCompose",
@@ -4233,7 +4233,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "compose",
         "operationId": "compose-redeploy",
@@ -4275,7 +4275,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "compose",
         "operationId": "compose-refreshToken",
@@ -4317,7 +4317,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "compose",
         "operationId": "compose-search",
@@ -4407,7 +4407,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "compose",
         "operationId": "compose-start",
@@ -4449,7 +4449,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "compose",
         "operationId": "compose-stop",
@@ -4491,7 +4491,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "compose",
         "operationId": "compose-templates",
@@ -4539,7 +4539,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "compose",
         "operationId": "compose-update",
@@ -4581,7 +4581,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "deployment",
         "operationId": "deployment-all",
@@ -4629,7 +4629,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "deployment",
         "operationId": "deployment-allByCompose",
@@ -4677,7 +4677,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "deployment",
         "operationId": "deployment-allByServer",
@@ -4725,7 +4725,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "deployment",
         "operationId": "deployment-allByType",
@@ -4779,7 +4779,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "deployment",
         "operationId": "deployment-allCentralized",
@@ -4820,7 +4820,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "deployment",
         "operationId": "deployment-killProcess",
@@ -4862,7 +4862,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "deployment",
         "operationId": "deployment-queueList",
@@ -4903,7 +4903,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "deployment",
         "operationId": "deployment-removeDeployment",
@@ -4945,7 +4945,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "destination",
         "operationId": "destination-all",
@@ -4986,7 +4986,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "destination",
         "operationId": "destination-create",
@@ -5028,7 +5028,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "destination",
         "operationId": "destination-one",
@@ -5076,7 +5076,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "destination",
         "operationId": "destination-remove",
@@ -5118,7 +5118,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "destination",
         "operationId": "destination-testConnection",
@@ -5160,7 +5160,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "destination",
         "operationId": "destination-update",
@@ -5202,7 +5202,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "docker",
         "operationId": "docker-getConfig",
@@ -5256,7 +5256,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "docker",
         "operationId": "docker-getContainers",
@@ -5304,7 +5304,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "docker",
         "operationId": "docker-getContainersByAppLabel",
@@ -5364,7 +5364,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "docker",
         "operationId": "docker-getContainersByAppNameMatch",
@@ -5424,7 +5424,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "docker",
         "operationId": "docker-getServiceContainersByAppName",
@@ -5478,7 +5478,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "docker",
         "operationId": "docker-getStackContainersByAppName",
@@ -5532,7 +5532,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "docker",
         "operationId": "docker-restartContainer",
@@ -5574,7 +5574,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "domain",
         "operationId": "domain-byApplicationId",
@@ -5622,7 +5622,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "domain",
         "operationId": "domain-byComposeId",
@@ -5670,7 +5670,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "domain",
         "operationId": "domain-canGenerateTraefikMeDomains",
@@ -5718,7 +5718,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "domain",
         "operationId": "domain-create",
@@ -5760,7 +5760,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "domain",
         "operationId": "domain-delete",
@@ -5802,7 +5802,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "domain",
         "operationId": "domain-generateDomain",
@@ -5844,7 +5844,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "domain",
         "operationId": "domain-one",
@@ -5892,7 +5892,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "domain",
         "operationId": "domain-update",
@@ -5934,7 +5934,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "domain",
         "operationId": "domain-validateDomain",
@@ -5976,7 +5976,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "environment",
         "operationId": "environment-byProjectId",
@@ -6024,7 +6024,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "environment",
         "operationId": "environment-create",
@@ -6066,7 +6066,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "environment",
         "operationId": "environment-duplicate",
@@ -6108,7 +6108,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "environment",
         "operationId": "environment-one",
@@ -6156,7 +6156,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "environment",
         "operationId": "environment-remove",
@@ -6198,7 +6198,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "environment",
         "operationId": "environment-search",
@@ -6276,7 +6276,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "environment",
         "operationId": "environment-update",
@@ -6318,7 +6318,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "gitea",
         "operationId": "gitea-create",
@@ -6360,7 +6360,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "gitea",
         "operationId": "gitea-getGiteaBranches",
@@ -6420,7 +6420,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "gitea",
         "operationId": "gitea-getGiteaRepositories",
@@ -6468,7 +6468,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "gitea",
         "operationId": "gitea-getGiteaUrl",
@@ -6516,7 +6516,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "gitea",
         "operationId": "gitea-giteaProviders",
@@ -6557,7 +6557,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "gitea",
         "operationId": "gitea-one",
@@ -6605,7 +6605,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "gitea",
         "operationId": "gitea-testConnection",
@@ -6647,7 +6647,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "gitea",
         "operationId": "gitea-update",
@@ -6689,7 +6689,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "github",
         "operationId": "github-getGithubBranches",
@@ -6749,7 +6749,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "github",
         "operationId": "github-getGithubRepositories",
@@ -6797,7 +6797,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "github",
         "operationId": "github-githubProviders",
@@ -6838,7 +6838,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "github",
         "operationId": "github-one",
@@ -6886,7 +6886,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "github",
         "operationId": "github-testConnection",
@@ -6928,7 +6928,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "github",
         "operationId": "github-update",
@@ -6970,7 +6970,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "gitlab",
         "operationId": "gitlab-create",
@@ -7012,7 +7012,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "gitlab",
         "operationId": "gitlab-getGitlabBranches",
@@ -7078,7 +7078,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "gitlab",
         "operationId": "gitlab-getGitlabRepositories",
@@ -7126,7 +7126,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "gitlab",
         "operationId": "gitlab-gitlabProviders",
@@ -7167,7 +7167,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "gitlab",
         "operationId": "gitlab-one",
@@ -7215,7 +7215,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "gitlab",
         "operationId": "gitlab-testConnection",
@@ -7257,7 +7257,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "gitlab",
         "operationId": "gitlab-update",
@@ -7299,7 +7299,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "gitProvider",
         "operationId": "gitProvider-getAll",
@@ -7340,7 +7340,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "gitProvider",
         "operationId": "gitProvider-remove",
@@ -7382,7 +7382,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "licenseKey",
         "operationId": "licenseKey-activate",
@@ -7424,7 +7424,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "licenseKey",
         "operationId": "licenseKey-deactivate",
@@ -7464,7 +7464,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "licenseKey",
         "operationId": "licenseKey-getEnterpriseSettings",
@@ -7505,7 +7505,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "licenseKey",
         "operationId": "licenseKey-haveValidLicenseKey",
@@ -7546,7 +7546,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "licenseKey",
         "operationId": "licenseKey-updateEnterpriseSettings",
@@ -7588,7 +7588,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "licenseKey",
         "operationId": "licenseKey-validate",
@@ -7628,7 +7628,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mariadb",
         "operationId": "mariadb-changeStatus",
@@ -7670,7 +7670,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mariadb",
         "operationId": "mariadb-create",
@@ -7712,7 +7712,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mariadb",
         "operationId": "mariadb-deploy",
@@ -7754,7 +7754,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mariadb",
         "operationId": "mariadb-move",
@@ -7796,7 +7796,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mariadb",
         "operationId": "mariadb-one",
@@ -7844,7 +7844,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mariadb",
         "operationId": "mariadb-rebuild",
@@ -7886,7 +7886,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mariadb",
         "operationId": "mariadb-reload",
@@ -7928,7 +7928,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mariadb",
         "operationId": "mariadb-remove",
@@ -7970,7 +7970,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mariadb",
         "operationId": "mariadb-saveEnvironment",
@@ -8012,7 +8012,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mariadb",
         "operationId": "mariadb-saveExternalPort",
@@ -8054,7 +8054,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mariadb",
         "operationId": "mariadb-search",
@@ -8144,7 +8144,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mariadb",
         "operationId": "mariadb-start",
@@ -8186,7 +8186,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mariadb",
         "operationId": "mariadb-stop",
@@ -8228,7 +8228,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mariadb",
         "operationId": "mariadb-update",
@@ -8270,7 +8270,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mongo",
         "operationId": "mongo-changeStatus",
@@ -8312,7 +8312,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mongo",
         "operationId": "mongo-create",
@@ -8354,7 +8354,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mongo",
         "operationId": "mongo-deploy",
@@ -8396,7 +8396,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mongo",
         "operationId": "mongo-move",
@@ -8438,7 +8438,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mongo",
         "operationId": "mongo-one",
@@ -8486,7 +8486,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mongo",
         "operationId": "mongo-rebuild",
@@ -8528,7 +8528,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mongo",
         "operationId": "mongo-reload",
@@ -8570,7 +8570,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mongo",
         "operationId": "mongo-remove",
@@ -8612,7 +8612,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mongo",
         "operationId": "mongo-saveEnvironment",
@@ -8654,7 +8654,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mongo",
         "operationId": "mongo-saveExternalPort",
@@ -8696,7 +8696,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mongo",
         "operationId": "mongo-search",
@@ -8786,7 +8786,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mongo",
         "operationId": "mongo-start",
@@ -8828,7 +8828,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mongo",
         "operationId": "mongo-stop",
@@ -8870,7 +8870,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mongo",
         "operationId": "mongo-update",
@@ -8912,7 +8912,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mounts",
         "operationId": "mounts-allNamedByApplicationId",
@@ -8960,7 +8960,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mounts",
         "operationId": "mounts-create",
@@ -9002,7 +9002,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mounts",
         "operationId": "mounts-listByServiceId",
@@ -9056,7 +9056,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mounts",
         "operationId": "mounts-one",
@@ -9104,7 +9104,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mounts",
         "operationId": "mounts-remove",
@@ -9146,7 +9146,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mounts",
         "operationId": "mounts-update",
@@ -9188,7 +9188,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mysql",
         "operationId": "mysql-changeStatus",
@@ -9230,7 +9230,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mysql",
         "operationId": "mysql-create",
@@ -9272,7 +9272,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mysql",
         "operationId": "mysql-deploy",
@@ -9314,7 +9314,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mysql",
         "operationId": "mysql-move",
@@ -9356,7 +9356,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mysql",
         "operationId": "mysql-one",
@@ -9404,7 +9404,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mysql",
         "operationId": "mysql-rebuild",
@@ -9446,7 +9446,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mysql",
         "operationId": "mysql-reload",
@@ -9488,7 +9488,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mysql",
         "operationId": "mysql-remove",
@@ -9530,7 +9530,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mysql",
         "operationId": "mysql-saveEnvironment",
@@ -9572,7 +9572,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mysql",
         "operationId": "mysql-saveExternalPort",
@@ -9614,7 +9614,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mysql",
         "operationId": "mysql-search",
@@ -9704,7 +9704,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mysql",
         "operationId": "mysql-start",
@@ -9746,7 +9746,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mysql",
         "operationId": "mysql-stop",
@@ -9788,7 +9788,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "mysql",
         "operationId": "mysql-update",
@@ -9830,7 +9830,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-all",
@@ -9871,7 +9871,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-createCustom",
@@ -9913,7 +9913,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-createDiscord",
@@ -9955,7 +9955,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-createEmail",
@@ -9997,7 +9997,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-createGotify",
@@ -10039,7 +10039,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-createLark",
@@ -10081,7 +10081,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-createNtfy",
@@ -10123,7 +10123,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-createPushover",
@@ -10165,7 +10165,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-createResend",
@@ -10207,7 +10207,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-createSlack",
@@ -10249,7 +10249,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-createTeams",
@@ -10291,7 +10291,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-createTelegram",
@@ -10333,7 +10333,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-getEmailProviders",
@@ -10374,7 +10374,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-one",
@@ -10422,7 +10422,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-receiveNotification",
@@ -10464,7 +10464,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-remove",
@@ -10506,7 +10506,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-testCustomConnection",
@@ -10548,7 +10548,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-testDiscordConnection",
@@ -10590,7 +10590,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-testEmailConnection",
@@ -10632,7 +10632,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-testGotifyConnection",
@@ -10674,7 +10674,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-testLarkConnection",
@@ -10716,7 +10716,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-testNtfyConnection",
@@ -10758,7 +10758,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-testPushoverConnection",
@@ -10800,7 +10800,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-testResendConnection",
@@ -10842,7 +10842,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-testSlackConnection",
@@ -10884,7 +10884,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-testTeamsConnection",
@@ -10926,7 +10926,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-testTelegramConnection",
@@ -10968,7 +10968,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-updateCustom",
@@ -11010,7 +11010,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-updateDiscord",
@@ -11052,7 +11052,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-updateEmail",
@@ -11094,7 +11094,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-updateGotify",
@@ -11136,7 +11136,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-updateLark",
@@ -11178,7 +11178,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-updateNtfy",
@@ -11220,7 +11220,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-updatePushover",
@@ -11262,7 +11262,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-updateResend",
@@ -11304,7 +11304,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-updateSlack",
@@ -11346,7 +11346,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-updateTeams",
@@ -11388,7 +11388,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "notification",
         "operationId": "notification-updateTelegram",
@@ -11430,7 +11430,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "organization",
         "operationId": "organization-active",
@@ -11471,7 +11471,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "organization",
         "operationId": "organization-all",
@@ -11512,7 +11512,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "organization",
         "operationId": "organization-allInvitations",
@@ -11553,7 +11553,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "organization",
         "operationId": "organization-create",
@@ -11595,7 +11595,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "organization",
         "operationId": "organization-delete",
@@ -11637,7 +11637,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "organization",
         "operationId": "organization-one",
@@ -11685,7 +11685,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "organization",
         "operationId": "organization-removeInvitation",
@@ -11727,7 +11727,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "organization",
         "operationId": "organization-setDefault",
@@ -11769,7 +11769,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "organization",
         "operationId": "organization-update",
@@ -11811,7 +11811,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "organization",
         "operationId": "organization-updateMemberRole",
@@ -11853,7 +11853,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "patch",
         "operationId": "patch-byEntityId",
@@ -11907,7 +11907,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "patch",
         "operationId": "patch-cleanPatchRepos",
@@ -11949,7 +11949,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "patch",
         "operationId": "patch-create",
@@ -11991,7 +11991,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "patch",
         "operationId": "patch-delete",
@@ -12033,7 +12033,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "patch",
         "operationId": "patch-ensureRepo",
@@ -12075,7 +12075,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "patch",
         "operationId": "patch-markFileForDeletion",
@@ -12117,7 +12117,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "patch",
         "operationId": "patch-one",
@@ -12165,7 +12165,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "patch",
         "operationId": "patch-readRepoDirectories",
@@ -12225,7 +12225,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "patch",
         "operationId": "patch-readRepoFile",
@@ -12285,7 +12285,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "patch",
         "operationId": "patch-saveFileAsPatch",
@@ -12327,7 +12327,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "patch",
         "operationId": "patch-toggleEnabled",
@@ -12369,7 +12369,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "patch",
         "operationId": "patch-update",
@@ -12411,7 +12411,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "port",
         "operationId": "port-create",
@@ -12453,7 +12453,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "port",
         "operationId": "port-delete",
@@ -12495,7 +12495,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "port",
         "operationId": "port-one",
@@ -12543,7 +12543,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "port",
         "operationId": "port-update",
@@ -12585,7 +12585,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "postgres",
         "operationId": "postgres-changeStatus",
@@ -12627,7 +12627,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "postgres",
         "operationId": "postgres-create",
@@ -12669,7 +12669,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "postgres",
         "operationId": "postgres-deploy",
@@ -12711,7 +12711,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "postgres",
         "operationId": "postgres-move",
@@ -12753,7 +12753,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "postgres",
         "operationId": "postgres-one",
@@ -12801,7 +12801,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "postgres",
         "operationId": "postgres-rebuild",
@@ -12843,7 +12843,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "postgres",
         "operationId": "postgres-reload",
@@ -12885,7 +12885,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "postgres",
         "operationId": "postgres-remove",
@@ -12927,7 +12927,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "postgres",
         "operationId": "postgres-saveEnvironment",
@@ -12969,7 +12969,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "postgres",
         "operationId": "postgres-saveExternalPort",
@@ -13011,7 +13011,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "postgres",
         "operationId": "postgres-search",
@@ -13101,7 +13101,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "postgres",
         "operationId": "postgres-start",
@@ -13143,7 +13143,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "postgres",
         "operationId": "postgres-stop",
@@ -13185,7 +13185,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "postgres",
         "operationId": "postgres-update",
@@ -13227,7 +13227,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "previewDeployment",
         "operationId": "previewDeployment-all",
@@ -13275,7 +13275,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "previewDeployment",
         "operationId": "previewDeployment-delete",
@@ -13317,7 +13317,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "previewDeployment",
         "operationId": "previewDeployment-one",
@@ -13365,7 +13365,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "previewDeployment",
         "operationId": "previewDeployment-redeploy",
@@ -13407,7 +13407,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "project",
         "operationId": "project-all",
@@ -13448,7 +13448,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "project",
         "operationId": "project-allForPermissions",
@@ -13489,7 +13489,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "project",
         "operationId": "project-create",
@@ -13531,7 +13531,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "project",
         "operationId": "project-duplicate",
@@ -13573,7 +13573,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "project",
         "operationId": "project-one",
@@ -13621,7 +13621,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "project",
         "operationId": "project-remove",
@@ -13663,7 +13663,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "project",
         "operationId": "project-search",
@@ -13735,7 +13735,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "project",
         "operationId": "project-update",
@@ -13777,7 +13777,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "redirects",
         "operationId": "redirects-create",
@@ -13819,7 +13819,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "redirects",
         "operationId": "redirects-delete",
@@ -13861,7 +13861,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "redirects",
         "operationId": "redirects-one",
@@ -13909,7 +13909,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "redirects",
         "operationId": "redirects-update",
@@ -13951,7 +13951,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "redis",
         "operationId": "redis-changeStatus",
@@ -13993,7 +13993,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "redis",
         "operationId": "redis-create",
@@ -14035,7 +14035,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "redis",
         "operationId": "redis-deploy",
@@ -14077,7 +14077,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "redis",
         "operationId": "redis-move",
@@ -14119,7 +14119,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "redis",
         "operationId": "redis-one",
@@ -14167,7 +14167,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "redis",
         "operationId": "redis-rebuild",
@@ -14209,7 +14209,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "redis",
         "operationId": "redis-reload",
@@ -14251,7 +14251,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "redis",
         "operationId": "redis-remove",
@@ -14293,7 +14293,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "redis",
         "operationId": "redis-saveEnvironment",
@@ -14335,7 +14335,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "redis",
         "operationId": "redis-saveExternalPort",
@@ -14377,7 +14377,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "redis",
         "operationId": "redis-search",
@@ -14467,7 +14467,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "redis",
         "operationId": "redis-start",
@@ -14509,7 +14509,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "redis",
         "operationId": "redis-stop",
@@ -14551,7 +14551,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "redis",
         "operationId": "redis-update",
@@ -14593,7 +14593,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "registry",
         "operationId": "registry-all",
@@ -14634,7 +14634,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "registry",
         "operationId": "registry-create",
@@ -14676,7 +14676,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "registry",
         "operationId": "registry-one",
@@ -14724,7 +14724,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "registry",
         "operationId": "registry-remove",
@@ -14766,7 +14766,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "registry",
         "operationId": "registry-testRegistry",
@@ -14808,7 +14808,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "registry",
         "operationId": "registry-testRegistryById",
@@ -14850,7 +14850,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "registry",
         "operationId": "registry-update",
@@ -14892,7 +14892,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "rollback",
         "operationId": "rollback-delete",
@@ -14934,7 +14934,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "rollback",
         "operationId": "rollback-rollback",
@@ -14976,7 +14976,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "schedule",
         "operationId": "schedule-create",
@@ -15018,7 +15018,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "schedule",
         "operationId": "schedule-delete",
@@ -15060,7 +15060,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "schedule",
         "operationId": "schedule-list",
@@ -15114,7 +15114,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "schedule",
         "operationId": "schedule-one",
@@ -15162,7 +15162,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "schedule",
         "operationId": "schedule-runManually",
@@ -15204,7 +15204,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "schedule",
         "operationId": "schedule-update",
@@ -15246,7 +15246,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "security",
         "operationId": "security-create",
@@ -15288,7 +15288,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "security",
         "operationId": "security-delete",
@@ -15330,7 +15330,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "security",
         "operationId": "security-one",
@@ -15378,7 +15378,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "security",
         "operationId": "security-update",
@@ -15420,7 +15420,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "server",
         "operationId": "server-all",
@@ -15461,7 +15461,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "server",
         "operationId": "server-buildServers",
@@ -15502,7 +15502,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "server",
         "operationId": "server-count",
@@ -15543,7 +15543,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "server",
         "operationId": "server-create",
@@ -15585,7 +15585,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "server",
         "operationId": "server-getDefaultCommand",
@@ -15633,7 +15633,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "server",
         "operationId": "server-getServerMetrics",
@@ -15693,7 +15693,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "server",
         "operationId": "server-getServerTime",
@@ -15734,7 +15734,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "server",
         "operationId": "server-one",
@@ -15782,7 +15782,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "server",
         "operationId": "server-publicIp",
@@ -15823,7 +15823,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "server",
         "operationId": "server-remove",
@@ -15865,7 +15865,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "server",
         "operationId": "server-security",
@@ -15913,7 +15913,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "server",
         "operationId": "server-setup",
@@ -15955,7 +15955,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "server",
         "operationId": "server-setupMonitoring",
@@ -15997,7 +15997,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "server",
         "operationId": "server-update",
@@ -16039,7 +16039,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "server",
         "operationId": "server-validate",
@@ -16087,7 +16087,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "server",
         "operationId": "server-withSSHKey",
@@ -16128,7 +16128,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-assignDomainServer",
@@ -16170,7 +16170,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-checkGPUStatus",
@@ -16218,7 +16218,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-cleanAll",
@@ -16260,7 +16260,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-cleanAllDeploymentQueue",
@@ -16300,7 +16300,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-cleanDockerBuilder",
@@ -16342,7 +16342,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-cleanDockerPrune",
@@ -16384,7 +16384,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-cleanMonitoring",
@@ -16424,7 +16424,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-cleanRedis",
@@ -16464,7 +16464,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-cleanSSHPrivateKey",
@@ -16504,7 +16504,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-cleanStoppedContainers",
@@ -16546,7 +16546,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-cleanUnusedImages",
@@ -16588,7 +16588,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-cleanUnusedVolumes",
@@ -16630,7 +16630,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-getDokployCloudIps",
@@ -16671,7 +16671,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-getDokployVersion",
@@ -16712,7 +16712,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-getIp",
@@ -16753,7 +16753,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-getLogCleanupStatus",
@@ -16794,7 +16794,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-getOpenApiDocument",
@@ -16835,7 +16835,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-getReleaseTag",
@@ -16876,7 +16876,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-getTraefikPorts",
@@ -16924,7 +16924,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-getUpdateData",
@@ -16964,7 +16964,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-getWebServerSettings",
@@ -17005,7 +17005,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-haveActivateRequests",
@@ -17046,7 +17046,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-haveTraefikDashboardPortEnabled",
@@ -17094,7 +17094,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-health",
@@ -17135,7 +17135,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-isCloud",
@@ -17176,7 +17176,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-isUserSubscribed",
@@ -17217,7 +17217,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-readDirectories",
@@ -17265,7 +17265,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-readMiddlewareTraefikConfig",
@@ -17306,7 +17306,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-readTraefikConfig",
@@ -17347,7 +17347,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-readTraefikEnv",
@@ -17395,7 +17395,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-readTraefikFile",
@@ -17449,7 +17449,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-readWebServerTraefikConfig",
@@ -17490,7 +17490,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-reloadRedis",
@@ -17530,7 +17530,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-reloadServer",
@@ -17570,7 +17570,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-reloadTraefik",
@@ -17612,7 +17612,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-saveSSHPrivateKey",
@@ -17654,7 +17654,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-setupGPU",
@@ -17696,7 +17696,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-toggleDashboard",
@@ -17738,7 +17738,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-toggleRequests",
@@ -17780,7 +17780,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-updateDockerCleanup",
@@ -17822,7 +17822,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-updateLogCleanup",
@@ -17864,7 +17864,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-updateMiddlewareTraefikConfig",
@@ -17906,7 +17906,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-updateServer",
@@ -17946,7 +17946,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-updateServerIp",
@@ -17988,7 +17988,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-updateTraefikConfig",
@@ -18030,7 +18030,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-updateTraefikFile",
@@ -18072,7 +18072,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-updateTraefikPorts",
@@ -18114,7 +18114,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-updateWebServerTraefikConfig",
@@ -18156,7 +18156,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "settings",
         "operationId": "settings-writeTraefikEnv",
@@ -18198,7 +18198,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "sshKey",
         "operationId": "sshKey-all",
@@ -18239,7 +18239,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "sshKey",
         "operationId": "sshKey-create",
@@ -18281,7 +18281,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "sshKey",
         "operationId": "sshKey-generate",
@@ -18323,7 +18323,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "sshKey",
         "operationId": "sshKey-one",
@@ -18371,7 +18371,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "sshKey",
         "operationId": "sshKey-remove",
@@ -18413,7 +18413,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "sshKey",
         "operationId": "sshKey-update",
@@ -18455,7 +18455,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "sso",
         "operationId": "sso-addTrustedOrigin",
@@ -18497,7 +18497,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "sso",
         "operationId": "sso-deleteProvider",
@@ -18539,7 +18539,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "sso",
         "operationId": "sso-getTrustedOrigins",
@@ -18580,7 +18580,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "sso",
         "operationId": "sso-listProviders",
@@ -18621,7 +18621,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "sso",
         "operationId": "sso-one",
@@ -18669,7 +18669,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "sso",
         "operationId": "sso-register",
@@ -18711,7 +18711,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "sso",
         "operationId": "sso-removeTrustedOrigin",
@@ -18753,7 +18753,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "sso",
         "operationId": "sso-showSignInWithSSO",
@@ -18794,7 +18794,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "sso",
         "operationId": "sso-update",
@@ -18836,7 +18836,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "sso",
         "operationId": "sso-updateTrustedOrigin",
@@ -18878,7 +18878,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "stripe",
         "operationId": "stripe-canCreateMoreServers",
@@ -18919,7 +18919,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "stripe",
         "operationId": "stripe-createCheckoutSession",
@@ -18961,7 +18961,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "stripe",
         "operationId": "stripe-createCustomerPortalSession",
@@ -19001,7 +19001,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "stripe",
         "operationId": "stripe-getCurrentPlan",
@@ -19042,7 +19042,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "stripe",
         "operationId": "stripe-getInvoices",
@@ -19083,7 +19083,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "stripe",
         "operationId": "stripe-getProducts",
@@ -19124,7 +19124,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "stripe",
         "operationId": "stripe-upgradeSubscription",
@@ -19166,7 +19166,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "swarm",
         "operationId": "swarm-getNodeApps",
@@ -19214,7 +19214,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "swarm",
         "operationId": "swarm-getNodeInfo",
@@ -19268,7 +19268,7 @@
       ],
       "type": "api-operation",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "swarm",
         "operationId": "swarm-getNodes",
@@ -19316,7 +19316,7 @@
       ],
       "type": "api-operation",
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "untagged",
         "operationId": "application-dropDeployment",
@@ -19358,7 +19358,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "user",
         "operationId": "user-all",
@@ -19399,7 +19399,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "user",
         "operationId": "user-assignPermissions",
@@ -19441,7 +19441,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "user",
         "operationId": "user-checkUserOrganizations",
@@ -19489,7 +19489,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "user",
         "operationId": "user-createApiKey",
@@ -19531,7 +19531,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "user",
         "operationId": "user-deleteApiKey",
@@ -19573,7 +19573,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "user",
         "operationId": "user-generateToken",
@@ -19613,7 +19613,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "user",
         "operationId": "user-get",
@@ -19654,7 +19654,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "user",
         "operationId": "user-getBackups",
@@ -19695,7 +19695,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "user",
         "operationId": "user-getContainerMetrics",
@@ -19761,7 +19761,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "user",
         "operationId": "user-getInvitations",
@@ -19802,7 +19802,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "user",
         "operationId": "user-getMetricsToken",
@@ -19843,7 +19843,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "user",
         "operationId": "user-getServerMetrics",
@@ -19884,7 +19884,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "user",
         "operationId": "user-getUserByToken",
@@ -19932,7 +19932,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "user",
         "operationId": "user-haveRootAccess",
@@ -19973,7 +19973,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "user",
         "operationId": "user-one",
@@ -20021,7 +20021,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "user",
         "operationId": "user-remove",
@@ -20063,7 +20063,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "user",
         "operationId": "user-sendInvitation",
@@ -20105,7 +20105,7 @@
       ],
       "type": "api-operation",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "user",
         "operationId": "user-update",
@@ -20147,7 +20147,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "volumeBackups",
         "operationId": "volumeBackups-create",
@@ -20189,7 +20189,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "volumeBackups",
         "operationId": "volumeBackups-delete",
@@ -20231,7 +20231,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "volumeBackups",
         "operationId": "volumeBackups-list",
@@ -20285,7 +20285,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "volumeBackups",
         "operationId": "volumeBackups-one",
@@ -20333,7 +20333,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "volumeBackups",
         "operationId": "volumeBackups-runManually",
@@ -20375,7 +20375,7 @@
       ],
       "type": "api-operation",
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "apiOperation": {
         "tag": "volumeBackups",
         "operationId": "volumeBackups-update",
