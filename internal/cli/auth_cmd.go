@@ -1,6 +1,7 @@
 package cli
 
 import (
+	stderrors "errors"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -108,10 +109,7 @@ func runAuthStatus(r *output.Renderer, cfg *config.Config) error {
 	if !doc.Ready {
 		if err := cfg.Ready(); err != nil {
 			var typed *yerr.Error
-			if e, ok := err.(*yerr.Error); ok {
-				typed = e
-			}
-			if typed != nil {
+			if stderrors.As(err, &typed) {
 				doc.Reason = string(typed.Code) + ": " + typed.Message
 			} else {
 				doc.Reason = err.Error()

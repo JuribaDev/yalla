@@ -82,9 +82,13 @@ jobs:
           staticcheck ./...
 
       - name: golangci-lint
+        # Pin to a v2 release: v1.x of golangci-lint is built with Go 1.24
+        # and refuses to parse a module that targets a newer toolchain.
+        # The action's `latest` selector resolves to the latest v1, not
+        # the latest absolute release, so the version must be explicit.
         uses: golangci/golangci-lint-action@v6
         with:
-          version: latest
+          version: v2.12.2
           args: --timeout=5m
 
   goreleaser-check:

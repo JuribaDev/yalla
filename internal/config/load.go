@@ -1,6 +1,7 @@
 package config
 
 import (
+	stderrors "errors"
 	"os"
 	"strings"
 
@@ -85,7 +86,8 @@ func (l *Loader) Load(flags FlagValues) (*Config, error) {
 		file, err = l.ReadFile(path)
 		if err != nil {
 			if !IsNotExist(err) {
-				if _, isTyped := err.(*yerr.Error); isTyped {
+				var typed *yerr.Error
+				if stderrors.As(err, &typed) {
 					return nil, err
 				}
 				return nil, yerr.Newf(yerr.CodeConfig, "read %s: %v", path, err)

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	stderrors "errors"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -248,7 +249,8 @@ func readExistingFile(path string) (config.FileData, error) {
 	if config.IsNotExist(err) {
 		return config.FileData{Path: path}, nil
 	}
-	if _, typed := err.(*yerr.Error); typed {
+	var typed *yerr.Error
+	if stderrors.As(err, &typed) {
 		return config.FileData{}, err
 	}
 	return config.FileData{}, yerr.Newf(yerr.CodeConfig, "read %s: %v", path, err)
