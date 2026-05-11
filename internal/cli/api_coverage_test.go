@@ -1,12 +1,16 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -55,6 +59,15 @@ type apiCoverageCase struct {
 	SampleQuery      map[string][]string
 	SamplePathParams map[string]string
 
+	// SampleFile is the single file part for operations whose request
+	// body is declared as `multipart/form-data` in the OpenAPI spec.
+	// Today only `application-dropDeployment` populates it; every JSON
+	// operation leaves it nil. The harness writes the bytes to a
+	// `t.TempDir()` file and forwards the path via the `--input` JSON
+	// `files` map. `runAPICoverageSuccess` then parses the request body
+	// with `mime/multipart` to assert the file part round-tripped.
+	SampleFile *apiCoverageFile
+
 	// SuccessStatus is the HTTP status the httptest server returns for
 	// the success leg. Defaults to 200 when zero so most cases stay
 	// short.
@@ -73,6 +86,18 @@ type apiCoverageCase struct {
 	// FailureCode is the typed yerr.Code the renderer must surface for
 	// FailureStatus. Defaults to yerr.CodeAuth when empty.
 	FailureCode yerr.Code
+}
+
+// apiCoverageFile is the per-case multipart file part. FieldName matches
+// the OpenAPI `requestBody.content."multipart/form-data".schema.properties`
+// key (e.g. `zip` for `application-dropDeployment`). Filename ends up in
+// the per-part Content-Disposition; empty falls back to FieldName.
+// Content is the raw bytes the harness writes to a `t.TempDir()` file
+// before forwarding the path through the `--input` JSON's `files` map.
+type apiCoverageFile struct {
+	FieldName string
+	Filename  string
+	Content   []byte
 }
 
 // coveredAPIOperations is the append-only registry of API-XXXX stories
@@ -47969,11 +47994,28 @@ var coveredAPIOperations = []apiCoverageCase{
 		// this entry, plus the six US-XXXX foundation stories. The
 		// next contributor must verify `passes=true` for every story
 		// in the PRD (462/462) before declaring the project complete.
+		//
+		// **Multipart fixture split (post-API-0426 update).** The two
+		// scalar form fields (`applicationId`, `dropBuildPath`) stay in
+		// SampleBody because they round-trip as `Content-Disposition:
+		// form-data; name="..."` parts whose body is the unquoted JSON
+		// value. The required `zip` field — declared `format: binary` in
+		// the spec — moves to SampleFile so the harness produces a real
+		// multipart envelope on the wire, parses it back with
+		// `mime/multipart`, and verifies the file bytes survived the
+		// round trip. Keeping the placeholder string from the original
+		// API-0426 fixture as the file Content lets every prior PRD
+		// reference to "yalla-coverage-dropDeployment-0426-binary-
+		// placeholder" stay `git grep`-traceable to this entry.
 		SampleBody: json.RawMessage(`{
 			"applicationId": "app-untag-cov-dropDeployment-0426",
-			"zip": "yalla-coverage-dropDeployment-0426-binary-placeholder",
 			"dropBuildPath": "build/output"
 		}`),
+		SampleFile: &apiCoverageFile{
+			FieldName: "zip",
+			Filename:  "drop-deployment-cov-0426.zip",
+			Content:   []byte("yalla-coverage-dropDeployment-0426-binary-placeholder"),
+		},
 		// 200 response in the spec is `{}` with `additionalProperties:
 		// false`, matching every prior covered peer. Empty-object body
 		// keeps the success-leg envelope assertion focused on
@@ -51217,7 +51259,7 @@ func runAPICoverageSuccess(t *testing.T, tc apiCoverageCase) {
 	if seenAuth != "test-token-value" {
 		t.Errorf("%s header = %q, want test-token-value", api.DefaultAPIKeyHeader, seenAuth)
 	}
-	if len(tc.SampleBody) > 0 {
+	if len(tc.SampleBody) > 0 || tc.SampleFile != nil {
 		// The wire Content-Type contract is what the registry declares for
 		// the operation's request body, not a hardcoded "application/json".
 		// Almost every Dokploy operation today is JSON, but
@@ -51235,9 +51277,17 @@ func runAPICoverageSuccess(t *testing.T, tc apiCoverageCase) {
 		}
 		if len(seenBody) == 0 {
 			t.Errorf("server received empty body; expected forwarded request")
+		} else if api.IsMultipartFormData(seenContentType) {
+			// Multipart branch: parse the body with mime/multipart and
+			// assert each scalar field from SampleBody plus the single
+			// SampleFile part. Used today only for
+			// `application-dropDeployment`; future multipart ops get the
+			// same treatment by populating SampleFile.
+			assertMultipartCoverageBody(t, seenContentType, seenBody, tc)
 		} else {
-			// The CLI forwards the bytes verbatim; round-trip through the
-			// JSON decoder so whitespace differences do not cause flakes.
+			// JSON branch (every other op): the CLI forwards the bytes
+			// verbatim; round-trip through the JSON decoder so whitespace
+			// differences do not cause flakes.
 			var got, want any
 			if err := json.Unmarshal(seenBody, &got); err != nil {
 				t.Errorf("server body is not valid JSON: %v (raw=%q)", err, string(seenBody))
@@ -51318,23 +51368,36 @@ func runAPICoverageFailure(t *testing.T, tc apiCoverageCase) {
 	}
 }
 
-// buildCoverageInputArgs writes the case's path/query/body into a temp
-// `--input` JSON file and returns the matching CLI flags. Empty cases
-// return no extra args so operations without inputs stay terse.
+// buildCoverageInputArgs writes the case's path/query/body/files into a
+// temp `--input` JSON file and returns the matching CLI flags. Empty
+// cases return no extra args so operations without inputs stay terse.
 func buildCoverageInputArgs(t *testing.T, tc apiCoverageCase) []string {
 	t.Helper()
-	if len(tc.SampleBody) == 0 && len(tc.SampleQuery) == 0 && len(tc.SamplePathParams) == 0 {
+	if len(tc.SampleBody) == 0 && len(tc.SampleQuery) == 0 && len(tc.SamplePathParams) == 0 && tc.SampleFile == nil {
 		return nil
 	}
 	doc := struct {
 		PathParams map[string]string   `json:"path_params,omitempty"`
 		Query      map[string][]string `json:"query,omitempty"`
 		Body       json.RawMessage     `json:"body,omitempty"`
+		Files      map[string]string   `json:"files,omitempty"`
 	}{
 		PathParams: tc.SamplePathParams,
 		Query:      tc.SampleQuery,
 		Body:       tc.SampleBody,
 	}
+
+	if tc.SampleFile != nil {
+		// The bare-string `files` value (`"<field>": "<path>"`) is the
+		// shorthand the CLI accepts via apiCallFile.UnmarshalJSON;
+		// exercising it here keeps the harness honest about that shape.
+		filePath := filepath.Join(t.TempDir(), tc.OperationID+"-"+tc.SampleFile.FieldName+".bin")
+		if err := os.WriteFile(filePath, tc.SampleFile.Content, 0o600); err != nil {
+			t.Fatalf("write coverage file part: %v", err)
+		}
+		doc.Files = map[string]string{tc.SampleFile.FieldName: filePath}
+	}
+
 	raw, err := json.Marshal(doc)
 	if err != nil {
 		t.Fatalf("marshal coverage input: %v", err)
@@ -51347,6 +51410,93 @@ func buildCoverageInputArgs(t *testing.T, tc apiCoverageCase) []string {
 		t.Fatalf("write coverage input: %v", err)
 	}
 	return []string{"--input", path}
+}
+
+// assertMultipartCoverageBody parses a multipart/form-data envelope sent
+// by the success-leg httptest server and verifies it carries the scalar
+// fields declared in tc.SampleBody (string-typed JSON object) plus the
+// single file part declared in tc.SampleFile. The helper is shared
+// between every multipart operation so adding a future one only requires
+// populating SampleFile.
+func assertMultipartCoverageBody(t *testing.T, contentType string, body []byte, tc apiCoverageCase) {
+	t.Helper()
+	_, params, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		t.Errorf("multipart Content-Type parse: %v (raw=%q)", err, contentType)
+		return
+	}
+	boundary := params["boundary"]
+	if boundary == "" {
+		t.Errorf("multipart Content-Type missing boundary param: %q", contentType)
+		return
+	}
+
+	// Expected scalar form fields come from SampleBody. Every value must
+	// be a JSON string because that is the only shape multipart form
+	// fields carry on the wire — the harness rejects fixtures that
+	// declare a number/bool here so a future contributor surfaces the
+	// constraint instead of debugging a silent string-coercion.
+	expectedFields := map[string]string{}
+	if len(tc.SampleBody) > 0 {
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(tc.SampleBody, &raw); err != nil {
+			t.Fatalf("multipart fixture SampleBody must be a JSON object: %v", err)
+		}
+		for k, v := range raw {
+			var s string
+			if err := json.Unmarshal(v, &s); err != nil {
+				t.Fatalf("multipart fixture field %q must be a string: %v", k, err)
+			}
+			expectedFields[k] = s
+		}
+	}
+
+	seenFields := map[string]string{}
+	seenFiles := map[string][]byte{}
+	mr := multipart.NewReader(bytes.NewReader(body), boundary)
+	for {
+		p, err := mr.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Errorf("multipart NextPart: %v", err)
+			return
+		}
+		b, err := io.ReadAll(p)
+		if err != nil {
+			t.Errorf("multipart ReadAll: %v", err)
+			return
+		}
+		if p.FileName() != "" {
+			seenFiles[p.FormName()] = b
+		} else {
+			seenFields[p.FormName()] = string(b)
+		}
+	}
+
+	for k, want := range expectedFields {
+		if got := seenFields[k]; got != want {
+			t.Errorf("multipart field[%q] = %q, want %q", k, got, want)
+		}
+	}
+
+	if tc.SampleFile != nil {
+		got, ok := seenFiles[tc.SampleFile.FieldName]
+		if !ok {
+			seenKeys := make([]string, 0, len(seenFiles))
+			for k := range seenFiles {
+				seenKeys = append(seenKeys, k)
+			}
+			sort.Strings(seenKeys)
+			t.Errorf("multipart file part %q missing; saw file parts %v", tc.SampleFile.FieldName, seenKeys)
+			return
+		}
+		if !bytes.Equal(got, tc.SampleFile.Content) {
+			t.Errorf("multipart file part %q bytes mismatch:\n got=%q\nwant=%q",
+				tc.SampleFile.FieldName, got, tc.SampleFile.Content)
+		}
+	}
 }
 
 // equalStringSlice is a non-allocating slice equality helper used by the

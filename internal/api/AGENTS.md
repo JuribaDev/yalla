@@ -68,3 +68,35 @@ extraction surface used by `yalla api`, `yalla schema`, and (US-0007)
 - Backoff sleeps are `time.NewTimer`-based and watch the request context
   so a `<-ctx.Done()` during retry returns `CodeCanceled` rather than
   waiting out the timer. Keep this behaviour: agents script around it.
+
+## Multipart bodies (`multipart.go`)
+
+- `Request.Body` is contractually pre-serialised bytes — `internal/api`
+  never reaches into the file system, never spawns a multipart writer on
+  the wire side. All multipart encoding happens in the CLI layer (under
+  `internal/cli/api_call_cmd.go`) via `BuildMultipart(fields, files,
+  boundary)` and lands here as plain `[]byte` + the full
+  `multipart/form-data; boundary=...` Content-Type. Keeping the api
+  package media-type-agnostic on the request side preserves the existing
+  test patterns (`httptest.Server` handler reads `r.Body` verbatim) for
+  every JSON operation.
+- `IsMultipartFormData(ct)` is the canonical detector. Use it instead of
+  hand-rolling a `strings.HasPrefix("multipart/form-data")` check so the
+  case/whitespace/parameter handling stays in one place.
+- Deterministic mode: an empty boundary tells `BuildMultipart` to let
+  `mime/multipart` pick a random one (live wire). A non-empty boundary
+  is passed through `multipart.Writer.SetBoundary`, which validates it
+  and returns an error rather than producing a malformed envelope.
+  `DefaultDryRunMultipartBoundary` is the single literal `yalla api call
+  --dry-run` uses; do not derive a new constant in tests, reference this
+  one so a future change to the dry-run boundary only edits one place.
+- Field ordering is alphabetical by name across the scalar+file
+  namespace so the encoded bytes are reproducible for a given boundary.
+  Tests that assert byte-equality of dry-run envelopes rely on this.
+- File parts default to `application/octet-stream` when `ContentType`
+  is empty so binaries never get mislabelled as `text/plain` by an
+  intermediary. Filename defaults to FieldName when empty so the part
+  still has a stable identifier on the wire.
+- `BuildMultipart` rejects empty / duplicate field names with a typed
+  Go error; the CLI wraps that into `CodeInvalidInput` so an agent sees
+  a stable exit code and a hint pointing back at the input shape.

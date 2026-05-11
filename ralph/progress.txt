@@ -31804,3 +31804,163 @@ forward-reference lesson before assuming any field shape.
     regression that broke the prefix injection. Surfacing it via a
     helper keeps assertions honest about the wire path.
 ---
+
+----------------------------------------------------------------------
+## 2026-05-11 — fix(api): real multipart/form-data for application-dropDeployment
+
+Branch: `ralph/claude-yalla` (parent commit `6706640`)
+
+- **Problem.** The CLI honoured `requestBody.ContentType` verbatim and
+  shipped the supplied JSON body bytes under a `Content-Type:
+  multipart/form-data` header (`internal/cli/api_call_cmd.go`
+  pre-edit). That satisfied the registry's coverage contract for
+  `application-dropDeployment` (the only `multipart/form-data`
+  operation in the Dokploy spec) but produced a wire envelope Dokploy
+  itself could never parse. The previous fixture comment called this
+  out explicitly: *"A dedicated multipart packer can be layered on top
+  later."* This story is that layer.
+
+- **What changed:**
+  - `internal/api/multipart.go` (new): pure encoder
+    `BuildMultipart(fields, files, boundary) ([]byte, contentType,
+    error)`. Plus `MultipartField` / `MultipartFile` value types,
+    the `ContentTypeMultipartForm` and
+    `DefaultDryRunMultipartBoundary` constants, and the
+    `IsMultipartFormData(ct)` detector. Field ordering is alphabetical
+    across the scalar+file namespace so the bytes are reproducible for
+    a given boundary; `SetBoundary` validates caller-supplied
+    boundaries; empty / duplicate names surface as typed Go errors.
+  - `internal/cli/api_call_cmd.go`:
+    - `apiCallInput` gained a `Files map[string]apiCallFile` field.
+    - `apiCallFile` accepts both shorthand (`"zip": "/abs/path"`)
+      and verbose (`"zip": {"path": ..., "filename": ...,
+      "content_type": ...}`) shapes via custom `UnmarshalJSON`. The
+      verbose form rejects unknown fields for the same reason
+      `apiCallInput` rejects unknown top-level fields — typos never
+      silently drop a value.
+    - Body resolution moved to `buildAPICallRequestBody(op, body,
+      files, dryRun)`. For multipart ops it dispatches to
+      `buildMultipartRequestBody`, which: decodes `body` as a JSON
+      object of scalar form fields, stats / reads each `files`
+      entry, calls `api.BuildMultipart` (random boundary for live
+      wire, `DefaultDryRunMultipartBoundary` for `--dry-run`), and
+      returns the envelope bytes + full `multipart/form-data;
+      boundary=...` Content-Type. `resolveJSONRequestBody` is the
+      kept-verbatim JSON codepath every prior operation uses.
+    - `buildAPICallRequestBody` rejects `files` for non-multipart
+      ops with a stable `CodeInvalidInput` and a hint pointing at
+      `yalla schema get <operationId>`.
+    - Dry-run substitutes `[REDACTED] file="<basename>" size=<n>` for
+      file bytes so the rendered envelope is safe to log or paste; the
+      file is still stat-ed so a missing path surfaces in dry-run too.
+    - `apiCallDryRunDoc` gained a `body_text` field mirroring
+      `apiCallSuccessDoc` so the multipart envelope (not valid JSON)
+      no longer crashes the JSON marshaller through a
+      `json.RawMessage` carrying non-JSON bytes.
+    - `--help` for `yalla api call` now documents the `files`
+      shape and the multipart-only constraint.
+  - `internal/api/AGENTS.md`: new "Multipart bodies" section locks
+    the encoder conventions (where it lives, the
+    `IsMultipartFormData` detector, the deterministic-boundary rule,
+    the alphabetical part order, the default per-part Content-Type).
+  - `internal/cli/api_coverage_test.go`:
+    - `apiCoverageCase` gained a `SampleFile *apiCoverageFile`
+      field; `buildCoverageInputArgs` writes the file bytes to a
+      `t.TempDir()` path and forwards the bare-string `files`
+      entry through `--input`.
+    - `runAPICoverageSuccess` body assertion now branches on the
+      observed `Content-Type`: multipart bodies parse through
+      `mime/multipart` via the new `assertMultipartCoverageBody`
+      helper, JSON bodies keep the existing `json.Unmarshal`
+      comparison verbatim. Every non-multipart case is unaffected.
+    - `application-dropDeployment` fixture: `zip` migrated from
+      `SampleBody` to a `SampleFile` part. `applicationId` and
+      `dropBuildPath` stay as scalar form fields. The placeholder
+      string from the original API-0426 fixture is preserved as the
+      file Content so prior PRD references stay
+      `git grep`-traceable.
+
+- **Tests:**
+  - `internal/api/multipart_test.go` (new): 8 tests covering
+    encode-and-parse round-trip, random-boundary uniqueness,
+    deterministic ordering, default per-part Content-Type, the
+    dry-run-boundary literal, empty/duplicate-name rejection,
+    invalid-boundary surfacing, and the `IsMultipartFormData` table.
+  - `internal/cli/api_call_cmd_multipart_test.go` (new):
+    `TestAPICall_Multipart_Success`,
+    `TestAPICall_Multipart_AcceptsBareStringFileValue`,
+    `TestAPICall_Multipart_DryRun_RedactsFileAndToken`,
+    `TestAPICall_Multipart_MissingFile_Error`,
+    `TestAPICall_Multipart_EmptyFilePath_Error`,
+    `TestAPICall_Multipart_FilesForJSONOperation_Error`,
+    `TestAPICall_Multipart_RejectsUnknownFileField`,
+    `TestAPICall_JSON_StillUsesApplicationJSON` (regression guard),
+    and a table-driven `TestAPICallFile_UnmarshalJSON`.
+  - `internal/cli/api_coverage_test.go`: harness extension plus the
+    `application-dropDeployment` fixture rewrite. Every other
+    covered op is unchanged.
+
+- **Quality gates:**
+  - `gofmt -l .`: clean.
+  - `go vet ./...`: clean.
+  - `go mod tidy`: no changes.
+  - `go test -count=1 ./...`: PASS (all packages).
+  - `go test -race -count=1 ./...`: PASS (race-detector clean).
+  - `./scripts/verify.sh --quiet`: all required checks PASS;
+    `govulncheck` / `staticcheck` / `golangci-lint` / `goreleaser`
+    not installed in this environment (reported, not silently skipped).
+  - Built binary smoke checks: `--help` / `--version` print to
+    stderr with empty stdout; unknown command emits `E_USAGE` (exit
+    2) on stderr only; `--json does-not-exist` emits the canonical
+    error envelope on stderr only; the multipart dry-run emits a JSON
+    envelope with `content_type=multipart/form-data;
+    boundary=yalla-dryrun-boundary`, `body_text` containing
+    `[REDACTED] file="..." size=22` for the file part and the two
+    scalar fields verbatim, `X-Api-Key: [REDACTED]` and no leak of
+    the configured token; a JSON dry-run still prefixes the URL with
+    `/api` and round-trips the body as a JSON value.
+
+- **Coverage-file split: deferred.**
+  `internal/cli/api_coverage_test.go` is ~2.6 MB / ~51 000 lines
+  because of the single append-only `coveredAPIOperations` slice
+  (444 entries, each ~100 lines of commentary + fixture). Splitting
+  it across per-tag files is mechanically simple — every fixture is
+  a self-contained `apiCoverageCase` literal — but the giant slice
+  is also the harness's source of truth for *coverage completeness*
+  (any failure mid-file is attributable to one story). Moving entries
+  across files in this same PR would create a 51 000-line diff that
+  drowns the substantive multipart change in noise; bisecting any
+  future regression through that combined diff would be painful. A
+  dedicated split PR with no code changes can move one tag at a time
+  with a verify-clean gate per tag. Leaving the file intact this pass
+  per the agent contract's "if splitting is too large for this pass,
+  leave a progress note and keep the current file" rule.
+
+- **Learnings:**
+  - **Body encoding belongs at the CLI boundary, not the wire.** Keep
+    `api.Request.Body` as pre-serialised `[]byte`. Putting
+    `mime/multipart` inside `internal/api` would tempt every future
+    media type to grow a parser there and would shrink the package's
+    usable surface for curated commands (a curated `yalla deploy`
+    that wants to stream from disk should compose
+    `api.BuildMultipart` itself rather than reach into the client).
+  - **`json.RawMessage` is a footgun for non-JSON dry-runs.**
+    Embedding non-JSON bytes in a `json.RawMessage` blows up at
+    parent-struct `json.Marshal` time with a
+    `MarshalerError` — the failure path is several layers above the
+    code that supplied the bytes. The fix mirrored
+    `apiCallSuccessDoc`: `body` for JSON,
+    `body_text` for anything else. Worth remembering for any future
+    non-JSON content type (yaml manifests, raw protobuf).
+  - **Deterministic dry-run boundary lets agents byte-compare.**
+    Exposing `DefaultDryRunMultipartBoundary` as a public api-package
+    constant means tests and downstream tooling reference one literal
+    rather than re-deriving the string. The CLI smoke check above
+    confirms the dry-run envelope contains exactly that boundary.
+  - **The harness Content-Type assertion was already half-prepared.**
+    API-0426 had already moved `runAPICoverageSuccess` off the
+    hardcoded `HasPrefix("application/json")` check; the only thing
+    missing was a body-parse branch. Adding `assertMultipartCoverageBody`
+    and a `SampleFile` field kept every JSON op's assertion
+    byte-identical and let the multipart op's assertion live in one
+    place ready for any future multipart operation.
