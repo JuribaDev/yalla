@@ -1,6 +1,9 @@
 package upgrade
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 // TestDetect_AllChannels exercises every install-method decision branch
 // listed in the US-0010 acceptance criteria. Each entry pins one
@@ -175,10 +178,13 @@ func TestDetect_NilEnvLookup(t *testing.T) {
 
 // TestDefaultProbe_NormalisesPath ensures filepath.Clean is applied so
 // detection cannot be fooled by a redundant `..` segment in the
-// resolved executable path.
+// resolved executable path. The expected value runs through
+// filepath.FromSlash so the assertion holds on Windows runners (where
+// filepath.Clean swaps `/` for `\`) without weakening the Unix shape.
 func TestDefaultProbe_NormalisesPath(t *testing.T) {
 	p := DefaultProbe("/usr/local/lib/../bin/yalla", "linux", nil)
-	if p.BinaryPath != "/usr/local/bin/yalla" {
-		t.Errorf("DefaultProbe.BinaryPath = %q, want %q", p.BinaryPath, "/usr/local/bin/yalla")
+	want := filepath.FromSlash("/usr/local/bin/yalla")
+	if p.BinaryPath != want {
+		t.Errorf("DefaultProbe.BinaryPath = %q, want %q", p.BinaryPath, want)
 	}
 }

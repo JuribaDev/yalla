@@ -27,7 +27,6 @@ package config
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	yerr "github.com/JuribaDev/yalla/internal/errors"
@@ -233,16 +232,4 @@ func FromContext(ctx context.Context) *Config {
 		return v
 	}
 	return &Config{Output: OutputHuman}
-}
-
-// describeKey returns a short human-readable label for a known config key.
-// Used by `yalla config get <key>` error messages so a typo points at the
-// real surface.
-func describeKey(key string) string {
-	switch key {
-	case KeyBaseURL, KeyToken, KeyOutput, KeyNoInput, KeyVerbose:
-		return key
-	default:
-		return fmt.Sprintf("unknown key %q", key)
-	}
 }

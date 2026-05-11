@@ -538,13 +538,11 @@ func buildOperation(op rawOperation, method, path, tag string) (Operation, error
 	}
 
 	for _, p := range op.Parameters {
-		out.Parameters = append(out.Parameters, Parameter{
-			Name:        p.Name,
-			In:          p.In,
-			Required:    p.Required,
-			Description: p.Description,
-			Schema:      p.Schema,
-		})
+		// rawParameter and Parameter share the same field shape — the
+		// difference is just JSON tag fidelity for the public projection.
+		// Struct conversion keeps this loop trivially correct as fields
+		// evolve (staticcheck S1016).
+		out.Parameters = append(out.Parameters, Parameter(p))
 	}
 
 	if op.RequestBody != nil {

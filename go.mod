@@ -2,7 +2,7 @@ module github.com/JuribaDev/yalla
 
 go 1.25
 
-toolchain go1.25.10
+toolchain go1.26.3
 
 require (
 	github.com/spf13/cobra v1.10.2

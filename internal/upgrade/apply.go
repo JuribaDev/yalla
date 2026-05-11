@@ -75,13 +75,13 @@ type ApplyOptions struct {
 // envelope carries a stable identifier.
 func ApplyManual(ctx context.Context, opts ApplyOptions) error {
 	if opts.BinaryPath == "" {
-		return fmt.Errorf("BinaryPath is empty")
+		return fmt.Errorf("binary path is empty")
 	}
 	if opts.Version == "" {
-		return fmt.Errorf("Version is empty")
+		return fmt.Errorf("version is empty")
 	}
 	if opts.HTTPClient == nil {
-		return fmt.Errorf("HTTPClient is nil")
+		return fmt.Errorf("HTTP client is nil")
 	}
 	if opts.Owner == "" {
 		opts.Owner = DefaultOwner

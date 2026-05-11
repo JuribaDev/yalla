@@ -101,13 +101,11 @@ func (r *Registry) AllSchemas() []*SchemaDoc {
 func (r *Registry) schemaFor(op Operation) *SchemaDoc {
 	params := make([]ParameterSchema, 0, len(op.Parameters))
 	for _, p := range op.Parameters {
-		params = append(params, ParameterSchema{
-			Name:        p.Name,
-			In:          p.In,
-			Required:    p.Required,
-			Description: p.Description,
-			Schema:      p.Schema,
-		})
+		// ParameterSchema mirrors Parameter field-for-field; the projection
+		// type exists so the schema commands can evolve independently of
+		// the registry. Struct conversion keeps the loop trivially correct
+		// (staticcheck S1016).
+		params = append(params, ParameterSchema(p))
 	}
 	sort.SliceStable(params, func(i, j int) bool {
 		// Path params before query before header before cookie keeps the
@@ -128,12 +126,9 @@ func (r *Registry) schemaFor(op Operation) *SchemaDoc {
 
 	outputs := make([]ResponseSchema, 0, len(op.Responses))
 	for _, resp := range op.Responses {
-		outputs = append(outputs, ResponseSchema{
-			Status:      resp.Status,
-			Description: resp.Description,
-			ContentType: resp.ContentType,
-			Schema:      resp.Schema,
-		})
+		// ResponseSchema mirrors Response field-for-field; same projection
+		// argument as ParameterSchema above (staticcheck S1016).
+		outputs = append(outputs, ResponseSchema(resp))
 	}
 
 	return &SchemaDoc{
