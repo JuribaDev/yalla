@@ -86,7 +86,7 @@ jobs:
         # and refuses to parse a module that targets a newer toolchain.
         # The action's `latest` selector resolves to the latest v1, not
         # the latest absolute release, so the version must be explicit.
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v7
         with:
           version: v2.12.2
           args: --timeout=5m
