@@ -4,6 +4,7 @@ import (
 	stderrors "errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -136,7 +137,13 @@ func TestWriteFile_RoundTripPreservesShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
-	if info.Mode().Perm() != secureFileMode {
+	// Windows doesn't honor POSIX permission bits — `os.WriteFile` with
+	// mode 0o600 lands as 0o666 because NTFS reports the world-readable
+	// default. The secureFileMode contract is still meaningful on POSIX
+	// systems (where the redactor pattern relies on it), but asserting it
+	// on Windows is a category error. Skip the assertion there rather
+	// than weaken it to a tautology.
+	if runtime.GOOS != "windows" && info.Mode().Perm() != secureFileMode {
 		t.Errorf("file perm = %o, want %o", info.Mode().Perm(), secureFileMode)
 	}
 

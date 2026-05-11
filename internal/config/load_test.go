@@ -3,6 +3,7 @@ package config
 import (
 	stderrors "errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -17,6 +18,13 @@ func (m envMap) Lookup(key string) (string, bool) {
 	v, ok := m[key]
 	return v, ok
 }
+
+// defaultTestConfigPath is the platform-native default config path the
+// loader produces when [newTestLoader]'s `UserConfigDir` returns
+// `/test/config`. Using `filepath.Join` here keeps the expectation
+// stable on Windows runners (where the loader produces a backslash
+// path) without compromising the Unix shape.
+var defaultTestConfigPath = filepath.Join("/test/config", "yalla", "config.yaml")
 
 // newTestLoader returns a Loader wired to in-memory env and file fixtures.
 // Missing files are reported as os.ErrNotExist so the loader's silent-
@@ -57,7 +65,7 @@ func TestLoad_DefaultsWhenNothingSet(t *testing.T) {
 	if cfg.OutputSource != SourceDefault {
 		t.Errorf("OutputSource = %q, want %q", cfg.OutputSource, SourceDefault)
 	}
-	if cfg.ConfigPath != "/test/config/yalla/config.yaml" {
+	if cfg.ConfigPath != defaultTestConfigPath {
 		t.Errorf("ConfigPath = %q, want default", cfg.ConfigPath)
 	}
 	if cfg.FileLoaded {
@@ -68,7 +76,7 @@ func TestLoad_DefaultsWhenNothingSet(t *testing.T) {
 func TestLoad_FlagBeatsEverything(t *testing.T) {
 	t.Parallel()
 	files := map[string]FileData{
-		"/test/config/yalla/config.yaml": {
+		defaultTestConfigPath: {
 			BaseURL: "https://from-file.example.com",
 			Token:   "from-file-token",
 			Output:  OutputJSON,
@@ -115,7 +123,7 @@ func TestLoad_FlagBeatsEverything(t *testing.T) {
 func TestLoad_EnvBeatsFile(t *testing.T) {
 	t.Parallel()
 	files := map[string]FileData{
-		"/test/config/yalla/config.yaml": {
+		defaultTestConfigPath: {
 			BaseURL: "https://from-file.example.com",
 			Token:   "from-file-token",
 			Output:  OutputHuman,
@@ -154,7 +162,7 @@ func TestLoad_FileBeatsDefaults(t *testing.T) {
 	t.Parallel()
 	noInputTrue := true
 	files := map[string]FileData{
-		"/test/config/yalla/config.yaml": {
+		defaultTestConfigPath: {
 			BaseURL: "https://from-file.example.com",
 			Token:   "from-file-token",
 			Output:  OutputJSON,

@@ -1,0 +1,38 @@
+# Force LF line endings on all text files so files we hash at build/test
+# time have a stable byte representation across platforms. Without this,
+# GitHub Actions Windows runners with the default `core.autocrlf=true`
+# mutate `\n` → `\r\n` on checkout, which silently changes file content
+# and breaks any test that pins an embedded fixture's SHA-256.
+#
+# The canonical example is `internal/api/data/openapi.json`: its digest
+# is pinned at compile time (`api.EmbeddedSpecSHA256`) and asserted in
+# `registry_test.go`. CRLF normalisation produces a different file, which
+# fails the test on Windows and ships a different byte stream than every
+# other platform's binary.
+
+* text=auto eol=lf
+
+# Pin canonical text formats explicitly so a future change to git's auto
+# detection cannot drift them.
+*.json   text eol=lf
+*.yaml   text eol=lf
+*.yml    text eol=lf
+*.toml   text eol=lf
+*.md     text eol=lf
+*.go     text eol=lf
+*.sh     text eol=lf
+*.py     text eol=lf
+
+# Binary file types — `core.autocrlf` must not touch these. The release
+# artefact zips are the primary motivation; the others are defensive.
+*.zip    binary
+*.tar    binary
+*.tar.gz binary
+*.tgz    binary
+*.gz     binary
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.ico    binary
+*.pdf    binary
