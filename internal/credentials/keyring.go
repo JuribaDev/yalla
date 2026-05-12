@@ -20,14 +20,17 @@ type Store interface {
 // and Secret Service-compatible Linux keyrings.
 type KeyringStore struct{}
 
+// Get returns the secret stored for service/account from the host keyring.
 func (KeyringStore) Get(service, account string) (string, error) {
 	return keyring.Get(service, account)
 }
 
+// Set stores secret for service/account in the host keyring.
 func (KeyringStore) Set(service, account, secret string) error {
 	return keyring.Set(service, account, secret)
 }
 
+// Delete removes the secret stored for service/account from the host keyring.
 func (KeyringStore) Delete(service, account string) error {
 	return keyring.Delete(service, account)
 }

@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Run the same verification gate CI relies on before creating a commit.
+
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+gopath="$(go env GOPATH 2>/dev/null || true)"
+if [[ -n "$gopath" ]]; then
+  export PATH="$gopath/bin:$PATH"
+fi
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+echo "pre-commit: running full CI-equivalent verification"
+echo "pre-commit: scripts/verify.sh --strict --release"
+
+scripts/verify.sh --strict --release
