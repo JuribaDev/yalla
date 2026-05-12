@@ -2,9 +2,15 @@ package cli
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
+	"github.com/zalando/go-keyring"
+
+	"github.com/JuribaDev/yalla/internal/api"
 	"github.com/JuribaDev/yalla/internal/config"
 	"github.com/JuribaDev/yalla/internal/output"
 )
@@ -149,5 +155,183 @@ func TestAuthStatus_NoInputDoesNotPrompt(t *testing.T) {
 	}
 	if stdout.Len() == 0 {
 		t.Error("expected JSON output on stdout")
+	}
+}
+
+func TestAuthLogin_TokenStdinStoresURLAndTokenThenVerifies(t *testing.T) {
+	keyring.MockInit()
+	path := withTempConfig(t, "")
+	const token = "login-secret-token-value"
+
+	var seenPath, seenAPIKey string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenPath = r.URL.Path
+		seenAPIKey = r.Header.Get(api.DefaultAPIKeyHeader)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"user_1","email":"dev@example.com","activeOrganizationId":"org_1"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	streams, stdout, stderr := testStreams()
+	streams.In = strings.NewReader(token + "\n")
+	cmd, flags := buildRoot(streams, BuildInfo{Version: "0.0.0-test"})
+	cmd.SetArgs([]string{"--json", "auth", "login", "--url", srv.URL, "--token-stdin"})
+	if err := cmd.Execute(); err != nil {
+		_ = renderTerminalError(streams, flags, err)
+		t.Fatalf("Execute: %v (stderr=%q)", err, stderr.String())
+	}
+
+	if strings.Contains(stdout.String()+stderr.String(), token) {
+		t.Fatalf("token leaked into output: stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+	if seenPath != coverageWirePath("/user.get") {
+		t.Errorf("verification path = %q, want %q", seenPath, coverageWirePath("/user.get"))
+	}
+	if seenAPIKey != token {
+		t.Errorf("verification API key = %q, want token from stdin", seenAPIKey)
+	}
+	stored, err := keyring.Get("yalla", srv.URL)
+	if err != nil {
+		t.Fatalf("keyring get: %v", err)
+	}
+	if stored != token {
+		t.Errorf("stored token = %q, want stdin token", stored)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if !strings.Contains(string(body), "base_url: "+srv.URL) {
+		t.Errorf("config missing URL; body=%q", string(body))
+	}
+
+	var env struct {
+		Data authLoginDoc `json:"data"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &env); err != nil {
+		t.Fatalf("decode: %v; raw=%q", err, stdout.String())
+	}
+	if env.Data.URL != srv.URL || env.Data.Token.Source != string(config.SourceCredentialStore) {
+		t.Errorf("unexpected login payload: %+v", env.Data)
+	}
+	if env.Data.User.Email != "dev@example.com" || env.Data.ActiveOrganizationID != "org_1" {
+		t.Errorf("verification identity not surfaced: %+v", env.Data)
+	}
+}
+
+func TestAuthLogin_TokenStdinRedactsVerificationFailure(t *testing.T) {
+	keyring.MockInit()
+	withTempConfig(t, "")
+	const token = "stdin-secret-token-validated-12345"
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte("bad token: " + r.Header.Get(api.DefaultAPIKeyHeader)))
+	}))
+	t.Cleanup(srv.Close)
+
+	streams, stdout, stderr := testStreams()
+	streams.In = strings.NewReader(token)
+	cmd, flags := buildRoot(streams, BuildInfo{Version: "0.0.0-test"})
+	cmd.SetArgs([]string{"--json", "auth", "login", "--url", srv.URL, "--token-stdin", "--store", "config"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("Execute returned nil for failed verification")
+	}
+	_ = renderTerminalError(streams, flags, err)
+
+	if stdout.Len() != 0 {
+		t.Errorf("stdout should be empty on failed login; got %q", stdout.String())
+	}
+	if strings.Contains(stderr.String(), token) {
+		t.Fatalf("stdin token leaked into verification error: %q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), output.Sentinel) {
+		t.Fatalf("expected redaction sentinel in stderr; got %q", stderr.String())
+	}
+}
+
+func TestAuthStatus_ReportsCredentialStoreToken(t *testing.T) {
+	keyring.MockInit()
+	withTempConfig(t, "base_url: https://stored.example.com\n")
+	if err := keyring.Set("yalla", "https://stored.example.com", "stored-token-value"); err != nil {
+		t.Fatalf("keyring set: %v", err)
+	}
+
+	stdout, stderr, err := runRootArgs(t, "--json", "auth", "status")
+	if err != nil {
+		t.Fatalf("Execute: %v (stderr=%q)", err, stderr)
+	}
+	var env struct {
+		Data authStatusDoc `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &env); err != nil {
+		t.Fatalf("decode: %v; raw=%q", err, stdout)
+	}
+	if !env.Data.Ready {
+		t.Fatalf("ready = false; payload=%+v", env.Data)
+	}
+	if env.Data.Token.Source != config.SourceCredentialStore {
+		t.Errorf("token.source = %q, want %q", env.Data.Token.Source, config.SourceCredentialStore)
+	}
+	if strings.Contains(stdout+stderr, "stored-token-value") {
+		t.Errorf("credential-store token leaked: stdout=%q stderr=%q", stdout, stderr)
+	}
+}
+
+func TestAuthLogout_RemovesTokenForActiveURL(t *testing.T) {
+	keyring.MockInit()
+	withTempConfig(t, "base_url: https://stored.example.com\n")
+	if err := keyring.Set("yalla", "https://stored.example.com", "stored-token-value"); err != nil {
+		t.Fatalf("keyring set: %v", err)
+	}
+
+	stdout, stderr, err := runRootArgs(t, "--json", "auth", "logout")
+	if err != nil {
+		t.Fatalf("Execute: %v (stderr=%q)", err, stderr)
+	}
+	if _, err := keyring.Get("yalla", "https://stored.example.com"); err == nil {
+		t.Fatal("token still present after logout")
+	}
+	var env struct {
+		Data authLogoutDoc `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &env); err != nil {
+		t.Fatalf("decode: %v; raw=%q", err, stdout)
+	}
+	if env.Data.URL != "https://stored.example.com" || !env.Data.Removed {
+		t.Errorf("unexpected logout payload: %+v", env.Data)
+	}
+}
+
+func TestAuthLogout_ConfigTokenSucceedsWhenKeyringUnsupported(t *testing.T) {
+	keyring.MockInitWithError(keyring.ErrUnsupportedPlatform)
+	t.Cleanup(keyring.MockInit)
+	path := withTempConfig(t, "base_url: https://stored.example.com\ntoken: plaintext-token-value\n")
+
+	stdout, stderr, err := runRootArgs(t, "--json", "auth", "logout")
+	if err != nil {
+		t.Fatalf("Execute: %v (stderr=%q)", err, stderr)
+	}
+	if strings.Contains(stdout+stderr, "plaintext-token-value") {
+		t.Fatalf("token leaked into logout output: stdout=%q stderr=%q", stdout, stderr)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if strings.Contains(string(body), "plaintext-token-value") {
+		t.Fatalf("config token was not cleared: %q", string(body))
+	}
+	var env struct {
+		Data authLogoutDoc `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &env); err != nil {
+		t.Fatalf("decode: %v; raw=%q", err, stdout)
+	}
+	if !env.Data.Removed || env.Data.Token.Source != string(config.SourceFile) {
+		t.Errorf("unexpected logout payload: %+v", env.Data)
 	}
 }

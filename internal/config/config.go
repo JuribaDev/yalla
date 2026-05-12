@@ -70,6 +70,9 @@ const (
 	SourceFile    Source = "file"
 	SourceEnv     Source = "env"
 	SourceFlag    Source = "flag"
+	// SourceCredentialStore means the token came from the host OS secure
+	// credential store. Only tokens use this source.
+	SourceCredentialStore Source = "credential_store"
 )
 
 // OutputFormat is the resolved render mode. `output: json` means
@@ -148,11 +151,11 @@ func (c *Config) Ready() error {
 	}
 	if !c.HasToken() {
 		return yerr.New(yerr.CodeAuth, "no Dokploy API token configured").
-			WithHint("set YALLA_TOKEN, pass --token, or run `yalla config set token <value>`")
+			WithHint("run `yalla auth login`, set YALLA_TOKEN, or pass --token")
 	}
 	if !c.HasBaseURL() {
 		return yerr.New(yerr.CodeConfig, "no Dokploy base URL configured").
-			WithHint("set YALLA_BASE_URL, pass --base-url, or run `yalla config set base_url https://dokploy.example.com`")
+			WithHint("run `yalla auth login`, set YALLA_BASE_URL, or pass --base-url")
 	}
 	return nil
 }

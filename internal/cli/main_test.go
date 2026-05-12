@@ -4,6 +4,8 @@ import (
 	"os"
 	"testing"
 
+	"github.com/zalando/go-keyring"
+
 	"github.com/JuribaDev/yalla/internal/config"
 )
 
@@ -35,5 +37,6 @@ func TestMain(m *testing.M) {
 	envSnapshotForRenderer = func() config.EnvSnapshot {
 		return config.EnvSnapshot{Output: config.OutputHuman}
 	}
+	keyring.MockInit()
 	os.Exit(m.Run())
 }

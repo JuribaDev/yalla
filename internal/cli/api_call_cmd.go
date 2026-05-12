@@ -364,11 +364,11 @@ func runAPICall(ctx context.Context, r *output.Renderer, reg *api.Registry, cfg 
 	if !opts.DryRun {
 		if cfg.BaseURL == "" {
 			return yerr.New(yerr.CodeConfig, "no Dokploy base URL configured").
-				WithHint("set YALLA_BASE_URL, pass --base-url, or run `yalla config set base_url https://dokploy.example.com`")
+				WithHint("run `yalla auth login`, set YALLA_BASE_URL, or pass --base-url")
 		}
 		if op.RequiresAuth && cfg.Token == "" {
 			return yerr.Newf(yerr.CodeAuth, "operation %q requires authentication; no Dokploy API token configured", op.OperationID).
-				WithHint("set YALLA_TOKEN, pass --token, or run `yalla config set token <value>`")
+				WithHint("run `yalla auth login`, set YALLA_TOKEN, or pass --token")
 		}
 	}
 

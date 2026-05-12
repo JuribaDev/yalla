@@ -140,6 +140,17 @@ func NewRootCommand(streams IOStreams, build BuildInfo) *cobra.Command {
 func buildRoot(streams IOStreams, build BuildInfo) (*cobra.Command, *GlobalFlags) {
 	flags := &GlobalFlags{}
 	loader := config.NewLoader()
+	loader.CredentialLookup = func(baseURL string) (string, bool) {
+		store := credentialStoreFactory()
+		if store == nil {
+			return "", false
+		}
+		token, err := store.Get(credentialService, credentialAccountForURL(baseURL))
+		if err != nil || token == "" {
+			return "", false
+		}
+		return token, true
+	}
 
 	cmd := &cobra.Command{
 		Use:   "yalla",
@@ -202,8 +213,8 @@ while logs, prompts, warnings, and errors are written to stderr.`,
 	pf.BoolVar(&flags.JSON, "json", false, "emit machine-readable JSON output to stdout")
 	pf.BoolVar(&flags.NoInput, "no-input", false, "never prompt; fail with a stable error code if input is required")
 	pf.StringVar(&flags.Config, "config", "", "path to a yalla config file (overrides the default search path)")
-	pf.StringVar(&flags.BaseURL, "base-url", "", "Dokploy API base URL (e.g. https://dokploy.example.com)")
-	pf.StringVar(&flags.Token, "token", "", "Dokploy API token; redacted in all logs and output")
+	pf.StringVar(&flags.BaseURL, "base-url", "", "API URL (e.g. https://deploy.example.com)")
+	pf.StringVar(&flags.Token, "token", "", "API token; redacted in all logs and output")
 	pf.BoolVarP(&flags.Verbose, "verbose", "v", false, "enable verbose diagnostic logging on stderr")
 
 	// Subcommands are registered after the persistent flags are wired so the
