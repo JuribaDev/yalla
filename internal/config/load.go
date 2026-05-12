@@ -26,6 +26,10 @@ type Loader struct {
 	// UserConfigDir mirrors os.UserConfigDir; used to compute the default
 	// config path.
 	UserConfigDir func() (string, error)
+	// CredentialLookup optionally resolves a token from the host secure
+	// credential store after base_url is known. The CLI layer wires this
+	// hook so the config package does not import platform keyring code.
+	CredentialLookup func(baseURL string) (string, bool)
 }
 
 // NewLoader returns a Loader bound to the real process environment and file
@@ -114,9 +118,19 @@ func (l *Loader) Load(flags FlagValues) (*Config, error) {
 	cfg.Token, cfg.TokenSource = l.resolveString(
 		flags.TokenSet, flags.Token,
 		EnvToken,
-		file.Token,
+		"",
 		"",
 	)
+	if cfg.Token == "" && cfg.BaseURL != "" && l.CredentialLookup != nil {
+		if token, ok := l.CredentialLookup(cfg.BaseURL); ok && token != "" {
+			cfg.Token = token
+			cfg.TokenSource = SourceCredentialStore
+		}
+	}
+	if cfg.Token == "" && file.Token != "" {
+		cfg.Token = file.Token
+		cfg.TokenSource = SourceFile
+	}
 
 	output, outputSource, err := l.resolveOutput(flags, file)
 	if err != nil {

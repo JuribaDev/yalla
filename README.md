@@ -30,9 +30,18 @@ commands so AI agents and humans can drive Dokploy with the same tooling.
 
 ```sh
 yalla --version
+yalla auth login
+yalla auth status
+yalla auth whoami
 yalla manifest --json
 yalla api operations --json
 yalla api call project-create --input request.json --json
+```
+
+For automation, avoid putting tokens in shell history:
+
+```sh
+printf '%s' "$YALLA_TOKEN" | yalla auth login --url https://deploy.example.com --token-stdin --json
 ```
 
 ## Releases

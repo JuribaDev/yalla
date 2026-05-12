@@ -202,7 +202,7 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 	base := strings.TrimSpace(cfg.BaseURL)
 	if base == "" {
 		return nil, yerr.New(yerr.CodeConfig, "no Dokploy base URL configured").
-			WithHint("set YALLA_BASE_URL, pass --base-url, or run `yalla config set base_url https://dokploy.example.com`")
+			WithHint("run `yalla auth login`, set YALLA_BASE_URL, or pass --base-url")
 	}
 	u, err := url.Parse(base)
 	if err != nil {

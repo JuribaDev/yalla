@@ -17,6 +17,16 @@ optional tool as missing, install it or document the skip in
 `ralph/progress.txt` — the project policy is **never silently skip a
 check**.
 
+To install the repository pre-commit hook:
+
+```bash
+scripts/install-hooks.sh
+```
+
+The hook runs `scripts/verify.sh --strict --release`, which mirrors the
+CI test, security, lint, and release dry-run gates before Git creates a
+commit.
+
 ## Required Checks Before Every Commit
 
 These are non-negotiable. CI runs them on every push and pull request,
