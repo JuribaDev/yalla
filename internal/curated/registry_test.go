@@ -192,3 +192,57 @@ func TestDefaultRegistry_VerifiesAgainstSpec(t *testing.T) {
 		t.Fatalf("default curated registry out of sync with embedded spec: %v", err)
 	}
 }
+
+func TestDefaultRegistry_IncludesDatabaseCommands(t *testing.T) {
+	cmds := Default().Commands()
+	byPath := make(map[string]Command, len(cmds))
+	for _, cmd := range cmds {
+		byPath[cmd.Path] = cmd
+	}
+	for _, path := range []string{
+		"yalla database backup create",
+		"yalla database backup delete",
+		"yalla database backup get",
+		"yalla database backup list-files",
+		"yalla database backup run",
+		"yalla database backup update",
+		"yalla database create",
+		"yalla database deploy",
+		"yalla database update",
+	} {
+		cmd, ok := byPath[path]
+		if !ok {
+			t.Fatalf("missing curated command %q", path)
+		}
+		if cmd.Domain != DomainDatabase {
+			t.Errorf("%s domain = %q, want %q", path, cmd.Domain, DomainDatabase)
+		}
+		if len(cmd.OperationIDs) == 0 {
+			t.Errorf("%s has no operation IDs", path)
+		}
+		if !strings.Contains(cmd.JSONExample, "--json") {
+			t.Errorf("%s JSONExample must contain --json: %q", path, cmd.JSONExample)
+		}
+	}
+	update := byPath["yalla database update"]
+	for _, want := range []string{"postgres-one", "postgres-update", "redis-one", "redis-update"} {
+		if !containsString(update.OperationIDs, want) {
+			t.Errorf("database update operation IDs missing %q: %v", want, update.OperationIDs)
+		}
+	}
+	backupRun := byPath["yalla database backup run"]
+	for _, want := range []string{"backup-manualBackupPostgres", "backup-manualBackupMySql", "backup-manualBackupMariadb", "backup-manualBackupMongo"} {
+		if !containsString(backupRun.OperationIDs, want) {
+			t.Errorf("database backup run operation IDs missing %q: %v", want, backupRun.OperationIDs)
+		}
+	}
+}
+
+func containsString(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
+}

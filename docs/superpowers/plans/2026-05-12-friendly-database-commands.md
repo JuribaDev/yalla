@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add production-grade friendly database commands so users can create and deploy Dokploy-managed Postgres, MySQL, MariaDB, MongoDB, and Redis resources without hand-writing `yalla api call <engine>-create` payloads.
+**Goal:** Add production-grade friendly database commands so users can create, deploy, and scale Dokploy-managed Postgres, MySQL, MariaDB, MongoDB, and Redis resources without hand-writing `yalla api call <engine>-create` or `<engine>-update` payloads.
 
 **Architecture:** Add a `database` Cobra command group under `internal/cli`, backed by a small typed database service that translates friendly flags into existing Dokploy OpenAPI operations. Use the embedded OpenAPI schema as the source of truth because the live `https://ploy.jsa.sa/swagger` page redirects to login and API-key-authenticated spec routes return 404; verify behavior against live non-mutating search endpoints. Keep raw API access unchanged, register curated descriptors in `internal/curated`, and make every command emit stable human and JSON output through `internal/output.Renderer`.
 
@@ -63,6 +63,18 @@ yalla database deploy postgres --id postgres_123
 yalla database deploy redis --id redis_123
 ```
 
+Scale/update resources:
+
+```sh
+yalla database update postgres \
+  --id postgres_123 \
+  --memory-reservation 512M \
+  --memory-limit 1G \
+  --cpu-reservation 0.25 \
+  --cpu-limit 1 \
+  --replicas 1
+```
+
 Optional convenience:
 
 ```sh
@@ -82,8 +94,14 @@ flowchart TD
     Deploy -->|yes| RawDeploy["runAPICall: <engine>-deploy"]
     Deploy -->|no| Emit["Render databaseCreateDoc"]
     RawDeploy --> Emit
+    Cobra --> Update["Cobra command: yalla database update <engine>"]
+    Update --> UpdateValidate["Validate id + scaling flags"]
+    UpdateValidate --> RawUpdate["runAPICall: <engine>-update"]
+    RawUpdate --> EmitUpdate["Render databaseUpdateDoc"]
     Emit --> JSON["JSON envelope via output.Renderer.Data"]
     Emit --> Human["Human summary via output.Renderer.Human"]
+    EmitUpdate --> JSON
+    EmitUpdate --> Human
 ```
 
 ## Swagger / Live API Findings
@@ -112,12 +130,23 @@ Non-mutating database endpoint checks with the configured API key:
 /api/libsql.create   -> 404
 ```
 
+The embedded schemas for `postgres-update`, `mysql-update`, `mariadb-update`, `mongo-update`, and `redis-update` expose the resource controls needed for scaling:
+
+```text
+memoryReservation string|null
+memoryLimit       string|null
+cpuReservation    string|null
+cpuLimit          string|null
+replicas          number
+```
+
 Implications:
 
 - Do not build dynamic Swagger fetching into this feature.
 - Use `internal/api/data/openapi.json` and `yalla schema get <operationId>` for schema-driven implementation.
 - Add live smoke verification only for non-mutating `*-search` endpoints.
 - Keep `libsql` unsupported until a future embedded schema and live instance expose `libsql-*` operations.
+- Include a friendly `database update` command for CPU, memory, and replica scaling rather than forcing agents back to raw `<engine>-update` calls.
 
 ## UX And Validation Rules
 
@@ -141,8 +170,24 @@ Rules:
 - `--database-name` is invalid for MongoDB.
 - `--root-password` applies only to MySQL/MariaDB if the API accepts it; it is optional because `mysql-create` does not require it.
 - `--replica-sets` applies only to MongoDB and maps to the optional `replicaSets` request field.
+- `--image` overrides the friendly safe defaults. When omitted, the CLI sends `postgres:18`, `mysql:8`, `mariadb:11.4`, `mongo:8`, or `redis:8` so agents do not inherit broken upstream schema defaults such as `mariadb:6` or `mongo:15`.
+- `database update` supports `--memory-reservation`, `--memory-limit`, `--cpu-reservation`, `--cpu-limit`, and `--replicas` for every supported engine.
+- `database update` must be patch-like from the user’s perspective: it fetches the current DB record with `<engine>-one`, overlays the changed flags, then sends the complete `<engine>-update` body needed by Dokploy.
 - `--deploy` runs create, recovers the ID via search, then deploys.
 - Without `--deploy`, create still recovers and prints the resource ID when possible.
+
+## AI-First CLI Alignment
+
+This feature must preserve the repo’s agent-first contract:
+
+- Every command supports `--json` through `internal/output.Renderer.Data`, never hand-rolled JSON.
+- Human output goes through `Renderer.Human`; diagnostics go through `Renderer.Logf` on stderr.
+- Failures return typed `internal/errors` values so agents can switch on stable codes such as `E_INVALID_INPUT`, `E_UNSUPPORTED`, `E_NOT_FOUND`, and `E_AUTH`.
+- Commands must be non-interactive by default for supplied flags and must respect global `--no-input`; missing required values fail with actionable hints instead of prompting.
+- `yalla manifest --json` must list the top-level `database` command and curated command descriptors with operation IDs.
+- `--help` examples must include both human and agent forms, with JSON examples containing `--json`.
+- Secrets such as database passwords must not appear in JSON output, human output, verbose logs, errors, or tests.
+- Raw access remains available through `yalla api call <operationId>`, so agents can fall back when a future Dokploy field is not yet curated.
 
 ## Files
 
@@ -151,7 +196,7 @@ Rules:
 - Create: `internal/cli/database_service.go` for engine metadata, validation, create/deploy/search orchestration.
 - Create: `internal/cli/database_cmd_test.go` for CLI behavior, validation, JSON output, help, and command registration tests.
 - Modify: `internal/cli/manifest_cmd_test.go` to include top-level `database`.
-- Modify: `internal/curated/registry.go` to register curated descriptors for `yalla database create` and `yalla database deploy`.
+- Modify: `internal/curated/registry.go` to register curated descriptors for `yalla database create`, `yalla database deploy`, and `yalla database update`.
 - Modify: `internal/curated/registry_test.go` to assert database curated mappings.
 - Modify: `docs/curated-commands.md` to replace aspirational database examples with concrete supported syntax.
 - Modify: `skills/claude/yalla-dokploy-deploy/references/databases.md` to prefer friendly commands and keep raw API calls as fallback.
@@ -236,6 +281,7 @@ func newDatabaseCommand() *cobra.Command {
 	}
 	cmd.AddCommand(newDatabaseCreateCommand())
 	cmd.AddCommand(newDatabaseDeployCommand())
+	cmd.AddCommand(newDatabaseUpdateCommand())
 	return cmd
 }
 
@@ -254,6 +300,17 @@ func newDatabaseDeployCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "deploy <engine>",
 		Short: "Deploy a Dokploy database",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			return nil
+		},
+	}
+}
+
+func newDatabaseUpdateCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "update <engine>",
+		Short: "Update and scale a Dokploy database",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			return nil
@@ -489,6 +546,10 @@ func (e databaseEngine) searchOperationID() string {
 	return string(e) + "-search"
 }
 
+func (e databaseEngine) updateOperationID() string {
+	return string(e) + "-update"
+}
+
 func (e databaseEngine) idField() string {
 	switch e {
 	case databasePostgres:
@@ -694,7 +755,160 @@ git add internal/cli/database_cmd.go internal/cli/database_service.go internal/c
 git commit -m "feat: deploy databases through friendly command"
 ```
 
-## Task 6: Manifest And Curated Registry
+## Task 6: Update And Scale Command
+
+**Files:**
+- Modify: `internal/cli/database_cmd.go`
+- Modify: `internal/cli/database_service.go`
+- Test: `internal/cli/database_cmd_test.go`
+
+- [ ] **Step 1: Add update command tests**
+
+Assert:
+
+```sh
+yalla database update postgres \
+  --id postgres_123 \
+  --memory-reservation 512M \
+  --memory-limit 1G \
+  --cpu-reservation 0.25 \
+  --cpu-limit 1 \
+  --replicas 1
+```
+
+first calls `postgres-one`, then sends this merged body to `postgres-update`:
+
+```json
+{
+  "body": {
+    "postgresId": "postgres_123",
+    "memoryReservation": "512M",
+    "memoryLimit": "1G",
+    "cpuReservation": "0.25",
+    "cpuLimit": "1",
+    "replicas": 1
+  }
+}
+```
+
+The actual implementation should include any current fields Dokploy requires from the `postgres-one` response; this test should assert the scaling fields are present and changed, not that unrelated preserved fields are absent.
+
+- [ ] **Step 2: Add update options**
+
+```go
+type databaseUpdateOptions struct {
+	Engine            databaseEngine
+	ID                string
+	MemoryReservation string
+	MemoryLimit       string
+	CPUReservation    string
+	CPULimit          string
+	Replicas          int
+	ReplicasSet       bool
+}
+```
+
+Use `ReplicasSet` so `--replicas 0` can be distinguished from an omitted flag if Dokploy ever supports zero in a future mode.
+
+- [ ] **Step 3: Wire update flags**
+
+```go
+var opts databaseUpdateOptions
+cmd.Flags().StringVar(&opts.ID, "id", "", "database ID")
+cmd.Flags().StringVar(&opts.MemoryReservation, "memory-reservation", "", "reserved memory, e.g. 512M")
+cmd.Flags().StringVar(&opts.MemoryLimit, "memory-limit", "", "maximum memory, e.g. 1G")
+cmd.Flags().StringVar(&opts.CPUReservation, "cpu-reservation", "", "reserved CPU units, e.g. 0.25")
+cmd.Flags().StringVar(&opts.CPULimit, "cpu-limit", "", "maximum CPU units, e.g. 1")
+cmd.Flags().IntVar(&opts.Replicas, "replicas", 0, "replica count")
+```
+
+In `RunE`, set `opts.ReplicasSet = c.Flags().Changed("replicas")`.
+
+- [ ] **Step 4: Validate update input**
+
+Rules:
+
+- `--id` is required.
+- At least one update flag is required.
+- `--replicas` must be greater than zero for this first implementation.
+- Memory strings are passed through to Dokploy but must not be empty when the flag is present.
+- CPU strings are passed through to Dokploy but must parse as positive decimal numbers so obvious typos fail locally.
+
+- [ ] **Step 5: Fetch current record before update**
+
+Call `<engine>-one` with the engine-specific query parameter:
+
+```json
+{
+  "query": {
+    "postgresId": ["postgres_123"]
+  }
+}
+```
+
+Parse the returned JSON object into a mutable map. If the current record cannot be fetched, return `E_NOT_FOUND` or the upstream typed error from `runAPICall`.
+
+- [ ] **Step 6: Merge scaling fields**
+
+Overlay only flags the user supplied:
+
+```go
+if opts.MemoryReservation != "" {
+	body["memoryReservation"] = opts.MemoryReservation
+}
+if opts.MemoryLimit != "" {
+	body["memoryLimit"] = opts.MemoryLimit
+}
+if opts.CPUReservation != "" {
+	body["cpuReservation"] = opts.CPUReservation
+}
+if opts.CPULimit != "" {
+	body["cpuLimit"] = opts.CPULimit
+}
+if opts.ReplicasSet {
+	body["replicas"] = opts.Replicas
+}
+```
+
+Ensure the body contains the engine ID field, e.g. `postgresId`, `mysqlId`, `mariadbId`, `mongoId`, or `redisId`.
+
+- [ ] **Step 7: Emit stable update output**
+
+```go
+type databaseUpdateDoc struct {
+	Engine            string `json:"engine"`
+	ID                string `json:"id"`
+	MemoryReservation string `json:"memory_reservation,omitempty"`
+	MemoryLimit       string `json:"memory_limit,omitempty"`
+	CPUReservation    string `json:"cpu_reservation,omitempty"`
+	CPULimit          string `json:"cpu_limit,omitempty"`
+	Replicas          int    `json:"replicas,omitempty"`
+}
+```
+
+Human output:
+
+```text
+Updated postgres database postgres_123
+Memory: reservation=512M limit=1G
+CPU: reservation=0.25 limit=1
+Replicas: 1
+```
+
+- [ ] **Step 8: Run update tests**
+
+```sh
+go test ./internal/cli -run 'TestDatabaseUpdate_' -count=1
+```
+
+- [ ] **Step 9: Commit**
+
+```sh
+git add internal/cli/database_cmd.go internal/cli/database_service.go internal/cli/database_cmd_test.go
+git commit -m "feat: scale databases through friendly update command"
+```
+
+## Task 7: Manifest And Curated Registry
 
 **Files:**
 - Modify: `internal/curated/registry.go`
@@ -724,6 +938,16 @@ OperationIDs: []string{
 }
 ```
 
+and:
+
+```go
+Path: "yalla database update"
+OperationIDs: []string{
+	"postgres-one", "mysql-one", "mariadb-one", "mongo-one", "redis-one",
+	"postgres-update", "mysql-update", "mariadb-update", "mongo-update", "redis-update",
+}
+```
+
 - [ ] **Step 2: Register curated descriptors**
 
 Append to `defaultCommands` in `internal/curated/registry.go`, keeping entries grouped and sorted by path.
@@ -745,7 +969,7 @@ git add internal/curated/registry.go internal/curated/registry_test.go internal/
 git commit -m "feat: publish database commands in manifest"
 ```
 
-## Task 7: Documentation And Deploy Skill Update
+## Task 8: Documentation And Deploy Skill Update
 
 **Files:**
 - Modify: `docs/curated-commands.md`
@@ -760,6 +984,7 @@ yalla database create postgres --environment-id env_123 --name app-postgres --da
 yalla database create redis --environment-id env_123 --name app-redis --database-password "$REDIS_PASSWORD"
 yalla database create mongo --environment-id env_123 --name app-mongo --database-user app --database-password "$MONGO_PASSWORD" --replica-sets
 yalla database deploy postgres --id postgres_123
+yalla database update postgres --id postgres_123 --memory-reservation 512M --memory-limit 1G --cpu-reservation 0.25 --cpu-limit 1 --replicas 1
 ```
 
 - [ ] **Step 2: Update deploy skill reference**
@@ -788,7 +1013,7 @@ git add docs/curated-commands.md skills/claude/yalla-dokploy-deploy/references/d
 git commit -m "docs: document friendly database commands"
 ```
 
-## Task 8: Security And Redaction Regression
+## Task 9: Security And Redaction Regression
 
 **Files:**
 - Modify: `internal/cli/redaction_security_test.go`
@@ -829,7 +1054,7 @@ git add internal/cli/redaction_security_test.go internal/cli/database_cmd_test.g
 git commit -m "test: prevent database password leaks"
 ```
 
-## Task 9: Live Non-Mutating Smoke Verification
+## Task 10: Live Non-Mutating Smoke Verification
 
 **Files:**
 - Modify: `docs/curated-commands.md`
@@ -880,6 +1105,7 @@ go test ./...
 go run ./cmd/yalla --json manifest
 go run ./cmd/yalla database create postgres --help
 go run ./cmd/yalla database deploy postgres --help
+go run ./cmd/yalla database update postgres --help
 for op in postgres-search mysql-search mariadb-search mongo-search redis-search; do
   go run ./cmd/yalla --json api call "$op" --input <(printf '{"query":{"limit":["1"],"offset":["0"]}}') --timeout 10s
 done
@@ -889,7 +1115,7 @@ Expected:
 
 - All tests pass.
 - Manifest includes top-level `database`.
-- Manifest includes curated commands `yalla database create` and `yalla database deploy`.
+- Manifest includes curated commands `yalla database create`, `yalla database deploy`, and `yalla database update`.
 - Help shows supported engines and safe password examples.
 - `libsql` returns `E_UNSUPPORTED`.
 - Redis rejects user/database flags.
@@ -897,8 +1123,37 @@ Expected:
 - Live non-mutating search endpoints return HTTP 200 on `https://ploy.jsa.sa`.
 - JSON output never contains raw database passwords.
 
+## Live Mutating Verification
+
+Executed against `https://ploy.jsa.sa` in a temporary project named `yalla-db-live-*`:
+
+- Created a temporary project and environment.
+- Created and deployed `postgres`, `mysql`, `mariadb`, `mongo`, and `redis` with generated alphanumeric passwords.
+- Scaled every database with `--memory-reservation 128M`, `--memory-limit 256M`, `--cpu-reservation 0.10`, `--cpu-limit 0.25`, and `--replicas 1`.
+- Verified each `<engine>-one` response reflected the scaled CPU, memory, and replica fields with status `done`.
+- Removed every created database, verified `<engine>-search` no longer returned it, and removed the temporary project.
+
+Live testing found Dokploy's embedded schema defaults include invalid images for some engines (`mariadb:6`, `mongo:15`), so the friendly command now sends safe defaults unless `--image` is provided.
+
+## Backup Command Follow-Up
+
+Implemented an AI-first backup surface under `yalla database backup`:
+
+```sh
+yalla database backup create postgres --id postgres_123 --destination-id dst_123 --database app --prefix backups/app/ --schedule "0 2 * * *" --keep-latest 7
+yalla database backup run postgres --backup-id backup_123
+yalla database backup update postgres --backup-id backup_123 --schedule "0 4 * * *" --keep-latest 14
+yalla database backup get --backup-id backup_123
+yalla database backup list-files --destination-id dst_123 --prefix backups/app/
+yalla database backup delete --backup-id backup_123
+```
+
+Supported engines for backup create/run/update are `postgres`, `mysql`, `mariadb`, and `mongo`. Redis intentionally returns `E_UNSUPPORTED` because the embedded Dokploy backup schema has no Redis backup operation.
+
+`database backup update` is patch-like for agents: it calls `backup-one`, preserves required fields, overlays changed flags, and sends the complete `backup-update` body. `database backup create` emits `backup_id` even when Dokploy's `backup-create` response body is `{}` by recovering the new schedule from the database record's `backups` array (`postgres-one`, `mysql-one`, `mariadb-one`, or `mongo-one`) and falling back to `user-getBackups`.
+
 ## Rollout Notes
 
 - This is additive. Existing `yalla api call <engine>-create` workflows remain supported.
-- The first release should document `database create` and `database deploy` only. `database list/get/start/stop/logs` can follow as separate, smaller stories using the same engine metadata.
+- The first release should document `database create`, `database deploy`, and `database update` only. `database list/get/start/stop/logs` can follow as separate, smaller stories using the same engine metadata.
 - If Dokploy later adds `libsql-*` operations, add `libsql` as a new engine with its own validation and output tests instead of overloading Redis/Postgres behavior.

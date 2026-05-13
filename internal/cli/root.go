@@ -223,6 +223,7 @@ while logs, prompts, warnings, and errors are written to stderr.`,
 	cmd.AddCommand(newConfigCommand())
 	cmd.AddCommand(newAuthCommand())
 	cmd.AddCommand(newAPICommand())
+	cmd.AddCommand(newDatabaseCommand())
 	cmd.AddCommand(newSchemaCommand())
 	cmd.AddCommand(newManifestCommand())
 	cmd.AddCommand(newDocsCommand())

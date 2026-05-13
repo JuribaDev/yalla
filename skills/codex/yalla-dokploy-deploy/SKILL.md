@@ -1,6 +1,6 @@
 ---
 name: yalla-dokploy-deploy
-description: Deploy and manage apps on yalla — the user's CLI for Dokploy. Use this skill whenever the user wants to ship, deploy, launch, redeploy, promote staging→prod, rollback to a previous image/commit, stop, start, restart, or tear down a project; upload a pre-built artifact / drop a zip / ship a local dist/ or build/ folder onto Dokploy; configure a domain (Let's Encrypt, custom cert, custom path); provision, scale, or back up a database (postgres/mysql/mariadb/mongo/redis) or pass-through an external one (RDS/Neon/Supabase); run schema migrations; scale replicas + resource limits; attach persistent volumes; wire deploy notifications (Slack/Discord/email); set up PR preview deployments; or schedule cron jobs. Trigger words include: "deploy", "ship", "launch", "make it live", "redeploy", "promote", "roll back", "stop the app", "restart the app", "tear down", "add a database", "scale database", "backup database", "set up yalla", "yalla deploy", ".yalla.yaml", "drop this zip", "upload my build", "ship this dist folder", "I already built it locally". Also trigger on Arabic / Arabizi: "انشر", "اعمل deploy", "ارجع", "وقف", "ركّب", "خليه يطلع للناس", "يلا deploy", "اعمل redeploy", "ارفع الـ zip", "ارفع البيلد", "اعمل drop". If the user is in a code project and wants to publish, change, observe, or revert a running service, this is the right skill — even if they don't say the word "yalla". Skip only for deploys targeting other platforms (Vercel, Railway, Render, Fly, DigitalOcean App Platform), local Docker debugging that doesn't include a deploy, CI/CD pipeline authoring (GitHub Actions, GitLab CI), or general infrastructure cost comparisons.
+description: Use when deploying, redeploying, promoting, rolling back, operating, scaling, or tearing down Dokploy projects through yalla; provisioning, scaling, wiring, or backing up databases; configuring domains, env vars, migrations, volumes, notifications, preview deployments, scheduled jobs, or pre-built artifact uploads.
 ---
 
 # Yalla → Dokploy deploy
@@ -8,6 +8,13 @@ description: Deploy and manage apps on yalla — the user's CLI for Dokploy. Use
 End-to-end deploy automation. Inspect the project, plan the deploy, get user confirmation, run the canonical lifecycle through `yalla api call`, verify the result is actually serving traffic.
 
 The skill assumes `yalla` is installed and authenticated. If it isn't, see "Pre-flight" below — give the user the setup snippet and stop.
+
+## Codex Notes
+
+- Use this skill from the repo workspace; resolve reference paths relative to this `SKILL.md`.
+- Prefer friendly commands (`yalla database ...`, `yalla auth ...`) before raw `yalla api call` when they cover the requested workflow.
+- Keep long operations transparent with short progress updates. For destructive or externally visible actions, show the exact command and get explicit confirmation unless the user already gave clear approval.
+- Never write API tokens or generated DB passwords to tracked files. If state must be persisted, use `.dokploy.yaml` for non-secret IDs and `.dokploy.yaml.local` for local-only secret notes.
 
 ## When to do what
 

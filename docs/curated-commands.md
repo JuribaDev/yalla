@@ -107,8 +107,30 @@ story that introduces them.
 `start`, `stop`, `logs`
 
 ### database
-`list`, `get`, `create`, `update`, `delete`, `deploy`, `start`,
-`stop`, `logs`
+`list`, `list-files`, `get`, `create`, `update`, `delete`, `deploy`,
+`run`, `start`, `stop`, `logs`
+
+Initial friendly database commands:
+
+```sh
+yalla database create postgres --environment-id env_123 --name app-postgres --database-name app --database-user app --database-password "$DATABASE_PASSWORD"
+yalla database create redis --environment-id env_123 --name app-redis --database-password "$REDIS_PASSWORD" --deploy
+yalla database create mongo --environment-id env_123 --name app-mongo --database-user app --database-password "$MONGO_PASSWORD" --replica-sets
+yalla database deploy postgres --id postgres_123
+yalla database update postgres --id postgres_123 --memory-reservation 512M --memory-limit 1G --cpu-reservation 0.25 --cpu-limit 1 --replicas 1
+yalla database backup create postgres --id postgres_123 --destination-id dst_123 --database app --prefix backups/app/ --schedule "0 2 * * *" --keep-latest 7
+yalla database backup run postgres --backup-id backup_123
+yalla database backup update postgres --backup-id backup_123 --schedule "0 4 * * *" --keep-latest 14
+yalla database backup list-files --destination-id dst_123 --prefix backups/app/
+yalla database backup delete --backup-id backup_123
+```
+
+Agent-mode examples use the same flags with `--json`, for example:
+
+```sh
+yalla --json database update postgres --id postgres_123 --memory-limit 1G --cpu-limit 1
+yalla --json database backup create postgres --id postgres_123 --destination-id dst_123 --database app --prefix backups/app/ --schedule "0 2 * * *" --keep-latest 7
+```
 
 ### server
 `list`, `get`, `register`, `update`, `delete`
