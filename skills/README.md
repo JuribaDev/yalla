@@ -22,7 +22,12 @@ skills/
 │       ├── fixtures/           # Stable inputs the evals reference (if any).
 │       └── evals/evals.json    # The test set used to validate the skill.
 └── codex/                      # Skills authored for OpenAI Codex.
-    └── (slot, see codex/README.md)
+    └── yalla-dokploy-deploy/   # Codex variant of the deploy-and-manage skill.
+        ├── SKILL.md
+        ├── agents/openai.yaml
+        ├── references/
+        ├── scripts/
+        └── evals/evals.json
 ```
 
 The Claude and Codex variants exist side by side because the two agents
@@ -45,8 +50,15 @@ ln -snf "$(pwd)/skills/claude/yalla-dokploy-deploy" \
 cp -r skills/claude/yalla-dokploy-deploy ~/.claude/skills/
 ```
 
-For Codex (or any other runtime), follow that runtime's skill-loading
-convention. The folder contract — `SKILL.md` at the root, optional
+For Codex, copy or symlink the skill into the Codex skills directory:
+
+```sh
+ln -snf "$(pwd)/skills/codex/yalla-dokploy-deploy" \
+  ~/.codex/skills/yalla-dokploy-deploy
+```
+
+For any other runtime, follow that runtime's skill-loading convention.
+The folder contract — `SKILL.md` at the root, optional `agents/`,
 `references/`, `scripts/`, `fixtures/`, `evals/` — is the same.
 
 ## Source of truth

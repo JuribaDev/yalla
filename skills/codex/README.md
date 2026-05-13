@@ -1,17 +1,17 @@
 # skills/codex/
 
-Slot for OpenAI Codex-flavored skills that pair with the yalla CLI.
+OpenAI Codex-flavored skills that pair with the yalla CLI.
 
-This directory is intentionally empty in the `ralph/claude-yalla` branch
-— the corresponding Codex playbook lives on the parallel Codex branch
-(`ralph/yalla-cli`) and should be mirrored here when that branch is
-ready to publish its skill alongside the Claude one.
+This tree currently ships the Codex variant of `yalla-dokploy-deploy`.
+It mirrors the Claude skill's deploy references, but includes Codex-facing
+metadata and notes for how Codex loads and presents skills.
 
 The folder contract is identical to `skills/claude/<skill>/`:
 
 ```
 skills/codex/<skill-name>/
 ├── SKILL.md            # Trigger metadata + operator playbook.
+├── agents/openai.yaml  # Codex UI metadata.
 ├── references/*.md     # Topic-scoped recipes.
 ├── scripts/            # Helpers the skill executes.
 ├── fixtures/           # Stable inputs the evals reference.
