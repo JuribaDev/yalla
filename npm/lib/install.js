@@ -1,7 +1,7 @@
 'use strict';
 
-// Download, verify, and unpack the matching native yalla binary from a
-// GitHub Release. The wrapper is intentionally dependency-free: only Node
+// Download, verify, and unpack the matching native yalla binary from the
+// public release mirror. The wrapper is intentionally dependency-free: only Node
 // core APIs are used so `npm install` does not pull a transitive surface.
 
 const fs = require('fs');
@@ -14,13 +14,19 @@ const { spawnSync } = require('child_process');
 const { detect, checksumName, parseChecksum } = require('./platform');
 
 const DEFAULT_REPO = 'JuribaDev/yalla';
+const DEFAULT_RELEASE_BASE = 'https://s3.jsa.sa/yalla-releases/releases/download';
 
 function repoSlug() {
   return process.env.YALLA_REPO || DEFAULT_REPO;
 }
 
+function cleanBaseURL(value) {
+  return String(value || '').replace(/\/+$/, '');
+}
+
 function releaseBase() {
-  if (process.env.YALLA_RELEASE_BASE) return process.env.YALLA_RELEASE_BASE;
+  if (process.env.YALLA_RELEASE_BASE) return cleanBaseURL(process.env.YALLA_RELEASE_BASE);
+  if (!process.env.YALLA_REPO) return DEFAULT_RELEASE_BASE;
   return `https://github.com/${repoSlug()}/releases/download`;
 }
 
