@@ -2,6 +2,23 @@
 
 `application-deploy` returning HTTP 200 means **the deploy was queued**, not that it succeeded. Real verification has two phases.
 
+## Prefer the wait primitives
+
+When you just need to wait until a condition is true, use the `yalla wait` family instead of writing a sleep-poll loop:
+
+```sh
+yalla --json wait compose --id compose_123 --status done --timeout 300s
+yalla --json wait url --url https://<host>/ --status-class 2xx --timeout 120s
+yalla --json wait orphans --app-name <appName> --count 0 --timeout 60s
+```
+
+Each returns `E_TIMEOUT` if the predicate doesn't hold within the budget, with the last observed state on the error envelope. They share yalla's audit log, retry, and JSON envelope so a human can replay what happened later. See `composite-verbs.md` § wait.
+
+The two-phase verification model below still applies — `yalla wait compose` then `yalla wait url` is its composite expression. Use the manual phases below when you need a predicate the wait primitives don't cover (e.g. probing a specific JSON field on a `/healthz` response).
+
+---
+
+
 ## Phase 1: status poll
 
 Loop on `application-one` (or `compose-one`) until the status terminates:

@@ -55,11 +55,12 @@ func TestDetect_AllChannels(t *testing.T) {
 			},
 			wantChan: ChannelHomebrew,
 		},
-		// npm global on Linux: prefix/lib/node_modules/yalla-cli/bin/yalla.js
+		// npm global on Linux:
+		// prefix/lib/node_modules/@juriba/yalla-cli/bin/yalla.js
 		// is what the yalla shim resolves to.
 		{
 			name:     "npm_global_linux",
-			probe:    Probe{BinaryPath: "/usr/local/lib/node_modules/yalla-cli/bin/yalla", GOOS: "linux", Env: noEnv},
+			probe:    Probe{BinaryPath: "/usr/local/lib/node_modules/@juriba/yalla-cli/bin/yalla", GOOS: "linux", Env: noEnv},
 			wantChan: ChannelNPM,
 		},
 		// npm via .bin shim path (yarn workspaces).
@@ -71,14 +72,14 @@ func TestDetect_AllChannels(t *testing.T) {
 		// npm on Windows uses backslashes.
 		{
 			name:     "npm_global_windows",
-			probe:    Probe{BinaryPath: `C:\Users\dev\AppData\Roaming\npm\node_modules\yalla-cli\bin\yalla.exe`, GOOS: "windows", Env: noEnv},
+			probe:    Probe{BinaryPath: `C:\Users\dev\AppData\Roaming\npm\node_modules\@juriba\yalla-cli\bin\yalla.exe`, GOOS: "windows", Env: noEnv},
 			wantChan: ChannelNPM,
 		},
 		// npx cache (npm 7+): the `_npx/` segment beats the
 		// node_modules check because it is more specific.
 		{
 			name:     "npx_npm7_cache",
-			probe:    Probe{BinaryPath: "/home/dev/.npm/_npx/abc123/node_modules/yalla-cli/bin/yalla", GOOS: "linux", Env: noEnv},
+			probe:    Probe{BinaryPath: "/home/dev/.npm/_npx/abc123/node_modules/@juriba/yalla-cli/bin/yalla", GOOS: "linux", Env: noEnv},
 			wantChan: ChannelNPX,
 		},
 		// Scoop: `<scoop>\apps\yalla\<version>\yalla.exe`.

@@ -155,20 +155,20 @@ func TestUpgradeCheck_JSON_PackageManagerChannels(t *testing.T) {
 		{
 			name: "npm",
 			probe: upgrade.Probe{
-				BinaryPath: "/usr/local/lib/node_modules/yalla-cli/bin/yalla",
+				BinaryPath: "/usr/local/lib/node_modules/@juriba/yalla-cli/bin/yalla",
 				GOOS:       "linux",
 			},
 			channel: upgrade.ChannelNPM,
-			command: "npm install -g yalla-cli@latest",
+			command: "npm install -g @juriba/yalla-cli@latest",
 		},
 		{
 			name: "npx",
 			probe: upgrade.Probe{
-				BinaryPath: "/home/dev/.npm/_npx/abc/node_modules/yalla-cli/bin/yalla",
+				BinaryPath: "/home/dev/.npm/_npx/abc/node_modules/@juriba/yalla-cli/bin/yalla",
 				GOOS:       "linux",
 			},
 			channel: upgrade.ChannelNPX,
-			command: "npx yalla-cli@latest",
+			command: "npx @juriba/yalla-cli@latest",
 		},
 		{
 			name: "scoop",

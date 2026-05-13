@@ -21,7 +21,7 @@ This skill covers **nine intents**. Each maps to a different workflow:
 | Promote staging → production | mirror source/buildType, apply target-env vars, deploy in target env | `promotion.md` |
 | Rollback to previous version | swap source pointer to previous image/commit → application-redeploy | `rollback.md` |
 | Stop / start / restart | application-stop / application-start / application-reload | `operations.md` |
-| Tear down (remove everything) | project-remove (cascades) | `lifecycle.md` § Failure handling |
+| Tear down (remove everything) | `yalla teardown project --project <name>` (safe cascade, default; `--no-cascade` falls back to raw `project-remove`) | `composite-verbs.md` + `lifecycle.md` § Failure handling |
 | Read logs / status | application-readAppMonitoring / application-one | `operations.md` |
 | Add/scale/back up a database for an app | `yalla database create/deploy/update/backup ...` → application-saveEnvironment | `databases.md` |
 
@@ -131,14 +131,22 @@ If the user says "edit X", re-render the plan with the change and ask again.
 
 ## Execute
 
-Run the canonical sequence. The full ordered API-call recipe — including what to do if a step fails midway — is in `references/lifecycle.md`. Read it before executing.
+Reach for the composite verbs first — they collapse the ordered API-call list into a single command and stay idempotent under `--get-or-create`. The full surface lives in `references/composite-verbs.md`; the highlights:
 
-Quick mental model:
+- `yalla deploy compose --project <p> --env <e> --compose-file <path> --get-or-create --dry-run` — full compose deploy in one command. Always do `--dry-run` first; it prints the ordered operations it would run so the user can sanity-check before mutating.
+- `yalla teardown project --project <p>` — safe cascade teardown that catches orphans Dokploy itself misses.
+- `yalla wait compose --id <id> --status done` / `yalla wait url --url <url>` / `yalla wait orphans --app-name <name> --count 0` — replace bespoke polling loops with a single command that returns `E_TIMEOUT` on failure.
+- `yalla rescue orphans --app-name <name>` — recover after a stuck or half-deployed stack.
+- `yalla audit tail --lines 50` — see exactly what yalla mutated, with the typed envelope per call. Use this when the user asks "what did you change?" or when a deploy went sideways and you need to know what state it left behind.
+
+For single-app deploys (no composite verb yet) and edges the composite commands don't cover, follow the full ordered recipe in `references/lifecycle.md`.
+
+Quick mental model when composite verbs don't apply:
 
 - **Single app**: project → envs → app → source → buildType → env vars → (DB if needed) → domain → deploy
-- **Compose**: project → envs → compose → composeFile → env vars → (no provisioned DBs; user owns them in compose) → domain → deploy
+- **Compose** (manual fallback only — prefer `yalla deploy compose`): project → envs → compose → composeFile → env vars → (no provisioned DBs; user owns them in compose) → domain → deploy
 
-Every raw mutation goes through `yalla --json --no-input api call <op> --input <file>` or `--input -` with JSON on stdin. Capture the `--json` envelope and inspect `.data.body` for the returned IDs.
+Raw mutations have two equivalent forms — `--input <file>` (or `--input -` for stdin) and `--data '<inline-json>'` for short bodies. The `--data` form auto-wraps a bare object as the request body, so you don't have to write `{"body":{...}}` by hand. Capture the `--json` envelope per step and inspect `.data.body` for returned IDs; also check `.data.warnings[]` — a non-fatal `APPNAME_MUTATED` warning means Dokploy renamed your service and the in-cluster hostnames you planned for will not resolve. Re-run with `--strict-appname` to make that fail loud.
 
 A few non-obvious bits the references cover:
 
@@ -176,18 +184,33 @@ Save the IDs into `.dokploy.yaml` at the repo root if it doesn't exist (so futur
 
 ## Failure handling
 
-If any mutation returns a non-2xx exit code:
-- **E_AUTH (4)**: token expired or wrong. Tell the user to run `yalla auth login --url <url>` again, or pipe a fresh token with `--token-stdin`.
-- **E_INVALID_INPUT (2)**: the body shape was wrong. Re-fetch `yalla --json schema get <op>` and adjust. Don't keep retrying with the same body.
-- **E_NOT_FOUND (5)**: an upstream resource (org, env, app) doesn't exist. Refetch the parent and retry once.
+yalla returns stable typed error codes. Branch on the `code` field of the error doc, not just the exit-code integer:
+
+- **E_AUTH**: token expired or wrong. Tell the user to run `yalla auth login --url <url>` again, or pipe a fresh token with `--token-stdin`.
+- **E_INVALID_INPUT**: the body shape was wrong. Re-fetch `yalla --json schema get <op>` and adjust. Don't keep retrying with the same body.
+- **E_NOT_FOUND**: an upstream resource (org, env, app) doesn't exist. Refetch the parent and retry once.
+- **E_CONFLICT**: name already exists in the same scope. Re-run with `--get-or-create` (raw `api call` or `yalla deploy compose`) to adopt the existing record instead of failing.
+- **E_FORBIDDEN**: token is valid but lacks permission for this org/resource. Don't retry — surface to the user.
+- **E_ORPHAN**: a previous run left Docker resources Dokploy can no longer see. Run `yalla rescue orphans --app-name <name>`, then `yalla wait orphans --app-name <name> --count 0`, then retry.
+- **E_UPSTREAM_BUG**: a known Dokploy bug fired (catalogued in `internal/dokploy/known_issues.yaml`). The error doc carries a `workaround` field — follow it. Don't loop on the same call.
+- **E_RATE_LIMITED**: back off; resume after the suggested delay.
+- **E_NO_INPUT_REQUIRED**: you passed `--no-input` but the operation needs a body. Provide `--input` or `--data`.
+- **E_UNSUPPORTED**: this Dokploy build doesn't expose the operation. Don't loop — tell the user.
 - **E_NETWORK / E_TIMEOUT**: surface to user, don't auto-retry mutations.
 
-For partial deploys (project created, app failed), offer a "rollback?" (run `project-remove` to clean up) so the user isn't left with orphaned resources.
+Non-fatal warnings (HTTP 2xx with a `warnings[]` entry in the envelope):
+
+- **APPNAME_MUTATED**: Dokploy renamed your service after `compose-create`. Either accept the new `appName` and re-wire env vars to it, or retry with `--strict-appname` to make this fail loud.
+
+For partial deploys (project created, app/compose failed), prefer `yalla teardown project --project <name> --dry-run` to preview cleanup, then re-run without `--dry-run`. That command catches orphans the raw `project-remove` leaves behind.
+
+When you can't tell what yalla actually changed, run `yalla audit tail --lines 50` — it shows the exact ordered mutations with operation IDs, request IDs, and response codes.
 
 ## References — read these as needed
 
 | File | When to read |
 |---|---|
+| `references/composite-verbs.md` | Before executing — composite commands (`yalla deploy compose`, `yalla teardown project`, `yalla wait *`, `yalla rescue orphans`, `yalla audit tail`) plus the `--data` / `--get-or-create` / `--strict-appname` ergonomics on raw `api call`. Read this any time you would otherwise hand-orchestrate `yalla api call` steps. |
 | `references/preflight.md` | If `yalla --version` fails or `auth status` is not ready, or user asks how to install yalla. |
 | `references/detect.md` | Always before scanning a project. The detection heuristics + decision tree + external-DB host classifier. |
 | `references/build-types.md` | Before calling `application-saveBuildType` — minimal-correct body per build type. |

@@ -1,6 +1,6 @@
 'use strict';
 
-// Smoke tests for the npm wrapper. Run with `node --test test`.
+// Smoke tests for the npm wrapper. Run with `node --test test/*.js`.
 // We intentionally avoid any third-party test runners.
 
 const test = require('node:test');

@@ -254,8 +254,8 @@ func TestNPMWrapperPackage(t *testing.T) {
 	var pkg npmPackage
 	readJSON(t, filepath.Join(npm, "package.json"), &pkg)
 
-	if pkg.Name != "yalla-cli" {
-		t.Errorf("npm/package.json name = %q, want yalla-cli", pkg.Name)
+	if pkg.Name != "@juriba/yalla-cli" {
+		t.Errorf("npm/package.json name = %q, want @juriba/yalla-cli", pkg.Name)
 	}
 	if got := pkg.Bin["yalla"]; got != "bin/yalla.js" {
 		t.Errorf(`bin["yalla"] = %q, want "bin/yalla.js"`, got)

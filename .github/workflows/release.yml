@@ -56,7 +56,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
           registry-url: "https://registry.npmjs.org"
 
       - name: Stamp wrapper version
@@ -67,10 +67,6 @@ jobs:
           export VERSION="${TAG#v}"
           node -e "const f='./package.json';const p=require(f);p.version=process.env.VERSION;require('fs').writeFileSync(f, JSON.stringify(p, null, 2)+'\n');"
 
-      - name: Publish (skipped when NPM_TOKEN unset)
-        if: ${{ env.NPM_TOKEN != '' }}
+      - name: Publish
         working-directory: npm
         run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
