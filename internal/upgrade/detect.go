@@ -67,7 +67,7 @@ type Probe struct {
 // Detect classifies the running binary's install channel. The order of
 // the checks matters: more-specific signals (npx cache) win over
 // broader ones (npm node_modules) so `npx yalla upgrade` is reported
-// distinctly from `npm install -g yalla-cli`.
+// distinctly from `npm install -g @juriba/yalla-cli`.
 //
 // When no channel matches Detect returns ChannelUnknown rather than
 // ChannelManual: ChannelManual is reserved for cases where yalla is
@@ -130,14 +130,15 @@ func Detect(p Probe) Channel {
 		}
 	}
 
-	// npm global installs land under `<prefix>/lib/node_modules/yalla-cli/`
-	// (Linux/macOS) or `<prefix>\node_modules\yalla-cli\` (Windows). The
-	// `node_modules/yalla-cli/` segment is the source of truth — the
+	// npm global installs land under
+	// `<prefix>/lib/node_modules/@juriba/yalla-cli/` (Linux/macOS) or
+	// `<prefix>\node_modules\@juriba\yalla-cli\` (Windows). The
+	// scoped `node_modules/@juriba/yalla-cli/` segment is the source of truth — the
 	// trampoline script is at `bin/yalla.js` and a shim is created at
 	// `<prefix>/bin/yalla` (or `<prefix>\yalla.cmd` on Windows). When the
 	// shim is invoked the resolved binary still lives inside
-	// `node_modules/yalla-cli`.
-	if pathContainsAny(path, "/node_modules/yalla-cli/", `\node_modules\yalla-cli\`, "/node_modules/.bin/yalla", `\node_modules\.bin\yalla`) {
+	// `node_modules/@juriba/yalla-cli`.
+	if pathContainsAny(path, "/node_modules/@juriba/yalla-cli/", `\node_modules\@juriba\yalla-cli\`, "/node_modules/yalla-cli/", `\node_modules\yalla-cli\`, "/node_modules/.bin/yalla", `\node_modules\.bin\yalla`) {
 		return ChannelNPM
 	}
 

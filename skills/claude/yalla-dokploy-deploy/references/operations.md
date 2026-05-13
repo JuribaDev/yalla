@@ -2,6 +2,12 @@
 
 Day-2 ops that touch an existing deploy without redeploying. These are the verbs the skill needs when the user says **"the app is misbehaving"**, **"pause it"**, **"restart"**, **"show me logs"**, or **"what's running right now?"**.
 
+## Composite verbs first
+
+For permanent teardown — "remove the project and everything in it" — prefer `yalla teardown project --project <name>` over raw `project-remove`. The composite handles the orphan Docker containers Dokploy itself leaves behind on the swarm. See `composite-verbs.md` for the full surface. Raw `application-stop` / `application-start` / `application-reload` below are still the right tools for the **non-destructive** day-2 ops in this file — there are no composites for those yet.
+
+If the user wants to know what yalla actually changed during a stop/start cycle, point them at `yalla audit tail --lines 50` — every mutation is logged with operation ID, request ID, and response code.
+
 ## When to use this file
 
 The skill's main workflow is **deploy-shaped** — create, configure, ship, verify. This file is for the **inverse and the in-between** — stopping, starting, restarting, inspecting. Read this when:

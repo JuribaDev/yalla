@@ -36,11 +36,11 @@ func PlanFor(channel Channel, binaryPath string) Plan {
 		p.Command = "brew upgrade yalla"
 		p.Note = "yalla is managed by Homebrew. Run `brew upgrade yalla` to update."
 	case ChannelNPM:
-		p.Command = "npm install -g yalla-cli@latest"
-		p.Note = "yalla is managed by npm. Run `npm install -g yalla-cli@latest` to update."
+		p.Command = "npm install -g @juriba/yalla-cli@latest"
+		p.Note = "yalla is managed by npm. Run `npm install -g @juriba/yalla-cli@latest` to update."
 	case ChannelNPX:
-		p.Command = "npx yalla-cli@latest"
-		p.Note = "yalla was launched via npx; the cache is per-invocation. Re-run `npx yalla-cli@latest` to fetch a newer version."
+		p.Command = "npx @juriba/yalla-cli@latest"
+		p.Note = "yalla was launched via npx; the cache is per-invocation. Re-run `npx @juriba/yalla-cli@latest` to fetch a newer version."
 	case ChannelScoop:
 		p.Command = "scoop update yalla"
 		p.Note = "yalla is managed by Scoop. Run `scoop update yalla` to update."

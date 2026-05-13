@@ -243,6 +243,34 @@
       "prompt": "Our postgres on Dokploy (id postgres_eR7kQ2) is hitting OOMs. Bump it to 1G memory limit, 512M reservation, 1 CPU limit, 0.25 reservation, and run 2 replicas. Use yalla.",
       "expected_output": "Uses `yalla database update postgres --id postgres_eR7kQ2 --memory-limit 1G --memory-reservation 512M --cpu-limit 1 --cpu-reservation 0.25 --replicas 2`. Mentions that update is patch-like (only fields you set are changed) and that the change requires a redeploy/reload to take effect on the running container.",
       "files": []
+    },
+    {
+      "id": 41,
+      "name": "compose-deploy-via-composite",
+      "prompt": "I have a docker-compose stack at /tmp/yalla-fixtures/compose-stack with an api service, a worker, and a postgres. Deploy it to my Dokploy at ploy.jsa.sa, project name 'analytics', staging env, with the api reachable at analytics-staging.apps.jsa.sa (the api service listens on port 3000). The .env.staging file in the repo has the runtime env vars. Show me the plan and the exact yalla calls in order. This is a fresh project — nothing exists in Dokploy yet.",
+      "expected_output": "Uses the composite `yalla deploy compose` with --project/--env/--compose-file/--env-file/--domain/--get-or-create flags. Runs --dry-run BEFORE the live mutation so the user can review planned ops. Does NOT hand-orchestrate the 13-step project-create → environment-create → compose-create → saveDockerCompose → saveEnvironment → ... chain.",
+      "files": []
+    },
+    {
+      "id": 42,
+      "name": "teardown-with-orphan-check",
+      "prompt": "Tear down the project 'old-prototype' on my Dokploy at ploy.jsa.sa. I want EVERYTHING gone — no orphan containers, no leftover volumes, nothing on the swarm. The last partial deploy left some half-running services I want cleaned up too.",
+      "expected_output": "Uses `yalla teardown project --project old-prototype` (the safe-cascade composite) rather than raw `project-remove`. Shows a `--dry-run` preview first. Verifies with `yalla wait orphans --app-name <name> --count 0`. Does not use --no-cascade.",
+      "files": []
+    },
+    {
+      "id": 43,
+      "name": "rescue-stuck-deploy",
+      "prompt": "My last yalla compose deploy crashed midway — the project still shows in Dokploy as 'deploying' but it's been stuck for 20 minutes, and `docker ps` on the host shows two containers running under appName 'invoice-staging' that Dokploy's UI doesn't know about. How do I unstick this safely without manually SSH-ing in and `docker rm`-ing things?",
+      "expected_output": "Uses `yalla rescue orphans --app-name invoice-staging` (composite) rather than telling the user to SSH and docker rm manually. Mentions `--ssh user@host` as the fallback if the Dokploy API can't reach the host. Verifies with `yalla wait orphans --app-name invoice-staging --count 0`. Recommends `yalla audit tail` to confirm what the rescue mutated.",
+      "files": []
+    },
+    {
+      "id": 44,
+      "name": "audit-mutation-history",
+      "prompt": "After my last `yalla deploy compose` run, the app appears under a different appName than I expected — I asked for appName='checkout' but the in-cluster DNS resolves 'checkout-1' instead. What changed, and how do I make sure this doesn't happen on the next deploy?",
+      "expected_output": "Recognizes this is an APPNAME_MUTATED warning (non-fatal, in response envelope warnings[]). Uses `yalla audit tail` to find the offending call and read the requested vs actual appName. Recommends re-deploying with `--strict-appname` so the next occurrence is a hard failure instead of a silent rename.",
+      "files": []
     }
   ]
 }

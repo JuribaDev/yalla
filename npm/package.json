@@ -1,5 +1,5 @@
 {
-  "name": "yalla-cli",
+  "name": "@juriba/yalla-cli",
   "version": "0.0.0-dev",
   "description": "Production-grade, AI-agent-first CLI for Dokploy. Native Go binary fetched on install.",
   "keywords": [
@@ -31,7 +31,7 @@
   ],
   "scripts": {
     "postinstall": "node install.js",
-    "test": "node --test test"
+    "test": "node --test test/*.js"
   },
   "engines": {
     "node": ">=18"
