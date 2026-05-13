@@ -35,12 +35,31 @@ jobs:
         with:
           distribution: goreleaser
           version: "~> v2"
-          args: release --clean
+          args: release --clean --skip=homebrew,scoop,winget
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
-          SCOOP_TAP_GITHUB_TOKEN: ${{ secrets.SCOOP_TAP_GITHUB_TOKEN }}
-          WINGET_GITHUB_TOKEN: ${{ secrets.WINGET_GITHUB_TOKEN }}
+
+      - name: Upload public release artifacts to RustFS
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.RUSTFS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.RUSTFS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: us-east-1
+          AWS_EC2_METADATA_DISABLED: "true"
+          RUSTFS_BUCKET: yalla-releases
+          RUSTFS_ENDPOINT: https://s3.jsa.sa
+        run: |
+          set -euo pipefail
+          : "${AWS_ACCESS_KEY_ID:?RUSTFS_ACCESS_KEY_ID secret is required}"
+          : "${AWS_SECRET_ACCESS_KEY:?RUSTFS_SECRET_ACCESS_KEY secret is required}"
+          aws --version
+          aws configure set default.s3.addressing_style path
+          aws s3 cp dist/ "s3://${RUSTFS_BUCKET}/releases/download/${GITHUB_REF_NAME}/" \
+            --recursive \
+            --exclude "*" \
+            --include "*.tar.gz" \
+            --include "*.zip" \
+            --include "*checksums.txt" \
+            --endpoint-url "${RUSTFS_ENDPOINT}"
 
   npm-publish:
     name: Publish npm wrapper

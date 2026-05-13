@@ -7,6 +7,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const platform = require('../lib/platform');
+const installer = require('../lib/install');
 
 test('detect darwin/arm64 maps to darwin_arm64 tar.gz', () => {
   const p = platform.detect('darwin', 'arm64');
@@ -66,4 +67,44 @@ test('parseChecksum throws when filename missing', () => {
 
 test('checksumName follows GoReleaser default template', () => {
   assert.equal(platform.checksumName('1.2.3'), 'yalla_1.2.3_checksums.txt');
+});
+
+test('releaseBase defaults to public RustFS mirror', () => {
+  const oldBase = process.env.YALLA_RELEASE_BASE;
+  const oldRepo = process.env.YALLA_REPO;
+  delete process.env.YALLA_RELEASE_BASE;
+  delete process.env.YALLA_REPO;
+  try {
+    assert.equal(
+      installer.releaseBase(),
+      'https://s3.jsa.sa/yalla-releases/releases/download',
+    );
+  } finally {
+    if (oldBase === undefined) delete process.env.YALLA_RELEASE_BASE;
+    else process.env.YALLA_RELEASE_BASE = oldBase;
+    if (oldRepo === undefined) delete process.env.YALLA_REPO;
+    else process.env.YALLA_REPO = oldRepo;
+  }
+});
+
+test('releaseBase allows explicit mirrors and GitHub fallback', () => {
+  const oldBase = process.env.YALLA_RELEASE_BASE;
+  const oldRepo = process.env.YALLA_REPO;
+  try {
+    process.env.YALLA_RELEASE_BASE = 'https://mirror.example.test/releases/download/';
+    delete process.env.YALLA_REPO;
+    assert.equal(installer.releaseBase(), 'https://mirror.example.test/releases/download');
+
+    delete process.env.YALLA_RELEASE_BASE;
+    process.env.YALLA_REPO = 'Example/private-yalla';
+    assert.equal(
+      installer.releaseBase(),
+      'https://github.com/Example/private-yalla/releases/download',
+    );
+  } finally {
+    if (oldBase === undefined) delete process.env.YALLA_RELEASE_BASE;
+    else process.env.YALLA_RELEASE_BASE = oldBase;
+    if (oldRepo === undefined) delete process.env.YALLA_REPO;
+    else process.env.YALLA_REPO = oldRepo;
+  }
 });
