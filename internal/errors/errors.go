@@ -32,12 +32,14 @@ const (
 	CodeUsage        Code = "E_USAGE"
 	CodeInvalidInput Code = "E_INVALID_INPUT"
 	CodeConfig       Code = "E_CONFIG"
+	CodeOrphan       Code = "E_ORPHAN"
 	CodeAuth         Code = "E_AUTH"
 	CodeForbidden    Code = "E_FORBIDDEN"
 	CodeNotFound     Code = "E_NOT_FOUND"
 	CodeConflict     Code = "E_CONFLICT"
 	CodeRateLimited  Code = "E_RATE_LIMITED"
 	CodeServer       Code = "E_SERVER"
+	CodeUpstreamBug  Code = "E_UPSTREAM_BUG"
 	CodeNetwork      Code = "E_NETWORK"
 	CodeTimeout      Code = "E_TIMEOUT"
 	CodeCanceled     Code = "E_CANCELED"
@@ -65,12 +67,14 @@ var codeDescriptions = map[Code]string{
 	CodeUsage:        "command-line usage error (unknown flag, bad subcommand, etc.)",
 	CodeInvalidInput: "request payload, flag value, or registry filter rejected",
 	CodeConfig:       "configuration is missing, malformed, or incomplete",
+	CodeOrphan:       "operation left Dokploy or Docker resources behind",
 	CodeAuth:         "authentication failed or no credentials supplied",
 	CodeForbidden:    "credentials are valid but not authorised for the action",
 	CodeNotFound:     "resource, operationId, or schema does not exist",
 	CodeConflict:     "request rejected because of a precondition or state conflict",
 	CodeRateLimited:  "upstream rate limit hit; back off and retry",
 	CodeServer:       "upstream Dokploy server returned an error",
+	CodeUpstreamBug:  "known upstream Dokploy bug encountered; use the documented workaround",
 	CodeNetwork:      "transport-level network failure reaching Dokploy",
 	CodeTimeout:      "request exceeded the configured timeout",
 	CodeCanceled:     "context canceled (e.g. SIGINT)",
@@ -87,8 +91,8 @@ var codeDescriptions = map[Code]string{
 func AllCodes() []CodeDoc {
 	codes := []Code{
 		CodeUnknown, CodeInternal, CodeUsage, CodeInvalidInput,
-		CodeConfig, CodeAuth, CodeForbidden, CodeNotFound,
-		CodeConflict, CodeRateLimited, CodeServer, CodeNetwork,
+		CodeConfig, CodeOrphan, CodeAuth, CodeForbidden, CodeNotFound,
+		CodeConflict, CodeRateLimited, CodeServer, CodeUpstreamBug, CodeNetwork,
 		CodeTimeout, CodeCanceled, CodeNoInput, CodeUnsupported,
 	}
 	out := make([]CodeDoc, 0, len(codes))
@@ -124,7 +128,7 @@ func (c Code) ExitCode() int {
 		return 0
 	case CodeUsage, CodeInvalidInput:
 		return 2
-	case CodeConfig:
+	case CodeConfig, CodeOrphan:
 		return 3
 	case CodeAuth, CodeForbidden:
 		return 4
@@ -134,7 +138,7 @@ func (c Code) ExitCode() int {
 		return 6
 	case CodeRateLimited:
 		return 7
-	case CodeNetwork, CodeTimeout, CodeServer:
+	case CodeNetwork, CodeTimeout, CodeServer, CodeUpstreamBug:
 		return 8
 	case CodeNoInput:
 		return 9

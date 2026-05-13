@@ -15,14 +15,15 @@ import (
 // separate operations list. Schemas are preserved as raw JSON to keep the
 // full OpenAPI/JSON Schema fidelity (oneOf/allOf/anyOf, $defs, examples).
 type SchemaDoc struct {
-	OperationID  string                `json:"operation_id"`
-	Method       string                `json:"method"`
-	Path         string                `json:"path"`
-	Tag          string                `json:"tag,omitempty"`
-	Summary      string                `json:"summary,omitempty"`
-	Description  string                `json:"description,omitempty"`
-	RequiresAuth bool                  `json:"requires_auth"`
-	Security     []SecurityRequirement `json:"security,omitempty"`
+	OperationID  string                     `json:"operation_id"`
+	Method       string                     `json:"method"`
+	Path         string                     `json:"path"`
+	Tag          string                     `json:"tag,omitempty"`
+	Summary      string                     `json:"summary,omitempty"`
+	Description  string                     `json:"description,omitempty"`
+	RequiresAuth bool                       `json:"requires_auth"`
+	Security     []SecurityRequirement      `json:"security,omitempty"`
+	Extensions   map[string]json.RawMessage `json:"extensions,omitempty"`
 
 	// Input describes everything an agent must supply to invoke the op:
 	// path/query/header/cookie parameters and the request body schema.
@@ -140,6 +141,7 @@ func (r *Registry) schemaFor(op Operation) *SchemaDoc {
 		Description:  op.Description,
 		RequiresAuth: op.RequiresAuth,
 		Security:     op.Security,
+		Extensions:   cloneRawMap(op.Extensions),
 		Input:        input,
 		Outputs:      outputs,
 	}

@@ -65,6 +65,11 @@ type Operation struct {
 	// RequiresAuth is the convenience boolean for `requires len(Security) > 0`.
 	// Agents can branch on it without inspecting the raw security blocks.
 	RequiresAuth bool `json:"requires_auth"`
+
+	// Extensions preserves yalla-specific OpenAPI operation annotations.
+	// Only x-yalla-* keys are exposed so upstream/vendor extensions do not
+	// become an accidental public contract.
+	Extensions map[string]json.RawMessage `json:"extensions,omitempty"`
 }
 
 // Parameter is a single OpenAPI parameter description. Schema is preserved
@@ -488,14 +493,38 @@ type rawSecurityScheme struct {
 // schemas, response schemas) so the public Operation type can preserve the
 // full OpenAPI/JSON Schema surface without lossy re-modelling.
 type rawOperation struct {
-	OperationID string                `json:"operationId"`
-	Tags        []string              `json:"tags"`
-	Summary     string                `json:"summary"`
-	Description string                `json:"description"`
-	Parameters  []rawParameter        `json:"parameters"`
-	RequestBody *rawRequestBody       `json:"requestBody"`
-	Responses   map[string]rawResp    `json:"responses"`
-	Security    []SecurityRequirement `json:"security"`
+	OperationID string                     `json:"operationId"`
+	Tags        []string                   `json:"tags"`
+	Summary     string                     `json:"summary"`
+	Description string                     `json:"description"`
+	Parameters  []rawParameter             `json:"parameters"`
+	RequestBody *rawRequestBody            `json:"requestBody"`
+	Responses   map[string]rawResp         `json:"responses"`
+	Security    []SecurityRequirement      `json:"security"`
+	Extensions  map[string]json.RawMessage `json:"-"`
+}
+
+func (op *rawOperation) UnmarshalJSON(b []byte) error {
+	type alias rawOperation
+	var a alias
+	if err := json.Unmarshal(b, &a); err != nil {
+		return err
+	}
+	var all map[string]json.RawMessage
+	if err := json.Unmarshal(b, &all); err != nil {
+		return err
+	}
+	ext := make(map[string]json.RawMessage)
+	for k, v := range all {
+		if strings.HasPrefix(k, "x-yalla-") {
+			ext[k] = append(json.RawMessage(nil), v...)
+		}
+	}
+	*op = rawOperation(a)
+	if len(ext) > 0 {
+		op.Extensions = ext
+	}
+	return nil
 }
 
 type rawParameter struct {
@@ -535,6 +564,7 @@ func buildOperation(op rawOperation, method, path, tag string) (Operation, error
 		Responses:    make([]Response, 0, len(op.Responses)),
 		Security:     op.Security,
 		RequiresAuth: len(op.Security) > 0,
+		Extensions:   cloneRawMap(op.Extensions),
 	}
 
 	for _, p := range op.Parameters {
@@ -583,6 +613,17 @@ func buildOperation(op rawOperation, method, path, tag string) (Operation, error
 	}
 
 	return out, nil
+}
+
+func cloneRawMap(in map[string]json.RawMessage) map[string]json.RawMessage {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]json.RawMessage, len(in))
+	for k, v := range in {
+		out[k] = append(json.RawMessage(nil), v...)
+	}
+	return out
 }
 
 // pickJSONContent prefers application/json over any other content type

@@ -1065,7 +1065,10 @@
               }
             }
           }
-        }
+        },
+        "x-yalla-idempotency": "exact project name",
+        "x-yalla-side-effect": "creates_project",
+        "x-yalla-postcondition": "project record exists"
       }
     },
     "/project.one": {
@@ -1508,7 +1511,10 @@
               }
             }
           }
-        }
+        },
+        "x-yalla-cascade": "teardown-project",
+        "x-yalla-side-effect": "removes_project",
+        "x-yalla-postcondition": "project and child resources absent"
       }
     },
     "/project.update": {
@@ -15918,7 +15924,10 @@
               }
             }
           }
-        }
+        },
+        "x-yalla-idempotency": "exact-name within environmentId",
+        "x-yalla-side-effect": "creates_compose",
+        "x-yalla-postcondition": "compose record exists"
       }
     },
     "/compose.one": {
@@ -17426,7 +17435,9 @@
               }
             }
           }
-        }
+        },
+        "x-yalla-side-effect": "starts_deployment",
+        "x-yalla-postcondition": "compose deployment reaches done"
       }
     },
     "/compose.redeploy": {
@@ -17604,7 +17615,9 @@
               }
             }
           }
-        }
+        },
+        "x-yalla-known-issue": "dokploy-compose-stop-spawn-bin-sh-enoent",
+        "x-yalla-postcondition": "compose reaches idle/done/error"
       }
     },
     "/compose.start": {
@@ -46960,7 +46973,10 @@
               }
             }
           }
-        }
+        },
+        "x-yalla-idempotency": "exact environment name within projectId",
+        "x-yalla-side-effect": "creates_environment",
+        "x-yalla-postcondition": "environment record exists"
       }
     },
     "/environment.one": {
@@ -48675,6 +48691,456 @@
                     "type": "string"
                   }
                 }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/error.BAD_REQUEST"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authorization not provided",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/error.UNAUTHORIZED"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/error.FORBIDDEN"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/error.INTERNAL_SERVER_ERROR"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/docker.stopContainer": {
+      "post": {
+        "operationId": "docker-stopContainer",
+        "tags": [
+          "docker"
+        ],
+        "summary": "Stop a Docker container",
+        "x-yalla-side-effect": "mutates_docker_resources",
+        "x-yalla-postcondition": "no matching orphan resource remains",
+        "security": [
+          {
+            "Authorization": []
+          }
+        ],
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "containerId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "containerId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/error.BAD_REQUEST"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authorization not provided",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/error.UNAUTHORIZED"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/error.FORBIDDEN"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/error.INTERNAL_SERVER_ERROR"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/docker.removeContainer": {
+      "post": {
+        "operationId": "docker-removeContainer",
+        "tags": [
+          "docker"
+        ],
+        "summary": "Remove a Docker container",
+        "x-yalla-side-effect": "mutates_docker_resources",
+        "x-yalla-postcondition": "no matching orphan resource remains",
+        "security": [
+          {
+            "Authorization": []
+          }
+        ],
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "containerId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "containerId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/error.BAD_REQUEST"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authorization not provided",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/error.UNAUTHORIZED"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/error.FORBIDDEN"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/error.INTERNAL_SERVER_ERROR"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/docker.removeNetwork": {
+      "post": {
+        "operationId": "docker-removeNetwork",
+        "tags": [
+          "docker"
+        ],
+        "summary": "Remove a Docker network",
+        "x-yalla-side-effect": "mutates_docker_resources",
+        "x-yalla-postcondition": "no matching orphan resource remains",
+        "security": [
+          {
+            "Authorization": []
+          }
+        ],
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "networkId": {
+                    "type": "string"
+                  },
+                  "networkName": {
+                    "type": "string"
+                  }
+                },
+                "required": []
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/error.BAD_REQUEST"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authorization not provided",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/error.UNAUTHORIZED"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/error.FORBIDDEN"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/error.INTERNAL_SERVER_ERROR"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/docker.removeVolume": {
+      "post": {
+        "operationId": "docker-removeVolume",
+        "tags": [
+          "docker"
+        ],
+        "summary": "Remove a Docker volume",
+        "x-yalla-side-effect": "mutates_docker_resources",
+        "x-yalla-postcondition": "no matching orphan resource remains",
+        "security": [
+          {
+            "Authorization": []
+          }
+        ],
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "volumeId": {
+                    "type": "string"
+                  },
+                  "volumeName": {
+                    "type": "string"
+                  }
+                },
+                "required": []
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/error.BAD_REQUEST"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authorization not provided",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/error.UNAUTHORIZED"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient access",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/error.FORBIDDEN"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/error.INTERNAL_SERVER_ERROR"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/docker.composeDown": {
+      "post": {
+        "operationId": "docker-compose-down",
+        "tags": [
+          "docker"
+        ],
+        "summary": "Run docker compose down for an appName",
+        "x-yalla-side-effect": "mutates_docker_resources",
+        "x-yalla-postcondition": "no matching orphan resource remains",
+        "security": [
+          {
+            "Authorization": []
+          }
+        ],
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "appName": {
+                    "type": "string"
+                  },
+                  "serverId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "appName"
+                ]
               }
             }
           }

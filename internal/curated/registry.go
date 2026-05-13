@@ -134,6 +134,39 @@ func Default() *Registry {
 // here. Keep entries grouped by Domain and alphabetised by Path.
 var defaultCommands = []Command{
 	{
+		Path:    "yalla compose deploy",
+		Domain:  DomainCompose,
+		Verb:    "deploy",
+		Summary: "Deploy a Compose stack with project, environment, domains, and wait orchestration",
+		OperationIDs: []string{
+			"project-create", "environment-create", "compose-create", "compose-update", "domain-create", "compose-deploy", "compose-one",
+		},
+		HumanExample: "yalla deploy compose --project app --env staging --compose-file docker-compose.yml",
+		JSONExample:  "yalla --json deploy compose --project app --env staging --compose-file docker-compose.yml",
+	},
+	{
+		Path:    "yalla compose rescue",
+		Domain:  DomainCompose,
+		Verb:    "rescue",
+		Summary: "Clean orphaned Docker resources for a Compose appName",
+		OperationIDs: []string{
+			"docker-compose-down", "docker-getContainersByAppNameMatch",
+		},
+		HumanExample: "yalla rescue orphans --app-name app",
+		JSONExample:  "yalla --json rescue orphans --app-name app",
+	},
+	{
+		Path:    "yalla compose wait",
+		Domain:  DomainCompose,
+		Verb:    "wait",
+		Summary: "Wait for Compose status, URL status, or orphan counts",
+		OperationIDs: []string{
+			"compose-one", "docker-getContainersByAppNameMatch",
+		},
+		HumanExample: "yalla wait compose --id compose_123 --status done",
+		JSONExample:  "yalla --json wait compose --id compose_123 --status done",
+	},
+	{
 		Path:    "yalla database backup create",
 		Domain:  DomainDatabase,
 		Verb:    "create",
@@ -148,6 +181,17 @@ var defaultCommands = []Command{
 		},
 		HumanExample: "yalla database backup create postgres --id postgres_123 --destination-id dst_123 --database app --prefix backups/app/ --schedule \"0 2 * * *\" --keep-latest 7",
 		JSONExample:  "yalla --json database backup create postgres --id postgres_123 --destination-id dst_123 --database app --prefix backups/app/ --schedule \"0 2 * * *\" --keep-latest 7",
+	},
+	{
+		Path:    "yalla project delete",
+		Domain:  DomainProject,
+		Verb:    "delete",
+		Summary: "Safely teardown a project and assert no orphan containers remain",
+		OperationIDs: []string{
+			"project-one", "project-all", "environment-byProjectId", "compose-search", "compose-stop", "compose-delete", "environment-remove", "project-remove", "docker-compose-down", "docker-getContainersByAppNameMatch",
+		},
+		HumanExample: "yalla teardown project --project app",
+		JSONExample:  "yalla --json teardown project --project app",
 	},
 	{
 		Path:    "yalla database backup delete",

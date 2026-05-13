@@ -51059,6 +51059,51 @@ var coveredAPIOperations = []apiCoverageCase{
 		// `data.status` rather than payload projection.
 		SuccessResponse: `{}`,
 	},
+	{
+		StoryID:         "API-0451",
+		OperationID:     "docker-stopContainer",
+		Method:          http.MethodPost,
+		Path:            "/docker.stopContainer",
+		Tag:             "docker",
+		SampleBody:      json.RawMessage(`{"containerId":"docker-cov-stop-container-0451"}`),
+		SuccessResponse: `{}`,
+	},
+	{
+		StoryID:         "API-0452",
+		OperationID:     "docker-removeContainer",
+		Method:          http.MethodPost,
+		Path:            "/docker.removeContainer",
+		Tag:             "docker",
+		SampleBody:      json.RawMessage(`{"containerId":"docker-cov-remove-container-0452"}`),
+		SuccessResponse: `{}`,
+	},
+	{
+		StoryID:         "API-0453",
+		OperationID:     "docker-removeNetwork",
+		Method:          http.MethodPost,
+		Path:            "/docker.removeNetwork",
+		Tag:             "docker",
+		SampleBody:      json.RawMessage(`{"networkName":"docker-cov-remove-network-0453"}`),
+		SuccessResponse: `{}`,
+	},
+	{
+		StoryID:         "API-0454",
+		OperationID:     "docker-removeVolume",
+		Method:          http.MethodPost,
+		Path:            "/docker.removeVolume",
+		Tag:             "docker",
+		SampleBody:      json.RawMessage(`{"volumeName":"docker-cov-remove-volume-0454"}`),
+		SuccessResponse: `{}`,
+	},
+	{
+		StoryID:         "API-0455",
+		OperationID:     "docker-compose-down",
+		Method:          http.MethodPost,
+		Path:            "/docker.composeDown",
+		Tag:             "docker",
+		SampleBody:      json.RawMessage(`{"appName":"docker-cov-compose-down-0455"}`),
+		SuccessResponse: `{}`,
+	},
 }
 
 // TestAPICoverage_RegistryInvariants asserts that every covered story's

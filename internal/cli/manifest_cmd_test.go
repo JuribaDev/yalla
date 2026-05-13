@@ -92,7 +92,7 @@ func TestManifest_JSONListsAllSubcommands(t *testing.T) {
 	}
 
 	wantTopLevel := []string{
-		"api", "auth", "completion", "config", "database", "docs", "manifest", "schema", "upgrade",
+		"api", "audit", "auth", "completion", "config", "database", "deploy", "docs", "manifest", "rescue", "schema", "teardown", "upgrade", "wait",
 	}
 	gotTop := make([]string, 0, len(env.Data.Commands))
 	for _, c := range env.Data.Commands {

@@ -19,7 +19,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/JuribaDev/yalla/internal/api"
+	"github.com/JuribaDev/yalla/internal/audit"
 	"github.com/JuribaDev/yalla/internal/config"
+	"github.com/JuribaDev/yalla/internal/dokploy"
 	yerr "github.com/JuribaDev/yalla/internal/errors"
 	"github.com/JuribaDev/yalla/internal/output"
 )
@@ -96,18 +98,27 @@ func (f *apiCallFile) UnmarshalJSON(b []byte) error {
 // Content-Type is JSON-shaped so downstream agents can read fields without
 // a second decode pass; otherwise the raw text is preserved in body_text.
 type apiCallSuccessDoc struct {
-	OperationID string          `json:"operation_id"`
-	Method      string          `json:"method"`
-	URL         string          `json:"url"`
-	Status      int             `json:"status"`
-	StatusText  string          `json:"status_text"`
-	DurationMs  int64           `json:"duration_ms"`
-	Attempts    int             `json:"attempts"`
-	RequestID   string          `json:"request_id,omitempty"`
-	TraceID     string          `json:"trace_id,omitempty"`
-	ContentType string          `json:"content_type,omitempty"`
-	Body        json.RawMessage `json:"body,omitempty"`
-	BodyText    string          `json:"body_text,omitempty"`
+	OperationID      string           `json:"operation_id"`
+	Method           string           `json:"method"`
+	URL              string           `json:"url"`
+	Status           int              `json:"status"`
+	StatusText       string           `json:"status_text"`
+	DurationMs       int64            `json:"duration_ms"`
+	Attempts         int              `json:"attempts"`
+	RequestID        string           `json:"request_id,omitempty"`
+	TraceID          string           `json:"trace_id,omitempty"`
+	ContentType      string           `json:"content_type,omitempty"`
+	Body             json.RawMessage  `json:"body,omitempty"`
+	BodyText         string           `json:"body_text,omitempty"`
+	Warnings         []apiCallWarning `json:"warnings,omitempty"`
+	IdempotentResult string           `json:"idempotent_result,omitempty"`
+}
+
+type apiCallWarning struct {
+	Code      string `json:"code"`
+	Requested string `json:"requested,omitempty"`
+	Actual    string `json:"actual,omitempty"`
+	Message   string `json:"message,omitempty"`
 }
 
 // apiCallDryRunDoc is emitted by `--dry-run`. It mirrors what the executor
@@ -206,9 +217,12 @@ func resolveAPIClientDefaults(reg *api.Registry) (api.AuthScheme, string, string
 
 func newAPICallCommand() *cobra.Command {
 	var (
-		inputPath string
-		dryRun    bool
-		timeout   time.Duration
+		inputPath     string
+		data          string
+		dryRun        bool
+		strictAppName bool
+		getOrCreate   bool
+		timeout       time.Duration
 	)
 	cmd := &cobra.Command{
 		Use:   "call <operationId>",
@@ -261,19 +275,24 @@ content so the rendered envelope never carries a binary payload.`,
 			streams := IOStreamsFromContext(ctx)
 			r := rendererFromContext(c, streams)
 
-			input, err := loadAPICallInput(streams, inputPath)
+			input, err := loadAPICallInput(streams, inputPath, data)
 			if err != nil {
 				return err
 			}
 			return runAPICall(ctx, r, api.Default(), cfg, args[0], input, apiCallOptions{
-				DryRun:  dryRun,
-				Timeout: timeout,
-				Build:   BuildInfoFromContext(ctx),
+				DryRun:        dryRun,
+				StrictAppName: strictAppName,
+				GetOrCreate:   getOrCreate,
+				Timeout:       timeout,
+				Build:         BuildInfoFromContext(ctx),
 			})
 		},
 	}
 	cmd.Flags().StringVar(&inputPath, "input", "", "path to a JSON input file (use - for stdin)")
+	cmd.Flags().StringVar(&data, "data", "", "inline JSON input; bare objects are treated as request body")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print the resolved request without sending it")
+	cmd.Flags().BoolVar(&strictAppName, "strict-appname", false, "fail compose-create when Dokploy mutates the requested appName")
+	cmd.Flags().BoolVar(&getOrCreate, "get-or-create", false, "for supported create operations, return an existing exact-name match instead of creating")
 	cmd.Flags().DurationVar(&timeout, "timeout", 0, "override the per-attempt HTTP timeout (e.g. 5s, 30s); 0 keeps the default")
 	return cmd
 }
@@ -281,9 +300,11 @@ content so the rendered envelope never carries a binary payload.`,
 // apiCallOptions bundles the per-invocation knobs separately from the
 // per-call inputs so unit tests can drive runAPICall without parsing flags.
 type apiCallOptions struct {
-	DryRun  bool
-	Timeout time.Duration
-	Build   BuildInfo
+	DryRun        bool
+	StrictAppName bool
+	GetOrCreate   bool
+	Timeout       time.Duration
+	Build         BuildInfo
 }
 
 // loadAPICallInput reads and decodes the --input JSON. An empty path means
@@ -294,8 +315,14 @@ type apiCallOptions struct {
 // stdin when the user explicitly asked for it via "-". The contract is
 // "yalla never prompts in --no-input mode"; reading explicit stdin is not
 // a prompt, it is the requested data source.
-func loadAPICallInput(streams IOStreams, path string) (apiCallInput, error) {
+func loadAPICallInput(streams IOStreams, path, data string) (apiCallInput, error) {
 	var in apiCallInput
+	if strings.TrimSpace(path) != "" && strings.TrimSpace(data) != "" {
+		return in, yerr.New(yerr.CodeInvalidInput, "--input and --data cannot be used together")
+	}
+	if strings.TrimSpace(data) != "" {
+		return decodeAPICallInputBytes([]byte(data), "--data", true)
+	}
 	if path == "" {
 		return in, nil
 	}
@@ -317,10 +344,41 @@ func loadAPICallInput(streams IOStreams, path string) (apiCallInput, error) {
 	if len(strings.TrimSpace(string(raw))) == 0 {
 		return in, nil
 	}
-	dec := json.NewDecoder(strings.NewReader(string(raw)))
+	return decodeAPICallInputBytes(raw, "--input", false)
+}
+
+var apiCallEnvelopeKeys = map[string]struct{}{
+	"path_params": {},
+	"query":       {},
+	"headers":     {},
+	"body":        {},
+	"files":       {},
+}
+
+func decodeAPICallInputBytes(raw []byte, label string, autoWrap bool) (apiCallInput, error) {
+	var in apiCallInput
+	var top map[string]json.RawMessage
+	decTop := json.NewDecoder(bytes.NewReader(raw))
+	decTop.UseNumber()
+	if err := decTop.Decode(&top); err != nil {
+		return in, yerr.Newf(yerr.CodeInvalidInput, "parse %s JSON: %v", label, err)
+	}
+	hasEnvelope := false
+	for k := range top {
+		if _, ok := apiCallEnvelopeKeys[k]; ok {
+			hasEnvelope = true
+			break
+		}
+	}
+	if autoWrap && !hasEnvelope {
+		in.Body = append(json.RawMessage(nil), bytes.TrimSpace(raw)...)
+		return in, nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&in); err != nil {
-		return in, yerr.Newf(yerr.CodeInvalidInput, "parse --input JSON: %v", err)
+		return in, yerr.Newf(yerr.CodeInvalidInput, "parse %s JSON: %v", label, err)
 	}
 	return in, nil
 }
@@ -389,6 +447,10 @@ func runAPICall(ctx context.Context, r *output.Renderer, reg *api.Registry, cfg 
 		return errAsTyped(err, yerr.CodeConfig)
 	}
 
+	if opts.GetOrCreate {
+		return runGetOrCreateAPICall(ctx, r, reg, cli, op, in, targetURL, body, contentType)
+	}
+
 	req := &api.Request{
 		Method:      op.Method,
 		Path:        resolvedPath,
@@ -404,9 +466,164 @@ func runAPICall(ctx context.Context, r *output.Renderer, reg *api.Registry, cfg 
 		return errAsTyped(err, yerr.CodeNetwork)
 	}
 	if !result.Success() {
+		appendAPIAudit(ctx, op, targetURL, result, result.AsError())
+		if known := dokploy.MatchKnownIssue(op.OperationID, result.Status, result.Body); known != nil {
+			return known
+		}
 		return result.AsError()
 	}
-	return emitAPICallSuccess(r, op, targetURL, result)
+	appendAPIAudit(ctx, op, targetURL, result, nil)
+	return emitAPICallSuccessWithOptions(r, op, targetURL, result, apiCallEmitOptions{
+		RequestedAppName: requestStringField(in.Body, "appName"),
+		StrictAppName:    opts.StrictAppName,
+	})
+}
+
+func appendAPIAudit(ctx context.Context, op api.Operation, target string, result *api.Result, callErr error) {
+	if !isMutationMethod(op.Method) {
+		return
+	}
+	rec := audit.Record{
+		OperationID: op.OperationID,
+		Target:      target,
+	}
+	if result != nil {
+		rec.Status = result.Status
+		rec.DurationMs = result.Duration.Milliseconds()
+		rec.RequestID = result.RequestID
+		rec.TraceID = result.TraceID
+	}
+	if callErr != nil {
+		if ye := yerr.From(callErr); ye != nil {
+			rec.ErrorCode = string(ye.Code)
+		}
+	}
+	_ = audit.DefaultLogger().Append(ctx, rec)
+}
+
+func isMutationMethod(method string) bool {
+	switch strings.ToUpper(method) {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return true
+	default:
+		return false
+	}
+}
+
+type getOrCreateMapping struct {
+	ListOp      string
+	NameField   string
+	IDField     string
+	ScopeFields []string
+}
+
+var getOrCreateMappings = map[string]getOrCreateMapping{
+	"project-create":     {ListOp: "project-all", NameField: "name", IDField: "id"},
+	"environment-create": {ListOp: "environment-search", NameField: "name", IDField: "id", ScopeFields: []string{"projectId"}},
+	"compose-create":     {ListOp: "compose-search", NameField: "name", IDField: "id", ScopeFields: []string{"environmentId", "projectId"}},
+}
+
+func runGetOrCreateAPICall(ctx context.Context, r *output.Renderer, reg *api.Registry, cli *api.Client, op api.Operation, in apiCallInput, targetURL string, body []byte, contentType string) error {
+	mapping, ok := getOrCreateMappings[op.OperationID]
+	if !ok {
+		return yerr.Newf(yerr.CodeInvalidInput, "--get-or-create is only supported for create operations with a known list/search operation")
+	}
+	name := requestStringField(in.Body, mapping.NameField)
+	if name == "" {
+		return yerr.Newf(yerr.CodeInvalidInput, "--get-or-create requires body.%s", mapping.NameField)
+	}
+	existing, err := findExistingRecord(ctx, reg, cli, mapping, in.Body, name)
+	if err != nil {
+		return err
+	}
+	if len(existing) > 0 {
+		return emitSyntheticAPICallSuccess(r, op, targetURL, existing, "existing")
+	}
+	res, err := cli.Do(ctx, &api.Request{
+		Method:      op.Method,
+		Path:        op.Path,
+		Body:        body,
+		ContentType: contentType,
+		Idempotent:  false,
+	})
+	if err != nil {
+		return errAsTyped(err, yerr.CodeNetwork)
+	}
+	if !res.Success() {
+		appendAPIAudit(ctx, op, targetURL, res, res.AsError())
+		if known := dokploy.MatchKnownIssue(op.OperationID, res.Status, res.Body); known != nil {
+			return known
+		}
+		return res.AsError()
+	}
+	appendAPIAudit(ctx, op, targetURL, res, nil)
+	created := json.RawMessage(res.Body)
+	if len(created) == 0 || string(bytes.TrimSpace(created)) == "{}" {
+		if relisted, err := findExistingRecord(ctx, reg, cli, mapping, in.Body, name); err == nil && len(relisted) > 0 {
+			created = relisted
+		}
+	}
+	return emitSyntheticAPICallSuccess(r, op, targetURL, created, "created")
+}
+
+func findExistingRecord(ctx context.Context, reg *api.Registry, cli *api.Client, mapping getOrCreateMapping, body json.RawMessage, name string) (json.RawMessage, error) {
+	listOp, ok := reg.Get(mapping.ListOp)
+	if !ok {
+		return nil, yerr.Newf(yerr.CodeNotFound, "get-or-create list operation %q is unavailable", mapping.ListOp)
+	}
+	query := url.Values{}
+	query.Set(mapping.NameField, name)
+	for _, sf := range mapping.ScopeFields {
+		if v := requestStringField(body, sf); v != "" {
+			query.Set(sf, v)
+		}
+	}
+	res, err := cli.Do(ctx, &api.Request{Method: listOp.Method, Path: listOp.Path, Query: query, Idempotent: true})
+	if err != nil {
+		return nil, errAsTyped(err, yerr.CodeNetwork)
+	}
+	if !res.Success() {
+		return nil, res.AsError()
+	}
+	return exactNameRecord(res.Body, mapping.NameField, name), nil
+}
+
+func exactNameRecord(body []byte, field, want string) json.RawMessage {
+	for _, rec := range candidateRecords(body) {
+		if requestStringField(rec, field) == want {
+			return rec
+		}
+	}
+	return nil
+}
+
+func candidateRecords(body []byte) []json.RawMessage {
+	var arr []json.RawMessage
+	if err := json.Unmarshal(body, &arr); err == nil {
+		return arr
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(body, &obj); err != nil {
+		return nil
+	}
+	for _, key := range []string{"data", "items", "results", "projects", "environments", "composes"} {
+		if raw := obj[key]; len(raw) > 0 {
+			if err := json.Unmarshal(raw, &arr); err == nil {
+				return arr
+			}
+		}
+	}
+	return []json.RawMessage{json.RawMessage(body)}
+}
+
+func emitSyntheticAPICallSuccess(r *output.Renderer, op api.Operation, targetURL string, body json.RawMessage, idempotent string) error {
+	return emitAPICallSuccessWithOptions(r, op, targetURL, &api.Result{
+		Status:      http.StatusOK,
+		StatusText:  "200 OK",
+		ContentType: api.ContentTypeJSON,
+		Body:        body,
+		Attempts:    1,
+	}, apiCallEmitOptions{IdempotentResult: idempotent})
 }
 
 // pathParamRE matches OpenAPI-style `{name}` placeholders. Dokploy does
@@ -718,24 +935,46 @@ func isIdempotentMethod(method string) bool {
 // emitAPICallSuccess renders the success envelope. The Dokploy response
 // body is embedded verbatim when it is JSON (so downstream agents can
 // query fields without a second parse) or surfaced as plain text otherwise.
-func emitAPICallSuccess(r *output.Renderer, op api.Operation, targetURL string, result *api.Result) error {
+type apiCallEmitOptions struct {
+	RequestedAppName string
+	StrictAppName    bool
+	IdempotentResult string
+}
+
+func emitAPICallSuccessWithOptions(r *output.Renderer, op api.Operation, targetURL string, result *api.Result, opts apiCallEmitOptions) error {
 	doc := apiCallSuccessDoc{
-		OperationID: op.OperationID,
-		Method:      op.Method,
-		URL:         targetURL,
-		Status:      result.Status,
-		StatusText:  result.StatusText,
-		DurationMs:  result.Duration.Milliseconds(),
-		Attempts:    result.Attempts,
-		RequestID:   result.RequestID,
-		TraceID:     result.TraceID,
-		ContentType: result.ContentType,
+		OperationID:      op.OperationID,
+		Method:           op.Method,
+		URL:              targetURL,
+		Status:           result.Status,
+		StatusText:       result.StatusText,
+		DurationMs:       result.Duration.Milliseconds(),
+		Attempts:         result.Attempts,
+		RequestID:        result.RequestID,
+		TraceID:          result.TraceID,
+		ContentType:      result.ContentType,
+		IdempotentResult: opts.IdempotentResult,
 	}
 	if len(result.Body) > 0 {
 		if isJSONContentType(result.ContentType) && json.Valid(result.Body) {
 			doc.Body = append(json.RawMessage(nil), result.Body...)
 		} else {
 			doc.BodyText = string(result.Body)
+		}
+	}
+	if op.OperationID == "compose-create" && opts.RequestedAppName != "" {
+		actual := requestStringField(doc.Body, "appName")
+		if actual != "" && actual != opts.RequestedAppName {
+			if opts.StrictAppName {
+				return yerr.Newf(yerr.CodeInvalidInput, "Dokploy mutated appName from %q to %q", opts.RequestedAppName, actual).
+					WithHint("use compose-import if upstream supports adoption, or yalla rescue orphans for cleanup")
+			}
+			doc.Warnings = append(doc.Warnings, apiCallWarning{
+				Code:      "APPNAME_MUTATED",
+				Requested: opts.RequestedAppName,
+				Actual:    actual,
+				Message:   "Dokploy changed the requested appName; existing Docker stack adoption is not supported",
+			})
 		}
 	}
 
@@ -761,6 +1000,23 @@ func emitAPICallSuccess(r *output.Renderer, op api.Operation, targetURL string, 
 	}
 	r.Human(strings.TrimRight(sb.String(), "\n"))
 	return nil
+}
+
+func requestStringField(raw json.RawMessage, field string) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var m map[string]json.RawMessage
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	if err := dec.Decode(&m); err != nil {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(m[field], &s); err == nil {
+		return s
+	}
+	return ""
 }
 
 // emitAPICallDryRun renders the resolved request without sending it. The

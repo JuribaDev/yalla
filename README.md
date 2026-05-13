@@ -35,8 +35,27 @@ yalla auth status
 yalla auth whoami
 yalla manifest --json
 yalla api operations --json
-yalla api call project-create --input request.json --json
+yalla api call project-create --data '{"name":"smoke"}' --dry-run --json
+yalla deploy compose --project smoke --env staging --compose-file docker-compose.yml --dry-run --json
+yalla teardown project --project smoke --json
+yalla wait url --url https://example.com --status-class 2xx --timeout 10s --json
 ```
+
+`yalla api call` accepts either `--input request.json` for the full envelope
+(`path_params`, `query`, `headers`, `body`, `files`) or `--data '<json>'` for
+single-line JSON. With `--data`, a bare object is treated as the request body,
+so agents can call create/update operations without boilerplate wrappers.
+
+Composite commands layer safe orchestration on top of the raw executor:
+
+- `yalla deploy compose` creates or updates project/env/compose/domain state,
+  deploys, and waits for completion.
+- `yalla teardown project` cascades cleanup before removing a project and
+  returns `E_ORPHAN` when Docker resources remain.
+- `yalla rescue orphans` runs the API cleanup path or prints an explicit SSH
+  fallback.
+- `yalla wait compose|url|orphans` provides deterministic polling primitives.
+- `yalla audit tail` reads the local JSONL mutation audit log.
 
 For automation, avoid putting tokens in shell history:
 

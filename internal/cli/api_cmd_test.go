@@ -12,7 +12,7 @@ import (
 // expectedOpCount mirrors api.expectedOperationCount but lives in the cli
 // package so a CLI-level regression also fails this assertion. The two
 // constants must be bumped together.
-const expectedOpCount = 450
+const expectedOpCount = 455
 
 func TestAPIOperations_JSONListsEveryOperation(t *testing.T) {
 	stdout, stderr, err := runRootArgs(t, "--json", "api", "operations")

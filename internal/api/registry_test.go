@@ -14,7 +14,7 @@ import (
 // also bumping this constant + EmbeddedSpecSHA256 (a contract violation)
 // or the registry started skipping operations (a code bug). Either way the
 // test should fail loudly so a release cannot silently lose API coverage.
-const expectedOperationCount = 450
+const expectedOperationCount = 455
 
 func TestEmbeddedSpec_SHA256IsPinned(t *testing.T) {
 	sum := sha256.Sum256(EmbeddedSpec)
@@ -219,6 +219,26 @@ func TestDefault_HasCanonicalOperationIDs(t *testing.T) {
 		if _, ok := r.Get(id); !ok {
 			t.Errorf("registry missing canonical operationId %q", id)
 		}
+	}
+}
+
+func TestDefault_PreservesYallaExtensions(t *testing.T) {
+	op, ok := Default().Get("project-remove")
+	if !ok {
+		t.Fatal("missing project-remove")
+	}
+	if len(op.Extensions) == 0 {
+		t.Fatal("project-remove extensions are empty")
+	}
+	if _, ok := op.Extensions["x-yalla-cascade"]; !ok {
+		t.Fatalf("extensions = %#v, want x-yalla-cascade", op.Extensions)
+	}
+	doc, err := Default().Schema("project-remove")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := doc.Extensions["x-yalla-cascade"]; !ok {
+		t.Fatalf("schema extensions = %#v, want x-yalla-cascade", doc.Extensions)
 	}
 }
 
