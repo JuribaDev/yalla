@@ -14,13 +14,23 @@ Raw `yalla --json api call <operationId>` remains the fallback for fields not ye
 
 ```sh
 yalla database create postgres --environment-id env_123 --name app-postgres --database-name app --database-user app --database-password "$DATABASE_PASSWORD" --deploy
-yalla database create redis --environment-id env_123 --name app-redis --database-password "$REDIS_PASSWORD" --deploy
-yalla database create mongo --environment-id env_123 --name app-mongo --database-user app --database-password "$MONGO_PASSWORD" --replica-sets --deploy
+yalla database create mysql    --environment-id env_123 --name app-mysql    --database-name app --database-user app --database-password "$DATABASE_PASSWORD" --root-password "$MYSQL_ROOT_PASSWORD" --deploy
+yalla database create mariadb  --environment-id env_123 --name app-mariadb  --database-name app --database-user app --database-password "$DATABASE_PASSWORD" --root-password "$MARIADB_ROOT_PASSWORD" --deploy
+yalla database create mongo    --environment-id env_123 --name app-mongo    --database-user app --database-password "$MONGO_PASSWORD" --replica-sets --deploy
+yalla database create redis    --environment-id env_123 --name app-redis    --database-password "$REDIS_PASSWORD" --deploy
 yalla database deploy postgres --id postgres_123
 yalla database update postgres --id postgres_123 --memory-reservation 512M --memory-limit 1G --cpu-reservation 0.25 --cpu-limit 1 --replicas 1
 ```
 
-Use `--json` for agent workflows when the command output will be parsed.
+Use `--json` for agent workflows when the command output will be parsed. Each engine's `create` returns the new database ID — the friendly command recovers it by re-searching after the create call, so a `{}` response from upstream is not a failure.
+
+Non-obvious flags worth knowing:
+
+- `--root-password` (MySQL / MariaDB only) — sets the engine root password independent of the app user password. If you omit it for MySQL/MariaDB, Dokploy generates a random one you can never read back; pass it explicitly when you want repeatable provisioning.
+- `--app-name` — overrides the auto-generated in-cluster hostname (the value other apps reach via Docker Swarm DNS). Default is fine for almost every project; only set this if you need a stable name independent of the DB record name.
+- `--server-id` — pins the DB container to a specific Dokploy server in a multi-server cluster. Leave unset for single-server installs.
+- `--replica-sets` (Mongo only) — enables MongoDB replica-set mode. Most apps do not need it; turn it on only if the app expects a replica-set connection string.
+- `--deploy` on `create` — fuses create + deploy in one step. Skip it if you want to inspect the record before it spins up.
 
 ## Schema reminders
 
@@ -121,13 +131,27 @@ yalla database backup create postgres \
   --keep-latest 7
 
 yalla database backup run postgres --backup-id backup_123
-yalla database backup update postgres --backup-id backup_123 --schedule "0 4 * * *" --keep-latest 14
+yalla database backup update postgres --backup-id backup_123 --schedule "0 4 * * *" --keep-latest 14 --enabled
 yalla database backup get --backup-id backup_123
-yalla database backup list-files --destination-id dst_123 --prefix backups/app/
+yalla database backup list-files --destination-id dst_123 --prefix backups/app/   # browse a destination
+yalla database backup list-files --backup-id backup_123                            # files for one backup
 yalla database backup delete --backup-id backup_123
 ```
 
+`backup update` accepts `--enabled` or `--disabled` (mutually exclusive) to pause/resume a schedule without deleting the backup record. `--service-name` lets MongoDB replica-set deployments target a specific service inside the swarm.
+
 Use `--json` for agent workflows. Some Dokploy versions return `{}` from raw `backup-create`; the friendly command recovers `backup_id` from the database record's `backups` array via `<engine>-one` and falls back to `user-getBackups`. Treat a missing `backup_id` from the friendly command as a real failure and inspect the typed error hint instead of asking the user to copy an ID from the portal.
+
+### Where `--destination-id` comes from
+
+Destinations are S3-compatible buckets (or local paths) registered at the **organization** level, not per-database. There is no friendly `yalla destination …` wrapper yet — list and create them through the raw API:
+
+```sh
+yalla --json api call destination-all --input '{}'                             # see what already exists
+yalla --json api call destination-create --input destination.json              # body: {name, provider, accessKey, secretAccessKey, bucket, endpoint, region}
+```
+
+Reuse one destination across many backups — that is the design. Only create a new destination when the user asks for an isolated bucket or a different storage backend.
 
 After deploy, point the user at:
 

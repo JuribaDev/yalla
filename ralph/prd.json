@@ -7,9 +7,9 @@
     "openapi": "3.1.0",
     "title": "Dokploy API",
     "version": "1.0.0",
-    "sha256": "09999cf46fa7504ca2bc7539d8b1e6817da3d612964a5f83fe404dd32c56c7c7",
-    "pathCount": 450,
-    "operationCount": 450
+    "sha256": "6123f5d874d169f83ffdcc8b821fc848c96095084aa5b9a68eb8e94759d8fed2",
+    "pathCount": 455,
+    "operationCount": 455
   },
   "productPrinciples": [
     "AI-agent-first behavior is a product requirement, not a mode added later.",
@@ -240,7 +240,7 @@
       "type": "foundation",
       "priority": 1,
       "passes": true,
-      "notes": "OpenAPI sha256: 09999cf46fa7504ca2bc7539d8b1e6817da3d612964a5f83fe404dd32c56c7c7"
+      "notes": "OpenAPI sha256: 6123f5d874d169f83ffdcc8b821fc848c96095084aa5b9a68eb8e94759d8fed2"
     },
     {
       "id": "US-0005",

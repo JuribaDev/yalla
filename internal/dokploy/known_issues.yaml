@@ -1,0 +1,7 @@
+- id: dokploy-compose-stop-spawn-bin-sh-enoent
+  op: compose-stop
+  status: 500
+  body_contains: "spawn /bin/sh ENOENT"
+  classification: upstream_bug
+  upstream_issue: "compose-stop may fail when the upstream runtime cannot spawn /bin/sh"
+  workaround: "Use docker-compose-down by appName, then retry cleanup"

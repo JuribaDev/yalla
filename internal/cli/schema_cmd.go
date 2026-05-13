@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -187,6 +190,15 @@ func runSchemaGet(r *output.Renderer, reg *api.Registry, operationID string) err
 	} else {
 		sb.WriteString("auth: not required\n")
 	}
+	if len(doc.Extensions) > 0 {
+		sb.WriteString("extensions:\n")
+		for _, k := range sortedRawKeys(doc.Extensions) {
+			var compact bytes.Buffer
+			if err := json.Compact(&compact, doc.Extensions[k]); err == nil {
+				fmt.Fprintf(&sb, "  %s: %s\n", k, compact.String())
+			}
+		}
+	}
 
 	if doc.Input != nil && len(doc.Input.Parameters) > 0 {
 		sb.WriteString("\nparameters:\n")
@@ -223,4 +235,13 @@ func runSchemaGet(r *output.Renderer, reg *api.Registry, operationID string) err
 
 	r.Human(strings.TrimRight(sb.String(), "\n"))
 	return nil
+}
+
+func sortedRawKeys(m map[string]json.RawMessage) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }

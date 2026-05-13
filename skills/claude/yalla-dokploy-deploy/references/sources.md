@@ -149,3 +149,15 @@ Same applies to `buildArgs` and `buildSecrets`.
 ## Source switching
 
 Switching sources later (e.g., docker image → git) is done by calling the new `application-save*Provider` op. The previous source is replaced — only the latest call's source is active at deploy time. The build type is independent and persists across source switches.
+
+## appName adoption warning
+
+Do not assume `compose-create` adopts an existing Docker stack just because the
+request body includes `appName`. yalla compares requested `appName` with the
+response body and emits `APPNAME_MUTATED` when Dokploy changes it. Use
+`--strict-appname` when a mutation must fail fast. If an existing stack needs
+cleanup, use:
+
+```sh
+yalla --json rescue orphans --app-name <appName>
+```

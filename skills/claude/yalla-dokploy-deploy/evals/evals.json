@@ -4,7 +4,7 @@
     {
       "id": 1,
       "name": "node-postgres-staging",
-      "prompt": "Deploy this Next.js app to my Dokploy install, staging env. The repo is at /tmp/yalla-fixtures/node-postgres. My Dokploy is at https://ploy.jsa.sa, base host for autodomains is apps.jsa.sa. Don't actually run anything destructive \u2014 just give me the full plan with every yalla call I'd need to run, in order, including the JSON bodies. The repo has a Prisma schema using postgres and a .env.example with several vars I want shipped.",
+      "prompt": "Deploy this Next.js app to my Dokploy install, staging env. The repo is at /tmp/yalla-fixtures/node-postgres. My Dokploy is at https://ploy.jsa.sa, base host for autodomains is apps.jsa.sa. Don't actually run anything destructive — just give me the full plan with every yalla call I'd need to run, in order, including the JSON bodies. The repo has a Prisma schema using postgres and a .env.example with several vars I want shipped.",
       "expected": "nixpacks build, postgres provisioned, full env-var partition, both envs created, letsencrypt domain"
     },
     {
@@ -22,7 +22,7 @@
     {
       "id": 4,
       "name": "dockerfile-multistage-go",
-      "prompt": "Deploy this Go service to staging on my Dokploy at ploy.jsa.sa, base host apps.jsa.sa. The repo at /tmp/yalla-fixtures/dockerfile-multistage-go has a multi-stage Dockerfile (build stage + alpine runtime, EXPOSE 8080) and a .env.example mentioning DATABASE_URL=postgres://. Paper plan only \u2014 show every yalla call with full JSON bodies.",
+      "prompt": "Deploy this Go service to staging on my Dokploy at ploy.jsa.sa, base host apps.jsa.sa. The repo at /tmp/yalla-fixtures/dockerfile-multistage-go has a multi-stage Dockerfile (build stage + alpine runtime, EXPOSE 8080) and a .env.example mentioning DATABASE_URL=postgres://. Paper plan only — show every yalla call with full JSON bodies.",
       "expected": "buildType=dockerfile, dockerfile=./Dockerfile, dockerContextPath=., postgres-create, domain port=8080, git-provider with origin URL"
     },
     {
@@ -40,7 +40,7 @@
     {
       "id": 7,
       "name": "docker-image-only",
-      "prompt": "I want to deploy the docker image ghcr.io/example/api:v1.4.0 to my Dokploy at ploy.jsa.sa (base host apps.jsa.sa) staging env. Listening on port 3000. There's no source code locally \u2014 just the image (the directory at /tmp/yalla-fixtures/docker-image-only has only a DEPLOY.md noting the image ref and port). Paper plan with all yalla calls.",
+      "prompt": "I want to deploy the docker image ghcr.io/example/api:v1.4.0 to my Dokploy at ploy.jsa.sa (base host apps.jsa.sa) staging env. Listening on port 3000. There's no source code locally — just the image (the directory at /tmp/yalla-fixtures/docker-image-only has only a DEPLOY.md noting the image ref and port). Paper plan with all yalla calls.",
       "expected": "application-saveDockerProvider with dockerImage=ghcr.io/example/api:v1.4.0, no git-provider call, domain port=3000, deploy"
     },
     {
@@ -58,7 +58,7 @@
     {
       "id": 10,
       "name": "redeploy-existing",
-      "prompt": "Redeploy the project at /tmp/yalla-fixtures/redeploy-existing to its staging env. It has a .dokploy.yaml from a previous deploy with project + env + app IDs already saved. Paper plan only \u2014 the skill should recognise this and skip creation steps.",
+      "prompt": "Redeploy the project at /tmp/yalla-fixtures/redeploy-existing to its staging env. It has a .dokploy.yaml from a previous deploy with project + env + app IDs already saved. Paper plan only — the skill should recognise this and skip creation steps.",
       "expected": "skill detects .dokploy.yaml, calls application-redeploy with the saved applicationId, does NOT call project-create / environment-create / application-create"
     },
     {
@@ -70,43 +70,43 @@
     {
       "id": 12,
       "name": "preflight-not-ready",
-      "prompt": "Deploy /tmp/yalla-fixtures/preflight-not-ready to my Dokploy at ploy.jsa.sa. ASSUME yalla is not yet installed/authenticated on this machine \u2014 `yalla --version` would say 'command not found' or `yalla auth status` would say `ready: false`. Walk me through what to do.",
+      "prompt": "Deploy /tmp/yalla-fixtures/preflight-not-ready to my Dokploy at ploy.jsa.sa. ASSUME yalla is not yet installed/authenticated on this machine — `yalla --version` would say 'command not found' or `yalla auth status` would say `ready: false`. Walk me through what to do.",
       "expected": "skill stops at preflight, emits setup instructions (build, yalla auth login with --url, token-stdin automation alternative, auth status/whoami verification), does not produce a deploy plan"
     },
     {
       "id": 13,
       "name": "tear-down-existing",
-      "prompt": "Tear down the deployment at /tmp/yalla-fixtures/tear-down-existing. Remove everything from Dokploy \u2014 project, apps, envs, domains. There's a .dokploy.yaml with the IDs. Paper plan.",
+      "prompt": "Tear down the deployment at /tmp/yalla-fixtures/tear-down-existing. Remove everything from Dokploy — project, apps, envs, domains. There's a .dokploy.yaml with the IDs. Paper plan.",
       "expected": "skill reads .dokploy.yaml, plan calls project-remove with the saved projectId (cascades), does NOT call project-create / application-create / etc."
     },
     {
       "id": 14,
       "name": "background-worker-no-domain",
-      "prompt": "Deploy /tmp/yalla-fixtures/background-worker \u2014 a queue worker (BullMQ + ioredis), no HTTP endpoint. Dokploy at ploy.jsa.sa, staging env. Skip domain (no public access needed). Paper plan.",
+      "prompt": "Deploy /tmp/yalla-fixtures/background-worker — a queue worker (BullMQ + ioredis), no HTTP endpoint. Dokploy at ploy.jsa.sa, staging env. Skip domain (no public access needed). Paper plan.",
       "expected": "redis-create (REDIS_URL detected), nixpacks build, no domain-create call, application-deploy + status-poll only (no HTTP probe in verification)"
     },
     {
       "id": 15,
       "name": "custom-domain",
-      "prompt": "Deploy /tmp/yalla-fixtures/custom-domain to my Dokploy at ploy.jsa.sa. I want to use my own domain `api.acme.com` for production \u2014 NOT the auto-named `<project>-<env>.<base-host>` default. DNS for api.acme.com already points at the Dokploy server. Use Let's Encrypt. Paper plan with full yalla calls.",
+      "prompt": "Deploy /tmp/yalla-fixtures/custom-domain to my Dokploy at ploy.jsa.sa. I want to use my own domain `api.acme.com` for production — NOT the auto-named `<project>-<env>.<base-host>` default. DNS for api.acme.com already points at the Dokploy server. Use Let's Encrypt. Paper plan with full yalla calls.",
       "expected": "domain-create body uses host='api.acme.com' (NOT auto-named), targets production env, certificateType=letsencrypt, https=true"
     },
     {
       "id": 16,
       "name": "multi-domain",
       "prompt": "Deploy /tmp/yalla-fixtures/multi-domain to my Dokploy production at ploy.jsa.sa. ONE app, but I need TWO public hosts: `api.acme.com` and `admin.acme.com`. Both Let's Encrypt, same applicationId. Paper plan.",
-      "expected": "TWO separate domain-create calls \u2014 same applicationId, different hosts, both letsencrypt"
+      "expected": "TWO separate domain-create calls — same applicationId, different hosts, both letsencrypt"
     },
     {
       "id": 17,
       "name": "custom-path-routing",
-      "prompt": "Deploy /tmp/yalla-fixtures/path-routed-api to my Dokploy production. The app should respond at `acme.com/api/*` (path-prefix routing \u2014 there are other apps living at the same domain). The internal app expects requests at root `/`, so strip the `/api` prefix before forwarding. Paper plan with the domain-create body \u2014 show `path`, `internalPath`, and `stripPath` correctly set.",
+      "prompt": "Deploy /tmp/yalla-fixtures/path-routed-api to my Dokploy production. The app should respond at `acme.com/api/*` (path-prefix routing — there are other apps living at the same domain). The internal app expects requests at root `/`, so strip the `/api` prefix before forwarding. Paper plan with the domain-create body — show `path`, `internalPath`, and `stripPath` correctly set.",
       "expected": "domain-create body has host=acme.com, path=/api, stripPath=true (or internalPath=/), explicitly explains the stripPath behaviour"
     },
     {
       "id": 18,
       "name": "custom-cert",
-      "prompt": "Deploy /tmp/yalla-fixtures/custom-cert to my Dokploy production. We have our own corporate TLS cert + custom Traefik resolver named `corp-vault-resolver` (already configured Dokploy-side). Domain `internal.acme.corp`. Don't use Let's Encrypt \u2014 use our custom cert. Paper plan.",
+      "prompt": "Deploy /tmp/yalla-fixtures/custom-cert to my Dokploy production. We have our own corporate TLS cert + custom Traefik resolver named `corp-vault-resolver` (already configured Dokploy-side). Domain `internal.acme.corp`. Don't use Let's Encrypt — use our custom cert. Paper plan.",
       "expected": "domain-create body has certificateType=custom, customCertResolver='corp-vault-resolver', https=true"
     },
     {
@@ -118,31 +118,31 @@
     {
       "id": 20,
       "name": "private-registry-image",
-      "prompt": "Deploy the private docker image at `registry.acme.com/billing/api:v3.2.1` to my Dokploy staging. Username `billing-deploy`, password is in 1Password \u2014 I'll paste it when prompted. Listens on port 8080. The directory at /tmp/yalla-fixtures/private-registry only has a DEPLOY.md noting this. Paper plan.",
+      "prompt": "Deploy the private docker image at `registry.acme.com/billing/api:v3.2.1` to my Dokploy staging. Username `billing-deploy`, password is in 1Password — I'll paste it when prompted. Listens on port 8080. The directory at /tmp/yalla-fixtures/private-registry only has a DEPLOY.md noting this. Paper plan.",
       "expected": "application-saveDockerProvider body has dockerImage=registry.acme.com/billing/api:v3.2.1, registryUrl=https://registry.acme.com, username='billing-deploy', explicit note that password should be supplied via prompt/credential store/env var (NOT pasted in chat), domain port=8080"
     },
     {
       "id": 21,
       "name": "github-app-provider",
-      "prompt": "Deploy /tmp/yalla-fixtures/github-app-provider to my Dokploy staging. We have a Dokploy\u2194GitHub App configured \u2014 its ID is in `.dokploy.yaml` under `github_provider_id`. Use `application-saveGithubProvider` with that ID so push-to-main triggers redeploys automatically. Paper plan.",
+      "prompt": "Deploy /tmp/yalla-fixtures/github-app-provider to my Dokploy staging. We have a Dokploy↔GitHub App configured — its ID is in `.dokploy.yaml` under `github_provider_id`. Use `application-saveGithubProvider` with that ID so push-to-main triggers redeploys automatically. Paper plan.",
       "expected": "application-saveGithubProvider body uses githubId from the .dokploy.yaml, owner='acme', repository='shop', triggerType='push', branch='main'"
     },
     {
       "id": 22,
       "name": "promote-staging-to-prod",
       "prompt": "Promote the staging deployment at /tmp/yalla-fixtures/promote-staging to production. Staging is already live (.dokploy.yaml has the staging app + env). The production env exists but has NO application yet. Reuse the same git source/build type as staging but with the DIFFERENT env vars from `.env.production` (DATABASE_URL points at prod-db, NODE_ENV=production, SENTRY_ENV=production). Don't recreate the project or staging env. Paper plan.",
-      "expected": "skill recognises .dokploy.yaml, reuses project + production env, creates a NEW application in the production env, copies source/build config from staging, applies .env.production vars, calls application-deploy on the new prod app \u2014 does NOT touch the staging app"
+      "expected": "skill recognises .dokploy.yaml, reuses project + production env, creates a NEW application in the production env, copies source/build config from staging, applies .env.production vars, calls application-deploy on the new prod app — does NOT touch the staging app"
     },
     {
       "id": 23,
       "name": "external-managed-database",
-      "prompt": "Deploy /tmp/yalla-fixtures/external-managed-db to my Dokploy staging. The .env.example has DATABASE_URL pointing at our managed Postgres on AWS RDS (`prod-db.cluster-xyz.us-east-1.rds.amazonaws.com`). DO NOT provision a Dokploy postgres \u2014 the app should connect to RDS directly. Paper plan.",
+      "prompt": "Deploy /tmp/yalla-fixtures/external-managed-db to my Dokploy staging. The .env.example has DATABASE_URL pointing at our managed Postgres on AWS RDS (`prod-db.cluster-xyz.us-east-1.rds.amazonaws.com`). DO NOT provision a Dokploy postgres — the app should connect to RDS directly. Paper plan.",
       "expected": "skill detects DATABASE_URL but recognises the external host (RDS / non-local FQDN) and SKIPS postgres-create / postgres-deploy. application-saveEnvironment ships the DATABASE_URL verbatim. Domain still set up. Plan calls out the assumption explicitly."
     },
     {
       "id": 24,
       "name": "app-with-migrations",
-      "prompt": "Deploy /tmp/yalla-fixtures/django-with-migrations to my Dokploy staging at ploy.jsa.sa. Django app, has a `release: python manage.py migrate --noinput` line in the Procfile \u2014 that's the schema migration that MUST run before any web traffic. Paper plan should make sure migrations run before/at-deploy, not skipped.",
+      "prompt": "Deploy /tmp/yalla-fixtures/django-with-migrations to my Dokploy staging at ploy.jsa.sa. Django app, has a `release: python manage.py migrate --noinput` line in the Procfile — that's the schema migration that MUST run before any web traffic. Paper plan should make sure migrations run before/at-deploy, not skipped.",
       "expected": "skill recognises the Procfile `release:` line and configures heroku_buildpacks build (which honours release commands), OR explicitly notes that yalla/Dokploy may need a custom pre-deploy command via application-update (or similar). Plan must NOT silently drop the migrate step."
     },
     {
@@ -154,13 +154,13 @@
     {
       "id": 26,
       "name": "stop-without-tear-down",
-      "prompt": "Stop (don't delete) the production deployment at /tmp/yalla-fixtures/stop-app. Keep all the config \u2014 domain, env vars, database \u2014 intact, just stop the running container so we can investigate something. Paper plan.",
+      "prompt": "Stop (don't delete) the production deployment at /tmp/yalla-fixtures/stop-app. Keep all the config — domain, env vars, database — intact, just stop the running container so we can investigate something. Paper plan.",
       "expected": "plan calls application-stop with the saved applicationId. Does NOT call project-remove / application-delete / domain-* / postgres-*. Mentions application-start as the inverse op for resuming later."
     },
     {
       "id": 27,
       "name": "cron-scheduled",
-      "prompt": "Deploy /tmp/yalla-fixtures/cron-scheduled to my Dokploy production at ploy.jsa.sa, base host apps.jsa.sa. SCHEDULE.md says it should run nightly at 02:30 UTC via cron `30 2 * * *`. NOT a long-running web service \u2014 a periodic batch job. Paper plan.",
+      "prompt": "Deploy /tmp/yalla-fixtures/cron-scheduled to my Dokploy production at ploy.jsa.sa, base host apps.jsa.sa. SCHEDULE.md says it should run nightly at 02:30 UTC via cron `30 2 * * *`. NOT a long-running web service — a periodic batch job. Paper plan.",
       "expected": "plan uses Dokploy's schedule mechanism (schedule-create or similar) with the cron expression, NOT application-create + domain-create. Does NOT attach a domain. Skips domain HTTP probe in verification."
     },
     {
@@ -172,14 +172,14 @@
     {
       "id": 29,
       "name": "multi-server-placement",
-      "prompt": "Deploy /tmp/yalla-fixtures/multi-server-placement to my Dokploy. The cluster has multiple servers \u2014 PLACEMENT.md says this app MUST run on the GPU node (serverId: SERVER-GPU-01). Paper plan that pins the app to that server.",
+      "prompt": "Deploy /tmp/yalla-fixtures/multi-server-placement to my Dokploy. The cluster has multiple servers — PLACEMENT.md says this app MUST run on the GPU node (serverId: SERVER-GPU-01). Paper plan that pins the app to that server.",
       "expected": "plan sets serverId=SERVER-GPU-01 in application-create body. Does not leave serverId=null. Mentions that without this, the swarm scheduler could place the workload on a non-GPU node."
     },
     {
       "id": 30,
       "name": "volumes-persistent",
-      "prompt": "Deploy /tmp/yalla-fixtures/volumes-persistent to my Dokploy production. The container writes to /data \u2014 VOLUMES.md says we need a NAMED volume `app-data` of 20Gi mounted at /data so redeploys preserve state. Paper plan with the volume/mount yalla call.",
-      "expected": "plan calls mount-create (or volume-create \u2014 yalla's mount op) with mountType=volume, mountName=app-data, mountPath=/data, applicationId. Volume call comes BEFORE application-deploy so first deploy sees the mount."
+      "prompt": "Deploy /tmp/yalla-fixtures/volumes-persistent to my Dokploy production. The container writes to /data — VOLUMES.md says we need a NAMED volume `app-data` of 20Gi mounted at /data so redeploys preserve state. Paper plan with the volume/mount yalla call.",
+      "expected": "plan calls mount-create (or volume-create — yalla's mount op) with mountType=volume, mountName=app-data, mountPath=/data, applicationId. Volume call comes BEFORE application-deploy so first deploy sees the mount."
     },
     {
       "id": 31,
@@ -190,7 +190,7 @@
     {
       "id": 32,
       "name": "websocket-app",
-      "prompt": "Deploy /tmp/yalla-fixtures/websocket-app to my Dokploy production. It's a Socket.IO server \u2014 needs HTTP/1.1 upgrade for WebSocket and long idle timeouts (default 60s isn't enough). Domain ws.acme.com. Paper plan.",
+      "prompt": "Deploy /tmp/yalla-fixtures/websocket-app to my Dokploy production. It's a Socket.IO server — needs HTTP/1.1 upgrade for WebSocket and long idle timeouts (default 60s isn't enough). Domain ws.acme.com. Paper plan.",
       "expected": "plan uses application-saveBuildType=nixpacks (Node app). Domain has https=true, letsencrypt, port 3000. Plan calls out the WebSocket needs explicitly: long Traefik timeouts (e.g. via application-update labels / domain settings), HTTP/1.1 upgrade, sticky sessions if replicas>1. Even if Dokploy handles WS natively, the plan must acknowledge the consideration."
     },
     {
@@ -207,20 +207,41 @@
     },
     {
       "id": 35,
-      "prompt": "I just got a release zip from our CI artifact archive (downloaded to /tmp/yalla-fixtures/drop-deploy/release-v0.4.2.zip \u2014 it's a built SPA, the root of the zip is the build output, index.html is at top-level). The app already exists on my Dokploy at https://ploy.jsa.sa called \"marketing-site\" (project \"marketing\", env \"production\"). Drop it. No domain change needed. Paper plan with every yalla call and the exact --input JSON, then walk me through the actual upload step.",
+      "prompt": "I just got a release zip from our CI artifact archive (downloaded to /tmp/yalla-fixtures/drop-deploy/release-v0.4.2.zip — it's a built SPA, the root of the zip is the build output, index.html is at top-level). The app already exists on my Dokploy at https://ploy.jsa.sa called \"marketing-site\" (project \"marketing\", env \"production\"). Drop it. No domain change needed. Paper plan with every yalla call and the exact --input JSON, then walk me through the actual upload step.",
       "expected_output": "Plan should route through drop-deploy (not git/redeploy). Should look up applicationId via application-all under the marketing project, call application-saveBuildType with static (because SPA + root build output), then call application-dropDeployment with files.zip pointing at the local path and dropBuildPath omitted or empty. Should mention dry-run first. Should NOT propose application-saveGitProvider or application-saveDockerProvider.",
       "files": []
     },
     {
       "id": 36,
-      "prompt": "deploy /tmp/yalla-fixtures/drop-deploy/lambda-bundle to dokploy. it's a python lambda i built and zipped \u2014 there's no git remote on this folder, no Dockerfile, and i don't want to push the build artifact to any registry. just want it running on my dokploy box. base host apps.jsa.sa. staging env. project name should default to the folder name. tell me everything you'll do and then do it (assume the zip already exists at /tmp/yalla-fixtures/drop-deploy/lambda-bundle/release.zip).",
-      "expected_output": "Should detect this as a drop-deploy case based on: pre-built zip + no git remote + no Dockerfile + user explicitly doesn't want a registry. Full fresh-deploy lifecycle (project-create \u2192 environment-create \u2192 application-create \u2192 application-saveBuildType \u2192 application-saveEnvironment \u2192 optionally domain-create \u2192 application-dropDeployment) with the multipart input shape. Should call out that there's no server-side rollback for drop deploys.",
+      "prompt": "deploy /tmp/yalla-fixtures/drop-deploy/lambda-bundle to dokploy. it's a python lambda i built and zipped — there's no git remote on this folder, no Dockerfile, and i don't want to push the build artifact to any registry. just want it running on my dokploy box. base host apps.jsa.sa. staging env. project name should default to the folder name. tell me everything you'll do and then do it (assume the zip already exists at /tmp/yalla-fixtures/drop-deploy/lambda-bundle/release.zip).",
+      "expected_output": "Should detect this as a drop-deploy case based on: pre-built zip + no git remote + no Dockerfile + user explicitly doesn't want a registry. Full fresh-deploy lifecycle (project-create → environment-create → application-create → application-saveBuildType → application-saveEnvironment → optionally domain-create → application-dropDeployment) with the multipart input shape. Should call out that there's no server-side rollback for drop deploys.",
       "files": []
     },
     {
       "id": 37,
-      "prompt": "upload my new build to the api-gateway app. the zip is at /tmp/yalla-fixtures/drop-deploy/api-gateway-v3.zip \u2014 but the actual build output is inside the zip at build/output/ (the rest is source for debugging). app is on https://ploy.jsa.sa, project \"platform\", env \"production\". dry-run first so i can paste the envelope into the change log, then ship it. last zip is at ./api-gateway-v2.zip in case we need to roll back.",
-      "expected_output": "Plan must set dropBuildPath to \"build/output\" (not omit it, not use root). Must dry-run first; the dry-run envelope is meant to be pasted, so the deterministic boundary + redacted file sentinel matter. Should acknowledge there's no server-side rollback and the user's own ./api-gateway-v2.zip is the rollback path \u2014 re-running application-dropDeployment against it.",
+      "prompt": "upload my new build to the api-gateway app. the zip is at /tmp/yalla-fixtures/drop-deploy/api-gateway-v3.zip — but the actual build output is inside the zip at build/output/ (the rest is source for debugging). app is on https://ploy.jsa.sa, project \"platform\", env \"production\". dry-run first so i can paste the envelope into the change log, then ship it. last zip is at ./api-gateway-v2.zip in case we need to roll back.",
+      "expected_output": "Plan must set dropBuildPath to \"build/output\" (not omit it, not use root). Must dry-run first; the dry-run envelope is meant to be pasted, so the deterministic boundary + redacted file sentinel matter. Should acknowledge there's no server-side rollback and the user's own ./api-gateway-v2.zip is the rollback path — re-running application-dropDeployment against it.",
+      "files": []
+    },
+    {
+      "id": 38,
+      "name": "provision-friendly-postgres",
+      "prompt": "I'm deploying a Node API (/tmp/yalla-fixtures/node-postgres) to my Dokploy at ploy.jsa.sa, base host apps.jsa.sa, staging env. The .env.example has DATABASE_URL=postgres://app:app@localhost:5432/app — so I need a postgres DB provisioned alongside the app, with the connection string wired into the app's env. Show me the plan and the exact yalla calls in order. The project name is `node-postgres`.",
+      "expected_output": "A plan that uses `yalla database create postgres ... --deploy` (the friendly command), generates a strong password, picks a sensible default image, recovers the DB ID and appName, wires DATABASE_URL via application-saveEnvironment. Should NOT hand-roll `yalla --json --no-input api call postgres-create`.",
+      "files": []
+    },
+    {
+      "id": 39,
+      "name": "backup-existing-postgres",
+      "prompt": "I have a postgres DB already running on Dokploy — its id is `postgres_eR7kQ2` and the logical database name is `invoices_app`. I want nightly backups at 02:00 UTC, retain the last 7 backups, uploaded to our existing S3 destination (org has one destination already configured). Show me the yalla command to set this up. If you need anything from me first, say so explicitly.",
+      "expected_output": "Uses `yalla database backup create postgres --id postgres_eR7kQ2 --destination-id <dst_...> --database invoices_app --schedule \"0 2 * * *\" --keep-latest 7`. Explains the user must first list existing destinations via `yalla --json api call destination-all --input '{}'` to discover the destination-id, since there's no friendly destination-list yet. Should NOT hand-roll raw `backup-create`.",
+      "files": []
+    },
+    {
+      "id": 40,
+      "name": "scale-existing-database",
+      "prompt": "Our postgres on Dokploy (id postgres_eR7kQ2) is hitting OOMs. Bump it to 1G memory limit, 512M reservation, 1 CPU limit, 0.25 reservation, and run 2 replicas. Use yalla.",
+      "expected_output": "Uses `yalla database update postgres --id postgres_eR7kQ2 --memory-limit 1G --memory-reservation 512M --cpu-limit 1 --cpu-reservation 0.25 --replicas 2`. Mentions that update is patch-like (only fields you set are changed) and that the change requires a redeploy/reload to take effect on the running container.",
       "files": []
     }
   ]

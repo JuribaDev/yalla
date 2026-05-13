@@ -2,7 +2,18 @@
 
 Read this immediately before executing. Two flows: single-app and compose. Both share the same head (project + envs + domain + verify) and differ in the middle (how the workload itself is created).
 
-Every step uses `yalla --json --no-input api call <op> --input <file>`. Capture the printed envelope per step; many ops return `{}` on success and you'll need to re-list to recover IDs.
+Prefer the composite commands when they fit:
+
+```sh
+yalla --json --no-input deploy compose --project <project> --env <env> --compose-file docker-compose.yml --get-or-create
+yalla --json --no-input teardown project --project <project>
+yalla --json --no-input wait orphans --app-name <appName> --count 0 --timeout 60s
+```
+
+Use raw calls for unsupported edges. Raw steps may use either
+`yalla --json --no-input api call <op> --input <file>` for the full envelope or
+`--data '<json>'` for a single request body. Capture the printed envelope per
+step; many ops return `{}` on success and you'll need to re-list to recover IDs.
 
 ## Common head: project + envs + (state file lookup)
 
@@ -51,7 +62,7 @@ To create:
 `project-create` ships a default `production` env. Add `staging` (and any others the user requested):
 
 ```sh
-yalla --json api call environment-create --input <(echo '{"body":{"name":"staging","projectId":"<projectId>"}}')
+yalla --json api call environment-create --data '{"name":"staging","projectId":"<projectId>"}'
 ```
 
 After every `environment-create`, refetch the project to see the env IDs:

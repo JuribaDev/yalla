@@ -31,4 +31,4 @@ var EmbeddedSpec []byte
 // public version handle of the registry: bumping the spec is a public-API
 // change and must be reflected in this constant, in ralph/prd.json's
 // sourceApi.sha256 field, and in the registry test that locks the digest.
-const EmbeddedSpecSHA256 = "09999cf46fa7504ca2bc7539d8b1e6817da3d612964a5f83fe404dd32c56c7c7"
+const EmbeddedSpecSHA256 = "6123f5d874d169f83ffdcc8b821fc848c96095084aa5b9a68eb8e94759d8fed2"

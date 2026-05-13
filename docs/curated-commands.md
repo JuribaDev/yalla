@@ -104,7 +104,21 @@ story that introduces them.
 
 ### compose
 `list`, `get`, `create`, `update`, `delete`, `deploy`, `redeploy`,
-`start`, `stop`, `logs`
+`start`, `stop`, `logs`, `wait`, `rescue`
+
+Composite compose/project commands exposed by the current CLI:
+
+```sh
+yalla deploy compose --project app --env staging --compose-file docker-compose.yml --dry-run
+yalla wait compose --id compose_123 --status done --timeout 300s
+yalla wait orphans --app-name app --count 0 --timeout 60s
+yalla rescue orphans --app-name app
+yalla teardown project --project app
+```
+
+Agent-mode examples use the same flags with `--json`. The raw operation IDs
+remain inspectable through `yalla schema get`; composite commands emit ordered
+planned operations in dry-run mode.
 
 ### database
 `list`, `list-files`, `get`, `create`, `update`, `delete`, `deploy`,
