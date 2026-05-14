@@ -122,3 +122,22 @@ do not mix customer API handlers into CLI packages.
   deterministic and Docker-safe. The package returns its own sentinel errors
   (`ErrInvalidID`, `ErrInvalidSlug`, …) with no HTTP semantics; the handler
   layer maps them to `apierr.InvalidInput`.
+- Authorization is `internal/controlplane/policy`. It is the authoritative
+  engine — Dokploy permissions are only defense-in-depth. `policy.Engine` is a
+  pure, total decision function: `Decide(Principal, Action, Resource)` returns
+  a `Decision{Allow, Reason}` with a stable `Reason` code; `Authorize` /
+  `AuthorizeCtx` map a denial onto typed `apierr` (`Unauthenticated` for a
+  missing principal, `Forbidden` otherwise). Every endpoint maps to exactly one
+  `policy.Action`; the action lives in `policy`'s `defaultActionCatalog` (the
+  authoritative `requiredAction` → `Capability` mapping). When you add an
+  endpoint, add its action there (or pass `policy.WithAction` for a late
+  addition) — `TestPolicyMatrix` and `TestCatalogAndRolesAreWellFormed` guard
+  the catalog. Roles confer `Capability` sets, not individual actions; the six
+  built-ins are fixed and custom roles resolve through a `CustomRoleResolver`
+  hook. Scoped `Grant`s narrow/widen authority within an org via `Scope`
+  containment over Organization→Project→Environment→Service; cross-tenant
+  resources are denied by construction except support reads/break-glass. The
+  authenticated principal travels on the request context via
+  `policy.WithPrincipal` / `policy.PrincipalFromContext` — never thread it
+  through signatures. The `store.Authorizer` port is satisfied by this engine;
+  store keeps only the narrow port and never imports `policy`.

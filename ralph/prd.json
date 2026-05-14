@@ -1227,8 +1227,8 @@
       ],
       "type": "authorization",
       "priority": 1,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "internal/controlplane/policy is a pure, total decision engine: Engine.Decide(Principal, Action, Resource) -> Decision{Allow, Reason} with stable Reason codes, and Engine.Authorize / AuthorizeCtx map denials onto typed apierr (Unauthenticated/Forbidden) for handlers and store units of work. Six built-in roles (owner/admin/developer/viewer/ci/support) plus a CustomRoleResolver hook map to a small capability set (self/read/deploy/write/admin/owner/support); the 61-action catalog maps every API-surface requiredAction to one capability. Scoped Grants narrow and widen authority within an org via Scope containment over Organization->Project->Environment->Service; cross-tenant resources are denied by construction except support reads/break-glass. WithPrincipal/PrincipalFromContext carry the principal on the request context. TestPolicyMatrix exhaustively covers all 6 roles x 61 actions; tests also cover no-principal, disabled, unknown action/role, custom roles, grant narrowing/widening/ignored-invalid, cross-tenant, scope containment, apierr mapping with no ID leakage, and the context carrier. gofmt, go build, go vet, go test ./..., and go test -race ./... all pass. Postgres integration criterion is N/A (pure engine, no persistence); DB-backed grant rows land with the grants-persistence story. JSON-envelope criterion is N/A (no HTTP surface yet); the engine returns typed apierr that the existing apienvelope renderer already maps."
     },
     {
       "id": "BE-0019",

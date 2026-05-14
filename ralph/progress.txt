@@ -20,6 +20,7 @@
 - Domain tables live in versioned migrations under store/migrate/migrations/. Every customer-data table carries organization_id (directly or via a verified parent chain) and is tenant-isolated at the database level by COMPOSITE foreign keys: a child FK (organization_id, parent_id) references the parent's UNIQUE (organization_id, id), making a cross-tenant child unrepresentable. Slugs are citext, unique within parent scope, never global. users is a global identity table; org membership is the memberships join table. Schema-level integration tests live in package store_test (NOT package migrate — it can't import testutil) and match constraint violations via *pgconn.PgError SQLSTATE class 23.
 - Persistence access goes through internal/controlplane/store: Store.Read (read-only tx -> Querier) and Store.Write (read/write tx -> *Tx; commit on nil, rollback on ANY error or panic). A *Tx is obtainable ONLY inside Store.Write; repository mutation methods take *Tx, read methods take Querier — so a mutation structurally cannot run outside the transaction that also carries its authorization and quota checks. A unit of work validates input first, then composes authorize -> reserve quota -> write desired state -> enqueue durable job inside one Store.Write. The policy/quota/jobs dependencies are narrow port interfaces defined IN store (Authorizer, QuotaReserver, JobEnqueuer); store never imports those packages. Error mapping is uniform: pgx.ErrNoRows -> apierr.NotFound, SQLSTATE class 23 -> apierr.Conflict, other driver errors -> apierr.StoreUnavailable; the raw cause is wrapped for logging only. ProjectRepository/ProjectService are the reference implementation.
 - Credentials: internal/controlplane/auth owns generation/hashing/verification; internal/controlplane/store owns persistence. A secret is stored ONLY as a one-way hash plus a public, globally-UNIQUE prefix — never plaintext. Plaintext credential types implement String/GoString/LogValue/MarshalJSON returning output.Sentinel; the plaintext is reachable only via an explicit Reveal() method. High-entropy secrets (>=128 bits random) use fast unsalted SHA-256 + subtle.ConstantTimeCompare, NOT bcrypt/argon2. Authentication lookup (FindByPrefix) is the ONE deliberate non-tenant-scoped repository read — it runs before the tenant is known; the found row carries its own OrganizationID. Tenant-scoped mutations that may match zero rows report apierr.NotFound via tag.RowsAffected()==0.
+- Authorization is internal/controlplane/policy: policy.Engine is a pure, total decision function — Decide(Principal, Action, Resource) -> Decision{Allow, Reason} (stable Reason codes); Authorize/AuthorizeCtx map denials onto typed apierr (Unauthenticated for a missing principal, Forbidden otherwise). Every endpoint maps to exactly one policy.Action; the action lives in policy's defaultActionCatalog (the authoritative requiredAction -> Capability map) — add new actions there or via policy.WithAction. Roles confer Capability sets (self/read/deploy/write/admin/owner/support), not individual actions; six built-ins are fixed, custom roles resolve through a CustomRoleResolver hook. Scoped Grants narrow/widen authority within an org via Scope containment over Organization->Project->Environment->Service; cross-tenant resources are denied by construction except support reads/break-glass. The principal travels on the request context via policy.WithPrincipal/PrincipalFromContext — never thread it through signatures. The store.Authorizer port is satisfied by this engine; store still never imports policy. TestPolicyMatrix exhaustively covers all built-in roles x catalogued actions.
 
 ## 2026-05-14 - BE-0002
 - What was implemented: Backend configuration contract for the control-plane API and worker.
@@ -1086,4 +1087,73 @@
     seedOrg/seedProject/seedDomainOrg, newStore, and insertAPIKey across files.
   - migrate.go embeds migrations/*.sql by glob, so a new NNNN_*.sql pair is picked up with no Go
     change; migrate_test.go already derives the latest version from m.Migrations() (no literal).
+---
+
+## 2026-05-14 - BE-0018
+- What was implemented: the RBAC and scoped grants engine — internal/controlplane/policy, the
+  authoritative authorization decision engine for the control plane.
+  - internal/controlplane/policy/policy.go: package doc + core types. Role (six built-in
+    constants: owner/admin/developer/viewer/ci/support); Capability (self/read/deploy/write/
+    admin/owner/support); Action (dotted string); Scope (Organization->Project->Environment->
+    Service, with unexported covers() containment); Grant (Role + Scope); Resource (domain.Kind
+    + Scope); Principal (ID/Kind/OrganizationID/Role/Grants/Disabled — the single concrete type
+    both API-key and session auth resolve to); Reason (stable allow/deny codes) + Decision.
+  - internal/controlplane/policy/catalog.go: builtinRoleCaps (the authoritative role->capability
+    matrix, each role listed in full — capabilities are NOT hierarchical); defaultActionCatalog
+    (all 61 API-surface requiredActions -> one Capability each); BuiltinRoles()/Actions() stable
+    sorted enumerators; CustomRoleResolver hook type; capSet helper.
+  - internal/controlplane/policy/engine.go: Engine (immutable, concurrency-safe), NewEngine +
+    Option (WithCustomRoles, WithAction). Decide(Principal, Action, Resource) -> Decision is a
+    pure, total, panic-free function with a fixed deny-by-default order: no/disabled principal ->
+    unknown action -> CapSelf bypass -> unresolvable org role -> cross-tenant (deny unless
+    support read/break-glass) -> org-role capability -> covering-grant capability ->
+    out_of_scope vs no_capability. Authorize/AuthorizeCtx map denials onto typed apierr
+    (Unauthenticated for a missing principal, Forbidden otherwise; message carries only the
+    action + reason code, never an ID). WithPrincipal/PrincipalFromContext carry the principal
+    on the request context.
+  - internal/controlplane/policy/policy_test.go (white-box, package policy): TestPolicyMatrix
+    exhaustively covers all 6 built-in roles x all 61 actions (367 subtests) with verdicts
+    derived from the matrix+catalog so drift fails CI; plus no-principal, disabled, unknown
+    action, unknown role (and CapSelf bypassing the role check), custom roles (as org role and
+    as grant role), grant narrowing/widening/out-of-scope/ignored-invalid (unknown role,
+    foreign-org scope), cross-tenant deny + support read/break-glass allow, TestScopeCovers
+    containment table, Authorize apierr-code mapping with a no-ID-leak assertion, the context
+    carrier round trip, and a catalog/roles well-formedness guard.
+  - Removed placeholder internal/controlplane/policy/doc.go (package doc now lives in policy.go).
+  - internal/controlplane/AGENTS.md: documented the policy engine, the action catalog as the
+    requiredAction source of truth, capability-based roles, scoped grants, and the context carrier.
+- Files changed: internal/controlplane/policy/{policy.go,catalog.go,engine.go,policy_test.go}
+  (new), internal/controlplane/policy/doc.go (deleted), internal/controlplane/AGENTS.md,
+  ralph/prd.json, ralph/progress.txt.
+- Verification run: gofmt -w .; go mod tidy; go build ./...; go vet ./...; go test ./...;
+  go test -race ./....
+- Results: all passed (TestPolicyMatrix = 367 passing subtests). goimports, golangci-lint,
+  staticcheck, govulncheck not installed locally.
+- Remaining risks / follow-ups:
+  - The store.Authorizer port (Authorize(ctx, q Querier, action, organizationID)) is NOT yet
+    wired to this engine — the existing services still use nopAuthorizer test doubles. A later
+    story should add a store-port adapter that reads policy.PrincipalFromContext(ctx), builds an
+    org-scoped Resource, and calls Engine.Authorize. It was left out here to keep policy from
+    taking a build dependency on store and to keep BE-0018 to the engine itself.
+  - Grants are in-memory on the Principal. The DB-backed grant rows the store.Authorizer comment
+    anticipates ("a policy decision that reads grant rows") land with the grants-persistence
+    story; the project.grants.* / environment.grants.* actions are already catalogued.
+  - Postgres integration criterion is N/A (pure engine, no persistence). JSON-envelope criterion
+    is N/A (no HTTP surface yet) — the engine emits typed apierr the apienvelope renderer maps.
+  - "not-found behavior" maps to ReasonDeniedUnknownAction here (an uncatalogued action); there
+    is no resource lookup in a pure engine.
+- Learnings for future iterations:
+  - Capability indirection keeps the role/action matrix small and TOTAL: roles confer a Capability
+    set, actions require one Capability, and the per-action verdict is a set membership check.
+    This made an exhaustive 6x61 table test derivable from the two source-of-truth maps rather
+    than hand-enumerated, so the test fails the instant either map drifts.
+  - CapSelf is checked BEFORE org-role resolution on purpose: auth.me/auth.orgs/organization.create
+    must work for any authenticated principal even one with an unknown/empty role.
+  - Cross-tenant is enforced structurally (resource.Scope.OrganizationID != principal.OrganizationID
+    is the first thing checked after role resolution), and grants are filtered to the principal's
+    own org — a foreign-org grant can never widen authority.
+  - The 61 distinct requiredAction values come from prd.json apiSurface.endpoints; query them with
+    ctx_execute_file rather than reading the 837KB PRD. defaultActionCatalog must stay in sync as
+    later endpoint stories land — TestCatalogAndRolesAreWellFormed asserts the count (61).
+  - Go 1.25 in this repo: t.Context() is available in tests; no need for context.Background().
 ---
