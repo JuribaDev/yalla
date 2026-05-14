@@ -31964,3 +31964,24 @@ Branch: `ralph/claude-yalla` (parent commit `6706640`)
     and a `SampleFile` field kept every JSON op's assertion
     byte-identical and let the multipart op's assertion live in one
     place ready for any future multipart operation.
+
+## 2026-05-14 20:15 +03 - BE-0001
+- Implemented the initial same-repo backend skeleton for the Yalla Control Plane.
+- Added `cmd/yalla-api` as the HTTP API binary with graceful shutdown, `YALLA_API_ADDR`, and build metadata wiring.
+- Added `cmd/yalla-worker` as the background worker binary placeholder with signal handling.
+- Added `internal/controlplane` package layout for `httpapi`, `runtime`, `config`, `store`, `auth`, `policy`, `quota`, `jobs`, `worker`, `dokploy`, `audit`, `telemetry`, and `testutil`.
+- Added bootstrap HTTP endpoints: `GET /healthz`, `GET /readyz`, and `GET /version`, all returning stable `yalla.output.v1` envelopes.
+- Added stable JSON 404 handling with `yalla.error.v1` and `E_NOT_FOUND`.
+- Added focused handler tests for success envelopes and not-found error envelopes.
+- Updated `ralph/prd.json` with same-repo monorepo topology and marked BE-0001 passing.
+- Updated `prompt.md` to make the same-repo topology and future CLI-to-control-plane direction explicit.
+- Added `internal/controlplane/AGENTS.md` with reusable backend package conventions.
+- Files changed: `cmd/yalla-api/main.go`, `cmd/yalla-worker/main.go`, `internal/controlplane/**`, `ralph/prd.json`, `prompt.md`, `ralph/progress.txt`.
+- Verification run: `go test ./internal/controlplane/httpapi`, `go test ./...`, `go test -race ./...`, `go vet ./...`.
+- Results: all verification commands passed.
+- Remaining risks or follow-ups: backend persistence, auth, policy, quota, jobs, metering, and real Dokploy provisioning are only package placeholders and are covered by later PRD stories.
+- **Learnings for future iterations:**
+  - Same-repo backend binaries can reuse existing `internal/errors` and `internal/output` schema constants immediately.
+  - `http.ServeMux` writes its own plain-text 404 body; wrap it carefully or route not-found explicitly so API errors remain stable JSON envelopes.
+  - Keep the backend under `internal/controlplane` so future agents do not mix customer API logic into the existing CLI packages.
+---

@@ -1,20 +1,24 @@
 # Ralph Agent Instructions
 
-You are an autonomous coding agent working on a Go CLI project (Yalla - a production-grade, AI-agent-first CLI for Dokploy).
+You are an autonomous coding agent working on the Yalla Control Plane backend: a production-grade Go API and worker layer between customers and Dokploy.
 
 ## Project Context
 
-- **Product**: `yalla`, a native cross-platform CLI for controlling Dokploy through its public API surface.
-- **Language**: Go. Users must not need Go installed; releases ship compiled binaries.
-- **CLI framework**: Cobra + pflag. Use `github.com/spf13/cobra` for the command tree.
-- **Architecture**: Keep commands thin. Put logic in `internal/` packages: `cli/`, `api/`, `config/`, `output/`, `errors/`, `version/`, and `testutil/`.
-- **API coverage**: Every Dokploy OpenAPI operation in `ralph/prd.json` must be covered. Raw API coverage is required even when curated commands exist.
-- **Agent contract**: `--json`, `--schema`, `--no-input`, stable exit codes, machine-readable errors, deterministic stdout/stderr behavior.
-- **Output rule**: Data goes to stdout. Logs, warnings, prompts, progress, and errors go to stderr.
-- **Networking**: Use `net/http` with typed wrappers, explicit timeouts, `context.Context`, cancellation support, and secret redaction.
-- **Config precedence**: CLI flags > environment variables > config file > defaults.
-- **Distribution**: GoReleaser, GitHub Releases, Homebrew, npm/npx wrapper, Scoop, WinGet, install script, and `go install` as contributor fallback only.
-- **Versioning**: Use SemVer from git tags. Treat command names, flags, JSON schemas, error codes, exit codes, and config shape as public API.
+- **Product**: `yalla-control-plane`, the backend API layer that customers, agents, CI, and later the frontend use to manage Dokploy-backed infrastructure safely.
+- **Source of truth**: Yalla's Postgres database owns tenants, users, API keys, ownership, limits, desired state, audit events, and provisioning job state.
+- **Provisioning engine**: Dokploy is private infrastructure. Customers must not receive broad Dokploy API keys and must not call Dokploy directly.
+- **Hierarchy**: Mirror Dokploy's model: Organization -> Project -> Environment -> Service. Yalla enforces this hierarchy first; Dokploy mirrors it for provisioning and defense-in-depth.
+- **Language**: Go. Keep the backend in the existing Go module and preserve the current CLI packages unless a story explicitly changes them.
+- **Repository topology**: Same-repo Go monorepo. The existing CLI stays at `cmd/yalla`, the backend API starts at `cmd/yalla-api`, and background provisioning/metering workers start at `cmd/yalla-worker`.
+- **API architecture**: Use `net/http` with a small router/middleware stack. Keep handlers thin. Put logic in focused packages under `internal/controlplane/` such as `httpapi`, `config`, `store`, `auth`, `policy`, `quota`, `jobs`, `worker`, `dokploy`, `audit`, `telemetry`, and `testutil`.
+- **Database**: PostgreSQL via `pgx`. Migrations are mandatory. Every customer-data query must be tenant-scoped by organization or a verified parent join.
+- **Worker**: Use durable Postgres-backed jobs for provisioning. Jobs must be idempotent, retry-safe, lease-based, cancellable, and auditable.
+- **Dokploy integration**: Use a typed internal Dokploy client. Do not expose raw Dokploy operations to customer-facing endpoints.
+- **CLI direction**: Future customer workflows in the CLI should call the Yalla Control Plane API by default. Raw Dokploy access remains an explicit internal/admin escape hatch only.
+- **Agent contract**: Stable JSON envelopes, stable error codes, stable HTTP statuses, deterministic schemas, request IDs, redaction, and explicit verification are public API.
+- **Output rule**: HTTP responses use JSON envelopes. Service logs are structured diagnostics only and must never contain secrets.
+- **Config precedence**: CLI flags for binaries > environment variables > config file > defaults when config files are used. Environment variables are the production default for API and worker processes.
+- **Versioning**: Treat endpoint paths, methods, request/response schemas, error codes, audit event names, job payload schemas, and config keys as public compatibility contracts.
 
 Read `prompt.md`, `ralph/prd.json`, and `ralph/progress.txt` before working. If an `AGENTS.md` exists in the repo or edited directories, follow it too.
 
@@ -24,8 +28,8 @@ Read `prompt.md`, `ralph/prd.json`, and `ralph/progress.txt` before working. If 
 2. Read the progress log at `ralph/progress.txt` (check Codebase Patterns section first).
 3. Check for relevant `AGENTS.md` files in the repo and edited directories.
 4. Check you're on the correct branch from PRD `branchName`. If not, check it out or create from main.
-5. Pick the **highest priority** user story where `passes: false`.
-6. Implement that single user story.
+5. Pick the **highest priority** backend user story where `passes: false`.
+6. Implement that single user story end to end.
 7. Run quality checks (see below).
 8. If checks pass, update the PRD to set `passes: true` for the completed story.
 9. Append your progress to `ralph/progress.txt`.
@@ -55,6 +59,18 @@ go test -race ./...
 go vet ./...
 ```
 
+Backend stories may require Postgres-backed integration tests. When a story touches persistence, migrations, jobs, quota, policy, or worker behavior, also run the relevant focused suites documented by the story. Typical commands:
+
+```bash
+# Migration and backend package checks
+go test ./internal/controlplane/...
+go test -race ./internal/controlplane/...
+go test -run TestMigrations ./...
+go test -run TestPolicyMatrix ./...
+go test -run TestQuotaConcurrency ./...
+go test -run TestFakeDokploy ./...
+```
+
 If configured or installed, also run:
 
 ```bash
@@ -67,11 +83,11 @@ staticcheck ./...
 # Vulnerability scan
 govulncheck ./...
 
-# Release configuration
-goreleaser check
+# Local dependency stack, when needed
+docker compose up -d postgres
 
-# Release dry run
-goreleaser release --snapshot --clean
+# Optional external smoke only when explicitly configured
+YALLA_EXTERNAL_DOKPLOY=1 go test -run TestLiveDokploySmoke ./...
 ```
 
 - ALL commits must pass formatting, `go test ./...`, `go test -race ./...`, and `go vet ./...`.
@@ -80,72 +96,94 @@ goreleaser release --snapshot --clean
 - Follow existing code patterns in the codebase.
 - If a tool is not installed, document that clearly in `ralph/progress.txt`.
 - Never skip verification silently.
+- Do not require a live Dokploy server for normal tests. Use fake Dokploy fixtures by default.
+- External Dokploy smoke tests must be opt-in and must never run against production by accident.
 
 ## Agent & CLI UX
 
-When implementing any command, make it first-class for AI agents and still usable by humans.
+When implementing any endpoint, job, command, or backend subsystem, make it first-class for AI agents and still understandable for human operators.
 
 Required behavior:
 
-1. Support `--json` for deterministic machine-readable output.
-2. Support `--no-input` so agents never hang on prompts.
-3. Keep stdout data-only and stderr diagnostics-only.
-4. Return stable exit codes.
-5. Return stable error codes in JSON errors.
-6. Redact tokens, cookies, API keys, and secrets from all output.
-7. Provide useful `Short`, `Long`, and `Example` text for Cobra commands.
-8. Add schema or manifest metadata when the command changes the public command surface.
+1. Use stable `yalla.output.v1` success envelopes and `yalla.error.v1` error envelopes.
+2. Include `request_id` in every response, log record, audit record, and provisioning job created from a request.
+3. Keep endpoint behavior deterministic: stable status codes, stable error codes, stable field names, and stable pagination.
+4. Return typed errors from the backend error package; do not hand-roll JSON errors in handlers.
+5. Redact tokens, cookies, API keys, database URLs, Dokploy tokens, and secret variables from all logs, errors, audit metadata, tests, and dry-run output.
+6. Enforce auth, scoped grants, quota, idempotency, and audit before any mutating Dokploy provisioning action.
+7. Never expose broad Dokploy raw API access through customer-facing endpoints.
+8. Add OpenAPI metadata when the public API surface changes.
+9. Add contract tests for success, invalid input, unauthenticated, unauthorized, not found, conflict, and quota failure paths where applicable.
+10. Add tenant-isolation tests for every endpoint that reads or mutates customer-owned resources.
 
-Do not build a TUI as the primary interface. Interactive UI can be optional later, but the core CLI must stay scriptable.
+Do not build frontend UI in this backend PRD. Frontend work will be planned separately after the backend API contract is stable.
 
 ## Feature Implementation Checklist
 
-When implementing a new feature, command, or API operation:
+When implementing a new backend feature, endpoint, worker job, or persistence story:
 
-1. **Contract first**: identify the PRD story, expected command shape, JSON output, error codes, and exit codes.
-2. **Command layer**: add or update Cobra commands under `internal/cli/`. Keep command files thin.
-3. **Config layer**: load config once and pass typed config down. Respect CLI > env > config file > defaults.
-4. **API layer**: add typed request/response handling in `internal/api/` using `net/http`, context, timeouts, and redaction.
-5. **Output layer**: render all `--json` output through `internal/output/`. Do not hand-roll JSON in commands.
-6. **Error layer**: return typed errors from `internal/errors/` so exit codes and JSON errors stay stable.
-7. **Schemas/manifest**: update schema and manifest support for new commands or API operations.
-8. **Tests**: add unit tests, command tests with in-memory stdout/stderr, JSON golden tests where useful, and `httptest.Server` contract tests.
-9. **Docs/completions**: update generated command docs or completion support if the command surface changes.
-10. **Verification**: run the full quality checks before marking the story as passing.
+1. **Contract first**: identify the PRD story, endpoint/job shape, JSON envelope, error codes, audit event, required action, and compatibility impact.
+2. **HTTP layer**: add or update route registration and thin handlers under the backend HTTP package. Do not put business logic in handlers.
+3. **Config layer**: load config once at process startup. Validate required config early. Never log secrets or raw DSNs.
+4. **Persistence layer**: add migrations first, then repository methods. Queries must be tenant-scoped and covered by integration tests.
+5. **Auth layer**: authenticate API keys, sessions, or internal worker credentials and map them to a shared Principal type.
+6. **Policy layer**: authorize with action constants and scoped resources. Every endpoint must have a required action.
+7. **Quota layer**: reserve quota transactionally before creating resources or enqueueing provisioning jobs.
+8. **Job layer**: use durable jobs for Dokploy mutations. Jobs must be idempotent, retry-safe, cancellable, and auditable.
+9. **Dokploy layer**: call Dokploy only through the typed internal client. Use fake Dokploy in normal tests.
+10. **Output layer**: render all HTTP success and error responses through shared envelope helpers.
+11. **Audit layer**: record mutations, denied authorization decisions, break-glass access, key changes, and quota failures.
+12. **Telemetry layer**: add structured logs, metrics, and traces for request and job paths.
+13. **Schemas/OpenAPI**: update generated or maintained OpenAPI specs for public endpoint changes.
+14. **Tests**: add unit tests, repository integration tests, handler contract tests, tenant-isolation tests, policy matrix tests, fake Dokploy worker tests, and concurrency tests where relevant.
+15. **Docs/runbooks**: update backend docs, AGENTS.md, or progress patterns only when the learning is reusable.
+16. **Verification**: run the full required quality checks before marking the story as passing.
 
 ## API Coverage Rules
 
-Yalla must cover every Dokploy OpenAPI operation listed in `ralph/prd.json`.
+Yalla Control Plane must expose intent-based customer APIs. It must not expose a generic customer-facing proxy to Dokploy.
 
-Required raw API interface:
+Required backend API principles:
 
-```bash
-yalla api operations --json
-yalla api call <operationId> --input request.json --json
-yalla schema list --json
-yalla schema get <operationId> --json
-yalla manifest --json
+```text
+Customer / Agent / CI -> Yalla Control Plane API -> Postgres source of truth -> Provisioning worker -> private Dokploy API
 ```
 
-For each API operation story:
+For each public endpoint story:
 
-1. Add or verify the operation registry entry.
-2. Ensure `yalla api call <operationId> --input request.json --json` works.
-3. Ensure `yalla schema get <operationId> --json` works.
-4. Add tests for success and at least one representative failure.
-5. Verify the operation appears in `yalla manifest --json`.
+1. Register the route and document it in OpenAPI.
+2. Authenticate the principal.
+3. Resolve organization, project, environment, and service scope.
+4. Authorize the required action using the policy engine.
+5. Validate the request body, path params, query params, and idempotency key.
+6. Enforce quota before mutating desired state or enqueueing jobs.
+7. Persist source-of-truth state in Postgres.
+8. Enqueue durable jobs for Dokploy provisioning when needed.
+9. Emit audit events for mutations and denied decisions.
+10. Return stable JSON envelopes with request IDs.
+11. Add tests for success, invalid input, unauthenticated, unauthorized, cross-tenant access, not found, conflict, and dependency failure where applicable.
 
-Curated commands are encouraged for common workflows, but they must not replace raw API coverage.
+Dokploy mapping rules:
+
+```text
+Yalla Organization  -> Dokploy Organization when feasible, otherwise shared internal Dokploy organization with strict Yalla scoping
+Yalla Project       -> Dokploy Project
+Yalla Environment   -> Dokploy Environment
+Yalla Service       -> Dokploy Application / Database / Docker Compose service
+```
+
+Dokploy permissions should be configured as defense-in-depth when available, but Yalla's policy engine remains authoritative.
 
 ## Commit Convention
 
 Use conventional commits scoped to the affected module:
 
 ```text
-feat(cli): [US-0001] - Bootstrap Cobra root command
-feat(api): [API-0016] - Cover application-deploy
-fix(output): [US-0002] - Redact tokens in JSON errors
-test(api): [API-0040] - Add backup-create contract tests
+feat(controlplane): [BE-0001] - Create backend Go module layout
+feat(auth): [BE-0015] - Implement API key hashing and lookup
+feat(policy): [BE-0018] - Implement RBAC and scoped grants engine
+feat(quota): [BE-0022] - Implement quota checker service
+test(worker): [BE-0030] - Implement fake Dokploy server
 ```
 
 ## Progress Report Format
@@ -176,12 +214,14 @@ If you discover a **reusable pattern** that future iterations should know, add i
 
 ```text
 ## Codebase Patterns
-- Cobra commands use `RunE` and return typed Yalla errors.
-- `--json` output is rendered only through `internal/output`.
-- Command tests construct root commands with in-memory stdin, stdout, and stderr.
-- API tests use `httptest.Server` fixtures and never require a live Dokploy server.
-- Config precedence is CLI flags > environment variables > config file > defaults.
-- Raw API operation coverage must stay in sync with `ralph/prd.json`.
+- Backend handlers are thin and delegate to focused control-plane services.
+- Every customer-data query is tenant-scoped by organization or verified parent join.
+- API success envelopes use yalla.output.v1; API errors use yalla.error.v1.
+- Every endpoint maps to an action constant and has policy matrix tests.
+- Quota reservations happen in the same transaction as desired-state writes.
+- Dokploy calls happen only in worker/provisioner code through the typed Dokploy client.
+- Normal tests use fake Dokploy fixtures, not a live Dokploy server.
+- Migrations must run from an empty Postgres database in CI.
 ```
 
 Only add patterns that are **general and reusable**, not story-specific details.
@@ -193,17 +233,17 @@ Before committing, check if any edited files have learnings worth preserving in 
 1. **Identify directories with edited files** - Look at which directories you modified.
 2. **Check for existing AGENTS.md** - Look for `AGENTS.md` in those directories or parent directories.
 3. **Add valuable learnings** - If you discovered something future developers/agents should know:
-    - CLI command patterns or conventions specific to that module
-    - API client patterns or request/response mapping rules
-    - Gotchas or non-obvious requirements
-    - Dependencies between files, schemas, manifests, and tests
-    - Testing approaches for that area
+    - Backend package boundaries or conventions specific to that module
+    - API handler patterns or request/response mapping rules
+    - Persistence, migration, or tenant-scoping gotchas
+    - Dependencies between endpoints, actions, OpenAPI, audit events, and tests
+    - Testing approaches for policy, quota, jobs, fake Dokploy, or migrations
 
 **Examples of good AGENTS.md additions:**
-- "When adding a command, also update manifest metadata and command tests."
-- "All JSON envelopes must go through internal/output."
-- "API operation tests should use httptest fixtures, not live Dokploy calls."
-- "The npm wrapper must preserve args, stdout, stderr, and exit code exactly."
+- "When adding an endpoint, also add an action constant, OpenAPI operation, contract tests, and policy matrix tests."
+- "All JSON envelopes must go through the backend response renderer."
+- "Repository tests must create two organizations and prove cross-tenant isolation."
+- "Provisioning tests should use fake Dokploy fixtures, not live Dokploy calls."
 
 **Do NOT add:**
 - Story-specific implementation details
@@ -228,11 +268,13 @@ If there are still stories with `passes: false`, end your response normally (ano
 - Commit frequently.
 - Keep CI green: `gofmt`, `go test ./...`, `go test -race ./...`, and `go vet ./...` must pass.
 - Read the Codebase Patterns section in `ralph/progress.txt` before starting.
-- Every Dokploy API operation in the PRD must remain covered.
+- The backend PRD is backend-only. Do not implement frontend screens in this phase.
+- Do not expose customer-facing raw Dokploy API access.
+- Do not give customers broad Dokploy API keys.
 - Do not make MVP shortcuts. Build production-grade code.
-- Do not print secrets in logs, errors, dry-run output, test output, or JSON.
-- Never put progress text in stdout when `--json` is used.
-- Never let `--no-input` hang on a prompt.
+- Do not print secrets in logs, errors, audit metadata, test output, dry-run output, or JSON.
+- Never let cross-tenant IDs reveal data from another organization.
+- Never mutate Dokploy before Yalla auth, policy, quota, desired-state write, idempotency, and audit requirements are satisfied.
 - Do not edit generated release artifacts unless the repo explicitly tracks them.
 - Prefer simple, testable Go code over clever abstractions.
-- Use native Go binaries for distribution; users should not need Go installed.
+- Use typed boundaries: handlers, services, repositories, policy, quota, jobs, Dokploy client, audit, telemetry.
