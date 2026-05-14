@@ -21,9 +21,15 @@ do not mix customer API handlers into CLI packages.
   `Forbidden`, `InvalidInput`/`Invalid`, `NotFound`, `Conflict`,
   `QuotaExceeded`, the dependency constructors (`DokployUnavailable`,
   `StoreUnavailable`, `QueueUnavailable`, `NetworkFailure`, `Timeout`), and
-  `Internal`. Adding a new error code means adding it to `apierr`'s `taxonomy`
-  map and, if it needs a non-500 status, a case in `apienvelope.StatusForCode`
-  (the single source of truth `apierr.Lookup` reads). `MessageGeneric` codes
+  `Internal`. Adding a new error code is a multi-file change: define the
+  `yerr.Code` constant in `internal/errors` (with its `codeDescriptions`,
+  `AllCodes`, and `ExitCode` entries — the code is shared with the CLI
+  manifest), add it to `apierr`'s `taxonomy` map with a constructor, and, if it
+  needs a non-500 status, a case in `apienvelope.StatusForCode` (the single
+  source of truth `apierr.Lookup` reads). `apienvelope_test.TestStatusForCode`
+  iterates `AllCodes` and asserts every code is ≥ 400, so a new code with no
+  `StatusForCode` case silently passes as 500 — add the case deliberately.
+  `MessageGeneric` codes
   must keep the cause out of `Message`/`Hint` — wrap it so logs can still see
   it. `InvalidInput` carries `FieldViolation`s (field path + reason, never the
   submitted value); recover them with `apierr.ViolationsOf`. Dependency
@@ -161,3 +167,20 @@ do not mix customer API handlers into CLI packages.
   typed status (a 5xx) and is never collapsed into a 401. The middleware is not
   yet wired into `newRouteTable` — the bootstrap routes are all public; the
   endpoint stories that add authenticated routes wrap them with `RequireAuth`.
+- Idempotency for mutating endpoints is `httpapi.RequireIdempotency(store, ttl)`
+  — middleware installed **inside** `RequireAuth` (it reads
+  `policy.PrincipalFromContext` to scope the `Idempotency-Key` to a principal
+  within a tenant). Safe methods and keyless unsafe requests pass straight
+  through (idempotency is opt-in). The first request for a key claims it, runs
+  the handler against a buffering `responseCapture`, and records the rendered
+  envelope; a retry with the same key + same request hash replays the recorded
+  response (`Idempotency-Replayed: true`), a different request is
+  `409 E_IDEMPOTENCY_CONFLICT`, an in-flight one is `409 E_CONFLICT`. A `5xx` is
+  never recorded — the claim is released so the client can retry. Persistence
+  is `store.IdempotencyRepository` (`Claim` is a `WHERE`-guarded
+  `ON CONFLICT DO UPDATE` upsert: fresh claim or expired-row takeover both
+  RETURN the row, a live claim makes it a no-op so a follow-up `Find` reads the
+  locked row). Like `RequireAuth`, it is implemented and tested but not yet
+  wired into a route — wrap the first mutating endpoint with it, and document
+  the `Idempotency-Key` header + the `E_IDEMPOTENCY_CONFLICT` response in that
+  endpoint's OpenAPI operation.

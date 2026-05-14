@@ -21,6 +21,7 @@ func TestCode_ExitCodeMappingIsStable(t *testing.T) {
 		{CodeForbidden, 4},
 		{CodeNotFound, 5},
 		{CodeConflict, 6},
+		{CodeIdempotencyConflict, 6},
 		{CodeRateLimited, 7},
 		{CodeQuotaExceeded, 7},
 		{CodeNetwork, 8},

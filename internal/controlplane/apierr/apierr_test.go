@@ -56,7 +56,8 @@ func TestCatalogIsSortedAndCoversCategories(t *testing.T) {
 	}
 	required := []yerr.Code{
 		yerr.CodeAuth, yerr.CodeForbidden, yerr.CodeInvalidInput,
-		yerr.CodeNotFound, yerr.CodeConflict, yerr.CodeQuotaExceeded,
+		yerr.CodeNotFound, yerr.CodeConflict, yerr.CodeIdempotencyConflict,
+		yerr.CodeQuotaExceeded,
 		yerr.CodeServer, yerr.CodeUnavailable, yerr.CodeNetwork,
 		yerr.CodeTimeout, yerr.CodeInternal,
 	}
@@ -90,6 +91,7 @@ func TestConstructorsEmitCataloguedCodes(t *testing.T) {
 		{"forbidden", Forbidden(""), yerr.CodeForbidden, 403},
 		{"not found", NotFound("project", "p1"), yerr.CodeNotFound, 404},
 		{"conflict", Conflict(""), yerr.CodeConflict, 409},
+		{"idempotency conflict", IdempotencyConflict(""), yerr.CodeIdempotencyConflict, 409},
 		{"invalid input", InvalidInput(FieldViolation{Field: "name", Reason: "required"}), yerr.CodeInvalidInput, 400},
 		{"invalid", Invalid(""), yerr.CodeInvalidInput, 400},
 		{"quota exceeded", QuotaExceeded("services", 5), yerr.CodeQuotaExceeded, 429},

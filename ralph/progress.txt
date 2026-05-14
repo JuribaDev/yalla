@@ -13,7 +13,7 @@
 - Lifecycle code is tested with fakes (fake httpServer, fake Claimer/Lease) — no real sockets, no live deps.
 - Request correlation lives in internal/controlplane/telemetry. telemetry.Correlate is the outermost HTTP middleware (httpapi.NewHandler wraps the mux in it): it resolves request_id (per request) + correlation_id (per workflow) onto the request context before any handler runs. Inbound X-Request-Id/X-Correlation-Id are honoured only if telemetry.SafeID passes ([A-Za-z0-9._-], 1..128) — unsafe values are dropped and a fresh telemetry.NewRequestID() is minted, so injection payloads never reach headers/logs/jobs. Read IDs anywhere via telemetry.FromContext/RequestID/CorrelationID; never thread them through signatures. Non-HTTP entry points seed context with telemetry.WithCorrelation.
 - Per-request structured logging lives in internal/controlplane/telemetry: telemetry.RequestLogging(logger) is the middleware just inside Correlate (httpapi.NewHandler wraps the routed mux in it). One JSON record per request: method/route/target/status/latency_ms/bytes/request_id/correlation_id, plus org_id/principal_id when set via telemetry.SetOrgID/SetPrincipalID (a request-scoped mutable holder the auth/policy layers enrich). Headers and bodies are never logged; the request target is redacted. Level follows the outcome (5xx error, 4xx warn, else info); the logger threshold (YALLA_LOG_LEVEL) gates emission. Service binaries bind service via logger.With and log JSON to stdout.
-- Backend errors are built through internal/controlplane/apierr, the catalogued error taxonomy — never yerr.New directly in handlers/services. apierr constructors return *yerr.Error (so they flow into apienvelope.WriteError); apierr.Catalog/Lookup pair every code with HTTP status (derived from apienvelope.StatusForCode — single source of truth), retry semantics, and a MessagePolicy. MessageGeneric codes (internal + all dependency failures) keep the cause out of Message/Hint and only Wrap it for logging. InvalidInput carries FieldViolation{Field,Reason} (path + reason, never the submitted value), recoverable via apierr.ViolationsOf; dependency failures are recoverable via apierr.DependencyOf even when they share a code. Adding a code = add to apierr.taxonomy + (if non-500) a apienvelope.StatusForCode case.
+- Backend errors are built through internal/controlplane/apierr, the catalogued error taxonomy — never yerr.New directly in handlers/services. apierr constructors return *yerr.Error (so they flow into apienvelope.WriteError); apierr.Catalog/Lookup pair every code with HTTP status (derived from apienvelope.StatusForCode — single source of truth), retry semantics, and a MessagePolicy. MessageGeneric codes (internal + all dependency failures) keep the cause out of Message/Hint and only Wrap it for logging. InvalidInput carries FieldViolation{Field,Reason} (path + reason, never the submitted value), recoverable via apierr.ViolationsOf; dependency failures are recoverable via apierr.DependencyOf even when they share a code. Adding a code = define the yerr.Code constant in internal/errors (and its codeDescriptions, AllCodes, ExitCode entries — the code is shared with the CLI manifest) + add to apierr.taxonomy + add an apierr constructor + (if non-500) a apienvelope.StatusForCode case; update the TestStatusForCode / TestConstructorsEmitCataloguedCodes / TestCode_ExitCodeMappingIsStable tables.
 - Schema changes are versioned SQL files under internal/controlplane/store/migrate/migrations/ named NNNN_name.up.sql (required) + NNNN_name.down.sql (optional, reversible-only), embedded via //go:embed. The migrate.Migrator runner owns a checksummed schema_migrations ledger, serialises with a pg advisory lock, and runs each migration in its own transaction. Migrator.Up is idempotent and refuses dirty / unknown-version / checksum-mismatch databases (errors.Is sentinels ErrDirtyDatabase/ErrUnknownVersion/ErrChecksumMismatch). NEVER edit an applied migration file (trips ErrChecksumMismatch by design) — add a new higher-versioned migration. Persistence tests are integration tests: they connect via YALLA_TEST_DATABASE_URL, create an isolated throwaway database per test, and t.Skip when the env var is unset so go test ./... stays green without Postgres. docker-compose.yml at repo root provisions local Postgres. pgx (github.com/jackc/pgx/v5 + pgxpool) is the Postgres driver.
 - Persistence tests use the shared harness internal/controlplane/testutil: RequireDB(t) gives an empty isolated throwaway Postgres database per test, RequireMigratedDB(t) also applies migrations; both t.Skip with testutil.SkipReason when YALLA_TEST_DATABASE_URL is unset and drop the DB on cleanup (parallel-safe — unique DB name per call). testutil.NewFactory(t) builds deterministic, globally-unique in-memory fixtures for the Organization->Project->Environment->Service hierarchy + User/APIKey (two factories never collide). testutil.AssertRedacted/AssertRedactedValue guard "must not leak a secret" assertions. store/migrate keeps its own local testPool — it cannot import testutil (import cycle: testutil imports migrate). Keep pure decision logic (lookupAdminDSN, scanLeaks) unexported + white-box tested, since testing.TB is sealed and cannot be faked.
 - HTTP routes are data-driven from internal/controlplane/httpapi/routes.go newRouteTable — the single source of truth. Each apiRoute pairs a served http.HandlerFunc with its openapi.Endpoint metadata; httpapi.NewHandler registers every entry on the mux AND generates the OpenAPI document from the same table, so a served route is always a documented route (TestEveryRegisteredRouteIsDocumented enforces it in CI). Never call mux.HandleFunc directly in NewHandler — add to newRouteTable. The OpenAPI 3.1 document is built by internal/controlplane/openapi.Build from a neutral []openapi.Endpoint, references the two stable envelope schemas, is served raw (not enveloped) at GET /openapi.json without auth, and marshals maps with sorted keys for a byte-stable artifact. Secret-shaped sample values use output.Sentinel.
@@ -26,6 +26,7 @@
 - Quota enforcement: the QuotaRepository (internal/controlplane/store/quota.go) is the persistence half (EffectiveLimit / LockUsage / SumActiveReservations / InsertReservation, all tenant-scoped, mutations on *Tx) and the quota.Checker (internal/controlplane/quota) is the store.QuotaReserver service half. A hard limit is enforced by LockUsage doing INSERT ... ON CONFLICT DO NOTHING then SELECT ... FOR UPDATE on the quota_usage counter row — that lock serialises concurrent reservers so they cannot both over-allocate; the decision is current+reserved+requested <= limit, reserved = SUM of active non-expired reservations. Soft/metered limits record but never reject; disabled/no-policy allow with no write. A rejection is apierr.QuotaExceeded wrapping a recoverable quota.ExceededDetail{Resource,Current,Reserved,Requested,Limit}. Quota accounting rows have no domain.Kind — ids are minted locally with a prefixed crypto/rand helper.
 - Audit log (0007_audit_events, store/audit.go, internal/controlplane/audit): the immutable audit log records every authorization decision, allowed AND denied. Immutability is enforced at two layers — the table has no updated_at and a BEFORE UPDATE trigger (audit_events_reject_update) that rejects every UPDATE in the database, and AuditRepository exposes only Append + tenant-scoped ListByOrganization (no update/delete); row DELETE stays reachable only via the organizations ON DELETE CASCADE. An append-only table that must still cascade on tenant teardown blocks UPDATE only, never DELETE. The audit.Auditor (depends on the narrow Recorder port, satisfied by *store.AuditRepository) is the single place a policy.Decision becomes an AuditEvent: it pulls the principal (policy.PrincipalFromContext) + correlation ids (telemetry.FromContext) off the context, files the event under the principal's org else the resource's org, and REDACTS metadata before persistence — secret-shaped keys (token/secret/password/credential/...) replaced wholesale with output.Sentinel, every other value + the user agent scrubbed by an output.Redactor. store treats metadata as already-redacted; redaction is the audit service's contract. Auditor.Record takes the caller's *store.Tx so an audit write can share the mutation's transaction or run in its own.
 - Provisioning jobs (0008_provisioning_jobs, store/job.go): the durable, idempotent queue of Dokploy provisioning work. The provisioning_jobs table is tenant-scoped (organization_id FK + composite (organization_id, project_id|environment_id|service_id) FKs so a job can never target another tenant's resource), idempotent (UNIQUE (organization_id, idempotency_key)), and exposes UNIQUE (organization_id, id) as a composite-FK target — 0008 also wires the FK that 0006 deferred (quota_reservations.job_id -> provisioning_jobs). DB CHECKs enforce the closed status set, "terminal status iff finished_at set", "lease held iff status=running", and attempts<=max_attempts; the Go state machine (store.JobStatus.CanTransitionTo, backed by the jobTransitions map: queued->running|cancelled, running->succeeded|retrying|failed|dead_letter|cancelled, retrying->running|cancelled, terminals have no edges) is the authoritative validator. JobRepository follows the ProjectRepository pattern (mutations need *Tx, reads take Querier, NotFound for cross-tenant ids); Transition locks the row FOR UPDATE, validates the edge before any write (illegal edge = apierr.Conflict), and derives lease/attempt/timestamp bookkeeping from the target status so a caller cannot leave a CHECK-violating row. error_summary is run through an output.NewRedactor() backstop on every write (Insert + Transition) — the store IS the redaction chokepoint for job errors, unlike audit metadata which the service redacts.
+- HTTP idempotency (0009_idempotency_keys, store/idempotency.go, httpapi/idempotency.go): mutating endpoints are made retry-safe by httpapi.RequireIdempotency(IdempotencyStore, ttl) — middleware installed INSIDE RequireAuth (it reads policy.PrincipalFromContext to scope the key to a principal within a tenant). Safe methods and unsafe requests with no Idempotency-Key pass straight through (opt-in). The claim protocol: store.IdempotencyRepository.Claim is a WHERE-guarded upsert — INSERT ... ON CONFLICT DO UPDATE ... WHERE expires_at <= now() — so it freshly claims, transparently steals an expired row (claimed=true), or returns the existing live claim (claimed=false, RETURNING yields no row, follow-up Find reads the row the DO UPDATE attempt locked). On claimed=true the middleware runs the handler against a buffering responseCapture, then Complete records the rendered envelope (status < 500) or Release drops the claim (status >= 500, so a server failure is retried not replayed). On claimed=false: hash mismatch -> apierr.IdempotencyConflict (E_IDEMPOTENCY_CONFLICT, the only use of the new code), completed -> replay the recorded body+status with Idempotency-Replayed: true, still pending -> apierr.Conflict "already in progress". The request hash is sha256(method\npath?query\nbody); the body is buffered then restored as a fresh r.Body so the handler still reads it. Keys are scoped UNIQUE (organization_id, principal_id, idempotency_key); a completion CHECK ties status='completed' to a non-null response. The store-backed IdempotencyStore adapter (httpapi.NewIdempotencyStore) runs each repo call in its own Store.Write — RequireIdempotency is implemented and tested but not yet wired into a route (no mutating endpoints exist yet), same as RequireAuth.
 - Postgres-backed worker queue (store/job.go ClaimNext, worker/queue.go): the durable queue has two halves. store.JobRepository.ClaimNext is the SKIP LOCKED claim — SELECT ... FOR UPDATE SKIP LOCKED picks the single most-eligible job (queued|retrying AND next_run_at<=now, OR running AND lease_deadline<now) so concurrent claimers skip a locked row instead of blocking, then transitions it to running inside the same Store.Write tx. An expired-lease job is reclaimed THROUGH the state machine (running->retrying->running, so attempt/lease bookkeeping stays consistent); a job past its retry budget is dead-lettered instead and the poll claims nothing. worker/queue.go is the store-backed Claimer/Lease impl: loop.go stays pure (interfaces only, fake-tested) and queue.go is the only worker file that imports store. Failure classification: worker.Terminal(err)/IsTerminal mark a permanent failure (-> failed, never retried); a plain error is transient (-> retrying with worker.Backoff bounded exponential delay, or -> dead_letter when Attempts>=MaxAttempts). StoreClaimer.complete() records every outcome on a context.WithoutCancel + timeout context — once the runner ran, the outcome write must survive shutdown; only an interrupted (un-run) job returns non-nil from Lease.Run so the loop releases it. The JobRunner (real Dokploy provisioner) is still injected/faked; cmd/yalla-worker stays on NoopClaimer until that runner lands.
 
 ## 2026-05-14 - BE-0002
@@ -1888,4 +1889,119 @@
     Workers must retry-until-drained with a deadline guard.
   - worker_test (package worker_test) cannot reach store/schema_test.go's
     seedOrg helpers — re-seed the org with a local INSERT helper.
+---
+
+## 2026-05-15 - BE-0026
+- What was implemented: the HTTP idempotency-key middleware that makes mutating
+  control-plane endpoints safe for agent and CI retries — a client attaches an
+  Idempotency-Key, and the handler runs at most once per key while every retry
+  receives the same response.
+  - internal/errors/errors.go: added the stable yerr.CodeIdempotencyConflict
+    ("E_IDEMPOTENCY_CONFLICT") error code with its codeDescriptions, AllCodes,
+    and ExitCode (6, like E_CONFLICT) entries — the code is shared with the CLI
+    manifest, so all four sites had to be updated together.
+  - internal/controlplane/apienvelope/apienvelope.go: StatusForCode maps
+    E_IDEMPOTENCY_CONFLICT -> 409.
+  - internal/controlplane/apierr/apierr.go: added the taxonomy entry
+    (MessageSpecific, non-retryable) and the apierr.IdempotencyConflict(message)
+    constructor, which carries a fixed recovery hint.
+  - internal/controlplane/store/migrate/migrations/0009_idempotency_keys.{up,down}.sql
+    (new): the idempotency_keys table — id, organization_id (FK, ON DELETE
+    CASCADE), principal_id, idempotency_key, route, request_hash (sha256 hex),
+    request_id, status ('pending'|'completed'), response_status, response_body
+    (bytea), created_at, completed_at, expires_at. A completion CHECK ties
+    status='completed' to a non-null response triple and 'pending' to all-null.
+    UNIQUE (organization_id, principal_id, idempotency_key) scopes a key to a
+    principal within a tenant; an expires_at index supports a future janitor.
+  - internal/controlplane/store/idempotency.go (new): IdempotencyRepository
+    with the claim protocol. Claim is a WHERE-guarded upsert (INSERT ... ON
+    CONFLICT DO UPDATE ... WHERE expires_at <= now()) — fresh claim or
+    expired-row takeover both RETURN the row (claimed=true); a live claim makes
+    DO UPDATE a no-op so RETURNING yields nothing and a follow-up Find reads the
+    row the upsert attempt already locked (claimed=false). Complete updates a
+    pending row to completed with the recorded response; Release deletes a
+    pending row; Find is the tenant-scoped read. IdempotencyKeyRef bundles
+    (org, principal, key); ids are minted locally with an "idk_" prefix like the
+    other internal accounting tables.
+  - internal/controlplane/httpapi/idempotency.go (new): RequireIdempotency
+    middleware + the narrow IdempotencyStore port + NewIdempotencyStore adapter
+    (each repo call in its own Store.Write). Safe methods and keyless unsafe
+    requests pass through; a malformed key is 400 E_INVALID_INPUT; a missing
+    principal is 500 E_INTERNAL (wiring guard). The request body is buffered to
+    compute the sha256 hash, then restored as a fresh r.Body. On claimed=true
+    the handler runs against a buffering responseCapture; status < 500 ->
+    Complete records the rendered envelope, status >= 500 (or an oversized body)
+    -> Release so the failure is retried, not replayed. On claimed=false: hash
+    mismatch -> E_IDEMPOTENCY_CONFLICT, completed -> replay the recorded
+    body+status with Idempotency-Replayed: true, pending -> E_CONFLICT
+    "already in progress".
+  - internal/controlplane/store/idempotency_test.go (new): integration tests —
+    claim+complete, replay after completion, in-flight pending claim,
+    same-key/different-request returns the original, expired-claim takeover,
+    release-then-reclaim, complete rejects a non-pending claim, tenant + cross-
+    principal isolation, validation (nil tx, missing fields, out-of-range
+    status), and a missing-key Find.
+  - internal/controlplane/httpapi/idempotency_test.go (new): contract tests with
+    a fake IdempotencyStore — safe-method and no-key pass-through, key
+    validation (space / control char / too long), missing-principal 500, first
+    request runs and records, replay of a completed response, in-flight
+    E_CONFLICT, same-key/different-request E_IDEMPOTENCY_CONFLICT, 5xx not
+    recorded (claim released, retry re-runs), client errors (validation /
+    authorization / not-found) recorded and replayed, a concurrent
+    before-and-after-completion end-to-end test, claim-store dependency failure,
+    request body preserved for the handler, and a redaction check that a secret
+    in a handler error never survives into the stored or replayed body.
+  - Updated the error-code test tables in internal/errors/errors_test.go,
+    apienvelope/apienvelope_test.go, and apierr/apierr_test.go.
+- Files changed: internal/errors/errors.go, internal/errors/errors_test.go,
+  internal/controlplane/apienvelope/apienvelope.go,
+  internal/controlplane/apienvelope/apienvelope_test.go,
+  internal/controlplane/apierr/apierr.go,
+  internal/controlplane/apierr/apierr_test.go,
+  internal/controlplane/store/migrate/migrations/0009_idempotency_keys.up.sql (new),
+  internal/controlplane/store/migrate/migrations/0009_idempotency_keys.down.sql (new),
+  internal/controlplane/store/idempotency.go (new),
+  internal/controlplane/store/idempotency_test.go (new),
+  internal/controlplane/httpapi/idempotency.go (new),
+  internal/controlplane/httpapi/idempotency_test.go (new),
+  ralph/prd.json, ralph/progress.txt.
+- Verification run: gofmt -l . (clean); go mod tidy (no-op, no new deps);
+  go build ./...; go vet ./...; go test ./... and go test -race ./... with
+  YALLA_TEST_DATABASE_URL pointed at the docker-compose Postgres.
+- Results: all passed (build, vet, full test suite, race detector on httpapi +
+  store + the error packages). goimports, golangci-lint, staticcheck,
+  govulncheck not installed locally (documented in earlier entries).
+- Remaining risks / follow-ups:
+  - RequireIdempotency is implemented and fully tested but not yet wired into
+    any route — there are no mutating endpoints in the route table yet. It is
+    wired in alongside the first mutating endpoint, the same way RequireAuth is
+    built and tested but unused until customer endpoints land.
+  - The OpenAPI surface is unchanged: no public endpoint was added, so there is
+    nothing to document yet. When the first mutating endpoint lands, its
+    OpenAPI operation should document the Idempotency-Key header and the
+    E_IDEMPOTENCY_CONFLICT / 409 response.
+  - The acceptance criterion "stores ... expiration" is backed by expires_at +
+    transparent expired-claim takeover; a background janitor to purge expired
+    rows is a natural follow-up (the expires_at index is already in place).
+- **Learnings for future iterations:**
+  - A WHERE-guarded ON CONFLICT DO UPDATE is the clean way to do "claim, or
+    take over only if stale": against a live row the DO UPDATE's WHERE makes it
+    a no-op so RETURNING yields ErrNoRows, but the conflicting row is still
+    LOCKED for the rest of the tx — so the follow-up SELECT inside the same
+    Store.Write sees a stable, locked row and concurrent claimers serialise
+    there. No xmax trick or advisory lock needed.
+  - The idempotency middleware must run a handler against a buffering
+    ResponseWriter (responseCapture) rather than streaming, because the
+    decision to record vs release depends on the final status — you cannot
+    record a response you have already flushed, and you must not record a 5xx.
+  - Adding a yerr.Code is a multi-file change: the constant + codeDescriptions
+    + AllCodes + ExitCode in internal/errors (it is shared with the CLI
+    manifest), the apienvelope.StatusForCode case, the apierr taxonomy entry +
+    constructor, and the three test tables (errors_test, apienvelope_test,
+    apierr_test). apienvelope_test.TestStatusForCode also iterates AllCodes and
+    asserts every code is >= 400, so a new code with no StatusForCode case
+    silently passes as 500 — add the case deliberately.
+  - readAndRestoreBody buffers r.Body then sets r.Body = io.NopCloser(reader):
+    middleware that needs to inspect a request body must restore it or the
+    wrapped handler reads nothing.
 ---
