@@ -147,3 +147,17 @@ do not mix customer API handlers into CLI packages.
   `policy.WithPrincipal` / `policy.PrincipalFromContext` — never thread it
   through signatures. The `store.Authorizer` port is satisfied by this engine;
   store keeps only the narrow port and never imports `policy`.
+- Request authentication is `auth.Authenticator`; the HTTP wrappers are
+  `httpapi.RequireAuth` / `httpapi.RequireInternalWorker`. `RequireAuth`
+  authenticates the bearer credential, attaches the principal to the context
+  (`policy.WithPrincipal` + `telemetry.SetOrgID`/`SetPrincipalID`), then
+  authorizes the route's action against a `ResourceResolver` (nil ⇒ the
+  principal's own organization scope — pass a resolver that reads path params
+  so a cross-tenant id is a 403, not a silent allow). Missing credentials are
+  `401 E_AUTH`; an invalid credential is `401 E_AUTH` with a **fixed generic
+  message** (never reveal which check failed or whether a key prefix exists); an
+  authenticated-but-unauthorized request is `403 E_FORBIDDEN` carrying the
+  stable policy reason. A datastore failure during authentication keeps its
+  typed status (a 5xx) and is never collapsed into a 401. The middleware is not
+  yet wired into `newRouteTable` — the bootstrap routes are all public; the
+  endpoint stories that add authenticated routes wrap them with `RequireAuth`.

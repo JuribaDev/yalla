@@ -65,3 +65,32 @@ and `SecretHash` strings `auth.Generate` produces.
 - `SessionToken` is a credential type with the identical redaction contract as
   `Token` (`String/GoString/LogValue/MarshalJSON` → `output.Sentinel`, plaintext
   only via `Reveal()`).
+
+## Request authenticator (`authenticator.go`)
+
+- `Authenticator.Authenticate(ctx, bearerToken)` is the decision layer behind
+  the HTTP auth middleware: it resolves any of the three bearer schemes — API
+  key (`yk_...`), human session JWT, internal worker secret — to one
+  `Identity{Principal, Method}`. The thin HTTP wrapper lives in `httpapi`
+  (`RequireAuth` / `RequireInternalWorker`).
+- **Uniform invalid-credentials contract.** Every invalid-credential cause —
+  malformed token, unknown API key prefix, wrong secret, revoked/expired key,
+  bad signature, expired/revoked/unknown-subject session — collapses to the
+  single `ErrInvalidCredentials` sentinel. Never add a path that returns a more
+  specific error for a bad credential: that is how a "does this prefix exist?"
+  oracle leaks. A missing credential is `ErrNoCredentials`. A genuine datastore
+  failure is propagated **unchanged** (a typed `*yerr.Error`), never disguised
+  as `ErrInvalidCredentials`, so the middleware renders it as a 5xx, not a 401.
+- The Authenticator depends on the narrow `CredentialStore` port and its
+  `APIKeyRecord` / `ServiceAccountRecord` DTOs, so `auth` never imports
+  `store`; the production adapter is `store.CredentialReader`. Unit tests use a
+  fake `CredentialStore` and need no database.
+- API-key principals carry **no** `Role` and **no** `Grants` here — resolving
+  an API key's authority from its stored scopes is a later story, so an API-key
+  principal can perform only `CapSelf` actions until a scoped grant lands
+  (deny-by-default). Session principals get their role from the verified token
+  claim. The internal worker principal is role-less and org-less by design.
+- `SessionIssuer` / `SessionAudience` are the stable iss/aud contract values —
+  `MintSession` callers must use exactly these. Session revocation is wired
+  through `CredentialStore.OrganizationRoleVersion`, which feeds
+  `VerifySession`'s `CurrentRoleVersion` hook.

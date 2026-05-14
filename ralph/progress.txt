@@ -21,6 +21,7 @@
 - Persistence access goes through internal/controlplane/store: Store.Read (read-only tx -> Querier) and Store.Write (read/write tx -> *Tx; commit on nil, rollback on ANY error or panic). A *Tx is obtainable ONLY inside Store.Write; repository mutation methods take *Tx, read methods take Querier — so a mutation structurally cannot run outside the transaction that also carries its authorization and quota checks. A unit of work validates input first, then composes authorize -> reserve quota -> write desired state -> enqueue durable job inside one Store.Write. The policy/quota/jobs dependencies are narrow port interfaces defined IN store (Authorizer, QuotaReserver, JobEnqueuer); store never imports those packages. Error mapping is uniform: pgx.ErrNoRows -> apierr.NotFound, SQLSTATE class 23 -> apierr.Conflict, other driver errors -> apierr.StoreUnavailable; the raw cause is wrapped for logging only. ProjectRepository/ProjectService are the reference implementation.
 - Credentials: internal/controlplane/auth owns generation/hashing/verification; internal/controlplane/store owns persistence. A secret is stored ONLY as a one-way hash plus a public, globally-UNIQUE prefix — never plaintext. Plaintext credential types implement String/GoString/LogValue/MarshalJSON returning output.Sentinel; the plaintext is reachable only via an explicit Reveal() method. High-entropy secrets (>=128 bits random) use fast unsalted SHA-256 + subtle.ConstantTimeCompare, NOT bcrypt/argon2. Authentication lookup (FindByPrefix) is the ONE deliberate non-tenant-scoped repository read — it runs before the tenant is known; the found row carries its own OrganizationID. Tenant-scoped mutations that may match zero rows report apierr.NotFound via tag.RowsAffected()==0.
 - Authorization is internal/controlplane/policy: policy.Engine is a pure, total decision function — Decide(Principal, Action, Resource) -> Decision{Allow, Reason} (stable Reason codes); Authorize/AuthorizeCtx map denials onto typed apierr (Unauthenticated for a missing principal, Forbidden otherwise). Every endpoint maps to exactly one policy.Action; the action lives in policy's defaultActionCatalog (the authoritative requiredAction -> Capability map) — add new actions there or via policy.WithAction. Roles confer Capability sets (self/read/deploy/write/admin/owner/support), not individual actions; six built-ins are fixed, custom roles resolve through a CustomRoleResolver hook. Scoped Grants narrow/widen authority within an org via Scope containment over Organization->Project->Environment->Service; cross-tenant resources are denied by construction except support reads/break-glass. The principal travels on the request context via policy.WithPrincipal/PrincipalFromContext — never thread it through signatures. The store.Authorizer port is satisfied by this engine; store still never imports policy. TestPolicyMatrix exhaustively covers all built-in roles x catalogued actions.
+- Request authentication is internal/controlplane/auth.Authenticator: it resolves any of the three bearer schemes (API key yk_..., human session JWT, internal worker secret) to one auth.Identity{Principal, Method}. Every invalid-credential cause collapses to the single ErrInvalidCredentials sentinel (missing creds = ErrNoCredentials) so no error is a "does this key prefix exist?" oracle; a genuine datastore failure is propagated unchanged as a typed *yerr.Error, never disguised as invalid credentials. The Authenticator depends on the narrow auth.CredentialStore port (+ APIKeyRecord/ServiceAccountRecord DTOs) so auth never imports store; the production adapter is store.CredentialReader (store imports auth, not the reverse). The HTTP wrappers are httpapi.RequireAuth(authenticator, engine, action, ResourceResolver) and httpapi.RequireInternalWorker — they authenticate, attach the principal via policy.WithPrincipal + telemetry.SetOrgID/SetPrincipalID, then authorize: missing creds 401 E_AUTH, invalid 401 E_AUTH (fixed generic message), unauthorized 403 E_FORBIDDEN (stable policy reason), dependency failure keeps its typed 5xx. ResourceResolver nil defaults to the principal's own org scope; pass a path-param resolver so a cross-tenant id is a 403, not a silent allow.
 
 ## 2026-05-14 - BE-0002
 - What was implemented: Backend configuration contract for the control-plane API and worker.
@@ -1275,4 +1276,119 @@
   - The well-known base64url for {"alg":"HS256","typ":"JWT"} is
     eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9 — pinning it as a constant is both the
     alg-downgrade defence and cheaper than decoding+inspecting a header.
+---
+
+## 2026-05-15 - BE-0020 - Implement authorization middleware
+- What was implemented: the request authentication + authorization middleware —
+  the layer that turns an inbound bearer credential into a policy.Principal,
+  attaches it to the request context, and authorizes the route's action.
+  - internal/controlplane/auth/authenticator.go (new): Authenticator +
+    AuthenticatorConfig + NewAuthenticator. Authenticate(ctx, bearerToken)
+    resolves three schemes by shape — API key ("yk_" prefix), human session
+    JWT, internal worker shared secret — to one Identity{Principal, Method}.
+    Ports: CredentialStore interface (FindAPIKeyByPrefix / FindServiceAccount /
+    OrganizationRoleVersion) + auth-local DTOs APIKeyRecord / ServiceAccountRecord
+    so auth never imports store. Sentinels ErrNoCredentials / ErrInvalidCredentials;
+    every invalid-credential cause (malformed token, unknown prefix, wrong
+    secret, revoked/expired key, bad signature, expired/revoked/unknown-subject
+    session) collapses to ErrInvalidCredentials — no prefix-existence oracle —
+    while a datastore failure is propagated unchanged. AuthMethod constants,
+    InternalWorkerPrincipalID, stable SessionIssuer / SessionAudience. API-key
+    principals carry no Role/Grants (grant resolution from api_keys.scopes is a
+    later story); session principals get their role from the verified claim;
+    the internal worker principal is role-less and org-less. constantTimeEqual
+    hashes both inputs so the worker-token compare does not leak length.
+  - internal/controlplane/httpapi/middleware.go (new): RequireAuth(authenticator,
+    engine, action, ResourceResolver) and RequireInternalWorker(authenticator)
+    middleware; bearerToken (RFC 7235 case-insensitive "Bearer " extraction);
+    writeAuthError / toAPIError. Missing creds -> 401 E_AUTH ("authentication is
+    required"); invalid -> 401 E_AUTH ("the supplied credentials are invalid",
+    fixed/generic); unauthorized -> 403 E_FORBIDDEN with the stable policy
+    reason; dependency failure keeps its typed 5xx. Attaches the principal via
+    policy.WithPrincipal and enriches the log record via telemetry.SetOrgID /
+    SetPrincipalID before the authorization decision. Everything renders through
+    apienvelope. The middleware is NOT yet wired into newRouteTable — the
+    bootstrap routes are all public; endpoint stories wrap their routes.
+  - internal/controlplane/store/migrate/migrations/0005_membership_role_version.
+    {up,down}.sql (new): ALTER memberships ADD COLUMN role_version bigint NOT
+    NULL DEFAULT 1 CHECK (>= 1) — the counter behind version-based session
+    revocation that BE-0017's session primitive expected to exist.
+  - internal/controlplane/store/membership.go (new): Membership struct +
+    MembershipRepository.Get (tenant-scoped read, apierr.NotFound for a
+    non-member).
+  - internal/controlplane/store/credentials.go (new): CredentialReader — the
+    production auth.CredentialStore adapter. store imports auth and composes the
+    existing tenant-scoped repository methods (no new SQL). OrganizationRoleVersion
+    maps a missing membership to (0,false,nil) but propagates a datastore error.
+  - Tests: auth/authenticator_test.go (unit, fake CredentialStore — all three
+    schemes, the uniform-invalid contract incl. unknown-prefix == wrong-secret,
+    dependency-failure-is-not-401, no-credential-echo); httpapi/middleware_test.go
+    (contract tests, fake Authenticator + real policy.Engine + telemetry.Correlate
+    — 4 credential paths, envelopes, cross-tenant ResourceResolver, RequireInternalWorker,
+    bearerToken table, public-routes-need-no-credential); store/membership_test.go +
+    store/credentials_test.go (integration vs isolated migrated Postgres — tenant
+    scoping, role_version default, end-to-end Authenticator-over-CredentialReader
+    for both API key and session, plus revoked-key / stale-version paths).
+  - AGENTS.md updated: auth, store, and internal/controlplane.
+- Files changed: internal/controlplane/auth/{authenticator.go,authenticator_test.go,AGENTS.md} (new/edit),
+  internal/controlplane/httpapi/{middleware.go,middleware_test.go} (new),
+  internal/controlplane/store/{membership.go,membership_test.go,credentials.go,credentials_test.go} (new),
+  internal/controlplane/store/migrate/migrations/0005_membership_role_version.{up,down}.sql (new),
+  internal/controlplane/store/AGENTS.md, internal/controlplane/AGENTS.md,
+  ralph/prd.json, ralph/progress.txt.
+- Verification run: gofmt -l .; go mod tidy; go build ./...; go vet ./...;
+  go test ./...; go test -race ./... — and the full suite again with
+  YALLA_TEST_DATABASE_URL set against the docker-compose Postgres (so the new
+  migration + repository + adapter integration tests actually executed, incl.
+  TestMigrations).
+- Results: all passed, with and without Postgres. goimports / golangci-lint /
+  staticcheck / govulncheck still not installed locally (documented in earlier
+  iterations).
+- Acceptance criteria mapping:
+  - "Missing credentials return E_AUTHENTICATION_REQUIRED" / "Invalid credentials
+    return E_AUTH_INVALID without revealing whether a key prefix exists": the
+    repo's settled error taxonomy uses one code E_AUTH (apierr.Unauthenticated)
+    for both, with distinct fixed messages. The PRD's two code names are
+    descriptive labels, not formal codes (the PRD has no error catalog defining
+    them, and yerr/apierr are a shared CLI+backend contract). The behavioural
+    guarantee — a uniform, generic invalid-credentials result with no
+    prefix-existence oracle — is fully implemented and tested
+    (TestAuthenticateAPIKeyInvalidIsUniform asserts unknown-prefix and
+    wrong-secret produce the identical error).
+  - "Authenticated but unauthorized -> E_FORBIDDEN with a stable reason":
+    RequireAuth runs engine.Authorize; the 403 message carries the stable
+    policy.Reason code (TestRequireAuthUnauthorizedIsForbidden /
+    ...ResourceResolverEnforcesTenantBoundary).
+  - "Tests cover API key, session token, internal worker token, and anonymous
+    public endpoints": all four, in both the auth unit tests and the httpapi
+    contract tests (TestPublicRoutesNeedNoCredential is the anonymous leg).
+  - Envelopes / integration-from-migrations / redaction: all covered.
+- Remaining risks / follow-ups:
+  - The middleware is built and fully tested but not wired into newRouteTable —
+    there are no authenticated routes yet (same shape as store services not yet
+    wired into cmd). The endpoint stories wrap their routes with RequireAuth and
+    grow NewHandler's wiring then; cmd/yalla-api must build the Authenticator
+    (config needs an internal-worker-token field — not added here to keep the
+    story focused; it is a config-story-shaped change).
+  - API-key principals are role-less/grant-less until the api_keys.scopes ->
+    policy.Grant resolution story lands; today an API-key principal can do only
+    CapSelf actions. This is deny-by-default and safe, but means API-key auth is
+    not yet "useful" for tenant actions — intentional.
+- Learnings for future iterations:
+  - policy.Principal contains a Grants slice, so it is NOT == comparable —
+    compare field-by-field in tests (see assertPrincipal in authenticator_test.go).
+  - The "consumer defines the port, provider implements it" rule has a direction
+    choice: here auth defines CredentialStore and store implements it, so store
+    imports auth (auth stays store-free + unit-testable). Verify no cycle: auth
+    imports only policy/domain/output; none import store.
+  - VerifySession's CurrentRoleVersion hook is a func returning (int64, bool)
+    with no error channel. To not disguise a datastore outage as
+    ErrUnknownSubject, capture the lookup error in a closure variable and check
+    it after VerifySession returns.
+  - testutil.NewFactory builds in-memory fixture VALUES; package store_test
+    already has seedOrg/seedUser/seedServiceAccount helpers — reuse them and add
+    seedMembership rather than re-rolling raw inserts.
+  - A new migration is auto-discovered from the //go:embed FS by filename; no
+    registration list to update. Existing memberships INSERTs in schema_test.go
+    omit role_version and still pass because the column has DEFAULT 1.
 ---

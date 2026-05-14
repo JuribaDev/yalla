@@ -89,6 +89,25 @@ Postgres persistence for control-plane source-of-truth state.
   unit of work is `authorize → reserve quota → write` only. Not every
   unit-of-work needs every port.
 
+## Memberships & credential lookup (`0005_membership_role_version`, `membership.go`, `credentials.go`)
+
+- `memberships.role_version` (added in `0005`) is the counter behind
+  version-based **session-token revocation**: `NOT NULL DEFAULT 1`, monotonic
+  (`CHECK >= 1`). Bumping it on a role/membership change or forced sign-out
+  invalidates every outstanding session token at once, without a denylist.
+- `MembershipRepository.Get` is a tenant-scoped read (`organization_id` before
+  `user_id`) returning `apierr.NotFound` for a non-member — a cross-tenant
+  user id can never reveal another org's membership.
+- `CredentialReader` is the **production adapter** that satisfies the
+  `auth.CredentialStore` port — the BE-0020 "store wiring" for the auth
+  middleware. The dependency direction is deliberate: `auth` defines the port
+  and never imports `store`; `store` imports `auth` and implements it by
+  composing the existing tenant-scoped repository methods (no new SQL), so the
+  tenant-scoping guarantees are inherited. `OrganizationRoleVersion` maps a
+  missing membership to `(0, false, nil)` but propagates a datastore failure as
+  a non-nil error, so an outage surfaces as a dependency failure, not a silent
+  auth denial.
+
 ## Repository transaction pattern (`store.go`, `project.go`, `projectservice.go`)
 
 - The `store` package is the **only** place repository code reaches the

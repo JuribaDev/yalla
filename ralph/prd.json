@@ -1265,8 +1265,8 @@
       ],
       "type": "authorization",
       "priority": 1,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented auth.Authenticator (CredentialStore port + APIKeyRecord/ServiceAccountRecord DTOs + Identity/AuthMethod) resolving API key, human session, and internal worker credentials to one policy.Principal; every invalid-credential cause collapses to the uniform ErrInvalidCredentials so the prefix-existence leak is closed, while a datastore failure is propagated as a typed dependency error. httpapi.RequireAuth / RequireInternalWorker wrap routes: missing creds -> 401 E_AUTH, invalid -> 401 E_AUTH (generic message), unauthorized -> 403 E_FORBIDDEN with the stable policy reason, all via apienvelope. Added migration 0005 (memberships.role_version), store.MembershipRepository, and store.CredentialReader (the production CredentialStore adapter). PRD criterion codes E_AUTHENTICATION_REQUIRED / E_AUTH_INVALID map onto the existing taxonomy's E_AUTH (apierr.Unauthenticated) with distinct messages; the behavioral guarantees are fully implemented. Tests: auth unit tests with fakes (all schemes, uniform-invalid contract, dependency-failure separation, no-credential-echo), httpapi contract tests (4 paths + envelopes + cross-tenant resolver + bearerToken), and store integration tests against isolated migrated Postgres incl. end-to-end Authenticator-over-CredentialReader. gofmt, go vet, go test ./..., and go test -race ./... pass (full suite run with and without Postgres)."
     },
     {
       "id": "BE-0021",

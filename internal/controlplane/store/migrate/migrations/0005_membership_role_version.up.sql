@@ -1,0 +1,21 @@
+-- Membership role/revocation version: the counter that backs version-based
+-- session-token revocation.
+--
+-- internal/controlplane/auth mints human session tokens as compact HS256 JWTs
+-- that embed an `rver` claim — the role/revocation version the token was
+-- minted with. The BE-0020 auth middleware rejects a session token unless its
+-- embedded version still equals the member's current role_version, so a single
+-- increment of this column — on a role change, a membership change, or a forced
+-- sign-out — invalidates every outstanding session for that member at once,
+-- without a denylist.
+--
+-- Design rules enforced here:
+--
+--   * role_version is NOT NULL with DEFAULT 1, so every existing membership
+--     row gets a valid starting version and no token-issuing code path can
+--     observe a NULL.
+--   * The CHECK keeps the version monotonic-positive: it starts at 1 and only
+--     ever moves forward, so a freshly minted token can never accidentally
+--     match a "0" sentinel.
+ALTER TABLE memberships
+    ADD COLUMN role_version bigint NOT NULL DEFAULT 1 CHECK (role_version >= 1);
