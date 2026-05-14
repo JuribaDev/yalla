@@ -47,9 +47,12 @@ func main() {
 	defer stop()
 
 	loop := &worker.Loop{
-		// NoopClaimer is the placeholder until the durable Postgres-backed
-		// job store lands with the persistence stories. With it the worker
-		// starts, idles, and shuts down cleanly through the real run loop.
+		// The durable Postgres-backed queue (worker.StoreClaimer) is built and
+		// tested, but a StoreClaimer needs a JobRunner — the typed Dokploy
+		// provisioner — which lands in a later story. Until that runner exists
+		// the binary uses NoopClaimer, so the worker still starts, idles, and
+		// shuts down cleanly through the real run loop; wiring StoreClaimer in
+		// is a one-line change once the runner is available.
 		Claimer:        worker.NoopClaimer{},
 		Logger:         logger,
 		ReleaseTimeout: cfg.ShutdownTimeout,

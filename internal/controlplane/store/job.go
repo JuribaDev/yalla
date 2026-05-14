@@ -506,6 +506,120 @@ func (r *JobRepository) Transition(ctx context.Context, tx *Tx, organizationID, 
 	return updated, nil
 }
 
+// ClaimNext leases the next eligible provisioning job to owner for
+// leaseDuration, atomically inside tx, and returns it in the running status.
+// It is the SKIP LOCKED claim path that lets many workers poll the same queue
+// without ever running a job twice: the SELECT ... FOR UPDATE SKIP LOCKED takes
+// a row lock that a concurrent claimer skips rather than blocks on, so two
+// workers never select the same job, and the transition to running commits or
+// rolls back atomically with that lock held.
+//
+// A job is eligible when it is queued or retrying and due (next_run_at <= now),
+// or running with an expired lease (lease_deadline < now) — a job whose worker
+// crashed. The boolean is false when nothing is eligible; that is the
+// empty-queue signal the worker loop backs off on.
+//
+// An expired-lease job is reclaimed through the state machine — running ->
+// retrying -> running — so attempt counting and lease bookkeeping stay
+// identical to a normal retry. A job that has already spent its retry budget is
+// dead-lettered instead of reclaimed, and ClaimNext reports nothing claimed for
+// that poll rather than handing a worker a job that can never run.
+//
+// It requires a *Tx, so a claim can never escape the transaction that owns the
+// row lock. owner must be non-empty and leaseDuration positive — both are
+// programming errors otherwise; a zero now defaults to the current UTC time.
+func (r *JobRepository) ClaimNext(ctx context.Context, tx *Tx, owner string, leaseDuration time.Duration, now time.Time) (ProvisioningJob, bool, error) {
+	if tx == nil {
+		return ProvisioningJob{}, false, apierr.Internal(errors.New("store: JobRepository.ClaimNext called with a nil transaction"))
+	}
+	if owner == "" || leaseDuration <= 0 {
+		return ProvisioningJob{}, false, apierr.Internal(
+			errors.New("store: JobRepository.ClaimNext requires a non-empty owner and a positive lease duration"))
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	} else {
+		now = now.UTC()
+	}
+
+	// Find the single most-eligible job and lock its row. SKIP LOCKED is what
+	// makes concurrent workers safe: a row another worker is already claiming
+	// inside its own open transaction is skipped, not waited on.
+	var (
+		jobID  string
+		orgID  string
+		status string
+	)
+	row := tx.QueryRow(ctx,
+		`SELECT id, organization_id, status
+		   FROM provisioning_jobs
+		  WHERE (status IN ('queued', 'retrying') AND next_run_at <= $1)
+		     OR (status = 'running' AND lease_deadline < $1)
+		  ORDER BY next_run_at, created_at
+		  FOR UPDATE SKIP LOCKED
+		  LIMIT 1`,
+		now)
+	switch err := row.Scan(&jobID, &orgID, &status); {
+	case errors.Is(err, pgx.ErrNoRows):
+		return ProvisioningJob{}, false, nil
+	case err != nil:
+		return ProvisioningJob{}, false, apierr.StoreUnavailable(err)
+	}
+
+	// An expired-lease running job is reclaimed through the state machine. If
+	// it has already spent its retry budget it is dead-lettered instead, and
+	// this poll claims nothing rather than returning a doomed job.
+	if JobStatus(status) == JobStatusRunning {
+		reclaimable, err := r.reclaimExpiredLease(ctx, tx, orgID, jobID, now)
+		if err != nil {
+			return ProvisioningJob{}, false, err
+		}
+		if !reclaimable {
+			return ProvisioningJob{}, false, nil
+		}
+	}
+
+	claimed, err := r.Transition(ctx, tx, orgID, jobID, JobStatusRunning, JobTransition{
+		LeaseOwner:    owner,
+		LeaseDuration: leaseDuration,
+		Now:           now,
+	})
+	if err != nil {
+		return ProvisioningJob{}, false, err
+	}
+	return claimed, true, nil
+}
+
+// reclaimExpiredLease moves a running job whose lease has expired back to a
+// claimable state. It returns true when the job was sent to retrying and is
+// ready to be claimed again, and false when the job had already spent its
+// retry budget and was dead-lettered instead. The job row is already locked
+// FOR UPDATE by the caller, so the read sees the committed state and the two
+// transitions cannot race another worker.
+func (r *JobRepository) reclaimExpiredLease(ctx context.Context, tx *Tx, organizationID, jobID string, now time.Time) (bool, error) {
+	current, err := r.Get(ctx, tx, organizationID, jobID)
+	if err != nil {
+		return false, err
+	}
+	if current.Attempts >= current.MaxAttempts {
+		if _, err := r.Transition(ctx, tx, organizationID, jobID, JobStatusDeadLetter, JobTransition{
+			ErrorSummary: "lease expired and the retry budget is exhausted; the previous worker did not finish the job",
+			Now:          now,
+		}); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+	if _, err := r.Transition(ctx, tx, organizationID, jobID, JobStatusRetrying, JobTransition{
+		NextRunAt:    now,
+		ErrorSummary: "lease expired; the previous worker did not finish the job",
+		Now:          now,
+	}); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // scanProvisioningJob scans one provisioning_jobs row in
 // provisioningJobColumns order, mapping the nullable resource-target,
 // lease-deadline, and timestamp columns to their zero values when absent.

@@ -26,6 +26,7 @@
 - Quota enforcement: the QuotaRepository (internal/controlplane/store/quota.go) is the persistence half (EffectiveLimit / LockUsage / SumActiveReservations / InsertReservation, all tenant-scoped, mutations on *Tx) and the quota.Checker (internal/controlplane/quota) is the store.QuotaReserver service half. A hard limit is enforced by LockUsage doing INSERT ... ON CONFLICT DO NOTHING then SELECT ... FOR UPDATE on the quota_usage counter row — that lock serialises concurrent reservers so they cannot both over-allocate; the decision is current+reserved+requested <= limit, reserved = SUM of active non-expired reservations. Soft/metered limits record but never reject; disabled/no-policy allow with no write. A rejection is apierr.QuotaExceeded wrapping a recoverable quota.ExceededDetail{Resource,Current,Reserved,Requested,Limit}. Quota accounting rows have no domain.Kind — ids are minted locally with a prefixed crypto/rand helper.
 - Audit log (0007_audit_events, store/audit.go, internal/controlplane/audit): the immutable audit log records every authorization decision, allowed AND denied. Immutability is enforced at two layers — the table has no updated_at and a BEFORE UPDATE trigger (audit_events_reject_update) that rejects every UPDATE in the database, and AuditRepository exposes only Append + tenant-scoped ListByOrganization (no update/delete); row DELETE stays reachable only via the organizations ON DELETE CASCADE. An append-only table that must still cascade on tenant teardown blocks UPDATE only, never DELETE. The audit.Auditor (depends on the narrow Recorder port, satisfied by *store.AuditRepository) is the single place a policy.Decision becomes an AuditEvent: it pulls the principal (policy.PrincipalFromContext) + correlation ids (telemetry.FromContext) off the context, files the event under the principal's org else the resource's org, and REDACTS metadata before persistence — secret-shaped keys (token/secret/password/credential/...) replaced wholesale with output.Sentinel, every other value + the user agent scrubbed by an output.Redactor. store treats metadata as already-redacted; redaction is the audit service's contract. Auditor.Record takes the caller's *store.Tx so an audit write can share the mutation's transaction or run in its own.
 - Provisioning jobs (0008_provisioning_jobs, store/job.go): the durable, idempotent queue of Dokploy provisioning work. The provisioning_jobs table is tenant-scoped (organization_id FK + composite (organization_id, project_id|environment_id|service_id) FKs so a job can never target another tenant's resource), idempotent (UNIQUE (organization_id, idempotency_key)), and exposes UNIQUE (organization_id, id) as a composite-FK target — 0008 also wires the FK that 0006 deferred (quota_reservations.job_id -> provisioning_jobs). DB CHECKs enforce the closed status set, "terminal status iff finished_at set", "lease held iff status=running", and attempts<=max_attempts; the Go state machine (store.JobStatus.CanTransitionTo, backed by the jobTransitions map: queued->running|cancelled, running->succeeded|retrying|failed|dead_letter|cancelled, retrying->running|cancelled, terminals have no edges) is the authoritative validator. JobRepository follows the ProjectRepository pattern (mutations need *Tx, reads take Querier, NotFound for cross-tenant ids); Transition locks the row FOR UPDATE, validates the edge before any write (illegal edge = apierr.Conflict), and derives lease/attempt/timestamp bookkeeping from the target status so a caller cannot leave a CHECK-violating row. error_summary is run through an output.NewRedactor() backstop on every write (Insert + Transition) — the store IS the redaction chokepoint for job errors, unlike audit metadata which the service redacts.
+- Postgres-backed worker queue (store/job.go ClaimNext, worker/queue.go): the durable queue has two halves. store.JobRepository.ClaimNext is the SKIP LOCKED claim — SELECT ... FOR UPDATE SKIP LOCKED picks the single most-eligible job (queued|retrying AND next_run_at<=now, OR running AND lease_deadline<now) so concurrent claimers skip a locked row instead of blocking, then transitions it to running inside the same Store.Write tx. An expired-lease job is reclaimed THROUGH the state machine (running->retrying->running, so attempt/lease bookkeeping stays consistent); a job past its retry budget is dead-lettered instead and the poll claims nothing. worker/queue.go is the store-backed Claimer/Lease impl: loop.go stays pure (interfaces only, fake-tested) and queue.go is the only worker file that imports store. Failure classification: worker.Terminal(err)/IsTerminal mark a permanent failure (-> failed, never retried); a plain error is transient (-> retrying with worker.Backoff bounded exponential delay, or -> dead_letter when Attempts>=MaxAttempts). StoreClaimer.complete() records every outcome on a context.WithoutCancel + timeout context — once the runner ran, the outcome write must survive shutdown; only an interrupted (un-run) job returns non-nil from Lease.Run so the loop releases it. The JobRunner (real Dokploy provisioner) is still injected/faked; cmd/yalla-worker stays on NoopClaimer until that runner lands.
 
 ## 2026-05-14 - BE-0002
 - What was implemented: Backend configuration contract for the control-plane API and worker.
@@ -1796,4 +1797,95 @@
   - go test -run TestMigrations ./... is the cheap check that a new migration
     loads and applies from an empty DB; the migrate package auto-discovers
     migrations/*.sql via //go:embed, so there is no manifest to update.
+---
+
+## 2026-05-15 - BE-0025
+- What was implemented: the Postgres-backed worker queue — workers claim durable
+  provisioning jobs with SELECT ... FOR UPDATE SKIP LOCKED, run them through an
+  injected runner, and classify failures into retry / dead-letter / permanent.
+  - internal/controlplane/store/job.go: added JobRepository.ClaimNext(ctx, tx,
+    owner, leaseDuration, now) — the SKIP LOCKED claim. It selects the single
+    most-eligible job (queued|retrying AND next_run_at<=now, OR running AND
+    lease_deadline<now) FOR UPDATE SKIP LOCKED so concurrent claimers skip a
+    locked row instead of blocking, then transitions it to running in the same
+    tx. Private reclaimExpiredLease moves a crashed worker's running job back
+    through the state machine (running->retrying->running) so attempt/lease
+    bookkeeping stays consistent, or dead-letters it when the retry budget is
+    already spent (poll then claims nothing rather than handing out a doomed
+    job). nil tx / empty owner / non-positive lease are typed apierr.Internal.
+  - internal/controlplane/worker/queue.go (new): the store-backed Claimer/Lease
+    implementation. loop.go stays pure (interfaces only); queue.go is the only
+    worker file importing store. JobRunner/RunnerFunc is the injected work port.
+    Terminal(err)/IsTerminal classify a permanent failure. Backoff.Delay is
+    bounded exponential (base*2^(attempt-1) capped at Max, optional full
+    jitter, overflow-safe by doubling-with-cap). StoreClaimer (built via
+    NewStoreClaimer, which validates Store/Runner/Owner -> apierr.InvalidInput)
+    leases via ClaimNext; storeLease.Run executes the runner and records the
+    outcome — success -> succeeded, Terminal error -> failed, transient with
+    budget left -> retrying with backoff, transient with budget spent ->
+    dead_letter. complete() writes the outcome on a context.WithoutCancel +
+    timeout context so a finished job's result survives shutdown; only an
+    interrupted (un-run) job returns non-nil from Run so the loop releases it.
+    Release requeues an interrupted job claimable-immediately. NewOwnerID mints
+    a process-unique lease owner.
+  - internal/controlplane/store/job_test.go: added ClaimNext integration tests
+    — leases a due job, empty queue + not-yet-due job, reclaims an expired
+    lease (counts an attempt), dead-letters an exhausted expired lease,
+    concurrent SKIP LOCKED (6 workers x 24 jobs, each claimed exactly once),
+    and validation (nil tx / empty owner / zero lease).
+  - internal/controlplane/worker/queue_internal_test.go (new): pure unit tests
+    for Backoff.Delay (bounded exponential, defaults, Max<Base, jitter bounds),
+    Terminal/IsTerminal classification through wrapping, NewOwnerID uniqueness.
+  - internal/controlplane/worker/queue_test.go (new): StoreClaimer integration
+    tests — runs a job to succeeded, retries a transient failure with a
+    backed-off next_run_at, fails a Terminal error without retrying,
+    dead-letters after the retry budget (with a secret redacted in the failure
+    summary), Release requeues, and the headline test: two worker.Loop workers
+    against the same queue run all 16 jobs exactly once and all reach succeeded.
+  - cmd/yalla-worker/main.go: comment updated — StoreClaimer is built and
+    tested; the binary stays on NoopClaimer only until the JobRunner (typed
+    Dokploy provisioner) lands in a later story.
+  - internal/controlplane/worker/AGENTS.md (new): records the loop.go-pure /
+    queue.go-store-backed split and the queue conventions.
+- Files changed: internal/controlplane/store/job.go,
+  internal/controlplane/store/job_test.go,
+  internal/controlplane/worker/queue.go (new),
+  internal/controlplane/worker/queue_internal_test.go (new),
+  internal/controlplane/worker/queue_test.go (new),
+  internal/controlplane/worker/AGENTS.md (new),
+  cmd/yalla-worker/main.go, ralph/prd.json, ralph/progress.txt.
+- Verification run: gofmt -w .; go mod tidy (no-op, no new deps); go build ./...;
+  go vet ./...; go test ./... and go test -race ./... with
+  YALLA_TEST_DATABASE_URL pointed at the docker-compose Postgres.
+- Results: all passed (build, vet, full test suite, race detector on store +
+  worker). goimports, golangci-lint, staticcheck, govulncheck not installed
+  locally (documented in earlier entries).
+- Remaining risks / follow-ups:
+  - cmd/yalla-worker still uses NoopClaimer: a StoreClaimer needs a JobRunner,
+    which is the typed Dokploy provisioner from a later story (BE-0029+).
+    Wiring StoreClaimer into main is a one-liner once that runner exists; it
+    also needs a real pgx pool wired into the worker binary at startup.
+  - Acceptance criterion "authorization failure" is N/A — the worker queue is
+    an internal subsystem with no HTTP surface and no policy action; covered
+    success / validation failure / not-found-equivalent (empty queue, expired
+    lease) instead. "Stable JSON envelopes" is likewise N/A here (no HTTP).
+- **Learnings for future iterations:**
+  - SKIP LOCKED + the Store.Write row lock is the whole concurrency story: a
+    claimer's open transaction holds the row, a peer's SELECT ... SKIP LOCKED
+    skips it, the transition to running commits with the lock held. No queue
+    library needed.
+  - Reclaiming an expired lease THROUGH the existing state machine
+    (running->retrying->running) avoids adding a running->running self-edge to
+    jobTransitions and keeps attempt counting honest — a reclaim is just
+    another retry.
+  - The Lease contract subtlety: storeLease.Run must record outcomes on a
+    context detached from cancellation (context.WithoutCancel + timeout). If it
+    used the live ctx, a job that finished exactly as shutdown began would fail
+    its own success-write, get treated as interrupted, and be released for a
+    duplicate run. Only a genuinely un-run (interrupted) job returns non-nil.
+  - A concurrent-claim test where workers exit on the first empty result is
+    flaky: a job locked by a peer's still-open tx looks empty via SKIP LOCKED.
+    Workers must retry-until-drained with a deadline guard.
+  - worker_test (package worker_test) cannot reach store/schema_test.go's
+    seedOrg helpers — re-seed the org with a local INSERT helper.
 ---

@@ -2,7 +2,9 @@ package store_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -602,5 +604,301 @@ func TestJobRepositoryInsertRedactsErrorSummary(t *testing.T) {
 
 	if strings.Contains(stored.ErrorSummary, "sk-should-not-persist") {
 		t.Errorf("Insert persisted a secret in error_summary: %q", stored.ErrorSummary)
+	}
+}
+
+// claimNext leases the next eligible job through Store.Write and returns the
+// claimed job and whether anything was claimed.
+func claimNext(ctx context.Context, t *testing.T, s *store.Store, repo *store.JobRepository, owner string, lease time.Duration, now time.Time) (store.ProvisioningJob, bool) {
+	t.Helper()
+	var (
+		job   store.ProvisioningJob
+		found bool
+	)
+	if err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		j, ok, err := repo.ClaimNext(ctx, tx, owner, lease, now)
+		if err != nil {
+			return err
+		}
+		job, found = j, ok
+		return nil
+	}); err != nil {
+		t.Fatalf("ClaimNext: %v", err)
+	}
+	return job, found
+}
+
+// TestJobRepositoryClaimNextLeasesDueJob proves ClaimNext claims a due queued
+// job: it returns it running, with the lease taken and the attempt counted.
+func TestJobRepositoryClaimNextLeasesDueJob(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	repo := store.NewJobRepository()
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	org := seedOrg(t, db, f, "Acme")
+	job := insertJob(ctx, t, s, repo, jobFixture(org.ID, "idem-claim"))
+
+	now := time.Now().UTC().Add(time.Minute)
+	claimed, found := claimNext(ctx, t, s, repo, "worker-1", 30*time.Second, now)
+	if !found {
+		t.Fatal("ClaimNext claimed nothing for a due queued job")
+	}
+	if claimed.ID != job.ID {
+		t.Errorf("claimed job %q, want %q", claimed.ID, job.ID)
+	}
+	if claimed.Status != store.JobStatusRunning {
+		t.Errorf("claimed status = %q, want running", claimed.Status)
+	}
+	if claimed.Attempts != 1 {
+		t.Errorf("claimed attempts = %d, want 1", claimed.Attempts)
+	}
+	if claimed.LeaseOwner != "worker-1" || claimed.LeaseDeadline.IsZero() {
+		t.Errorf("ClaimNext did not take the lease: owner=%q deadline=%v", claimed.LeaseOwner, claimed.LeaseDeadline)
+	}
+
+	// The job is now running with a live lease, so a second claim finds nothing.
+	if _, found := claimNext(ctx, t, s, repo, "worker-2", 30*time.Second, now); found {
+		t.Error("ClaimNext claimed a job that is already leased")
+	}
+}
+
+// TestJobRepositoryClaimNextEmptyQueue proves ClaimNext reports nothing on an
+// empty queue and skips a job whose backoff has not elapsed.
+func TestJobRepositoryClaimNextEmptyQueue(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	repo := store.NewJobRepository()
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	org := seedOrg(t, db, f, "Acme")
+
+	// Nothing enqueued at all.
+	if _, found := claimNext(ctx, t, s, repo, "worker-1", 30*time.Second, time.Now().UTC()); found {
+		t.Error("ClaimNext claimed a job from an empty queue")
+	}
+
+	// A queued job scheduled into the future is not yet due.
+	notDue := jobFixture(org.ID, "idem-future")
+	notDue.NextRunAt = time.Now().UTC().Add(time.Hour)
+	insertJob(ctx, t, s, repo, notDue)
+	if _, found := claimNext(ctx, t, s, repo, "worker-1", 30*time.Second, time.Now().UTC()); found {
+		t.Error("ClaimNext claimed a job whose next_run_at is still in the future")
+	}
+}
+
+// TestJobRepositoryClaimNextReclaimsExpiredLease proves a job whose worker
+// crashed — running with an expired lease — is reclaimed through the state
+// machine, counting another attempt and handing the new worker the lease.
+func TestJobRepositoryClaimNextReclaimsExpiredLease(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	repo := store.NewJobRepository()
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	org := seedOrg(t, db, f, "Acme")
+	job := insertJob(ctx, t, s, repo, jobFixture(org.ID, "idem-reclaim"))
+
+	t0 := time.Now().UTC()
+	first, found := claimNext(ctx, t, s, repo, "worker-1", time.Second, t0)
+	if !found || first.Attempts != 1 {
+		t.Fatalf("first claim: found=%v attempts=%d, want true/1", found, first.Attempts)
+	}
+
+	// The lease expired at t0+1s; reclaim it from a worker polling at t0+2s.
+	reclaimed, found := claimNext(ctx, t, s, repo, "worker-2", 30*time.Second, t0.Add(2*time.Second))
+	if !found {
+		t.Fatal("ClaimNext did not reclaim a job with an expired lease")
+	}
+	if reclaimed.ID != job.ID {
+		t.Errorf("reclaimed job %q, want %q", reclaimed.ID, job.ID)
+	}
+	if reclaimed.Status != store.JobStatusRunning {
+		t.Errorf("reclaimed status = %q, want running", reclaimed.Status)
+	}
+	if reclaimed.Attempts != 2 {
+		t.Errorf("reclaimed attempts = %d, want 2 (reclaim counts an attempt)", reclaimed.Attempts)
+	}
+	if reclaimed.LeaseOwner != "worker-2" {
+		t.Errorf("reclaimed lease owner = %q, want worker-2", reclaimed.LeaseOwner)
+	}
+}
+
+// TestJobRepositoryClaimNextDeadLettersExhaustedExpiredLease proves an
+// expired-lease job that has already spent its retry budget is dead-lettered
+// rather than handed to another worker.
+func TestJobRepositoryClaimNextDeadLettersExhaustedExpiredLease(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	repo := store.NewJobRepository()
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	org := seedOrg(t, db, f, "Acme")
+	in := jobFixture(org.ID, "idem-reclaim-exhausted")
+	in.MaxAttempts = 1
+	job := insertJob(ctx, t, s, repo, in)
+
+	t0 := time.Now().UTC()
+	if _, found := claimNext(ctx, t, s, repo, "worker-1", time.Second, t0); !found {
+		t.Fatal("first claim found nothing")
+	}
+
+	// The single attempt is spent; the expired lease cannot be reclaimed.
+	if _, found := claimNext(ctx, t, s, repo, "worker-2", 30*time.Second, t0.Add(2*time.Second)); found {
+		t.Error("ClaimNext reclaimed a job that has exhausted its retry budget")
+	}
+
+	dead := getJobByID(ctx, t, s, repo, org.ID, job.ID)
+	if dead.Status != store.JobStatusDeadLetter {
+		t.Errorf("status = %q, want dead_letter", dead.Status)
+	}
+	if dead.FinishedAt.IsZero() {
+		t.Error("a dead-lettered job must carry finished_at")
+	}
+}
+
+// getJobByID reads a job back through a read-only transaction.
+func getJobByID(ctx context.Context, t *testing.T, s *store.Store, repo *store.JobRepository, orgID, jobID string) store.ProvisioningJob {
+	t.Helper()
+	var job store.ProvisioningJob
+	if err := s.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		var rErr error
+		job, rErr = repo.Get(ctx, q, orgID, jobID)
+		return rErr
+	}); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	return job
+}
+
+// TestJobRepositoryClaimNextConcurrentSkipLocked proves the SKIP LOCKED claim
+// is safe under concurrency: many workers polling the same queue claim every
+// job exactly once and never the same job twice.
+func TestJobRepositoryClaimNextConcurrentSkipLocked(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	repo := store.NewJobRepository()
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	org := seedOrg(t, db, f, "Acme")
+	const jobCount = 24
+	for i := 0; i < jobCount; i++ {
+		insertJob(ctx, t, s, repo, jobFixture(org.ID, fmt.Sprintf("idem-skiplocked-%d", i)))
+	}
+	// A fixed clock with a long lease: once claimed, a job is never re-eligible
+	// for the duration of the test, so every claim must be of a distinct job.
+	now := time.Now().UTC()
+
+	var (
+		mu      sync.Mutex
+		claimed = make(map[string]int, jobCount)
+	)
+	claimOne := func(owner string) (bool, error) {
+		var (
+			job   store.ProvisioningJob
+			found bool
+		)
+		err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+			j, ok, cErr := repo.ClaimNext(ctx, tx, owner, time.Hour, now)
+			job, found = j, ok
+			return cErr
+		})
+		if err != nil {
+			return false, err
+		}
+		if found {
+			mu.Lock()
+			claimed[job.ID]++
+			mu.Unlock()
+		}
+		return found, nil
+	}
+
+	const workers = 6
+	deadline := time.Now().Add(20 * time.Second)
+	var wg sync.WaitGroup
+	errCh := make(chan error, workers)
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			owner := fmt.Sprintf("worker-%d", w)
+			for {
+				found, err := claimOne(owner)
+				if err != nil {
+					errCh <- err
+					return
+				}
+				if found {
+					continue
+				}
+				// An empty result may just mean every remaining eligible row
+				// is locked by another worker's open transaction; retry until
+				// the queue is provably drained or the deadline is hit.
+				mu.Lock()
+				drained := len(claimed) >= jobCount
+				mu.Unlock()
+				if drained || time.Now().After(deadline) {
+					return
+				}
+				time.Sleep(time.Millisecond)
+			}
+		}(w)
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Fatalf("concurrent ClaimNext: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(claimed) != jobCount {
+		t.Fatalf("claimed %d distinct jobs, want %d", len(claimed), jobCount)
+	}
+	for id, n := range claimed {
+		if n != 1 {
+			t.Errorf("job %s claimed %d times, want exactly 1", id, n)
+		}
+	}
+}
+
+// TestJobRepositoryClaimNextValidation proves ClaimNext rejects a nil
+// transaction and a missing owner or lease duration rather than issuing a
+// malformed claim.
+func TestJobRepositoryClaimNextValidation(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	repo := store.NewJobRepository()
+	ctx := context.Background()
+
+	// A nil transaction is rejected without touching the database.
+	if _, _, err := repo.ClaimNext(ctx, nil, "worker-1", time.Second, time.Now().UTC()); err == nil {
+		t.Error("ClaimNext(nil tx) returned no error")
+	}
+
+	// An empty owner or a non-positive lease duration is a programming error.
+	err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		if _, _, e := repo.ClaimNext(ctx, tx, "", time.Second, time.Now().UTC()); e == nil {
+			t.Error("ClaimNext(empty owner) returned no error")
+		}
+		if _, _, e := repo.ClaimNext(ctx, tx, "worker-1", 0, time.Now().UTC()); e == nil {
+			t.Error("ClaimNext(zero lease duration) returned no error")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Store.Write: %v", err)
 	}
 }
