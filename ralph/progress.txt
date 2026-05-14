@@ -32,6 +32,7 @@
 - Typed Dokploy client (internal/controlplane/dokploy.Client): customer/handler code NEVER calls Dokploy — only worker/provisioner code, through this typed wrapper. The client exposes Yalla intents (EnsureProject/EnsureService/DeployService/ReadDeploymentLogs/RemoveService/...), not raw Dokploy ops. The Dokploy token is injected via Config.Token, held unexported, exposed by no method, and redacted by Client.LogValue. "Ensure" intents are idempotent against Yalla's source of truth: an optional ExistingID does GET+verify, an empty one does POST+create (the worker records the returned Dokploy ID in Postgres). Only idempotent methods (GET, DELETE) are retried — never POST — and only on apierr.Retryable errors, with bounded exponential backoff; each attempt gets a per-request context timeout and forwards X-Request-Id/X-Correlation-Id from telemetry.FromContext. Every failure maps onto the apierr taxonomy (400->Invalid, 401/403->Internal as a non-retryable Yalla misconfig, 404->NotFound, 409->Conflict, 429/5xx/transport->DokployUnavailable, deadline->Timeout(DependencyDokploy)); the redacted upstream body is wrapped only as the log-only cause, never a client-facing Message. Normal tests run against dokployfake; the client touches no Postgres.
 - Dokploy provisioning has two pure, no-I/O layers under internal/controlplane/dokploy that the worker composes: the Mapper (mapping.go) is the ID-resolution layer — top-down translation of the Yalla* hierarchy into Ensure*Input intents, each child method taking the parent's resolved Dokploy ID; the Renderer (renderer.go) is the declarative-content layer — Render(RenderInput) -> RenderedSpec resolves variables (ascending precedence org<project<environment<service), zero-fills ResourceLimits from tier defaults, normalises BuildSettings, and emits deterministic names/labels/domains, needing no resolved parent IDs. Inapplicable fields are DROPPED, not errored (engine for non-db, role for db, cron_schedule for non-cron, domains for non-web) — mirror this convention for any new provisioning shape. RenderedSpec carries verbatim variable values for the worker; RenderedSpec.Summary() / LogValue redact EVERY variable value (not just Secret-flagged) for logs/audit. Golden tests use testutil.GoldenJSON + the global -update-golden flag, goldens live in testdata/<feature>/.
 - Request input validation goes through internal/controlplane/validate: build a validate.New() Collector, call validators (Name/Slug/ID/Path/URL/Domain/Resources/EnvVars/GitRepoURL/GitBranch/GitCommit/ImageRef) against it, return c.Err() — nil or one apierr.InvalidInput carrying every collected violation (no short-circuit). A FieldViolation.Reason NEVER echoes the submitted value (classification text + bounds only) — this is what lets a secret env var be rejected without leaking. Policy-dependent rules are passed in as plain options the caller resolves (Domain takes DomainOptions{AllowWildcard}, set only after feature flag + quota say yes); validate imports no config/quota. EnvVars separates secret vs non-secret via a distinct ".secret[i]" path segment and a larger secret length ceiling. validate.DecodeJSON is the strict JSON body decoder: size-capped, rejects unknown fields + trailing data, every failure is a body-free apierr.Invalid. Every string validator has a fuzz target seeded with long strings / invalid UTF-8 / path traversal / control chars.
+- "Add policy matrix coverage for <endpoint>" stories add a <endpoint>_policy_test.go beside the endpoint's contract test, in package httpapi, driving the REAL NewHandler + real policy.NewEngine() (the production authorization path, fake Authenticator only). Table the principal classes the PRD names: every built-in role, revoked/expired credentials (modelled as Disabled principals — the only shape in which a revoked/expired credential reaches the engine; the auth layer's earlier 401 path is the contract test's job), and a wrong-organization principal. For a CapSelf endpoint the matrix is "all allow" — assert the served data is the caller's OWN identity, never escalated/cross-tenant. Grant-containment criteria (sibling project / production env / parent-level secret non-leak) are engine properties: assert them with policy.NewEngine().Decide directly, then tie back by proving the endpoint echoes the confined grant set verbatim. Reuse the existing helpers (meHandlerFor/getMe/decodeMe, middleware_test.go's decodeError) — a sibling _test.go needs no new scaffolding.
 - HTTP endpoints are data-driven entries in internal/controlplane/httpapi/routes.go newRouteTable: apiRoute{endpoint, handler, resolver}. Authorization is declarative — set openapi.Endpoint.RequiresAuth=true + RequiredAction=string(policy.ActionX), and NewHandler auto-wraps the handler in RequireAuth(authenticator, engine, action, resolver) before registering it, so a served authenticated route is structurally impossible without authorization. TestEveryAuthenticatedRouteHasMappedAction enforces the RequiresAuth<->RequiredAction invariant in CI. The optional apiRoute.resolver derives the policy.Resource from path/query params; leave it nil for self/org-root actions (RequireAuth then authorizes against the principal's own org scope). NewHandler signature is (build, readiness, meta, authenticator, engine, logger); httpapi tests build it through the newTestHandler helper (canned fakeAuthenticator + policy.NewEngine()). Handlers stay thin: read policy.PrincipalFromContext, render via apienvelope.WriteData/WriteError. cmd/yalla-api wires the real stack at startup (pgxpool -> store.New -> store.NewCredentialReader -> auth.NewAuthenticator + policy.NewEngine) and requires YALLA_DATABASE_URL in every profile.
 
 ## 2026-05-15 - BE-0040
@@ -2461,4 +2462,62 @@
   - "Redact rendered environment variable values" means ALL values in the
     debug summary, not just Secret-flagged ones. The Secret flag survives onto
     RenderedSpec so the worker can choose Dokploy secret vs plain config.
+---
+
+## 2026-05-15 - BE-0042
+- What was implemented: policy-matrix coverage for GET /v1/me — a dedicated
+  test file proving action auth.me's authorization contract end to end through
+  the real NewHandler + real policy.NewEngine() (the production request path).
+  - internal/controlplane/httpapi/me_policy_test.go (new):
+    - TestMePolicyMatrixRoles: every built-in org role (owner/admin/developer/
+      viewer/ci/support) plus a role-less grant-only principal is allowed
+      auth.me and receives EXACTLY its own identity (principal_id, org, role).
+      auth.me is CapSelf so the matrix is "all allow" — the assertion that
+      matters is that the served identity is the caller's, never escalated.
+    - TestMePolicyRevokedAndExpiredKeys: a revoked or expired credential —
+      both surface to the engine as a Disabled principal — is denied auth.me
+      with a stable 403 E_FORBIDDEN carrying ReasonDeniedPrincipalDisabled, and
+      the denied body never echoes the principal id.
+    - TestMePolicyWrongOrganizationPrincipal: a principal whose home org is
+      org_intruder receives only org_intruder's identity; the body leaks no
+      other tenant's ids. Also asserts at the engine level that Decide(auth.me,
+      foreign-org resource) is ReasonAllowedSelf — auth.me never reads the
+      resource, so the resource org can never be a leak vector.
+    - TestMePolicyGrantContainment: proves scoped grants are confined by the
+      engine — a project grant does not reach a sibling project, a staging
+      environment grant does not reach production, a service grant reaches
+      neither a sibling service nor the parent environment — and that GET
+      /v1/me echoes the principal's project grant verbatim (same scope, no
+      widening, no invented deeper ids, no sibling-project mention).
+- Files changed: internal/controlplane/httpapi/me_policy_test.go (new);
+  ralph/prd.json, ralph/progress.txt.
+- Verification run: gofmt -w .; go mod tidy; go build ./...; go vet ./...;
+  go test ./...; go test -race ./internal/controlplane/httpapi/....
+- Results: all passed. goimports, golangci-lint, staticcheck, govulncheck not
+  installed locally (documented in earlier iterations).
+- Remaining risks / follow-ups:
+  - "Isolated Postgres migrations" / "fake Dokploy" acceptance criteria are N/A:
+    GET /v1/me touches no database and no Dokploy — it echoes the authenticated
+    principal resolved by RequireAuth. The tests drive the real handler + real
+    policy engine with a fake Authenticator, which is the full authorization
+    path minus the credential store.
+  - "revoked key" / "expired key" are modelled as Disabled principals because
+    that is the only shape in which a revoked/expired credential reaches the
+    policy engine — the auth layer may also reject such a credential earlier
+    with 401 E_AUTH (covered by me_test.go's TestMeInvalidCredentials). The
+    policy matrix's job is the disabled-principal -> 403 path specifically.
+- Learnings for future iterations:
+  - Pattern for "Add policy matrix coverage for <endpoint>" stories: add a
+    <endpoint>_policy_test.go beside the endpoint's contract test, drive the
+    real NewHandler + policy.NewEngine() (production path), and table the
+    principal classes the PRD names (roles, revoked/expired = Disabled,
+    wrong-org). For a CapSelf endpoint the matrix is "all allow" — assert the
+    served data is the caller's own, not that some role is denied.
+  - The grant-containment acceptance criteria (sibling project / production /
+    parent-secret non-leak) are engine properties: assert them with
+    policy.NewEngine().Decide directly in the endpoint's policy test, then tie
+    back by proving the endpoint echoes the confined grant set verbatim.
+  - me_test.go already provides reusable helpers (meHandlerFor, getMe,
+    decodeMe) and middleware_test.go provides decodeError — a sibling
+    _test.go file in package httpapi reuses them with no new scaffolding.
 ---
