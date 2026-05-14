@@ -1151,8 +1151,8 @@
       ],
       "type": "persistence",
       "priority": 1,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented in internal/controlplane/store: Store.Read/Write transaction runner, the *Tx handle obtainable only inside Write, the Querier interface, and ProjectRepository + ProjectService as the reference unit of work composing authorizer + quota reserver + job enqueuer + desired-state write in one transaction. Rollback proven for validation, authorization, quota, conflict, enqueue-failure, and panic. Criterion 5 (JSON envelopes) is a no-op for this no-HTTP-surface story; all errors are typed apierr values that render through the standard envelope."
     },
     {
       "id": "BE-0015",

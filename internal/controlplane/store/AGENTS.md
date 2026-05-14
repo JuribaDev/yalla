@@ -57,6 +57,33 @@ Postgres persistence for control-plane source-of-truth state.
   constraints — `internal/controlplane/domain` owns ID well-formedness, and
   `testutil` fixtures deliberately use independent prefixes.
 
+## Repository transaction pattern (`store.go`, `project.go`, `projectservice.go`)
+
+- The `store` package is the **only** place repository code reaches the
+  database, and only via `Store.Read` (read-only transaction → `Querier`) or
+  `Store.Write` (read/write transaction → `*Tx`). `Store.Write` commits on a
+  nil return and rolls back on **any** error or panic.
+- `*Tx` can only be obtained inside `Store.Write`. **Repository mutation
+  methods take `*Tx`; read methods take `Querier`.** That makes it
+  structurally impossible to run a mutation outside a transaction — which is
+  what makes the authorization and quota checks that share that transaction
+  impossible to bypass. When you add a repository, follow this split.
+- The unit of work (see `ProjectService.Create`) composes, inside one
+  `Store.Write`: authorize → reserve quota → write desired state → enqueue
+  durable job. Validate input **before** opening the transaction. The policy,
+  quota, and jobs dependencies are narrow **port interfaces** (`Authorizer`,
+  `QuotaReserver`, `JobEnqueuer`) defined here — the real engines land in later
+  stories; tests use fakes. Do not import `policy`/`quota`/`jobs` from `store`.
+- Error mapping is uniform: `pgx.ErrNoRows` → `apierr.NotFound`; constraint
+  violations (SQLSTATE class 23) → `apierr.Conflict`; any other driver error →
+  `apierr.StoreUnavailable`. The raw driver error is wrapped as the cause for
+  logging only and never reaches the user-facing message — `mapWriteError` is
+  the shared helper. Never build SQL by concatenating caller input; every
+  statement is fully parameterized.
+- `ProjectRepository`/`ProjectService` are the **reference implementation** of
+  this pattern, not a one-off. New customer-data repositories and unit-of-work
+  orchestrators copy their shape.
+
 ## Testing
 
 - Persistence tests are **integration tests**: they connect with
@@ -75,3 +102,13 @@ Postgres persistence for control-plane source-of-truth state.
 - When you add a migration, audit `store/migrate/migrate_test.go` for
   assertions that hard-code the latest version (e.g. `Status().Current`); make
   them derive from `m.Migrations()` instead of a literal.
+- `testutil.Factory` IDs deliberately use **non-canonical** prefixes
+  (`org_<16hex>0001`), so they are rejected by `domain.ParseID`. Tests that
+  feed a service whose input validation calls `domain.ParseID`/`ParseSlug`
+  must seed rows with real `domain.NewID(...)` values, not factory IDs — see
+  `seedDomainOrg` in `projectservice_test.go`. Factory fixtures are still fine
+  for direct repository/SQL tests that do not go through domain validation.
+- Unit tests for the store's pure decision logic (input validation, error
+  mapping, constraint classification, constructor guards) live in
+  `package store` (`internal_test.go`) and run without a database. Everything
+  that touches Postgres is a `package store_test` integration test.
