@@ -9,15 +9,25 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/JuribaDev/yalla/internal/controlplane/policy"
 	"github.com/JuribaDev/yalla/internal/controlplane/runtime"
 	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
 	"github.com/JuribaDev/yalla/internal/output"
 )
 
+// newTestHandler builds a NewHandler with canned authorization dependencies
+// for tests that exercise the public surface (the bootstrap and discovery
+// routes). The fake authenticator never authenticates a request, which is all
+// the public routes need; the authenticated /v1/me route has its own
+// auth-aware coverage in me_test.go.
+func newTestHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, logger *slog.Logger) http.Handler {
+	return NewHandler(build, readiness, meta, fakeAuthenticator{}, policy.NewEngine(), logger)
+}
+
 func TestHandlerServesBootstrapEndpoints(t *testing.T) {
 	t.Parallel()
 
-	handler := NewHandler(runtime.BuildInfo{
+	handler := newTestHandler(runtime.BuildInfo{
 		Version: "1.2.3",
 		Commit:  "abc123",
 		Date:    "2026-05-14T00:00:00Z",
@@ -93,7 +103,7 @@ func TestHandlerServesBootstrapEndpoints(t *testing.T) {
 func TestHandlerReturnsStableNotFoundEnvelope(t *testing.T) {
 	t.Parallel()
 
-	handler := NewHandler(runtime.BuildInfo{}, nil, nil, nil)
+	handler := newTestHandler(runtime.BuildInfo{}, nil, nil, nil)
 	req := httptest.NewRequest(http.MethodGet, "/missing", nil)
 	rec := httptest.NewRecorder()
 
@@ -128,7 +138,7 @@ func TestReadyzReflectsReadinessTransitions(t *testing.T) {
 	t.Parallel()
 
 	readiness := runtime.NewReadiness("migrations")
-	handler := NewHandler(runtime.BuildInfo{}, readiness, nil, nil)
+	handler := newTestHandler(runtime.BuildInfo{}, readiness, nil, nil)
 
 	get := func() *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
@@ -226,7 +236,7 @@ func TestVersionEndpointReportsSchemaAndMigrationVersion(t *testing.T) {
 	// With a populated Meta the resolved migration version is reported.
 	meta := runtime.NewMeta()
 	meta.SetMigrationVersion("0042")
-	got := decodeVersion(t, NewHandler(build, nil, meta, nil))
+	got := decodeVersion(t, newTestHandler(build, nil, meta, nil))
 	want := versionPayload{
 		Version:          "3.4.5",
 		Commit:           "deadbee",
@@ -243,7 +253,7 @@ func TestVersionEndpointReportsSchemaAndMigrationVersion(t *testing.T) {
 
 	// With a nil Meta the migration version falls back to "unknown" rather
 	// than panicking or emitting an empty string.
-	got = decodeVersion(t, NewHandler(build, nil, nil, nil))
+	got = decodeVersion(t, newTestHandler(build, nil, nil, nil))
 	if got.MigrationVersion != runtime.MigrationVersionUnknown {
 		t.Errorf("migration_version with nil meta = %q, want %q",
 			got.MigrationVersion, runtime.MigrationVersionUnknown)
@@ -270,7 +280,7 @@ func TestReadyzReportsDependencyChecks(t *testing.T) {
 	healthy.MarkReady("database")
 	healthy.MarkReady("migrations")
 	healthy.MarkReady("queue")
-	rec := get(NewHandler(runtime.BuildInfo{}, healthy, nil, nil))
+	rec := get(newTestHandler(runtime.BuildInfo{}, healthy, nil, nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("healthy status = %d, want 200; body %s", rec.Code, rec.Body.String())
 	}
@@ -330,7 +340,7 @@ func TestReadyzReportsDependencyChecks(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			rec := get(NewHandler(runtime.BuildInfo{}, tc.readiness, nil, nil))
+			rec := get(newTestHandler(runtime.BuildInfo{}, tc.readiness, nil, nil))
 			if rec.Code != http.StatusServiceUnavailable {
 				t.Fatalf("status = %d, want 503; body %s", rec.Code, rec.Body.String())
 			}
@@ -390,7 +400,7 @@ func requestIDOf(t *testing.T, body []byte) string {
 func TestHandlerGeneratesRequestIDForEnvelopeAndHeader(t *testing.T) {
 	t.Parallel()
 
-	handler := NewHandler(runtime.BuildInfo{}, nil, nil, nil)
+	handler := newTestHandler(runtime.BuildInfo{}, nil, nil, nil)
 
 	// Cover a success envelope (/healthz), an error envelope from a route
 	// that writes one directly (/readyz, 503), and the synthesised
@@ -403,7 +413,7 @@ func TestHandlerGeneratesRequestIDForEnvelopeAndHeader(t *testing.T) {
 		path    string
 	}{
 		{"success envelope", handler, "/healthz"},
-		{"error envelope", NewHandler(runtime.BuildInfo{}, unready, nil, nil), "/readyz"},
+		{"error envelope", newTestHandler(runtime.BuildInfo{}, unready, nil, nil), "/readyz"},
 		{"not found envelope", handler, "/missing"},
 	}
 
@@ -430,7 +440,7 @@ func TestHandlerGeneratesRequestIDForEnvelopeAndHeader(t *testing.T) {
 func TestHandlerEchoesSafeInboundRequestID(t *testing.T) {
 	t.Parallel()
 
-	handler := NewHandler(runtime.BuildInfo{}, nil, nil, nil)
+	handler := newTestHandler(runtime.BuildInfo{}, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	req.Header.Set(telemetry.HeaderRequestID, "caller-supplied-id")
@@ -448,7 +458,7 @@ func TestHandlerEchoesSafeInboundRequestID(t *testing.T) {
 func TestHandlerRejectsUnsafeInboundRequestID(t *testing.T) {
 	t.Parallel()
 
-	handler := NewHandler(runtime.BuildInfo{}, nil, nil, nil)
+	handler := newTestHandler(runtime.BuildInfo{}, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	// A header-injection payload must never be echoed back verbatim.
@@ -474,7 +484,7 @@ func TestHandlerEmitsStructuredRequestLog(t *testing.T) {
 
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	handler := NewHandler(runtime.BuildInfo{}, nil, nil, logger)
+	handler := newTestHandler(runtime.BuildInfo{}, nil, nil, logger)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz?token=topsecretvalue", nil)
 	rec := httptest.NewRecorder()
@@ -523,7 +533,7 @@ func TestHandlerEmitsStructuredRequestLog(t *testing.T) {
 func TestHandlerServesOpenAPIDocument(t *testing.T) {
 	t.Parallel()
 
-	handler := NewHandler(runtime.BuildInfo{Version: "9.9.9"}, nil, nil, nil)
+	handler := newTestHandler(runtime.BuildInfo{Version: "9.9.9"}, nil, nil, nil)
 
 	// Deliberately no Authorization header: the discovery endpoint is public.
 	req := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
@@ -597,7 +607,7 @@ func TestEveryRegisteredRouteIsDocumented(t *testing.T) {
 func TestRegisteredRoutesAreServable(t *testing.T) {
 	t.Parallel()
 
-	handler := NewHandler(runtime.BuildInfo{}, nil, nil, nil)
+	handler := newTestHandler(runtime.BuildInfo{}, nil, nil, nil)
 	table := newRouteTable(runtime.BuildInfo{}, nil, nil)
 
 	for _, ep := range append(endpointsOf(table), openAPIEndpoint()) {
@@ -622,7 +632,7 @@ func TestRegisteredRoutesAreServable(t *testing.T) {
 func TestOpenAPIDocumentRedactsExampleSecrets(t *testing.T) {
 	t.Parallel()
 
-	handler := NewHandler(runtime.BuildInfo{}, nil, nil, nil)
+	handler := newTestHandler(runtime.BuildInfo{}, nil, nil, nil)
 	req := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)

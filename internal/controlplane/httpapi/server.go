@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apienvelope"
+	"github.com/JuribaDev/yalla/internal/controlplane/policy"
 	"github.com/JuribaDev/yalla/internal/controlplane/runtime"
 	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
 	yerr "github.com/JuribaDev/yalla/internal/errors"
@@ -42,11 +43,18 @@ import (
 // accepted — request logging is silently disabled — which suits tests and
 // embedders that do not exercise the logging path.
 //
+// authenticator and engine back the per-route authorization middleware: every
+// route whose OpenAPI metadata declares RequiresAuth is wrapped in RequireAuth
+// for its declared action before it is registered, so an authenticated route
+// is structurally impossible to serve without authentication. Registering an
+// authenticated route with a nil authenticator or engine is a wiring error and
+// panics at startup rather than serving an unprotected endpoint.
+//
 // Routes come from the newRouteTable single source of truth: NewHandler
 // registers every entry on the mux and generates the OpenAPI document
 // (GET /openapi.json) from the same table, so a served route is always a
 // documented route.
-func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, logger *slog.Logger) http.Handler {
+func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, authenticator Authenticator, engine *policy.Engine, logger *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 	build = build.Normalized()
 
@@ -76,7 +84,18 @@ func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter, me
 	})
 
 	for _, rt := range table {
-		mux.HandleFunc(rt.endpoint.Method+" "+rt.endpoint.Path, rt.handler)
+		h := http.Handler(rt.handler)
+		if rt.endpoint.RequiresAuth {
+			if authenticator == nil || engine == nil {
+				// A misconfigured handler must never serve an authenticated
+				// route unprotected. Fail fast at startup, the same way a
+				// broken OpenAPI document does above.
+				panic("httpapi: authenticated route " + rt.endpoint.Method + " " + rt.endpoint.Path +
+					" registered without an authenticator or policy engine")
+			}
+			h = RequireAuth(authenticator, engine, policy.Action(rt.endpoint.RequiredAction), rt.resolver)(h)
+		}
+		mux.HandleFunc(rt.endpoint.Method+" "+rt.endpoint.Path, h.ServeHTTP)
 	}
 
 	routed := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -369,7 +369,7 @@ func TestBearerToken(t *testing.T) {
 // public endpoints" leg of the BE-0020 acceptance criteria.
 func TestPublicRoutesNeedNoCredential(t *testing.T) {
 	t.Parallel()
-	handler := NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, nil)
+	handler := newTestHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, nil)
 	for _, path := range []string{"/healthz", "/version", "/openapi.json"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		rec := httptest.NewRecorder()

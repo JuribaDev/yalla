@@ -7,6 +7,7 @@ import (
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apienvelope"
 	"github.com/JuribaDev/yalla/internal/controlplane/openapi"
+	"github.com/JuribaDev/yalla/internal/controlplane/policy"
 	"github.com/JuribaDev/yalla/internal/controlplane/runtime"
 	yerr "github.com/JuribaDev/yalla/internal/errors"
 )
@@ -15,6 +16,7 @@ import (
 const (
 	tagOperations = "operations"
 	tagMeta       = "meta"
+	tagIdentity   = "identity"
 )
 
 // apiRoute couples a served HTTP route with the OpenAPI metadata that
@@ -23,9 +25,16 @@ const (
 // same entries into the generated OpenAPI document, so a route can never be
 // served without being documented. TestEveryRegisteredRouteIsDocumented
 // enforces that invariant in CI.
+//
+// When endpoint.RequiresAuth is true, NewHandler wraps handler in RequireAuth
+// for endpoint.RequiredAction. resolver derives the policy.Resource the request
+// acts on from its path and query parameters; a nil resolver authorizes against
+// the principal's own organization scope, which suits self and organization-root
+// actions that have no deeper target.
 type apiRoute struct {
 	endpoint openapi.Endpoint
 	handler  http.HandlerFunc
+	resolver ResourceResolver
 }
 
 // healthzPayload is the data block of the GET /healthz success envelope.
@@ -119,6 +128,23 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 					MigrationVersion: migrationVersion,
 				})
 			},
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodGet,
+				Path:               "/v1/me",
+				OperationID:        "getMe",
+				Summary:            "Current principal identity",
+				Description:        "Returns the identity of the authenticated principal — its id, kind, home organization, organization role, and scoped grants — exactly as the control plane resolved it from the request credential. The response is derived from the authenticated principal alone and never reveals another tenant's data. It carries no credential material.",
+				Tags:               []string{tagIdentity},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionAuthMe),
+				SuccessDescription: "The authenticated principal's identity.",
+			},
+			// A nil resolver authorizes against the principal's own organization
+			// scope. auth.me is a CapSelf action — allowed for any authenticated,
+			// enabled principal — so the endpoint has no deeper resource target.
+			handler: meHandler(),
 		},
 	}
 }

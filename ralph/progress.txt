@@ -32,6 +32,91 @@
 - Typed Dokploy client (internal/controlplane/dokploy.Client): customer/handler code NEVER calls Dokploy — only worker/provisioner code, through this typed wrapper. The client exposes Yalla intents (EnsureProject/EnsureService/DeployService/ReadDeploymentLogs/RemoveService/...), not raw Dokploy ops. The Dokploy token is injected via Config.Token, held unexported, exposed by no method, and redacted by Client.LogValue. "Ensure" intents are idempotent against Yalla's source of truth: an optional ExistingID does GET+verify, an empty one does POST+create (the worker records the returned Dokploy ID in Postgres). Only idempotent methods (GET, DELETE) are retried — never POST — and only on apierr.Retryable errors, with bounded exponential backoff; each attempt gets a per-request context timeout and forwards X-Request-Id/X-Correlation-Id from telemetry.FromContext. Every failure maps onto the apierr taxonomy (400->Invalid, 401/403->Internal as a non-retryable Yalla misconfig, 404->NotFound, 409->Conflict, 429/5xx/transport->DokployUnavailable, deadline->Timeout(DependencyDokploy)); the redacted upstream body is wrapped only as the log-only cause, never a client-facing Message. Normal tests run against dokployfake; the client touches no Postgres.
 - Dokploy provisioning has two pure, no-I/O layers under internal/controlplane/dokploy that the worker composes: the Mapper (mapping.go) is the ID-resolution layer — top-down translation of the Yalla* hierarchy into Ensure*Input intents, each child method taking the parent's resolved Dokploy ID; the Renderer (renderer.go) is the declarative-content layer — Render(RenderInput) -> RenderedSpec resolves variables (ascending precedence org<project<environment<service), zero-fills ResourceLimits from tier defaults, normalises BuildSettings, and emits deterministic names/labels/domains, needing no resolved parent IDs. Inapplicable fields are DROPPED, not errored (engine for non-db, role for db, cron_schedule for non-cron, domains for non-web) — mirror this convention for any new provisioning shape. RenderedSpec carries verbatim variable values for the worker; RenderedSpec.Summary() / LogValue redact EVERY variable value (not just Secret-flagged) for logs/audit. Golden tests use testutil.GoldenJSON + the global -update-golden flag, goldens live in testdata/<feature>/.
 - Request input validation goes through internal/controlplane/validate: build a validate.New() Collector, call validators (Name/Slug/ID/Path/URL/Domain/Resources/EnvVars/GitRepoURL/GitBranch/GitCommit/ImageRef) against it, return c.Err() — nil or one apierr.InvalidInput carrying every collected violation (no short-circuit). A FieldViolation.Reason NEVER echoes the submitted value (classification text + bounds only) — this is what lets a secret env var be rejected without leaking. Policy-dependent rules are passed in as plain options the caller resolves (Domain takes DomainOptions{AllowWildcard}, set only after feature flag + quota say yes); validate imports no config/quota. EnvVars separates secret vs non-secret via a distinct ".secret[i]" path segment and a larger secret length ceiling. validate.DecodeJSON is the strict JSON body decoder: size-capped, rejects unknown fields + trailing data, every failure is a body-free apierr.Invalid. Every string validator has a fuzz target seeded with long strings / invalid UTF-8 / path traversal / control chars.
+- HTTP endpoints are data-driven entries in internal/controlplane/httpapi/routes.go newRouteTable: apiRoute{endpoint, handler, resolver}. Authorization is declarative — set openapi.Endpoint.RequiresAuth=true + RequiredAction=string(policy.ActionX), and NewHandler auto-wraps the handler in RequireAuth(authenticator, engine, action, resolver) before registering it, so a served authenticated route is structurally impossible without authorization. TestEveryAuthenticatedRouteHasMappedAction enforces the RequiresAuth<->RequiredAction invariant in CI. The optional apiRoute.resolver derives the policy.Resource from path/query params; leave it nil for self/org-root actions (RequireAuth then authorizes against the principal's own org scope). NewHandler signature is (build, readiness, meta, authenticator, engine, logger); httpapi tests build it through the newTestHandler helper (canned fakeAuthenticator + policy.NewEngine()). Handlers stay thin: read policy.PrincipalFromContext, render via apienvelope.WriteData/WriteError. cmd/yalla-api wires the real stack at startup (pgxpool -> store.New -> store.NewCredentialReader -> auth.NewAuthenticator + policy.NewEngine) and requires YALLA_DATABASE_URL in every profile.
+
+## 2026-05-15 - BE-0040
+- What was implemented: GET /v1/me, the first authenticated customer-facing
+  endpoint — it reports the authenticated principal's own identity.
+  - internal/controlplane/httpapi/me.go: mePayload/meGrant response DTOs
+    (principal_id, kind, organization_id, role, grants[], disabled — all
+    non-secret), principalPayload() projection (grants is always a non-nil
+    slice so the wire carries [] not null), and meHandler() — a thin handler
+    that reads policy.PrincipalFromContext and renders via apienvelope.WriteData,
+    with a defensive typed-internal-error path if no principal is present.
+  - routes.go: added the /v1/me apiRoute (RequiresAuth=true, RequiredAction=
+    auth.me, tag "identity", operationId getMe); added the resolver field to
+    apiRoute and the tagIdentity constant. newRouteTable signature unchanged.
+  - server.go: NewHandler now takes (build, readiness, meta, authenticator,
+    engine, logger). Its registration loop wraps every RequiresAuth route in
+    RequireAuth(authenticator, engine, action, resolver) — and panics at
+    startup if such a route is registered without an authenticator/engine,
+    the same fail-fast posture as the OpenAPI marshal panic.
+  - cmd/yalla-api/main.go: wires the real authenticated request path —
+    opens the pgxpool, builds store.New -> store.NewCredentialReader ->
+    auth.NewAuthenticator (signing keys from config) + policy.NewEngine(),
+    requires YALLA_DATABASE_URL in every profile, closes the pool on shutdown,
+    and the "database" readiness gate is now a real pool.Ping probe (the
+    migrations/queue gates stay placeholder marks for their own stories).
+  - Tests: me_test.go — happy path (owner principal w/ scoped grant), service
+    account principal + grants-renders-as-[] proof, unauthenticated (401
+    E_AUTH), invalid credentials (401 E_AUTH, identical contract), disabled
+    principal (403 E_FORBIDDEN carrying the stable policy reason), dependency
+    failure stays a typed 5xx not a 401, request_id propagation to envelope +
+    header, OpenAPI documentation/security/x-required-action assertions,
+    defensive no-principal -> E_INTERNAL, and a focused principalPayload unit
+    test. server_test.go/middleware_test.go callers updated via the new
+    newTestHandler helper.
+- Files changed: internal/controlplane/httpapi/{me.go,me_test.go} (new),
+  internal/controlplane/httpapi/{routes.go,server.go,server_test.go,
+  middleware_test.go}, internal/controlplane/httpapi/AGENTS.md (new),
+  cmd/yalla-api/main.go, ralph/prd.json, ralph/progress.txt.
+- Verification run: gofmt -w .; goimports -w .; go mod tidy; go build ./...;
+  go vet ./...; go test ./...; go test -race ./....
+- Results: all passed. goimports present; golangci-lint, staticcheck,
+  govulncheck still not installed locally (documented in earlier iterations).
+- Remaining risks / follow-ups:
+  - "Record an audit event for every mutating request and every denied
+    authorization decision" is N/A for GET /v1/me: it is a non-mutating read,
+    and RequireAuth does not yet emit audit events for denied decisions (no
+    audit wiring exists in the HTTP path). Auditing denied authorization
+    decisions in RequireAuth is a cross-cutting follow-up that should land as
+    its own story so every endpoint gets it uniformly, not piecemeal.
+  - "Unit tests cover ... validation failure" and "Integration tests run
+    against isolated Postgres migrations": GET /v1/me has no request body, no
+    path params, and no query params, so there is no input to validate; and
+    the handler touches no database (the principal is fully resolved by the
+    auth layer onto the request context), so there is no Postgres integration
+    surface. The unauthenticated / invalid-credential / disabled-principal
+    tests cover the rejection space instead.
+  - BE-0041 (contract tests for GET /v1/me) and BE-0042 (policy matrix
+    coverage for GET /v1/me) are now unblocked — me_test.go already covers
+    much of BE-0041's surface, but those remain separate PRD stories.
+  - cmd/yalla-api now fails fast without YALLA_DATABASE_URL in every profile
+    (config only required it for strict profiles). This is deliberate: the
+    control plane cannot authenticate a request without its credential store,
+    and there is no separate "bootstrap the DB pool" story in the PRD. Local
+    dev uses the repo docker-compose Postgres.
+- Learnings for future iterations:
+  - The endpoint triplet pattern in the PRD (implement @ p2, contract tests
+    @ p2, policy matrix @ p1) means the p1 story is always blocked on its p2
+    implementation. The implementation story is the real unblocker; pick it
+    even though a later sibling carries the higher priority number.
+  - NewHandler had ~15 call sites across httpapi tests. Adding a thin
+    newTestHandler(build, readiness, meta, logger) helper that injects canned
+    auth deps kept the churn to one helper + a mechanical rename, and is the
+    right move whenever a widely-called constructor gains a dependency.
+  - openapi.Endpoint already carries RequiresAuth + RequiredAction, so the
+    route table needed no auth-dependency parameters — NewHandler reads those
+    fields and wraps the handler itself. Only the optional ResourceResolver
+    needed a new apiRoute field.
+  - pgxpool.New / pgx.ParseConfig errors can echo the connection string, so
+    a pool-construction failure is logged with a fixed secret-free message,
+    NOT err.Error(). pool.Ping errors are connection-level and safe to log.
+  - policy.Engine.Decide denies a Disabled principal (ReasonDeniedPrincipalDisabled)
+    BEFORE the CapSelf shortcut, so even a self action like auth.me is 403 for
+    a revoked principal — that is the clean "authorization failure" test case
+    for any self endpoint.
+---
 
 ## 2026-05-15 - BE-0036
 - What was implemented: internal/controlplane/validate, the centralized
