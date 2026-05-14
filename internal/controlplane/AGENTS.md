@@ -110,3 +110,15 @@ do not mix customer API handlers into CLI packages.
   endpoints emit `security: []`; authenticated ones require `ApiKeyAuth`. Maps
   marshal with sorted keys so the artifact is byte-stable. Any sample value
   that looks like a secret must use `output.Sentinel`, never a real credential.
+- Resource identity, slug, and Dokploy-naming primitives live in
+  `internal/controlplane/domain`. Generate IDs with `domain.NewID(kind)` (never
+  hand-build a `<prefix>_...` string) and validate inbound ones with
+  `domain.ParseID`; the kind prefixes (`org_`, `usr_`, `key_`, `proj_`, `env_`,
+  `svc_`, `dep_`, `job_`) and the encoding are a stable contract. Human labels
+  become slugs through `domain.NormalizeSlug` (lenient) or `domain.ParseSlug`
+  (strict); slug uniqueness within a parent scope is a database constraint, not
+  something this package enforces. Build the Dokploy-side name with
+  `domain.DokployName(label, id)` — it embeds the full Yalla ID so the name is
+  deterministic and Docker-safe. The package returns its own sentinel errors
+  (`ErrInvalidID`, `ErrInvalidSlug`, …) with no HTTP semantics; the handler
+  layer maps them to `apierr.InvalidInput`.

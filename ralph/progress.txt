@@ -641,3 +641,90 @@
     files are package migrate, so they cannot import testutil even though
     they're "just tests". Bootstrap-layer packages keep local helpers.
 ---
+
+## 2026-05-14 - BE-0012
+- What was implemented: stable domain identity, slug, and Dokploy-naming
+  primitives for every control-plane resource (new package
+  internal/controlplane/domain).
+  - domain/id.go: Kind type + the 8 canonical kinds (org/usr/key/proj/env/svc/
+    dep/job) backed by a kinds set; ID type = "<kind>_<26-char crockford-base32
+    suffix>" carrying 128 bits of crypto/rand entropy. NewID/MustNewID,
+    ParseID/MustParseID (rejects missing separator, unknown kind, wrong-length
+    suffix, non-Crockford chars — never echoes untrusted input), and
+    ID.Valid/Kind/IsKind/String. Lowercase Crockford alphabet (i/l/o/u excluded)
+    via base32.NewEncoding(...).WithPadding(NoPadding).
+  - domain/slug.go: Slug type; NormalizeSlug (lenient: Unicode case-fold via
+    cases.Fold so ß->ss, NFD + strip Mn marks so é->e, NFKC compatibility fold
+    so ligatures/full-width -> ascii, lowercase, collapse non-[a-z0-9] runs to
+    single hyphens, trim, truncate to MaxSlugLen=30 — idempotent, output always
+    passes ValidateSlug); ValidateSlug (strict canonical check) + ParseSlug.
+    The transform.Chain is stateful + not concurrency-safe, so it is pooled via
+    sync.Pool (slugTransformerPool), one per in-flight call.
+  - domain/dokployname.go: DokployName(label, id) = "<slug>-<id with _->->",
+    deterministic + globally unique + Docker-safe (<=63 chars; MaxSlugLen 30
+    chosen so slug + longest-prefixed ID fits). Empty/unusable label falls back
+    to the resource kind. ValidateDokployName + DokployNameMaxLen const.
+  - domain/errors.go: sentinel errors (ErrUnknownKind/ErrInvalidID/
+    ErrInvalidSlug/ErrInvalidDokployName) with NO HTTP semantics — handler layer
+    maps them to apierr.InvalidInput. domain imports neither apierr nor
+    apienvelope.
+  - Tests: id_test.go (kind validity, 4000-iteration NewID round-trip +
+    uniqueness, ParseID table incl. excluded i/l/o/u + uppercase + bad length,
+    zero-value, IsKind wrong-kind, error-does-not-echo-input, Must* panics);
+    slug_test.go (normalize table incl. diacritics/ß/ligature/full-width/emoji,
+    truncation never leaves trailing hyphen, empty-input errors, ValidateSlug +
+    ParseSlug tables); dokployname_test.go (embeds id, deterministic across
+    equivalent labels, empty-label kind fallback, invalid-id error, length stays
+    <=63 for every kind, ValidateDokployName table); fuzz_test.go
+    (FuzzNormalizeSlug invariants + idempotency, FuzzValidateSlug, FuzzParseID
+    round-trip + Dokploy-safe).
+  - go.mod: golang.org/x/text v0.29.0 promoted from indirect to direct (already
+    in the module graph; no go.sum change).
+  - AGENTS.md: added a domain bullet to internal/controlplane/AGENTS.md and a
+    new internal/controlplane/domain/AGENTS.md.
+- Files changed: internal/controlplane/domain/{id.go,slug.go,dokployname.go,
+  errors.go,id_test.go,slug_test.go,dokployname_test.go,fuzz_test.go,AGENTS.md}
+  (new), internal/controlplane/AGENTS.md, go.mod, ralph/prd.json,
+  ralph/progress.txt.
+- Verification run: gofmt -w .; go mod tidy; go build ./...; go vet ./...;
+  go test ./...; go test -race ./...; plus 5s each of go test -fuzz for
+  FuzzNormalizeSlug / FuzzValidateSlug / FuzzParseID.
+- Results: all passed (fuzz: ~474k/33k/2.4M execs respectively, 0 failures, no
+  testdata/fuzz crash files written). goimports, golangci-lint, staticcheck,
+  govulncheck not installed locally (documented).
+- Remaining risks / follow-ups:
+  - testutil/fixtures.go builds FAKE deterministic IDs with its own prefixes
+    (it uses "prj" where domain uses "proj") — deliberately independent of the
+    domain package. When BE-0013 lands real domain tables, a repository-backed
+    seeder should mint real domain.NewID values; the testutil structs are the
+    shape that seeder will consume. Aligning testutil's fake prefixes with the
+    domain kinds is optional cleanup, not required.
+  - Slug uniqueness "within parent scope" (acceptance #2) is half here: domain
+    guarantees well-formedness; the per-scope UNIQUE constraint lands with the
+    BE-0013 tenant-hierarchy migration.
+  - Acceptance #3 ("Dokploy names include deterministic Yalla IDs"): DokployName
+    embeds the full ID. The actual Dokploy mapping (org->project->env->service)
+    is consumed by the provisioning worker stories, not this one.
+  - Acceptance #5-7 (JSON envelopes / authz / not-found / Postgres integration)
+    are N/A for a pure domain-primitive package with no HTTP or DB surface;
+    covered success + extensive validation-failure + fuzz instead. #8
+    (redaction): IDs and slugs are not secrets — N/A, but error messages
+    deliberately do not echo untrusted input (TestParseIDErrorDoesNotEchoInput).
+- Learnings for future iterations:
+  - golang.org/x/text/transform.Chain is STATEFUL and NOT safe for concurrent
+    use. A package-level transform.Chain shared across t.Parallel() subtests
+    panics in (*link).src. Pool it (sync.Pool) or build per-call. This will
+    bite any future package doing Unicode normalisation.
+  - cases.Fold() (golang.org/x/text/cases) does full Unicode case folding,
+    which is what maps ß -> "ss"; strings.ToLower and NFKC do NOT. Put it first
+    in the chain, before NFD/NFKC.
+  - 16 random bytes encode to exactly 26 base32 chars with no padding (5 bytes
+    -> 8 chars; 16 = 3*5 + 1 -> 24 + 2 = 26). Crockford lowercase alphabet is
+    "0123456789abcdefghjkmnpqrstvwxyz" (i/l/o/u removed).
+  - Go fuzz: f.Add seeds live in code; generated "interesting" corpus goes to
+    the build cache, NOT testdata/ — testdata/fuzz/ files appear only on a
+    failure. A clean fuzz run leaves the working tree untouched.
+  - Keep domain primitives free of apierr/apienvelope imports — return plain
+    sentinel errors and let the HTTP layer translate. This keeps the dependency
+    arrow pointing one way (httpapi -> domain, never the reverse).
+---
