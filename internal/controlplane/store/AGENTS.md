@@ -232,3 +232,25 @@ Postgres persistence for control-plane source-of-truth state.
   `SELECT ... FOR UPDATE NOWAIT` raises `*pgconn.PgError` with SQLSTATE `55P03`
   (`lock_not_available`) when another transaction holds the row — see
   `quota_schema_test.go`'s `TestQuotaReservationConcurrentRowLock`.
+- A state-machine table (`provisioning_jobs`, `store/job.go`) keeps the
+  authoritative transition graph in Go (`JobStatus.CanTransitionTo`, backed by
+  the `jobTransitions` map) and lets the DB CHECK only the *closed status set*
+  and per-status invariants ("terminal iff `finished_at` set", "lease held iff
+  `status='running'`"). The mutating method (`Transition`) locks the row
+  `FOR UPDATE`, validates the edge **before** any write (illegal edge =
+  `apierr.Conflict`), and derives every dependent column (lease, attempts,
+  timestamps) from the target status — a caller passes an options struct
+  (`JobTransition`), never a full row, so it cannot produce a CHECK-violating
+  shape.
+- When a migration **wires a foreign key an earlier migration deferred** (e.g.
+  `0008` adds `quota_reservations.job_id -> provisioning_jobs` that `0006` left
+  unconstrained), add it with a plain `ALTER TABLE ... ADD CONSTRAINT` in the
+  later `*.up.sql`, and `DROP CONSTRAINT ... IF EXISTS` it **first** in that
+  migration's `*.down.sql` — it depends on the new table's composite `UNIQUE`
+  key.
+- The store layer is the redaction chokepoint for **error-summary-style**
+  free-text columns it owns (`provisioning_jobs.error_summary` is run through
+  `output.NewRedactor()` on every `Insert`/`Transition`). This differs from
+  `audit_events.metadata`, which the *service* (`internal/controlplane/audit`)
+  redacts and the store treats as already-clean — match whichever contract the
+  column's existing owner documents.

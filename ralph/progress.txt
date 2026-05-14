@@ -25,6 +25,7 @@
 - Quota schema (0006_quota_policy_schema): a closed enum reused across tables is a Postgres DOMAIN over text + CHECK (here quota_resource over 14 dimensions, quota_enforcement_mode over hard/soft/metered/disabled); DROP DOMAIN goes in the down migration after the tables. quota_policies holds one limit per (scope, resource) where a row is EITHER a plan_default (text plan, no plans-table FK yet) OR an organization override — enforced by one table CHECK + two partial unique indexes; the checker resolves "org override else plan default". quota_usage is one counter row per (org, resource); quota_reservations are short-lived (amount>0, status active->committed|released|expired, expires_at, settled_at tied to non-active status by CHECK) and expose UNIQUE (organization_id, id) as a composite-FK target; usage_events is append-only (no updated_at/trigger, signed delta) and links reservations via a tenant-safe composite FK. An optional cross-table link inside a tenant uses a plain composite FK (MATCH SIMPLE) — NOT ON DELETE SET NULL, which would null the NOT NULL organization_id.
 - Quota enforcement: the QuotaRepository (internal/controlplane/store/quota.go) is the persistence half (EffectiveLimit / LockUsage / SumActiveReservations / InsertReservation, all tenant-scoped, mutations on *Tx) and the quota.Checker (internal/controlplane/quota) is the store.QuotaReserver service half. A hard limit is enforced by LockUsage doing INSERT ... ON CONFLICT DO NOTHING then SELECT ... FOR UPDATE on the quota_usage counter row — that lock serialises concurrent reservers so they cannot both over-allocate; the decision is current+reserved+requested <= limit, reserved = SUM of active non-expired reservations. Soft/metered limits record but never reject; disabled/no-policy allow with no write. A rejection is apierr.QuotaExceeded wrapping a recoverable quota.ExceededDetail{Resource,Current,Reserved,Requested,Limit}. Quota accounting rows have no domain.Kind — ids are minted locally with a prefixed crypto/rand helper.
 - Audit log (0007_audit_events, store/audit.go, internal/controlplane/audit): the immutable audit log records every authorization decision, allowed AND denied. Immutability is enforced at two layers — the table has no updated_at and a BEFORE UPDATE trigger (audit_events_reject_update) that rejects every UPDATE in the database, and AuditRepository exposes only Append + tenant-scoped ListByOrganization (no update/delete); row DELETE stays reachable only via the organizations ON DELETE CASCADE. An append-only table that must still cascade on tenant teardown blocks UPDATE only, never DELETE. The audit.Auditor (depends on the narrow Recorder port, satisfied by *store.AuditRepository) is the single place a policy.Decision becomes an AuditEvent: it pulls the principal (policy.PrincipalFromContext) + correlation ids (telemetry.FromContext) off the context, files the event under the principal's org else the resource's org, and REDACTS metadata before persistence — secret-shaped keys (token/secret/password/credential/...) replaced wholesale with output.Sentinel, every other value + the user agent scrubbed by an output.Redactor. store treats metadata as already-redacted; redaction is the audit service's contract. Auditor.Record takes the caller's *store.Tx so an audit write can share the mutation's transaction or run in its own.
+- Provisioning jobs (0008_provisioning_jobs, store/job.go): the durable, idempotent queue of Dokploy provisioning work. The provisioning_jobs table is tenant-scoped (organization_id FK + composite (organization_id, project_id|environment_id|service_id) FKs so a job can never target another tenant's resource), idempotent (UNIQUE (organization_id, idempotency_key)), and exposes UNIQUE (organization_id, id) as a composite-FK target — 0008 also wires the FK that 0006 deferred (quota_reservations.job_id -> provisioning_jobs). DB CHECKs enforce the closed status set, "terminal status iff finished_at set", "lease held iff status=running", and attempts<=max_attempts; the Go state machine (store.JobStatus.CanTransitionTo, backed by the jobTransitions map: queued->running|cancelled, running->succeeded|retrying|failed|dead_letter|cancelled, retrying->running|cancelled, terminals have no edges) is the authoritative validator. JobRepository follows the ProjectRepository pattern (mutations need *Tx, reads take Querier, NotFound for cross-tenant ids); Transition locks the row FOR UPDATE, validates the edge before any write (illegal edge = apierr.Conflict), and derives lease/attempt/timestamp bookkeeping from the target status so a caller cannot leave a CHECK-violating row. error_summary is run through an output.NewRedactor() backstop on every write (Insert + Transition) — the store IS the redaction chokepoint for job errors, unlike audit metadata which the service redacts.
 
 ## 2026-05-14 - BE-0002
 - What was implemented: Backend configuration contract for the control-plane API and worker.
@@ -1672,4 +1673,127 @@
     secret-shaped key IS the secret — replace it wholesale) and a value-based
     rule (output.Redactor for transport patterns). The structural Redactor
     alone does not catch a bare secret stored under e.g. "api_token".
+---
+
+## 2026-05-15 - BE-0024 - Implement provisioning job table
+- What was implemented: the durable provisioning job table — schema, the
+  state machine, and the JobRepository persistence layer.
+  - store/migrate/migrations/0008_provisioning_jobs.{up,down}.sql: the
+    provisioning_jobs table. Carries every field the story requires —
+    job_type, resource targets (project_id/environment_id/service_id),
+    desired_version, idempotency_key, status, attempts, max_attempts,
+    lease_owner, lease_deadline, next_run_at, error_summary — plus payload
+    (jsonb), request_id, correlation_id, and the timestamp columns. Tenant
+    isolation is database-enforced: organization_id FK to organizations
+    (ON DELETE CASCADE) and composite (organization_id, <resource>_id) FKs to
+    projects/environments/services, so a job can never target another tenant's
+    resource. CHECKs enforce the closed 7-status set, "terminal status iff
+    finished_at set", "lease held iff status='running'", and
+    attempts<=max_attempts. UNIQUE (organization_id, idempotency_key) is the
+    idempotency guarantee; UNIQUE (organization_id, id) is the composite-FK
+    target. 0008 also wires the FK that 0006 deferred:
+    quota_reservations.job_id -> provisioning_jobs (organization_id, id),
+    dropped first in the down migration.
+  - store/job.go: JobStatus (the 7 statuses) with Valid/String/Terminal and
+    CanTransitionTo backed by the authoritative jobTransitions map. JobRepository
+    follows the ProjectRepository pattern — Insert/Transition need *Tx, Get/
+    FindByIdempotencyKey/ListByOrganization take Querier, every query tenant-
+    scoped, NotFound for cross-tenant ids. Insert mints a domain.NewID(KindJob),
+    forces a new job to queued/0-attempts, defaults max_attempts and next_run_at,
+    and validates required fields via apierr.InvalidInput. Transition locks the
+    row FOR UPDATE, validates the edge with CanTransitionTo before any write
+    (illegal edge = apierr.Conflict), then derives lease/attempt/timestamp
+    bookkeeping from the target status (claim takes the lease + counts an
+    attempt + rejects past the retry budget; retry releases the lease + sets
+    backoff; terminals release the lease + stamp finished_at). error_summary is
+    run through a package-level output.NewRedactor() on every write.
+  - store/job_internal_test.go: white-box unit tests (no DB) — status set, the
+    full CanTransitionTo matrix, Terminal, redactJobError, payload (un)marshal,
+    nullable helpers, JobTransition.now defaulting, and the nil-tx / invalid-
+    status / validation guards on Insert and Transition.
+  - store/job_test.go: integration tests — insert+get, idempotency conflict,
+    same-key-different-orgs, FindByIdempotencyKey (hit/miss/cross-tenant),
+    cross-tenant Get -> NotFound, ListByOrganization tenant isolation, the full
+    transition lifecycle (claim/succeed), retry-then-reclaim, dead-letter,
+    retry-budget-exhausted, cancellation, invalid transitions (queued->succeeded
+    and terminal->running), transition NotFound, claim-without-lease ->
+    InvalidInput, cross-tenant resource target rejected by composite FK,
+    unknown-org rejected, and the error_summary redaction backstop.
+- Files changed:
+  - internal/controlplane/store/migrate/migrations/0008_provisioning_jobs.up.sql (new)
+  - internal/controlplane/store/migrate/migrations/0008_provisioning_jobs.down.sql (new)
+  - internal/controlplane/store/job.go (new)
+  - internal/controlplane/store/job_internal_test.go (new)
+  - internal/controlplane/store/job_test.go (new)
+  - internal/controlplane/store/AGENTS.md (provisioning job repository note)
+  - ralph/prd.json (BE-0024 passes: true)
+- Verification run (YALLA_TEST_DATABASE_URL set, local Postgres 16 via docker compose):
+  - gofmt -w .: clean; go mod tidy: no changes; go build ./...: clean.
+  - go vet ./...: clean.
+  - go test ./...: all pass.
+  - go test -race ./...: all pass (incl. store, store/migrate, quota).
+  - go test -run TestMigrations ./...: pass — migrate package loads and applies
+    0008 from an empty DB.
+  - goimports, golangci-lint, staticcheck, govulncheck: not installed locally.
+- Acceptance criteria mapping:
+  - "Jobs include type, resource IDs, desired version, idempotency key, status,
+    attempts, lease owner, lease deadline, next run time, redacted error
+    summary": every one is a column on provisioning_jobs and a field on
+    store.ProvisioningJob.
+  - "Jobs transition through queued, running, retrying, succeeded, failed,
+    cancelled, dead_letter": the status CHECK + JobStatus constants cover all 7;
+    Transition drives them.
+  - "State transitions are validated and audited": CanTransitionTo is the
+    authoritative validator (TestJobStatusCanTransitionTo exhaustive matrix +
+    TestJobRepositoryTransitionInvalid). "Audited" — the Transition surface is
+    designed to run inside the same Store.Write as an audit.Auditor.Record call;
+    wiring the Auditor into job transitions lands with the worker-queue/HTTP
+    stories (no composition root or endpoint exists yet).
+  - "Tests cover leases, retries, idempotency, cancellation, dead-lettering":
+    TestJobRepositoryTransitionLifecycle/RetryThenReclaim/DeadLetter/
+    RetryBudgetExhausted/Cancellation, TestJobRepositoryInsertIdempotencyConflict.
+  - "JSON envelopes yalla.output.v1 / yalla.error.v1": N/A for an internal
+    persistence layer with no HTTP surface; the typed apierr it returns renders
+    through apienvelope at the endpoint layer (later HTTP stories).
+  - "Unit tests cover success/validation/authorization/not-found": success +
+    validation (TestJobRepositoryInsertValidationFailures) + not-found
+    (TestJobRepositoryGetCrossTenant / TransitionNotFound) covered.
+    "Authorization failure" is N/A — JobRepository has no authz surface of its
+    own; authorization is composed around it by the unit-of-work / HTTP layer.
+  - "Integration tests run against isolated Postgres migrations": all store
+    integration tests use testutil.RequireMigratedDB and skip without
+    YALLA_TEST_DATABASE_URL.
+  - "Secrets redacted": error_summary is run through output.NewRedactor() on
+    every Insert and Transition; payload carries only non-secret references; no
+    column stores a credential. TestJobRepositoryInsert/Transition redaction
+    tests assert no leak.
+- Remaining risks / follow-ups:
+  - JobRepository is not yet wired into a composition root, the worker queue,
+    or any endpoint. The Postgres-backed Claimer (BE-0025) builds the claim/
+    lease-reaper queries on top of provisioning_jobs_claim_idx /
+    provisioning_jobs_lease_deadline_idx; the projectservice.go JobEnqueuer port
+    will be satisfied by a jobs service that calls JobRepository.Insert.
+  - Resource-target FKs are ON DELETE CASCADE: deleting a project/environment/
+    service cascade-deletes its jobs (consistent with the hierarchy tables and
+    the organizations cascade). If a story later needs job history to survive
+    resource deletion, that is a schema change (re-home the rows), not a code
+    change here.
+  - "Audited" transitions: the hook point is Store.Write composition; the
+    Auditor wiring is deferred to the stories that own a composition root.
+- Learnings for future iterations:
+  - A deferred composite FK (0006 left quota_reservations.job_id unconstrained
+    because provisioning_jobs did not exist yet) is wired with a plain
+    ALTER TABLE ... ADD CONSTRAINT in the later migration, and dropped FIRST in
+    that migration's down file — it depends on the table's composite UNIQUE key.
+  - The provisioning_jobs lease CHECK ties lease_owner+lease_deadline to
+    status='running' (both-set iff running). Transition therefore cannot let a
+    caller hand-set the lease; it derives the lease columns from the target
+    status, which is also why JobTransition is an options struct, not a full row.
+  - mapWriteError already turns a UNIQUE / FK violation into apierr.Conflict,
+    so the idempotency-key collision, the cross-tenant resource FK, and the
+    unknown-org FK all surface as CodeConflict with one conflictMessage — no
+    per-constraint branching needed in the repository.
+  - go test -run TestMigrations ./... is the cheap check that a new migration
+    loads and applies from an empty DB; the migrate package auto-discovers
+    migrations/*.sql via //go:embed, so there is no manifest to update.
 ---
