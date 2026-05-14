@@ -141,6 +141,16 @@ Postgres persistence for control-plane source-of-truth state.
   cross-table link inside a tenant uses a **plain** composite FK — *not*
   `ON DELETE SET NULL`, which would null the `NOT NULL organization_id`; the
   org-level `ON DELETE CASCADE` already cleans both sides.
+- `QuotaRepository` (`quota.go`) is the persistence half of the quota checker:
+  `EffectiveLimit` (org override else plan default, one ordered query),
+  `LockUsage` (`INSERT ... ON CONFLICT DO NOTHING` then `SELECT ... FOR UPDATE`
+  — the concurrency primitive), `SumActiveReservations`, `InsertReservation`.
+  Reads take `Querier`, mutations take `*Tx`, every query tenant-scoped. The
+  `store.QuotaReserver` *service* lives in `internal/controlplane/quota`
+  (`quota.Checker`), not here — `store` only owns the persistence and the port.
+  `QuotaResource`/`EnforcementMode` are typed mirrors of the SQL `DOMAIN`s.
+  Quota accounting rows (`quota_usage`, `quota_reservations`) are **not** domain
+  resources — `newQuotaID` mints their ids locally, no `domain.Kind`.
 
 ## Repository transaction pattern (`store.go`, `project.go`, `projectservice.go`)
 

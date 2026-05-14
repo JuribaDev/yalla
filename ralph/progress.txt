@@ -23,6 +23,7 @@
 - Authorization is internal/controlplane/policy: policy.Engine is a pure, total decision function — Decide(Principal, Action, Resource) -> Decision{Allow, Reason} (stable Reason codes); Authorize/AuthorizeCtx map denials onto typed apierr (Unauthenticated for a missing principal, Forbidden otherwise). Every endpoint maps to exactly one policy.Action; the action lives in policy's defaultActionCatalog (the authoritative requiredAction -> Capability map) — add new actions there or via policy.WithAction. Roles confer Capability sets (self/read/deploy/write/admin/owner/support), not individual actions; six built-ins are fixed, custom roles resolve through a CustomRoleResolver hook. Scoped Grants narrow/widen authority within an org via Scope containment over Organization->Project->Environment->Service; cross-tenant resources are denied by construction except support reads/break-glass. The principal travels on the request context via policy.WithPrincipal/PrincipalFromContext — never thread it through signatures. The store.Authorizer port is satisfied by this engine; store still never imports policy. TestPolicyMatrix exhaustively covers all built-in roles x catalogued actions.
 - Request authentication is internal/controlplane/auth.Authenticator: it resolves any of the three bearer schemes (API key yk_..., human session JWT, internal worker secret) to one auth.Identity{Principal, Method}. Every invalid-credential cause collapses to the single ErrInvalidCredentials sentinel (missing creds = ErrNoCredentials) so no error is a "does this key prefix exist?" oracle; a genuine datastore failure is propagated unchanged as a typed *yerr.Error, never disguised as invalid credentials. The Authenticator depends on the narrow auth.CredentialStore port (+ APIKeyRecord/ServiceAccountRecord DTOs) so auth never imports store; the production adapter is store.CredentialReader (store imports auth, not the reverse). The HTTP wrappers are httpapi.RequireAuth(authenticator, engine, action, ResourceResolver) and httpapi.RequireInternalWorker — they authenticate, attach the principal via policy.WithPrincipal + telemetry.SetOrgID/SetPrincipalID, then authorize: missing creds 401 E_AUTH, invalid 401 E_AUTH (fixed generic message), unauthorized 403 E_FORBIDDEN (stable policy reason), dependency failure keeps its typed 5xx. ResourceResolver nil defaults to the principal's own org scope; pass a path-param resolver so a cross-tenant id is a 403, not a silent allow.
 - Quota schema (0006_quota_policy_schema): a closed enum reused across tables is a Postgres DOMAIN over text + CHECK (here quota_resource over 14 dimensions, quota_enforcement_mode over hard/soft/metered/disabled); DROP DOMAIN goes in the down migration after the tables. quota_policies holds one limit per (scope, resource) where a row is EITHER a plan_default (text plan, no plans-table FK yet) OR an organization override — enforced by one table CHECK + two partial unique indexes; the checker resolves "org override else plan default". quota_usage is one counter row per (org, resource); quota_reservations are short-lived (amount>0, status active->committed|released|expired, expires_at, settled_at tied to non-active status by CHECK) and expose UNIQUE (organization_id, id) as a composite-FK target; usage_events is append-only (no updated_at/trigger, signed delta) and links reservations via a tenant-safe composite FK. An optional cross-table link inside a tenant uses a plain composite FK (MATCH SIMPLE) — NOT ON DELETE SET NULL, which would null the NOT NULL organization_id.
+- Quota enforcement: the QuotaRepository (internal/controlplane/store/quota.go) is the persistence half (EffectiveLimit / LockUsage / SumActiveReservations / InsertReservation, all tenant-scoped, mutations on *Tx) and the quota.Checker (internal/controlplane/quota) is the store.QuotaReserver service half. A hard limit is enforced by LockUsage doing INSERT ... ON CONFLICT DO NOTHING then SELECT ... FOR UPDATE on the quota_usage counter row — that lock serialises concurrent reservers so they cannot both over-allocate; the decision is current+reserved+requested <= limit, reserved = SUM of active non-expired reservations. Soft/metered limits record but never reject; disabled/no-policy allow with no write. A rejection is apierr.QuotaExceeded wrapping a recoverable quota.ExceededDetail{Resource,Current,Reserved,Requested,Limit}. Quota accounting rows have no domain.Kind — ids are minted locally with a prefixed crypto/rand helper.
 
 ## 2026-05-14 - BE-0002
 - What was implemented: Backend configuration contract for the control-plane API and worker.
@@ -1480,5 +1481,101 @@
     the org-level ON DELETE CASCADE still cleans both sides.
   - Schema-story tests live in package store_test and reuse seedOrg from
     schema_test.go; put story-specific seed helpers in the new test file.
+---
+
+## 2026-05-15 - BE-0022
+- Implemented the quota checker service: the QuotaReserver unit of work that
+  enforces an organization's limits before a resource is created or a
+  provisioning job is enqueued.
+- Persistence layer (internal/controlplane/store/quota.go): QuotaRepository
+  following the ProjectRepository transaction pattern — reads take Querier,
+  mutations take *Tx, every query tenant-scoped by organization_id.
+  - QuotaResource (closed set mirroring the quota_resource DOMAIN, 14
+    dimensions) + EnforcementMode constants + reservation status constants.
+  - QuotaLimit / QuotaReservation persistence shapes.
+  - EffectiveLimit: one ordered query resolving "organization override else
+    plan default" for a (org, plan, resource); returns found=false when no
+    policy exists at either scope.
+  - LockUsage: upserts the (org, resource) quota_usage counter row
+    (INSERT ... ON CONFLICT DO NOTHING) then SELECT ... FOR UPDATE — the
+    serialisation primitive that prevents concurrent over-allocation.
+  - SumActiveReservations: COALESCE(SUM(amount)) of active, non-expired
+    reservations for a (org, resource).
+  - InsertReservation: writes a reservation row, mints a prefixed opaque id
+    (newQuotaID) when blank — quota accounting rows are not domain resources
+    so they carry their own id, not a domain.Kind id.
+- Service layer (internal/controlplane/quota/quota.go): Checker implements
+  store.QuotaReserver (compile-time assertion). Reserve validates input,
+  resolves the plan via a PlanResolver (StaticPlanResolver placeholder until a
+  plans table lands), resolves the effective limit, and for a hard limit locks
+  the usage counter, sums active reservations, and rejects when
+  current+reserved+requested > limit. Soft/metered limits are recorded but
+  never rejected; disabled limits and unconfigured resources are allowed with
+  no write. Rejections are apierr.QuotaExceeded with a hint naming
+  current/reserved/requested/limit and a recoverable ExceededDetail wrapped as
+  the cause (quota.DetailOf).
+- Files changed:
+  - internal/controlplane/store/quota.go (new)
+  - internal/controlplane/store/quota_internal_test.go (new, package store)
+  - internal/controlplane/store/quota_repository_test.go (new, package store_test)
+  - internal/controlplane/quota/quota.go (new)
+  - internal/controlplane/quota/quota_test.go (new)
+  - internal/controlplane/quota/doc.go (expanded package doc)
+  - internal/controlplane/store/AGENTS.md (quota repository note)
+  - ralph/prd.json (BE-0022 passes: true)
+- Verification (YALLA_TEST_DATABASE_URL set, local Postgres 16 via docker compose):
+  - gofmt -l: clean; go mod tidy: no changes; go build ./...: clean.
+  - go vet ./...: clean.
+  - go test ./...: all pass.
+  - go test -race ./...: all pass (incl. TestCheckerReserveConcurrentRespectsLimit,
+    9 parallel reservations against a hard limit of 3 — exactly 3 commit).
+- Acceptance criteria mapping:
+  - "Quota checks run inside the same transaction as desired-state writes":
+    Reserve takes the caller's *store.Tx; LockUsage/SumActiveReservations/
+    InsertReservation all run on it, so the check and the reservation commit or
+    roll back atomically with the resource (proven by the rollback assertion in
+    TestCheckerReserveRejectsWhenLimitExhausted).
+  - "Checker returns current, reserved, requested, limit, and recoverable hint
+    in errors": quota.ExceededDetail wrapped in apierr.QuotaExceeded, recovered
+    via quota.DetailOf; hint carries the same four counts.
+  - "Concurrent create requests cannot exceed limits" / "Integration tests
+    simulate parallel requests": TestCheckerReserveConcurrentRespectsLimit.
+  - "Unit tests cover success/validation/authorization/not-found": success +
+    validation are covered; "authorization failure" is N/A — quota runs after
+    the authz step of the unit of work and has no authz surface of its own;
+    "not-found" maps to the no-policy-configured path
+    (TestCheckerReserveAllowsWhenNoPolicyConfigured / EffectiveLimitNotFound).
+  - "JSON envelopes yalla.output.v1 / yalla.error.v1": N/A for an internal
+    service with no HTTP surface; the typed apierr.QuotaExceeded it returns
+    renders through apienvelope at the endpoint layer (later HTTP stories).
+  - "Integration tests run against isolated Postgres migrations": all use
+    testutil.RequireMigratedDB and skip without YALLA_TEST_DATABASE_URL.
+  - "Secrets redacted": no quota table or type stores secrets; ExceededDetail
+    carries only resource names and counts.
+- Remaining risks / follow-ups:
+  - quota_usage.used_value is never incremented by Reserve — only active
+    reservations count against the limit. Committing a reservation (used_value
+    += amount, status -> committed, usage_event row) and releasing/expiring it
+    belong to the reservation-lifecycle / metering stories.
+  - usage_events is intentionally not written here — it is the metering/audit
+    trail and is owned by the metering stories.
+  - PlanResolver is a StaticPlanResolver placeholder; when the plans table
+    lands, a DB-backed resolver replaces it without touching the Checker.
+  - The Checker is not yet wired into a composition root or any endpoint; the
+    project/service create endpoints (later stories) pass *quota.Checker as the
+    store.QuotaReserver.
+- Learnings for future iterations:
+  - The QuotaReserver port signature (Reserve(ctx, *store.Tx, orgID, resource
+    string) error) is fixed by store and ProjectService — the checker reserves
+    exactly one unit per call; do not change the port.
+  - INSERT ... ON CONFLICT DO NOTHING followed by SELECT ... FOR UPDATE in the
+    same tx is the safe upsert-then-lock idiom: a concurrent inserter blocks on
+    the uncommitted insert, so by the time the SELECT runs the row is always
+    visible and lockable — no "0 rows" race.
+  - errors.As works with a value-receiver error type as the As target
+    (var d ExceededDetail; errors.As(err, &d)) — wrap the value, not a pointer.
+  - Quota accounting rows (quota_usage, quota_reservations) have no domain.Kind;
+    mint their ids locally with a prefixed crypto/rand helper rather than
+    expanding the domain package's public Kind contract.
 ---
 
