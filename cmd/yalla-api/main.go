@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/JuribaDev/yalla/internal/controlplane/config"
 	"github.com/JuribaDev/yalla/internal/controlplane/httpapi"
 	"github.com/JuribaDev/yalla/internal/controlplane/runtime"
 )
@@ -22,20 +23,29 @@ var (
 )
 
 func main() {
-	addr := os.Getenv("YALLA_API_ADDR")
-	if addr == "" {
-		addr = ":8080"
+	// Resolve configuration before anything else so a misconfigured process
+	// fails fast with a deterministic exit code instead of half-starting.
+	cfg, err := config.LoadFromEnv()
+	if err != nil {
+		// The config loader guarantees CodeConfig errors never echo secret
+		// values, so logging err.Error() here is safe.
+		slog.Error("invalid backend configuration", "error", err.Error())
+		os.Exit(1)
 	}
 
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel}))
+	slog.SetDefault(logger)
+	logger.Info("yalla control-plane api configuration loaded", slog.Any("config", cfg))
+
 	server := &http.Server{
-		Addr:              addr,
+		Addr:              cfg.APIAddr,
 		Handler:           httpapi.NewHandler(runtime.BuildInfo{Version: Version, Commit: Commit, Date: Date}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	errCh := make(chan error, 1)
 	go func() {
-		slog.Info("yalla control-plane api listening", "addr", addr)
+		logger.Info("yalla control-plane api listening", "addr", cfg.APIAddr)
 		errCh <- server.ListenAndServe()
 	}()
 
@@ -47,12 +57,12 @@ func main() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := server.Shutdown(shutdownCtx); err != nil {
-			slog.Error("api shutdown failed", "error", err)
+			logger.Error("api shutdown failed", "error", err)
 			os.Exit(1)
 		}
 	case err := <-errCh:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			slog.Error("api server failed", "error", err)
+			logger.Error("api server failed", "error", err)
 			os.Exit(1)
 		}
 	}

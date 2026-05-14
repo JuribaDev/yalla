@@ -1,0 +1,42 @@
+## Codebase Patterns
+- Backend code lives under internal/controlplane/<pkg>; CLI stays under internal/cli. Keep HTTP handlers thin.
+- Shared primitives are reused, not reinvented: typed errors come from internal/errors (yerr.New/Newf, CodeConfig, etc.); the redaction sentinel and Redactor come from internal/output.
+- API success envelopes use yalla.output.v1; API errors use yalla.error.v1 (see internal/controlplane/httpapi/server.go).
+- Config is env-only for backend processes (no flags/files): internal/controlplane/config.Load(LookupFunc) layers env vars over per-profile defaults, then validates. cmd/yalla-api and cmd/yalla-worker call config.LoadFromEnv() once at startup and os.Exit(1) on error.
+- Every config/validation failure is a typed yerr CodeConfig error and must NEVER echo a secret value. Tests assert secrets do not appear in error strings, Redacted(), LogValue(), or String().
+- Secret-bearing structs implement slog.LogValuer + fmt.Stringer with redacted views as defence-in-depth.
+- Tests inject dependencies (e.g. config.MapLookup) instead of touching real process env/filesystem. Use t.Parallel().
+- Quality gate before commit: gofmt -w ., go mod tidy, go build ./..., go vet ./..., go test ./..., go test -race ./....
+
+## 2026-05-14 - BE-0002
+- What was implemented: Backend configuration contract for the control-plane API and worker.
+  - internal/controlplane/config/config.go: Env* var name constants (stable contract), Profile type
+    (local/test/staging/production) with IsStrict/Valid, Config struct with typed fields, RedactedConfig
+    projection, Redacted()/LogValue()/String() credential-free views, ActiveSigningKey/FeatureEnabled helpers.
+  - internal/controlplane/config/load.go: Load(LookupFunc) + LoadFromEnv(), per-profile defaults, profile/
+    log-level/feature-flag parsing, Validate() with format checks for every profile and required-field
+    enforcement for strict profiles. All failures are typed yerr.CodeConfig errors that never echo secrets.
+  - internal/controlplane/config/config_test.go: success per profile, defaults, every validation failure
+    path, redaction guarantees (error strings, Redacted JSON, slog LogValue, String), nil-safety.
+  - cmd/yalla-api/main.go + cmd/yalla-worker/main.go: load config at startup, fail fast with os.Exit(1),
+    configure slog level from config, log slog.Any("config", cfg) (auto-redacted via LogValue).
+  - Removed placeholder internal/controlplane/config/doc.go (package doc now lives in config.go).
+- Files changed: internal/controlplane/config/{config.go,load.go,config_test.go} (new),
+  internal/controlplane/config/doc.go (deleted), cmd/yalla-api/main.go, cmd/yalla-worker/main.go,
+  ralph/prd.json, ralph/progress.txt.
+- Verification run: gofmt -w .; go mod tidy; go build ./...; go vet ./...; go test ./...; go test -race ./....
+- Results: all passed. goimports, golangci-lint, staticcheck, govulncheck not installed locally (documented).
+- Remaining risks / follow-ups:
+  - Integration-test acceptance criterion (isolated Postgres migrations) is N/A for a pure config story;
+    it lands with the persistence stories.
+  - "authorization failure / not-found" unit-test criterion is boilerplate copied across all stories and
+    does not apply to a config contract; covered success + validation-failure thoroughly instead.
+  - Signing-key minimum length is 16 chars; revisit if a real signing scheme imposes a different bound.
+- Learnings for future iterations:
+  - The PRD has 614 stories; acceptance criteria 5-8 are boilerplate repeated on every story. Implement the
+    applicable ones and note N/A for the rest rather than forcing irrelevant tests.
+  - ralph/prd.json is ~833KB; do not Read it whole. grep -n for the story id, then Read a narrow window to
+    Edit. Process the JSON with ctx_execute_file when you only need to query it.
+  - internal/errors exposes yerr.Error implementing Unwrap, so stderrors.As works through wrapped errors.
+  - slog.GroupValue needs []any; slog.Group inside it also needs variadic any — wrote an anyAttrs adapter.
+---

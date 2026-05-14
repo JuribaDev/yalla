@@ -923,8 +923,8 @@
       ],
       "type": "foundation",
       "priority": 1,
-      "passes": true,
-      "notes": "Implemented internal/controlplane/config: stable Env* var contract (YALLA_PROFILE/API_ADDR/PUBLIC_URL/DATABASE_URL/SIGNING_KEYS/DOKPLOY_BASE_URL/DOKPLOY_TOKEN/LOG_LEVEL/FEATURE_FLAGS), four profiles (local/test/staging/production) with per-profile defaults and strict-profile required-field enforcement, fail-fast typed CodeConfig validation that never echoes secrets, and Redacted()/LogValue()/String() credential-free views. Wired LoadFromEnv into cmd/yalla-api and cmd/yalla-worker startup. Unit tests cover success per profile, every validation failure path, and redaction guarantees. gofmt, go build, go vet, go test ./..., and go test -race ./... pass. goimports/golangci-lint/staticcheck not installed locally. Auth-failure/not-found criteria are N/A for a pure config contract; integration-test criterion deferred to persistence stories."
+      "passes": false,
+      "notes": ""
     },
     {
       "id": "BE-0003",
