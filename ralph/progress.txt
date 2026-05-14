@@ -7,6 +7,10 @@
 - Secret-bearing structs implement slog.LogValuer + fmt.Stringer with redacted views as defence-in-depth.
 - Tests inject dependencies (e.g. config.MapLookup) instead of touching real process env/filesystem. Use t.Parallel().
 - Quality gate before commit: gofmt -w ., go mod tidy, go build ./..., go vet ./..., go test ./..., go test -race ./....
+- Process lifecycle is owned by internal/controlplane/runtime: RunHTTPServer(ctx, srv, shutdownTimeout, logger) for the API and worker.Loop for background jobs. Backend binaries derive shutdown from one signal.NotifyContext and pass cfg.ShutdownTimeout; they do not hand-roll select/Shutdown blocks.
+- runtime.Readiness holds named startup gates (concurrency-safe). httpapi.NewHandler takes a runtime.ReadinessReporter; /readyz must be 503 yalla.error.v1 E_SERVER until every gate passes, 200 yalla.output.v1 after. /healthz is liveness-only and never depends on downstream checks.
+- worker.Loop depends only on the Claimer/Lease interfaces so the durable job store can land later. The loop checks ctx before every Claim (stop claiming on shutdown) and releases interrupted in-flight leases on a context.WithoutCancel context so the release survives shutdown. A job whose Run returns nil is committed and must never be released.
+- Lifecycle code is tested with fakes (fake httpServer, fake Claimer/Lease) — no real sockets, no live deps.
 
 ## 2026-05-14 - BE-0002
 - What was implemented: Backend configuration contract for the control-plane API and worker.
@@ -39,4 +43,66 @@
     Edit. Process the JSON with ctx_execute_file when you only need to query it.
   - internal/errors exposes yerr.Error implementing Unwrap, so stderrors.As works through wrapped errors.
   - slog.GroupValue needs []any; slog.Group inside it also needs variadic any — wrote an anyAttrs adapter.
+---
+
+## 2026-05-14 - BE-0003
+- What was implemented: Service lifecycle and graceful shutdown for the API and worker.
+  - internal/controlplane/runtime/lifecycle.go (new): Readiness type — concurrency-safe named
+    startup gates (NewReadiness/Set/MarkReady/Ready/Snapshot/PendingGates) with the
+    ReadinessReporter interface; RunHTTPServer(ctx, srv, shutdownTimeout, logger) — runs
+    ListenAndServe in a goroutine, returns early on a pre-shutdown serve error, and on ctx
+    cancellation calls Shutdown with a fresh context.WithTimeout so a wedged request cannot
+    block exit. http.ErrServerClosed is treated as success.
+  - internal/controlplane/runtime/lifecycle_test.go (new): readiness transitions/regression,
+    no-gates-immediately-ready, snapshot-is-a-copy, graceful shutdown on cancel, shutdown-timeout
+    bounding, and serve-error propagation (fake httpServer, no real socket).
+  - internal/controlplane/worker/loop.go (new): Loop with Claimer/Lease interfaces. Run checks
+    ctx before every Claim (stops claiming on shutdown), backs off on empty queue / claim error,
+    and on an interrupted in-flight job releases the lease on a context.WithoutCancel context
+    bounded by ReleaseTimeout. A job whose Run returns nil is committed, never released.
+    NoopClaimer is the placeholder Claimer until the durable Postgres job store lands.
+    (replaced worker/doc.go — package doc now lives in loop.go.)
+  - internal/controlplane/worker/loop_test.go (new): processes-then-stops-claiming-on-cancel,
+    in-flight lease released on shutdown, completed job NOT released, retry-after-claim-error,
+    NoopClaimer clean shutdown (fake Claimer/Lease).
+  - internal/controlplane/httpapi/server.go: NewHandler now takes a runtime.ReadinessReporter;
+    /readyz returns 503 + yalla.error.v1 E_SERVER until gates pass, 200 + yalla.output.v1 after.
+    /healthz documented as liveness-only.
+  - internal/controlplane/httpapi/server_test.go: NewHandler call sites updated; added
+    TestReadyzReflectsReadinessTransitions (503 unready -> 200 ready).
+  - internal/controlplane/config/{config.go,load.go}: added YALLA_SHUTDOWN_TIMEOUT
+    (EnvShutdownTimeout) + Config.ShutdownTimeout (time.Duration), per-profile defaults
+    (local 15s, test 2s, staging/production 25s), Go-duration parsing, and 1s..5m range
+    validation as a typed yerr.CodeConfig error. Wired into RedactedConfig/LogValue/String.
+  - internal/controlplane/config/config_test.go: added TestShutdownTimeoutResolution and three
+    validation-failure rows (invalid duration, too small, too large).
+  - cmd/yalla-api/main.go: builds runtime.Readiness("startup"), runs a background
+    runStartupChecks placeholder that flips the gate, and delegates the server lifecycle to
+    runtime.RunHTTPServer with cfg.ShutdownTimeout.
+  - cmd/yalla-worker/main.go: runs worker.Loop{Claimer: NoopClaimer{}, ReleaseTimeout:
+    cfg.ShutdownTimeout} driven by signal.NotifyContext.
+- Files changed: internal/controlplane/runtime/{lifecycle.go,lifecycle_test.go} (new),
+  internal/controlplane/worker/{loop.go,loop_test.go} (new), internal/controlplane/worker/doc.go
+  (deleted), internal/controlplane/httpapi/{server.go,server_test.go},
+  internal/controlplane/config/{config.go,load.go,config_test.go}, cmd/yalla-api/main.go,
+  cmd/yalla-worker/main.go, internal/controlplane/AGENTS.md,
+  internal/controlplane/config/AGENTS.md, ralph/prd.json, ralph/progress.txt.
+- Verification run: gofmt -w .; go mod tidy; go build ./...; go vet ./...; go test ./...;
+  go test -race ./...; go test -race ./internal/controlplane/....
+- Results: all passed. goimports, golangci-lint, staticcheck, govulncheck not installed locally.
+- Remaining risks / follow-ups:
+  - runStartupChecks (cmd/yalla-api) and worker.NoopClaimer are deliberate placeholders. When
+    the persistence/jobs stories land, runStartupChecks must perform real DB + migration checks
+    and the worker must use the durable Postgres-backed Claimer.
+  - The Postgres integration-test acceptance criterion is N/A here (no persistence yet); it
+    lands with the persistence stories.
+- Learnings for future iterations:
+  - RunHTTPServer takes an unexported httpServer interface ({ListenAndServe; Shutdown}); *http.Server
+    satisfies it and tests pass a fake — exported func + unexported interface param works fine.
+  - Lease.Run's contract: nil return == committed (never release); non-nil + shutdown == release.
+    This avoids the double-run hazard of releasing a job that actually finished.
+  - context.WithoutCancel (Go 1.21+) is the clean way to give shutdown-time cleanup work a context
+    that is not already cancelled. go.mod is on go 1.25.
+  - Adding a non-secret config field only needs Config + Load + Validate + Redacted/LogValue/String
+    + tests; the redaction tests only assert secrets are absent, so a new plain field is safe.
 ---

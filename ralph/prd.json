@@ -942,8 +942,8 @@
       ],
       "type": "foundation",
       "priority": 1,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added runtime.RunHTTPServer (context-cancellation driven graceful shutdown bounded by a fresh timeout context) and runtime.Readiness (concurrency-safe named startup gates). httpapi.NewHandler now takes a ReadinessReporter; /readyz returns 503 + yalla.error.v1 E_SERVER until gates pass, 200 + yalla.output.v1 once ready. New worker.Loop stops claiming jobs as soon as its context is cancelled and releases interrupted in-flight leases on a shutdown-independent context; worker.NoopClaimer is the placeholder until the durable job store lands. Config gained YALLA_SHUTDOWN_TIMEOUT (per-profile defaults, 1s-5m range validation). cmd/yalla-api and cmd/yalla-worker wired to the new lifecycle helpers. Tests cover readiness transitions, cancellation, shutdown-timeout bounding, serve errors, in-flight lease release, and completed-job non-release. gofmt, go build, go vet, go test ./..., and go test -race ./... pass. goimports/golangci-lint/staticcheck/govulncheck not installed locally. Postgres integration-test criterion is N/A for this story (no persistence yet); auth/not-found criteria are covered by the existing /readyz and route-not-found envelope tests."
     },
     {
       "id": "BE-0004",

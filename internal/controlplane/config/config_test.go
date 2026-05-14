@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	yerr "github.com/JuribaDev/yalla/internal/errors"
 )
@@ -164,6 +165,21 @@ func TestLoadValidationFailures(t *testing.T) {
 			wantSub: EnvFeatureFlags,
 		},
 		{
+			name:    "invalid shutdown timeout",
+			mutate:  func(e map[string]string) { e[EnvShutdownTimeout] = "soon" },
+			wantSub: EnvShutdownTimeout,
+		},
+		{
+			name:    "shutdown timeout too small",
+			mutate:  func(e map[string]string) { e[EnvShutdownTimeout] = "0s" },
+			wantSub: "out of range",
+		},
+		{
+			name:    "shutdown timeout too large",
+			mutate:  func(e map[string]string) { e[EnvShutdownTimeout] = "10m" },
+			wantSub: "out of range",
+		},
+		{
 			name: "strict profile missing fields",
 			mutate: func(e map[string]string) {
 				delete(e, EnvDatabaseURL)
@@ -289,6 +305,41 @@ func TestStringRedactsSecrets(t *testing.T) {
 		if strings.Contains(s, secret) {
 			t.Errorf("String() leaked %q: %s", secret, s)
 		}
+	}
+}
+
+func TestShutdownTimeoutResolution(t *testing.T) {
+	t.Parallel()
+
+	// Default applies when the variable is unset.
+	cfg, err := Load(MapLookup(strictEnv()))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.ShutdownTimeout != 25*time.Second {
+		t.Errorf("default shutdown timeout = %s, want 25s", cfg.ShutdownTimeout)
+	}
+
+	// An explicit value overrides the profile default.
+	env := strictEnv()
+	env[EnvShutdownTimeout] = "45s"
+	cfg, err = Load(MapLookup(env))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.ShutdownTimeout != 45*time.Second {
+		t.Errorf("override shutdown timeout = %s, want 45s", cfg.ShutdownTimeout)
+	}
+
+	// The local profile has its own default.
+	cfg, err = Load(MapLookup(map[string]string{
+		EnvDatabaseURL: "postgres://localhost:5432/yalla",
+	}))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.ShutdownTimeout != 15*time.Second {
+		t.Errorf("local default shutdown timeout = %s, want 15s", cfg.ShutdownTimeout)
 	}
 }
 

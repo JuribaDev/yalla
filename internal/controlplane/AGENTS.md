@@ -16,3 +16,13 @@ do not mix customer API handlers into CLI packages.
   typed control-plane services, not raw Dokploy operations.
 - Normal tests should use fake dependencies. Live Dokploy tests must be
   opt-in and clearly named as external smoke tests.
+- Process lifecycle lives in `runtime`: use `runtime.RunHTTPServer` for the
+  API and `worker.Loop` for background jobs. Binaries derive shutdown from a
+  single `signal.NotifyContext` and pass `cfg.ShutdownTimeout`; do not
+  hand-roll `select`/`Shutdown` blocks in `main`.
+- `/readyz` is gated by `runtime.Readiness` and must report 503 (`E_SERVER`)
+  until every startup gate passes. `/healthz` is liveness-only — it never
+  depends on downstream checks.
+- New background workers depend on the `worker.Claimer`/`worker.Lease`
+  interfaces, never on a concrete job store directly, so they stay testable
+  with fakes before the durable Postgres queue exists.

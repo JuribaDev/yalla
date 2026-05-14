@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	yerr "github.com/JuribaDev/yalla/internal/errors"
 )
@@ -32,9 +33,10 @@ func MapLookup(env map[string]string) LookupFunc { return mapLookup(env) }
 // profileDefaults holds the per-profile baseline applied before environment
 // variables are layered on top.
 type profileDefaults struct {
-	apiAddr   string
-	logLevel  slog.Level
-	publicURL string
+	apiAddr         string
+	logLevel        slog.Level
+	publicURL       string
+	shutdownTimeout time.Duration
 }
 
 // defaultsByProfile maps each profile to its baseline. Local is tuned for a
@@ -43,22 +45,26 @@ type profileDefaults struct {
 // secret defaults — strict profiles must be configured explicitly.
 var defaultsByProfile = map[Profile]profileDefaults{
 	ProfileLocal: {
-		apiAddr:   ":8080",
-		logLevel:  slog.LevelDebug,
-		publicURL: "http://localhost:8080",
+		apiAddr:         ":8080",
+		logLevel:        slog.LevelDebug,
+		publicURL:       "http://localhost:8080",
+		shutdownTimeout: 15 * time.Second,
 	},
 	ProfileTest: {
-		apiAddr:   "127.0.0.1:0",
-		logLevel:  slog.LevelWarn,
-		publicURL: "http://127.0.0.1",
+		apiAddr:         "127.0.0.1:0",
+		logLevel:        slog.LevelWarn,
+		publicURL:       "http://127.0.0.1",
+		shutdownTimeout: 2 * time.Second,
 	},
 	ProfileStaging: {
-		apiAddr:  ":8080",
-		logLevel: slog.LevelInfo,
+		apiAddr:         ":8080",
+		logLevel:        slog.LevelInfo,
+		shutdownTimeout: 25 * time.Second,
 	},
 	ProfileProduction: {
-		apiAddr:  ":8080",
-		logLevel: slog.LevelInfo,
+		apiAddr:         ":8080",
+		logLevel:        slog.LevelInfo,
+		shutdownTimeout: 25 * time.Second,
 	},
 }
 
@@ -66,6 +72,15 @@ var defaultsByProfile = map[Profile]profileDefaults{
 // than this is almost always a placeholder or a truncated copy-paste and
 // would produce weak signatures, so it is rejected outright.
 const minSigningKeyLen = 16
+
+// shutdownTimeout bounds. A non-positive timeout would make graceful
+// shutdown a no-op (in-flight work dropped immediately); an unbounded one
+// would let a wedged request block process exit indefinitely. Both are
+// rejected so shutdown stays predictable.
+const (
+	minShutdownTimeout = time.Second
+	maxShutdownTimeout = 5 * time.Minute
+)
 
 // LoadFromEnv resolves the backend configuration from the real process
 // environment. It is the entry point both backend binaries call once at
@@ -100,16 +115,22 @@ func Load(lookup LookupFunc) (*Config, error) {
 		return nil, err
 	}
 
+	shutdownTimeout, err := resolveShutdownTimeout(lookup, defaults.shutdownTimeout)
+	if err != nil {
+		return nil, err
+	}
+
 	cfg := &Config{
-		Profile:        profile,
-		APIAddr:        valueOr(lookup, EnvAPIAddr, defaults.apiAddr),
-		PublicURL:      valueOr(lookup, EnvPublicURL, defaults.publicURL),
-		DatabaseURL:    valueOr(lookup, EnvDatabaseURL, ""),
-		SigningKeys:    splitList(valueOr(lookup, EnvSigningKeys, "")),
-		DokployBaseURL: valueOr(lookup, EnvDokployBaseURL, ""),
-		DokployToken:   valueOr(lookup, EnvDokployToken, ""),
-		LogLevel:       logLevel,
-		FeatureFlags:   flags,
+		Profile:         profile,
+		APIAddr:         valueOr(lookup, EnvAPIAddr, defaults.apiAddr),
+		PublicURL:       valueOr(lookup, EnvPublicURL, defaults.publicURL),
+		DatabaseURL:     valueOr(lookup, EnvDatabaseURL, ""),
+		SigningKeys:     splitList(valueOr(lookup, EnvSigningKeys, "")),
+		DokployBaseURL:  valueOr(lookup, EnvDokployBaseURL, ""),
+		DokployToken:    valueOr(lookup, EnvDokployToken, ""),
+		ShutdownTimeout: shutdownTimeout,
+		LogLevel:        logLevel,
+		FeatureFlags:    flags,
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -162,6 +183,12 @@ func (c *Config) Validate() error {
 				"%s entry #%d is too short (need at least %d characters)",
 				EnvSigningKeys, i+1, minSigningKeyLen)
 		}
+	}
+
+	if c.ShutdownTimeout < minShutdownTimeout || c.ShutdownTimeout > maxShutdownTimeout {
+		return yerr.Newf(yerr.CodeConfig,
+			"%s %s is out of range (want between %s and %s)",
+			EnvShutdownTimeout, c.ShutdownTimeout, minShutdownTimeout, maxShutdownTimeout)
 	}
 
 	if c.Profile.IsStrict() {
@@ -239,6 +266,23 @@ func resolveLogLevel(lookup LookupFunc, fallback slog.Level) (slog.Level, error)
 		return 0, yerr.Newf(yerr.CodeConfig,
 			"invalid %s %q (want debug, info, warn, or error)", EnvLogLevel, raw)
 	}
+}
+
+// resolveShutdownTimeout parses YALLA_SHUTDOWN_TIMEOUT as a Go duration,
+// falling back to the profile default. Range enforcement happens in
+// Validate so every profile gets the same bounds check.
+func resolveShutdownTimeout(lookup LookupFunc, fallback time.Duration) (time.Duration, error) {
+	raw, ok := lookup(EnvShutdownTimeout)
+	raw = strings.TrimSpace(raw)
+	if !ok || raw == "" {
+		return fallback, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, yerr.Newf(yerr.CodeConfig,
+			"invalid %s %q (want a Go duration such as 15s or 1m)", EnvShutdownTimeout, raw)
+	}
+	return d, nil
 }
 
 // resolveFeatureFlags parses YALLA_FEATURE_FLAGS into a name->enabled map.

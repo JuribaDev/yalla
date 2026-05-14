@@ -16,7 +16,7 @@ func TestHandlerServesBootstrapEndpoints(t *testing.T) {
 		Version: "1.2.3",
 		Commit:  "abc123",
 		Date:    "2026-05-14T00:00:00Z",
-	})
+	}, nil)
 
 	tests := []struct {
 		name       string
@@ -94,7 +94,7 @@ func TestHandlerServesBootstrapEndpoints(t *testing.T) {
 func TestHandlerReturnsStableNotFoundEnvelope(t *testing.T) {
 	t.Parallel()
 
-	handler := NewHandler(runtime.BuildInfo{})
+	handler := NewHandler(runtime.BuildInfo{}, nil)
 	req := httptest.NewRequest(http.MethodGet, "/missing", nil)
 	rec := httptest.NewRecorder()
 
@@ -122,5 +122,68 @@ func TestHandlerReturnsStableNotFoundEnvelope(t *testing.T) {
 	}
 	if env.Error.Code != "E_NOT_FOUND" {
 		t.Errorf("error.code = %q, want E_NOT_FOUND", env.Error.Code)
+	}
+}
+
+func TestReadyzReflectsReadinessTransitions(t *testing.T) {
+	t.Parallel()
+
+	readiness := runtime.NewReadiness("migrations")
+	handler := NewHandler(runtime.BuildInfo{}, readiness)
+
+	get := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// Before startup gates pass, /readyz must report 503 with a stable
+	// error envelope so the load balancer keeps the process out of rotation.
+	rec := get()
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("unready status = %d, want %d; body %s",
+			rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	}
+	var errEnv struct {
+		SchemaVersion string `json:"schema_version"`
+		OK            bool   `json:"ok"`
+		Error         struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &errEnv); err != nil {
+		t.Fatalf("decode unready response: %v", err)
+	}
+	if errEnv.SchemaVersion != "yalla.error.v1" {
+		t.Errorf("schema_version = %q, want yalla.error.v1", errEnv.SchemaVersion)
+	}
+	if errEnv.OK {
+		t.Errorf("ok = true, want false")
+	}
+	if errEnv.Error.Code != "E_SERVER" {
+		t.Errorf("error.code = %q, want E_SERVER", errEnv.Error.Code)
+	}
+
+	// Once every startup gate passes, /readyz must flip to 200 ready.
+	readiness.MarkReady("migrations")
+	rec = get()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ready status = %d, want %d; body %s",
+			rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var okEnv struct {
+		SchemaVersion string            `json:"schema_version"`
+		OK            bool              `json:"ok"`
+		Data          map[string]string `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &okEnv); err != nil {
+		t.Fatalf("decode ready response: %v", err)
+	}
+	if okEnv.SchemaVersion != "yalla.output.v1" || !okEnv.OK {
+		t.Errorf("ready envelope = %+v, want yalla.output.v1 ok=true", okEnv)
+	}
+	if okEnv.Data["status"] != "ready" {
+		t.Errorf("data.status = %q, want ready", okEnv.Data["status"])
 	}
 }

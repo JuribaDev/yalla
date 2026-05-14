@@ -26,5 +26,11 @@ worker (`cmd/yalla-worker`).
 - When you add a config field: add its `Env*` constant, wire it in `Load`,
   add format/required validation in `Validate`, extend `RedactedConfig` +
   `LogValue` + `String` if it is a secret, and add success + failure tests.
+  A non-secret field still belongs in `RedactedConfig`/`LogValue`/`String`
+  for diagnostics — the redaction tests only assert secrets are *absent*, so
+  adding a plain field there is safe.
+- Duration-shaped fields (e.g. `ShutdownTimeout`) parse with
+  `time.ParseDuration` and are range-checked in `Validate` so every profile
+  gets the same bounds; defaults live in `defaultsByProfile`.
 - Tests inject `config.MapLookup(map[string]string{...})` instead of touching
   `os.Environ`; use `t.Parallel()`.

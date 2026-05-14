@@ -13,15 +13,31 @@ import (
 // NewHandler builds the bootstrap HTTP surface for the Yalla control-plane
 // API. It intentionally starts small; feature packages add routes through this
 // boundary as their PRD stories are implemented.
-func NewHandler(build runtime.BuildInfo) http.Handler {
+//
+// readiness gates the /readyz endpoint: until every startup dependency
+// (migrations, database connectivity, and similar checks) has passed,
+// /readyz reports 503 so the load balancer keeps the process out of
+// rotation. A nil readiness is treated as always-ready, which suits tests
+// and processes with no startup dependencies.
+func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter) http.Handler {
 	mux := http.NewServeMux()
 	build = build.Normalized()
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		// Liveness: the process is running and can serve HTTP. It does not
+		// depend on downstream dependencies — that is what /readyz is for.
 		writeData(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, _ *http.Request) {
-		writeData(w, http.StatusOK, map[string]string{"status": "ready"})
+		if readiness == nil || readiness.Ready() {
+			writeData(w, http.StatusOK, map[string]string{"status": "ready"})
+			return
+		}
+		// Not ready yet: report 503 with a stable error envelope so probes
+		// and agents see a deterministic code while startup completes.
+		writeError(w, http.StatusServiceUnavailable,
+			yerr.New(yerr.CodeServer, "service is not ready").
+				WithHint("startup dependency checks have not passed yet"))
 	})
 	mux.HandleFunc("GET /version", func(w http.ResponseWriter, _ *http.Request) {
 		writeData(w, http.StatusOK, map[string]string{

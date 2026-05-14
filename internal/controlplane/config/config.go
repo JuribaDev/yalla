@@ -32,6 +32,7 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/JuribaDev/yalla/internal/output"
 )
@@ -61,6 +62,10 @@ const (
 	// worker. Treated as a secret: never logged and never exposed to
 	// customer-facing endpoints.
 	EnvDokployToken = "YALLA_DOKPLOY_TOKEN"
+	// EnvShutdownTimeout bounds how long a backend process waits to drain
+	// in-flight HTTP requests and release in-flight job leases during a
+	// graceful shutdown. Accepts any Go duration string (e.g. "15s", "1m").
+	EnvShutdownTimeout = "YALLA_SHUTDOWN_TIMEOUT"
 	// EnvLogLevel sets the structured log level: debug, info, warn, error.
 	EnvLogLevel = "YALLA_LOG_LEVEL"
 	// EnvFeatureFlags is a comma-separated list of feature flags. Each entry
@@ -126,6 +131,10 @@ type Config struct {
 	DokployBaseURL string
 	// DokployToken is the privileged Dokploy service token. Secret.
 	DokployToken string
+	// ShutdownTimeout bounds graceful shutdown: the HTTP server stops
+	// accepting connections and drains in-flight requests within this
+	// window, and the worker releases in-flight job leases within it.
+	ShutdownTimeout time.Duration
 	// LogLevel is the resolved structured log level.
 	LogLevel slog.Level
 	// FeatureFlags maps flag names to their enabled state.
@@ -163,6 +172,7 @@ type RedactedConfig struct {
 	SigningKeysConfigured int             `json:"signing_keys_configured"`
 	DokployBaseURL        string          `json:"dokploy_base_url"`
 	DokployToken          string          `json:"dokploy_token"`
+	ShutdownTimeout       string          `json:"shutdown_timeout"`
 	LogLevel              string          `json:"log_level"`
 	FeatureFlags          map[string]bool `json:"feature_flags"`
 }
@@ -193,6 +203,7 @@ func (c *Config) Redacted() RedactedConfig {
 		SigningKeysConfigured: len(c.SigningKeys),
 		DokployBaseURL:        c.DokployBaseURL,
 		DokployToken:          redact(c.DokployToken),
+		ShutdownTimeout:       c.ShutdownTimeout.String(),
 		LogLevel:              c.LogLevel.String(),
 		FeatureFlags:          flags,
 	}
@@ -221,6 +232,7 @@ func (c *Config) LogValue() slog.Value {
 		slog.Int("signing_keys_configured", r.SigningKeysConfigured),
 		slog.String("dokploy_base_url", r.DokployBaseURL),
 		slog.String("dokploy_token", r.DokployToken),
+		slog.String("shutdown_timeout", r.ShutdownTimeout),
 		slog.String("log_level", r.LogLevel),
 		slog.Group("feature_flags", anyAttrs(attrs)...),
 	)
@@ -249,8 +261,8 @@ func (c *Config) String() string {
 	}
 	sort.Strings(flags)
 	return fmt.Sprintf(
-		"config{profile:%s api_addr:%s public_url:%s database_url:%s signing_keys_configured:%d dokploy_base_url:%s dokploy_token:%s log_level:%s feature_flags:[%s]}",
+		"config{profile:%s api_addr:%s public_url:%s database_url:%s signing_keys_configured:%d dokploy_base_url:%s dokploy_token:%s shutdown_timeout:%s log_level:%s feature_flags:[%s]}",
 		r.Profile, r.APIAddr, r.PublicURL, r.DatabaseURL, r.SigningKeysConfigured,
-		r.DokployBaseURL, r.DokployToken, r.LogLevel, strings.Join(flags, " "),
+		r.DokployBaseURL, r.DokployToken, r.ShutdownTimeout, r.LogLevel, strings.Join(flags, " "),
 	)
 }
