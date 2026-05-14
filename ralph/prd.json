@@ -57,7 +57,22 @@
         "dokployClient": "internal/api and internal/dokploy",
         "controlPlane": "internal/controlplane"
       },
-      "rule": "Future CLI customer workflows should call the Yalla Control Plane API by default; raw Dokploy access remains an explicit internal/admin escape hatch only."
+      "rule": "Future CLI customer workflows should call the Yalla Control Plane API by default; raw Dokploy access remains an explicit internal/admin escape hatch only.",
+      "internalPackageReason": "Go internal packages are private to this repository/module. Backend implementation code lives under internal/controlplane so external modules cannot import it as an SDK and so the HTTP API remains the public boundary.",
+      "boundaries": [
+        "cmd/yalla is the CLI binary and should depend on internal/cli plus a control-plane HTTP client when customer workflows move to the backend.",
+        "cmd/yalla-api is the backend HTTP API binary and depends on internal/controlplane packages.",
+        "cmd/yalla-worker is the backend worker binary and depends on internal/controlplane worker/job/provisioning packages.",
+        "internal/cli owns Cobra commands, terminal UX, local config, and CLI output behavior.",
+        "internal/controlplane owns backend API handlers, auth, policy, quota, jobs, persistence, metering, billing, audit, and provisioning orchestration.",
+        "internal/api and internal/dokploy are shared low-level Dokploy integration packages used behind explicit boundaries.",
+        "The CLI must not import internal/controlplane/store, policy, quota, jobs, or worker packages directly for customer workflows; it should call the control-plane API through an HTTP client.",
+        "If a reusable external Go SDK is needed later, create pkg/yallaapi or a generated client package rather than exporting backend internals."
+      ],
+      "futureClientPackage": {
+        "internalFirst": "internal/controlplane/client for repo-local CLI-to-control-plane calls",
+        "publicLater": "pkg/yallaapi only if external Go consumers need a supported SDK"
+      }
     }
   },
   "technologyStack": {

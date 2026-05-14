@@ -10,11 +10,14 @@ You are an autonomous coding agent working on the Yalla Control Plane backend: a
 - **Hierarchy**: Mirror Dokploy's model: Organization -> Project -> Environment -> Service. Yalla enforces this hierarchy first; Dokploy mirrors it for provisioning and defense-in-depth.
 - **Language**: Go. Keep the backend in the existing Go module and preserve the current CLI packages unless a story explicitly changes them.
 - **Repository topology**: Same-repo Go monorepo. The existing CLI stays at `cmd/yalla`, the backend API starts at `cmd/yalla-api`, and background provisioning/metering workers start at `cmd/yalla-worker`.
+- **Package boundary**: Backend implementation code belongs under `internal/controlplane` because Go `internal/` packages are private to this repository/module. This prevents backend internals from becoming an accidental public SDK.
+- **CLI/backend separation**: `internal/cli` owns Cobra commands and terminal UX. `internal/controlplane` owns HTTP API, auth, policy, quota, jobs, persistence, metering, billing, audit, and provisioning orchestration.
 - **API architecture**: Use `net/http` with a small router/middleware stack. Keep handlers thin. Put logic in focused packages under `internal/controlplane/` such as `httpapi`, `config`, `store`, `auth`, `policy`, `quota`, `jobs`, `worker`, `dokploy`, `audit`, `telemetry`, and `testutil`.
 - **Database**: PostgreSQL via `pgx`. Migrations are mandatory. Every customer-data query must be tenant-scoped by organization or a verified parent join.
 - **Worker**: Use durable Postgres-backed jobs for provisioning. Jobs must be idempotent, retry-safe, lease-based, cancellable, and auditable.
 - **Dokploy integration**: Use a typed internal Dokploy client. Do not expose raw Dokploy operations to customer-facing endpoints.
 - **CLI direction**: Future customer workflows in the CLI should call the Yalla Control Plane API by default. Raw Dokploy access remains an explicit internal/admin escape hatch only.
+- **Client boundary**: The CLI must not import `internal/controlplane/store`, `policy`, `quota`, `jobs`, or `worker` directly for customer workflows. Add `internal/controlplane/client` first, or `pkg/yallaapi` later if an external Go SDK is needed.
 - **Agent contract**: Stable JSON envelopes, stable error codes, stable HTTP statuses, deterministic schemas, request IDs, redaction, and explicit verification are public API.
 - **Output rule**: HTTP responses use JSON envelopes. Service logs are structured diagnostics only and must never contain secrets.
 - **Config precedence**: CLI flags for binaries > environment variables > config file > defaults when config files are used. Environment variables are the production default for API and worker processes.
