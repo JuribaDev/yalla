@@ -40,8 +40,19 @@ do not mix customer API handlers into CLI packages.
   single `signal.NotifyContext` and pass `cfg.ShutdownTimeout`; do not
   hand-roll `select`/`Shutdown` blocks in `main`.
 - `/readyz` is gated by `runtime.Readiness` and must report 503 (`E_SERVER`)
-  until every startup gate passes. `/healthz` is liveness-only — it never
-  depends on downstream checks.
+  until every startup gate passes. When ready it returns a `yalla.output.v1`
+  envelope whose `data.checks` map names every dependency gate and its pass
+  state; when not ready the 503 error hint lists the pending check names
+  (fixed, non-secret identifiers — never values). Binaries register one gate
+  per real dependency (`database`, `migrations`, `queue`, and `dokploy` when a
+  Dokploy base URL is configured), not a single `startup` gate. `/healthz` is
+  liveness-only — it never depends on downstream checks.
+- `/version` reports build identity (`version`/`commit`/`date`) plus the two
+  contract fields: `api_schema_version` (the stable `runtime.APISchemaVersion`
+  constant) and `migration_version` (dynamic, read from a
+  `runtime.MetaReporter`). `runtime.Meta` is the concurrency-safe reporter the
+  API binary populates once the persistence layer resolves the applied
+  migration version; a nil reporter yields `runtime.MigrationVersionUnknown`.
 - New background workers depend on the `worker.Claimer`/`worker.Lease`
   interfaces, never on a concrete job store directly, so they stay testable
   with fakes before the durable Postgres queue exists.

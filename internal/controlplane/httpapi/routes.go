@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"net/http"
+	"sort"
+	"strings"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apienvelope"
 	"github.com/JuribaDev/yalla/internal/controlplane/openapi"
@@ -26,11 +28,43 @@ type apiRoute struct {
 	handler  http.HandlerFunc
 }
 
+// healthzPayload is the data block of the GET /healthz success envelope.
+type healthzPayload struct {
+	Status string `json:"status"`
+}
+
+// readyzPayload is the data block of the GET /readyz success envelope. Checks
+// names every startup dependency gate and whether it is passing, so operators
+// and agents can see exactly which dependency is degraded. Gate names are
+// fixed, non-secret identifiers (for example "database", "migrations",
+// "queue", "dokploy").
+type readyzPayload struct {
+	Status string          `json:"status"`
+	Checks map[string]bool `json:"checks"`
+}
+
+// versionPayload is the data block of the GET /version success envelope. It
+// carries both the build identity (Version/Commit/Date) and the contract
+// identity: APISchemaVersion is the stable API contract version and
+// MigrationVersion is the applied database schema version.
+type versionPayload struct {
+	Version          string `json:"version"`
+	Commit           string `json:"commit"`
+	Date             string `json:"date"`
+	APISchemaVersion string `json:"api_schema_version"`
+	MigrationVersion string `json:"migration_version"`
+}
+
 // newRouteTable returns every API route paired with its OpenAPI metadata. The
 // /openapi.json route is intentionally absent — its handler is built from the
 // document these routes describe, so openAPIDocument folds it back in (see
 // openAPIEndpoint) and NewHandler registers it last.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter) []apiRoute {
+//
+// readiness drives /readyz; meta drives the dynamic fields of /version. Both
+// may be nil: a nil readiness is treated as always-ready and a nil meta
+// reports an unknown migration version, which suits tests and processes with
+// no startup dependencies wired yet.
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -47,7 +81,7 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter)
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				// Liveness: the process is running and can serve HTTP. It does
 				// not depend on downstream dependencies — that is /readyz.
-				apienvelope.WriteData(w, http.StatusOK, requestID(r), map[string]string{"status": "ok"})
+				apienvelope.WriteData(w, http.StatusOK, requestID(r), healthzPayload{Status: "ok"})
 			},
 		},
 		{
@@ -56,44 +90,86 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter)
 				Path:               "/readyz",
 				OperationID:        "getReadyz",
 				Summary:            "Readiness probe",
-				Description:        "Reports whether every startup dependency check has passed. Returns 503 with a yalla.error.v1 envelope until the process is ready, 200 afterwards.",
+				Description:        "Reports whether every startup dependency check — database connectivity, migration state, queue readiness, and the Dokploy dependency when configured — has passed. Returns 200 with the per-check status once ready, or 503 with a yalla.error.v1 envelope naming the pending checks until then.",
 				Tags:               []string{tagOperations},
-				SuccessDescription: "Every startup dependency check has passed.",
+				SuccessDescription: "Every startup dependency check has passed; the data block reports each check.",
 			},
-			handler: func(w http.ResponseWriter, r *http.Request) {
-				if readiness == nil || readiness.Ready() {
-					apienvelope.WriteData(w, http.StatusOK, requestID(r), map[string]string{"status": "ready"})
-					return
-				}
-				// Not ready yet: report 503 with a stable error envelope so
-				// probes and agents see a deterministic code while startup
-				// completes. The 503 is an explicit override of the code's
-				// default mapping because "not ready yet" is a liveness
-				// signal, not an upstream fault.
-				apienvelope.WriteErrorStatus(w, http.StatusServiceUnavailable, requestID(r),
-					yerr.New(yerr.CodeServer, "service is not ready").
-						WithHint("startup dependency checks have not passed yet"))
-			},
+			handler: readyzHandler(readiness),
 		},
 		{
 			endpoint: openapi.Endpoint{
 				Method:             http.MethodGet,
 				Path:               "/version",
 				OperationID:        "getVersion",
-				Summary:            "Build version",
-				Description:        "Returns the build-time identity of the running process: semantic version, source commit, and build date.",
+				Summary:            "Build and contract version",
+				Description:        "Returns the running process identity: build version, source commit, build date, the stable API schema version, and the applied database migration version.",
 				Tags:               []string{tagMeta},
-				SuccessDescription: "The build identity of the running process.",
+				SuccessDescription: "The build and contract identity of the running process.",
 			},
 			handler: func(w http.ResponseWriter, r *http.Request) {
-				apienvelope.WriteData(w, http.StatusOK, requestID(r), map[string]string{
-					"version": build.Version,
-					"commit":  build.Commit,
-					"date":    build.Date,
+				migrationVersion := runtime.MigrationVersionUnknown
+				if meta != nil {
+					migrationVersion = meta.MigrationVersion()
+				}
+				apienvelope.WriteData(w, http.StatusOK, requestID(r), versionPayload{
+					Version:          build.Version,
+					Commit:           build.Commit,
+					Date:             build.Date,
+					APISchemaVersion: runtime.APISchemaVersion,
+					MigrationVersion: migrationVersion,
 				})
 			},
 		},
 	}
+}
+
+// readyzHandler builds the GET /readyz handler. When every startup gate is
+// passing it renders a 200 yalla.output.v1 envelope listing each check; while
+// any gate is still failing it renders a 503 yalla.error.v1 envelope whose
+// hint names the pending checks. The 503 is an explicit override of the error
+// code's default status because "not ready yet" is a liveness signal, not an
+// upstream fault. A nil reporter is treated as always-ready, which suits
+// tests and processes with no startup dependencies.
+func readyzHandler(readiness runtime.ReadinessReporter) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		checks := map[string]bool{}
+		ready := true
+		if readiness != nil {
+			checks = readiness.Snapshot()
+			ready = readiness.Ready()
+		}
+		if ready {
+			apienvelope.WriteData(w, http.StatusOK, requestID(r), readyzPayload{
+				Status: "ready",
+				Checks: checks,
+			})
+			return
+		}
+		// Not ready yet: report 503 with a stable error envelope so probes and
+		// agents see a deterministic code while startup completes. The hint
+		// names the pending checks — fixed, non-secret gate identifiers — so
+		// operators can see which dependency is blocking readiness.
+		hint := "startup dependency checks have not passed yet"
+		if pending := pendingChecks(checks); len(pending) > 0 {
+			hint = "pending dependency checks: " + strings.Join(pending, ", ")
+		}
+		apienvelope.WriteErrorStatus(w, http.StatusServiceUnavailable, requestID(r),
+			yerr.New(yerr.CodeServer, "service is not ready").WithHint(hint))
+	}
+}
+
+// pendingChecks returns the sorted names of every check that is not passing.
+// Check names are fixed, non-secret identifiers, so they are safe to surface
+// in an error hint.
+func pendingChecks(checks map[string]bool) []string {
+	pending := make([]string, 0, len(checks))
+	for name, passing := range checks {
+		if !passing {
+			pending = append(pending, name)
+		}
+	}
+	sort.Strings(pending)
+	return pending
 }
 
 // openAPIEndpoint is the OpenAPI metadata for GET /openapi.json. It is kept

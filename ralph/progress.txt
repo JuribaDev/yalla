@@ -388,3 +388,83 @@
     describe). Pattern: keep its metadata in a separate openAPIEndpoint(), have the doc
     builder append it, and register the serving route last in NewHandler.
 ---
+
+## 2026-05-14 - BE-0009
+- What was implemented: Health, readiness, and version endpoints upgraded from
+  bootstrap stubs to their full BE-0009 contract.
+  - internal/controlplane/runtime/meta.go (new): APISchemaVersion constant
+    ("yalla.api.v1", a public compatibility contract distinct from the build
+    version), MigrationVersionUnknown sentinel, MetaReporter interface, and the
+    concurrency-safe Meta type (NewMeta/SetMigrationVersion/MigrationVersion)
+    that the API binary populates once persistence resolves the applied
+    migration version. Empty version -> "unknown".
+  - internal/controlplane/runtime/meta_test.go (new): default-unknown,
+    set/reset-to-unknown, 100-goroutine concurrent access, APISchemaVersion
+    pinned, *Meta satisfies MetaReporter.
+  - internal/controlplane/httpapi/routes.go: typed payload structs
+    (healthzPayload, readyzPayload{status,checks}, versionPayload with
+    api_schema_version + migration_version). newRouteTable now takes a
+    runtime.MetaReporter. /readyz handler extracted to readyzHandler: 200
+    yalla.output.v1 with a per-check map when ready, 503 yalla.error.v1 whose
+    hint lists the sorted pending check names (pendingChecks helper) when not.
+    /version reports build identity + APISchemaVersion + migration version
+    (falls back to MigrationVersionUnknown on a nil meta). Descriptions updated
+    for the OpenAPI document.
+  - internal/controlplane/httpapi/server.go: NewHandler signature now
+    (build, readiness, meta, logger); threads meta into newRouteTable. Doc
+    comment updated.
+  - cmd/yalla-api/main.go: registers one readiness gate per real dependency
+    (database, migrations, queue, + dokploy when cfg.DokployBaseURL set)
+    instead of a single "startup" gate; constructs runtime.NewMeta() and passes
+    it to NewHandler; the startup goroutine marks every registered gate ready
+    (placeholder until the persistence/provisioning stories wire real probes
+    and resolve the migration version onto meta).
+  - internal/controlplane/httpapi/server_test.go: all NewHandler/newRouteTable
+    call sites updated for the new meta arg; TestHandlerServesBootstrapEndpoints
+    drops the readyz row (its richer payload has its own test) and asserts the
+    new /version fields; TestReadyzReflectsReadinessTransitions decodes the
+    checks map; new TestVersionEndpointReportsSchemaAndMigrationVersion (meta
+    populated + nil-meta fallback) and TestReadyzReportsDependencyChecks
+    (healthy / degraded / dependency-failed, asserting the hint names exactly
+    the pending checks and never a passing one).
+  - internal/controlplane/AGENTS.md: documented the /readyz per-check payload,
+    the per-dependency gate convention, and the /version contract fields.
+- Files changed: internal/controlplane/runtime/{meta.go,meta_test.go} (new),
+  internal/controlplane/httpapi/{routes.go,server.go,server_test.go},
+  cmd/yalla-api/main.go, internal/controlplane/AGENTS.md, ralph/prd.json,
+  ralph/progress.txt.
+- Verification run: gofmt -w .; go mod tidy; go build ./...; go vet ./...;
+  go test ./...; go test -race ./...; go test -race ./internal/controlplane/....
+- Results: all passed. goimports, golangci-lint, staticcheck, govulncheck not
+  installed locally.
+- Remaining risks / follow-ups:
+  - The readiness gates and meta migration version are still placeholders:
+    runStartupChecks marks every gate ready unconditionally and never calls
+    meta.SetMigrationVersion. The persistence/provisioning stories MUST replace
+    that with real DB connectivity / migration-version / queue / Dokploy probes
+    and resolve the applied migration version onto meta.
+  - Integration tests against isolated Postgres migrations (criterion 7) are
+    N/A until the persistence layer lands; the /readyz "migrations" gate and
+    /version migration_version field are the seams those stories plug into.
+  - "validation failure / authorization failure" unit-test criteria are N/A:
+    these three endpoints take no input and require no auth (operational
+    probes + discovery). Covered success + degraded + failed + not-found.
+  - /readyz and /version still use the generic success-envelope schema in the
+    OpenAPI document — no per-endpoint data-schema components were added (that
+    would mean extending the openapi package's component registry). Endpoint
+    descriptions were updated instead. Add data schemas if a future story needs
+    machine-validated response bodies.
+- Learnings for future iterations:
+  - NewHandler's signature is now (build, readiness, meta, logger). Adding a
+    4th positional dependency ripples to every test call site — there are ~9
+    NewHandler calls + 2 newRouteTable calls in server_test.go. A single
+    replace_all handled the common NewHandler(runtime.BuildInfo{}, nil, nil)
+    form; the rest needed targeted edits.
+  - A success-envelope data block that is no longer a flat string map breaks
+    tests that decode `Data map[string]string` — readyz now nests a
+    `checks` object. Decode into a typed struct (or map[string]any) instead.
+  - runtime.Readiness already exposes Snapshot() on the ReadinessReporter
+    interface, so /readyz can report per-check state without widening the
+    interface; compute pending checks from the snapshot in the handler.
+  - cfg.DokployBaseURL != "" is the signal for "Dokploy is configured" — use it
+    to conditionally register the dokploy readiness gate ("when configured").

@@ -21,7 +21,7 @@ func TestHandlerServesBootstrapEndpoints(t *testing.T) {
 		Version: "1.2.3",
 		Commit:  "abc123",
 		Date:    "2026-05-14T00:00:00Z",
-	}, nil, nil)
+	}, nil, nil, nil)
 
 	tests := []struct {
 		name       string
@@ -38,21 +38,15 @@ func TestHandlerServesBootstrapEndpoints(t *testing.T) {
 			},
 		},
 		{
-			name:       "ready",
-			path:       "/readyz",
-			wantStatus: http.StatusOK,
-			wantData: map[string]string{
-				"status": "ready",
-			},
-		},
-		{
 			name:       "version",
 			path:       "/version",
 			wantStatus: http.StatusOK,
 			wantData: map[string]string{
-				"version": "1.2.3",
-				"commit":  "abc123",
-				"date":    "2026-05-14T00:00:00Z",
+				"version":            "1.2.3",
+				"commit":             "abc123",
+				"date":               "2026-05-14T00:00:00Z",
+				"api_schema_version": "yalla.api.v1",
+				"migration_version":  "unknown",
 			},
 		},
 	}
@@ -99,7 +93,7 @@ func TestHandlerServesBootstrapEndpoints(t *testing.T) {
 func TestHandlerReturnsStableNotFoundEnvelope(t *testing.T) {
 	t.Parallel()
 
-	handler := NewHandler(runtime.BuildInfo{}, nil, nil)
+	handler := NewHandler(runtime.BuildInfo{}, nil, nil, nil)
 	req := httptest.NewRequest(http.MethodGet, "/missing", nil)
 	rec := httptest.NewRecorder()
 
@@ -134,7 +128,7 @@ func TestReadyzReflectsReadinessTransitions(t *testing.T) {
 	t.Parallel()
 
 	readiness := runtime.NewReadiness("migrations")
-	handler := NewHandler(runtime.BuildInfo{}, readiness, nil)
+	handler := NewHandler(runtime.BuildInfo{}, readiness, nil, nil)
 
 	get := func() *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
@@ -178,9 +172,12 @@ func TestReadyzReflectsReadinessTransitions(t *testing.T) {
 			rec.Code, http.StatusOK, rec.Body.String())
 	}
 	var okEnv struct {
-		SchemaVersion string            `json:"schema_version"`
-		OK            bool              `json:"ok"`
-		Data          map[string]string `json:"data"`
+		SchemaVersion string `json:"schema_version"`
+		OK            bool   `json:"ok"`
+		Data          struct {
+			Status string          `json:"status"`
+			Checks map[string]bool `json:"checks"`
+		} `json:"data"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &okEnv); err != nil {
 		t.Fatalf("decode ready response: %v", err)
@@ -188,9 +185,194 @@ func TestReadyzReflectsReadinessTransitions(t *testing.T) {
 	if okEnv.SchemaVersion != "yalla.output.v1" || !okEnv.OK {
 		t.Errorf("ready envelope = %+v, want yalla.output.v1 ok=true", okEnv)
 	}
-	if okEnv.Data["status"] != "ready" {
-		t.Errorf("data.status = %q, want ready", okEnv.Data["status"])
+	if okEnv.Data.Status != "ready" {
+		t.Errorf("data.status = %q, want ready", okEnv.Data.Status)
 	}
+	if !okEnv.Data.Checks["migrations"] {
+		t.Errorf("data.checks[migrations] = false, want true once the gate passes")
+	}
+}
+
+// TestVersionEndpointReportsSchemaAndMigrationVersion proves GET /version
+// reports the build identity, the stable API schema version, and the dynamic
+// migration version resolved from the MetaReporter.
+func TestVersionEndpointReportsSchemaAndMigrationVersion(t *testing.T) {
+	t.Parallel()
+
+	build := runtime.BuildInfo{Version: "3.4.5", Commit: "deadbee", Date: "2026-05-14T12:00:00Z"}
+
+	decodeVersion := func(t *testing.T, handler http.Handler) versionPayload {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/version", nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200; body %s", rec.Code, rec.Body.String())
+		}
+		var env struct {
+			SchemaVersion string         `json:"schema_version"`
+			OK            bool           `json:"ok"`
+			Data          versionPayload `json:"data"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+			t.Fatalf("decode version response: %v", err)
+		}
+		if env.SchemaVersion != "yalla.output.v1" || !env.OK {
+			t.Errorf("version envelope = %+v, want yalla.output.v1 ok=true", env)
+		}
+		return env.Data
+	}
+
+	// With a populated Meta the resolved migration version is reported.
+	meta := runtime.NewMeta()
+	meta.SetMigrationVersion("0042")
+	got := decodeVersion(t, NewHandler(build, nil, meta, nil))
+	want := versionPayload{
+		Version:          "3.4.5",
+		Commit:           "deadbee",
+		Date:             "2026-05-14T12:00:00Z",
+		APISchemaVersion: runtime.APISchemaVersion,
+		MigrationVersion: "0042",
+	}
+	if got != want {
+		t.Errorf("version data = %+v, want %+v", got, want)
+	}
+	if want.APISchemaVersion != "yalla.api.v1" {
+		t.Errorf("api_schema_version = %q, want yalla.api.v1", want.APISchemaVersion)
+	}
+
+	// With a nil Meta the migration version falls back to "unknown" rather
+	// than panicking or emitting an empty string.
+	got = decodeVersion(t, NewHandler(build, nil, nil, nil))
+	if got.MigrationVersion != runtime.MigrationVersionUnknown {
+		t.Errorf("migration_version with nil meta = %q, want %q",
+			got.MigrationVersion, runtime.MigrationVersionUnknown)
+	}
+}
+
+// TestReadyzReportsDependencyChecks proves GET /readyz reports the per-check
+// status: healthy (every gate passing), degraded (one optional dependency
+// failing), and dependency-failed (a core dependency failing). The healthy
+// case is a 200 yalla.output.v1 envelope listing each check; the failing
+// cases are 503 yalla.error.v1 envelopes whose hint names the pending checks.
+func TestReadyzReportsDependencyChecks(t *testing.T) {
+	t.Parallel()
+
+	get := func(handler http.Handler) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// Healthy: every dependency gate passes.
+	healthy := runtime.NewReadiness("database", "migrations", "queue")
+	healthy.MarkReady("database")
+	healthy.MarkReady("migrations")
+	healthy.MarkReady("queue")
+	rec := get(NewHandler(runtime.BuildInfo{}, healthy, nil, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("healthy status = %d, want 200; body %s", rec.Code, rec.Body.String())
+	}
+	var okEnv struct {
+		SchemaVersion string        `json:"schema_version"`
+		OK            bool          `json:"ok"`
+		Data          readyzPayload `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &okEnv); err != nil {
+		t.Fatalf("decode healthy response: %v", err)
+	}
+	if okEnv.SchemaVersion != "yalla.output.v1" || !okEnv.OK {
+		t.Errorf("healthy envelope = %+v, want yalla.output.v1 ok=true", okEnv)
+	}
+	if okEnv.Data.Status != "ready" {
+		t.Errorf("healthy data.status = %q, want ready", okEnv.Data.Status)
+	}
+	for _, gate := range []string{"database", "migrations", "queue"} {
+		if !okEnv.Data.Checks[gate] {
+			t.Errorf("healthy data.checks[%q] = false, want true", gate)
+		}
+	}
+
+	// degraded covers one optional dependency failing; dependency-failed
+	// covers a core dependency failing. Both must be 503 with a stable error
+	// envelope whose hint names exactly the pending checks.
+	cases := []struct {
+		name        string
+		readiness   *runtime.Readiness
+		wantPending []string
+	}{
+		{
+			name: "degraded",
+			readiness: func() *runtime.Readiness {
+				r := runtime.NewReadiness("database", "migrations", "queue", "dokploy")
+				r.MarkReady("database")
+				r.MarkReady("migrations")
+				r.MarkReady("queue")
+				// dokploy left failing — an optional dependency is degraded.
+				return r
+			}(),
+			wantPending: []string{"dokploy"},
+		},
+		{
+			name: "dependency-failed",
+			readiness: func() *runtime.Readiness {
+				r := runtime.NewReadiness("database", "migrations", "queue")
+				r.MarkReady("migrations")
+				r.MarkReady("queue")
+				// database left failing — a core dependency is down.
+				return r
+			}(),
+			wantPending: []string{"database"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			rec := get(NewHandler(runtime.BuildInfo{}, tc.readiness, nil, nil))
+			if rec.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d, want 503; body %s", rec.Code, rec.Body.String())
+			}
+			var errEnv struct {
+				SchemaVersion string `json:"schema_version"`
+				OK            bool   `json:"ok"`
+				Error         struct {
+					Code string `json:"code"`
+					Hint string `json:"hint"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &errEnv); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if errEnv.SchemaVersion != "yalla.error.v1" || errEnv.OK {
+				t.Errorf("envelope = %+v, want yalla.error.v1 ok=false", errEnv)
+			}
+			if errEnv.Error.Code != "E_SERVER" {
+				t.Errorf("error.code = %q, want E_SERVER", errEnv.Error.Code)
+			}
+			for _, gate := range tc.wantPending {
+				if !strings.Contains(errEnv.Error.Hint, gate) {
+					t.Errorf("hint %q does not name pending check %q", errEnv.Error.Hint, gate)
+				}
+			}
+			// A passing gate must never be reported as pending.
+			if strings.Contains(errEnv.Error.Hint, "migrations") &&
+				!contains(tc.wantPending, "migrations") {
+				t.Errorf("hint %q names a passing check", errEnv.Error.Hint)
+			}
+		})
+	}
+}
+
+// contains reports whether want appears in s.
+func contains(s []string, want string) bool {
+	for _, v := range s {
+		if v == want {
+			return true
+		}
+	}
+	return false
 }
 
 // requestIDOf decodes the request_id field shared by both envelope shapes.
@@ -208,7 +390,7 @@ func requestIDOf(t *testing.T, body []byte) string {
 func TestHandlerGeneratesRequestIDForEnvelopeAndHeader(t *testing.T) {
 	t.Parallel()
 
-	handler := NewHandler(runtime.BuildInfo{}, nil, nil)
+	handler := NewHandler(runtime.BuildInfo{}, nil, nil, nil)
 
 	// Cover a success envelope (/healthz), an error envelope from a route
 	// that writes one directly (/readyz, 503), and the synthesised
@@ -221,7 +403,7 @@ func TestHandlerGeneratesRequestIDForEnvelopeAndHeader(t *testing.T) {
 		path    string
 	}{
 		{"success envelope", handler, "/healthz"},
-		{"error envelope", NewHandler(runtime.BuildInfo{}, unready, nil), "/readyz"},
+		{"error envelope", NewHandler(runtime.BuildInfo{}, unready, nil, nil), "/readyz"},
 		{"not found envelope", handler, "/missing"},
 	}
 
@@ -248,7 +430,7 @@ func TestHandlerGeneratesRequestIDForEnvelopeAndHeader(t *testing.T) {
 func TestHandlerEchoesSafeInboundRequestID(t *testing.T) {
 	t.Parallel()
 
-	handler := NewHandler(runtime.BuildInfo{}, nil, nil)
+	handler := NewHandler(runtime.BuildInfo{}, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	req.Header.Set(telemetry.HeaderRequestID, "caller-supplied-id")
@@ -266,7 +448,7 @@ func TestHandlerEchoesSafeInboundRequestID(t *testing.T) {
 func TestHandlerRejectsUnsafeInboundRequestID(t *testing.T) {
 	t.Parallel()
 
-	handler := NewHandler(runtime.BuildInfo{}, nil, nil)
+	handler := NewHandler(runtime.BuildInfo{}, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	// A header-injection payload must never be echoed back verbatim.
@@ -292,7 +474,7 @@ func TestHandlerEmitsStructuredRequestLog(t *testing.T) {
 
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	handler := NewHandler(runtime.BuildInfo{}, nil, logger)
+	handler := NewHandler(runtime.BuildInfo{}, nil, nil, logger)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz?token=topsecretvalue", nil)
 	rec := httptest.NewRecorder()
@@ -341,7 +523,7 @@ func TestHandlerEmitsStructuredRequestLog(t *testing.T) {
 func TestHandlerServesOpenAPIDocument(t *testing.T) {
 	t.Parallel()
 
-	handler := NewHandler(runtime.BuildInfo{Version: "9.9.9"}, nil, nil)
+	handler := NewHandler(runtime.BuildInfo{Version: "9.9.9"}, nil, nil, nil)
 
 	// Deliberately no Authorization header: the discovery endpoint is public.
 	req := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
@@ -393,7 +575,7 @@ func TestEveryRegisteredRouteIsDocumented(t *testing.T) {
 	t.Parallel()
 
 	build := runtime.BuildInfo{}
-	table := newRouteTable(build, nil)
+	table := newRouteTable(build, nil, nil)
 	doc := openAPIDocument(build, table)
 
 	want := append(endpointsOf(table), openAPIEndpoint())
@@ -415,8 +597,8 @@ func TestEveryRegisteredRouteIsDocumented(t *testing.T) {
 func TestRegisteredRoutesAreServable(t *testing.T) {
 	t.Parallel()
 
-	handler := NewHandler(runtime.BuildInfo{}, nil, nil)
-	table := newRouteTable(runtime.BuildInfo{}, nil)
+	handler := NewHandler(runtime.BuildInfo{}, nil, nil, nil)
+	table := newRouteTable(runtime.BuildInfo{}, nil, nil)
 
 	for _, ep := range append(endpointsOf(table), openAPIEndpoint()) {
 		req := httptest.NewRequest(ep.Method, ep.Path, nil)
@@ -440,7 +622,7 @@ func TestRegisteredRoutesAreServable(t *testing.T) {
 func TestOpenAPIDocumentRedactsExampleSecrets(t *testing.T) {
 	t.Parallel()
 
-	handler := NewHandler(runtime.BuildInfo{}, nil, nil)
+	handler := NewHandler(runtime.BuildInfo{}, nil, nil, nil)
 	req := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)

@@ -33,6 +33,11 @@ import (
 // read the resolved value straight off the request context. telemetry.RequestLogging
 // sits just inside it and emits one structured, redacted log record per request.
 //
+// meta supplies the dynamic fields of GET /version — principally the applied
+// database migration version, which is unknown until the process connects to
+// Postgres. A nil meta reports an unknown migration version, which suits
+// tests and processes with no persistence layer wired yet.
+//
 // logger receives the per-request structured log records. A nil logger is
 // accepted — request logging is silently disabled — which suits tests and
 // embedders that do not exercise the logging path.
@@ -41,11 +46,11 @@ import (
 // registers every entry on the mux and generates the OpenAPI document
 // (GET /openapi.json) from the same table, so a served route is always a
 // documented route.
-func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter, logger *slog.Logger) http.Handler {
+func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, logger *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 	build = build.Normalized()
 
-	table := newRouteTable(build, readiness)
+	table := newRouteTable(build, readiness, meta)
 
 	// Generate the OpenAPI document once, from the route table, at startup.
 	doc := openAPIDocument(build, table)

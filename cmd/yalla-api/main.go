@@ -43,16 +43,28 @@ func main() {
 
 	build := runtime.BuildInfo{Version: Version, Commit: Commit, Date: Date}.Normalized()
 
-	// Readiness gates the load balancer: /readyz reports 503 until startup
-	// dependency checks pass, so traffic is only routed to a process that
-	// can actually serve it. The real database and migration checks land
-	// with the persistence stories; the gate scaffolding is wired now so
-	// the readiness transition is exercised end to end.
-	readiness := runtime.NewReadiness("startup")
+	// Readiness gates the load balancer: /readyz reports 503 until every
+	// startup dependency check passes, so traffic is only routed to a process
+	// that can actually serve it. One gate per dependency the API needs —
+	// database connectivity, migration state, and the job queue — plus the
+	// Dokploy dependency when a Dokploy base URL is configured. The real
+	// probes land with the persistence and provisioning stories; the gate
+	// scaffolding is wired now so the readiness transition and the /readyz
+	// per-check payload are exercised end to end.
+	readinessGates := []string{"database", "migrations", "queue"}
+	if cfg.DokployBaseURL != "" {
+		readinessGates = append(readinessGates, "dokploy")
+	}
+	readiness := runtime.NewReadiness(readinessGates...)
+
+	// Meta supplies the dynamic fields of /version. The applied migration
+	// version is unknown until the persistence layer resolves it; the startup
+	// goroutine populates it once the migration check lands.
+	meta := runtime.NewMeta()
 
 	server := &http.Server{
 		Addr:              cfg.APIAddr,
-		Handler:           httpapi.NewHandler(build, readiness, logger),
+		Handler:           httpapi.NewHandler(build, readiness, meta, logger),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -68,7 +80,14 @@ func main() {
 			logger.Error("startup dependency checks failed", "error", err)
 			return
 		}
-		readiness.MarkReady("startup")
+		// Placeholder: the real database, migration, queue, and Dokploy
+		// probes land with the persistence and provisioning stories, which
+		// will also resolve the applied migration version onto meta. Marking
+		// every gate ready here keeps the readiness transition wired end to
+		// end so /readyz flips to 200 once startup completes.
+		for _, gate := range readinessGates {
+			readiness.MarkReady(gate)
+		}
 		logger.Info("startup dependency checks passed; api is ready to serve traffic")
 	}()
 
