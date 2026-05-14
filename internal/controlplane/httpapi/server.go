@@ -6,6 +6,7 @@ import (
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apienvelope"
 	"github.com/JuribaDev/yalla/internal/controlplane/runtime"
+	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
 	yerr "github.com/JuribaDev/yalla/internal/errors"
 )
 
@@ -22,6 +23,12 @@ import (
 // Every response — success or error — is rendered through the apienvelope
 // package so the wire contract (yalla.output.v1 / yalla.error.v1) stays
 // deterministic. Handlers never marshal JSON directly.
+//
+// The whole surface is wrapped in telemetry.Correlate, the outermost
+// middleware: it resolves the request_id / correlation_id for every request
+// (honouring safe inbound X-Request-Id / X-Correlation-Id headers, generating
+// fresh values otherwise) before any handler runs, so requestID can read the
+// resolved value straight off the request context.
 func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter) http.Handler {
 	mux := http.NewServeMux()
 	build = build.Normalized()
@@ -52,16 +59,16 @@ func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter) ht
 		})
 	})
 
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return telemetry.Correlate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mux.ServeHTTP(&notFoundRecorder{ResponseWriter: w, request: r}, r)
-	})
+	}))
 }
 
-// requestID resolves the correlation ID for a request. Until the request-ID
-// middleware story (BE-0006) lands there is no generated ID, so this returns
-// the empty string; the envelope still carries the request_id field so the
-// wire shape is stable today and gains a value transparently later.
-func requestID(_ *http.Request) string { return "" }
+// requestID resolves the request identifier for a request. telemetry.Correlate
+// wraps the whole handler, so by the time any route runs the request context
+// always carries a resolved, SafeID-clean request_id — either echoed from a
+// safe inbound X-Request-Id header or freshly generated.
+func requestID(r *http.Request) string { return telemetry.RequestID(r.Context()) }
 
 // notFoundRecorder intercepts the ServeMux's plain-text 404 so unmatched
 // routes still return the stable yalla.error.v1 envelope.

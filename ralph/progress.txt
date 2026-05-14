@@ -11,6 +11,7 @@
 - runtime.Readiness holds named startup gates (concurrency-safe). httpapi.NewHandler takes a runtime.ReadinessReporter; /readyz must be 503 yalla.error.v1 E_SERVER until every gate passes, 200 yalla.output.v1 after. /healthz is liveness-only and never depends on downstream checks.
 - worker.Loop depends only on the Claimer/Lease interfaces so the durable job store can land later. The loop checks ctx before every Claim (stop claiming on shutdown) and releases interrupted in-flight leases on a context.WithoutCancel context so the release survives shutdown. A job whose Run returns nil is committed and must never be released.
 - Lifecycle code is tested with fakes (fake httpServer, fake Claimer/Lease) — no real sockets, no live deps.
+- Request correlation lives in internal/controlplane/telemetry. telemetry.Correlate is the outermost HTTP middleware (httpapi.NewHandler wraps the mux in it): it resolves request_id (per request) + correlation_id (per workflow) onto the request context before any handler runs. Inbound X-Request-Id/X-Correlation-Id are honoured only if telemetry.SafeID passes ([A-Za-z0-9._-], 1..128) — unsafe values are dropped and a fresh telemetry.NewRequestID() is minted, so injection payloads never reach headers/logs/jobs. Read IDs anywhere via telemetry.FromContext/RequestID/CorrelationID; never thread them through signatures. Non-HTTP entry points seed context with telemetry.WithCorrelation.
 - Backend errors are built through internal/controlplane/apierr, the catalogued error taxonomy — never yerr.New directly in handlers/services. apierr constructors return *yerr.Error (so they flow into apienvelope.WriteError); apierr.Catalog/Lookup pair every code with HTTP status (derived from apienvelope.StatusForCode — single source of truth), retry semantics, and a MessagePolicy. MessageGeneric codes (internal + all dependency failures) keep the cause out of Message/Hint and only Wrap it for logging. InvalidInput carries FieldViolation{Field,Reason} (path + reason, never the submitted value), recoverable via apierr.ViolationsOf; dependency failures are recoverable via apierr.DependencyOf even when they share a code. Adding a code = add to apierr.taxonomy + (if non-500) a apienvelope.StatusForCode case.
 
 ## 2026-05-14 - BE-0002
@@ -207,4 +208,56 @@
     (validationError/dependencyError) as the Cause is the clean way to attach machine-readable
     structure without changing yerr.Error's shape.
   - apierr importing apienvelope is fine (no cycle: apienvelope imports only yerr + output).
+---
+
+## 2026-05-14 - BE-0006
+- What was implemented: Request ID and correlation middleware for the control-plane API.
+  - internal/controlplane/telemetry/correlation.go (new, replaces telemetry/doc.go):
+    HeaderRequestID/HeaderCorrelationID stable header-name constants; Correlation struct
+    (RequestID per request, CorrelationID per workflow); NewRequestID() (crypto/rand 16 bytes
+    -> 32-char hex, with a nanosecond-timestamp fallback that can never panic); SafeID()
+    (1..128 chars from [A-Za-z0-9._-] — rejects CR/LF/space/control/non-ascii, so an inbound
+    value is safe to place verbatim into headers, logs, audit metadata, job rows);
+    WithCorrelation/FromContext/RequestID/CorrelationID context plumbing; LogAttrs(ctx) slog
+    helper; Correlate(next) — the outermost HTTP middleware: honours safe inbound
+    X-Request-Id/X-Correlation-Id, generates a fresh request_id otherwise, defaults a missing
+    correlation_id to the request_id, stores Correlation on the context, echoes both IDs as
+    response headers.
+  - internal/controlplane/httpapi/server.go: NewHandler now wraps the whole mux in
+    telemetry.Correlate; requestID(r) reads telemetry.RequestID(r.Context()) instead of
+    returning "". Every success, /readyz 503, and synthesised 404 envelope now carries a real
+    request_id.
+  - internal/controlplane/telemetry/correlation_test.go (new): SafeID table (incl. CR/LF
+    header-injection, oversized, non-ascii, null byte), NewRequestID uniqueness+safety over
+    1000 draws, context round-trip + zero-value + nil-ctx guard, LogAttrs, and Correlate
+    middleware behaviour (generate-when-missing, honour-safe-inbound, default-correlation,
+    reject-unsafe-inbound).
+  - internal/controlplane/httpapi/server_test.go: added request_id assertions for the success
+    envelope, the /readyz error envelope, and the not-found envelope (all generated + matching
+    the response header), plus echo-safe-inbound and reject-unsafe-inbound cases.
+  - internal/controlplane/AGENTS.md: documented the telemetry.Correlate middleware contract.
+- Files changed: internal/controlplane/telemetry/correlation.go (new),
+  internal/controlplane/telemetry/correlation_test.go (new),
+  internal/controlplane/telemetry/doc.go (deleted), internal/controlplane/httpapi/server.go,
+  internal/controlplane/httpapi/server_test.go, internal/controlplane/AGENTS.md,
+  ralph/prd.json, ralph/progress.txt.
+- Verification run: gofmt -w .; go mod tidy; go build ./...; go vet ./...; go test ./...;
+  go test -race ./....
+- Results: all passed. goimports, golangci-lint, staticcheck, govulncheck not installed locally.
+- Remaining risks / follow-ups:
+  - Propagation to "audit records, job metadata, Dokploy provisioner calls" (criterion 2) and
+    the "DB write / queue job / fake Dokploy" propagation tests (criterion 4) are partly N/A:
+    those subsystems are still doc-only stubs. The context plumbing (WithCorrelation/FromContext)
+    is the propagation mechanism they will read from; when audit/jobs/dokploy land they MUST
+    pull request_id + correlation_id from telemetry.FromContext(ctx) and persist/forward them.
+  - "validation failure / authorization failure" unit-test criteria have no endpoints yet;
+    covered success + /readyz error + not-found envelopes instead.
+- Learnings for future iterations:
+  - telemetry.Correlate is the outermost middleware; future middleware (logging BE-0007, auth,
+    idempotency) should assume correlation is already on the context and slot inside it.
+  - httpapi.NewHandler returns the Correlate-wrapped handler, so cmd/yalla-api needs no change.
+  - SafeID is deliberately strict ([A-Za-z0-9._-]) — it doubles as the header/log-injection
+    guard. Don't loosen it to accept arbitrary client IDs; that charset still covers UUID/ULID.
+  - When adding non-HTTP entry points (worker job runners), seed context via
+    telemetry.WithCorrelation so the same request_id/correlation_id flows through jobs.
 ---

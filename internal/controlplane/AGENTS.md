@@ -45,3 +45,15 @@ do not mix customer API handlers into CLI packages.
 - New background workers depend on the `worker.Claimer`/`worker.Lease`
   interfaces, never on a concrete job store directly, so they stay testable
   with fakes before the durable Postgres queue exists.
+- Request correlation lives in `telemetry`. `telemetry.Correlate` is the
+  outermost HTTP middleware (`httpapi.NewHandler` wraps the whole mux in it):
+  it resolves a `request_id` (per request) and `correlation_id` (per workflow)
+  onto the request context before any handler runs. Inbound `X-Request-Id` /
+  `X-Correlation-Id` headers are honoured only when they pass
+  `telemetry.SafeID` (`[A-Za-z0-9._-]`, 1..128 chars) — unsafe values are
+  discarded and a fresh `telemetry.NewRequestID()` is generated, so a
+  header-injection payload can never reach logs, response headers, or job
+  rows. Read the IDs anywhere via `telemetry.RequestID(ctx)` /
+  `telemetry.CorrelationID(ctx)` / `telemetry.FromContext(ctx)`; never thread
+  them through signatures. New non-HTTP entry points (worker jobs) should seed
+  their own context with `telemetry.WithCorrelation`.

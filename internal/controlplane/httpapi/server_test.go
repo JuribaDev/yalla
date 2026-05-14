@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/runtime"
+	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
 )
 
 func TestHandlerServesBootstrapEndpoints(t *testing.T) {
@@ -185,5 +186,95 @@ func TestReadyzReflectsReadinessTransitions(t *testing.T) {
 	}
 	if okEnv.Data["status"] != "ready" {
 		t.Errorf("data.status = %q, want ready", okEnv.Data["status"])
+	}
+}
+
+// requestIDOf decodes the request_id field shared by both envelope shapes.
+func requestIDOf(t *testing.T, body []byte) string {
+	t.Helper()
+	var env struct {
+		RequestID string `json:"request_id"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		t.Fatalf("decode request_id: %v", err)
+	}
+	return env.RequestID
+}
+
+func TestHandlerGeneratesRequestIDForEnvelopeAndHeader(t *testing.T) {
+	t.Parallel()
+
+	handler := NewHandler(runtime.BuildInfo{}, nil)
+
+	// Cover a success envelope (/healthz), an error envelope from a route
+	// that writes one directly (/readyz, 503), and the synthesised
+	// not-found error envelope. Every path must carry a generated,
+	// SafeID-clean request_id that matches the echoed response header.
+	unready := runtime.NewReadiness("startup")
+	cases := []struct {
+		name    string
+		handler http.Handler
+		path    string
+	}{
+		{"success envelope", handler, "/healthz"},
+		{"error envelope", NewHandler(runtime.BuildInfo{}, unready), "/readyz"},
+		{"not found envelope", handler, "/missing"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			rec := httptest.NewRecorder()
+			tc.handler.ServeHTTP(rec, req)
+
+			id := requestIDOf(t, rec.Body.Bytes())
+			if !telemetry.SafeID(id) {
+				t.Fatalf("envelope request_id %q is not a generated SafeID", id)
+			}
+			if got := rec.Header().Get(telemetry.HeaderRequestID); got != id {
+				t.Errorf("response %s = %q, want it to match envelope request_id %q",
+					telemetry.HeaderRequestID, got, id)
+			}
+		})
+	}
+}
+
+func TestHandlerEchoesSafeInboundRequestID(t *testing.T) {
+	t.Parallel()
+
+	handler := NewHandler(runtime.BuildInfo{}, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req.Header.Set(telemetry.HeaderRequestID, "caller-supplied-id")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if got := requestIDOf(t, rec.Body.Bytes()); got != "caller-supplied-id" {
+		t.Errorf("envelope request_id = %q, want caller-supplied-id", got)
+	}
+	if got := rec.Header().Get(telemetry.HeaderRequestID); got != "caller-supplied-id" {
+		t.Errorf("response header request_id = %q, want caller-supplied-id", got)
+	}
+}
+
+func TestHandlerRejectsUnsafeInboundRequestID(t *testing.T) {
+	t.Parallel()
+
+	handler := NewHandler(runtime.BuildInfo{}, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	// A header-injection payload must never be echoed back verbatim.
+	req.Header.Set(telemetry.HeaderRequestID, "bad id with spaces")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	id := requestIDOf(t, rec.Body.Bytes())
+	if id == "bad id with spaces" {
+		t.Fatalf("unsafe inbound request_id was echoed: %q", id)
+	}
+	if !telemetry.SafeID(id) {
+		t.Fatalf("fallback request_id %q is not safe", id)
 	}
 }
