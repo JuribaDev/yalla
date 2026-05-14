@@ -136,6 +136,7 @@ func (s *Server) newMux() *http.ServeMux {
 	mux.HandleFunc("GET /api/databases/{id}", s.getService)
 
 	mux.HandleFunc("GET /api/services/{id}/status", s.getServiceStatus)
+	mux.HandleFunc("DELETE /api/services/{id}", s.deleteService)
 
 	mux.HandleFunc("POST /api/domains", s.createDomain)
 	mux.HandleFunc("GET /api/domains/{id}", s.getDomain)
@@ -421,6 +422,28 @@ func (s *Server) getServiceStatus(w http.ResponseWriter, r *http.Request) {
 		ServiceID: svc.ID,
 		Status:    svc.Status,
 	})
+}
+
+// deleteService removes a service and any domains bound to it. Removal is
+// idempotent from the worker's point of view, but the fake still answers 404
+// for an unknown ID so the client's own "treat 404 as success" logic is
+// exercised rather than hidden.
+func (s *Server) deleteService(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	id := r.PathValue("id")
+	if _, ok := s.resources.services[id]; !ok {
+		writeError(w, http.StatusNotFound, "not_found", "no such service")
+		return
+	}
+	delete(s.resources.services, id)
+	for domainID, d := range s.resources.domains {
+		if d.ServiceID == id {
+			delete(s.resources.domains, domainID)
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // --- Domains -------------------------------------------------------------
