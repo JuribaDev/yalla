@@ -57,6 +57,21 @@ Postgres persistence for control-plane source-of-truth state.
   constraints — `internal/controlplane/domain` owns ID well-formedness, and
   `testutil` fixtures deliberately use independent prefixes.
 
+## API keys (`0003_api_keys`, `apikey.go`)
+
+- `api_keys` stores **only a hash** of the secret (`secret_hash`) plus the
+  public `prefix`. No column ever holds a usable credential — the plaintext
+  token is minted by `internal/controlplane/auth`, shown once, never persisted.
+- `APIKeyRepository.FindByPrefix` is the **one deliberate exception** to "scope
+  by `organization_id` first": it is the authentication lookup, which runs
+  before the caller's tenant is known. The `prefix` is globally `UNIQUE` and
+  unguessable, and the returned row carries its own `OrganizationID`, so callers
+  scope subsequent work by `key.OrganizationID`. Every other read/mutation
+  (`Get`, `ListByOrganization`, `TouchLastUsed`, `Revoke`) is tenant-scoped.
+- Tenant-scoped mutations that may match zero rows (`TouchLastUsed`, `Revoke`)
+  report `apierr.NotFound` via `tag.RowsAffected() == 0` — a cross-tenant id
+  simply does not match. `Revoke` is idempotent (`COALESCE(revoked_at, $3)`).
+
 ## Repository transaction pattern (`store.go`, `project.go`, `projectservice.go`)
 
 - The `store` package is the **only** place repository code reaches the

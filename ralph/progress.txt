@@ -19,6 +19,7 @@
 - HTTP routes are data-driven from internal/controlplane/httpapi/routes.go newRouteTable — the single source of truth. Each apiRoute pairs a served http.HandlerFunc with its openapi.Endpoint metadata; httpapi.NewHandler registers every entry on the mux AND generates the OpenAPI document from the same table, so a served route is always a documented route (TestEveryRegisteredRouteIsDocumented enforces it in CI). Never call mux.HandleFunc directly in NewHandler — add to newRouteTable. The OpenAPI 3.1 document is built by internal/controlplane/openapi.Build from a neutral []openapi.Endpoint, references the two stable envelope schemas, is served raw (not enveloped) at GET /openapi.json without auth, and marshals maps with sorted keys for a byte-stable artifact. Secret-shaped sample values use output.Sentinel.
 - Domain tables live in versioned migrations under store/migrate/migrations/. Every customer-data table carries organization_id (directly or via a verified parent chain) and is tenant-isolated at the database level by COMPOSITE foreign keys: a child FK (organization_id, parent_id) references the parent's UNIQUE (organization_id, id), making a cross-tenant child unrepresentable. Slugs are citext, unique within parent scope, never global. users is a global identity table; org membership is the memberships join table. Schema-level integration tests live in package store_test (NOT package migrate — it can't import testutil) and match constraint violations via *pgconn.PgError SQLSTATE class 23.
 - Persistence access goes through internal/controlplane/store: Store.Read (read-only tx -> Querier) and Store.Write (read/write tx -> *Tx; commit on nil, rollback on ANY error or panic). A *Tx is obtainable ONLY inside Store.Write; repository mutation methods take *Tx, read methods take Querier — so a mutation structurally cannot run outside the transaction that also carries its authorization and quota checks. A unit of work validates input first, then composes authorize -> reserve quota -> write desired state -> enqueue durable job inside one Store.Write. The policy/quota/jobs dependencies are narrow port interfaces defined IN store (Authorizer, QuotaReserver, JobEnqueuer); store never imports those packages. Error mapping is uniform: pgx.ErrNoRows -> apierr.NotFound, SQLSTATE class 23 -> apierr.Conflict, other driver errors -> apierr.StoreUnavailable; the raw cause is wrapped for logging only. ProjectRepository/ProjectService are the reference implementation.
+- Credentials: internal/controlplane/auth owns generation/hashing/verification; internal/controlplane/store owns persistence. A secret is stored ONLY as a one-way hash plus a public, globally-UNIQUE prefix — never plaintext. Plaintext credential types implement String/GoString/LogValue/MarshalJSON returning output.Sentinel; the plaintext is reachable only via an explicit Reveal() method. High-entropy secrets (>=128 bits random) use fast unsalted SHA-256 + subtle.ConstantTimeCompare, NOT bcrypt/argon2. Authentication lookup (FindByPrefix) is the ONE deliberate non-tenant-scoped repository read — it runs before the tenant is known; the found row carries its own OrganizationID. Tenant-scoped mutations that may match zero rows report apierr.NotFound via tag.RowsAffected()==0.
 
 ## 2026-05-14 - BE-0002
 - What was implemented: Backend configuration contract for the control-plane API and worker.
@@ -906,4 +907,107 @@
   - apierr already keeps raw causes out of the user-facing Message
     (yerr.Error.Error() renders only "code: message"), so wrapping a driver
     error via .Wrap() is leak-safe and still errors.Is-traversable.
+---
+
+## 2026-05-14 - BE-0015
+- What was implemented: API key hashing, generation, verification, and the
+  persistence layer for customer API keys.
+  - internal/controlplane/store/migrate/migrations/0003_api_keys.{up,down}.sql
+    (new): the api_keys table. Stores ONLY secret_hash (one-way) + a public,
+    globally-UNIQUE prefix — no column ever holds a usable credential.
+    Tenant-scoped via organization_id FK (ON DELETE CASCADE). Lifecycle columns
+    expires_at / revoked_at / last_used_at; created_by REFERENCES users ON
+    DELETE SET NULL (nullable — keys survive creator deletion, lose
+    attribution); scopes text[] NOT NULL DEFAULT '{}'. created_at/updated_at +
+    set_updated_at() trigger. Index on organization_id for tenant listing
+    (the prefix lookup rides the UNIQUE index).
+  - internal/controlplane/auth/apikey.go (new package): the credential
+    primitives. Token shape "yk_<prefixRandom>_<secret>" (Crockford base32, no
+    padding) is a public contract. Generate() -> GeneratedKey{Token, Prefix,
+    SecretHash}; HashSecret = hex SHA-256 (fast unsalted hash is correct for
+    192-bit-entropy secrets); VerifySecret uses subtle.ConstantTimeCompare;
+    ParseToken validates shape and returns ErrMalformedToken (never echoes
+    input). Token is a self-redacting type: String/GoString/LogValue/
+    MarshalJSON all yield output.Sentinel; plaintext only via explicit
+    Reveal().
+  - internal/controlplane/store/apikey.go (new): APIKey row struct +
+    lifecycle predicates (IsRevoked/IsExpired/IsUsable) + APIKeyRepository
+    following the *Tx-mutation / Querier-read pattern. Insert/TouchLastUsed/
+    Revoke take *Tx; FindByPrefix/Get/ListByOrganization take Querier.
+    FindByPrefix is the deliberate non-tenant-scoped auth lookup (documented).
+    Revoke is idempotent via COALESCE(revoked_at, $3). Zero-row mutations ->
+    apierr.NotFound.
+  - internal/controlplane/auth/apikey_test.go (new, package auth_test):
+    generate->parse->verify round trip, uniqueness, deterministic hashing,
+    constant-time verify (correct/wrong/empty/tampered), ParseToken malformed
+    table, Token redaction across %v/%+v/%#v/%s/slog/JSON, and
+    AssertRedactedValue over the full token + bare secret.
+  - internal/controlplane/store/apikey_test.go (new, package store_test):
+    insert+FindByPrefix, FindByPrefix not-found, tenant-scoped Get/List/
+    TouchLastUsed/Revoke (cross-tenant -> NotFound), duplicate-prefix Conflict,
+    nil-Tx guard, expiry round trip, the "plaintext is never persisted" test
+    (concatenates every text column and asserts the token/secret are absent),
+    and DB-free lifecycle-predicate unit tests. Adds seedUser helper.
+  - internal/controlplane/auth/AGENTS.md (new); store/AGENTS.md: documented the
+    api_keys table, the FindByPrefix non-tenant-scoped exception, and the
+    idempotent zero-row-mutation -> NotFound convention.
+- Files changed: 0003_api_keys.{up,down}.sql (new), auth/apikey.go (new),
+  auth/apikey_test.go (new), auth/AGENTS.md (new), store/apikey.go (new),
+  store/apikey_test.go (new), store/AGENTS.md, ralph/prd.json,
+  ralph/progress.txt.
+- Verification run: gofmt -w .; go mod tidy; go build ./...; go vet ./...;
+  go test ./...; go test -race ./... — the last two with
+  YALLA_TEST_DATABASE_URL pointing at the docker-compose Postgres 16, so all 10
+  api_keys integration tests RUN (confirmed via -v, not skipped) and PASS,
+  including under -race.
+- Results: all passed (go test ./... and go test -race ./... exit 0, 24 ok
+  packages; go vet exit 0). goimports/golangci-lint/staticcheck/govulncheck
+  still not installed locally (documented in earlier entries).
+- Acceptance criteria mapping:
+  - "public prefix + secret body; only a hash is stored" — auth.Generate +
+    api_keys (no plaintext column).
+  - "lookup uses prefix ... constant-time hash comparison" —
+    APIKeyRepository.FindByPrefix + auth.VerifySecret (subtle.ConstantTimeCompare).
+  - "expiration, revocation, last_used_at, created_by, scope metadata" — all
+    present as columns + APIKey fields + lifecycle predicates.
+  - "tests prove plaintext keys are never persisted or logged" —
+    TestAPIKeyPlaintextIsNeverPersisted + TestTokenRedactsItselfInEveryRendering
+    + TestGeneratedKeyNeverLeaksTheSecret.
+  - Criterion 5 (JSON envelopes) — N/A: this story has no HTTP surface; all
+    errors are typed apierr values that already render through apienvelope.
+  - "unit tests cover success/validation failure/authorization failure/
+    not-found" — success + validation failure (ParseToken malformed table) +
+    not-found (FindByPrefix/Get/TouchLastUsed/Revoke). Authorization-failure is
+    N/A at this layer (the policy engine is BE-0018); the *Tx-only mutation
+    surface is the structural hook the authorize step will share.
+  - Integration tests use isolated Postgres migrations, no live Dokploy.
+  - Redaction — Token self-redacts everywhere; the persisted-row test proves
+    no plaintext reaches any column.
+- Remaining risks / follow-ups:
+  - No HTTP endpoint or auth middleware yet: the "create API key" endpoint and
+    the request-authentication middleware (parse token -> FindByPrefix ->
+    VerifySecret -> IsUsable -> TouchLastUsed -> Principal) are later stories.
+    auth.VerifySecret + APIKeyRepository are the primitives they compose.
+  - api_keys.scopes is an opaque text[] for now; the scope catalog / validation
+    is a later policy story.
+  - BE-0016 (service accounts) will need created_by to optionally point at a
+    service account rather than a user; revisit the created_by FK then.
+- Learnings for future iterations:
+  - A self-redacting credential type needs FOUR methods to be leak-proof
+    against testutil.AssertRedactedValue: String (covers %v/%+v/%s), GoString
+    (covers %#v), LogValue (slog), MarshalJSON (JSON). Missing any one leaks.
+  - testutil.Factory.APIKey only reads org.ID and user.ID off its args, so a
+    test can pass partial fixtures: f.APIKey(testutil.Organization{ID: orgID},
+    testutil.User{ID: uid}, label) just to borrow its globally-unique key ID.
+  - For "plaintext never persisted" assertions, concatenate every text-bearing
+    column in SQL (id||'|'||...||array_to_string(scopes,',')) and run
+    testutil.AssertRedacted on the result — proves absence across the whole row
+    in one shot.
+  - Idempotent revoke without a Conflict: UPDATE ... SET col = COALESCE(col, $n)
+    keeps the first timestamp and still counts the row as affected, so
+    RowsAffected()==0 cleanly means "no such row" -> NotFound, never "already
+    done".
+  - base32.Encoding.EncodedLen() respects the WithPadding setting — compute
+    token-part lengths from it rather than hard-coding, so the entropy budget
+    and the ParseToken shape check stay in sync.
 ---
