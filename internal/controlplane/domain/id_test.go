@@ -9,7 +9,7 @@ import (
 func TestKindValid(t *testing.T) {
 	t.Parallel()
 	valid := []Kind{
-		KindOrganization, KindUser, KindAPIKey, KindProject,
+		KindOrganization, KindUser, KindServiceAccount, KindAPIKey, KindProject,
 		KindEnvironment, KindService, KindDeployment, KindJob,
 	}
 	for _, k := range valid {
@@ -27,7 +27,7 @@ func TestKindValid(t *testing.T) {
 func TestNewIDRoundTrip(t *testing.T) {
 	t.Parallel()
 	kinds := []Kind{
-		KindOrganization, KindUser, KindAPIKey, KindProject,
+		KindOrganization, KindUser, KindServiceAccount, KindAPIKey, KindProject,
 		KindEnvironment, KindService, KindDeployment, KindJob,
 	}
 	seen := make(map[ID]struct{})

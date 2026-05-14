@@ -1011,3 +1011,79 @@
     token-part lengths from it rather than hard-coding, so the entropy budget
     and the ParseToken shape check stay in sync.
 ---
+
+## 2026-05-14 - BE-0016
+- What was implemented: the service account model — non-human principals for CI/automation
+  that authenticate without a human user and without ever holding a Dokploy token.
+  - internal/controlplane/domain/id.go: added KindServiceAccount ("sa") constant + kinds-map
+    entry + doc-comment prefix list. id_test.go: KindServiceAccount added to both Kind lists.
+  - internal/controlplane/store/migrate/migrations/0004_service_accounts.{up,down}.sql:
+    new tenant-scoped service_accounts table (organization_id FK ON DELETE CASCADE, citext slug
+    unique within org, display_name, disabled_at lifecycle, UNIQUE (organization_id, id) as the
+    composite-FK target, set_updated_at trigger). ALTER api_keys ADD COLUMN service_account_id
+    (nullable) + composite FK (organization_id, service_account_id) -> service_accounts
+    (organization_id, id) ON DELETE CASCADE — MATCH SIMPLE, so it is enforced only when the
+    column is set and then pins the key's org to its service account's. Partial index on the
+    non-NULL link. down reverses link-then-table.
+  - internal/controlplane/store/serviceaccount.go: ServiceAccount struct + IsDisabled();
+    ServiceAccountRepository (Insert/Get/ListByOrganization/CountByOrganization/Disable) mirroring
+    APIKeyRepository — mutations take *Tx, reads take Querier, every query tenant-scoped, Disable
+    idempotent via COALESCE and reports NotFound on RowsAffected()==0.
+  - internal/controlplane/store/serviceaccountservice.go: ServiceAccountService unit-of-work
+    (validate -> Store.Write{ authorize -> reserve quota -> insert }). Mirrors ProjectService but
+    has NO JobEnqueuer — a service account is pure Yalla identity with no Dokploy object.
+    validateCreateServiceAccountInput uses domain.ParseID/ParseSlug, returns InvalidInput with
+    stable field paths.
+  - internal/controlplane/store/apikey.go: APIKey gains ServiceAccountID; apiKeyColumns,
+    scanAPIKey, Insert updated for the new nullable column; added ListByServiceAccount
+    (tenant-scoped read).
+  - internal/controlplane/testutil/fixtures.go: ServiceAccount fixture struct + Factory.ServiceAccount.
+  - Tests: store/serviceaccountservice_internal_test.go (white-box: validation + nil-dependency
+    constructor guards, reuses nopAuthorizer/nopQuotaReserver from internal_test.go);
+    store/serviceaccount_test.go (integration: insert/get round-trip, belongs-to-one-org +
+    cascade, tenant-scoped Get/List, duplicate-slug conflict + cross-org slug reuse, idempotent
+    tenant-scoped Disable, service account owns API keys + ListByServiceAccount excludes
+    human-owned keys, composite FK rejects a cross-tenant service-account key, deploy-only +
+    denied-cross-project-read scope round-trip, and ServiceAccountService success / validation /
+    authorization / quota-rollback / conflict).
+  - PRD BE-0016 -> passes:true with a notes summary.
+- Files changed: internal/controlplane/domain/{id.go,id_test.go};
+  internal/controlplane/store/migrate/migrations/0004_service_accounts.{up,down}.sql (new);
+  internal/controlplane/store/{serviceaccount.go,serviceaccountservice.go,
+  serviceaccountservice_internal_test.go,serviceaccount_test.go} (new);
+  internal/controlplane/store/apikey.go; internal/controlplane/testutil/fixtures.go;
+  internal/controlplane/store/AGENTS.md; ralph/prd.json; ralph/progress.txt.
+- Verification run: gofmt -w .; go mod tidy (no module changes); go build ./...; go vet ./...;
+  go test ./...; go test -race ./...; and with YALLA_TEST_DATABASE_URL set against docker-compose
+  Postgres: go test ./internal/controlplane/... and go test -race ./....
+- Results: all passed. The 19 new BE-0016 tests run (not skipped) against Postgres; the whole
+  suite is green with the race detector. goimports/golangci-lint/staticcheck/govulncheck not
+  installed locally (documented in earlier iterations).
+- Remaining risks / follow-ups:
+  - Acceptance criterion "service accounts cannot manage billing/owners/break-glass unless policy
+    allows" is forward-looking: there is no policy engine or shared Principal type yet. The model
+    layer encodes the identity + ownership; the rule is documented in the migration and struct
+    comments for the policy story to enforce.
+  - The JSON-envelope acceptance criterion is N/A — this is a persistence/model story with no
+    HTTP endpoint (same shape as BE-0013/BE-0014). The service-account HTTP surface lands later.
+  - api_keys.created_by (attribution) and service_account_id (ownership) are intentionally
+    independent — a human can mint a key owned by a service account — so there is no
+    mutual-exclusion CHECK.
+- Learnings for future iterations:
+  - A composite FK with a nullable child column is the clean tenant-isolation primitive for an
+    OPTIONAL parent link: MATCH SIMPLE skips the check when the nullable column is NULL, and
+    enforces the full (organization_id, parent_id) tuple when it is set. api_keys.service_account_id
+    is the reference example; reuse this shape for any optional cross-table ownership link.
+  - Adding a column to an existing table = a NEW migration that ALTERs it; never edit the original
+    (0003) migration file (ErrChecksumMismatch by design). apiKeyColumns is the single column
+    list — updating that const + scanAPIKey + Insert keeps FindByPrefix/Get/List* consistent.
+  - Not every unit-of-work needs a JobEnqueuer. ServiceAccountService composes only
+    authorize -> quota -> write because a service account provisions nothing in Dokploy. Mirror
+    ProjectService's shape but drop the steps that do not apply.
+  - White-box store tests (package store) can freely reuse helpers across files — nopAuthorizer/
+    nopQuotaReserver live in internal_test.go and serviceaccountservice_internal_test.go uses them.
+    Likewise package store_test integration tests reuse recordingAuthorizer/recordingQuota,
+    seedOrg/seedProject/seedDomainOrg, newStore, and insertAPIKey across files.
+  - migrate.go embeds migrations/*.sql by glob, so a new NNNN_*.sql pair is picked up with no Go
+    change; migrate_test.go already derives the latest version from m.Migrations() (no literal).
+---

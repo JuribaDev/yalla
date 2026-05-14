@@ -72,6 +72,23 @@ Postgres persistence for control-plane source-of-truth state.
   report `apierr.NotFound` via `tag.RowsAffected() == 0` — a cross-tenant id
   simply does not match. `Revoke` is idempotent (`COALESCE(revoked_at, $3)`).
 
+## Service accounts (`0004_service_accounts`, `serviceaccount.go`, `serviceaccountservice.go`)
+
+- `service_accounts` is a tenant-scoped table for **non-human principals** (CI
+  and automation). It carries `organization_id` directly and exposes
+  `UNIQUE (organization_id, id)` so it can be a composite-FK target. It has a
+  `disabled_at` lifecycle (`Disable` is idempotent via `COALESCE`).
+- `api_keys.service_account_id` is a **nullable** ownership link. The composite
+  foreign key `(organization_id, service_account_id)` is `MATCH SIMPLE`: it is
+  enforced only when the column is set, and then it pins the key's organization
+  to its service account's — a cross-tenant service-account key is
+  unrepresentable. This is the reference pattern for any **optional**
+  cross-table ownership link.
+- `ServiceAccountService` mirrors `ProjectService` but has **no
+  `JobEnqueuer`** — a service account provisions nothing in Dokploy, so its
+  unit of work is `authorize → reserve quota → write` only. Not every
+  unit-of-work needs every port.
+
 ## Repository transaction pattern (`store.go`, `project.go`, `projectservice.go`)
 
 - The `store` package is the **only** place repository code reaches the

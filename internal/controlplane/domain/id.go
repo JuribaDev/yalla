@@ -2,7 +2,7 @@
 // shared by every Yalla control-plane resource.
 //
 // These primitives are a public compatibility contract. Resource ID prefixes
-// (org_, usr_, key_, proj_, env_, svc_, dep_, job_), the ID encoding, the slug
+// (org_, usr_, sa_, key_, proj_, env_, svc_, dep_, job_), the ID encoding, the slug
 // normalisation rules, and the Dokploy-name layout are all treated as stable:
 // changing them is a breaking change for stored data, audit records, and any
 // agent or CLI that parses them.
@@ -41,25 +41,29 @@ type Kind string
 const (
 	KindOrganization Kind = "org"
 	KindUser         Kind = "usr"
-	KindAPIKey       Kind = "key"
-	KindProject      Kind = "proj"
-	KindEnvironment  Kind = "env"
-	KindService      Kind = "svc"
-	KindDeployment   Kind = "dep"
-	KindJob          Kind = "job"
+	// KindServiceAccount is a non-human principal: a CI/automation identity
+	// scoped to a single organization.
+	KindServiceAccount Kind = "sa"
+	KindAPIKey         Kind = "key"
+	KindProject        Kind = "proj"
+	KindEnvironment    Kind = "env"
+	KindService        Kind = "svc"
+	KindDeployment     Kind = "dep"
+	KindJob            Kind = "job"
 )
 
 // kinds is the authoritative set of valid resource kinds. It backs Kind.Valid
 // and the ID parser; adding a Kind constant requires adding it here too.
 var kinds = map[Kind]struct{}{
-	KindOrganization: {},
-	KindUser:         {},
-	KindAPIKey:       {},
-	KindProject:      {},
-	KindEnvironment:  {},
-	KindService:      {},
-	KindDeployment:   {},
-	KindJob:          {},
+	KindOrganization:   {},
+	KindUser:           {},
+	KindServiceAccount: {},
+	KindAPIKey:         {},
+	KindProject:        {},
+	KindEnvironment:    {},
+	KindService:        {},
+	KindDeployment:     {},
+	KindJob:            {},
 }
 
 // Valid reports whether k is one of the canonical resource kinds.

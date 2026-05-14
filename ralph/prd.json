@@ -1189,8 +1189,8 @@
       ],
       "type": "auth",
       "priority": 1,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Migration 0004_service_accounts adds the tenant-scoped service_accounts table and a nullable api_keys.service_account_id ownership link with a composite FK (organization_id, service_account_id) so a service-account key cannot cross tenants. domain.KindServiceAccount ('sa') added. store.ServiceAccountRepository + ServiceAccountService follow the ProjectRepository/ProjectService reference pattern (authorize -> reserve quota -> write; no Dokploy job). apikey.go gains ListByServiceAccount and the ServiceAccountID field. Policy-gated restrictions (billing/owners/break-glass) are documented for the policy engine; no HTTP endpoint in this story, so JSON-envelope criterion is N/A."
     },
     {
       "id": "BE-0017",

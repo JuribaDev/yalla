@@ -34,6 +34,16 @@ type User struct {
 	Name           string
 }
 
+// ServiceAccount is an in-memory test fixture for a non-human principal — a
+// CI/automation identity scoped to a single Organization. Service accounts own
+// API keys but are never human users.
+type ServiceAccount struct {
+	ID             string
+	OrganizationID string
+	Slug           string
+	Name           string
+}
+
 // APIKey is an in-memory test fixture for an organization-scoped API key.
 // Secret is a fake plaintext credential; it exists so redaction tests have a
 // realistic value to assert against and must never be logged or rendered.
@@ -114,6 +124,17 @@ func (f *Factory) User(org Organization, label string) User {
 		OrganizationID: org.ID,
 		Email:          fmt.Sprintf("%s-%s%d@fixtures.yalla.test", localPart(label, "user"), f.token, n),
 		Name:           displayName(label, "User", n),
+	}
+}
+
+// ServiceAccount builds a new ServiceAccount fixture linked to org.
+func (f *Factory) ServiceAccount(org Organization, label string) ServiceAccount {
+	n := f.next()
+	return ServiceAccount{
+		ID:             f.id("sa", n),
+		OrganizationID: org.ID,
+		Slug:           f.slug(label, "service-account", n),
+		Name:           displayName(label, "Service Account", n),
 	}
 }
 

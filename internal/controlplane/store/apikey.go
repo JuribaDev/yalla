@@ -24,12 +24,19 @@ type APIKey struct {
 	Scopes         []string
 	// CreatedBy is the id of the user who minted the key, or "" when the key
 	// has no attributed creator (the api_keys.created_by column is nullable).
-	CreatedBy  string
-	ExpiresAt  *time.Time
-	RevokedAt  *time.Time
-	LastUsedAt *time.Time
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	CreatedBy string
+	// ServiceAccountID is the id of the service account that owns the key, or
+	// "" when the key is not owned by a service account (the
+	// api_keys.service_account_id column is nullable). A non-human principal —
+	// CI or automation — authenticates with a service-account-owned key. The
+	// composite foreign key (organization_id, service_account_id) guarantees
+	// the owning service account is in the same organization as the key.
+	ServiceAccountID string
+	ExpiresAt        *time.Time
+	RevokedAt        *time.Time
+	LastUsedAt       *time.Time
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 // IsRevoked reports whether the key has been explicitly revoked.
@@ -65,22 +72,26 @@ func NewAPIKeyRepository() *APIKeyRepository { return &APIKeyRepository{} }
 // apiKeyColumns is the column list returned by every api_keys query, in the
 // order scanAPIKey expects.
 const apiKeyColumns = `id, organization_id, prefix, secret_hash, name, scopes, ` +
-	`created_by, expires_at, revoked_at, last_used_at, created_at, updated_at`
+	`created_by, service_account_id, expires_at, revoked_at, last_used_at, created_at, updated_at`
 
 // scanAPIKey scans one api_keys row, in apiKeyColumns order, into an APIKey.
 func scanAPIKey(row pgx.Row) (APIKey, error) {
 	var (
-		k         APIKey
-		createdBy *string
+		k                APIKey
+		createdBy        *string
+		serviceAccountID *string
 	)
 	if err := row.Scan(
 		&k.ID, &k.OrganizationID, &k.Prefix, &k.SecretHash, &k.Name, &k.Scopes,
-		&createdBy, &k.ExpiresAt, &k.RevokedAt, &k.LastUsedAt, &k.CreatedAt, &k.UpdatedAt,
+		&createdBy, &serviceAccountID, &k.ExpiresAt, &k.RevokedAt, &k.LastUsedAt, &k.CreatedAt, &k.UpdatedAt,
 	); err != nil {
 		return APIKey{}, err
 	}
 	if createdBy != nil {
 		k.CreatedBy = *createdBy
+	}
+	if serviceAccountID != nil {
+		k.ServiceAccountID = *serviceAccountID
 	}
 	return k, nil
 }
@@ -100,6 +111,10 @@ func (r *APIKeyRepository) Insert(ctx context.Context, tx *Tx, k APIKey) (APIKey
 	if k.CreatedBy != "" {
 		createdBy = &k.CreatedBy
 	}
+	var serviceAccountID *string
+	if k.ServiceAccountID != "" {
+		serviceAccountID = &k.ServiceAccountID
+	}
 	scopes := k.Scopes
 	if scopes == nil {
 		// A nil slice would be stored as NULL; the column is NOT NULL DEFAULT
@@ -109,11 +124,11 @@ func (r *APIKeyRepository) Insert(ctx context.Context, tx *Tx, k APIKey) (APIKey
 	row := tx.QueryRow(ctx,
 		`INSERT INTO api_keys
 		   (id, organization_id, prefix, secret_hash, name, scopes,
-		    created_by, expires_at, revoked_at, last_used_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		    created_by, service_account_id, expires_at, revoked_at, last_used_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		 RETURNING `+apiKeyColumns,
 		k.ID, k.OrganizationID, k.Prefix, k.SecretHash, k.Name, scopes,
-		createdBy, k.ExpiresAt, k.RevokedAt, k.LastUsedAt)
+		createdBy, serviceAccountID, k.ExpiresAt, k.RevokedAt, k.LastUsedAt)
 	created, err := scanAPIKey(row)
 	if err != nil {
 		return APIKey{}, mapWriteError(err, "an api key with this id or prefix already exists")
@@ -173,6 +188,37 @@ func (r *APIKeyRepository) ListByOrganization(ctx context.Context, q Querier, or
 		 WHERE organization_id = $1
 		 ORDER BY created_at, id`,
 		organizationID)
+	if err != nil {
+		return nil, apierr.StoreUnavailable(err)
+	}
+	defer rows.Close()
+
+	var keys []APIKey
+	for rows.Next() {
+		k, err := scanAPIKey(rows)
+		if err != nil {
+			return nil, apierr.StoreUnavailable(err)
+		}
+		keys = append(keys, k)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, apierr.StoreUnavailable(err)
+	}
+	return keys, nil
+}
+
+// ListByServiceAccount returns every API key owned by the service account
+// identified by (organizationID, serviceAccountID), oldest first. The query is
+// tenant scoped by organization_id, so it can never return another
+// organization's keys — and a service account id from another organization
+// simply matches no rows.
+func (r *APIKeyRepository) ListByServiceAccount(ctx context.Context, q Querier, organizationID, serviceAccountID string) ([]APIKey, error) {
+	rows, err := q.Query(ctx,
+		`SELECT `+apiKeyColumns+`
+		 FROM api_keys
+		 WHERE organization_id = $1 AND service_account_id = $2
+		 ORDER BY created_at, id`,
+		organizationID, serviceAccountID)
 	if err != nil {
 		return nil, apierr.StoreUnavailable(err)
 	}
