@@ -9,7 +9,13 @@ do not mix customer API handlers into CLI packages.
   `auth`, `policy`, `quota`, `jobs`, `dokploy`, `store`, `audit`, and
   `telemetry`.
 - Public API responses must use stable envelopes:
-  `yalla.output.v1` for success and `yalla.error.v1` for errors.
+  `yalla.output.v1` for success and `yalla.error.v1` for errors. Render every
+  response — success and error — through `apienvelope.WriteData` /
+  `apienvelope.WriteError`. Handlers must never marshal JSON directly; the
+  envelope structs are unexported so this boundary is enforced by the compiler.
+  HTTP status follows the error `Code` via `apienvelope.StatusForCode`; only
+  use `WriteErrorStatus` when a status genuinely cannot be derived from the
+  code (e.g. `/readyz` returning 503).
 - Every customer-data path must eventually resolve organization scope before
   reading or mutating data. Cross-tenant IDs must not leak resource existence.
 - Dokploy is a private provisioning backend. Customer-facing code should call
