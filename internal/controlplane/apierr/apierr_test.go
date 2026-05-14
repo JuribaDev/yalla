@@ -1,0 +1,387 @@
+package apierr
+
+import (
+	stderrors "errors"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/JuribaDev/yalla/internal/controlplane/apienvelope"
+	yerr "github.com/JuribaDev/yalla/internal/errors"
+	"github.com/JuribaDev/yalla/internal/output"
+)
+
+// TestCatalogStatusesAreDeterministicFailures asserts every catalogued code has
+// a deterministic HTTP status, that the status matches apienvelope (the single
+// source of truth), and that no error code maps to a non-failure status.
+func TestCatalogStatusesAreDeterministicFailures(t *testing.T) {
+	t.Parallel()
+
+	cat := Catalog()
+	if len(cat) == 0 {
+		t.Fatal("Catalog() is empty")
+	}
+	for _, entry := range cat {
+		if entry.Code == "" {
+			t.Errorf("catalogue entry has an empty code: %+v", entry)
+		}
+		if want := apienvelope.StatusForCode(entry.Code); entry.HTTPStatus != want {
+			t.Errorf("%s HTTPStatus = %d, want %d (apienvelope is the source of truth)",
+				entry.Code, entry.HTTPStatus, want)
+		}
+		if entry.HTTPStatus < 400 {
+			t.Errorf("%s maps to status %d, want a >= 400 failure status",
+				entry.Code, entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageSpecific && entry.MessagePolicy != MessageGeneric {
+			t.Errorf("%s has an unknown message policy %q", entry.Code, entry.MessagePolicy)
+		}
+		if entry.Description == "" {
+			t.Errorf("%s has no description", entry.Code)
+		}
+	}
+}
+
+// TestCatalogIsSortedAndCoversCategories proves the catalogue is deterministic
+// and covers every category named by the story: auth, policy, validation,
+// quota, conflict, dependency failures, and internal failures.
+func TestCatalogIsSortedAndCoversCategories(t *testing.T) {
+	t.Parallel()
+
+	cat := Catalog()
+	for i := 1; i < len(cat); i++ {
+		if cat[i-1].Code >= cat[i].Code {
+			t.Fatalf("Catalog() not sorted: %s before %s", cat[i-1].Code, cat[i].Code)
+		}
+	}
+	required := []yerr.Code{
+		yerr.CodeAuth, yerr.CodeForbidden, yerr.CodeInvalidInput,
+		yerr.CodeNotFound, yerr.CodeConflict, yerr.CodeQuotaExceeded,
+		yerr.CodeServer, yerr.CodeUnavailable, yerr.CodeNetwork,
+		yerr.CodeTimeout, yerr.CodeInternal,
+	}
+	for _, code := range required {
+		if _, ok := Lookup(code); !ok {
+			t.Errorf("taxonomy is missing required code %s", code)
+		}
+	}
+}
+
+func TestLookupUnknownCode(t *testing.T) {
+	t.Parallel()
+
+	if entry, ok := Lookup(yerr.Code("E_NOT_A_REAL_CODE")); ok {
+		t.Errorf("Lookup of an unknown code returned ok with %+v", entry)
+	}
+}
+
+// TestConstructorsEmitCataloguedCodes proves every constructor produces a code
+// that is documented in the catalogue with the expected status.
+func TestConstructorsEmitCataloguedCodes(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name       string
+		err        *yerr.Error
+		wantCode   yerr.Code
+		wantStatus int
+	}{
+		{"unauthenticated", Unauthenticated(""), yerr.CodeAuth, 401},
+		{"forbidden", Forbidden(""), yerr.CodeForbidden, 403},
+		{"not found", NotFound("project", "p1"), yerr.CodeNotFound, 404},
+		{"conflict", Conflict(""), yerr.CodeConflict, 409},
+		{"invalid input", InvalidInput(FieldViolation{Field: "name", Reason: "required"}), yerr.CodeInvalidInput, 400},
+		{"invalid", Invalid(""), yerr.CodeInvalidInput, 400},
+		{"quota exceeded", QuotaExceeded("services", 5), yerr.CodeQuotaExceeded, 429},
+		{"dokploy unavailable", DokployUnavailable(stderrors.New("x")), yerr.CodeServer, 502},
+		{"store unavailable", StoreUnavailable(stderrors.New("x")), yerr.CodeUnavailable, 503},
+		{"queue unavailable", QueueUnavailable(stderrors.New("x")), yerr.CodeUnavailable, 503},
+		{"network failure", NetworkFailure(stderrors.New("x")), yerr.CodeNetwork, 502},
+		{"timeout", Timeout(DependencyDokploy, stderrors.New("x")), yerr.CodeTimeout, 504},
+		{"internal", Internal(stderrors.New("x")), yerr.CodeInternal, 500},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if tc.err.Code != tc.wantCode {
+				t.Fatalf("code = %q, want %q", tc.err.Code, tc.wantCode)
+			}
+			entry, ok := Lookup(tc.err.Code)
+			if !ok {
+				t.Fatalf("%s is not catalogued", tc.err.Code)
+			}
+			if entry.HTTPStatus != tc.wantStatus {
+				t.Errorf("status = %d, want %d", entry.HTTPStatus, tc.wantStatus)
+			}
+			if tc.err.Message == "" {
+				t.Errorf("%s produced an empty message", tc.name)
+			}
+		})
+	}
+}
+
+func TestUnauthenticatedAndForbiddenDefaults(t *testing.T) {
+	t.Parallel()
+
+	if got := Unauthenticated(""); got.Message == "" {
+		t.Error("Unauthenticated(\"\") must supply a default message")
+	}
+	if got := Unauthenticated("token expired"); got.Message != "token expired" {
+		t.Errorf("Unauthenticated message = %q, want passthrough", got.Message)
+	}
+	if got := Forbidden(""); got.Message == "" {
+		t.Error("Forbidden(\"\") must supply a default message")
+	}
+}
+
+// TestNotFoundEchoesCallerIdentifierOnly proves NotFound names the resource and
+// reflects the caller-supplied id verbatim, and never invents one.
+func TestNotFoundEchoesCallerIdentifierOnly(t *testing.T) {
+	t.Parallel()
+
+	withID := NotFound("project", "proj-123")
+	if !strings.Contains(withID.Message, "project") || !strings.Contains(withID.Message, "proj-123") {
+		t.Errorf("message = %q, want it to name the resource and the caller id", withID.Message)
+	}
+	blank := NotFound("", "")
+	if blank.Message != "resource not found" {
+		t.Errorf("NotFound(\"\",\"\") message = %q, want \"resource not found\"", blank.Message)
+	}
+}
+
+// TestInvalidInputSortsViolationsAndExposesFieldPaths proves validation errors
+// carry stable, deterministic field paths recoverable via ViolationsOf,
+// independent of caller argument order, and that the hint lists those paths.
+func TestInvalidInputSortsViolationsAndExposesFieldPaths(t *testing.T) {
+	t.Parallel()
+
+	err := InvalidInput(
+		FieldViolation{Field: "  spec.replicas  ", Reason: " must be >= 1 "},
+		FieldViolation{Field: "", Reason: ""}, // dropped
+		FieldViolation{Field: "metadata.name", Reason: "required"},
+	)
+	if err.Code != yerr.CodeInvalidInput {
+		t.Fatalf("code = %q, want E_INVALID_INPUT", err.Code)
+	}
+	violations, ok := ViolationsOf(err)
+	if !ok {
+		t.Fatal("ViolationsOf returned false for an InvalidInput error")
+	}
+	if len(violations) != 2 {
+		t.Fatalf("violations = %+v, want 2 (blank entry dropped)", violations)
+	}
+	// Sorted by field path regardless of argument order; values trimmed.
+	if violations[0].Field != "metadata.name" || violations[1].Field != "spec.replicas" {
+		t.Errorf("violations not sorted by field path: %+v", violations)
+	}
+	if violations[1].Reason != "must be >= 1" {
+		t.Errorf("reason not trimmed: %q", violations[1].Reason)
+	}
+	if !strings.Contains(err.Hint, "metadata.name") || !strings.Contains(err.Hint, "spec.replicas") {
+		t.Errorf("hint = %q, want it to list both field paths", err.Hint)
+	}
+}
+
+func TestInvalidInputWithNoUsableViolationsDegrades(t *testing.T) {
+	t.Parallel()
+
+	err := InvalidInput(FieldViolation{}, FieldViolation{Field: "  "})
+	if err.Code != yerr.CodeInvalidInput {
+		t.Fatalf("code = %q, want E_INVALID_INPUT", err.Code)
+	}
+	if _, ok := ViolationsOf(err); ok {
+		t.Error("ViolationsOf must be false when no usable violations were supplied")
+	}
+	if err.Message == "" {
+		t.Error("degraded InvalidInput must still carry a message")
+	}
+}
+
+func TestViolationsOfAndDependencyOfReturnFalseForUnrelatedErrors(t *testing.T) {
+	t.Parallel()
+
+	plain := stderrors.New("boom")
+	if _, ok := ViolationsOf(plain); ok {
+		t.Error("ViolationsOf must be false for a non-validation error")
+	}
+	if _, ok := DependencyOf(plain); ok {
+		t.Error("DependencyOf must be false for a non-dependency error")
+	}
+	if _, ok := ViolationsOf(Conflict("nope")); ok {
+		t.Error("ViolationsOf must be false for a Conflict error")
+	}
+}
+
+func TestQuotaExceeded(t *testing.T) {
+	t.Parallel()
+
+	withLimit := QuotaExceeded("services", 10)
+	if !strings.Contains(withLimit.Message, "services") {
+		t.Errorf("message = %q, want it to name the resource", withLimit.Message)
+	}
+	if !strings.Contains(withLimit.Hint, "10") {
+		t.Errorf("hint = %q, want it to surface the limit", withLimit.Hint)
+	}
+	noLimit := QuotaExceeded("projects", 0)
+	if noLimit.Hint != "" {
+		t.Errorf("hint = %q, want empty when no positive limit is supplied", noLimit.Hint)
+	}
+}
+
+// TestDependencyErrorsAreDistinguished proves every dependency failure is
+// machine-distinguishable via DependencyOf — including the datastore and the
+// queue, which deliberately share the E_UNAVAILABLE code.
+func TestDependencyErrorsAreDistinguished(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name     string
+		err      *yerr.Error
+		wantDep  Dependency
+		wantCode yerr.Code
+	}{
+		{"dokploy", DokployUnavailable(stderrors.New("x")), DependencyDokploy, yerr.CodeServer},
+		{"store", StoreUnavailable(stderrors.New("x")), DependencyStore, yerr.CodeUnavailable},
+		{"queue", QueueUnavailable(stderrors.New("x")), DependencyQueue, yerr.CodeUnavailable},
+		{"network", NetworkFailure(stderrors.New("x")), DependencyNetwork, yerr.CodeNetwork},
+		{"timeout", Timeout(DependencyStore, stderrors.New("x")), DependencyStore, yerr.CodeTimeout},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if tc.err.Code != tc.wantCode {
+				t.Errorf("code = %q, want %q", tc.err.Code, tc.wantCode)
+			}
+			dep, ok := DependencyOf(tc.err)
+			if !ok {
+				t.Fatalf("DependencyOf returned false for %s", tc.name)
+			}
+			if dep != tc.wantDep {
+				t.Errorf("dependency = %q, want %q", dep, tc.wantDep)
+			}
+		})
+	}
+
+	// The store and the queue share E_UNAVAILABLE but stay distinguishable.
+	store, _ := DependencyOf(StoreUnavailable(stderrors.New("x")))
+	queue, _ := DependencyOf(QueueUnavailable(stderrors.New("x")))
+	if store == queue {
+		t.Error("store and queue failures must be distinguishable despite sharing a code")
+	}
+
+	// Timeout with an unknown dependency wraps the cause directly.
+	if _, ok := DependencyOf(Timeout("", stderrors.New("x"))); ok {
+		t.Error("Timeout with no dependency must not report one")
+	}
+}
+
+// TestGenericMessageCodesNeverEchoCause proves MessageGeneric constructors keep
+// the cause out of the user-facing Message and Hint while still preserving it
+// in the error chain for server-side logging.
+func TestGenericMessageCodesNeverEchoCause(t *testing.T) {
+	t.Parallel()
+
+	const secret = "super-secret-token-9f3a2b1c"
+	cause := stderrors.New("connect failed: Authorization: Bearer " + secret)
+
+	cases := []struct {
+		name string
+		err  *yerr.Error
+	}{
+		{"internal", Internal(cause)},
+		{"dokploy", DokployUnavailable(cause)},
+		{"store", StoreUnavailable(cause)},
+		{"queue", QueueUnavailable(cause)},
+		{"network", NetworkFailure(cause)},
+		{"timeout", Timeout(DependencyDokploy, cause)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			entry, ok := Lookup(tc.err.Code)
+			if !ok || entry.MessagePolicy != MessageGeneric {
+				t.Fatalf("%s expected a MessageGeneric code, got %+v ok=%v", tc.name, entry, ok)
+			}
+			if strings.Contains(tc.err.Message, secret) {
+				t.Errorf("%s leaked the cause into Message: %q", tc.name, tc.err.Message)
+			}
+			if strings.Contains(tc.err.Hint, secret) {
+				t.Errorf("%s leaked the cause into Hint: %q", tc.name, tc.err.Hint)
+			}
+			// The cause must still be reachable for server-side logging.
+			if !stderrors.Is(tc.err, cause) {
+				t.Errorf("%s dropped the cause from the error chain", tc.name)
+			}
+		})
+	}
+}
+
+// TestEnvelopeRedactsSecretsFromSpecificMessages proves the apienvelope
+// redaction backstop scrubs secrets even from a MessageSpecific error whose
+// caller-supplied text accidentally carried a token.
+func TestEnvelopeRedactsSecretsFromSpecificMessages(t *testing.T) {
+	t.Parallel()
+
+	const secret = "leaked-token-value-abc123"
+	err := Conflict("rejected request carrying Authorization: Bearer " + secret)
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-redact", err)
+	body := rec.Body.String()
+
+	if strings.Contains(body, secret) {
+		t.Errorf("envelope leaked a secret: %s", body)
+	}
+	if !strings.Contains(body, output.Sentinel) {
+		t.Errorf("expected redaction sentinel %q in body: %s", output.Sentinel, body)
+	}
+}
+
+func TestRetryable(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"quota", QuotaExceeded("x", 1), true},
+		{"dokploy", DokployUnavailable(stderrors.New("x")), true},
+		{"store", StoreUnavailable(stderrors.New("x")), true},
+		{"network", NetworkFailure(stderrors.New("x")), true},
+		{"timeout", Timeout(DependencyStore, stderrors.New("x")), true},
+		{"invalid", Invalid("bad"), false},
+		{"forbidden", Forbidden(""), false},
+		{"not found", NotFound("x", "y"), false},
+		{"conflict", Conflict(""), false},
+		{"internal", Internal(stderrors.New("x")), false},
+		{"non-typed", stderrors.New("plain"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := Retryable(tc.err); got != tc.want {
+				t.Errorf("Retryable = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFieldViolationString(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		v    FieldViolation
+		want string
+	}{
+		{FieldViolation{Field: "spec.replicas", Reason: "must be >= 1"}, "spec.replicas: must be >= 1"},
+		{FieldViolation{Field: "spec.replicas"}, "spec.replicas: invalid"},
+		{FieldViolation{Reason: "request is malformed"}, "request is malformed"},
+		{FieldViolation{}, "invalid field"},
+	}
+	for _, tc := range cases {
+		if got := tc.v.String(); got != tc.want {
+			t.Errorf("FieldViolation%+v.String() = %q, want %q", tc.v, got, tc.want)
+		}
+	}
+}

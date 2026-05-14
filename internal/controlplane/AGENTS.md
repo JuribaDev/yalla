@@ -16,6 +16,19 @@ do not mix customer API handlers into CLI packages.
   HTTP status follows the error `Code` via `apienvelope.StatusForCode`; only
   use `WriteErrorStatus` when a status genuinely cannot be derived from the
   code (e.g. `/readyz` returning 503).
+- Construct backend errors through `apierr`, never `yerr.New` directly in
+  handlers/services. `apierr` is the catalogued taxonomy: `Unauthenticated`,
+  `Forbidden`, `InvalidInput`/`Invalid`, `NotFound`, `Conflict`,
+  `QuotaExceeded`, the dependency constructors (`DokployUnavailable`,
+  `StoreUnavailable`, `QueueUnavailable`, `NetworkFailure`, `Timeout`), and
+  `Internal`. Adding a new error code means adding it to `apierr`'s `taxonomy`
+  map and, if it needs a non-500 status, a case in `apienvelope.StatusForCode`
+  (the single source of truth `apierr.Lookup` reads). `MessageGeneric` codes
+  must keep the cause out of `Message`/`Hint` — wrap it so logs can still see
+  it. `InvalidInput` carries `FieldViolation`s (field path + reason, never the
+  submitted value); recover them with `apierr.ViolationsOf`. Dependency
+  failures are recoverable with `apierr.DependencyOf` even when they share a
+  code (store and queue both use `E_UNAVAILABLE`).
 - Every customer-data path must eventually resolve organization scope before
   reading or mutating data. Cross-tenant IDs must not leak resource existence.
 - Dokploy is a private provisioning backend. Customer-facing code should call

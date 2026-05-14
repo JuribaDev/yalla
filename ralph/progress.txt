@@ -11,6 +11,7 @@
 - runtime.Readiness holds named startup gates (concurrency-safe). httpapi.NewHandler takes a runtime.ReadinessReporter; /readyz must be 503 yalla.error.v1 E_SERVER until every gate passes, 200 yalla.output.v1 after. /healthz is liveness-only and never depends on downstream checks.
 - worker.Loop depends only on the Claimer/Lease interfaces so the durable job store can land later. The loop checks ctx before every Claim (stop claiming on shutdown) and releases interrupted in-flight leases on a context.WithoutCancel context so the release survives shutdown. A job whose Run returns nil is committed and must never be released.
 - Lifecycle code is tested with fakes (fake httpServer, fake Claimer/Lease) — no real sockets, no live deps.
+- Backend errors are built through internal/controlplane/apierr, the catalogued error taxonomy — never yerr.New directly in handlers/services. apierr constructors return *yerr.Error (so they flow into apienvelope.WriteError); apierr.Catalog/Lookup pair every code with HTTP status (derived from apienvelope.StatusForCode — single source of truth), retry semantics, and a MessagePolicy. MessageGeneric codes (internal + all dependency failures) keep the cause out of Message/Hint and only Wrap it for logging. InvalidInput carries FieldViolation{Field,Reason} (path + reason, never the submitted value), recoverable via apierr.ViolationsOf; dependency failures are recoverable via apierr.DependencyOf even when they share a code. Adding a code = add to apierr.taxonomy + (if non-500) a apienvelope.StatusForCode case.
 
 ## 2026-05-14 - BE-0002
 - What was implemented: Backend configuration contract for the control-plane API and worker.
@@ -149,4 +150,61 @@
     defence-in-depth backstop for any renderer.
   - json.Unmarshal ignores unknown fields, so adding request_id to the success envelope did
     not break existing httpapi/server_test.go decoders.
+---
+
+## 2026-05-14 - BE-0005
+- What was implemented: Stable backend error taxonomy for the control plane.
+  - internal/errors/errors.go: added two shared codes — CodeQuotaExceeded ("E_QUOTA_EXCEEDED")
+    and CodeUnavailable ("E_UNAVAILABLE") — with descriptions, ExitCode mappings (7 / 8), and
+    AllCodes entries. Quota is distinct from rate-limit (persists until limit raised);
+    Unavailable is a Yalla-owned-dependency failure, distinct from CodeServer (Dokploy upstream).
+  - internal/controlplane/apienvelope/apienvelope.go: StatusForCode now maps E_QUOTA_EXCEEDED
+    -> 429 and E_UNAVAILABLE -> 503; doc comment updated. Remains the single source of truth
+    for code->status.
+  - internal/controlplane/apierr/apierr.go (new package): the catalogued backend error taxonomy.
+    MessagePolicy (MessageSpecific/MessageGeneric); Dependency enum (dokploy/postgres/queue/
+    network); CatalogEntry + taxonomy map + Lookup/Catalog (HTTP status derived from
+    apienvelope, never stored); Retryable(err). Constructors all return *yerr.Error:
+    Unauthenticated, Forbidden, NotFound, Conflict, InvalidInput (sorted FieldViolations),
+    Invalid, QuotaExceeded, DokployUnavailable, StoreUnavailable, QueueUnavailable,
+    NetworkFailure, Timeout, Internal. FieldViolation{Field,Reason} carries a dotted path +
+    reason, never the submitted value. validationError/dependencyError are wrapped as the
+    Cause so ViolationsOf / DependencyOf recover structured detail; MessageGeneric codes keep
+    the cause out of Message/Hint and only Wrap it for server-side logging.
+  - internal/controlplane/apierr/apierr_test.go (new): catalogue determinism (status ==
+    apienvelope, all >= 400, policy + description present), sorted+category coverage, Lookup
+    miss, every constructor emits a catalogued code, auth/forbidden defaults, NotFound echoes
+    only the caller id, InvalidInput sorts/trims/de-dups violations and exposes field paths in
+    the hint, degraded InvalidInput, ViolationsOf/DependencyOf false for unrelated errors,
+    QuotaExceeded hint, dependency errors distinguished (store vs queue share E_UNAVAILABLE but
+    DependencyOf separates them), MessageGeneric codes never echo the cause but keep it in the
+    chain, apienvelope redaction backstop scrubs secrets from a MessageSpecific message,
+    Retryable matrix, FieldViolation.String.
+  - internal/errors/errors_test.go + apienvelope/apienvelope_test.go: extended the ExitCode and
+    StatusForCode tables with the two new codes.
+  - internal/controlplane/AGENTS.md: documented that backend errors must be built through apierr.
+- Files changed: internal/controlplane/apierr/{apierr.go,apierr_test.go} (new),
+  internal/errors/{errors.go,errors_test.go}, internal/controlplane/apienvelope/{apienvelope.go,
+  apienvelope_test.go}, internal/controlplane/AGENTS.md, ralph/prd.json, ralph/progress.txt.
+- Verification run: gofmt -w .; go mod tidy; go build ./...; go vet ./...; go test ./...;
+  go test -race ./....
+- Results: all passed. goimports, golangci-lint, staticcheck, govulncheck not installed locally.
+- Remaining risks / follow-ups:
+  - The Postgres integration-test acceptance criterion is N/A for a pure taxonomy package; it
+    lands with the persistence stories.
+  - Dependency distinction (store vs queue) is machine-recoverable via DependencyOf but is not
+    yet surfaced as a structured field on the wire envelope; if a future story needs that, add
+    an optional details block to apienvelope rather than forking the envelope.
+  - The errors.go doc comment still describes the package as "the CLI's" contract; it is now
+    shared CLI + control-plane. Left as-is to keep the change focused; revisit if it misleads.
+- Learnings for future iterations:
+  - No manifest parity test exists yet (grep for AllCodes/codeDescriptions found zero refs), so
+    adding codes to internal/errors is currently low-risk — but still update codeDescriptions,
+    AllCodes, and ExitCode together for correctness.
+  - apienvelope_test.go already iterates yerr.AllCodes() asserting StatusForCode >= 400, so any
+    new code added to AllCodes MUST get a StatusForCode case or that test fails.
+  - errors.As traverses from *yerr.Error through its Cause, so wrapping a private detail type
+    (validationError/dependencyError) as the Cause is the clean way to attach machine-readable
+    structure without changing yerr.Error's shape.
+  - apierr importing apienvelope is fine (no cycle: apienvelope imports only yerr + output).
 ---

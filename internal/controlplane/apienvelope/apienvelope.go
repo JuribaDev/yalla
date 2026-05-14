@@ -82,10 +82,11 @@ var envelopeRedactor = output.NewRedactor()
 //	E_FORBIDDEN                               -> 403 Forbidden
 //	E_NOT_FOUND                               -> 404 Not Found
 //	E_CONFLICT                                -> 409 Conflict
-//	E_RATE_LIMITED                            -> 429 Too Many Requests
+//	E_RATE_LIMITED, E_QUOTA_EXCEEDED          -> 429 Too Many Requests
 //	E_UNSUPPORTED                             -> 501 Not Implemented
 //	E_SERVER, E_UPSTREAM_BUG, E_NETWORK       -> 502 Bad Gateway
 //	E_TIMEOUT                                 -> 504 Gateway Timeout
+//	E_UNAVAILABLE                             -> 503 Service Unavailable
 //	E_CANCELED                                -> 499 Client Closed Request
 //	everything else (E_INTERNAL, E_CONFIG, …) -> 500 Internal Server Error
 func StatusForCode(code yerr.Code) int {
@@ -100,7 +101,7 @@ func StatusForCode(code yerr.Code) int {
 		return http.StatusNotFound
 	case yerr.CodeConflict:
 		return http.StatusConflict
-	case yerr.CodeRateLimited:
+	case yerr.CodeRateLimited, yerr.CodeQuotaExceeded:
 		return http.StatusTooManyRequests
 	case yerr.CodeUnsupported:
 		return http.StatusNotImplemented
@@ -108,6 +109,8 @@ func StatusForCode(code yerr.Code) int {
 		return http.StatusBadGateway
 	case yerr.CodeTimeout:
 		return http.StatusGatewayTimeout
+	case yerr.CodeUnavailable:
+		return http.StatusServiceUnavailable
 	case yerr.CodeCanceled:
 		// 499 is the de facto "client closed request" status. It has no
 		// net/http constant, but it is the deterministic value agents expect.
