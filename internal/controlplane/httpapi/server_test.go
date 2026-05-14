@@ -1,9 +1,12 @@
 package httpapi
 
 import (
+	"bytes"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/runtime"
@@ -17,7 +20,7 @@ func TestHandlerServesBootstrapEndpoints(t *testing.T) {
 		Version: "1.2.3",
 		Commit:  "abc123",
 		Date:    "2026-05-14T00:00:00Z",
-	}, nil)
+	}, nil, nil)
 
 	tests := []struct {
 		name       string
@@ -95,7 +98,7 @@ func TestHandlerServesBootstrapEndpoints(t *testing.T) {
 func TestHandlerReturnsStableNotFoundEnvelope(t *testing.T) {
 	t.Parallel()
 
-	handler := NewHandler(runtime.BuildInfo{}, nil)
+	handler := NewHandler(runtime.BuildInfo{}, nil, nil)
 	req := httptest.NewRequest(http.MethodGet, "/missing", nil)
 	rec := httptest.NewRecorder()
 
@@ -130,7 +133,7 @@ func TestReadyzReflectsReadinessTransitions(t *testing.T) {
 	t.Parallel()
 
 	readiness := runtime.NewReadiness("migrations")
-	handler := NewHandler(runtime.BuildInfo{}, readiness)
+	handler := NewHandler(runtime.BuildInfo{}, readiness, nil)
 
 	get := func() *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
@@ -204,7 +207,7 @@ func requestIDOf(t *testing.T, body []byte) string {
 func TestHandlerGeneratesRequestIDForEnvelopeAndHeader(t *testing.T) {
 	t.Parallel()
 
-	handler := NewHandler(runtime.BuildInfo{}, nil)
+	handler := NewHandler(runtime.BuildInfo{}, nil, nil)
 
 	// Cover a success envelope (/healthz), an error envelope from a route
 	// that writes one directly (/readyz, 503), and the synthesised
@@ -217,7 +220,7 @@ func TestHandlerGeneratesRequestIDForEnvelopeAndHeader(t *testing.T) {
 		path    string
 	}{
 		{"success envelope", handler, "/healthz"},
-		{"error envelope", NewHandler(runtime.BuildInfo{}, unready), "/readyz"},
+		{"error envelope", NewHandler(runtime.BuildInfo{}, unready, nil), "/readyz"},
 		{"not found envelope", handler, "/missing"},
 	}
 
@@ -244,7 +247,7 @@ func TestHandlerGeneratesRequestIDForEnvelopeAndHeader(t *testing.T) {
 func TestHandlerEchoesSafeInboundRequestID(t *testing.T) {
 	t.Parallel()
 
-	handler := NewHandler(runtime.BuildInfo{}, nil)
+	handler := NewHandler(runtime.BuildInfo{}, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	req.Header.Set(telemetry.HeaderRequestID, "caller-supplied-id")
@@ -262,7 +265,7 @@ func TestHandlerEchoesSafeInboundRequestID(t *testing.T) {
 func TestHandlerRejectsUnsafeInboundRequestID(t *testing.T) {
 	t.Parallel()
 
-	handler := NewHandler(runtime.BuildInfo{}, nil)
+	handler := NewHandler(runtime.BuildInfo{}, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	// A header-injection payload must never be echoed back verbatim.
@@ -276,5 +279,57 @@ func TestHandlerRejectsUnsafeInboundRequestID(t *testing.T) {
 	}
 	if !telemetry.SafeID(id) {
 		t.Fatalf("fallback request_id %q is not safe", id)
+	}
+}
+
+// TestHandlerEmitsStructuredRequestLog proves NewHandler wires
+// telemetry.RequestLogging: a served request produces one JSON log record
+// carrying the matched route, status, and the request_id that also appears in
+// the response envelope, and a secret smuggled into the URL query is redacted.
+func TestHandlerEmitsStructuredRequestLog(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	handler := NewHandler(runtime.BuildInfo{}, nil, logger)
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz?token=topsecretvalue", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if strings.Contains(buf.String(), "topsecretvalue") {
+		t.Fatalf("request log leaked a query-string secret: %s", buf.String())
+	}
+
+	var record struct {
+		Level     string `json:"level"`
+		Msg       string `json:"msg"`
+		Route     string `json:"route"`
+		Target    string `json:"target"`
+		Status    int    `json:"status"`
+		Method    string `json:"method"`
+		RequestID string `json:"request_id"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &record); err != nil {
+		t.Fatalf("decode log record %q: %v", buf.String(), err)
+	}
+	if record.Level != "INFO" {
+		t.Errorf("level = %q, want INFO", record.Level)
+	}
+	if record.Route != "GET /healthz" {
+		t.Errorf("route = %q, want the matched ServeMux pattern GET /healthz", record.Route)
+	}
+	if record.Status != http.StatusOK {
+		t.Errorf("status = %d, want 200", record.Status)
+	}
+	if record.Method != http.MethodGet {
+		t.Errorf("method = %q, want GET", record.Method)
+	}
+	if !strings.Contains(record.Target, "[REDACTED]") {
+		t.Errorf("target = %q, want the token query param redacted", record.Target)
+	}
+	if record.RequestID == "" || record.RequestID != requestIDOf(t, rec.Body.Bytes()) {
+		t.Errorf("log request_id = %q, want it to match the response envelope request_id",
+			record.RequestID)
 	}
 }

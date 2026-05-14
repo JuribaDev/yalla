@@ -2,6 +2,7 @@
 package httpapi
 
 import (
+	"log/slog"
 	"net/http"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apienvelope"
@@ -24,12 +25,17 @@ import (
 // package so the wire contract (yalla.output.v1 / yalla.error.v1) stays
 // deterministic. Handlers never marshal JSON directly.
 //
-// The whole surface is wrapped in telemetry.Correlate, the outermost
-// middleware: it resolves the request_id / correlation_id for every request
-// (honouring safe inbound X-Request-Id / X-Correlation-Id headers, generating
-// fresh values otherwise) before any handler runs, so requestID can read the
-// resolved value straight off the request context.
-func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter) http.Handler {
+// The whole surface is wrapped in two layers of middleware. telemetry.Correlate
+// is the outermost: it resolves the request_id / correlation_id for every
+// request (honouring safe inbound X-Request-Id / X-Correlation-Id headers,
+// generating fresh values otherwise) before any handler runs, so requestID can
+// read the resolved value straight off the request context. telemetry.RequestLogging
+// sits just inside it and emits one structured, redacted log record per request.
+//
+// logger receives the per-request structured log records. A nil logger is
+// accepted — request logging is silently disabled — which suits tests and
+// embedders that do not exercise the logging path.
+func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter, logger *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 	build = build.Normalized()
 
@@ -59,9 +65,10 @@ func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter) ht
 		})
 	})
 
-	return telemetry.Correlate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	routed := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mux.ServeHTTP(&notFoundRecorder{ResponseWriter: w, request: r}, r)
-	}))
+	})
+	return telemetry.Correlate(telemetry.RequestLogging(logger)(routed))
 }
 
 // requestID resolves the request identifier for a request. telemetry.Correlate

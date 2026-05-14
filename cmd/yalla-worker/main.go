@@ -28,7 +28,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel}))
+	// Service processes log structured JSON to stdout, one record per line.
+	// The service name is bound once so every record carries it.
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel})).
+		With(slog.String("service", "yalla-worker"))
 	slog.SetDefault(logger)
 
 	build := runtime.BuildInfo{Version: Version, Commit: Commit, Date: Date}.Normalized()

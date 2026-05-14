@@ -12,6 +12,7 @@
 - worker.Loop depends only on the Claimer/Lease interfaces so the durable job store can land later. The loop checks ctx before every Claim (stop claiming on shutdown) and releases interrupted in-flight leases on a context.WithoutCancel context so the release survives shutdown. A job whose Run returns nil is committed and must never be released.
 - Lifecycle code is tested with fakes (fake httpServer, fake Claimer/Lease) — no real sockets, no live deps.
 - Request correlation lives in internal/controlplane/telemetry. telemetry.Correlate is the outermost HTTP middleware (httpapi.NewHandler wraps the mux in it): it resolves request_id (per request) + correlation_id (per workflow) onto the request context before any handler runs. Inbound X-Request-Id/X-Correlation-Id are honoured only if telemetry.SafeID passes ([A-Za-z0-9._-], 1..128) — unsafe values are dropped and a fresh telemetry.NewRequestID() is minted, so injection payloads never reach headers/logs/jobs. Read IDs anywhere via telemetry.FromContext/RequestID/CorrelationID; never thread them through signatures. Non-HTTP entry points seed context with telemetry.WithCorrelation.
+- Per-request structured logging lives in internal/controlplane/telemetry: telemetry.RequestLogging(logger) is the middleware just inside Correlate (httpapi.NewHandler wraps the routed mux in it). One JSON record per request: method/route/target/status/latency_ms/bytes/request_id/correlation_id, plus org_id/principal_id when set via telemetry.SetOrgID/SetPrincipalID (a request-scoped mutable holder the auth/policy layers enrich). Headers and bodies are never logged; the request target is redacted. Level follows the outcome (5xx error, 4xx warn, else info); the logger threshold (YALLA_LOG_LEVEL) gates emission. Service binaries bind service via logger.With and log JSON to stdout.
 - Backend errors are built through internal/controlplane/apierr, the catalogued error taxonomy — never yerr.New directly in handlers/services. apierr constructors return *yerr.Error (so they flow into apienvelope.WriteError); apierr.Catalog/Lookup pair every code with HTTP status (derived from apienvelope.StatusForCode — single source of truth), retry semantics, and a MessagePolicy. MessageGeneric codes (internal + all dependency failures) keep the cause out of Message/Hint and only Wrap it for logging. InvalidInput carries FieldViolation{Field,Reason} (path + reason, never the submitted value), recoverable via apierr.ViolationsOf; dependency failures are recoverable via apierr.DependencyOf even when they share a code. Adding a code = add to apierr.taxonomy + (if non-500) a apienvelope.StatusForCode case.
 
 ## 2026-05-14 - BE-0002
@@ -260,4 +261,55 @@
     guard. Don't loosen it to accept arbitrary client IDs; that charset still covers UUID/ULID.
   - When adding non-HTTP entry points (worker job runners), seed context via
     telemetry.WithCorrelation so the same request_id/correlation_id flows through jobs.
+---
+
+## 2026-05-14 - BE-0007
+- What was implemented: Structured per-request logging middleware for the control-plane API.
+  - internal/controlplane/telemetry/logging.go (new): RequestLogging(logger) middleware emitting
+    exactly one JSON record per request after the handler runs — method, route (r.Pattern, the
+    ServeMux-matched route, falling back to URL path), target (redacted RequestURI), status,
+    latency_ms, bytes, plus request_id/correlation_id from LogAttrs(ctx). statusRecorder wraps the
+    ResponseWriter to capture status + byte count (defaults to 200 on an implicit write). Level
+    follows the outcome: 5xx error, 4xx warn, else info. Headers and bodies are never logged; the
+    target is run through output.NewRedactor() (logRedactor) so a smuggled ?token= is scrubbed.
+    requestFields is a request-scoped mutable holder seeded onto the context; SetOrgID/
+    SetPrincipalID let the future auth/policy layers enrich org_id/principal_id, which are emitted
+    only when non-empty. A nil logger disables logging (io.Discard) without panicking.
+  - internal/controlplane/telemetry/logging_test.go (new): one-record-per-outcome table
+    (success/validation-failure/auth-failure/forbidden/not-found/server-error → level + fields +
+    request_id matches response header), redaction (Authorization header, Cookie, query token,
+    body field — none appear in the log; target shows [REDACTED]), org/principal included when set
+    and omitted when unknown, configured-level gating (INFO suppressed under ERROR threshold, 5xx
+    still emitted), nil-logger safety, implicit-write status defaults to 200.
+  - internal/controlplane/httpapi/server.go: NewHandler now takes logger *slog.Logger and wraps
+    the routed mux in telemetry.RequestLogging(logger) just inside telemetry.Correlate.
+  - internal/controlplane/httpapi/server_test.go: all NewHandler call sites updated with the new
+    nil logger arg; added TestHandlerEmitsStructuredRequestLog (real logger to a buffer: route =
+    "GET /healthz" ServeMux pattern, status 200, request_id matches envelope, query secret redacted).
+  - cmd/yalla-api/main.go + cmd/yalla-worker/main.go: bind service via logger.With(
+    slog.String("service", "yalla-api"|"yalla-worker")); yalla-api passes the logger to NewHandler.
+- Files changed: internal/controlplane/telemetry/{logging.go,logging_test.go} (new),
+  internal/controlplane/httpapi/{server.go,server_test.go}, cmd/yalla-api/main.go,
+  cmd/yalla-worker/main.go, internal/controlplane/AGENTS.md, ralph/prd.json, ralph/progress.txt.
+- Verification run: gofmt -w .; go mod tidy; go build ./...; go vet ./...; go test ./...;
+  go test -race ./....
+- Results: all passed. goimports, golangci-lint, staticcheck, govulncheck not installed locally.
+- Remaining risks / follow-ups:
+  - org_id/principal_id propagation depends on the auth/policy stories calling SetOrgID/
+    SetPrincipalID; the mechanism is wired and tested but no endpoint resolves a principal yet.
+  - The Postgres integration-test acceptance criterion is N/A for a pure middleware story.
+  - "Tests verify stdout/stderr behavior for service processes" is covered structurally: the
+    middleware writes to whatever io.Writer the logger wraps, and the binaries wire os.Stdout.
+    A full process-level stdout capture test belongs with an e2e harness, not this unit story.
+- Learnings for future iterations:
+  - http.Request.Pattern is populated in place by http.ServeMux during ServeHTTP, and since the
+    logging middleware reassigns r = r.WithContext(...) (a shallow copy) before calling next, the
+    middleware's own r pointer sees the matched pattern after next returns. Use it for the "route"
+    field — low-cardinality, unlike the raw path.
+  - statusRecorder must default status to 200: a handler that calls Write without WriteHeader
+    never triggers WriteHeader, matching net/http's implicit-200 behavior.
+  - slog JSONHandler renders the auto timestamp as "time" and level as an upper-case string
+    ("INFO"/"WARN"/"ERROR"); tests decode those keys directly.
+  - logger.Log(ctx, level, msg, args...) accepts slog.Attr values inside the ...any args, so a
+    []any of slog.String(...) (as LogAttrs returns) splats in cleanly.
 ---

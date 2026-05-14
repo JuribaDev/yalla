@@ -32,7 +32,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel}))
+	// Service processes log structured JSON to stdout so a container runtime
+	// or log shipper captures one record per line. The service name is bound
+	// once here so every record — including the per-request logs emitted by
+	// telemetry.RequestLogging — carries it.
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel})).
+		With(slog.String("service", "yalla-api"))
 	slog.SetDefault(logger)
 	logger.Info("yalla control-plane api configuration loaded", slog.Any("config", cfg))
 
@@ -47,7 +52,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              cfg.APIAddr,
-		Handler:           httpapi.NewHandler(build, readiness),
+		Handler:           httpapi.NewHandler(build, readiness, logger),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

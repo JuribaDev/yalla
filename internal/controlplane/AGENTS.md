@@ -57,3 +57,15 @@ do not mix customer API handlers into CLI packages.
   `telemetry.CorrelationID(ctx)` / `telemetry.FromContext(ctx)`; never thread
   them through signatures. New non-HTTP entry points (worker jobs) should seed
   their own context with `telemetry.WithCorrelation`.
+- `telemetry.RequestLogging(logger)` is the per-request structured-log
+  middleware. `httpapi.NewHandler` wraps the routed mux in it, just inside
+  `Correlate`, so every served request emits exactly one JSON record with
+  `method`, `route`, `target`, `status`, `latency_ms`, `bytes`, `request_id`,
+  and `correlation_id` (plus `org_id` / `principal_id` once resolved). It never
+  logs headers or bodies, and the request target is run through a redactor.
+  Level follows the outcome: 5xx → error, 4xx → warn, else info; the logger's
+  threshold (from `YALLA_LOG_LEVEL`) decides what is actually written. The
+  auth/policy layers must call `telemetry.SetOrgID(ctx, …)` /
+  `telemetry.SetPrincipalID(ctx, …)` once they resolve those values so they
+  reach the per-request log record. Service binaries bind `service` onto the
+  logger with `logger.With(slog.String("service", …))` and log JSON to stdout.
