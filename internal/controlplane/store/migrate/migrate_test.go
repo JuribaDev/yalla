@@ -273,8 +273,9 @@ func TestMigrationsUpIsIdempotent(t *testing.T) {
 	if len(st.Pending) != 0 {
 		t.Fatalf("pending = %d, want 0", len(st.Pending))
 	}
-	if st.Current != 1 || st.Dirty {
-		t.Fatalf("status = {current:%d dirty:%v}, want {current:1 dirty:false}", st.Current, st.Dirty)
+	wantCurrent := m.Migrations()[len(m.Migrations())-1].Version
+	if st.Current != wantCurrent || st.Dirty {
+		t.Fatalf("status = {current:%d dirty:%v}, want {current:%d dirty:false}", st.Current, st.Dirty, wantCurrent)
 	}
 }
 

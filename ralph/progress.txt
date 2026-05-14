@@ -17,6 +17,7 @@
 - Schema changes are versioned SQL files under internal/controlplane/store/migrate/migrations/ named NNNN_name.up.sql (required) + NNNN_name.down.sql (optional, reversible-only), embedded via //go:embed. The migrate.Migrator runner owns a checksummed schema_migrations ledger, serialises with a pg advisory lock, and runs each migration in its own transaction. Migrator.Up is idempotent and refuses dirty / unknown-version / checksum-mismatch databases (errors.Is sentinels ErrDirtyDatabase/ErrUnknownVersion/ErrChecksumMismatch). NEVER edit an applied migration file (trips ErrChecksumMismatch by design) — add a new higher-versioned migration. Persistence tests are integration tests: they connect via YALLA_TEST_DATABASE_URL, create an isolated throwaway database per test, and t.Skip when the env var is unset so go test ./... stays green without Postgres. docker-compose.yml at repo root provisions local Postgres. pgx (github.com/jackc/pgx/v5 + pgxpool) is the Postgres driver.
 - Persistence tests use the shared harness internal/controlplane/testutil: RequireDB(t) gives an empty isolated throwaway Postgres database per test, RequireMigratedDB(t) also applies migrations; both t.Skip with testutil.SkipReason when YALLA_TEST_DATABASE_URL is unset and drop the DB on cleanup (parallel-safe — unique DB name per call). testutil.NewFactory(t) builds deterministic, globally-unique in-memory fixtures for the Organization->Project->Environment->Service hierarchy + User/APIKey (two factories never collide). testutil.AssertRedacted/AssertRedactedValue guard "must not leak a secret" assertions. store/migrate keeps its own local testPool — it cannot import testutil (import cycle: testutil imports migrate). Keep pure decision logic (lookupAdminDSN, scanLeaks) unexported + white-box tested, since testing.TB is sealed and cannot be faked.
 - HTTP routes are data-driven from internal/controlplane/httpapi/routes.go newRouteTable — the single source of truth. Each apiRoute pairs a served http.HandlerFunc with its openapi.Endpoint metadata; httpapi.NewHandler registers every entry on the mux AND generates the OpenAPI document from the same table, so a served route is always a documented route (TestEveryRegisteredRouteIsDocumented enforces it in CI). Never call mux.HandleFunc directly in NewHandler — add to newRouteTable. The OpenAPI 3.1 document is built by internal/controlplane/openapi.Build from a neutral []openapi.Endpoint, references the two stable envelope schemas, is served raw (not enveloped) at GET /openapi.json without auth, and marshals maps with sorted keys for a byte-stable artifact. Secret-shaped sample values use output.Sentinel.
+- Domain tables live in versioned migrations under store/migrate/migrations/. Every customer-data table carries organization_id (directly or via a verified parent chain) and is tenant-isolated at the database level by COMPOSITE foreign keys: a child FK (organization_id, parent_id) references the parent's UNIQUE (organization_id, id), making a cross-tenant child unrepresentable. Slugs are citext, unique within parent scope, never global. users is a global identity table; org membership is the memberships join table. Schema-level integration tests live in package store_test (NOT package migrate — it can't import testutil) and match constraint violations via *pgconn.PgError SQLSTATE class 23.
 
 ## 2026-05-14 - BE-0002
 - What was implemented: Backend configuration contract for the control-plane API and worker.
@@ -727,4 +728,93 @@
   - Keep domain primitives free of apierr/apienvelope imports — return plain
     sentinel errors and let the HTTP layer translate. This keeps the dependency
     arrow pointing one way (httpapi -> domain, never the reverse).
+---
+
+## 2026-05-14 - BE-0013
+- What was implemented: the tenant hierarchy schema — organizations, users,
+  memberships, projects, environments, services, and dokploy_refs — as
+  migration 0002, plus schema-level integration tests.
+  - internal/controlplane/store/migrate/migrations/0002_tenant_hierarchy.up.sql
+    (new): the seven tables. organizations is the tenant root; users is a
+    GLOBAL identity table linked to orgs only through memberships. projects/
+    environments/services each carry organization_id (+ parent IDs) and are
+    tenant-isolated by COMPOSITE foreign keys — environments reference
+    projects(organization_id, id), services reference
+    environments(organization_id, project_id, id) — so a child can never cross
+    the tenant boundary. Each parent exposes the matching UNIQUE(organization_id,
+    [project_id,] id) constraint the composite FK needs. Slugs are citext and
+    unique within parent scope (org for projects, project for environments,
+    environment for services), never globally. Every table has created_at/
+    updated_at + a set_updated_at() BEFORE UPDATE trigger. memberships PK is
+    (organization_id, user_id) with a role CHECK (owner/admin/member). services
+    has a kind CHECK (application/database/compose). dokploy_refs is the
+    polymorphic Yalla-resource -> Dokploy-object map (yalla_kind/yalla_id +
+    dokploy_resource/dokploy_id covering organization/project/environment/
+    application/compose/database/domain/backup); tenant-scoped via the
+    organization_id FK, UNIQUE(dokploy_resource, dokploy_id) so an object is
+    claimed once, UNIQUE(organization_id, yalla_id, dokploy_resource, dokploy_id)
+    against duplicate rows while still allowing many domains/backups per
+    resource. ON DELETE CASCADE everywhere from organizations down.
+  - 0002_tenant_hierarchy.down.sql (new): drops the seven tables newest-first;
+    DROP TABLE removes each table's indexes + trigger. set_updated_at() itself
+    belongs to the baseline migration and is left in place.
+  - internal/controlplane/store/schema_test.go (new, package store_test):
+    integration tests via testutil.RequireMigratedDB + testutil.NewFactory —
+    tables-exist, full-chain insert + hierarchy walk, FK enforcement (missing
+    org, env/service crossing the tenant boundary via the composite FK), slug
+    uniqueness within parent (incl. citext case-insensitivity + same slug
+    allowed in a different org), cascade delete (descendants gone, global users
+    row survives), cross-tenant isolation (org-scoped count), dokploy_refs
+    constraints (object claimed once, duplicate rows rejected, bad
+    dokploy_resource rejected, org FK), membership constraints (one per org,
+    role CHECK, user FK). Constraint violations matched via *pgconn.PgError
+    SQLSTATE class 23.
+  - internal/controlplane/store/migrate/migrate_test.go: TestMigrationsUpIs
+    Idempotent's Status().Current assertion now derives the expected version
+    from m.Migrations() instead of the literal 1, so future migrations don't
+    break it.
+  - internal/controlplane/store/AGENTS.md: documented the composite-FK tenant
+    boundary, global users table, dokploy_refs polymorphism, the no-ID-prefix-
+    CHECK decision, and where schema integration tests live.
+- Files changed: internal/controlplane/store/migrate/migrations/
+  0002_tenant_hierarchy.{up,down}.sql (new), internal/controlplane/store/
+  schema_test.go (new), internal/controlplane/store/migrate/migrate_test.go,
+  internal/controlplane/store/AGENTS.md, ralph/prd.json, ralph/progress.txt.
+- Verification run: gofmt -w .; go mod tidy; go build ./...; go vet ./...;
+  go test ./...; go test -race ./... — the last two also run with
+  YALLA_TEST_DATABASE_URL pointing at the docker-compose Postgres 16 (all 8
+  schema integration tests RUN, not skipped, and PASS under -race).
+- Results: all passed. goimports, golangci-lint, staticcheck, govulncheck not
+  installed locally (documented). Integration tests skip cleanly without the
+  env var so CI without Postgres stays green.
+- Remaining risks / follow-ups:
+  - No repository layer yet: BE-0014 (transaction pattern) + later repo stories
+    add the tenant-scoped query methods. The testutil.Factory builds in-memory
+    fixtures whose column shape matches these tables — a repository-backed
+    seeder should consume them. Note Factory.User carries an OrganizationID but
+    the users table is global; the seeder must create a separate membership row.
+  - Acceptance criteria 5-6 (JSON envelopes / authorization-failure unit tests)
+    are N/A for a pure schema migration with no HTTP surface; covered success +
+    extensive constraint-violation (FK / unique / check) + not-found-style
+    (cascade-deleted rows absent) instead.
+  - Criterion 8 (redaction): no table stores secrets/tokens/env values — those
+    land in dedicated later migrations; N/A here.
+  - The migration runner is still not wired into cmd/yalla-api startup; that
+    seam (runStartupChecks + runtime.Meta.SetMigrationVersion) is still open.
+- Learnings for future iterations:
+  - Composite foreign keys are the database-level tenant-isolation primitive:
+    child FK (organization_id, parent_id) -> parent UNIQUE(organization_id, id)
+    makes "child in a different org than its parent" unrepresentable. Every new
+    hierarchy table should follow this and expose the UNIQUE its children need.
+  - package migrate cannot import testutil (testutil imports migrate). Schema
+    integration tests therefore live in a sibling package store_test, which CAN
+    import testutil. This is the home for every future domain-table test.
+  - pgx surfaces constraint violations as *pgconn.PgError; SQLSTATE class "23"
+    (Code[:2] == "23") covers FK / unique / check / not-null uniformly — match
+    on the class, not individual codes, for "the database rejected this" tests.
+  - Adding a migration can break migrate_test.go assertions that hard-code the
+    latest version. Only Status().Current was literal-bound; the rest already
+    derive from len(m.Migrations()). Audit that file on every new migration.
+  - citext columns give case-insensitive UNIQUE for free — 'shared-slug' and
+    'SHARED-SLUG' collide within the same parent scope without a lower() index.
 ---
