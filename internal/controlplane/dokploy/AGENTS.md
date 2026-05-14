@@ -59,6 +59,34 @@ client.
   with stable paths that never echo the submitted value. A `DokployName` failure
   after a validated ID is a contract bug -> `apierr.Internal`, not a user error.
 
+## Desired-state renderer (`renderer.go`)
+
+- `Renderer.Render(RenderInput) (RenderedSpec, error)` is the **declarative-content**
+  layer; the `Mapper` is the **ID-resolution** layer. The renderer never resolves
+  a parent's Dokploy ID and does no I/O — it is pure and deterministic. The worker
+  combines the two: walk the `Mapper` top-down for IDs, feed `RenderedSpec` content
+  into each `Ensure*` call.
+- Variable precedence is ascending: `organization < project < environment < service`.
+  Same-name variables at a higher level override lower ones; `RenderedVariable.Source`
+  records the winning level. A duplicate name *within* one level is a violation.
+- Resource limits are zero-fill: a zero `ResourceLimits` field inherits the
+  deterministic tier default (`defaultResources`), so `RenderedSpec` always carries
+  fully-resolved, non-zero limits. Production web (application/compose) -> 2 replicas.
+- Inapplicable fields are **dropped**, mirroring how the `Mapper` drops `engine` for
+  non-database services: `role` is dropped for a database, `cron_schedule` for a
+  non-cron service, `domains` for a non-web service. `build` is normalised — fields
+  that do not apply to the chosen builder are dropped.
+- `RenderedSpec.Service.Variables` carries **verbatim** values (the worker needs
+  them). Never log/audit a `RenderedSpec` directly — call `RenderedSpec.Summary()`,
+  which redacts **every** variable value to `output.Sentinel` (not only `Secret`
+  ones). `RenderedSpec.LogValue` redirects to the `Summary` as a backstop.
+- Golden tests pin `Summary` JSON via `testutil.GoldenJSON` under
+  `testdata/renderer/`; refresh with `go test -update-golden ./...`. The golden
+  artifact is the redacted `Summary`, so it can never embed a real variable value.
+- Validation collects every violation into one `apierr.InvalidInput` with stable,
+  indexed field paths (`service.variables[2].name`, `domains[0].host`) that never
+  echo the submitted value.
+
 ## dokployfake conventions
 
 - It mimics **Dokploy's** JSON shapes, not Yalla's `yalla.output.v1` /
