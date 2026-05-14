@@ -1075,8 +1075,8 @@
       ],
       "type": "persistence",
       "priority": 1,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "internal/controlplane/store/migrate: embedded versioned SQL migrations (NNNN_name.up/down.sql), checksummed schema_migrations ledger, advisory-locked per-migration-transactional runner. Up refuses dirty/unknown/checksum-mismatch (errors.Is sentinels); Down rolls back newest-first. Baseline 0001 installs pgcrypto+citext extensions and the set_updated_at() trigger function (domain tables land in BE-0013+). Unit tests via fstest.MapFS (no DB); integration tests create an isolated throwaway database per test, skip when YALLA_TEST_DATABASE_URL unset. docker-compose.yml added for local Postgres."
     },
     {
       "id": "BE-0011",

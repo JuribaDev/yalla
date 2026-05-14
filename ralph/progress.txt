@@ -14,6 +14,7 @@
 - Request correlation lives in internal/controlplane/telemetry. telemetry.Correlate is the outermost HTTP middleware (httpapi.NewHandler wraps the mux in it): it resolves request_id (per request) + correlation_id (per workflow) onto the request context before any handler runs. Inbound X-Request-Id/X-Correlation-Id are honoured only if telemetry.SafeID passes ([A-Za-z0-9._-], 1..128) — unsafe values are dropped and a fresh telemetry.NewRequestID() is minted, so injection payloads never reach headers/logs/jobs. Read IDs anywhere via telemetry.FromContext/RequestID/CorrelationID; never thread them through signatures. Non-HTTP entry points seed context with telemetry.WithCorrelation.
 - Per-request structured logging lives in internal/controlplane/telemetry: telemetry.RequestLogging(logger) is the middleware just inside Correlate (httpapi.NewHandler wraps the routed mux in it). One JSON record per request: method/route/target/status/latency_ms/bytes/request_id/correlation_id, plus org_id/principal_id when set via telemetry.SetOrgID/SetPrincipalID (a request-scoped mutable holder the auth/policy layers enrich). Headers and bodies are never logged; the request target is redacted. Level follows the outcome (5xx error, 4xx warn, else info); the logger threshold (YALLA_LOG_LEVEL) gates emission. Service binaries bind service via logger.With and log JSON to stdout.
 - Backend errors are built through internal/controlplane/apierr, the catalogued error taxonomy — never yerr.New directly in handlers/services. apierr constructors return *yerr.Error (so they flow into apienvelope.WriteError); apierr.Catalog/Lookup pair every code with HTTP status (derived from apienvelope.StatusForCode — single source of truth), retry semantics, and a MessagePolicy. MessageGeneric codes (internal + all dependency failures) keep the cause out of Message/Hint and only Wrap it for logging. InvalidInput carries FieldViolation{Field,Reason} (path + reason, never the submitted value), recoverable via apierr.ViolationsOf; dependency failures are recoverable via apierr.DependencyOf even when they share a code. Adding a code = add to apierr.taxonomy + (if non-500) a apienvelope.StatusForCode case.
+- Schema changes are versioned SQL files under internal/controlplane/store/migrate/migrations/ named NNNN_name.up.sql (required) + NNNN_name.down.sql (optional, reversible-only), embedded via //go:embed. The migrate.Migrator runner owns a checksummed schema_migrations ledger, serialises with a pg advisory lock, and runs each migration in its own transaction. Migrator.Up is idempotent and refuses dirty / unknown-version / checksum-mismatch databases (errors.Is sentinels ErrDirtyDatabase/ErrUnknownVersion/ErrChecksumMismatch). NEVER edit an applied migration file (trips ErrChecksumMismatch by design) — add a new higher-versioned migration. Persistence tests are integration tests: they connect via YALLA_TEST_DATABASE_URL, create an isolated throwaway database per test, and t.Skip when the env var is unset so go test ./... stays green without Postgres. docker-compose.yml at repo root provisions local Postgres. pgx (github.com/jackc/pgx/v5 + pgxpool) is the Postgres driver.
 - HTTP routes are data-driven from internal/controlplane/httpapi/routes.go newRouteTable — the single source of truth. Each apiRoute pairs a served http.HandlerFunc with its openapi.Endpoint metadata; httpapi.NewHandler registers every entry on the mux AND generates the OpenAPI document from the same table, so a served route is always a documented route (TestEveryRegisteredRouteIsDocumented enforces it in CI). Never call mux.HandleFunc directly in NewHandler — add to newRouteTable. The OpenAPI 3.1 document is built by internal/controlplane/openapi.Build from a neutral []openapi.Endpoint, references the two stable envelope schemas, is served raw (not enveloped) at GET /openapi.json without auth, and marshals maps with sorted keys for a byte-stable artifact. Secret-shaped sample values use output.Sentinel.
 
 ## 2026-05-14 - BE-0002
@@ -468,3 +469,83 @@
     interface; compute pending checks from the snapshot in the handler.
   - cfg.DokployBaseURL != "" is the signal for "Dokploy is configured" — use it
     to conditionally register the dokploy readiness gate ("when configured").
+
+## 2026-05-14 - BE-0010
+- What was implemented: Postgres migration system for the control plane.
+  - internal/controlplane/store/migrate/migrate.go (new): the migration runner.
+    Migration/AppliedMigration/Status types; LoadMigrations(fs.FS) parses+validates
+    NNNN_name.(up|down).sql files (malformed names, missing up, empty up, conflicting
+    names, duplicates -> errors), sha256-checksums each up script, returns them sorted.
+    Migrator (New = embedded FS, NewWithFS = arbitrary FS for tests): Up applies pending
+    migrations in order, idempotent; Down rolls back newest-first to a target version;
+    Status reports applied/pending/current/dirty. Up/Down serialise via a pg session
+    advisory lock, bootstrap the schema_migrations ledger (version bigint PK, name,
+    checksum, applied_at, dirty), and run each migration in its own transaction (row
+    inserted dirty -> SQL -> row finalised clean; a SQL failure rolls the whole tx back
+    leaving no row). verify() refuses dirty / unknown-version / checksum-mismatch via
+    errors.Is sentinels ErrDirtyDatabase/ErrUnknownVersion/ErrChecksumMismatch;
+    ErrIrreversible guards Down across a migration with no down script.
+  - internal/controlplane/store/migrate/migrations/0001_baseline.up.sql + .down.sql (new):
+    baseline migration — installs pgcrypto + citext extensions and the set_updated_at()
+    BEFORE UPDATE trigger function (the timestamp convention every later table uses).
+    Domain tables are deliberately NOT here; they land in BE-0013 (tenant hierarchy),
+    BE-0021 (quota), BE-0023 (audit), etc.
+  - internal/controlplane/store/migrate/migrate_test.go (new): pure unit tests via
+    fstest.MapFS (embedded parse, 6 validation-failure rows, fixture-FS success, nil
+    pool); integration tests against an isolated per-test throwaway database
+    (testPool helper: CREATE DATABASE / connect / DROP DATABASE ... WITH (FORCE) on
+    cleanup, t.Skip when YALLA_TEST_DATABASE_URL unset): up-from-empty (ledger row +
+    checksum + PK constraint + extensions + function), idempotent up, refuses
+    dirty/unknown/checksum-mismatch, down is reversible + re-migratable, failed
+    migration rolls back leaving no row, Status pending/applied.
+  - internal/controlplane/store/AGENTS.md (new): migration conventions, domain-table
+    timestamp/tenant-scoping rules, integration-test approach.
+  - docker-compose.yml (new): local Postgres 16 (user/db "yalla", CREATE DATABASE priv).
+  - go.mod/go.sum: added github.com/jackc/pgx/v5 v5.9.2 (+ pgxpool).
+- Files changed: internal/controlplane/store/migrate/{migrate.go,migrate_test.go,
+  migrations/0001_baseline.up.sql,migrations/0001_baseline.down.sql} (new),
+  internal/controlplane/store/AGENTS.md (new), docker-compose.yml (new), go.mod, go.sum,
+  ralph/prd.json, ralph/progress.txt.
+- Verification run: gofmt -w .; go mod tidy; go build ./...; go vet ./...;
+  go test ./...; go test -race ./...; go test -race ./internal/controlplane/store/...
+  with YALLA_TEST_DATABASE_URL pointing at a local Postgres 16 container (all 8
+  integration tests RUN, not skipped, and PASS).
+- Results: all passed. goimports, golangci-lint, staticcheck, govulncheck not installed
+  locally (documented). Integration tests skip cleanly when YALLA_TEST_DATABASE_URL is
+  unset, so CI without Postgres still goes green; CI WITH Postgres exercises them.
+- Remaining risks / follow-ups:
+  - The runner is not yet wired into cmd/yalla-api or cmd/yalla-worker startup.
+    BE-0009's runStartupChecks + runtime.Meta.SetMigrationVersion are the seams: a
+    later story (or BE-0013 when there is real schema to apply) should connect a
+    pgxpool, run Migrator.Up, resolve Status().Current onto runtime.Meta, and gate
+    the "migrations" readiness check on it.
+  - Acceptance criterion 3 ("constraints for tenant isolation, uniqueness, FKs") is
+    only partially demonstrable here — there are no domain tables yet. BE-0010 ships
+    the migration *system* + the baseline conventions (set_updated_at, extensions);
+    the schema_migrations ledger's PK is the one constraint validated by tests.
+    Domain-table constraints land with BE-0013/BE-0021/BE-0023 migrations.
+  - Criteria 5 (JSON envelopes) and the "authorization failure / not-found" half of
+    criterion 6 are N/A: migrate is a persistence-layer package with no HTTP surface.
+    Covered success + validation-failure thoroughly instead.
+  - BE-0011 (persistence test harness) should generalise the testPool helper into
+    internal/controlplane/testutil so every persistence package shares one isolated-
+    database fixture instead of re-implementing it.
+- Learnings for future iterations:
+  - pgx v5 routes Exec/tx.Exec by argument count: a query with ZERO args uses the
+    simple query protocol, which allows multiple ;-separated statements in one call —
+    so a single .up.sql file with several DDL statements (and dollar-quoted $$ bodies)
+    runs fine via one conn.Exec(ctx, mig.UpSQL). A query WITH args uses the extended
+    protocol (one statement only).
+  - The advisory lock must be held on a single pinned connection: acquire one with
+    pool.Acquire(ctx) and run lock + all migration work + unlock on that *pgxpool.Conn,
+    not on the pool (the pool hands out different conns).
+  - Release the advisory lock on context.WithoutCancel(ctx) so an already-cancelled
+    caller context still releases it.
+  - Per-test isolation: pgx.Identifier{name}.Sanitize() safely quotes a generated DB
+    name; DROP DATABASE ... WITH (FORCE) (PG13+) evicts stragglers. Register cleanups
+    so they run LIFO: admin pool close FIRST (runs last), then DROP, then test pool
+    close (runs first) — pool closed before drop, admin still open to drop.
+  - slog.New(slog.DiscardHandler) (Go 1.24+) is the clean nil-logger fallback.
+  - Validation logic that takes an fs.FS (LoadMigrations) is unit-testable with
+    fstest.MapFS — no database needed for the "validation failure" acceptance criterion.
+---
