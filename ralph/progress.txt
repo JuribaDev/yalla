@@ -28,6 +28,7 @@
 - Provisioning jobs (0008_provisioning_jobs, store/job.go): the durable, idempotent queue of Dokploy provisioning work. The provisioning_jobs table is tenant-scoped (organization_id FK + composite (organization_id, project_id|environment_id|service_id) FKs so a job can never target another tenant's resource), idempotent (UNIQUE (organization_id, idempotency_key)), and exposes UNIQUE (organization_id, id) as a composite-FK target — 0008 also wires the FK that 0006 deferred (quota_reservations.job_id -> provisioning_jobs). DB CHECKs enforce the closed status set, "terminal status iff finished_at set", "lease held iff status=running", and attempts<=max_attempts; the Go state machine (store.JobStatus.CanTransitionTo, backed by the jobTransitions map: queued->running|cancelled, running->succeeded|retrying|failed|dead_letter|cancelled, retrying->running|cancelled, terminals have no edges) is the authoritative validator. JobRepository follows the ProjectRepository pattern (mutations need *Tx, reads take Querier, NotFound for cross-tenant ids); Transition locks the row FOR UPDATE, validates the edge before any write (illegal edge = apierr.Conflict), and derives lease/attempt/timestamp bookkeeping from the target status so a caller cannot leave a CHECK-violating row. error_summary is run through an output.NewRedactor() backstop on every write (Insert + Transition) — the store IS the redaction chokepoint for job errors, unlike audit metadata which the service redacts.
 - HTTP idempotency (0009_idempotency_keys, store/idempotency.go, httpapi/idempotency.go): mutating endpoints are made retry-safe by httpapi.RequireIdempotency(IdempotencyStore, ttl) — middleware installed INSIDE RequireAuth (it reads policy.PrincipalFromContext to scope the key to a principal within a tenant). Safe methods and unsafe requests with no Idempotency-Key pass straight through (opt-in). The claim protocol: store.IdempotencyRepository.Claim is a WHERE-guarded upsert — INSERT ... ON CONFLICT DO UPDATE ... WHERE expires_at <= now() — so it freshly claims, transparently steals an expired row (claimed=true), or returns the existing live claim (claimed=false, RETURNING yields no row, follow-up Find reads the row the DO UPDATE attempt locked). On claimed=true the middleware runs the handler against a buffering responseCapture, then Complete records the rendered envelope (status < 500) or Release drops the claim (status >= 500, so a server failure is retried not replayed). On claimed=false: hash mismatch -> apierr.IdempotencyConflict (E_IDEMPOTENCY_CONFLICT, the only use of the new code), completed -> replay the recorded body+status with Idempotency-Replayed: true, still pending -> apierr.Conflict "already in progress". The request hash is sha256(method\npath?query\nbody); the body is buffered then restored as a fresh r.Body so the handler still reads it. Keys are scoped UNIQUE (organization_id, principal_id, idempotency_key); a completion CHECK ties status='completed' to a non-null response. The store-backed IdempotencyStore adapter (httpapi.NewIdempotencyStore) runs each repo call in its own Store.Write — RequireIdempotency is implemented and tested but not yet wired into a route (no mutating endpoints exist yet), same as RequireAuth.
 - Postgres-backed worker queue (store/job.go ClaimNext, worker/queue.go): the durable queue has two halves. store.JobRepository.ClaimNext is the SKIP LOCKED claim — SELECT ... FOR UPDATE SKIP LOCKED picks the single most-eligible job (queued|retrying AND next_run_at<=now, OR running AND lease_deadline<now) so concurrent claimers skip a locked row instead of blocking, then transitions it to running inside the same Store.Write tx. An expired-lease job is reclaimed THROUGH the state machine (running->retrying->running, so attempt/lease bookkeeping stays consistent); a job past its retry budget is dead-lettered instead and the poll claims nothing. worker/queue.go is the store-backed Claimer/Lease impl: loop.go stays pure (interfaces only, fake-tested) and queue.go is the only worker file that imports store. Failure classification: worker.Terminal(err)/IsTerminal mark a permanent failure (-> failed, never retried); a plain error is transient (-> retrying with worker.Backoff bounded exponential delay, or -> dead_letter when Attempts>=MaxAttempts). StoreClaimer.complete() records every outcome on a context.WithoutCancel + timeout context — once the runner ran, the outcome write must survive shutdown; only an interrupted (un-run) job returns non-nil from Lease.Run so the loop releases it. The JobRunner (real Dokploy provisioner) is still injected/faked; cmd/yalla-worker stays on NoopClaimer until that runner lands.
+- Fake Dokploy (internal/controlplane/dokploy/dokployfake): the default Dokploy for EVERY normal test — a live Dokploy server is an opt-in external smoke test only. dokployfake.New() returns a *Server backed by httptest serving a Dokploy-shaped REST API (organization/project/environment/application/compose/database/domain/deployment/logs/status). It mimics Dokploy's own JSON shapes, NOT yalla.output.v1/yalla.error.v1 — it stands in for the upstream provisioning API, not a Yalla public surface (so the "stable envelope" acceptance criterion is N/A for Dokploy-facing test doubles). IDs are deterministic per-kind counters (org_1, proj_1, ...). Server.QueueFault arms a FIFO fault queue (StatusFault for 4xx/5xx, TimeoutFault honouring request cancellation, MalformedJSONFault); each request consumes one fault, applied before auth+routing. Every request is recorded (Server.Requests()) with Authorization/X-Api-Key/X-Auth-Token/Cookie header values replaced by output.Sentinel and the body run through an output.Redactor seeded with the bearer token — so a worker test can prove credentials were sent without the secret ever entering the fixture. The package depends only on internal/output + stdlib (no testing.TB, no store), so any package's tests import it without a cycle.
 
 ## 2026-05-14 - BE-0002
 - What was implemented: Backend configuration contract for the control-plane API and worker.
@@ -2004,4 +2005,105 @@
   - readAndRestoreBody buffers r.Body then sets r.Body = io.NopCloser(reader):
     middleware that needs to inspect a request body must restore it or the
     wrapped handler reads nothing.
+---
+
+## 2026-05-15 - BE-0028 - Implement fake Dokploy server
+- What was implemented: a deterministic, in-memory HTTP test double for the
+  private Dokploy provisioning backend, so "normal tests use fake Dokploy
+  fixtures, not a live Dokploy server" is structurally true.
+  - internal/controlplane/dokploy/dokployfake/dokployfake.go (new): the Server
+    type. New(opts...) starts an httptest server; Close/URL/Token accessors.
+    serve() is the single entry point — record (redacted) -> consume queued
+    fault -> bearer auth (constant-time compare) -> route. Fault is a FIFO
+    queue: StatusFault(4xx/5xx), TimeoutFault(d) (sleeps honouring request
+    cancellation, then 504), MalformedJSONFault (truncated non-JSON body);
+    QueueFault/ClearFaults manage it. RecordedRequest captures method/path/
+    query/headers/body/timestamp with Authorization/X-Api-Key/X-Auth-Token/
+    Cookie header values replaced by output.Sentinel and the body run through
+    an output.Redactor seeded with the bearer token; Requests()/RequestCount()/
+    Reset() expose and clear it. Errors render as Dokploy-style
+    {"error":{"code","message"}} — intentionally NOT yalla envelopes.
+  - internal/controlplane/dokploy/dokployfake/resources.go (new): the in-memory
+    resource model (Organization->Project->Environment->Service{application|
+    compose|database}, Domain, Deployment + logs) and the http.ServeMux router
+    covering create/get for every kind plus deployment trigger, deployment
+    logs, and service status. Deterministic per-kind ID counters (org_1,
+    proj_1, ...). Parent-existence -> 404, duplicate name in scope -> 409,
+    missing/blank field or bad/unknown-field JSON -> 400. Deployments succeed
+    immediately by default; SetDeploymentStatus / SetServiceStatus let a test
+    drive in-progress/failed/crashed states.
+  - internal/controlplane/dokploy/dokployfake/dokployfake_test.go (new): unit
+    tests — deterministic hierarchy + IDs, two-servers-are-isolated, GET
+    read-back, validation failures (missing field, db needs engine, malformed
+    JSON, unknown field), not-found (unknown id / missing parent / unrouted
+    path), conflict, auth required (none/wrong/correct), custom token, fault
+    injection (all 7 status codes FIFO + drain, malformed JSON, timeout both
+    fast-504 and outlast-the-deadline), request recording redacts header AND
+    body credentials, SetDeployment/ServiceStatus + logs, Reset clears state.
+  - internal/controlplane/worker/dokployfake_test.go (new): the worker's
+    Dokploy integration test — drives a worker.RunnerFunc through worker.Loop
+    that provisions an org->project->environment->application->deployment
+    chain against the fake, asserts every recorded request redacted its
+    Authorization header and never leaked the token; a second test injects a
+    500 and asserts the fault surfaces out of the runner as an error.
+  - internal/controlplane/dokploy/AGENTS.md (new), internal/controlplane/
+    worker/AGENTS.md (updated): documented the fake as the default Dokploy.
+- Files changed: internal/controlplane/dokploy/dokployfake/{dokployfake.go,
+  resources.go,dokployfake_test.go} (new), internal/controlplane/worker/
+  dokployfake_test.go (new), internal/controlplane/dokploy/AGENTS.md (new),
+  internal/controlplane/worker/AGENTS.md, ralph/prd.json, ralph/progress.txt.
+- Verification run: gofmt -l (clean); go mod tidy (no-op, no new deps);
+  go build ./...; go vet ./...; go test ./...; go test -race ./....
+- Results: all passed. goimports, golangci-lint, staticcheck, govulncheck
+  still not installed locally (documented in earlier iterations).
+- Acceptance criteria mapping:
+  - "Fake supports organization ... logs, and status operations": the router
+    in resources.go covers create/get for org/project/environment/application/
+    compose/database/domain, deployment trigger + get, deployment logs, and
+    service status; TestCreateHierarchyDeterministicIDs exercises the chain.
+  - "Fake can inject 400/401/403/404/409/429/500/timeout/malformed JSON": the
+    Fault FIFO queue; TestFaultInjection{StatusCodes,MalformedJSON,Timeout}.
+  - "Fake records requests with redacted auth headers": redactHeaders +
+    AuthHeader=Sentinel + body redactor; TestRequestRecordingRedactsCredentials
+    proves both the header AND a token echoed in the body are scrubbed.
+  - "Worker integration tests use fake Dokploy by default": worker/
+    dokployfake_test.go runs a runner through worker.Loop against the fake.
+  - "Unit tests cover success, validation failure, authorization failure,
+    not-found": TestCreateHierarchy.../TestValidationFailures/TestAuthRequired/
+    TestNotFound.
+  - "All public responses use stable yalla envelopes": N/A — the fake mimics
+    the UPSTREAM Dokploy API, not a Yalla public surface, so it uses Dokploy's
+    own JSON shapes by design.
+  - "Integration tests run against isolated Postgres migrations / no live
+    Dokploy": N/A for Postgres (the fake has no persistence); the whole point
+    of the story is that no live Dokploy is needed.
+  - "Secrets ... redacted in logs, errors, audit metadata, and test output":
+    every RecordedRequest is scrubbed before storage; the worker test asserts
+    via testutil.AssertRedacted that no recorded body leaks the token.
+- Remaining risks / follow-ups:
+  - The fake's REST surface is a clean, documented contract chosen by this
+    story (no Dokploy OpenAPI spec was available in-repo). BE-0029 (typed
+    Dokploy client) should target these exact routes/shapes, or both should
+    move together if the real Dokploy API differs.
+  - Degraded/partial-failure provisioning flows (e.g. deployment that starts
+    "running" then transitions) are supported via SetDeploymentStatus but not
+    yet auto-advancing; a later worker story can add a scripted state machine
+    if polling behaviour needs exercising.
+- Learnings for future iterations:
+  - Go 1.22+ http.ServeMux method+wildcard patterns ("POST /api/projects",
+    "GET /api/deployments/{id}/logs", r.PathValue("id")) plus a "/" catch-all
+    for a JSON 404 are enough to build a faithful REST test double — no
+    third-party router needed.
+  - A test double that takes no testing.TB and depends only on internal/output
+    + stdlib can be imported by ANY package's _test.go without an import
+    cycle; worker_test imports dokployfake freely. Prefer this over a
+    testutil.TB-based helper when the double has its own lifecycle (Close).
+  - For a timeout fault, select on time.After(delay) vs r.Context().Done() and
+    return without writing when the caller's context is cancelled — that makes
+    "slow upstream outlasts the client deadline" a real, race-free client-side
+    failure the worker test can assert on.
+  - output.NewRedactor(token) handles both the literal token (ReplaceAll) and
+    Authorization-header / token-query patterns (built-in regex), so seeding it
+    with just the bearer token covers recorded bodies; sensitive HEADER values
+    still need explicit per-key replacement since the redactor works on strings.
 ---

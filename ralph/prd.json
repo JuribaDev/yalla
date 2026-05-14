@@ -1417,8 +1417,8 @@
       ],
       "type": "testing",
       "priority": 1,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented internal/controlplane/dokploy/dokployfake: a deterministic, in-memory HTTP test double for Dokploy. Models the organization->project->environment->service (application/compose/database) hierarchy plus domains, deployments, deployment logs, and runtime status. FIFO fault queue injects 400/401/403/404/409/429/500, a timeout (honouring request cancellation), and malformed JSON. Every request is recorded with Authorization/X-Api-Key/X-Auth-Token/Cookie header values replaced by output.Sentinel and the body run through an output.Redactor seeded with the bearer token. New worker integration test (worker/dokployfake_test.go) drives a worker.RunnerFunc through worker.Loop against the fake. Acceptance criterion 5 (yalla.output.v1/yalla.error.v1 envelopes) is N/A: the fake stands in for the upstream Dokploy API, not a Yalla public surface, so it mimics Dokploy's JSON shapes by design. gofmt, go vet, go mod tidy, go test ./..., and go test -race ./... all pass."
     },
     {
       "id": "BE-0029",
