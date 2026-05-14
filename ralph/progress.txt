@@ -2167,3 +2167,65 @@
     the fake's request structs exactly (organization_id/project_id/environment_id/service_id,
     name, engine, host, https).
 ---
+
+## 2026-05-15 - BE-0030
+- What was implemented: the Dokploy hierarchy mapping layer
+  (internal/controlplane/dokploy/mapping.go) — a pure translator from Yalla's
+  source-of-truth hierarchy to the typed Dokploy Ensure*Input intents.
+  - Yalla* projection types (YallaOrganization/YallaProject/YallaEnvironment/
+    YallaService): minimal source-of-truth shapes carrying the canonical Yalla
+    ID, a human label, the parent linkage, and the already-recorded Dokploy ID.
+  - Mapper + NewMapper + WithSharedOrganization + SharesOrganization. Mapper is
+    pure (no I/O, no credentials, concurrency-safe).
+  - Mapper.Organization -> OrganizationTarget: dedicated mode returns an
+    EnsureOrganizationInput with a deterministic domain.DokployName and the
+    recorded DokployID as ExistingID (idempotent); shared mode resolves directly
+    to the configured shared Dokploy org ID with EnsureInput nil.
+  - Mapper.Project/Environment/Service: each takes the parent's resolved Dokploy
+    ID explicitly (mapping is top-down — a child needs its parent's Dokploy ID),
+    validates the Yalla IDs + parent linkage, and produces the Ensure*Input with
+    a deterministic name. Service routes by ServiceType and requires Engine for
+    ServiceDatabase (engine dropped for non-database types).
+  - validYallaID / requireDokployParent helpers collect apierr.InvalidInput
+    FieldViolations with stable paths that never echo the submitted value.
+  - mapping_test.go: dedicated/shared org mapping, ExistingID idempotency,
+    project/environment success, service-by-type table (incl. engine drop),
+    collected validation failures (malformed id, wrong kind, blank parent,
+    bad service type, missing engine, multi-violation), no-echo redaction proof,
+    determinism, full org->project->environment->service hierarchy walk.
+  - dokploy/AGENTS.md: added a "Hierarchy mapping" section.
+- Files changed: internal/controlplane/dokploy/{mapping.go,mapping_test.go}
+  (new), internal/controlplane/dokploy/AGENTS.md, ralph/prd.json,
+  ralph/progress.txt.
+- Verification run: gofmt -l .; go mod tidy; go build ./...; go vet ./...;
+  go test ./...; go test -race ./....
+- Results: all passed. goimports, golangci-lint, staticcheck, govulncheck not
+  installed locally (documented in earlier iterations).
+- Remaining risks / follow-ups:
+  - Acceptance criterion "stable yalla.output.v1/error.v1 envelopes" is N/A: the
+    Mapper is an internal pure function, not a public HTTP surface. "Isolated
+    Postgres migrations" is N/A — the Mapper touches no Postgres and consumes
+    in-memory projection structs. "Authorization failure / not-found" unit tests
+    are N/A — the Mapper performs no auth and no lookups; covered success +
+    validation-failure thoroughly instead.
+  - The Yalla* projection types are defined in the dokploy package because the
+    store does not yet have unified Organization/Environment/Service row types
+    (only store.Project exists). When those land, the worker/provisioner story
+    will project store rows into these Yalla* shapes — keep the field set in sync.
+  - The Mapper is implemented and tested but not yet wired into a JobRunner; the
+    real provisioner story will call Mapper then feed each Ensure*Input to
+    *dokploy.Client, threading the recorded Dokploy IDs down the hierarchy.
+- Learnings for future iterations:
+  - Mapping is top-down by nature: an Ensure*Input for a child needs the PARENT's
+    Dokploy ID (not the Yalla parent ID). Model every future hierarchy-aware
+    mapper to take the resolved parent Dokploy ID as an explicit argument rather
+    than trying to resolve it internally.
+  - apierr.ViolationsOf returns (violations, bool) — two values, not one.
+  - domain.DokployName(label, id) cannot fail once the id has passed
+    domain.ParseID (slug falls back to the kind, length is bounded). Treat a
+    post-validation DokployName error as apierr.Internal (a contract bug), never
+    a user-facing validation error.
+  - Collect validation violations in a []apierr.FieldViolation and emit one
+    apierr.InvalidInput at the end — do not short-circuit on the first bad field.
+    This matches dokploy/intents.go requireFields and is tested explicitly.
+---

@@ -37,6 +37,28 @@ client.
 - Correlation IDs from `telemetry.FromContext` are forwarded to Dokploy as
   `X-Request-Id` / `X-Correlation-Id` headers on every request.
 
+## Hierarchy mapping (`mapping.go`)
+
+- `Mapper` translates Yalla's source-of-truth hierarchy (`YallaOrganization` ->
+  `YallaProject` -> `YallaEnvironment` -> `YallaService`) into the `Ensure*Input`
+  intents the `Client` consumes. It is pure — no I/O, no credentials, concurrent-safe.
+- Mapping is **top-down**: a child intent needs its parent's *resolved Dokploy ID*,
+  so `Project`/`Environment`/`Service` take that ID as their first argument. The
+  worker ensures each level, records the returned Dokploy ID, and feeds it into
+  the next level.
+- Dokploy resource names come **only** from `domain.DokployName(label, id)` —
+  deterministic, Docker-safe, and embedding the full Yalla ID. Never hand-build
+  a name.
+- `WithSharedOrganization` selects the shared-internal-org fallback: `Organization`
+  then returns `OrganizationTarget{Shared: true}` with no `EnsureInput`. Dedicated
+  mode returns an `EnsureOrganizationInput`. A recorded `DokployID` becomes the
+  intent's `ExistingID`, keeping the produced intent idempotent.
+- Validation is local and collected (not short-circuited): a malformed/wrong-kind
+  Yalla ID, a blank parent Dokploy ID, an unrecognised service type, or a database
+  service missing its engine all become `apierr.InvalidInput` `FieldViolation`s
+  with stable paths that never echo the submitted value. A `DokployName` failure
+  after a validated ID is a contract bug -> `apierr.Internal`, not a user error.
+
 ## dokployfake conventions
 
 - It mimics **Dokploy's** JSON shapes, not Yalla's `yalla.output.v1` /
