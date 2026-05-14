@@ -108,6 +108,40 @@ Postgres persistence for control-plane source-of-truth state.
   a non-nil error, so an outage surfaces as a dependency failure, not a silent
   auth denial.
 
+## Quota schema (`0006_quota_policy_schema`)
+
+- The quota dimensions are a **closed set**, modelled as a Postgres `DOMAIN`
+  (`quota_resource` over text + `CHECK`) reused by all four quota tables — an
+  unknown dimension is rejected by the database, not at runtime. `DROP DOMAIN`
+  goes in the `.down.sql` **after** the tables that use it. `quota_enforcement_mode`
+  (`hard`/`soft`/`metered`/`disabled`) is the second shared domain. Adding a
+  dimension is a new migration running `ALTER DOMAIN`.
+- `quota_policies` holds **one limit per (scope, resource)**. A row is *either*
+  a `plan_default` (keyed by the text `plan` column — there is **no FK to a
+  plans table yet**) *or* an `organization` override (keyed by
+  `organization_id`). The single `quota_policies_scope_consistent` CHECK plus
+  two **partial unique indexes** (`WHERE scope_kind = '...'`) keep the two
+  scopes independent: a plan default and an org override for the same resource
+  coexist. The quota checker resolves "org override if present, else plan
+  default".
+- `quota_usage` is the actual allocated amount: one counter row per
+  `(organization_id, resource)` via `UNIQUE`. The quota checker locks this row
+  (`SELECT ... FOR UPDATE`) to make an allocation decision.
+- `quota_reservations` are short-lived claims: `amount > 0`, a status lifecycle
+  (`active -> committed | released | expired`), `expires_at` so a crashed job
+  cannot strand quota, and `quota_reservations_settled_consistent` ties
+  `settled_at` to non-active status. `job_id` is nullable with **no FK yet**
+  (`provisioning_jobs` lands later — a future migration adds the composite
+  `(organization_id, job_id)` FK). It exposes `UNIQUE (organization_id, id)` as
+  a composite-FK target.
+- `usage_events` is **append-only**: no `updated_at`, no update trigger, signed
+  `delta`. Its optional `reservation_id` link uses a composite FK
+  `(organization_id, reservation_id)` → `quota_reservations` (MATCH SIMPLE), so
+  a cross-tenant reservation reference is unrepresentable. Note: an optional
+  cross-table link inside a tenant uses a **plain** composite FK — *not*
+  `ON DELETE SET NULL`, which would null the `NOT NULL organization_id`; the
+  org-level `ON DELETE CASCADE` already cleans both sides.
+
 ## Repository transaction pattern (`store.go`, `project.go`, `projectservice.go`)
 
 - The `store` package is the **only** place repository code reaches the
@@ -163,3 +197,8 @@ Postgres persistence for control-plane source-of-truth state.
   mapping, constraint classification, constructor guards) live in
   `package store` (`internal_test.go`) and run without a database. Everything
   that touches Postgres is a `package store_test` integration test.
+- `testutil.DB` embeds `*pgxpool.Pool`, so `db.Begin(ctx)` yields a real
+  `pgx.Tx`. Row-lock behaviour is tested with **two independent transactions**:
+  `SELECT ... FOR UPDATE NOWAIT` raises `*pgconn.PgError` with SQLSTATE `55P03`
+  (`lock_not_available`) when another transaction holds the row — see
+  `quota_schema_test.go`'s `TestQuotaReservationConcurrentRowLock`.

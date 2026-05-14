@@ -22,6 +22,7 @@
 - Credentials: internal/controlplane/auth owns generation/hashing/verification; internal/controlplane/store owns persistence. A secret is stored ONLY as a one-way hash plus a public, globally-UNIQUE prefix — never plaintext. Plaintext credential types implement String/GoString/LogValue/MarshalJSON returning output.Sentinel; the plaintext is reachable only via an explicit Reveal() method. High-entropy secrets (>=128 bits random) use fast unsalted SHA-256 + subtle.ConstantTimeCompare, NOT bcrypt/argon2. Authentication lookup (FindByPrefix) is the ONE deliberate non-tenant-scoped repository read — it runs before the tenant is known; the found row carries its own OrganizationID. Tenant-scoped mutations that may match zero rows report apierr.NotFound via tag.RowsAffected()==0.
 - Authorization is internal/controlplane/policy: policy.Engine is a pure, total decision function — Decide(Principal, Action, Resource) -> Decision{Allow, Reason} (stable Reason codes); Authorize/AuthorizeCtx map denials onto typed apierr (Unauthenticated for a missing principal, Forbidden otherwise). Every endpoint maps to exactly one policy.Action; the action lives in policy's defaultActionCatalog (the authoritative requiredAction -> Capability map) — add new actions there or via policy.WithAction. Roles confer Capability sets (self/read/deploy/write/admin/owner/support), not individual actions; six built-ins are fixed, custom roles resolve through a CustomRoleResolver hook. Scoped Grants narrow/widen authority within an org via Scope containment over Organization->Project->Environment->Service; cross-tenant resources are denied by construction except support reads/break-glass. The principal travels on the request context via policy.WithPrincipal/PrincipalFromContext — never thread it through signatures. The store.Authorizer port is satisfied by this engine; store still never imports policy. TestPolicyMatrix exhaustively covers all built-in roles x catalogued actions.
 - Request authentication is internal/controlplane/auth.Authenticator: it resolves any of the three bearer schemes (API key yk_..., human session JWT, internal worker secret) to one auth.Identity{Principal, Method}. Every invalid-credential cause collapses to the single ErrInvalidCredentials sentinel (missing creds = ErrNoCredentials) so no error is a "does this key prefix exist?" oracle; a genuine datastore failure is propagated unchanged as a typed *yerr.Error, never disguised as invalid credentials. The Authenticator depends on the narrow auth.CredentialStore port (+ APIKeyRecord/ServiceAccountRecord DTOs) so auth never imports store; the production adapter is store.CredentialReader (store imports auth, not the reverse). The HTTP wrappers are httpapi.RequireAuth(authenticator, engine, action, ResourceResolver) and httpapi.RequireInternalWorker — they authenticate, attach the principal via policy.WithPrincipal + telemetry.SetOrgID/SetPrincipalID, then authorize: missing creds 401 E_AUTH, invalid 401 E_AUTH (fixed generic message), unauthorized 403 E_FORBIDDEN (stable policy reason), dependency failure keeps its typed 5xx. ResourceResolver nil defaults to the principal's own org scope; pass a path-param resolver so a cross-tenant id is a 403, not a silent allow.
+- Quota schema (0006_quota_policy_schema): a closed enum reused across tables is a Postgres DOMAIN over text + CHECK (here quota_resource over 14 dimensions, quota_enforcement_mode over hard/soft/metered/disabled); DROP DOMAIN goes in the down migration after the tables. quota_policies holds one limit per (scope, resource) where a row is EITHER a plan_default (text plan, no plans-table FK yet) OR an organization override — enforced by one table CHECK + two partial unique indexes; the checker resolves "org override else plan default". quota_usage is one counter row per (org, resource); quota_reservations are short-lived (amount>0, status active->committed|released|expired, expires_at, settled_at tied to non-active status by CHECK) and expose UNIQUE (organization_id, id) as a composite-FK target; usage_events is append-only (no updated_at/trigger, signed delta) and links reservations via a tenant-safe composite FK. An optional cross-table link inside a tenant uses a plain composite FK (MATCH SIMPLE) — NOT ON DELETE SET NULL, which would null the NOT NULL organization_id.
 
 ## 2026-05-14 - BE-0002
 - What was implemented: Backend configuration contract for the control-plane API and worker.
@@ -1392,3 +1393,92 @@
     registration list to update. Existing memberships INSERTs in schema_test.go
     omit role_version and still pass because the column has DEFAULT 1.
 ---
+
+## 2026-05-15 - BE-0021 - Implement quota policy schema
+- What was implemented: migration 0006_quota_policy_schema — the four
+  source-of-truth quota tables plus two shared domains. Pure schema story,
+  same shape as 0002 tenant hierarchy: migration + schema integration tests,
+  no Go repository/service/handler yet (those land with BE-0022).
+  - quota_resource DOMAIN: the closed set of 14 countable quota dimensions
+    (projects, environments, services, applications, compose_stacks,
+    databases, domains, preview_environments, cpu_millicores, memory_mb,
+    storage_gb, backups, concurrent_deployments, monthly_deployments) — reused
+    by all four tables so an unknown dimension is rejected by the database.
+  - quota_enforcement_mode DOMAIN: hard | soft | metered | disabled.
+  - quota_policies: one limit per (scope, resource). A row is EITHER a
+    plan_default (keyed by text `plan`, no FK to a plans table — plans land
+    later) OR an organization override (keyed by organization_id), enforced by
+    the quota_policies_scope_consistent CHECK + two partial unique indexes. The
+    quota checker resolves "org override if present, else plan default".
+  - quota_usage: actual allocated amount, one counter row per
+    (organization_id, resource) via UNIQUE — the row the checker locks.
+  - quota_reservations: in-flight claims (amount > 0), a status lifecycle
+    (active -> committed | released | expired), expires_at so a crashed job
+    cannot strand quota, and quota_reservations_settled_consistent CHECK tying
+    settled_at to non-active status. Nullable job_id (no FK yet —
+    provisioning_jobs is BE-0024). Exposes UNIQUE (organization_id, id) as a
+    composite-FK target.
+  - usage_events: append-only log (no updated_at, no update trigger), signed
+    delta, optional reservation link via composite FK
+    (organization_id, reservation_id) -> quota_reservations so a cross-tenant
+    reservation reference is unrepresentable.
+- Files changed:
+  - internal/controlplane/store/migrate/migrations/0006_quota_policy_schema.up.sql (new)
+  - internal/controlplane/store/migrate/migrations/0006_quota_policy_schema.down.sql (new)
+  - internal/controlplane/store/quota_schema_test.go (new, package store_test)
+  - internal/controlplane/store/AGENTS.md (quota schema section)
+  - ralph/prd.json (BE-0021 passes -> true), ralph/progress.txt
+- Verification run: gofmt -w .; go mod tidy; go build ./...; go vet ./...;
+  go test ./...; go test -race ./internal/controlplane/store/... — and
+  go test -race -v -run 'TestQuota|TestUsageEvents' with
+  YALLA_TEST_DATABASE_URL pointed at the docker-compose Postgres 16.
+- Results: all green. All 9 quota schema tests RUN (not skipped) and PASS
+  under the race detector; the full suite passes. goimports / golangci-lint /
+  staticcheck / govulncheck still not installed locally (documented earlier).
+- Acceptance criteria mapping:
+  - "Quotas cover projects ... monthly deploy count": the quota_resource
+    domain names every listed dimension; TestQuotaResourceDomainEnforcesClosedSet
+    inserts all 14 and rejects an unknown one.
+  - "Inherited from plan defaults and overridden per organization":
+    quota_policies scope model; TestQuotaPolicyScopeConsistency /
+    TestQuotaPolicyUniquePerScope (a plan default and an org override for the
+    same resource coexist; duplicates within a scope are rejected).
+  - "Reservation rows expire or release on job completion/failure": status
+    lifecycle + expires_at + settled_at CHECK; TestQuotaReservationLifecycleConstraints.
+  - "Tests cover concurrent reservations with row locks":
+    TestQuotaReservationConcurrentRowLock (two pgx transactions, SELECT ...
+    FOR UPDATE / NOWAIT, SQLSTATE 55P03, then success after commit).
+  - "Integration tests run against isolated Postgres migrations": all tests use
+    testutil.RequireMigratedDB and skip cleanly without YALLA_TEST_DATABASE_URL.
+  - Criteria about JSON envelopes / unit tests for authz / not-found are N/A for
+    a pure schema migration with no HTTP surface (same as 0002); covered success
+    + extensive constraint-violation + cascade (not-found-style) instead.
+  - Redaction: no quota table stores secrets, tokens, or rendered env values.
+- Remaining risks / follow-ups:
+  - quota_reservations.job_id has no FK — provisioning_jobs does not exist
+    until BE-0024. A later migration should add the composite
+    (organization_id, job_id) FK once that table and its UNIQUE target land.
+  - The plan-default scope uses a plain-text `plan` column; when the `plans`
+    table is introduced, a later migration can add an FK if desired.
+  - BE-0022 (quota checker service) builds the repository + unit-of-work on top
+    of this schema, following the ProjectRepository/ProjectService pattern.
+- Learnings for future iterations:
+  - A Postgres DOMAIN over text + CHECK is the clean way to share a closed enum
+    across multiple tables; DROP DOMAIN goes in the down migration AFTER the
+    tables that use it. Check domain existence in tests via
+    information_schema.domains.
+  - testutil.DB embeds *pgxpool.Pool, so db.Begin(ctx) yields a real pgx.Tx —
+    use two independent transactions for row-lock tests. SELECT ... FOR UPDATE
+    NOWAIT raises *pgconn.PgError with SQLSTATE 55P03 (lock_not_available);
+    match it with errors.As, not a string compare.
+  - "Exactly one of N nullable columns is set" is one table CHECK; pair it with
+    partial unique indexes (WHERE scope_kind = '...') so each scope has
+    independent uniqueness.
+  - A composite FK with ON DELETE SET NULL does NOT work when one FK column is
+    NOT NULL (it would null organization_id). For an optional cross-table link
+    inside a tenant, use a plain composite FK (MATCH SIMPLE, default NO ACTION) —
+    the org-level ON DELETE CASCADE still cleans both sides.
+  - Schema-story tests live in package store_test and reuse seedOrg from
+    schema_test.go; put story-specific seed helpers in the new test file.
+---
+
