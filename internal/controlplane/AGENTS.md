@@ -88,6 +88,21 @@ do not mix customer API handlers into CLI packages.
   CI if they drift. When you add an endpoint, add it to `newRouteTable` (or, for
   a self-referential route like `/openapi.json`, follow the `openAPIEndpoint`
   pattern); never call `mux.HandleFunc` directly in `NewHandler`.
+- Persistence tests use the shared harness in `internal/controlplane/testutil`,
+  not hand-rolled database setup. `testutil.RequireDB(t)` provisions an empty,
+  isolated, throwaway Postgres database per test; `testutil.RequireMigratedDB(t)`
+  also applies the embedded migrations. Both skip the test (with the documented
+  `testutil.SkipReason`) when `YALLA_TEST_DATABASE_URL` is unset, so
+  `go test ./...` stays green without Postgres, and both drop the database on
+  cleanup — safe under `t.Parallel()` because every call gets its own uniquely
+  named database. `testutil.NewFactory(t)` builds deterministically-shaped,
+  globally-unique fixture values for the `Organization -> Project ->
+  Environment -> Service` hierarchy plus `User` and `APIKey`; two factories
+  never collide, so one test can never observe another's tenant. Guard
+  "must not leak a secret" assertions with `testutil.AssertRedacted` /
+  `AssertRedactedValue`. The `store/migrate` package keeps its own local
+  `testPool` helper instead — it cannot import `testutil` (which imports
+  `migrate`) without an import cycle.
 - The OpenAPI document is built by `internal/controlplane/openapi` from a
   neutral `[]openapi.Endpoint`. It is OpenAPI 3.1, references the two stable
   envelope schemas (`SchemaSuccessEnvelope` / `SchemaErrorEnvelope`), and is

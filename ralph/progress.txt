@@ -15,6 +15,7 @@
 - Per-request structured logging lives in internal/controlplane/telemetry: telemetry.RequestLogging(logger) is the middleware just inside Correlate (httpapi.NewHandler wraps the routed mux in it). One JSON record per request: method/route/target/status/latency_ms/bytes/request_id/correlation_id, plus org_id/principal_id when set via telemetry.SetOrgID/SetPrincipalID (a request-scoped mutable holder the auth/policy layers enrich). Headers and bodies are never logged; the request target is redacted. Level follows the outcome (5xx error, 4xx warn, else info); the logger threshold (YALLA_LOG_LEVEL) gates emission. Service binaries bind service via logger.With and log JSON to stdout.
 - Backend errors are built through internal/controlplane/apierr, the catalogued error taxonomy — never yerr.New directly in handlers/services. apierr constructors return *yerr.Error (so they flow into apienvelope.WriteError); apierr.Catalog/Lookup pair every code with HTTP status (derived from apienvelope.StatusForCode — single source of truth), retry semantics, and a MessagePolicy. MessageGeneric codes (internal + all dependency failures) keep the cause out of Message/Hint and only Wrap it for logging. InvalidInput carries FieldViolation{Field,Reason} (path + reason, never the submitted value), recoverable via apierr.ViolationsOf; dependency failures are recoverable via apierr.DependencyOf even when they share a code. Adding a code = add to apierr.taxonomy + (if non-500) a apienvelope.StatusForCode case.
 - Schema changes are versioned SQL files under internal/controlplane/store/migrate/migrations/ named NNNN_name.up.sql (required) + NNNN_name.down.sql (optional, reversible-only), embedded via //go:embed. The migrate.Migrator runner owns a checksummed schema_migrations ledger, serialises with a pg advisory lock, and runs each migration in its own transaction. Migrator.Up is idempotent and refuses dirty / unknown-version / checksum-mismatch databases (errors.Is sentinels ErrDirtyDatabase/ErrUnknownVersion/ErrChecksumMismatch). NEVER edit an applied migration file (trips ErrChecksumMismatch by design) — add a new higher-versioned migration. Persistence tests are integration tests: they connect via YALLA_TEST_DATABASE_URL, create an isolated throwaway database per test, and t.Skip when the env var is unset so go test ./... stays green without Postgres. docker-compose.yml at repo root provisions local Postgres. pgx (github.com/jackc/pgx/v5 + pgxpool) is the Postgres driver.
+- Persistence tests use the shared harness internal/controlplane/testutil: RequireDB(t) gives an empty isolated throwaway Postgres database per test, RequireMigratedDB(t) also applies migrations; both t.Skip with testutil.SkipReason when YALLA_TEST_DATABASE_URL is unset and drop the DB on cleanup (parallel-safe — unique DB name per call). testutil.NewFactory(t) builds deterministic, globally-unique in-memory fixtures for the Organization->Project->Environment->Service hierarchy + User/APIKey (two factories never collide). testutil.AssertRedacted/AssertRedactedValue guard "must not leak a secret" assertions. store/migrate keeps its own local testPool — it cannot import testutil (import cycle: testutil imports migrate). Keep pure decision logic (lookupAdminDSN, scanLeaks) unexported + white-box tested, since testing.TB is sealed and cannot be faked.
 - HTTP routes are data-driven from internal/controlplane/httpapi/routes.go newRouteTable — the single source of truth. Each apiRoute pairs a served http.HandlerFunc with its openapi.Endpoint metadata; httpapi.NewHandler registers every entry on the mux AND generates the OpenAPI document from the same table, so a served route is always a documented route (TestEveryRegisteredRouteIsDocumented enforces it in CI). Never call mux.HandleFunc directly in NewHandler — add to newRouteTable. The OpenAPI 3.1 document is built by internal/controlplane/openapi.Build from a neutral []openapi.Endpoint, references the two stable envelope schemas, is served raw (not enveloped) at GET /openapi.json without auth, and marshals maps with sorted keys for a byte-stable artifact. Secret-shaped sample values use output.Sentinel.
 
 ## 2026-05-14 - BE-0002
@@ -548,4 +549,95 @@
   - slog.New(slog.DiscardHandler) (Go 1.24+) is the clean nil-logger fallback.
   - Validation logic that takes an fs.FS (LoadMigrations) is unit-testable with
     fstest.MapFS — no database needed for the "validation failure" acceptance criterion.
+---
+
+## 2026-05-14 - BE-0011
+- What was implemented: the reusable persistence test harness under
+  internal/controlplane/testutil (previously a doc.go-only stub).
+  - internal/controlplane/testutil/database.go (new, replaces doc.go): the
+    package doc + the isolated-database harness. EnvDatabaseURL constant
+    ("YALLA_TEST_DATABASE_URL") and SkipReason (the explicit documented reason
+    CI may skip the only external dependency — the local Docker Postgres stack).
+    DB type embeds *pgxpool.Pool + carries the generated Name. RequireDB(t)
+    provisions an empty, crypto-random-named, isolated throwaway Postgres
+    database (skips with SkipReason when the env var is unset, drops the DB on
+    cleanup with WITH (FORCE); cleanup order: pool.Close -> DROP -> admin.Close).
+    RequireMigratedDB(t) layers migrate.New(...).Up on top. lookupAdminDSN
+    (pure, getenv-injected) is the unit-testable skip-decision seam;
+    uniqueDBName uses crypto/rand so parallel tests never collide.
+  - internal/controlplane/testutil/fixtures.go (new): Factory builds
+    deterministically-shaped, globally-unique in-memory fixtures. Typed structs
+    Organization/User/APIKey/Project/Environment/Service with parent-linkage
+    IDs; ServiceKind* constants. NewFactory(t) seeds a random namespace token;
+    every builder takes its parent fixture so the hierarchy is compile-time
+    enforced and child rows carry the right organization/project/environment
+    IDs. Two factories (= two tests) never share an ID/slug/email/secret.
+    APIKey.Secret is a fake plaintext credential for redaction tests. slugify/
+    displayName/localPart normalise human labels.
+  - internal/controlplane/testutil/redact.go (new): AssertRedacted(t, s,
+    secrets...) and AssertRedactedValue(t, v, secrets...) — fail when a secret
+    appears verbatim in output / in any rendering of a value (JSON + %+v + %#v).
+    The failure message itself never prints the raw secret (shows length + a
+    sentinel-redacted view). scanLeaks is the pure, white-box-tested seam.
+  - internal/controlplane/testutil/internal_test.go (new, white-box): unit
+    tests for lookupAdminDSN (set/trimmed/unset/blank), slugify, displayName,
+    scanLeaks (leak detected / clean / empty-ignored / multi-leak). Always run
+    — no Postgres needed.
+  - internal/controlplane/testutil/fixtures_test.go (new, black-box): linked
+    hierarchy, uniqueness within a factory (100 iterations), factories never
+    collide (shared labels, 50 iterations each), empty/messy label handling,
+    Service.Kind override.
+  - internal/controlplane/testutil/redact_test.go (new, black-box):
+    AssertRedacted/AssertRedactedValue do not false-positive on clean output;
+    AssertRedacted guards a real factory-built API key secret.
+  - internal/controlplane/testutil/database_test.go (new, black-box
+    integration): isolated databases (table in db1 invisible from db2),
+    parallel-safe (8 workers each create the same-named table), drops on
+    cleanup (inner subtest then verify via pg_database), RequireMigratedDB
+    applies migrations (schema_migrations + pgcrypto), migrated DBs isolated.
+- Files changed: internal/controlplane/testutil/{database.go,fixtures.go,
+  redact.go,internal_test.go,fixtures_test.go,redact_test.go} (new),
+  internal/controlplane/testutil/doc.go (deleted),
+  internal/controlplane/AGENTS.md, ralph/prd.json, ralph/progress.txt.
+- Verification run: gofmt -w .; go mod tidy; go build ./...; go vet ./...;
+  go test ./...; go test -race ./...; then with YALLA_TEST_DATABASE_URL
+  pointing at a local docker-compose Postgres 16: go test -race -v
+  ./internal/controlplane/testutil/... (all 9 integration tests RUN, not
+  skipped, and PASS) and go test -race ./internal/controlplane/store/...
+  (migrate suite still green).
+- Results: all passed. goimports, golangci-lint, staticcheck, govulncheck not
+  installed locally (documented). Integration tests skip cleanly without the
+  env var so CI without Postgres stays green.
+- Remaining risks / follow-ups:
+  - The fixture Factory builds in-memory values only — there are no domain
+    tables yet (Organization/User/etc. land in BE-0012/BE-0013). When the
+    schema arrives, add repository-backed seeding (e.g. a Factory.Persist or a
+    seeder bound to a *DB) that inserts these typed fixtures; the structs here
+    are deliberately the shared shape that seeder will consume.
+  - store/migrate/migrate_test.go still has its own local testPool. It cannot
+    use testutil (testutil imports migrate -> import cycle). Leave it; it is
+    the bootstrap layer. Every OTHER persistence package must use testutil.
+  - Acceptance criterion 5 (stable JSON envelopes) is N/A: testutil is a
+    test-support package with no HTTP surface. Criterion 6's "authorization
+    failure" branch is also N/A (no auth surface); covered success +
+    validation-style failures (empty/messy labels, blank DSN) + the
+    not-found-style branch (DB dropped on cleanup -> not in pg_database).
+- Learnings for future iterations:
+  - testing.TB is a sealed interface (private method) — you CANNOT write a fake
+    TB to assert "t.Errorf was called". Pattern: keep the decision logic in a
+    pure unexported function (lookupAdminDSN, scanLeaks) and white-box unit-test
+    THAT; the testing.TB wrapper is then trivial glue. White-box (package
+    testutil) and black-box (package testutil_test) test files coexist fine in
+    one directory.
+  - A test helper taking testing.TB (not *testing.T) works in benchmarks and
+    nested helpers too; t.Skip/Fatalf/Cleanup/Helper/Errorf are all on TB.
+  - t.Run waits for a non-parallel subtest INCLUDING its t.Cleanup callbacks
+    before returning — so "provision in an inner subtest, then assert it was
+    cleaned up" is a reliable way to test cleanup behaviour.
+  - Cleanup ordering is LIFO: register admin-pool Close first (runs last), the
+    DROP DATABASE second, the test-pool Close last (runs first) — so the pool
+    is closed, then the DB dropped while the admin pool is still open.
+  - An import cycle is decided at the PACKAGE level: migrate's own _test.go
+    files are package migrate, so they cannot import testutil even though
+    they're "just tests". Bootstrap-layer packages keep local helpers.
 ---
