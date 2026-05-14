@@ -1157,3 +1157,69 @@
     later endpoint stories land — TestCatalogAndRolesAreWellFormed asserts the count (61).
   - Go 1.25 in this repo: t.Context() is available in tests; no need for context.Background().
 ---
+
+## 2026-05-14 - BE-0019
+- What was implemented: the action catalog as a typed, stable, compile-checked
+  permission contract.
+  - internal/controlplane/policy/actions.go (new): a `policy.Action…` constant
+    for every one of the 61 catalogued backend actions (the dotted string value
+    of each is public, stable API). `allActions` enumerates them as the single
+    source of truth for "which actions exist"; `Actions()` returns a sorted
+    stable copy (moved here from catalog.go); `Catalogued(Action) bool` is the
+    membership check the BE-0020 authorization middleware will use to reject an
+    endpoint wired to an unknown action.
+  - internal/controlplane/policy/catalog.go: rewrote `defaultActionCatalog` to
+    key on the `Action` constants instead of bare string literals, so an
+    uncatalogued or mistyped action is now a compile error. Removed the
+    duplicate `Actions()` (now in actions.go). builtinRoleCaps/BuiltinRoles
+    unchanged.
+  - internal/controlplane/openapi/openapi.go: added `Endpoint.RequiredAction`
+    and `Operation.RequiredAction`, rendered as the `x-required-action` OpenAPI
+    extension (omitempty — public endpoints omit it). operationFor wires it
+    through. The published document is unchanged for the current public-only
+    route table (omitempty), so no byte-stability regression.
+  - internal/controlplane/httpapi/routes_test.go (new):
+    TestEveryAuthenticatedRouteHasMappedAction iterates the served route table
+    plus openAPIEndpoint and enforces the invariant — every RequiresAuth route
+    must name a `policy.Catalogued` action; every public route must name none.
+    The moment a future endpoint story registers an authenticated route without
+    a mapped action, CI fails.
+  - internal/controlplane/policy/actions_test.go (new): catalog<->allActions
+    lockstep (no dups, no orphans, equal length), Actions() sorted + non-aliased,
+    Catalogued known/unknown/empty, BE-0019 concept coverage
+    (read/create/update/delete/deploy/restart/rollback/logs.read/metrics.read/
+    env.read/env.write/limits.read/limits.write/members.manage/keys.manage/
+    admin.reconcile), and constant string-value stability.
+  - internal/controlplane/openapi/openapi_action_test.go (new): x-required-action
+    renders for an authenticated operation and is omitted for a public one.
+  - internal/controlplane/AGENTS.md: documented the action-constant convention
+    and the new guard tests.
+- Files changed: internal/controlplane/policy/{actions.go,actions_test.go} (new),
+  internal/controlplane/policy/catalog.go,
+  internal/controlplane/openapi/{openapi.go,openapi_action_test.go (new)},
+  internal/controlplane/httpapi/routes_test.go (new),
+  internal/controlplane/AGENTS.md, ralph/prd.json, ralph/progress.txt.
+- Verification run: gofmt -w .; go mod tidy; go build ./...; go vet ./...;
+  go test ./...; go test -race ./....
+- Results: all passed. goimports, golangci-lint, staticcheck, govulncheck not
+  installed locally.
+- Remaining risks / follow-ups:
+  - No authenticated routes exist yet, so RequiredAction is unset on every
+    current route; BE-0020+ endpoint stories set it. The invariant test is not
+    vacuous — it validates all four public routes carry no action today.
+  - Criterion 5 (JSON envelopes) / criterion 6 auth+not-found halves are N/A:
+    this story has no new HTTP handler surface. Covered catalog success +
+    drift-failure paths thoroughly instead.
+  - Postgres integration-test criterion is N/A for a pure catalog/contract story.
+- Learnings for future iterations:
+  - When you add an endpoint: add the `Action` constant in policy/actions.go,
+    list it in `allActions`, map it in `defaultActionCatalog`, and set
+    `openapi.Endpoint.RequiredAction` on the route. Four tests guard this:
+    TestPolicyMatrix, TestCatalogAndRolesAreWellFormed,
+    TestActionCatalogMatchesEnumeration, TestEveryAuthenticatedRouteHasMappedAction.
+  - openapi.Endpoint stays neutral (RequiredAction is plain `string`, not
+    policy.Action) so the openapi package keeps zero backend dependencies; the
+    httpapi route table is where the typed `policy.Action` constant is used.
+  - x-* extension fields just need a struct field with a `json:"x-…,omitempty"`
+    tag — no special encoder needed.
+---

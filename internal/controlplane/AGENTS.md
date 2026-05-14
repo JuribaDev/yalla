@@ -128,11 +128,17 @@ do not mix customer API handlers into CLI packages.
   a `Decision{Allow, Reason}` with a stable `Reason` code; `Authorize` /
   `AuthorizeCtx` map a denial onto typed `apierr` (`Unauthenticated` for a
   missing principal, `Forbidden` otherwise). Every endpoint maps to exactly one
-  `policy.Action`; the action lives in `policy`'s `defaultActionCatalog` (the
-  authoritative `requiredAction` → `Capability` mapping). When you add an
-  endpoint, add its action there (or pass `policy.WithAction` for a late
-  addition) — `TestPolicyMatrix` and `TestCatalogAndRolesAreWellFormed` guard
-  the catalog. Roles confer `Capability` sets, not individual actions; the six
+  `policy.Action`. Actions are named `policy.Action…` constants in
+  `policy/actions.go` (never bare string literals — a typo must be a compile
+  error); `allActions` enumerates them, `defaultActionCatalog` maps each to one
+  `Capability`, and `policy.Catalogued(action)` is the membership check. When
+  you add an endpoint, add its `Action` constant in `actions.go`, list it in
+  `allActions`, map it in `defaultActionCatalog` (or pass `policy.WithAction`
+  for a late addition), and set `openapi.Endpoint.RequiredAction` on the route
+  (rendered as the `x-required-action` OpenAPI extension). `TestPolicyMatrix`,
+  `TestCatalogAndRolesAreWellFormed`, `TestActionCatalogMatchesEnumeration`,
+  and httpapi's `TestEveryAuthenticatedRouteHasMappedAction` guard the catalog —
+  an authenticated route without a catalogued action fails CI. Roles confer `Capability` sets, not individual actions; the six
   built-ins are fixed and custom roles resolve through a `CustomRoleResolver`
   hook. Scoped `Grant`s narrow/widen authority within an org via `Scope`
   containment over Organization→Project→Environment→Service; cross-tenant

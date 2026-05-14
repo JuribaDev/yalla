@@ -1246,8 +1246,8 @@
       ],
       "type": "authorization",
       "priority": 1,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added policy.Action constants (internal/controlplane/policy/actions.go) for all 61 catalogued backend actions plus allActions enumeration, Actions() (sorted stable copy), and Catalogued() membership check; rewrote defaultActionCatalog to key on the constants so an uncatalogued/mistyped action is a compile error. Added openapi.Endpoint.RequiredAction rendered as the x-required-action OpenAPI extension on Operation. Added httpapi TestEveryAuthenticatedRouteHasMappedAction enforcing that every authenticated route names a catalogued action and public routes name none. policy/openapi unit tests cover catalog<->enumeration lockstep, concept coverage, value stability, and x-required-action rendering. gofmt, go build, go vet, go test ./..., go test -race ./... all pass."
     },
     {
       "id": "BE-0020",

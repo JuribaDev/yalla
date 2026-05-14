@@ -66,6 +66,7 @@ type Endpoint struct {
 	Description        string   // Longer human description.
 	Tags               []string // Grouping tags.
 	RequiresAuth       bool     // false => public (security: []).
+	RequiredAction     string   // Policy action the operation authorizes; "" for public endpoints.
 	SuccessStatus      int      // Documented success status; 0 => 200.
 	SuccessDescription string   // Description of the success response.
 	SuccessSchema      string   // Success body component schema; "" => SuccessEnvelope.
@@ -122,13 +123,19 @@ func (p PathItem) MarshalJSON() ([]byte, error) { return marshalSortedMap(map[st
 
 // Operation describes one HTTP operation. Security is always emitted (never
 // omitempty) so a public endpoint explicitly advertises an empty requirement.
+//
+// RequiredAction is rendered as the x-required-action OpenAPI extension: it
+// names the stable policy action this operation authorizes, so agents and
+// tooling can discover the authorization contract straight from the document.
+// It is omitted for public endpoints, which have no action.
 type Operation struct {
-	Tags        []string              `json:"tags,omitempty"`
-	OperationID string                `json:"operationId"`
-	Summary     string                `json:"summary"`
-	Description string                `json:"description,omitempty"`
-	Security    []map[string][]string `json:"security"`
-	Responses   Responses             `json:"responses"`
+	Tags           []string              `json:"tags,omitempty"`
+	OperationID    string                `json:"operationId"`
+	Summary        string                `json:"summary"`
+	Description    string                `json:"description,omitempty"`
+	Security       []map[string][]string `json:"security"`
+	RequiredAction string                `json:"x-required-action,omitempty"`
+	Responses      Responses             `json:"responses"`
 }
 
 // Responses maps a status code (or "default") to its response. Sorted on marshal.
@@ -249,11 +256,12 @@ func operationFor(ep Endpoint) Operation {
 	}
 
 	return Operation{
-		Tags:        ep.Tags,
-		OperationID: ep.OperationID,
-		Summary:     ep.Summary,
-		Description: ep.Description,
-		Security:    security,
+		Tags:           ep.Tags,
+		OperationID:    ep.OperationID,
+		Summary:        ep.Summary,
+		Description:    ep.Description,
+		Security:       security,
+		RequiredAction: ep.RequiredAction,
 		Responses: Responses{
 			strconv.Itoa(status): jsonResponse(successDesc, successSchema),
 			"default":            jsonResponse("Error response using the stable yalla.error.v1 envelope.", SchemaErrorEnvelope),

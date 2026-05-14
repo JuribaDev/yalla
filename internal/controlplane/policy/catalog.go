@@ -47,97 +47,91 @@ func BuiltinRoles() []Role {
 	return out
 }
 
-// defaultActionCatalog maps every public action to the single capability it
-// requires. It is the authoritative action contract: every requiredAction in
-// the API surface appears here exactly once, and adding an endpoint means
-// adding its action here. The store layer duplicates a few of these strings
+// defaultActionCatalog maps every catalogued action to the single capability
+// it requires. It is the authoritative action-to-capability contract: every
+// action in [allActions] appears here exactly once, and adding an endpoint
+// means adding its action constant in actions.go, listing it in allActions,
+// and mapping it here. The store layer duplicates a few of these strings
 // (project.create, service_account.create) as plain constants on purpose to
 // avoid a build dependency; this catalog is where they are owned.
+//
+// Keys are the [Action] constants from actions.go, never bare string literals,
+// so an uncatalogued or mistyped action is a compile error.
 var defaultActionCatalog = map[Action]Capability{
 	// Identity: any authenticated principal acting on itself.
-	"auth.me":             CapSelf,
-	"auth.orgs":           CapSelf,
-	"organization.create": CapSelf,
+	ActionAuthMe:             CapSelf,
+	ActionAuthOrgs:           CapSelf,
+	ActionOrganizationCreate: CapSelf,
 
 	// Reads within an organization.
-	"organization.read":       CapRead,
-	"members.read":            CapRead,
-	"project.read":            CapRead,
-	"project.grants.read":     CapRead,
-	"environment.read":        CapRead,
-	"environment.grants.read": CapRead,
-	"service.read":            CapRead,
-	"env.read":                CapRead,
-	"domain.read":             CapRead,
-	"deployment.read":         CapRead,
-	"backup.read":             CapRead,
-	"job.read":                CapRead,
-	"logs.read":               CapRead,
-	"metrics.read":            CapRead,
-	"limits.read":             CapRead,
-	"preview.read":            CapRead,
+	ActionOrganizationRead:      CapRead,
+	ActionMembersRead:           CapRead,
+	ActionProjectRead:           CapRead,
+	ActionProjectGrantsRead:     CapRead,
+	ActionEnvironmentRead:       CapRead,
+	ActionEnvironmentGrantsRead: CapRead,
+	ActionServiceRead:           CapRead,
+	ActionEnvRead:               CapRead,
+	ActionDomainRead:            CapRead,
+	ActionDeploymentRead:        CapRead,
+	ActionBackupRead:            CapRead,
+	ActionJobRead:               CapRead,
+	ActionLogsRead:              CapRead,
+	ActionMetricsRead:           CapRead,
+	ActionLimitsRead:            CapRead,
+	ActionPreviewRead:           CapRead,
 
 	// Lifecycle actions against existing resources (no desired-state change).
-	"deployment.create":   CapDeploy,
-	"deployment.cancel":   CapDeploy,
-	"deployment.rollback": CapDeploy,
-	"backup.run":          CapDeploy,
-	"job.cancel":          CapDeploy,
-	"job.retry":           CapDeploy,
-	"service.restart":     CapDeploy,
-	"service.start":       CapDeploy,
-	"service.stop":        CapDeploy,
-	"preview.create":      CapDeploy,
-	"preview.delete":      CapDeploy,
+	ActionDeploymentCreate:   CapDeploy,
+	ActionDeploymentCancel:   CapDeploy,
+	ActionDeploymentRollback: CapDeploy,
+	ActionBackupRun:          CapDeploy,
+	ActionJobCancel:          CapDeploy,
+	ActionJobRetry:           CapDeploy,
+	ActionServiceRestart:     CapDeploy,
+	ActionServiceStart:       CapDeploy,
+	ActionServiceStop:        CapDeploy,
+	ActionPreviewCreate:      CapDeploy,
+	ActionPreviewDelete:      CapDeploy,
 
 	// Desired-state writes.
-	"project.create":     CapWrite,
-	"project.update":     CapWrite,
-	"project.delete":     CapWrite,
-	"project.restore":    CapWrite,
-	"environment.create": CapWrite,
-	"environment.update": CapWrite,
-	"environment.delete": CapWrite,
-	"service.create":     CapWrite,
-	"service.update":     CapWrite,
-	"service.delete":     CapWrite,
-	"service.restore":    CapWrite,
-	"env.write":          CapWrite,
-	"domain.create":      CapWrite,
-	"domain.update":      CapWrite,
-	"domain.delete":      CapWrite,
-	"backup.create":      CapWrite,
-	"backup.update":      CapWrite,
-	"backup.delete":      CapWrite,
+	ActionProjectCreate:     CapWrite,
+	ActionProjectUpdate:     CapWrite,
+	ActionProjectDelete:     CapWrite,
+	ActionProjectRestore:    CapWrite,
+	ActionEnvironmentCreate: CapWrite,
+	ActionEnvironmentUpdate: CapWrite,
+	ActionEnvironmentDelete: CapWrite,
+	ActionServiceCreate:     CapWrite,
+	ActionServiceUpdate:     CapWrite,
+	ActionServiceDelete:     CapWrite,
+	ActionServiceRestore:    CapWrite,
+	ActionEnvWrite:          CapWrite,
+	ActionDomainCreate:      CapWrite,
+	ActionDomainUpdate:      CapWrite,
+	ActionDomainDelete:      CapWrite,
+	ActionBackupCreate:      CapWrite,
+	ActionBackupUpdate:      CapWrite,
+	ActionBackupDelete:      CapWrite,
 
 	// Organization administration: members, credentials, grants, plan, audit.
-	"organization.update":      CapAdmin,
-	"members.manage":           CapAdmin,
-	"keys.read":                CapAdmin,
-	"keys.manage":              CapAdmin,
-	"project.grants.write":     CapAdmin,
-	"environment.grants.write": CapAdmin,
-	"limits.write":             CapAdmin,
-	"audit.read":               CapAdmin,
+	ActionOrganizationUpdate:     CapAdmin,
+	ActionMembersManage:          CapAdmin,
+	ActionKeysRead:               CapAdmin,
+	ActionKeysManage:             CapAdmin,
+	ActionProjectGrantsWrite:     CapAdmin,
+	ActionEnvironmentGrantsWrite: CapAdmin,
+	ActionLimitsWrite:            CapAdmin,
+	ActionAuditRead:              CapAdmin,
 
 	// Irreversible owner-only organization actions.
-	"organization.delete": CapOwner,
+	ActionOrganizationDelete: CapOwner,
 
 	// Internal break-glass / support tooling.
-	"admin.read":        CapSupport,
-	"admin.import":      CapSupport,
-	"admin.reconcile":   CapSupport,
-	"admin.break_glass": CapSupport,
-}
-
-// Actions returns every catalogued action in a stable, sorted order.
-func Actions() []Action {
-	out := make([]Action, 0, len(defaultActionCatalog))
-	for a := range defaultActionCatalog {
-		out = append(out, a)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
-	return out
+	ActionAdminRead:       CapSupport,
+	ActionAdminImport:     CapSupport,
+	ActionAdminReconcile:  CapSupport,
+	ActionAdminBreakGlass: CapSupport,
 }
 
 // CustomRoleResolver resolves a non-built-in role name to its capability set.
