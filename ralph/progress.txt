@@ -24,6 +24,7 @@
 - Request authentication is internal/controlplane/auth.Authenticator: it resolves any of the three bearer schemes (API key yk_..., human session JWT, internal worker secret) to one auth.Identity{Principal, Method}. Every invalid-credential cause collapses to the single ErrInvalidCredentials sentinel (missing creds = ErrNoCredentials) so no error is a "does this key prefix exist?" oracle; a genuine datastore failure is propagated unchanged as a typed *yerr.Error, never disguised as invalid credentials. The Authenticator depends on the narrow auth.CredentialStore port (+ APIKeyRecord/ServiceAccountRecord DTOs) so auth never imports store; the production adapter is store.CredentialReader (store imports auth, not the reverse). The HTTP wrappers are httpapi.RequireAuth(authenticator, engine, action, ResourceResolver) and httpapi.RequireInternalWorker — they authenticate, attach the principal via policy.WithPrincipal + telemetry.SetOrgID/SetPrincipalID, then authorize: missing creds 401 E_AUTH, invalid 401 E_AUTH (fixed generic message), unauthorized 403 E_FORBIDDEN (stable policy reason), dependency failure keeps its typed 5xx. ResourceResolver nil defaults to the principal's own org scope; pass a path-param resolver so a cross-tenant id is a 403, not a silent allow.
 - Quota schema (0006_quota_policy_schema): a closed enum reused across tables is a Postgres DOMAIN over text + CHECK (here quota_resource over 14 dimensions, quota_enforcement_mode over hard/soft/metered/disabled); DROP DOMAIN goes in the down migration after the tables. quota_policies holds one limit per (scope, resource) where a row is EITHER a plan_default (text plan, no plans-table FK yet) OR an organization override — enforced by one table CHECK + two partial unique indexes; the checker resolves "org override else plan default". quota_usage is one counter row per (org, resource); quota_reservations are short-lived (amount>0, status active->committed|released|expired, expires_at, settled_at tied to non-active status by CHECK) and expose UNIQUE (organization_id, id) as a composite-FK target; usage_events is append-only (no updated_at/trigger, signed delta) and links reservations via a tenant-safe composite FK. An optional cross-table link inside a tenant uses a plain composite FK (MATCH SIMPLE) — NOT ON DELETE SET NULL, which would null the NOT NULL organization_id.
 - Quota enforcement: the QuotaRepository (internal/controlplane/store/quota.go) is the persistence half (EffectiveLimit / LockUsage / SumActiveReservations / InsertReservation, all tenant-scoped, mutations on *Tx) and the quota.Checker (internal/controlplane/quota) is the store.QuotaReserver service half. A hard limit is enforced by LockUsage doing INSERT ... ON CONFLICT DO NOTHING then SELECT ... FOR UPDATE on the quota_usage counter row — that lock serialises concurrent reservers so they cannot both over-allocate; the decision is current+reserved+requested <= limit, reserved = SUM of active non-expired reservations. Soft/metered limits record but never reject; disabled/no-policy allow with no write. A rejection is apierr.QuotaExceeded wrapping a recoverable quota.ExceededDetail{Resource,Current,Reserved,Requested,Limit}. Quota accounting rows have no domain.Kind — ids are minted locally with a prefixed crypto/rand helper.
+- Audit log (0007_audit_events, store/audit.go, internal/controlplane/audit): the immutable audit log records every authorization decision, allowed AND denied. Immutability is enforced at two layers — the table has no updated_at and a BEFORE UPDATE trigger (audit_events_reject_update) that rejects every UPDATE in the database, and AuditRepository exposes only Append + tenant-scoped ListByOrganization (no update/delete); row DELETE stays reachable only via the organizations ON DELETE CASCADE. An append-only table that must still cascade on tenant teardown blocks UPDATE only, never DELETE. The audit.Auditor (depends on the narrow Recorder port, satisfied by *store.AuditRepository) is the single place a policy.Decision becomes an AuditEvent: it pulls the principal (policy.PrincipalFromContext) + correlation ids (telemetry.FromContext) off the context, files the event under the principal's org else the resource's org, and REDACTS metadata before persistence — secret-shaped keys (token/secret/password/credential/...) replaced wholesale with output.Sentinel, every other value + the user agent scrubbed by an output.Redactor. store treats metadata as already-redacted; redaction is the audit service's contract. Auditor.Record takes the caller's *store.Tx so an audit write can share the mutation's transaction or run in its own.
 
 ## 2026-05-14 - BE-0002
 - What was implemented: Backend configuration contract for the control-plane API and worker.
@@ -1579,3 +1580,96 @@
     expanding the domain package's public Kind contract.
 ---
 
+
+## 2026-05-15 - BE-0023
+- What was implemented: the immutable audit log — schema, persistence
+  repository, and the audit service that turns a policy decision into a
+  redacted audit record.
+  - internal/controlplane/store/migrate/migrations/0007_audit_events.{up,down}.sql:
+    the audit_events table (tenant-scoped via organization_id FK ON DELETE
+    CASCADE; actor_id/actor_kind default empty so an unauthenticated denied
+    request is still audited; decision allowed/denied; jsonb metadata; no
+    updated_at). Immutability is enforced in the database: the
+    audit_events_reject_update() trigger function + a BEFORE UPDATE trigger
+    reject every UPDATE. Four scoped indexes for the common read paths.
+  - internal/controlplane/store/audit.go: AuditEvent / AuditDecision
+    persistence types; AuditRepository with Append (mutation, *Tx) and
+    tenant-scoped ListByOrganization (read, Querier) — and DELIBERATELY no
+    update/delete method. scanAuditEvent serves both Append RETURNING and the
+    list loop (pgx.Rows satisfies pgx.Row). marshal/unmarshalAuditMetadata for
+    the jsonb column; newAuditID mints aud_<32hex> ids locally.
+  - internal/controlplane/audit/ (audit.go, doc.go, AGENTS.md): the Auditor
+    service over the narrow Recorder port. Auditor.Record(ctx, *store.Tx,
+    Entry) builds a store.AuditEvent from the Entry plus the principal
+    (policy.PrincipalFromContext) and correlation ids (telemetry.FromContext)
+    carried on the context, redacts the metadata + user agent, and appends.
+    redactMetadata replaces values under secret-shaped keys wholesale with
+    output.Sentinel and scrubs every other value via an output.Redactor.
+    resourceID picks the most specific scoped id for the resource kind.
+- Files changed:
+  - new: 0007_audit_events.{up,down}.sql, store/audit.go,
+    store/audit_internal_test.go, store/audit_test.go,
+    audit/audit.go, audit/audit_test.go, audit/AGENTS.md
+  - modified: audit/doc.go (package doc expanded), store/AGENTS.md (audit log
+    section), ralph/prd.json (BE-0023 passes: true)
+- Verification (YALLA_TEST_DATABASE_URL set, local Postgres 16 via docker compose):
+  - gofmt -l: clean; go mod tidy: no changes; go build ./...: clean.
+  - go vet ./...: clean.
+  - go test ./...: all pass (with and without Postgres).
+  - go test -race ./...: all pass, incl. the new audit integration tests and
+    TestMigrations (0007 applies cleanly from an empty database).
+- Acceptance criteria mapping:
+  - "Audit events include actor, organization, action, resource type, resource
+    ID, decision, request_id, IP, user agent, redacted diff metadata": every
+    field is a column on audit_events and a field on store.AuditEvent; the
+    Auditor populates them from the Entry + context.
+  - "Audit writes happen for allowed and denied policy decisions": Auditor.Record
+    maps policy.Decision.Allow to AuditDecisionAllowed/Denied; both verdicts are
+    persisted. TestAuditorRecordAllowedDecision / TestAuditorRecordDeniedDecision
+    (incl. a denied unauthenticated request with no actor) prove it.
+  - "Audit records are append-only from application code": AuditRepository has
+    no update/delete method; additionally the table rejects UPDATE at the DB
+    level (TestAuditRepositoryAppendImmutability proves a raw UPDATE fails and
+    the row is unchanged).
+  - "Tests assert sensitive payload fields are redacted and denied requests are
+    audited": TestAuditorRecordRedactsMetadata (secret-shaped key replaced
+    wholesale, transport pattern scrubbed, testutil.AssertRedactedValue over the
+    whole event); the denied tests cover the second half.
+  - "JSON envelopes yalla.output.v1 / yalla.error.v1": N/A — internal service
+    with no HTTP surface yet; the typed apierr it returns renders through
+    apienvelope at the endpoint layer (later HTTP stories).
+  - "Unit tests cover success/validation/authorization/not-found": success +
+    validation (TestAuditorRecordValidationFailures: blank action, missing
+    resource kind, missing reason, unresolvable org) are covered.
+    "authorization failure" is N/A — the audit service has no authz surface of
+    its own (it runs after the policy decision it records); "not-found" maps to
+    ListByOrganization returning an empty slice for an unknown/empty tenant.
+  - "Integration tests run against isolated Postgres migrations": all store
+    integration tests use testutil.RequireMigratedDB and skip without
+    YALLA_TEST_DATABASE_URL.
+  - "Secrets redacted": redactMetadata + the output.Redactor backstop; no
+    audit column stores a credential; tests assert no leak.
+- Remaining risks / follow-ups:
+  - The Auditor is not yet wired into a composition root or any endpoint. The
+    HTTP middleware (RequireAuth) and store units of work that call
+    Auditor.Record on every allowed/denied decision land in later stories — the
+    Auditor's port and signature are designed for that wiring.
+  - audit_events DELETE is intentionally NOT blocked (only UPDATE is), so the
+    organizations ON DELETE CASCADE still works for tenant teardown. If a story
+    later needs hard "audit survives org deletion" retention, that is a schema
+    change (drop the cascade / re-home the rows), not a code change here.
+- Learnings for future iterations:
+  - An append-only table that must still participate in ON DELETE CASCADE can
+    only block UPDATE — a BEFORE DELETE trigger would also break the cascade.
+    Block UPDATE in the DB; keep DELETE out of the application surface instead.
+  - pgx.Rows satisfies pgx.Row, so one scan helper (taking pgx.Row) serves both
+    a QueryRow RETURNING and a Query/rows.Next loop — no duplicate scanner.
+  - A package that needs a *store.Tx in its signature can still be unit-tested
+    without a database: depend on a narrow port (here Recorder), and the fake
+    ignores the *store.Tx so tests pass a typed nil. The real *Tx path is
+    covered by the store package's own integration tests.
+  - Redacting audit metadata needs BOTH a key-based rule (a value under a
+    secret-shaped key IS the secret — replace it wholesale) and a value-based
+    rule (output.Redactor for transport patterns). The structural Redactor
+    alone does not catch a bare secret stored under e.g. "api_token".
+---

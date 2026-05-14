@@ -152,6 +152,26 @@ Postgres persistence for control-plane source-of-truth state.
   Quota accounting rows (`quota_usage`, `quota_reservations`) are **not** domain
   resources — `newQuotaID` mints their ids locally, no `domain.Kind`.
 
+## Audit log (`0007_audit_events`, `audit.go`)
+
+- `audit_events` is the **immutable** audit log: one row per security-relevant
+  authorization decision, allowed *or* denied. Immutability is enforced at two
+  layers — the table has **no `updated_at`** and a `BEFORE UPDATE` trigger
+  (`audit_events_reject_update`) that rejects every UPDATE at the database
+  level, and `AuditRepository` exposes **only** `Append` + tenant-scoped reads
+  (`ListByOrganization`), no update/delete. Row DELETE stays reachable solely
+  through the organizations `ON DELETE CASCADE` for tenant teardown.
+- Actor columns (`actor_id`, `actor_kind`) default to empty: an unauthenticated
+  request that is **denied** is still audited, with no actor. `decision` is
+  `allowed`/`denied`; `metadata` is `jsonb` and is expected to arrive **already
+  redacted** — redaction is the `internal/controlplane/audit` service's
+  contract, not the repository's.
+- `AuditEvent`/`AuditDecision` are the persistence shapes. `scanAuditEvent`
+  takes `pgx.Row` and serves both the `Append` RETURNING and the
+  `ListByOrganization` loop (`pgx.Rows` satisfies `pgx.Row`). Audit rows are
+  internal accounting, not domain resources — `newAuditID` mints their ids
+  locally (`aud_<32hex>`), no `domain.Kind`.
+
 ## Repository transaction pattern (`store.go`, `project.go`, `projectservice.go`)
 
 - The `store` package is the **only** place repository code reaches the
