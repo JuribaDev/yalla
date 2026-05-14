@@ -1,3 +1,4 @@
+// Package httpapi exposes the Yalla Control Plane HTTP API surface.
 package httpapi
 
 import (

@@ -1,3 +1,4 @@
+// Package runtime contains process-level metadata shared by backend binaries.
 package runtime
 
 // BuildInfo is the build-time identity shared by the control-plane API and
