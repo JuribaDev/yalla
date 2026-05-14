@@ -14,6 +14,7 @@
 - Request correlation lives in internal/controlplane/telemetry. telemetry.Correlate is the outermost HTTP middleware (httpapi.NewHandler wraps the mux in it): it resolves request_id (per request) + correlation_id (per workflow) onto the request context before any handler runs. Inbound X-Request-Id/X-Correlation-Id are honoured only if telemetry.SafeID passes ([A-Za-z0-9._-], 1..128) — unsafe values are dropped and a fresh telemetry.NewRequestID() is minted, so injection payloads never reach headers/logs/jobs. Read IDs anywhere via telemetry.FromContext/RequestID/CorrelationID; never thread them through signatures. Non-HTTP entry points seed context with telemetry.WithCorrelation.
 - Per-request structured logging lives in internal/controlplane/telemetry: telemetry.RequestLogging(logger) is the middleware just inside Correlate (httpapi.NewHandler wraps the routed mux in it). One JSON record per request: method/route/target/status/latency_ms/bytes/request_id/correlation_id, plus org_id/principal_id when set via telemetry.SetOrgID/SetPrincipalID (a request-scoped mutable holder the auth/policy layers enrich). Headers and bodies are never logged; the request target is redacted. Level follows the outcome (5xx error, 4xx warn, else info); the logger threshold (YALLA_LOG_LEVEL) gates emission. Service binaries bind service via logger.With and log JSON to stdout.
 - Backend errors are built through internal/controlplane/apierr, the catalogued error taxonomy — never yerr.New directly in handlers/services. apierr constructors return *yerr.Error (so they flow into apienvelope.WriteError); apierr.Catalog/Lookup pair every code with HTTP status (derived from apienvelope.StatusForCode — single source of truth), retry semantics, and a MessagePolicy. MessageGeneric codes (internal + all dependency failures) keep the cause out of Message/Hint and only Wrap it for logging. InvalidInput carries FieldViolation{Field,Reason} (path + reason, never the submitted value), recoverable via apierr.ViolationsOf; dependency failures are recoverable via apierr.DependencyOf even when they share a code. Adding a code = add to apierr.taxonomy + (if non-500) a apienvelope.StatusForCode case.
+- HTTP routes are data-driven from internal/controlplane/httpapi/routes.go newRouteTable — the single source of truth. Each apiRoute pairs a served http.HandlerFunc with its openapi.Endpoint metadata; httpapi.NewHandler registers every entry on the mux AND generates the OpenAPI document from the same table, so a served route is always a documented route (TestEveryRegisteredRouteIsDocumented enforces it in CI). Never call mux.HandleFunc directly in NewHandler — add to newRouteTable. The OpenAPI 3.1 document is built by internal/controlplane/openapi.Build from a neutral []openapi.Endpoint, references the two stable envelope schemas, is served raw (not enveloped) at GET /openapi.json without auth, and marshals maps with sorted keys for a byte-stable artifact. Secret-shaped sample values use output.Sentinel.
 
 ## 2026-05-14 - BE-0002
 - What was implemented: Backend configuration contract for the control-plane API and worker.
@@ -312,4 +313,78 @@
     ("INFO"/"WARN"/"ERROR"); tests decode those keys directly.
   - logger.Log(ctx, level, msg, args...) accepts slog.Attr values inside the ...any args, so a
     []any of slog.String(...) (as LogAttrs returns) splats in cleanly.
+---
+
+## 2026-05-14 - BE-0008
+- What was implemented: OpenAPI 3.1 generation + validation for the control-plane API.
+  - internal/controlplane/openapi/openapi.go (new): the OpenAPI document builder.
+    Build(Info, []Endpoint) -> Document. Endpoint is the neutral per-route metadata
+    type (method/path/operationId/summary/description/tags/RequiresAuth/SuccessStatus/
+    SuccessDescription/SuccessSchema). Every operation documents a success response and
+    a "default" error response, both referencing component schemas. Components always
+    define SchemaSuccessEnvelope (yalla.output.v1), SchemaErrorEnvelope (yalla.error.v1),
+    SchemaErrorBody, SchemaOpenAPIDocument, and the ApiKeyAuth http/bearer security
+    scheme. Public endpoints emit security:[] explicitly; RequiresAuth emits
+    [{ApiKeyAuth:[]}]. All map types (Paths/PathItem/Responses/ContentMap/SchemaMap/
+    SecuritySchemeMap) marshal with sorted keys via marshalSortedMap so the artifact is
+    byte-stable. Examples render secret-shaped values with output.Sentinel; the
+    security-scheme description carries a redacted sample bearer token. Document exposes
+    HasOperation(method,path) + OperationCount() for the route-coverage test.
+  - internal/controlplane/httpapi/routes.go (new): newRouteTable(build, readiness) is
+    the single source of truth — []apiRoute pairing a served http.HandlerFunc with its
+    openapi.Endpoint. Moved the /healthz, /readyz, /version handlers here from server.go.
+    openAPIEndpoint() is the /openapi.json metadata (kept separate because its handler
+    is built from the doc itself); openAPIDocument(build, table) folds it back in so the
+    published document lists the discovery endpoint. endpointsOf projects metadata out.
+  - internal/controlplane/httpapi/server.go: NewHandler now builds the route table,
+    generates the OpenAPI doc once at startup (json.MarshalIndent; panics on a marshal
+    error since the input is static), appends the /openapi.json route (serves the raw
+    document — deliberately NOT enveloped, since OpenAPI tooling expects the standard
+    format — with no auth), and registers every table entry on the mux in a loop.
+  - internal/controlplane/openapi/openapi_test.go (new): 3.1 identity, envelope+error
+    schemas defined, ApiKeyAuth scheme, every endpoint documents both responses + custom
+    success status honoured, public security:[] vs authed ApiKeyAuth, HasOperation
+    case-insensitive, deterministic marshal (5x) + valid JSON, examples use output.Sentinel
+    and contain no unredacted secret-shaped token.
+  - internal/controlplane/httpapi/server_test.go: TestHandlerServesOpenAPIDocument
+    (200, application/json, openapi=3.1.0, info.version echoes build, paths include all
+    routes, body is the raw doc not an envelope, no auth header sent),
+    TestEveryRegisteredRouteIsDocumented (CI guard — every registered route in the doc,
+    no extras), TestRegisteredRoutesAreServable (every documented route reachable,
+    unknown path still 404), TestOpenAPIDocumentRedactsExampleSecrets.
+- Files changed: internal/controlplane/openapi/{openapi.go,openapi_test.go} (new),
+  internal/controlplane/httpapi/{routes.go (new),server.go,server_test.go},
+  internal/controlplane/AGENTS.md, ralph/prd.json, ralph/progress.txt.
+- Verification run: gofmt -w .; go mod tidy; go build ./...; go vet ./...; go test ./...;
+  go test -race ./...; go test -race ./internal/controlplane/....
+- Results: all passed. goimports, golangci-lint, staticcheck, govulncheck not installed locally.
+- Remaining risks / follow-ups:
+  - Endpoint has no request-body modelling yet (no endpoint has a request body). When the
+    first mutating endpoint lands, extend openapi.Endpoint with request schema metadata
+    and add a RequestBody to operationFor — keep it data-driven from the route table.
+  - The route-coverage guard proves newRouteTable -> document parity. It cannot catch a
+    raw mux.HandleFunc added outside the table; AGENTS.md forbids that and TestRegisteredRoutesAreServable
+    plus the convention are the backstop. If a future story needs a hard guard, expose a
+    mux-introspection hook.
+  - Acceptance criterion 5 ("all public responses use stable JSON envelopes") does not
+    apply to /openapi.json itself: the OpenAPI document is a standardised format and is
+    served raw so OpenAPI tooling can consume it. Every API *operation* response still
+    uses the envelopes. Validation/authorization-failure unit-test criteria are N/A —
+    /openapi.json takes no input and needs no auth; covered success + not-found instead.
+  - Postgres integration-test criterion is N/A for a pure API-contract story.
+- Learnings for future iterations:
+  - In a Go composite literal of map[string]*Schema, element values can elide &Schema{}
+    (write just {...}); but a *Schema struct *field* (e.g. Items) still needs explicit
+    &Schema{...}. Map/slice elements allow elision, struct fields do not.
+  - json.RawMessage with `json:",omitempty"` is the clean way to embed deterministic
+    example bodies — map[string]any examples would marshal with random key order and
+    break a determinism test. MarshalIndent does not re-indent RawMessage, so keep
+    embedded examples compact.
+  - A custom MarshalJSON on a named map type makes json.Marshal deterministic without
+    touching call sites; nest them (Paths -> PathItem -> Operation) and each level sorts
+    independently. omitempty still works on a named map type — it is evaluated on the Go
+    value (len==0) before MarshalJSON is called.
+  - The /openapi.json route is self-referential (its handler needs the doc the routes
+    describe). Pattern: keep its metadata in a separate openAPIEndpoint(), have the doc
+    builder append it, and register the serving route last in NewHandler.
 ---

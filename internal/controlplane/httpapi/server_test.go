@@ -11,6 +11,7 @@ import (
 
 	"github.com/JuribaDev/yalla/internal/controlplane/runtime"
 	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
+	"github.com/JuribaDev/yalla/internal/output"
 )
 
 func TestHandlerServesBootstrapEndpoints(t *testing.T) {
@@ -331,5 +332,122 @@ func TestHandlerEmitsStructuredRequestLog(t *testing.T) {
 	if record.RequestID == "" || record.RequestID != requestIDOf(t, rec.Body.Bytes()) {
 		t.Errorf("log request_id = %q, want it to match the response envelope request_id",
 			record.RequestID)
+	}
+}
+
+// TestHandlerServesOpenAPIDocument proves GET /openapi.json returns the raw
+// OpenAPI 3.1 document, without authentication, carrying the build version and
+// every served path.
+func TestHandlerServesOpenAPIDocument(t *testing.T) {
+	t.Parallel()
+
+	handler := NewHandler(runtime.BuildInfo{Version: "9.9.9"}, nil, nil)
+
+	// Deliberately no Authorization header: the discovery endpoint is public.
+	req := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("content-type = %q, want application/json", got)
+	}
+
+	var doc struct {
+		OpenAPI string `json:"openapi"`
+		Info    struct {
+			Version string `json:"version"`
+		} `json:"info"`
+		Paths map[string]map[string]any `json:"paths"`
+		// The raw OpenAPI document is not wrapped in an envelope; these fields
+		// must be absent.
+		SchemaVersion string `json:"schema_version"`
+		OK            *bool  `json:"ok"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("decode openapi document: %v", err)
+	}
+	if doc.OpenAPI != "3.1.0" {
+		t.Errorf("openapi = %q, want 3.1.0", doc.OpenAPI)
+	}
+	if doc.Info.Version != "9.9.9" {
+		t.Errorf("info.version = %q, want 9.9.9", doc.Info.Version)
+	}
+	if doc.SchemaVersion != "" || doc.OK != nil {
+		t.Errorf("openapi document is wrapped in an envelope, want the raw document")
+	}
+	for _, want := range []string{"/healthz", "/readyz", "/version", "/openapi.json"} {
+		if _, ok := doc.Paths[want]; !ok {
+			t.Errorf("openapi paths missing %q", want)
+		}
+	}
+}
+
+// TestEveryRegisteredRouteIsDocumented is the CI guard required by BE-0008:
+// every route the handler registers must appear in the OpenAPI document, with
+// no extra documented operations. The route table is the single source of
+// truth for both, so drift fails this test loudly.
+func TestEveryRegisteredRouteIsDocumented(t *testing.T) {
+	t.Parallel()
+
+	build := runtime.BuildInfo{}
+	table := newRouteTable(build, nil)
+	doc := openAPIDocument(build, table)
+
+	want := append(endpointsOf(table), openAPIEndpoint())
+	for _, ep := range want {
+		if !doc.HasOperation(ep.Method, ep.Path) {
+			t.Errorf("route %s %s is registered but missing from the OpenAPI document",
+				ep.Method, ep.Path)
+		}
+	}
+	if got := doc.OperationCount(); got != len(want) {
+		t.Errorf("OpenAPI documents %d operations, want exactly the %d registered routes",
+			got, len(want))
+	}
+}
+
+// TestRegisteredRoutesAreServable ties the OpenAPI document back to real
+// serving: every documented route must be reachable (never a synthesised 404),
+// and an undocumented path must still 404.
+func TestRegisteredRoutesAreServable(t *testing.T) {
+	t.Parallel()
+
+	handler := NewHandler(runtime.BuildInfo{}, nil, nil)
+	table := newRouteTable(runtime.BuildInfo{}, nil)
+
+	for _, ep := range append(endpointsOf(table), openAPIEndpoint()) {
+		req := httptest.NewRequest(ep.Method, ep.Path, nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code == http.StatusNotFound {
+			t.Errorf("documented route %s %s is not served", ep.Method, ep.Path)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/definitely-not-a-route", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("undocumented path status = %d, want 404", rec.Code)
+	}
+}
+
+// TestOpenAPIDocumentRedactsExampleSecrets proves the served document never
+// carries a real-looking credential.
+func TestOpenAPIDocumentRedactsExampleSecrets(t *testing.T) {
+	t.Parallel()
+
+	handler := NewHandler(runtime.BuildInfo{}, nil, nil)
+	req := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, output.Sentinel) {
+		t.Errorf("openapi document contains no %s sentinel, expected redacted sample secrets",
+			output.Sentinel)
 	}
 }

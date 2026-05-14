@@ -2,6 +2,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"log/slog"
 	"net/http"
 
@@ -35,35 +36,43 @@ import (
 // logger receives the per-request structured log records. A nil logger is
 // accepted — request logging is silently disabled — which suits tests and
 // embedders that do not exercise the logging path.
+//
+// Routes come from the newRouteTable single source of truth: NewHandler
+// registers every entry on the mux and generates the OpenAPI document
+// (GET /openapi.json) from the same table, so a served route is always a
+// documented route.
 func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter, logger *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 	build = build.Normalized()
 
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		// Liveness: the process is running and can serve HTTP. It does not
-		// depend on downstream dependencies — that is what /readyz is for.
-		apienvelope.WriteData(w, http.StatusOK, requestID(r), map[string]string{"status": "ok"})
+	table := newRouteTable(build, readiness)
+
+	// Generate the OpenAPI document once, from the route table, at startup.
+	doc := openAPIDocument(build, table)
+	docJSON, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		// The document is built from static, deterministic data, so a marshal
+		// failure is a programming error in the openapi package, not a runtime
+		// condition. Fail fast at startup rather than serve a broken contract.
+		panic("httpapi: marshal OpenAPI document: " + err.Error())
+	}
+
+	// Fold the discovery endpoint back into the served table. Its handler
+	// emits the raw OpenAPI document — deliberately not a yalla.output.v1
+	// envelope, because OpenAPI tooling expects the standard format — and it
+	// requires no authentication so agents can discover the contract.
+	table = append(table, apiRoute{
+		endpoint: openAPIEndpoint(),
+		handler: func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(docJSON)
+		},
 	})
-	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
-		if readiness == nil || readiness.Ready() {
-			apienvelope.WriteData(w, http.StatusOK, requestID(r), map[string]string{"status": "ready"})
-			return
-		}
-		// Not ready yet: report 503 with a stable error envelope so probes
-		// and agents see a deterministic code while startup completes. The
-		// 503 status is an explicit override of the code's default mapping
-		// because "not ready yet" is a liveness signal, not an upstream fault.
-		apienvelope.WriteErrorStatus(w, http.StatusServiceUnavailable, requestID(r),
-			yerr.New(yerr.CodeServer, "service is not ready").
-				WithHint("startup dependency checks have not passed yet"))
-	})
-	mux.HandleFunc("GET /version", func(w http.ResponseWriter, r *http.Request) {
-		apienvelope.WriteData(w, http.StatusOK, requestID(r), map[string]string{
-			"version": build.Version,
-			"commit":  build.Commit,
-			"date":    build.Date,
-		})
-	})
+
+	for _, rt := range table {
+		mux.HandleFunc(rt.endpoint.Method+" "+rt.endpoint.Path, rt.handler)
+	}
 
 	routed := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mux.ServeHTTP(&notFoundRecorder{ResponseWriter: w, request: r}, r)

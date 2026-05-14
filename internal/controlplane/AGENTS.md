@@ -69,3 +69,18 @@ do not mix customer API handlers into CLI packages.
   `telemetry.SetPrincipalID(ctx, …)` once they resolve those values so they
   reach the per-request log record. Service binaries bind `service` onto the
   logger with `logger.With(slog.String("service", …))` and log JSON to stdout.
+- Routes are data-driven. `httpapi/routes.go` `newRouteTable` is the single
+  source of truth: each `apiRoute` pairs the served `http.HandlerFunc` with its
+  `openapi.Endpoint` metadata. `NewHandler` registers every entry on the mux
+  *and* generates the OpenAPI document from the same table, so a served route
+  is always a documented route — `TestEveryRegisteredRouteIsDocumented` fails
+  CI if they drift. When you add an endpoint, add it to `newRouteTable` (or, for
+  a self-referential route like `/openapi.json`, follow the `openAPIEndpoint`
+  pattern); never call `mux.HandleFunc` directly in `NewHandler`.
+- The OpenAPI document is built by `internal/controlplane/openapi` from a
+  neutral `[]openapi.Endpoint`. It is OpenAPI 3.1, references the two stable
+  envelope schemas (`SchemaSuccessEnvelope` / `SchemaErrorEnvelope`), and is
+  served raw (not enveloped) at `GET /openapi.json` without auth. Public
+  endpoints emit `security: []`; authenticated ones require `ApiKeyAuth`. Maps
+  marshal with sorted keys so the artifact is byte-stable. Any sample value
+  that looks like a secret must use `output.Sentinel`, never a real credential.
