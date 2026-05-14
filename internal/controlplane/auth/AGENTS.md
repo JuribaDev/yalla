@@ -36,3 +36,32 @@ and `SecretHash` strings `auth.Generate` produces.
   which is not this threat model. The hash is deterministic so a key is found
   by its public prefix, never by hashing a guess. Do not "upgrade" this to
   bcrypt/argon2 without changing the threat model.
+
+## Session token contract (public, stable)
+
+- `session.go` mints/verifies **human** session tokens as compact HS256 JWTs:
+  `<header>.<payload>.<signature>`, base64url segments, with a *fixed* header
+  constant (`sessionTokenHeader`). An incoming token must match that header
+  byte-for-byte, so `"alg":"none"` and algorithm-downgrade tokens never reach
+  signature verification.
+- Claims: registered `iss/aud/sub/iat/exp` plus Yalla claims `org`, `role`,
+  `rver` (the role/revocation version). `MintSession` signs with the active
+  signing key; `VerifySession` accepts **any** key in `SigningKeys` (index 0
+  active, rest for rotation) via a constant-time `hmac.Equal`.
+- `VerifySession` checks in a fixed order — structure → signature → issuer →
+  audience → expiry → revocation — and returns sentinel errors
+  (`ErrMalformedToken`, `ErrTokenSignature`, `ErrTokenIssuer`,
+  `ErrTokenAudience`, `ErrTokenExpired`, `ErrTokenRevoked`,
+  `ErrUnknownSubject`). No error ever echoes the token or a signing key.
+- **Revocation is version-based, not a denylist.** The token embeds `rver`;
+  `VerifySession` rejects it unless it equals the *current* version returned by
+  the injected `CurrentRoleVersion(userID, orgID)` lookup. `ok == false` from
+  that lookup is the not-found case (`ErrUnknownSubject`). Bumping the counter
+  (role change, forced sign-out) invalidates every outstanding token at once.
+- `VerifySession` does **no I/O** — the only lookup is the injected
+  `CurrentRoleVersion` func, so the store wiring lands in the BE-0020 auth
+  middleware, not here. `SessionClaims.Principal()` returns a `policy.Principal`
+  — the *same* internal identity shape the API-key path resolves to.
+- `SessionToken` is a credential type with the identical redaction contract as
+  `Token` (`String/GoString/LogValue/MarshalJSON` → `output.Sentinel`, plaintext
+  only via `Reveal()`).

@@ -1223,3 +1223,56 @@
   - x-* extension fields just need a struct field with a `json:"x-…,omitempty"`
     tag — no special encoder needed.
 ---
+
+## 2026-05-14 - BE-0017 - Implement user session token model
+- Implemented human session token primitives in internal/controlplane/auth/session.go:
+  compact HS256 JWT mint/verify, version-based revocation, redacted SessionToken
+  credential type, and SessionClaims.Principal() -> policy.Principal so session
+  auth and API-key auth resolve to one internal identity shape.
+- Files changed:
+  - internal/controlplane/auth/session.go (new): SessionToken (credential type,
+    String/GoString/LogValue/MarshalJSON -> output.Sentinel, Reveal escape hatch),
+    SessionClaims (+ Principal()), MintSession/MintSessionParams,
+    VerifySession/VerifySessionParams, sentinel errors (ErrTokenSignature,
+    ErrTokenExpired, ErrTokenIssuer, ErrTokenAudience, ErrTokenRevoked,
+    ErrUnknownSubject; structural failures reuse the existing ErrMalformedToken),
+    ErrInvalidMintParams. Fixed base64url JWT header constant so "alg":"none"
+    downgrades are unrepresentable. Signature check is constant-time hmac.Equal
+    over every accepted key (active + rotation).
+  - internal/controlplane/auth/session_test.go (new): round-trip + claim mapping,
+    Principal() accepted by the real policy engine, expired/wrong-audience/
+    wrong-issuer/bad-signature/tampered-payload, rotated-key acceptance, a table
+    of malformed tokens (incl. alg:none, unknown payload field, exp<=iat),
+    revocation-version matrix (match/stale/unknown-subject = not-found), mint
+    param validation, and the full redaction contract over the token + signing key.
+  - internal/controlplane/auth/AGENTS.md: added "Session token contract" section.
+  - ralph/prd.json: BE-0017 passes -> true.
+- Verification run: gofmt -w .; go mod tidy; go build ./...; go vet ./...;
+  go test ./...; go test -race ./internal/controlplane/....
+- Results: all passed. goimports, golangci-lint, staticcheck, govulncheck not
+  installed locally.
+- Remaining risks / follow-ups:
+  - VerifySession does no I/O: the CurrentRoleVersion lookup is injected. The
+    BE-0020 auth middleware must wire it to the store (membership/role-version
+    read) and own issuer/audience config — config.Config currently has
+    SigningKeys but no Issuer/Audience fields; BE-0020 will need to add them.
+  - All verification failures currently map to a single existing error code at
+    the wire level once BE-0020 lands; the distinct E_AUTH_EXPIRED /
+    E_AUTHENTICATION_REQUIRED / E_AUTH_INVALID codes are their own stories
+    (BE-0513/0514/0515) and were intentionally not introduced here.
+  - AC "JSON envelopes" and the Postgres-integration criterion are N/A for a
+    pure crypto/value primitive (mirrors apikey.go); AC "authorization failure"
+    is covered analogously by the revoked / unknown-subject paths.
+- Learnings for future iterations:
+  - auth may import policy + domain (no cycle: policy imports apierr+domain,
+    neither imports auth). This is how a credential package can expose a typed
+    policy.Principal without the store-style narrow-port indirection.
+  - policy.Principal contains a []Grant slice, so it is NOT comparable with ==
+    in tests — compare fields individually (vet will reject the == form).
+  - Reuse ErrMalformedToken (already in apikey.go) for session structural
+    failures so the auth middleware has one "bad credential shape" sentinel
+    across both credential types.
+  - The well-known base64url for {"alg":"HS256","typ":"JWT"} is
+    eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9 — pinning it as a constant is both the
+    alg-downgrade defence and cheaper than decoding+inspecting a header.
+---
