@@ -10251,3 +10251,175 @@
     all-absent, project them as a nested object; if they vary
     independently, scalars are fine.
 ---
+
+## 2026-05-15 - BE-0138
+- What was implemented: policy-matrix coverage for GET
+  /v1/projects/{project_id}/grants — the authorization contract of the
+  list-project-grants endpoint (whose wire contract is already proved by
+  BE-0136 / project_grants_test.go).
+  - internal/controlplane/httpapi/projects_grants_policy_test.go (new):
+    four test functions that exhaustively exercise action
+    project.grants.read against the real NewHandler + real
+    policy.NewEngine() (fake Authenticator + fake ProjectGrantReader
+    only). The structure mirrors projects_get_policy_test.go because
+    project.grants.read carries the same capability class (CapRead),
+    the same resolver (projectIDResolver — resource scope = principal
+    home org + path project_id), and the same wire-vs-engine
+    cross-tenant distinction.
+    - TestListProjectGrantsPolicyMatrixRoles: drives every built-in
+      role (owner, admin, developer, viewer, ci, support) through the
+      production request path. All six hold CapRead so the matrix is
+      "all allow"; each row pins the engine verdict (Allow + reason
+      ReasonAllowedByRole), the reader being reached with the
+      principal's home org id + the path project_id + exactly one
+      call, and the wire body carrying the canonical two-grant
+      projection — a user grant with EnvironmentID/ServiceID null and
+      a service-account grant with both set, so the nullable-pointer
+      projection regression-fails here if either side flips.
+    - TestListProjectGrantsPolicyRevokedAndExpiredKeys: two cases
+      ("revoked key", "sa_revoked"; "expired key", "sa_expired"),
+      both Disabled-principal under an Owner role; engine denies with
+      ReasonDeniedPrincipalDisabled even though the role would
+      otherwise allow, the reader's callCount is asserted == 0 (so a
+      production store could not have surfaced a grant row in the
+      background), and the denied body is checked against
+      grantsDenyBodyLeak — a leak guard with nine needles (canonical
+      project id/slug/display name + both grant ids + both principal
+      ids + env id + svc id) — plus the principal id and org id.
+    - TestListProjectGrantsPolicyWrongOrganizationPrincipal: the
+      cross-tenant boundary. The wire-level half drives an
+      org_attacker Owner principal at GET
+      /v1/projects/prj_victim_alpha/grants with a fake reader that
+      returns apierr.NotFound (the reader's project existence check
+      mirrors the store-backed adapter's behavior); the assertion is
+      a deterministic 404 E_NOT_FOUND with the reader called exactly
+      once with (org_attacker, prj_victim_alpha) — never the victim's
+      org — and the response body containing no instance of the
+      victim's org id (case-insensitive message check + raw substring
+      body check). The engine-level half pins the five non-support
+      roles to ReasonDeniedCrossTenant against a foreign-org Project
+      resource and pins Support to ReasonAllowedBySupport (CapRead is
+      inside the engine's CapSupport && (CapRead || CapSupport)
+      exception). The customer-facing route cannot reach the engine
+      branch by construction, but pinning it locks the CapRead
+      requirement: a future catalog upgrade of project.grants.read
+      above CapRead would silently deny every support cross-tenant
+      read and fail here first.
+    - TestListProjectGrantsPolicyGrantContainment: the three
+      containment properties from PRD BE-0138's acceptance criteria.
+      Project-level Viewer grant on the target project allows
+      project.grants.read via ReasonAllowedByGrant on the target and
+      denies via ReasonDeniedOutOfScope on a sibling project. An
+      env-scoped Admin grant on staging denies project.grants.read on
+      the parent project (covers() is one-way) AND denies
+      environment.delete on production (the "env grant does not imply
+      access to production unless production is explicitly granted"
+      property). A service-scoped Admin grant denies service.update
+      on a sibling service, denies env.write on the parent
+      environment (the "service grant does not expose parent-level
+      secrets or unrelated services" property), and denies
+      project.grants.read on the parent project. Each property is
+      then tied back to the wire: four 403 responses (sibling
+      project / env-scoped / service-scoped + the home-org-foreign
+      stolen-key engine case) prove the reader is never reached
+      (callCount == 0, gotOrg/gotProj empty) and the body never echoes
+      the canonical project or grants — so a scoped key denied on the
+      wire cannot have surfaced any grant row in the background. The
+      org-level Viewer allow path is end-to-end (200, canonical
+      payload, reader reached on home org + path project id).
+  - Total new test count: 4 top-level tests + 6 role subtests + 2
+    revoked/expired subtests + 5 engine-cross-tenant subtests = 17
+    sub-rows in go test -v output. Every assertion that the reader
+    "must never run" uses callCount in addition to gotOrgID/gotProjectID
+    being empty — a stronger property than the projects_get_policy_test
+    pattern, which only checks the captured ids.
+- Files changed:
+  - internal/controlplane/httpapi/projects_grants_policy_test.go (new)
+  - ralph/prd.json (BE-0138 passes -> true)
+  - ralph/progress.txt (this entry)
+- Verification run:
+  - gofmt -w internal/controlplane/httpapi/projects_grants_policy_test.go
+    (no diff).
+  - go vet ./internal/controlplane/httpapi/... (clean).
+  - go mod tidy (no changes — no new imports beyond apierr/auth/domain/
+    policy/store which the package already uses).
+  - go test -run TestListProjectGrantsPolicy
+    ./internal/controlplane/httpapi/... -> PASS.
+  - go test ./... -> PASS (all packages, including the wider httpapi
+    suite that shares fixtures with this file).
+  - go test -race ./... -> PASS.
+  - goimports, golangci-lint, staticcheck, govulncheck still not
+    installed locally (documented in earlier iterations).
+- Results: all green; no other tests touched the symbols this file
+  introduces (canonicalGrantsProject, canonicalProjectGrants,
+  grantsDenyBodyLeak) so the new file is self-contained alongside the
+  contract-test scaffolding it reuses (listProjectGrantsHandlerFor,
+  getProjectGrants, decodeListProjectGrants, fakeProjectGrantReader,
+  seedProjectGrantWire).
+- Remaining risks / follow-ups:
+  - BE-0139 (Implement PUT /v1/projects/{project_id}/grants) and
+    BE-0141 (its policy matrix) are the next steps in the project-grants
+    surface — the writer-port + CapAdmin half of the project-grants
+    vertical (ActionProjectGrantsWrite -> CapAdmin in catalog.go:122).
+    The CRUD-style write story will introduce a ProjectGrantWriter port
+    (mirror OrganizationVariableReplacer / ProjectRestorer) and a
+    NewHandler signature change to thread it through — the
+    19-call-sites bulk substitution pattern from BE-0103 still applies.
+    The PUT-grants policy matrix will look more like
+    projects_restore_policy_test.go (CapWrite/CapAdmin-style: Owner/
+    Admin allow, Developer/Viewer/CI/Support deny, Support is OUTSIDE
+    the cross-tenant exception) rather than this one — but the
+    grant-containment property is symmetric, so the project-scoped
+    grantee on a sibling project deny and the env-/service-scoped
+    grantee deny will carry through.
+  - Filtering / pagination of project grants are out of scope for both
+    BE-0136 and BE-0138. A future "filter grants by principal / by
+    role / by environment / by service" story would add query
+    parameters; the wire envelope is forward-compatible (a new
+    field on the data payload would not break clients).
+  - The grants_policy file pins the engine-level support cross-tenant
+    exception even though projectIDResolver makes it unreachable on
+    the route under test. That is deliberate: the engine is the
+    authoritative source of the documented support exception, and a
+    future scoped variant (e.g. an admin tool that takes both {org_id}
+    and {project_id} from the path) inherits the working
+    cross-tenant deny and the documented support exception for free.
+- Learnings for future iterations:
+  - When a CapRead grants-read endpoint already has the same resolver
+    (projectIDResolver / similar) and the same capability class as an
+    existing matrix file (here projects_get_policy_test.go),
+    projects_grants_policy_test.go is a structural twin of it modulo
+    (1) the action constant, (2) the fake reader, (3) the response
+    decoder, and (4) the leak-guard needles. The role matrix, the
+    Disabled-principal case set, the cross-tenant wire/engine split,
+    and the four containment cases (project-target / project-sibling
+    / env / service / org-viewer) port directly. A "duplicate then
+    diff" approach is the right move; the only place to think harder
+    is the leak-guard needle set — for grants the needles must
+    cover canonical project id+slug+display-name AND every grant id
+    AND every principal id AND the env/svc ids on the canonical
+    grants. A weak leak guard that only checks the project's three
+    fields would miss a regression that rendered a grant's principal
+    id on a deny path.
+  - fakeProjectGrantReader has a callCount *int field on top of the
+    usual gotOrgID/gotProjectID pointers. Using callCount in the
+    deny-path assertions is a strictly stronger property than just
+    checking the captured ids are empty (a future regression that
+    nil-guarded the captured-ids pointers would silently pass the
+    weaker check). When a project-store fake exposes callCount, prefer
+    asserting callCount == N over relying on empty captured ids — and
+    keep the captured-id checks too for the load-bearing
+    "reader was called with the principal's home org" property on
+    the wire-level cross-tenant test.
+  - The "stolen key planted in a foreign org" engine assertion at the
+    end of the grant-containment test is the engine-level twin of the
+    wire-level "wrong organization principal" test, applied to a
+    scoped key (the principal carries grants for org_acme but its
+    home org is org_sibling). The cross-tenant guard fires because
+    the principal's home org no longer matches the grant's scope —
+    not because the grant itself is malformed. Keeping this assertion
+    in the containment test (instead of the wrong-organization test)
+    keeps "what does a scoped key authorize" all in one place; the
+    wrong-organization test stays focused on the role-based path.
+
+---
