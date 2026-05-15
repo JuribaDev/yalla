@@ -9,6 +9,7 @@
 - Quality gate before commit: gofmt -w ., go mod tidy, go build ./..., go vet ./..., go test ./..., go test -race ./....
 - Partial-update (PATCH) endpoints: the request DTO and store *Input use *string fields — nil means "field omitted, leave unchanged". The store builds+validates the patch BEFORE opening the transaction (rejecting a patch that names no field as a 400), then inside Store.Write reads the current row, applies the non-nil fields, and Updates. A repository Update using UPDATE ... RETURNING must check errors.Is(err, pgx.ErrNoRows) for the missing-row case BEFORE mapWriteError (which only classifies constraint-violation vs outage). Never set updated_at in an Update statement — the per-table set_updated_at() BEFORE UPDATE trigger owns it.
 - Customer-facing DELETE endpoints schedule a SOFT delete, never a hard delete: the store stamps a nullable deletion_scheduled_at column (migration 0010 for organizations) inside the same transaction as the <resource>.delete audit record, and the endpoint returns 202 Accepted. A hard DELETE would cascade through child tables AND the audit log (ON DELETE CASCADE), so the destructive teardown is a separate worker story. Re-scheduling an already-stamped row is apierr.Conflict, detected with a Get inside the tx (the repository ScheduleDeletion is an unconditional UPDATE).
+- Optimistic concurrency on mutable customer-data tables: migration 0011 adds a bigint version column (DEFAULT 1, CHECK > 0) + bump_version() BEFORE UPDATE trigger to organizations/projects/environments/services. The trigger overwrites NEW.version with OLD.version+1 on every UPDATE (including no-op data UPDATEs), so the application cannot freeze the sequence. Repository UPDATE methods accept ifMatchVersion *int64: nil = no precondition, non-nil = WHERE id=$1 AND version=$N; on no rows, a tenant-scoped Get inside the same tx disambiguates "row gone" (NotFound) from "row stale" (apierr.ConflictStale carrying the row's current version). Service-layer Update/ScheduleDeletion also pre-check the version after the read so a no-op data patch still surfaces the conflict against the right row. The HTTP layer parses RFC 7232 strong ETag values (`"<n>"`, lenient unquoted form accepted; weak/wildcard/multi-value rejected as 400 E_INVALID_INPUT) from If-Match, mirrors the row's authoritative version into the ETag response header on every success path (GET/POST/PATCH/DELETE), and surfaces stale writes as 409 E_CONFLICT carrying current_version under the new structured error.details map (apierr.DetailKeyCurrentVersion). yerr.Error.Details (map[string]string, set by WithDetail) is the agent-friendly counterpart to Hint; apienvelope renders it through the same regex redaction backstop used for Message/Hint.
 - Process lifecycle is owned by internal/controlplane/runtime: RunHTTPServer(ctx, srv, shutdownTimeout, logger) for the API and worker.Loop for background jobs. Backend binaries derive shutdown from one signal.NotifyContext and pass cfg.ShutdownTimeout; they do not hand-roll select/Shutdown blocks.
 - runtime.Readiness holds named startup gates (concurrency-safe). httpapi.NewHandler takes a runtime.ReadinessReporter; /readyz must be 503 yalla.error.v1 E_SERVER until every gate passes, 200 yalla.output.v1 after. /healthz is liveness-only and never depends on downstream checks.
 - worker.Loop depends only on the Claimer/Lease interfaces so the durable job store can land later. The loop checks ctx before every Claim (stop claiming on shutdown) and releases interrupted in-flight leases on a context.WithoutCancel context so the release survives shutdown. A job whose Run returns nil is committed and must never be released.
@@ -3421,4 +3422,103 @@
     "reader was reached" probe — leaving it unset and asserting it stayed
     "" is the cleanest way to prove a denial fired before the persistence
     call. Mirror this on every future reader fake.
+---
+
+
+## 2026-05-15 - BE-0027
+
+- Implemented optimistic concurrency for source-of-truth resources. Added
+  database-owned version columns + bump_version() trigger to organizations,
+  projects, environments, services (migration 0011). Plumbed an optional
+  IfMatchVersion through store.UpdateOrganizationInput,
+  DeleteOrganizationInput, OrganizationRepository.Update/ScheduleDeletion,
+  and ProjectRepository.UpdateDisplayName (added in this story so the
+  concurrency contract can be exercised at the projects table even before a
+  PATCH /v1/projects/{...} HTTP endpoint exists). New apierr.ConflictStale
+  surfaces stale writes as 409 E_CONFLICT carrying the row's current version
+  under DetailKeyCurrentVersion in the new yerr.Error.Details map (rendered
+  by apienvelope through the same regex redaction backstop used for
+  Message/Hint). PATCH and DELETE /v1/organizations/{org_id} now accept the
+  If-Match header (canonical strong ETag form, lenient unquoted integer
+  accepted; weak/wildcard/multi-value rejected as 400 before the store
+  layer); every success path mirrors the row's version into the ETag
+  response header so callers can echo it back without inspecting the body.
+
+- Files changed:
+  - internal/controlplane/store/migrate/migrations/0011_optimistic_versions.up.sql (NEW)
+  - internal/controlplane/store/migrate/migrations/0011_optimistic_versions.down.sql (NEW)
+  - internal/errors/errors.go (Details + WithDetail)
+  - internal/errors/errors_test.go (WithDetail coverage)
+  - internal/controlplane/apienvelope/apienvelope.go (errorPayload.Details + redactDetails)
+  - internal/controlplane/apienvelope/apienvelope_test.go (details rendering + redaction)
+  - internal/controlplane/apierr/apierr.go (ConflictStale, DetailKeyCurrentVersion, CurrentVersionOf)
+  - internal/controlplane/apierr/apierr_test.go (ConflictStale + recovery coverage)
+  - internal/controlplane/store/organization.go (Version on struct, columns,
+    Update/ScheduleDeletion ifMatchVersion + classifyOrganizationConcurrencyMiss)
+  - internal/controlplane/store/organizationservice.go (IfMatchVersion on
+    UpdateOrganizationInput/DeleteOrganizationInput, pre-check before write)
+  - internal/controlplane/store/organization_delete_test.go (call-site signature update)
+  - internal/controlplane/store/project.go (Version on struct, columns,
+    UpdateDisplayName method with ifMatchVersion)
+  - internal/controlplane/store/optimistic_versions_test.go (NEW migration coverage)
+  - internal/controlplane/store/organization_concurrency_test.go (NEW
+    repository concurrency coverage for organizations + projects)
+  - internal/controlplane/httpapi/organizations.go (Version field on
+    organizationResource, parseIfMatchVersion, writeOrganizationETag,
+    If-Match plumbing on PATCH/DELETE)
+  - internal/controlplane/httpapi/organizations_concurrency_test.go (NEW HTTP
+    contract coverage for If-Match success/missing/malformed/stale on PATCH
+    and DELETE, ETag header presence, parseIfMatchVersion white-box
+    coverage)
+  - ralph/prd.json (BE-0027 passes=true with notes)
+
+- Verification (gofmt -w ., go mod tidy, go vet ./..., go test ./..., go
+  test -race ./..., all targeted with YALLA_TEST_DATABASE_URL pointing at
+  the local Docker Postgres so the integration tests in store/* actually
+  execute the new migration and concurrency assertions). All green. The
+  optimistic-concurrency story passes today through the canonical
+  database-owned trigger + WHERE-on-version pattern; future PATCH/DELETE
+  endpoints for projects/environments/services should reuse the same
+  IfMatchVersion *int64 plumbing already proven on organizations/projects.
+
+- **Learnings for future iterations:**
+  - The bump_version() BEFORE UPDATE trigger overrides any caller-supplied
+    version on UPDATE (NEW.version := OLD.version + 1, regardless of the
+    SET clause). That makes the schema CHECK > 0 only meaningful at INSERT
+    time — an UPDATE attempting SET version = 0 silently lands at OLD+1.
+    The integration test was written first against UPDATE (which silently
+    succeeded) then corrected to assert INSERT-time CHECK behaviour AND a
+    separate trigger-override invariant. Future tables that adopt the
+    pattern should mirror both assertions, not just one.
+  - Optimistic concurrency is best implemented as TWO checks in series:
+    (1) a service-layer pre-check after the read inside the tx (so a no-op
+    data patch on an organization whose current.Version != IfMatch still
+    surfaces a conflict against the right row, even though the
+    version-checked UPDATE would itself succeed trivially), and (2) the
+    repository's WHERE id=$1 AND version=$N predicate (so a concurrent
+    writer landing between the read and the write is also rejected). The
+    pre-check + the repository check together close both the
+    no-op-data-patch hole and the read-then-race hole; either one alone
+    leaks one of them.
+  - For optimistic concurrency on the HTTP layer, exposing the
+    authoritative version both in the response body and the ETag response
+    header means agents can switch on either — the body+header always
+    agree because writeOrganizationETag(w, org.Version) is called before
+    apienvelope.WriteData renders the body. Keep the helper pinned in
+    front of every WriteData success call (organizations.go does this for
+    GET/POST/PATCH/DELETE/list); a missing call would silently break the
+    contract.
+  - The shared yerr.Error now carries optional Details (map[string]string)
+    + WithDetail. Use it for SHORT machine-readable failure context only
+    (current_version, retry_after, limit) — the apienvelope redactor still
+    runs over values, but the originating constructor is the contract for
+    "no secrets in details". Long human-readable text continues to belong
+    in Hint, not Details.
+  - The apierr taxonomy was deliberately NOT extended with a new code: a
+    stale write is a flavour of E_CONFLICT, not its own category. The
+    distinction lives in the structured details (DetailKeyCurrentVersion is
+    only attached by ConflictStale) and CurrentVersionOf, which a caller
+    can switch on without parsing the message. This keeps the
+    code-to-status table and the CLI manifest unchanged.
+
 ---

@@ -107,6 +107,31 @@ orchestrator's job.
   `t.Parallel()`. Build the test logger at `slog.LevelDebug` so a level
   threshold cannot mask the redaction assertion.
 
+## Optimistic concurrency on writes
+
+PATCH/DELETE on a mutable resource accept the caller's expected version
+through the `If-Match` request header and reject a stale write with a typed
+409. Reuse the helpers in `organizations.go`:
+
+- `parseIfMatchVersion(r) (*int64, error)` decodes the header. It accepts the
+  RFC 7232 strong-ETag form `"<n>"` and a lenient unquoted integer; weak
+  ETags (`W/"..."`), `*`, multi-value lists, and non-positive integers are
+  rejected as 400 `E_INVALID_INPUT` before the request reaches the store.
+- `writeOrganizationETag(w, org.Version)` mirrors the row's authoritative
+  version into the `ETag` response header. Call it on every success path
+  (GET/POST/PATCH/DELETE/list) so the body's `version` field and the header
+  always agree — agents can switch on either.
+- Plumb the parsed `*int64` into the store layer through the `IfMatchVersion`
+  field on the relevant `*Input`. The store-layer Update/ScheduleDeletion
+  methods already accept it: `nil` disables the precondition (legacy
+  next-write-wins), non-`nil` adds a `WHERE id=$1 AND version=$N` predicate,
+  and a stale view returns `apierr.ConflictStale(currentVersion)`.
+
+Render the resource's `Version` (an `int64`) on the response wire shape with
+no `omitempty` so a fresh `version: 1` always appears. The error envelope
+already surfaces the row's `current_version` under `error.details` for stale
+writes; do not re-encode it in the message or hint.
+
 ## Binary wiring
 
 `NewHandler(build, readiness, meta, authenticator, engine, orgs, creator, updater, deleter, logger)`.

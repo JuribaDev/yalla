@@ -203,3 +203,70 @@ func TestSchemaVersionIsStable(t *testing.T) {
 		t.Errorf("SchemaVersion = %q, want %q", SchemaVersion, "yalla.error.v1")
 	}
 }
+
+// TestWithDetailAttachesAndDoesNotMutateReceiver proves WithDetail returns a
+// copy with the supplied key/value attached, and never mutates the receiver
+// — so a single base error can be reused as a template for multiple
+// downstream annotations.
+func TestWithDetailAttachesAndDoesNotMutateReceiver(t *testing.T) {
+	t.Parallel()
+
+	base := New(CodeConflict, "stale write")
+	if base.Details != nil {
+		t.Fatalf("Details = %v, want nil for a freshly constructed error", base.Details)
+	}
+
+	annotated := base.WithDetail("current_version", "5")
+	if annotated == base {
+		t.Error("WithDetail returned the same pointer; want a fresh copy")
+	}
+	if got := annotated.Details["current_version"]; got != "5" {
+		t.Errorf("Details[current_version] = %q, want 5", got)
+	}
+	if base.Details != nil {
+		t.Errorf("base Details was mutated to %v, want nil", base.Details)
+	}
+
+	// Layering a second detail must not bleed back into the first copy.
+	withTwo := annotated.WithDetail("retry_after", "30")
+	if got := withTwo.Details["retry_after"]; got != "30" {
+		t.Errorf("Details[retry_after] = %q, want 30", got)
+	}
+	if _, ok := annotated.Details["retry_after"]; ok {
+		t.Error("first WithDetail copy was mutated by a downstream WithDetail call")
+	}
+}
+
+// TestWithDetailDropsBlankKey proves WithDetail silently drops a blank key
+// rather than storing a value under it: blank keys would corrupt callers
+// that switch on the recovered map.
+func TestWithDetailDropsBlankKey(t *testing.T) {
+	t.Parallel()
+
+	got := New(CodeConflict, "x").WithDetail("   ", "value")
+	if got.Details != nil {
+		t.Errorf("Details = %v, want nil — a blank key must not be stored", got.Details)
+	}
+}
+
+// TestWithDetailOverwritesExistingKey proves a second WithDetail call for
+// the same key replaces the value rather than silently keeping the first.
+func TestWithDetailOverwritesExistingKey(t *testing.T) {
+	t.Parallel()
+
+	got := New(CodeConflict, "x").WithDetail("k", "v1").WithDetail("k", "v2")
+	if got.Details["k"] != "v2" {
+		t.Errorf("Details[k] = %q, want v2 — second WithDetail must overwrite", got.Details["k"])
+	}
+}
+
+// TestWithDetailOnNilReturnsNil proves the nil-receiver branch returns nil
+// without panicking, mirroring the other With* helpers.
+func TestWithDetailOnNilReturnsNil(t *testing.T) {
+	t.Parallel()
+
+	var nilErr *Error
+	if got := nilErr.WithDetail("k", "v"); got != nil {
+		t.Errorf("WithDetail on nil returned %+v, want nil", got)
+	}
+}

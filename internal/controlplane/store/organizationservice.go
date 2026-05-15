@@ -55,10 +55,21 @@ type CreateOrganizationInput struct {
 // strings so the store layer takes no build dependency on the policy or
 // telemetry packages — the httpapi handler, which already holds the resolved
 // principal and the request correlation, fills them in.
+//
+// IfMatchVersion is the optional optimistic-concurrency precondition: when
+// non-nil, the update succeeds only if the row's current version equals
+// *IfMatchVersion at write time, otherwise it returns a typed
+// apierr.ConflictStale carrying the row's authoritative version. The httpapi
+// layer fills it from the request's If-Match header. A nil pointer disables
+// the check (next-write-wins, the legacy behaviour). The pointer indirection
+// is deliberate: it distinguishes "caller did not supply a precondition"
+// from "caller supplied version 0", which is impossible by schema CHECK and
+// must not silently behave like the unchecked path.
 type UpdateOrganizationInput struct {
 	OrganizationID string
 	Slug           *string
 	DisplayName    *string
+	IfMatchVersion *int64
 	ActorID        string
 	ActorKind      string
 	ActorOrgID     string
@@ -73,8 +84,12 @@ type UpdateOrganizationInput struct {
 // so the store layer takes no build dependency on the policy or telemetry
 // packages — the httpapi handler, which already holds the resolved principal
 // and the request correlation, fills them in.
+//
+// IfMatchVersion enforces optimistic concurrency for scheduling deletion,
+// with the same semantics as on UpdateOrganizationInput.
 type DeleteOrganizationInput struct {
 	OrganizationID string
+	IfMatchVersion *int64
 	ActorID        string
 	ActorKind      string
 	ActorOrgID     string
@@ -238,6 +253,16 @@ func (svc *OrganizationService) Update(ctx context.Context, in UpdateOrganizatio
 		if getErr != nil {
 			return getErr
 		}
+		// A pre-check before the write surfaces the stale-version conflict
+		// against the row the caller actually targets — even when no other
+		// field on the patch happens to differ from the current row, in
+		// which case the version-checked UPDATE would itself succeed
+		// trivially without the trigger needing to fire. The repository
+		// still re-checks the version under WHERE so a concurrent writer
+		// landing between the read and the write is also rejected.
+		if in.IfMatchVersion != nil && current.Version != *in.IfMatchVersion {
+			return apierr.ConflictStale(current.Version)
+		}
 		desired := current
 		if change.slug != nil {
 			desired.Slug = *change.slug
@@ -245,7 +270,7 @@ func (svc *OrganizationService) Update(ctx context.Context, in UpdateOrganizatio
 		if change.displayName != nil {
 			desired.DisplayName = *change.displayName
 		}
-		row, updErr := svc.orgs.Update(ctx, tx, desired)
+		row, updErr := svc.orgs.Update(ctx, tx, desired, in.IfMatchVersion)
 		if updErr != nil {
 			return updErr
 		}
@@ -314,6 +339,13 @@ func (svc *OrganizationService) ScheduleDeletion(ctx context.Context, in DeleteO
 		if getErr != nil {
 			return getErr
 		}
+		// The version pre-check surfaces a stale If-Match BEFORE the
+		// already-scheduled check, so the caller learns "your view of the
+		// version is stale" instead of an already-scheduled message that
+		// might race with a concurrent edit they did not see.
+		if in.IfMatchVersion != nil && current.Version != *in.IfMatchVersion {
+			return apierr.ConflictStale(current.Version)
+		}
 		if current.DeletionScheduledAt != nil {
 			// Scheduling teardown for an organization already scheduled for
 			// teardown changes nothing: the caller's view of the resource
@@ -321,7 +353,7 @@ func (svc *OrganizationService) ScheduleDeletion(ctx context.Context, in DeleteO
 			// success that would write a misleading audit record.
 			return apierr.Conflict("organization deletion is already scheduled")
 		}
-		row, updErr := svc.orgs.ScheduleDeletion(ctx, tx, organizationID)
+		row, updErr := svc.orgs.ScheduleDeletion(ctx, tx, organizationID, in.IfMatchVersion)
 		if updErr != nil {
 			return updErr
 		}

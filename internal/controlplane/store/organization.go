@@ -19,10 +19,17 @@ import (
 // once a deletion has been scheduled through DELETE /v1/organizations/{org_id}.
 // The destructive teardown itself (the ON DELETE CASCADE) is a later worker
 // story, so a scheduled organization — and its audit trail — still exists.
+//
+// Version is the database-owned optimistic-concurrency token: it starts at 1
+// on INSERT and is bumped by the organizations_bump_version trigger on every
+// UPDATE. The httpapi layer surfaces it as the resource's strong ETag and
+// requires a matching value in If-Match for any write that risks losing a
+// concurrent edit. Callers must not mutate it; the trigger is the only writer.
 type Organization struct {
 	ID                  string
 	Slug                string
 	DisplayName         string
+	Version             int64
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
 	DeletionScheduledAt *time.Time
@@ -49,7 +56,7 @@ func NewOrganizationRepository() *OrganizationRepository { return &OrganizationR
 
 // organizationColumns is the column list returned by every organization query,
 // in the order scanOrganization expects.
-const organizationColumns = `id, slug, display_name, created_at, updated_at, deletion_scheduled_at`
+const organizationColumns = `id, slug, display_name, version, created_at, updated_at, deletion_scheduled_at`
 
 // Get returns the organization identified by organizationID. A missing id is
 // reported as a typed NotFound — the same shape any other unknown id produces,
@@ -97,28 +104,50 @@ func (r *OrganizationRepository) Insert(ctx context.Context, tx *Tx, o Organizat
 
 // Update writes new slug and display_name values for the organization
 // identified by o.ID inside tx and returns the persisted row, including the
-// trigger-refreshed updated_at timestamp. It requires a *Tx — not a bare
-// Querier — so an organization can never be updated outside the transaction
-// that also carries its audit record. A missing id is reported as a typed
-// NotFound — the same shape any other unknown id produces, so a caller can
-// never tell "no such organization" apart from "an organization you cannot
-// see". A slug that collides with an existing organization is reported as a
-// typed Conflict; the raw driver error, which may name the constraint, is
-// preserved only as the wrapped cause for server-side logging and never
-// reaches the user-facing message.
-func (r *OrganizationRepository) Update(ctx context.Context, tx *Tx, o Organization) (Organization, error) {
+// trigger-refreshed updated_at timestamp and bumped version. It requires a
+// *Tx — not a bare Querier — so an organization can never be updated outside
+// the transaction that also carries its audit record. A missing id is
+// reported as a typed NotFound — the same shape any other unknown id
+// produces, so a caller can never tell "no such organization" apart from
+// "an organization you cannot see". A slug that collides with an existing
+// organization is reported as a typed Conflict; the raw driver error, which
+// may name the constraint, is preserved only as the wrapped cause for
+// server-side logging and never reaches the user-facing message.
+//
+// ifMatchVersion enforces optimistic concurrency. A nil pointer disables the
+// check (the next-write-wins behaviour callers had before this story). A
+// non-nil pointer becomes a WHERE clause on the row's current version: when
+// the version has advanced since the caller observed it, the UPDATE matches
+// no rows and the repository disambiguates "row gone" from "row stale" with a
+// targeted Get inside the same transaction. The stale-write case is reported
+// as a typed apierr.ConflictStale carrying the row's authoritative version,
+// so the caller can rebuild its If-Match header without an extra GET.
+func (r *OrganizationRepository) Update(ctx context.Context, tx *Tx, o Organization, ifMatchVersion *int64) (Organization, error) {
 	if tx == nil {
 		return Organization{}, apierr.Internal(errors.New("store: OrganizationRepository.Update called with a nil transaction"))
 	}
-	row := tx.QueryRow(ctx,
-		`UPDATE organizations
-		    SET slug = $2, display_name = $3
-		  WHERE id = $1
-		 RETURNING `+organizationColumns,
-		o.ID, o.Slug, o.DisplayName)
+	var row pgx.Row
+	if ifMatchVersion == nil {
+		row = tx.QueryRow(ctx,
+			`UPDATE organizations
+			    SET slug = $2, display_name = $3
+			  WHERE id = $1
+			 RETURNING `+organizationColumns,
+			o.ID, o.Slug, o.DisplayName)
+	} else {
+		row = tx.QueryRow(ctx,
+			`UPDATE organizations
+			    SET slug = $2, display_name = $3
+			  WHERE id = $1 AND version = $4
+			 RETURNING `+organizationColumns,
+			o.ID, o.Slug, o.DisplayName, *ifMatchVersion)
+	}
 	updated, err := scanOrganization(row)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Organization{}, apierr.NotFound("organization", o.ID)
+		if ifMatchVersion == nil {
+			return Organization{}, apierr.NotFound("organization", o.ID)
+		}
+		return Organization{}, classifyOrganizationConcurrencyMiss(ctx, r, tx, o.ID)
 	}
 	if err != nil {
 		return Organization{}, mapWriteError(err, "an organization with this slug already exists")
@@ -128,27 +157,47 @@ func (r *OrganizationRepository) Update(ctx context.Context, tx *Tx, o Organizat
 
 // ScheduleDeletion stamps deletion_scheduled_at on the organization identified
 // by organizationID inside tx and returns the persisted row, including the
-// trigger-refreshed updated_at timestamp. It requires a *Tx — not a bare
-// Querier — so an organization can never be marked for teardown outside the
-// transaction that also carries its audit record. A missing id is reported as a
-// typed NotFound — the same shape any other unknown id produces, so a caller
-// can never tell "no such organization" apart from "an organization you cannot
-// see". The UPDATE is unconditional: re-scheduling an organization already
-// scheduled for deletion is a conflict the OrganizationService detects with a
-// prior read, not a not-found this repository can distinguish.
-func (r *OrganizationRepository) ScheduleDeletion(ctx context.Context, tx *Tx, organizationID string) (Organization, error) {
+// trigger-refreshed updated_at timestamp and bumped version. It requires a
+// *Tx — not a bare Querier — so an organization can never be marked for
+// teardown outside the transaction that also carries its audit record. A
+// missing id is reported as a typed NotFound — the same shape any other
+// unknown id produces, so a caller can never tell "no such organization"
+// apart from "an organization you cannot see". The UPDATE is unconditional
+// in its predicate apart from the optional version check: re-scheduling an
+// organization already scheduled for deletion is a conflict the
+// OrganizationService detects with a prior read, not a not-found this
+// repository can distinguish.
+//
+// ifMatchVersion enforces optimistic concurrency identically to Update — a
+// nil pointer disables the check, a non-nil pointer adds a WHERE clause on
+// the current version, and a stale view is reported as a typed
+// apierr.ConflictStale carrying the row's authoritative version.
+func (r *OrganizationRepository) ScheduleDeletion(ctx context.Context, tx *Tx, organizationID string, ifMatchVersion *int64) (Organization, error) {
 	if tx == nil {
 		return Organization{}, apierr.Internal(errors.New("store: OrganizationRepository.ScheduleDeletion called with a nil transaction"))
 	}
-	row := tx.QueryRow(ctx,
-		`UPDATE organizations
-		    SET deletion_scheduled_at = now()
-		  WHERE id = $1
-		 RETURNING `+organizationColumns,
-		organizationID)
+	var row pgx.Row
+	if ifMatchVersion == nil {
+		row = tx.QueryRow(ctx,
+			`UPDATE organizations
+			    SET deletion_scheduled_at = now()
+			  WHERE id = $1
+			 RETURNING `+organizationColumns,
+			organizationID)
+	} else {
+		row = tx.QueryRow(ctx,
+			`UPDATE organizations
+			    SET deletion_scheduled_at = now()
+			  WHERE id = $1 AND version = $2
+			 RETURNING `+organizationColumns,
+			organizationID, *ifMatchVersion)
+	}
 	updated, err := scanOrganization(row)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Organization{}, apierr.NotFound("organization", organizationID)
+		if ifMatchVersion == nil {
+			return Organization{}, apierr.NotFound("organization", organizationID)
+		}
+		return Organization{}, classifyOrganizationConcurrencyMiss(ctx, r, tx, organizationID)
 	}
 	if err != nil {
 		return Organization{}, apierr.StoreUnavailable(err)
@@ -156,10 +205,24 @@ func (r *OrganizationRepository) ScheduleDeletion(ctx context.Context, tx *Tx, o
 	return updated, nil
 }
 
+// classifyOrganizationConcurrencyMiss disambiguates the two reasons a
+// version-checked UPDATE matched no rows: the organization was deleted (rare,
+// and reported as NotFound for parity with the unchecked path) or the
+// caller's view of the version is stale (reported as ConflictStale with the
+// row's current version). It runs inside the same transaction so the
+// disambiguation is consistent with the failed UPDATE.
+func classifyOrganizationConcurrencyMiss(ctx context.Context, r *OrganizationRepository, tx *Tx, organizationID string) error {
+	current, getErr := r.Get(ctx, tx, organizationID)
+	if getErr != nil {
+		return getErr
+	}
+	return apierr.ConflictStale(current.Version)
+}
+
 // scanOrganization scans one organizations row in organizationColumns order.
 func scanOrganization(row pgx.Row) (Organization, error) {
 	var o Organization
-	err := row.Scan(&o.ID, &o.Slug, &o.DisplayName, &o.CreatedAt, &o.UpdatedAt, &o.DeletionScheduledAt)
+	err := row.Scan(&o.ID, &o.Slug, &o.DisplayName, &o.Version, &o.CreatedAt, &o.UpdatedAt, &o.DeletionScheduledAt)
 	return o, err
 }
 

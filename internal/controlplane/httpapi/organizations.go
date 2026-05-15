@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apienvelope"
@@ -65,10 +67,16 @@ type organizationsPayload struct {
 }
 
 // organizationResource is one organization in an organizationsPayload: the
-// source-of-truth organization resource — its id, slug, display name, and
-// lifecycle timestamps — as the control plane stores it. It is the HTTP wire
-// shape, deliberately distinct from store.Organization so the persistence
-// layout can evolve without breaking the public contract.
+// source-of-truth organization resource — its id, slug, display name,
+// version, and lifecycle timestamps — as the control plane stores it. It is
+// the HTTP wire shape, deliberately distinct from store.Organization so the
+// persistence layout can evolve without breaking the public contract.
+//
+// Version is the database-owned optimistic-concurrency token. It is also the
+// value mirrored into the response's ETag header by writeOrganizationETag, so
+// agents can echo it back as If-Match on a follow-up PATCH or DELETE without
+// inspecting the body — the body and the header always agree on the same
+// version.
 //
 // DeletionScheduledAt is present only once a deletion has been scheduled for
 // the organization through DELETE /v1/organizations/{org_id}; it is omitted
@@ -78,6 +86,7 @@ type organizationResource struct {
 	OrganizationID      string  `json:"organization_id"`
 	Slug                string  `json:"slug"`
 	DisplayName         string  `json:"display_name"`
+	Version             int64   `json:"version"`
 	CreatedAt           string  `json:"created_at"`
 	UpdatedAt           string  `json:"updated_at"`
 	DeletionScheduledAt *string `json:"deletion_scheduled_at,omitempty"`
@@ -93,6 +102,7 @@ func organizationResourceOf(o store.Organization) organizationResource {
 		OrganizationID: o.ID,
 		Slug:           o.Slug,
 		DisplayName:    o.DisplayName,
+		Version:        o.Version,
 		CreatedAt:      o.CreatedAt.UTC().Format(time.RFC3339Nano),
 		UpdatedAt:      o.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
@@ -101,6 +111,80 @@ func organizationResourceOf(o store.Organization) organizationResource {
 		resource.DeletionScheduledAt = &scheduled
 	}
 	return resource
+}
+
+// formatETag renders a positive resource version as a strong ETag value per
+// RFC 7232 §2.3 — a base-10 integer wrapped in double quotes. A non-positive
+// version yields the empty string so the caller can omit the header for an
+// uninitialised row (which the schema CHECK forbids in practice but the
+// helper handles defensively).
+func formatETag(version int64) string {
+	if version <= 0 {
+		return ""
+	}
+	return `"` + strconv.FormatInt(version, 10) + `"`
+}
+
+// writeOrganizationETag mirrors the organization's optimistic-concurrency
+// version into the response ETag header before any body is written, so
+// callers can switch on the header alone (the wire body and the header always
+// agree). The header is omitted only when the version is non-positive, which
+// the schema CHECK forbids in practice.
+func writeOrganizationETag(w http.ResponseWriter, version int64) {
+	if tag := formatETag(version); tag != "" {
+		w.Header().Set("ETag", tag)
+	}
+}
+
+// parseIfMatchVersion turns the If-Match request header into the
+// optimistic-concurrency precondition the store layer expects. The header is
+// optional: an absent (or all-blank) header yields (nil, nil) — the caller
+// runs without a precondition. A present header is parsed as either the
+// canonical strong ETag form ("<int>"), the lenient unquoted integer form
+// (<int>), or rejected with a typed apierr.Invalid that names the offending
+// header without echoing its value (the value is bounded to a small integer,
+// but the error contract is uniform).
+//
+// Multi-value If-Match is not supported: a single resource version is the
+// only meaningful precondition this API understands, so a comma-separated
+// list is rejected as ambiguous. The W/-prefixed weak ETag form is also
+// rejected — only strong validators may be used for state-changing methods
+// (RFC 7232 §3.1).
+//
+// The "*" wildcard (any current state) is intentionally not supported either:
+// PATCH/DELETE on this resource always targets a row the caller named in the
+// path, and "any current state" against a path-named row collapses to "no
+// precondition", which is exactly what an absent header already expresses.
+func parseIfMatchVersion(r *http.Request) (*int64, error) {
+	raw := strings.TrimSpace(r.Header.Get("If-Match"))
+	if raw == "" {
+		return nil, nil
+	}
+	if raw == "*" {
+		return nil, apierr.Invalid(`If-Match: "*" is not supported; supply the resource version in the form "<n>"`)
+	}
+	if strings.Contains(raw, ",") {
+		return nil, apierr.Invalid(`If-Match must carry a single resource version, not a list`)
+	}
+	if strings.HasPrefix(raw, "W/") {
+		return nil, apienvelopeWeakETagError()
+	}
+	value := raw
+	if len(value) >= 2 && value[0] == '"' && value[len(value)-1] == '"' {
+		value = value[1 : len(value)-1]
+	}
+	v, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || v <= 0 {
+		return nil, apierr.Invalid(`If-Match must be a strong ETag of the form "<positive integer>"`)
+	}
+	return &v, nil
+}
+
+// apienvelopeWeakETagError builds the typed validation error returned for an
+// If-Match value that uses the weak-ETag prefix. It is split out so the
+// message stays in one place and the parser stays a thin lookup.
+func apienvelopeWeakETagError() error {
+	return apierr.Invalid(`If-Match must be a strong validator; weak ETags (W/"...") are not accepted for state-changing requests`)
 }
 
 // organizationsHandler builds the GET /v1/organizations handler. It lists the
@@ -137,6 +221,7 @@ func organizationsHandler(reader OrganizationReader) http.HandlerFunc {
 			apienvelope.WriteError(w, requestID(r), toAPIError(err))
 			return
 		}
+		writeOrganizationETag(w, org.Version)
 		apienvelope.WriteData(w, http.StatusOK, requestID(r), organizationsPayload{
 			Organizations: []organizationResource{organizationResourceOf(org)},
 		})
@@ -196,6 +281,7 @@ func getOrganizationHandler(reader OrganizationReader) http.HandlerFunc {
 			apienvelope.WriteError(w, requestID(r), toAPIError(err))
 			return
 		}
+		writeOrganizationETag(w, org.Version)
 		apienvelope.WriteData(w, http.StatusOK, requestID(r), getOrganizationPayload{
 			Organization: organizationResourceOf(org),
 		})
@@ -276,6 +362,7 @@ func createOrganizationHandler(creator OrganizationCreator) http.HandlerFunc {
 			return
 		}
 
+		writeOrganizationETag(w, org.Version)
 		apienvelope.WriteData(w, http.StatusCreated, requestID(r), createOrganizationPayload{
 			Organization: organizationResourceOf(org),
 		})
@@ -342,6 +429,12 @@ func updateOrganizationHandler(updater OrganizationUpdater) http.HandlerFunc {
 			return
 		}
 
+		ifMatchVersion, ifMatchErr := parseIfMatchVersion(r)
+		if ifMatchErr != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(ifMatchErr))
+			return
+		}
+
 		var req updateOrganizationRequest
 		if err := validate.DecodeJSON(r.Body, &req, 0); err != nil {
 			apienvelope.WriteError(w, requestID(r), toAPIError(err))
@@ -353,6 +446,7 @@ func updateOrganizationHandler(updater OrganizationUpdater) http.HandlerFunc {
 			OrganizationID: r.PathValue("org_id"),
 			Slug:           req.Slug,
 			DisplayName:    req.DisplayName,
+			IfMatchVersion: ifMatchVersion,
 			ActorID:        p.ID,
 			ActorKind:      string(p.Kind),
 			ActorOrgID:     p.OrganizationID,
@@ -364,6 +458,7 @@ func updateOrganizationHandler(updater OrganizationUpdater) http.HandlerFunc {
 			return
 		}
 
+		writeOrganizationETag(w, org.Version)
 		apienvelope.WriteData(w, http.StatusOK, requestID(r), updateOrganizationPayload{
 			Organization: organizationResourceOf(org),
 		})
@@ -419,9 +514,16 @@ func deleteOrganizationHandler(deleter OrganizationDeleter) http.HandlerFunc {
 			return
 		}
 
+		ifMatchVersion, ifMatchErr := parseIfMatchVersion(r)
+		if ifMatchErr != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(ifMatchErr))
+			return
+		}
+
 		correlation := telemetry.FromContext(r.Context())
 		org, err := deleter.ScheduleDeletion(r.Context(), store.DeleteOrganizationInput{
 			OrganizationID: r.PathValue("org_id"),
+			IfMatchVersion: ifMatchVersion,
 			ActorID:        p.ID,
 			ActorKind:      string(p.Kind),
 			ActorOrgID:     p.OrganizationID,
@@ -433,6 +535,7 @@ func deleteOrganizationHandler(deleter OrganizationDeleter) http.HandlerFunc {
 			return
 		}
 
+		writeOrganizationETag(w, org.Version)
 		apienvelope.WriteData(w, http.StatusAccepted, requestID(r), deleteOrganizationPayload{
 			Organization: organizationResourceOf(org),
 		})

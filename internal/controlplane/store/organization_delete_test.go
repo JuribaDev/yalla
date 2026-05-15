@@ -36,7 +36,7 @@ func TestOrganizationRepositoryScheduleDeletion(t *testing.T) {
 	var got store.Organization
 	if err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
 		var writeErr error
-		got, writeErr = repo.ScheduleDeletion(ctx, tx, org.ID)
+		got, writeErr = repo.ScheduleDeletion(ctx, tx, org.ID, nil)
 		return writeErr
 	}); err != nil {
 		t.Fatalf("ScheduleDeletion returned %v, want nil", err)
@@ -73,7 +73,7 @@ func TestOrganizationRepositoryScheduleDeletionNotFound(t *testing.T) {
 	ctx := context.Background()
 
 	err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
-		_, scheduleErr := repo.ScheduleDeletion(ctx, tx, "org_does_not_exist")
+		_, scheduleErr := repo.ScheduleDeletion(ctx, tx, "org_does_not_exist", nil)
 		return scheduleErr
 	})
 	if ye := yerr.From(err); ye.Code != yerr.CodeNotFound {

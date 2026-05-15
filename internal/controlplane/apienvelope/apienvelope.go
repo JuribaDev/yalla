@@ -6,7 +6,13 @@
 // Two stable envelope shapes are guaranteed:
 //
 //	yalla.output.v1 — success: {schema_version, ok:true, data, request_id, warnings?}
-//	yalla.error.v1  — failure: {schema_version, ok:false, error{code,message,hint?,documentation_url?}, request_id}
+//	yalla.error.v1  — failure: {schema_version, ok:false, error{code,message,hint?,details?,documentation_url?}, request_id}
+//
+// The error block's optional details map carries small, agent-readable
+// metadata about the failure (a stale write's current_version, a quota's
+// limit, a retry_after) so callers do not have to parse a human-readable
+// hint to recover. Keys are stable per error code; the catalog is the source
+// of truth.
 //
 // The envelope structs are intentionally unexported: handlers cannot construct
 // or marshal them directly, which guarantees no handler writes ad hoc JSON
@@ -56,14 +62,16 @@ type errorEnvelope struct {
 	RequestID     string       `json:"request_id"`
 }
 
-// errorPayload is the inner error block. Hint and DocumentationURL are
-// omitempty because not every failure has a remediation suggestion, and
-// emitting an empty string would corrupt agents that switch on field presence.
+// errorPayload is the inner error block. Hint, Details, and DocumentationURL
+// are omitempty because not every failure has a remediation suggestion or a
+// structured context block, and emitting an empty value would corrupt agents
+// that switch on field presence.
 type errorPayload struct {
-	Code             string `json:"code"`
-	Message          string `json:"message"`
-	Hint             string `json:"hint,omitempty"`
-	DocumentationURL string `json:"documentation_url,omitempty"`
+	Code             string            `json:"code"`
+	Message          string            `json:"message"`
+	Hint             string            `json:"hint,omitempty"`
+	Details          map[string]string `json:"details,omitempty"`
+	DocumentationURL string            `json:"documentation_url,omitempty"`
 }
 
 // envelopeRedactor scrubs well-known secret patterns (Authorization headers,
@@ -164,11 +172,13 @@ func WriteErrorStatus(w http.ResponseWriter, status int, requestID string, err *
 	code := errorCode(err)
 	message := "internal error"
 	hint := ""
+	var details map[string]string
 	if err != nil {
 		if err.Message != "" {
 			message = err.Message
 		}
 		hint = err.Hint
+		details = redactDetails(err.Details)
 	}
 	writeJSON(w, status, errorEnvelope{
 		SchemaVersion: ErrorSchema,
@@ -177,10 +187,33 @@ func WriteErrorStatus(w http.ResponseWriter, status int, requestID string, err *
 			Code:             string(code),
 			Message:          envelopeRedactor.Redact(message),
 			Hint:             envelopeRedactor.Redact(hint),
+			Details:          details,
 			DocumentationURL: DocURLForCode(code),
 		},
 		RequestID: requestID,
 	})
+}
+
+// redactDetails returns a redacted copy of in, dropping blank keys, or nil
+// when the input is empty so the omitempty tag drops the field from the wire.
+// Values are run through the regex backstop the same way Message and Hint
+// are; the originating constructor remains responsible for not naming a
+// secret in the first place.
+func redactDetails(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		if k == "" {
+			continue
+		}
+		out[k] = envelopeRedactor.Redact(v)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // errorCode extracts the stable Code from err, defaulting to CodeInternal for

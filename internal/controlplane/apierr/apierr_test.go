@@ -387,3 +387,69 @@ func TestFieldViolationString(t *testing.T) {
 		}
 	}
 }
+
+// TestConflictStaleAttachesCurrentVersion proves ConflictStale renders an
+// E_CONFLICT carrying the resource's authoritative version under the stable
+// DetailKeyCurrentVersion key, recoverable round-trip via CurrentVersionOf.
+// The Hint stays a fixed, non-secret remediation string so a leaked log line
+// can never reflect business state.
+func TestConflictStaleAttachesCurrentVersion(t *testing.T) {
+	t.Parallel()
+
+	err := ConflictStale(7)
+	if err.Code != yerr.CodeConflict {
+		t.Errorf("Code = %q, want E_CONFLICT", err.Code)
+	}
+	if err.Hint == "" {
+		t.Error("Hint is empty, want a non-empty remediation string")
+	}
+	if got := err.Details[DetailKeyCurrentVersion]; got != "7" {
+		t.Errorf("Details[%s] = %q, want \"7\"", DetailKeyCurrentVersion, got)
+	}
+
+	got, ok := CurrentVersionOf(err)
+	if !ok {
+		t.Fatal("CurrentVersionOf returned false for a ConflictStale error")
+	}
+	if got != 7 {
+		t.Errorf("CurrentVersionOf = %d, want 7", got)
+	}
+}
+
+// TestConflictStaleOmitsNonPositiveVersion proves a non-positive version is
+// treated as "unknown" and the detail is omitted entirely — the schema CHECK
+// guarantees a positive version, so a zero or negative value can only arise
+// from a programming error and must not pretend to carry information.
+func TestConflictStaleOmitsNonPositiveVersion(t *testing.T) {
+	t.Parallel()
+
+	for _, v := range []int64{0, -1, -42} {
+		err := ConflictStale(v)
+		if err.Code != yerr.CodeConflict {
+			t.Errorf("ConflictStale(%d).Code = %q, want E_CONFLICT", v, err.Code)
+		}
+		if _, ok := err.Details[DetailKeyCurrentVersion]; ok {
+			t.Errorf("ConflictStale(%d) attached a current_version detail; want it omitted", v)
+		}
+		if _, ok := CurrentVersionOf(err); ok {
+			t.Errorf("CurrentVersionOf(ConflictStale(%d)) returned true; want false", v)
+		}
+	}
+}
+
+// TestCurrentVersionOfHandlesUnrelatedErrors proves the recovery helper
+// returns false (and not, say, zero) for a plain Conflict, a non-typed
+// error, and a nil receiver — so callers can switch on it safely.
+func TestCurrentVersionOfHandlesUnrelatedErrors(t *testing.T) {
+	t.Parallel()
+
+	if _, ok := CurrentVersionOf(Conflict("plain")); ok {
+		t.Error("CurrentVersionOf must be false for a plain Conflict error")
+	}
+	if _, ok := CurrentVersionOf(stderrors.New("boom")); ok {
+		t.Error("CurrentVersionOf must be false for a non-typed error")
+	}
+	if _, ok := CurrentVersionOf(nil); ok {
+		t.Error("CurrentVersionOf must be false for nil")
+	}
+}

@@ -172,12 +172,23 @@ func (c Code) ExitCode() int {
 
 // Error is the canonical failure type returned from internal packages and the
 // command tree. It carries a stable Code, a user-facing Message, an optional
-// Hint that suggests a remedy, and an optional underlying Cause so
-// errors.Is/As traversal still works.
+// Hint that suggests a remedy, optional structured Details (small key/value
+// metadata such as a precondition's current_version, a quota's limit, or a
+// retry_after), and an optional underlying Cause so errors.Is/As traversal
+// still works.
+//
+// Details is the agent-friendly counterpart to Hint: callers that wire a
+// machine-readable failure context (for example, a stale write whose recovery
+// path is "GET the current version, then retry") attach it here so the caller
+// does not have to parse a human-readable string. Values must be free of
+// secrets — the renderer treats Details the same way it treats Message and
+// Hint and runs them through the redaction backstop, but the originating
+// constructor remains responsible for not naming a token in the first place.
 type Error struct {
 	Code    Code
 	Message string
 	Hint    string
+	Details map[string]string
 	Cause   error
 }
 
@@ -207,6 +218,32 @@ func (e *Error) WithHint(hint string) *Error {
 // WithHintf is a printf-style variant of WithHint.
 func (e *Error) WithHintf(format string, args ...any) *Error {
 	return e.WithHint(fmt.Sprintf(format, args...))
+}
+
+// WithDetail returns a copy of e with the supplied key/value attached to its
+// structured Details map. An empty key is dropped silently — Details is
+// agent-readable metadata, and a blank key would corrupt a switch on the
+// returned map. Existing values for the same key are overwritten so a caller
+// can refine a detail attached upstream.
+//
+// The receiver's own Details map is never mutated; the copy carries an
+// independent map so a single base error can be reused for multiple
+// downstream annotations.
+func (e *Error) WithDetail(key, value string) *Error {
+	if e == nil {
+		return nil
+	}
+	cp := *e
+	if strings.TrimSpace(key) == "" {
+		return &cp
+	}
+	merged := make(map[string]string, len(e.Details)+1)
+	for k, v := range e.Details {
+		merged[k] = v
+	}
+	merged[key] = value
+	cp.Details = merged
+	return &cp
 }
 
 // Wrap returns a copy of e annotated with an underlying cause. Code, Message,

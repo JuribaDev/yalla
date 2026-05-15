@@ -37,11 +37,20 @@ package apierr
 import (
 	stderrors "errors"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apienvelope"
 	yerr "github.com/JuribaDev/yalla/internal/errors"
 )
+
+// DetailKeyCurrentVersion is the stable details key carried on a stale-write
+// E_CONFLICT (built by ConflictStale): it surfaces the resource's
+// authoritative version so the caller can re-issue the request with a fresh
+// If-Match header without an extra GET. The value is a base-10 integer
+// rendered as a string so the wire shape stays JSON-friendly across clients
+// that lack a 64-bit numeric type.
+const DetailKeyCurrentVersion = "current_version"
 
 // MessagePolicy classifies whether an error code's user-facing Message is
 // allowed to describe the specific failure.
@@ -276,6 +285,45 @@ func Conflict(message string) *yerr.Error {
 		message = "request conflicts with the current resource state"
 	}
 	return yerr.New(yerr.CodeConflict, message)
+}
+
+// ConflictStale builds an E_CONFLICT error (HTTP 409) for a stale write —
+// the caller's expected version (typically the strong ETag carried in the
+// If-Match request header) does not match the resource's current version.
+// The current version is attached as structured details under
+// DetailKeyCurrentVersion so the caller can re-issue the request with a
+// fresh If-Match header without an extra GET. A non-positive currentVersion
+// is treated as "unknown" and the detail is omitted: the version sequence is
+// always strictly positive (the schema CHECK guarantees it), so a zero or
+// negative value can only arise from a programming error.
+func ConflictStale(currentVersion int64) *yerr.Error {
+	e := yerr.New(yerr.CodeConflict, "request is based on a stale version of the resource").
+		WithHint("re-fetch the resource and retry with the current version in the If-Match header")
+	if currentVersion <= 0 {
+		return e
+	}
+	return e.WithDetail(DetailKeyCurrentVersion, strconv.FormatInt(currentVersion, 10))
+}
+
+// CurrentVersionOf returns the resource's authoritative version attached to a
+// stale-write E_CONFLICT by ConflictStale. The boolean is false when err
+// carries no version detail (it was not built by ConflictStale, the
+// ConflictStale call had no usable version, or the value is unparseable). The
+// caller never needs to parse the human-readable Hint to recover the version.
+func CurrentVersionOf(err error) (int64, bool) {
+	var ye *yerr.Error
+	if !stderrors.As(err, &ye) || ye == nil {
+		return 0, false
+	}
+	raw, ok := ye.Details[DetailKeyCurrentVersion]
+	if !ok {
+		return 0, false
+	}
+	v, parseErr := strconv.ParseInt(raw, 10, 64)
+	if parseErr != nil || v <= 0 {
+		return 0, false
+	}
+	return v, true
 }
 
 // IdempotencyConflict builds an E_IDEMPOTENCY_CONFLICT error (HTTP 409) for a

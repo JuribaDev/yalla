@@ -1398,8 +1398,8 @@
       ],
       "type": "api-contract",
       "priority": 2,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented database-owned version columns + bump_version trigger on organizations/projects/environments/services (migration 0011). Added IfMatchVersion to store.UpdateOrganizationInput/DeleteOrganizationInput, OrganizationRepository.Update/ScheduleDeletion, and ProjectRepository.UpdateDisplayName. New apierr.ConflictStale carries current_version under the new yerr.Error.Details map, rendered in the yalla.error.v1 envelope. PATCH/DELETE /v1/organizations/{org_id} accept the If-Match header (strong ETag form) and mirror the row version into the ETag response header."
     },
     {
       "id": "BE-0028",

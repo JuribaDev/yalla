@@ -294,3 +294,72 @@ func TestDocURLForCode(t *testing.T) {
 		t.Errorf("DocURLForCode(\"\") = %q, want empty", got)
 	}
 }
+
+// decodedErrorWithDetails extends decodedError with the optional details map
+// the envelope renders for errors that carry agent-readable metadata (a
+// stale-write current_version, a quota's limit, a retry_after).
+type decodedErrorWithDetails struct {
+	SchemaVersion string `json:"schema_version"`
+	OK            bool   `json:"ok"`
+	Error         struct {
+		Code    string            `json:"code"`
+		Message string            `json:"message"`
+		Hint    string            `json:"hint"`
+		Details map[string]string `json:"details"`
+	} `json:"error"`
+	RequestID string `json:"request_id"`
+}
+
+// TestWriteErrorRendersDetails proves a yerr.Error with structured Details
+// surfaces them under "error.details" in the envelope, while an error with no
+// Details omits the field entirely so agents can switch on field presence.
+func TestWriteErrorRendersDetails(t *testing.T) {
+	t.Parallel()
+
+	withDetails := yerr.New(yerr.CodeConflict, "stale write").
+		WithDetail("current_version", "5").
+		WithDetail("retry_after", "30")
+
+	rec := httptest.NewRecorder()
+	WriteError(rec, "req-d", withDetails)
+
+	var env decodedErrorWithDetails
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if env.Error.Details["current_version"] != "5" {
+		t.Errorf("details[current_version] = %q, want 5", env.Error.Details["current_version"])
+	}
+	if env.Error.Details["retry_after"] != "30" {
+		t.Errorf("details[retry_after] = %q, want 30", env.Error.Details["retry_after"])
+	}
+
+	// An error without Details must not emit the field at all (omitempty).
+	rec = httptest.NewRecorder()
+	WriteError(rec, "req-d", yerr.New(yerr.CodeConflict, "no details"))
+	if strings.Contains(rec.Body.String(), `"details"`) {
+		t.Errorf("error body without details leaked a details field: %s", rec.Body.String())
+	}
+}
+
+// TestWriteErrorRedactsDetailValues proves the envelope's regex-based
+// redaction backstop is applied to detail values too, the same way it
+// covers Message and Hint, so a stray secret in a detail can never reach
+// the wire.
+func TestWriteErrorRedactsDetailValues(t *testing.T) {
+	t.Parallel()
+
+	const secret = "Authorization: Bearer should-be-redacted"
+	withSecret := yerr.New(yerr.CodeConflict, "x").WithDetail("captured_header", secret)
+
+	rec := httptest.NewRecorder()
+	WriteError(rec, "req-d", withSecret)
+
+	body := rec.Body.String()
+	if strings.Contains(body, "should-be-redacted") {
+		t.Errorf("envelope leaked a secret in details: %s", body)
+	}
+	if !strings.Contains(body, output.Sentinel) {
+		t.Errorf("expected redaction sentinel %q in body: %s", output.Sentinel, body)
+	}
+}
