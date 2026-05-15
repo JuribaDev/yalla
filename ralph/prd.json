@@ -4248,7 +4248,7 @@
       ],
       "type": "policy-variables",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Authorization coverage for PUT /v1/environments/{environment_id}/variables."
     },
     {

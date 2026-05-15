@@ -114,6 +114,16 @@ orchestrator's job.
   401), `request_id` propagation, and OpenAPI registration + `x-required-action`.
 - For endpoints that read/mutate customer-owned resources, add tenant-isolation
   tests (a cross-tenant path id must be 403 or not-found, never a leak).
+- Policy matrix tests for a write endpoint that carries plaintext credential
+  material in the request body (e.g. env variables PUT, project variables PUT,
+  org variables PUT, api-key create/rotate) MUST pair the response-direction
+  leak guard with a body-direction leak guard. Embed a globally-unique fragment
+  in the credential field of the matrix request body and assert no deny path
+  echoes it; structural-needle guards alone would miss a renderer that scrubs
+  request keys + booleans but reflects the value column. See
+  `environment_variables_put_policy_test.go`'s
+  `replaceEnvironmentVariablesMatrixSecretNeedle` /
+  `replaceEnvironmentVariablesRequestBodyLeak` pair.
 - A separate "Add contract tests for <endpoint>" story usually finds the
   implementation story's `<endpoint>_test.go` already covers most criteria —
   diff against the story's `acceptanceCriteria` and add only the gaps in a
