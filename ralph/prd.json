@@ -2044,7 +2044,7 @@
       ],
       "type": "endpoint-membership",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Endpoint belongs to the membership backend surface."
     },
     {

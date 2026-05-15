@@ -3298,3 +3298,35 @@
     (deleteOrganizationHandlerFor, deleteOrganization, decodeDeleteOrganization,
     fakeOrganizationDeleter, orgPrincipal, decodeError) — no new helpers needed.
 ---
+
+## 2026-05-15 - BE-0061
+- Implemented GET /v1/organizations/{org_id}/members — the membership list endpoint of the Organization-rooted hierarchy. Required action members.read, authorized via organizationIDResolver against the {org_id} path parameter, so a cross-tenant id is a deterministic 403 (with the support principal's CapRead cross-tenant exception preserved).
+- Picked the lowest-id priority-1 failing story (BE-0063, the GET-members policy matrix coverage) and discovered it strictly depends on BE-0061 (implement) + BE-0062 (contract tests) — the codebase pattern explicitly says these "Add policy matrix coverage" stories add a sibling _test.go beside the endpoint's contract test. Implementing BE-0061 first unblocks BE-0062 and BE-0063 in subsequent iterations and is itself a passing story; BE-0063 stays the next highest priority.
+- Files changed:
+  - internal/controlplane/store/membership.go — added OrganizationMember (Membership + joined Email/UserDisplayName from the global users table), organizationMemberColumns / scanOrganizationMember, MembershipRepository.ListByOrganization (tenant-scoped, deterministic ORDER BY created_at, user_id), and the MembershipReader Store.Read adapter (mirrors OrganizationReader/CredentialReader — composes the repository, no fresh SQL).
+  - internal/controlplane/store/membership_test.go — added TestMembershipRepositoryListByOrganization, …IsTenantScoped (two orgs with overlapping user labels), …EmptyIsNotNil, TestMembershipReaderListMembers (adapter+join), TestNewMembershipReaderRejectsNilStore.
+  - internal/controlplane/httpapi/members.go — new file: errNoMembershipReader sentinel; MembershipReader port interface; listMembersPayload / memberResource wire shapes (UTC RFC 3339 timestamps); memberResourceOf projection; listMembersHandler closure (reads principal, reads {org_id}, calls port, renders).
+  - internal/controlplane/httpapi/members_test.go — new file: fakeMembershipReader fixture + 14 contract/authz/isolation tests (happy path, scopes-to-path-param, empty list = "members":[], cross-tenant 403 with stable reason + no reader hit, support CapRead cross-tenant allow, unauthenticated 401, invalid creds 401, disabled-principal 403, reader unavailable 503 + no leaked cause, request_id propagation, no-principal/nil-reader internal-error paths, OpenAPI documentation invariant, projection unit test).
+  - internal/controlplane/httpapi/routes.go — added tagMembers; added the route entry under DELETE /v1/organizations/{org_id} (RequiresAuth, RequiredAction=members.read, resolver=organizationIDResolver); added members MembershipReader parameter to newRouteTable.
+  - internal/controlplane/httpapi/server.go — added members MembershipReader parameter to NewHandler (placed after deleter, before logger); threaded it into newRouteTable.
+  - Test wrappers updated to pass fakeMembershipReader{}: server_test.go's newTestHandler + both newRouteTable call sites; routes_test.go's newRouteTable call; me_test.go's meHandlerFor; me_contract_test.go's meHandlerWithLogger; organizations_test.go's organizationsHandlerFor; organizations_create_test.go's createOrganizationHandlerFor; organizations_delete_test.go's deleteOrganizationHandlerFor; organizations_patch_test.go's updateOrganizationHandlerFor.
+  - cmd/yalla-api/main.go — added store.NewMembershipReader(dataStore) and passed it to httpapi.NewHandler.
+- Verification (all green):
+  - gofmt -l .  (no diff)
+  - go vet ./... (clean)
+  - go build ./... (clean)
+  - go test ./... (with YALLA_TEST_DATABASE_URL set; every package passes including the five new Postgres integration tests against a fresh migrated DB)
+  - go test -race ./... (clean)
+  - Without YALLA_TEST_DATABASE_URL the new store tests skip cleanly via testutil.RequireMigratedDB, the same gate every other persistence test uses.
+- Remaining risks / follow-ups:
+  - BE-0062 (contract test story) and BE-0063 (policy matrix story) for this endpoint are still passes:false — they are the next iterations.
+  - The list endpoint does not paginate yet; the stable empty array + deterministic ORDER BY is forward-compatible with the pagination contract that BE-0037 will introduce.
+  - Mutating member endpoints (POST/PATCH/DELETE) are separate stories and intentionally not implemented here.
+- Learnings for future iterations:
+  - Priority-1 stories with type "policy-<surface>" almost always depend on a lower-numbered priority-2 implement story + contract-test story in the same triplet (e.g. BE-0061 + BE-0062 + BE-0063 for members.list). When the implement story has not passed yet, do that one this iteration even though its priority number is higher — the codebase pattern "Add policy matrix coverage … in package httpapi … beside the endpoint's contract test" makes the dependency explicit.
+  - The reader-port pattern carries verbatim: declare a narrow interface in httpapi (MembershipReader), build a *store.MembershipReader adapter that composes the repository inside Store.Read (never fresh SQL), thread the port through NewHandler -> newRouteTable -> the handler closure. *store.MembershipReader, *store.OrganizationReader, and store.CredentialReader are now three uses of the same shape.
+  - A list endpoint's tenant boundary is twofold: declarative at the policy layer (organizationIDResolver + RequiredAction=members.read) AND structural at the repository layer (WHERE organization_id = $1). The TestMembershipRepositoryListByOrganizationIsTenantScoped test seeded two orgs with the same user label "ada"/"grace" via testutil.NewFactory — Factory mints globally-unique ids per call so the two seeds never collide, which is why the cross-tenant assertion can use the same logical name without false positives.
+  - When a port stays optional ("nil reader returns typed E_INTERNAL"), the closure must check it BEFORE calling PathValue/reading the principal? No — check the principal first (so a defective auth wiring is reported the same way), then the port. Both paths land at apienvelope.WriteError(toAPIError(...)) / apierr.Internal so the wire shape is identical, but the wiring-error ordering matters for the per-test expectations.
+  - Adding a NewHandler parameter is a fan-out edit across ~9 test wrappers + cmd/yalla-api/main.go + the routes_test.go newRouteTable call + two newRouteTable call sites in server_test.go. Doing them all in one pass before running tests is faster than chasing compile errors one wrapper at a time. The AGENTS.md already documents the "grep for NewHandler( and newRouteTable( across *_test.go" recipe; following it verbatim worked.
+  - Local Postgres via docker-compose worked seamlessly for the integration tests; the docker-compose.yml at repo root exposes a yalla:yalla superuser on 127.0.0.1:5432 which RequireMigratedDB picks up from YALLA_TEST_DATABASE_URL. CI without it correctly skips, which keeps the "passes without Postgres" promise intact.
+---

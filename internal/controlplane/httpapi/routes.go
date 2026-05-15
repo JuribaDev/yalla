@@ -18,6 +18,7 @@ const (
 	tagMeta          = "meta"
 	tagIdentity      = "identity"
 	tagOrganizations = "organizations"
+	tagMembers       = "members"
 )
 
 // apiRoute couples a served HTTP route with the OpenAPI metadata that
@@ -76,12 +77,13 @@ type versionPayload struct {
 // no startup dependencies wired yet.
 //
 // orgs backs the organization read endpoints, creator backs POST
-// /v1/organizations, updater backs PATCH /v1/organizations/{org_id}, and
-// deleter backs DELETE /v1/organizations/{org_id}. Any may be nil for tests and
-// tooling that only inspect the route table's metadata; a request that actually
-// reaches a handler with a nil dependency is reported as a typed internal error
-// rather than a misleading empty list or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter) []apiRoute {
+// /v1/organizations, updater backs PATCH /v1/organizations/{org_id}, deleter
+// backs DELETE /v1/organizations/{org_id}, and members backs GET
+// /v1/organizations/{org_id}/members. Any may be nil for tests and tooling
+// that only inspect the route table's metadata; a request that actually
+// reaches a handler with a nil dependency is reported as a typed internal
+// error rather than a misleading empty list or a silently dropped write.
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -281,6 +283,31 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// denied at the policy boundary before the handler mutates any data.
 			resolver: organizationIDResolver,
 			handler:  deleteOrganizationHandler(deleter),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodGet,
+				Path:           "/v1/organizations/{org_id}/members",
+				OperationID:    "listOrganizationMembers",
+				Summary:        "List members of an organization",
+				Description:    "Lists the memberships of the organization named by the {org_id} path parameter, joined with each member's global user identity — user id, email, display name, role, role version, and lifecycle timestamps. Action members.read is authorized against the organization the path names before the handler runs: a principal listing members outside its own tenant is rejected with a deterministic 403, so a cross-tenant id can never reveal another tenant's members. The response carries no credential material — a membership row stores a role, never a secret — and the list is ordered deterministically by creation time then user id so a given set of rows always renders the same response.",
+				Tags:           []string{tagMembers},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionMembersRead),
+				PathParams: []openapi.PathParam{{
+					Name:        "org_id",
+					Description: "The id of the organization whose members are listed.",
+				}},
+				SuccessDescription: "The memberships of the organization.",
+			},
+			// organizationIDResolver authorizes action members.read against the
+			// organization the {org_id} path parameter names, not merely the
+			// principal's home organization, so a cross-tenant id is denied at
+			// the policy boundary before the handler reads any data — the lone
+			// exception is the support principal's deliberate cross-tenant
+			// read, exactly as the policy matrix specifies.
+			resolver: organizationIDResolver,
+			handler:  listMembersHandler(members),
 		},
 	}
 }

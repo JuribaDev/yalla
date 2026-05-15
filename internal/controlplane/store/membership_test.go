@@ -139,3 +139,178 @@ func TestMembershipRepositoryGetIsTenantScoped(t *testing.T) {
 		t.Fatalf("cross-tenant Get error = %v, want E_NOT_FOUND — no membership leak", err)
 	}
 }
+
+// TestMembershipRepositoryListByOrganization proves the list read joins the
+// memberships row with the global users identity row, returns every member of
+// the requested organization with the deterministic created_at then user_id
+// ordering, and surfaces the schema-default role_version for rows inserted
+// without an explicit version.
+func TestMembershipRepositoryListByOrganization(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	repo := store.NewMembershipRepository()
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	org := seedOrg(t, db, f, "acme")
+	adaID := seedUser(t, db, f, org, "ada")
+	graceID := seedUser(t, db, f, org, "grace")
+	seedMembership(t, db, org.ID, adaID, "owner", 4)
+	// grace's row is inserted without role_version so the schema default 1
+	// is exercised through the join read too.
+	if _, err := db.Exec(ctx,
+		`INSERT INTO memberships (organization_id, user_id, role) VALUES ($1, $2, 'admin')`,
+		org.ID, graceID); err != nil {
+		t.Fatalf("seed grace membership: %v", err)
+	}
+
+	var got []store.OrganizationMember
+	if err := s.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		var err error
+		got, err = repo.ListByOrganization(ctx, q, org.ID)
+		return err
+	}); err != nil {
+		t.Fatalf("ListByOrganization returned %v, want nil", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("ListByOrganization returned %d rows, want 2: %+v", len(got), got)
+	}
+	// The two seed rows are inserted in the same transaction, so created_at
+	// ties; the secondary ORDER BY user_id is what makes the order stable.
+	// The map below is keyed by user id so the test does not depend on the
+	// minted id ordering.
+	byUser := map[string]store.OrganizationMember{got[0].UserID: got[0], got[1].UserID: got[1]}
+	if ada, ok := byUser[adaID]; !ok {
+		t.Errorf("ada (%q) missing from list: %+v", adaID, got)
+	} else {
+		if ada.OrganizationID != org.ID || ada.Role != "owner" || ada.RoleVersion != 4 {
+			t.Errorf("ada row = %+v, want owner/4 in %q", ada, org.ID)
+		}
+		if ada.CreatedAt.IsZero() || ada.UpdatedAt.IsZero() {
+			t.Error("ada row did not return the database-assigned timestamps")
+		}
+		if ada.Email == "" || ada.UserDisplayName == "" {
+			t.Errorf("ada row = %+v, want email/display_name from the joined users row", ada)
+		}
+	}
+	if grace, ok := byUser[graceID]; !ok {
+		t.Errorf("grace (%q) missing from list: %+v", graceID, got)
+	} else if grace.Role != "admin" || grace.RoleVersion != 1 {
+		t.Errorf("grace row = %+v, want admin/1 (schema default)", grace)
+	}
+}
+
+// TestMembershipRepositoryListByOrganizationIsTenantScoped proves cross-tenant
+// isolation: listing one organization's members must never return a member of
+// another organization, even when the same user has memberships in both.
+func TestMembershipRepositoryListByOrganizationIsTenantScoped(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	repo := store.NewMembershipRepository()
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	orgA := seedOrg(t, db, f, "alpha")
+	orgB := seedOrg(t, db, f, "beta")
+	adaID := seedUser(t, db, f, orgA, "ada")
+	graceID := seedUser(t, db, f, orgB, "grace")
+	seedMembership(t, db, orgA.ID, adaID, "owner", 1)
+	seedMembership(t, db, orgB.ID, graceID, "owner", 1)
+
+	for _, tc := range []struct {
+		name   string
+		org    string
+		wantID string
+	}{
+		{name: "alpha", org: orgA.ID, wantID: adaID},
+		{name: "beta", org: orgB.ID, wantID: graceID},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got []store.OrganizationMember
+			if err := s.Read(ctx, func(ctx context.Context, q store.Querier) error {
+				var err error
+				got, err = repo.ListByOrganization(ctx, q, tc.org)
+				return err
+			}); err != nil {
+				t.Fatalf("ListByOrganization(%s) returned %v, want nil", tc.org, err)
+			}
+			if len(got) != 1 {
+				t.Fatalf("ListByOrganization(%s) returned %d rows, want exactly 1: %+v", tc.org, len(got), got)
+			}
+			if got[0].UserID != tc.wantID || got[0].OrganizationID != tc.org {
+				t.Errorf("ListByOrganization(%s) returned %+v, want member %q of %q only — cross-tenant leak",
+					tc.org, got[0], tc.wantID, tc.org)
+			}
+		})
+	}
+}
+
+// TestMembershipRepositoryListByOrganizationEmptyIsNotNil proves an
+// organization with no members yields a non-nil empty slice, never a nil
+// list, so callers can iterate the response without a nil check — and the
+// stable empty-array contract holds at the persistence layer.
+func TestMembershipRepositoryListByOrganizationEmptyIsNotNil(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	repo := store.NewMembershipRepository()
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	org := seedOrg(t, db, f, "lonely") // no memberships seeded
+
+	var got []store.OrganizationMember
+	if err := s.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		var err error
+		got, err = repo.ListByOrganization(ctx, q, org.ID)
+		return err
+	}); err != nil {
+		t.Fatalf("ListByOrganization returned %v, want nil", err)
+	}
+	if got == nil {
+		t.Error("ListByOrganization returned a nil slice; want a non-nil empty slice")
+	}
+	if len(got) != 0 {
+		t.Errorf("ListByOrganization returned %d rows, want 0: %+v", len(got), got)
+	}
+}
+
+// TestMembershipReaderListMembers proves the store-backed adapter composes the
+// repository through its own Store.Read transaction: the rows it returns
+// match the rows the repository read directly returns, and the join with the
+// users table is performed.
+func TestMembershipReaderListMembers(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	reader, err := store.NewMembershipReader(s)
+	if err != nil {
+		t.Fatalf("NewMembershipReader: %v", err)
+	}
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	org := seedOrg(t, db, f, "acme")
+	adaID := seedUser(t, db, f, org, "ada")
+	seedMembership(t, db, org.ID, adaID, "owner", 1)
+
+	got, err := reader.ListMembers(ctx, org.ID)
+	if err != nil {
+		t.Fatalf("ListMembers returned %v, want nil", err)
+	}
+	if len(got) != 1 || got[0].UserID != adaID || got[0].Email == "" {
+		t.Errorf("ListMembers = %+v, want exactly the seeded ada row with a joined email", got)
+	}
+}
+
+// TestNewMembershipReaderRejectsNilStore proves a misconfigured reader fails
+// at construction rather than on its first request — the same defensive
+// contract NewOrganizationReader / NewCredentialReader enforce.
+func TestNewMembershipReaderRejectsNilStore(t *testing.T) {
+	t.Parallel()
+	if _, err := store.NewMembershipReader(nil); err == nil {
+		t.Fatal("NewMembershipReader(nil) returned nil error, want a typed construction error")
+	}
+}
