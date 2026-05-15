@@ -134,14 +134,21 @@ writes; do not re-encode it in the message or hint.
 
 ## Binary wiring
 
-`NewHandler(build, readiness, meta, authenticator, engine, orgs, creator, updater, deleter, logger)`.
+`NewHandler(build, readiness, meta, authenticator, engine, orgs, creator,
+updater, deleter, members, memberCreator, memberUpdater, memberRemover,
+apiKeys, logger)`.
 `cmd/yalla-api` builds the real `authenticator` at startup from the pgxpool
 (`store.New` → `store.NewCredentialReader` → `auth.NewAuthenticator`), the
-`orgs` reader (`store.NewOrganizationReader`), and the `creator`/`updater`/`deleter`
-(one `store.NewOrganizationService` value satisfies all three ports), plus a
-`policy.NewEngine()`.
+`orgs` reader (`store.NewOrganizationReader`), the `creator`/`updater`/`deleter`
+(one `store.NewOrganizationService` value satisfies all three ports), the
+`members` reader (`store.NewMembershipReader`), the
+`memberCreator`/`memberUpdater`/`memberRemover` (one
+`store.NewMembershipService` value satisfies all three ports), the `apiKeys`
+reader (`store.NewAPIKeyReader`), plus a `policy.NewEngine()`.
 Adding a port parameter to `NewHandler` breaks every test call site — `grep`
 for `NewHandler(` and `newRouteTable(` across `*_test.go` and add the new fake
-(`fakeOrganization{Reader,Creator,Updater,Deleter}{}`) in one pass.
+(`fakeOrganization{Reader,Creator,Updater,Deleter}{}`,
+`fakeMembership{Reader,Creator,Updater,Remover}{}`, `fakeAPIKeyReader{}`)
+in one pass.
 Registering a `RequiresAuth` route with a nil authenticator/engine panics at
 startup — a wiring error, never a runtime 500.

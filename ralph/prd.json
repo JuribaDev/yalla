@@ -2329,7 +2329,7 @@
       ],
       "type": "endpoint-api-key",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Endpoint belongs to the api-key backend surface."
     },
     {

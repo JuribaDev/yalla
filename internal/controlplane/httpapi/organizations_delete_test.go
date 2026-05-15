@@ -62,7 +62,7 @@ type deleteOrganizationSuccessEnvelope struct {
 func deleteOrganizationHandlerFor(id auth.Identity, authErr error, deleter OrganizationDeleter) http.Handler {
 	a := fakeAuthenticator{identity: id, err: authErr}
 	return NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, a, policy.NewEngine(),
-		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, deleter, fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{}, nil)
+		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, deleter, fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{}, fakeAPIKeyReader{}, nil)
 }
 
 // deleteOrganization issues DELETE /v1/organizations/{orgID} against handler,

@@ -19,6 +19,7 @@ const (
 	tagIdentity      = "identity"
 	tagOrganizations = "organizations"
 	tagMembers       = "members"
+	tagAPIKeys       = "api-keys"
 )
 
 // apiRoute couples a served HTTP route with the OpenAPI metadata that
@@ -81,13 +82,14 @@ type versionPayload struct {
 // backs DELETE /v1/organizations/{org_id}, members backs GET
 // /v1/organizations/{org_id}/members, memberCreator backs POST
 // /v1/organizations/{org_id}/members, memberUpdater backs PATCH
-// /v1/organizations/{org_id}/members/{member_id}, and memberRemover backs
-// DELETE /v1/organizations/{org_id}/members/{member_id}. Any may be nil for
-// tests and tooling that only inspect the route table's metadata; a request
-// that actually reaches a handler with a nil dependency is reported as a
-// typed internal error rather than a misleading empty list or a silently
-// dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover) []apiRoute {
+// /v1/organizations/{org_id}/members/{member_id}, memberRemover backs
+// DELETE /v1/organizations/{org_id}/members/{member_id}, and apiKeys backs
+// GET /v1/organizations/{org_id}/api-keys. Any may be nil for tests and
+// tooling that only inspect the route table's metadata; a request that
+// actually reaches a handler with a nil dependency is reported as a typed
+// internal error rather than a misleading empty list or a silently dropped
+// write.
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, apiKeys APIKeyReader) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -416,6 +418,31 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// principal cannot manage members of another tenant.
 			resolver: memberIDResolver,
 			handler:  removeMemberHandler(memberRemover),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodGet,
+				Path:           "/v1/organizations/{org_id}/api-keys",
+				OperationID:    "listOrganizationAPIKeys",
+				Summary:        "List API keys of an organization",
+				Description:    "Lists the API keys owned by the organization named by the {org_id} path parameter, in deterministic creation order — each entry carries the key's id, public prefix, name, scopes, ownership identifiers (the user who minted it and the optional owning service account), and lifecycle timestamps. Action keys.read is authorized against the organization the path names before the handler runs: a principal listing API keys outside its own tenant is rejected with a deterministic 403, so a cross-tenant id can never reveal another tenant's keys. The response carries no credential material — the secret hash is never projected onto the wire and the plaintext token (the only usable credential) is shown to its owner once at creation and never reaches this endpoint. keys.read is a CapAdmin action: a viewer or developer cannot list the organization's keys; only an owner or admin in the tenant (and a support principal performing a cross-tenant read) can.",
+				Tags:           []string{tagAPIKeys},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionKeysRead),
+				PathParams: []openapi.PathParam{{
+					Name:        "org_id",
+					Description: "The id of the organization whose API keys are listed.",
+				}},
+				SuccessDescription: "The API keys owned by the organization.",
+			},
+			// organizationIDResolver authorizes action keys.read against the
+			// organization the {org_id} path parameter names, not merely the
+			// principal's home organization, so a cross-tenant id is denied at
+			// the policy boundary before the handler reads any data — the lone
+			// exception is the support principal's deliberate cross-tenant
+			// read, exactly as the policy matrix specifies for CapRead actions.
+			resolver: organizationIDResolver,
+			handler:  listAPIKeysHandler(apiKeys),
 		},
 	}
 }

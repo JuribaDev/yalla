@@ -280,3 +280,42 @@ func (r *APIKeyRepository) Revoke(ctx context.Context, tx *Tx, organizationID, k
 	}
 	return nil
 }
+
+// APIKeyReader is the store-backed read adapter the httpapi layer depends on
+// for the GET /v1/organizations/{org_id}/api-keys endpoint surface. It mirrors
+// MembershipReader and OrganizationReader — it composes the APIKeyRepository
+// rather than issuing its own SQL, so the tenant-scoping guarantees the
+// repository proves in its integration tests are inherited for free, and every
+// method opens its own short-lived read transaction through Store.Read.
+type APIKeyReader struct {
+	store   *Store
+	apiKeys *APIKeyRepository
+}
+
+// NewAPIKeyReader builds an APIKeyReader over store. It returns an error for a
+// nil store so a misconfigured adapter fails at construction rather than on
+// its first request.
+func NewAPIKeyReader(s *Store) (*APIKeyReader, error) {
+	if s == nil {
+		return nil, errors.New("store: nil store")
+	}
+	return &APIKeyReader{store: s, apiKeys: NewAPIKeyRepository()}, nil
+}
+
+// ListAPIKeys returns every API key owned by organizationID, oldest first,
+// reading them inside a short-lived read-only transaction. The read is tenant
+// scoped: a cross-tenant id simply matches no rows and yields an empty list,
+// never another organization's keys. A datastore failure is propagated as its
+// own typed error.
+func (r *APIKeyReader) ListAPIKeys(ctx context.Context, organizationID string) ([]APIKey, error) {
+	var keys []APIKey
+	err := r.store.Read(ctx, func(ctx context.Context, q Querier) error {
+		var listErr error
+		keys, listErr = r.apiKeys.ListByOrganization(ctx, q, organizationID)
+		return listErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	return keys, nil
+}

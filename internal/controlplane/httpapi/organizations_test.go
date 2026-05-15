@@ -60,7 +60,7 @@ type organizationsSuccessEnvelope struct {
 // route is wrapped in RequireAuth for action organization.read.
 func organizationsHandlerFor(id auth.Identity, authErr error, reader OrganizationReader) http.Handler {
 	a := fakeAuthenticator{identity: id, err: authErr}
-	return NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, a, policy.NewEngine(), reader, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{}, fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{}, nil)
+	return NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, a, policy.NewEngine(), reader, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{}, fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{}, fakeAPIKeyReader{}, nil)
 }
 
 // getOrganizations issues GET /v1/organizations against handler, optionally

@@ -151,7 +151,7 @@ type listMembersSuccessEnvelope struct {
 func listMembersHandlerFor(id auth.Identity, authErr error, reader MembershipReader) http.Handler {
 	a := fakeAuthenticator{identity: id, err: authErr}
 	return NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, a, policy.NewEngine(),
-		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{}, reader, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{}, nil)
+		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{}, reader, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{}, fakeAPIKeyReader{}, nil)
 }
 
 // getMembers issues GET /v1/organizations/{orgID}/members against handler,

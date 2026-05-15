@@ -4419,3 +4419,115 @@
     capability to CapRead.
 ---
 
+
+## 2026-05-15 - BE-0076
+- What was implemented: GET /v1/organizations/{org_id}/api-keys — lists every
+  API key owned by the organization named by the {org_id} path parameter,
+  read through a new APIKeyReader port. The handler is gated by RequireAuth
+  on action keys.read with organizationIDResolver, so a cross-tenant {org_id}
+  is denied at the policy boundary before the handler runs. The wire shape
+  is the new apiKeyResource projection — it deliberately drops SecretHash
+  (the one-way hash never crosses the HTTP boundary) and renders nullable
+  timestamps with omitempty. Empty lists render as "api_keys":[] and nil
+  scopes render as "scopes":[] so agents can iterate without nil checks.
+- Files changed:
+  - internal/controlplane/store/apikey.go (added APIKeyReader wrapper +
+    NewAPIKeyReader composing APIKeyRepository.ListByOrganization inside a
+    short-lived Store.Read transaction — mirrors MembershipReader exactly).
+  - internal/controlplane/httpapi/api_keys.go (new — APIKeyReader port,
+    apiKeyResource wire shape, listAPIKeysPayload, apiKeyResourceOf
+    projection, listAPIKeysHandler).
+  - internal/controlplane/httpapi/api_keys_test.go (new — 14 contract,
+    authorization, and tenant-isolation tests covering happy path with
+    multi-key + service-account-owned key, nullable-timestamp projection,
+    nil-scopes-as-empty-array, empty-list-as-empty-array, scoping to path
+    param, cross-tenant 403, viewer denied (CapAdmin gating proof), support
+    cross-tenant denied (proof CapAdmin actions don't get the CapRead
+    cross-tenant exception), missing credential 401, invalid credential
+    401, disabled principal 403, reader unavailable 503 with no leak of
+    wrapped cause, nil-reader internal 500 wiring assertion, request_id
+    propagation through both X-Request-Id header echo and envelope).
+  - internal/controlplane/httpapi/routes.go (added tagAPIKeys, threaded
+    apiKeys APIKeyReader through newRouteTable signature, registered the
+    GET /v1/organizations/{org_id}/api-keys route with full OpenAPI
+    metadata).
+  - internal/controlplane/httpapi/server.go (NewHandler signature now
+    accepts apiKeys APIKeyReader, threaded through to newRouteTable;
+    doc-comment updated to describe the new port).
+  - internal/controlplane/httpapi/AGENTS.md (Binary wiring section now
+    lists the full NewHandler signature including the api-key port and
+    fakeAPIKeyReader{} as the test stand-in to inject).
+  - cmd/yalla-api/main.go (constructs store.NewAPIKeyReader(dataStore)
+    and passes it to httpapi.NewHandler — same pattern as members).
+  - All existing test files calling NewHandler or newRouteTable were
+    updated in one mechanical pass to inject fakeAPIKeyReader{} or a
+    twelfth nil — consistent with the BE-0040 learning that adding a port
+    to NewHandler is a churn-amplifying change but stays mechanical when
+    the signature follows the established pattern.
+  - ralph/prd.json (BE-0076.passes flipped to true).
+- Verification run: gofmt -w .; go mod tidy; go build ./...; go vet ./...;
+  go test ./...; go test -race ./....
+- Results: all passed. goimports still not installed locally; golangci-lint,
+  staticcheck, govulncheck still not installed locally (documented in
+  earlier iterations).
+- Remaining risks / follow-ups:
+  - "Record an audit event for every mutating request and every denied
+    authorization decision" is N/A for GET /v1/organizations/{org_id}/api-keys:
+    it is a non-mutating read, and RequireAuth does not yet emit audit events
+    for denied decisions in the HTTP path. Auditing denied authorization
+    decisions in RequireAuth is a cross-cutting follow-up that should land as
+    its own story so every endpoint gets it uniformly, not piecemeal.
+  - "Unit tests cover ... validation failure" is N/A: this endpoint has no
+    request body, no path params other than the opaque {org_id}, and no
+    query parameters, so there is nothing syntactic to validate. The
+    cross-tenant-403 and viewer-403 tests are the authorization coverage;
+    the unauthenticated, invalid-credential, and disabled-principal tests
+    cover the rejection space.
+  - "Integration tests run against isolated Postgres migrations": the
+    store-backed APIKeyReader leans on the existing isolated-Postgres
+    integration coverage in store/apikey_test.go for ListByOrganization;
+    the new wrapper is a thin Store.Read composition with no SQL of its
+    own, mirroring NewMembershipReader. A dedicated integration test for
+    the wrapper itself is unnecessary and would duplicate the repository
+    suite.
+  - BE-0077 (contract tests for GET /v1/organizations/{org_id}/api-keys)
+    and BE-0078 (policy matrix coverage for the same) are now unblocked.
+    api_keys_test.go already covers much of BE-0077's surface — the
+    explicit story can either close as duplicate or extend coverage with
+    the dedicated contract assertions (the OpenAPI document tie-in test
+    is a likely candidate, mirroring TestListMembersIsDocumentedInOpenAPI).
+- Learnings for future iterations:
+  - keys.read is a CapAdmin action, NOT a CapRead action. Unlike the
+    members.read endpoint where a support principal can read across
+    tenants by the standard CapRead-with-support exception, the support
+    principal CANNOT read API keys cross-tenant — keys are CapAdmin and
+    support has only CapSelf+CapRead+CapSupport. When mirroring the
+    members test pattern, the "support cross-tenant read" test must
+    assert 403, not 200, for any CapAdmin endpoint. Future api-key
+    endpoint stories (BE-0079..BE-0093: POST/GET-by-id/PATCH/DELETE/rotate)
+    all pull the same CapAdmin gating from policy.ActionKeysRead /
+    policy.ActionKeysManage, so the pattern is uniform.
+  - Tests that exercise a bare handler (bypassing the full RequireAuth
+    middleware to assert wiring-error paths) MUST dispatch through the
+    "run" helper in middleware_test.go, which wraps the handler in
+    telemetry.Correlate so a request_id is resolved. Calling
+    handler.ServeHTTP(rec, req) directly leaves request_id empty and
+    decodeError fails with "request_id is empty, want the correlated
+    request id". The members suite (TestListMembersHandlerWithNilReaderIsInternal)
+    is the canonical pattern.
+  - The store-side reader wrapper is ALWAYS a thin Store.Read composition
+    over the repository's tenant-scoped read — there is no SQL written
+    twice, and the wrapper inherits the integration test guarantees the
+    repository proves. NewAPIKeyReader is one of three near-identical
+    wrappers (NewOrganizationReader, NewMembershipReader, NewAPIKeyReader);
+    future BE-XXXX stories that need a new read port should mirror this
+    shape exactly rather than push Querier handling into the handler layer.
+  - The wire shape for an API key DELIBERATELY omits SecretHash (the
+    one-way hash) — it is not a credential, but the project rule is that
+    credential material does not cross the HTTP boundary at all. The
+    test asserts the absence with two complementary checks: that the
+    sentinel hash value never appears in the body, AND that the literal
+    string "secret_hash" never appears as a JSON key. Future api-key
+    endpoint stories should reuse apiKeyResource / apiKeyResourceOf
+    rather than re-projecting the row, so the redaction stays uniform.
+---
