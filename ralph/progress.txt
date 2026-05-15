@@ -4315,3 +4315,107 @@
     uses. Reserve 204 for endpoints where the row is *not* the resource
     (e.g. session logout).
 ---
+## 2026-05-15 - BE-0075
+- What was implemented: Policy matrix coverage for DELETE
+  /v1/organizations/{org_id}/members/{member_id} — proves authorization for
+  action members.manage through the production NewHandler + real
+  policy.NewEngine() request path (not just the engine in isolation).
+  - internal/controlplane/httpapi/members_delete_policy_test.go (new):
+    - TestRemoveMemberPolicyMatrixRoles — every built-in role (owner,
+      admin, developer, viewer, ci, support) against the caller's own
+      {org_id}. Owner/Admin allow via ReasonAllowedByRole and the remover
+      is reached with both path params + actor; Developer/Viewer/CI/Support
+      all deny via ReasonDeniedNoCapability and the remover is never
+      reached (so a probed {member_id} cannot leak whether that user
+      belongs to the organization, and cannot silently destroy a
+      membership row). Each role also pins the engine verdict directly
+      against the resolver-shape (organization-root scope of {org_id}).
+    - TestRemoveMemberPolicyRevokedAndExpiredKeys — disabled principals
+      (the auth layer's surface for revoked / expired credentials) deny
+      with 403 + ReasonDeniedPrincipalDisabled even when the underlying
+      role is Owner; the remover never runs and the body never echoes the
+      principal id, organization id, or member id.
+    - TestRemoveMemberPolicyWrongOrganizationPrincipal — non-support
+      cross-tenant principal denied with ReasonDeniedCrossTenant; support
+      principal also denied cross-tenant (members.manage requires CapAdmin
+      and the engine's support cross-tenant exception is gated on
+      CapRead || CapSupport — locking in that DELETE never inherits the
+      read-side cross-tenant exception); support is also denied within
+      its own home org with ReasonDeniedNoCapability; remover never runs
+      in any branch and bodies leak no cross-tenant ids.
+    - TestRemoveMemberPolicyGrantContainment — project/environment/service
+      grants prove the standard scope-containment matrix
+      (sibling/production/parent-env asserted with project/env/service-
+      scoped actions so each grant has the right capability at the right
+      scope), then prove that a project/env/service-scoped Admin grant
+      does NOT cover the org-root scope members.manage requires
+      (ReasonDeniedOutOfScope) — even within the key's own organization;
+      a project-scoped grantee against its OWN org is denied at the wire
+      with the stable out-of-scope reason, and the remover never runs;
+      an organization-level Admin grant DOES cover the org root
+      (ReasonAllowedByGrant) and is end-to-end allowed at the wire with
+      both path params + actor forwarded; an organization-level Viewer
+      grant is NOT enough (locks in CapAdmin); a cross-tenant {org_id}
+      on the same scoped key is still denied with
+      ReasonDeniedCrossTenant.
+- Files changed:
+  - internal/controlplane/httpapi/members_delete_policy_test.go (new)
+  - ralph/prd.json (BE-0075 passes:true)
+  - ralph/progress.txt (this entry)
+- Verification run: gofmt -l (clean); go mod tidy (no-op); go vet ./...
+  (clean); go test ./...; go test -race ./....
+- Results: all passed. Focused suite
+  `go test -run 'TestRemoveMemberPolicy' ./internal/controlplane/httpapi/...`
+  green; full handler suite + entire repo also green under -race.
+  goimports / golangci-lint / staticcheck / govulncheck still not installed
+  locally (documented in earlier iterations).
+- Remaining risks / follow-ups:
+  - "Integration tests run against isolated Postgres migrations" is N/A
+    for a policy-matrix story: no Postgres state, no SQL. The matrix
+    drives the handler against in-memory fakes so what is being asserted
+    is the engine + middleware + resolver wiring, not persistence. The
+    membership store/repository suite already covers the Postgres-backed
+    DELETE path (BE-0073).
+  - The cross-cutting "audit denied authorization decisions in
+    RequireAuth" follow-up from BE-0040 / BE-0073 still applies — denies
+    here return a typed 403 but do not yet append an audit record.
+    Intentional: should land as one cross-cutting story so every endpoint
+    inherits it, not piecemeal.
+- Learnings for future iterations:
+  - The PATCH and DELETE companion policy matrices are intentionally near-
+    twins: same action (members.manage), same resolver
+    (memberIDResolver -> organization-root scope), same role table,
+    same containment table, same disabled-principal table. The DELETE
+    file diverges only in the verb-specific helpers (deleteMember,
+    removeMemberHandlerFor, fakeMembershipRemover, decodeRemoveMember,
+    store.RemoveMembershipInput captures) and the prose framing (the
+    sharper DELETE failure mode is destruction, not just leakage).
+    Future "policy matrix for VERB /endpoint" stories should reuse the
+    sibling matrix as a template — the four-test shape (roles, disabled
+    keys, wrong-org / support-exception boundary, grant-containment +
+    scoped-key-cannot-widen + cross-tenant smuggling) is the canonical
+    coverage envelope for org-rooted endpoints.
+  - "Pin both the engine verdict and the wire outcome" is the
+    load-bearing pattern. The engine assertion proves the policy decision
+    is what we believe it is for the resolver-shape the route emits; the
+    wire assertion proves the middleware + resolver + handler chain
+    actually surfaces that decision (and never reaches the underlying
+    port). Asserting only one half lets a regression in the other half
+    pass silently.
+  - For DELETE specifically, the "remover never runs" assertion is more
+    load-bearing than for PATCH: if a denied-auth path leaked through
+    silently it would not just leak data, it would destroy a membership
+    row. The captured-input pattern (`fakeMembershipRemover{got: &captured}`
+    with assertions that captured.OrganizationID == "" on every deny
+    branch) is the cheapest way to lock that down — same pattern works
+    for any future destructive endpoint with a captured-input fake.
+  - "members.manage requires CapAdmin so the support cross-tenant
+    exception does NOT apply" is the load-bearing distinction from
+    members.read. Whenever a future write endpoint shares an action with
+    a read endpoint, this check (engine-level: support against foreign
+    org → ReasonDeniedCrossTenant, support against own org →
+    ReasonDeniedNoCapability) is the regression boundary that prevents
+    a future catalog change from silently downgrading the action's
+    capability to CapRead.
+---
+
