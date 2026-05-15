@@ -84,7 +84,31 @@ func listProjectGrantsHandlerFor(id auth.Identity, authErr error, reader Project
 		fakeOrgVariableReader{}, fakeOrgVariableReplacer{}, fakeOrgVariablePatcher{}, fakeOrgVariableDeleter{},
 		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
 		fakeProjectReader{}, fakeProjectCreator{}, fakeProjectUpdater{}, fakeProjectDeleter{}, fakeProjectRestorer{},
-		reader, nil)
+		reader, fakeProjectGrantReplacer{}, nil)
+}
+
+// fakeProjectGrantReplacer is a canned ProjectGrantReplacer for httpapi
+// tests. The zero value returns an empty slice and no error from Replace,
+// which is all the tests that never reach the handler (the public-surface,
+// /v1/me, and other-route suites) need. Tests that drive the PUT endpoint
+// set grants/err and read got back to prove the input the handler forwards
+// is the principal's home org + the path project_id + every body field
+// verbatim — never a caller-controlled organization id.
+type fakeProjectGrantReplacer struct {
+	grants    []store.ProjectGrant
+	err       error
+	got       *store.ReplaceProjectGrantsInput
+	callCount *int
+}
+
+func (f fakeProjectGrantReplacer) Replace(_ context.Context, in store.ReplaceProjectGrantsInput) ([]store.ProjectGrant, error) {
+	if f.got != nil {
+		*f.got = in
+	}
+	if f.callCount != nil {
+		*f.callCount++
+	}
+	return f.grants, f.err
 }
 
 // getProjectGrants issues GET /v1/projects/{project_id}/grants against

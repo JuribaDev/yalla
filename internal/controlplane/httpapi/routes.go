@@ -106,12 +106,13 @@ type versionPayload struct {
 // projectCreator backs POST /v1/projects, projectUpdater backs PATCH
 // /v1/projects/{project_id}, projectDeleter backs DELETE
 // /v1/projects/{project_id}, projectRestorer backs POST
-// /v1/projects/{project_id}/restore, and projectGrants backs GET
+// /v1/projects/{project_id}/restore, projectGrants backs GET
+// /v1/projects/{project_id}/grants, and projectGrantReplacer backs PUT
 // /v1/projects/{project_id}/grants. Any may be nil for tests and tooling
 // that only inspect the route table's metadata; a request that actually
 // reaches a handler with a nil dependency is reported as a typed internal
 // error rather than a misleading empty list or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader) []apiRoute {
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -402,6 +403,37 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// persistence boundary.
 			resolver: projectIDResolver,
 			handler:  listProjectGrantsHandler(projectGrants),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodPut,
+				Path:           "/v1/projects/{project_id}/grants",
+				OperationID:    "replaceProjectGrants",
+				Summary:        "Replace project grants",
+				Description:    "Replaces the scoped grants attached to the project named by the {project_id} path parameter in one transaction. The request body supplies the complete replacement set — every grant absent from the body is removed, every grant present is upserted on its scope tuple (principal_id, environment_id, service_id), so a re-submission with the same set is structurally idempotent. An explicit empty array means \"clear every grant of this project\" — a meaningful (extreme) operation, never a silent no-op. Every field is validated before any database work; an invalid request (missing grants field, blank principal_id, unknown principal_kind, unknown role, duplicate scope tuple, service-scope without environment) never opens a transaction. Action project.grants.write is authorized against the (principal home organization, {project_id}) resource the path names before the handler runs: project.grants.write is a CapAdmin action, so the gate admits the principal's organization-wide admin roles (owner, admin) or a scoped grant that covers the resource (a project-scoped Admin grant for THAT project) while denying viewer, developer, ci, support, and grants that name only a sibling project, an unrelated environment, or an unrelated service because the policy engine asks whether the grant scope contains the resource scope, never the reverse. project.grants.write is a CapAdmin action, so there is no cross-tenant support exception — a support principal cannot replace another tenant's grants. A cross-tenant or unknown project_id reaches the persistence layer with the principal's home organization id and is rejected as a deterministic 404 by the project existence check, never disguised as an empty success. The replace, the audit record, and the post-write re-read are committed in one transaction so a partial replace and an orphaned audit row are both impossible. The response carries the persisted grants in the same stable wire shape GET /v1/projects/{project_id}/grants returns — every column projected onto the deterministic (principal_id, environment_id NULLS FIRST, service_id NULLS FIRST, id) order. A grant carries no credential material — the schema stores only structural identifiers and a role enum.",
+				Tags:           []string{tagProjects},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionProjectGrantsWrite),
+				PathParams: []openapi.PathParam{{
+					Name:        "project_id",
+					Description: "The id of the project whose grants to replace.",
+				}},
+				SuccessDescription: "The grants attached to the project after the replace.",
+			},
+			// projectIDResolver authorizes action project.grants.write against
+			// the (principal home organization, {project_id}) resource the
+			// path names, not merely the principal's home organization, so a
+			// scoped admin grant that names THIS project authorizes the write
+			// while a grant that names only a SIBLING project does not. The
+			// organization id is taken from the principal's home org (never
+			// the caller — there is no organization id in the request body),
+			// so a cross-tenant project_id still hits the tenant-scoped
+			// repository query and surfaces as a 404 at the persistence
+			// boundary. project.grants.write is a CapAdmin action and has no
+			// cross-tenant support exception — unlike CapRead actions, the
+			// support principal cannot replace grants in another tenant.
+			resolver: projectIDResolver,
+			handler:  replaceProjectGrantsHandler(projectGrantReplacer),
 		},
 		{
 			endpoint: openapi.Endpoint{

@@ -10,6 +10,8 @@ import (
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
 	"github.com/JuribaDev/yalla/internal/controlplane/policy"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
+	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
+	"github.com/JuribaDev/yalla/internal/controlplane/validate"
 )
 
 // errNoProjectGrantReader is returned when GET
@@ -19,6 +21,21 @@ import (
 // handler reports it as a typed internal failure rather than serving an
 // empty or misleading list.
 var errNoProjectGrantReader = errors.New("httpapi: no project grant reader configured")
+
+// errNoProjectGrantReplacer is returned when PUT
+// /v1/projects/{project_id}/grants is reached without a grant replacer wired
+// into NewHandler. Like errNoProjectGrantReader it can only happen through a
+// wiring error — a programming mistake, not a client error — so the handler
+// reports it as a typed internal failure rather than silently failing to
+// persist the change.
+var errNoProjectGrantReplacer = errors.New("httpapi: no project grant replacer configured")
+
+// errProjectGrantsBodyMissing is the closed-set rejection reason for a PUT
+// /v1/projects/{project_id}/grants body that decodes successfully but does
+// not name the "grants" field at all. An explicit empty array is a
+// meaningful clear and reaches the store layer; a missing field is a client
+// error so a misencoded request is never a silent clear.
+const errProjectGrantsBodyMissing = "must be supplied (provide an empty array to clear every grant)"
 
 // ProjectGrantReader is the narrow persistence port GET
 // /v1/projects/{project_id}/grants depends on. *store.ProjectGrantReader
@@ -177,4 +194,168 @@ func listProjectGrantsHandler(reader ProjectGrantReader) http.HandlerFunc {
 		}
 		apienvelope.WriteData(w, http.StatusOK, requestID(r), listProjectGrantsPayload{Grants: out})
 	}
+}
+
+// ProjectGrantReplacer is the narrow persistence port PUT
+// /v1/projects/{project_id}/grants depends on. *store.ProjectGrantService
+// satisfies it in production; tests supply a fake. Like ProjectGrantReader
+// it is an interface declared here so the handler stays unit-testable
+// without a real database — the concrete orchestrator (the tenant-scoped
+// project existence check, the per-grant upsert, the bulk
+// delete-by-exclusion, the audit record, and the post-write re-read, all
+// in one transaction) lives in the store layer.
+type ProjectGrantReplacer interface {
+	Replace(ctx context.Context, in store.ReplaceProjectGrantsInput) ([]store.ProjectGrant, error)
+}
+
+// projectGrantRequest is one entry in a replaceProjectGrantsRequest body:
+// the (principal_id, principal_kind, role, optional environment_id,
+// optional service_id) tuple the caller asks to persist for the project
+// named by the {project_id} path parameter.
+//
+// PrincipalKind is closed to "usr" or "sa" — the two principal kinds the
+// policy engine resolves — and Role is closed to one of the six built-in
+// role names. EnvironmentID and ServiceID are pointers so the wire
+// distinguishes "project-scoped grant" (both null) from
+// "environment-scoped grant" (only environment set) from "service-scoped
+// grant" (both set); a service-scoped grant must also name its parent
+// environment_id. Each field is validated in the store-layer unit of
+// work before any database write — an invalid request never opens a
+// transaction — and the handler does no per-field validation beyond
+// strict-decoding the body (oversized, malformed, or unknown-field bodies
+// become a typed 400 that never echoes the input).
+type projectGrantRequest struct {
+	PrincipalID   string  `json:"principal_id"`
+	PrincipalKind string  `json:"principal_kind"`
+	Role          string  `json:"role"`
+	EnvironmentID *string `json:"environment_id,omitempty"`
+	ServiceID     *string `json:"service_id,omitempty"`
+}
+
+// replaceProjectGrantsRequest is the decoded PUT
+// /v1/projects/{project_id}/grants request body: the complete set of
+// grants the caller asks to install for the project in one transaction.
+// Grants is a pointer to a slice so the body's omission of the field is
+// structurally distinguishable from an explicit empty array — PUT
+// replaces the entire set, so an explicit empty array means "clear every
+// grant" while a missing field is a stable 400.
+type replaceProjectGrantsRequest struct {
+	Grants *[]projectGrantRequest `json:"grants"`
+}
+
+// replaceProjectGrantsPayload is the data block of the PUT
+// /v1/projects/{project_id}/grants success envelope: the project's grants
+// after the replace, in the same stable wire shape GET
+// /v1/projects/{project_id}/grants returns. The endpoint always re-reads
+// the grants in the same transaction that committed the upsert + delete,
+// so the body always reflects the state that just persisted.
+type replaceProjectGrantsPayload struct {
+	Grants []projectGrantResource `json:"grants"`
+}
+
+// replaceProjectGrantsHandler builds the PUT
+// /v1/projects/{project_id}/grants handler. It decodes and delegates: the
+// request body is strictly decoded (oversized, malformed, or unknown-field
+// bodies become a typed 400 that never echoes the input), then the
+// replace-grants unit of work — verify the project, upsert each grant,
+// delete every grant not in the replacement set, append the audit record,
+// re-read the committed grants, all in one transaction — runs in the
+// store layer through the ProjectGrantReplacer port.
+//
+// RequireAuth gates the route on action project.grants.write before the
+// handler runs — authorized through projectIDResolver against the
+// (principal home organization, {project_id}) resource the path names —
+// and attaches the resolved principal, so a request that reaches the
+// handler has already cleared the tenant boundary against the principal's
+// home organization combined with the path id. A request that arrives
+// here with no principal is therefore a wiring error and is reported as
+// a typed internal error. The principal and the request correlation
+// identifiers are passed to the replacer so the audit record names the
+// actor; a validation failure (missing grants field, blank principal_id,
+// unknown principal_kind, unknown role, duplicate scope tuple,
+// service-scope without environment), a not-found {project_id}, and a
+// datastore outage each surface as their own typed status, never
+// disguised as one another.
+//
+// project.grants.write is a CapAdmin action: only the owner and admin
+// roles, or a principal holding a scope-covering admin grant, can
+// replace a project's grants. Viewer, developer, ci, and support are all
+// denied at the policy boundary, never reaching this handler. The
+// support principal's cross-tenant read exception does NOT apply because
+// project.grants.write is a write action — CapSupport never satisfies
+// CapAdmin in the engine.
+func replaceProjectGrantsHandler(replacer ProjectGrantReplacer) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if replacer == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoProjectGrantReplacer))
+			return
+		}
+
+		var req replaceProjectGrantsRequest
+		if err := validate.DecodeJSON(r.Body, &req, 0); err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		if req.Grants == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "grants",
+				Reason: errProjectGrantsBodyMissing,
+			}))
+			return
+		}
+
+		items := make([]store.ProjectGrantReplace, 0, len(*req.Grants))
+		for _, item := range *req.Grants {
+			items = append(items, store.ProjectGrantReplace{
+				PrincipalID:   item.PrincipalID,
+				PrincipalKind: item.PrincipalKind,
+				Role:          item.Role,
+				EnvironmentID: cloneOptionalString(item.EnvironmentID),
+				ServiceID:     cloneOptionalString(item.ServiceID),
+			})
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		grants, err := replacer.Replace(r.Context(), store.ReplaceProjectGrantsInput{
+			OrganizationID: p.OrganizationID,
+			ProjectID:      r.PathValue("project_id"),
+			Grants:         items,
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		payload := replaceProjectGrantsPayload{
+			Grants: make([]projectGrantResource, 0, len(grants)),
+		}
+		for _, g := range grants {
+			payload.Grants = append(payload.Grants, projectGrantResourceOf(g))
+		}
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), payload)
+	}
+}
+
+// cloneOptionalString returns a fresh *string carrying the same value as
+// in. It is used when copying caller-supplied nullable pointers from the
+// decoded request body into the store input so the store layer cannot
+// observe or mutate the caller's backing string memory. A nil input
+// stays nil — the project / environment / service scope distinction
+// reaches the store intact.
+func cloneOptionalString(in *string) *string {
+	if in == nil {
+		return nil
+	}
+	v := *in
+	return &v
 }

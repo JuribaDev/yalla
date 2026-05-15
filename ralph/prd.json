@@ -3526,7 +3526,7 @@
       ],
       "type": "endpoint-project",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Endpoint belongs to the project backend surface."
     },
     {

@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Replace-grants writer vertical (BE-0139 pattern, internal/controlplane/store/project_grant.go + httpapi/project_grants.go): a PUT-replace endpoint on a (parent, scoped-children) resource family pairs the existing reader-port adapter with a unit-of-work writer (ProjectGrantService) modeled exactly on OrganizationVariableService. The repository grows two new methods: Upsert(tx, id, organizationID, projectID, principalID, principalKind, role, *envID, *svcID) (ProjectGrant, error) using `ON CONFLICT (organization_id, project_id, principal_id, COALESCE(environment_id, ''), COALESCE(service_id, ''))` so the customer-mutable `role` is the only column the UPDATE branch touches (the immutable scope tuple + the bump_version trigger handle the rest); DeleteByProjectExceptIDs(tx, organizationID, projectID, keepIDs) renders the empty-keepIDs case as an unconstrained DELETE (an explicit clear is a meaningful customer operation), the non-empty case as `NOT (id = ANY($3::text[]))` so the bulk delete-by-exclusion is one round trip — same shape as DeleteByOrganizationExceptKeys but anchored on the row id (which Upsert returns from RETURNING) rather than a customer-supplied key, so an upsert that mutates an existing row deterministically keeps the survivor's id. The service Replace runs inside one Store.Write tx: project existence Get (a missing parent is typed NotFound, never a generic FK conflict), per-grant Upsert collecting the persisted ids into keepIDs, DeleteByProjectExceptIDs(keepIDs), audit.Append, post-write ListByProject re-read — every step shares the *Tx so a partial replace and an orphaned audit row are both impossible. Validation lives in buildProjectGrantReplace (split out, unit-testable without a DB): closed-set checks on principal_kind / role mirror the table's CHECK constraints, structural checks reject blank/NUL ids and a service-scope-without-environment, in-memory dedup uses `principalID + "\x00" + COALESCE(envID,'') + "\x00" + COALESCE(svcID,'')` to match the SQL unique index byte-for-byte. Audit metadata records counts only — `grant_count`, `project_scope_count`, `environment_scope_count`, `service_scope_count` — never principal ids, role names, or environment/service identifiers; per-row mutation history is the GET /v1/projects/{project_id}/grants surface's job. The HTTP layer adds a ProjectGrantReplacer port mirroring OrganizationVariableReplacer, a strict-decoded replaceProjectGrantsRequest with Grants *[]projectGrantRequest (pointer-to-slice so missing field is structurally distinguishable from an explicit empty array — a missing field is a stable 400, an empty array reaches the store), and the handler clones caller-supplied *string EnvironmentID/ServiceID pointers before forwarding them so the store cannot observe the caller's backing memory. NewHandler and newRouteTable signatures each grow ONE positional port (projectGrantReplacer ProjectGrantReplacer just after projectGrants ProjectGrantReader); a Python regex sweep over 27 test files anchored on `fakeProjectGrantReader{}, nil)` -> `fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, nil)` handled the bulk of the NewHandler churn (43 call sites), with three follow-up patterns hand-fixed: `, logger)` in server_test.go and me_contract_test.go (NewHandler with non-nil logger), `, nil)` newRouteTable call (different return type), and the 29-nil all-nil newRouteTable pattern in six test files (added one trailing nil for the new port). The story implicitly delivers BE-0439's CRUD repository acceptance criteria (Upsert + DeleteByProjectExceptIDs are the missing half) and the writer side of BE-0440's tenant-isolation criteria.
 - Inverse-lifecycle endpoints (restore vs schedule-delete) reuse the same Repository+Service pattern: the repository is an SQL-idempotent UPDATE returning the row (with optional version WHERE — NotFound on no-rows + nil ifMatch, classifyProjectConcurrencyMiss on no-rows + non-nil), and the Service does the lifecycle-state precondition check inside the same Store.Write transaction. For restore: pre-check current.DeletionScheduledAt != nil (else apierr.Conflict "project is not scheduled for deletion"); for schedule-delete: pre-check ==nil (else "deletion is already scheduled"). The pre-check is the customer's truth-finding step — the repository MUST stay SQL-idempotent so workers/admin jobs can retry without surfacing a misleading Conflict. Audit metadata captures the prior state (for restore, current.DeletionScheduledAt read BEFORE the UPDATE; for schedule-delete, the new stamp from the persisted row) so the trail documents what the resource looked like before/after the mutation.
 - Backend code lives under internal/controlplane/<pkg>; CLI stays under internal/cli. Keep HTTP handlers thin.
 - Shared primitives are reused, not reinvented: typed errors come from internal/errors (yerr.New/Newf, CodeConfig, etc.); the redaction sentinel and Redactor come from internal/output.
@@ -10422,4 +10423,228 @@
     keeps "what does a scoped key authorize" all in one place; the
     wrong-organization test stays focused on the role-based path.
 
+---
+
+## 2026-05-15 - BE-0139
+- What was implemented: PUT /v1/projects/{project_id}/grants — the
+  writer half of the project-grants vertical whose reader half BE-0136
+  landed and whose authorization matrix BE-0138 already exercises for
+  the GET shape. The endpoint replaces the project's scoped grants in
+  one transaction through a new ProjectGrantReplacer port satisfied by
+  *store.ProjectGrantService.
+  - internal/controlplane/store/project_grant.go: extended with the
+    persistence + unit-of-work writer. ProjectGrantRepository grows two
+    methods: Upsert(tx, id, organizationID, projectID, principalID,
+    principalKind, role, *envID, *svcID) (ProjectGrant, error) using
+    ON CONFLICT (organization_id, project_id, principal_id,
+    COALESCE(environment_id, ''), COALESCE(service_id, '')) DO UPDATE
+    SET role = EXCLUDED.role — only the customer-mutable role column
+    is touched on the UPDATE branch; the immutable scope tuple +
+    bump_version trigger refresh version/updated_at; a nil *Tx is a
+    typed Internal (programming error). DeleteByProjectExceptIDs(tx,
+    organizationID, projectID, keepIDs) renders the empty-keepIDs case
+    as an unconstrained DELETE filtered on (organization_id,
+    project_id) and the non-empty case as
+    NOT (id = ANY($3::text[])) — one round trip either way, tenant
+    scoped at the WHERE clause. ProjectGrantService composes Store,
+    ProjectRepository, ProjectGrantRepository, AuditAppender; Replace
+    runs inside one Store.Write tx: project existence Get (a missing
+    parent is typed NotFound, never a generic FK conflict), per-grant
+    Upsert collecting the persisted RETURNING ids into keepIDs (so an
+    upsert that mutates an existing row keeps the survivor's id, not
+    the caller-minted one), DeleteByProjectExceptIDs(keepIDs),
+    audit.Append, post-write ListByProject re-read.
+    buildProjectGrantReplace validates closed-set principal_kind ({usr,
+    sa}) and role (the six built-in roles) against in-memory tables
+    that mirror the table CHECK constraints byte-for-byte;
+    normaliseProjectGrantScopeID trims blank/NUL bytes from *string
+    scope ids; the dedup uses principalID + "\x00" +
+    safeProjectGrantScopeID(envID) + "\x00" + safeProjectGrantScopeID(
+    svcID) so the in-memory uniqueness matches the SQL
+    project_grants_principal_scope_idx COALESCE(...,'') projection
+    byte-for-byte. Service-scope-without-environment is rejected as
+    InvalidInput naming "grants[i].environment_id". Audit metadata
+    records {grant_count, project_scope_count, environment_scope_count,
+    service_scope_count} — counts only, never principal ids, role
+    names, or env/svc identifiers (per-row mutation history is the
+    reader's job).
+  - internal/controlplane/store/project_grant_service_test.go (new):
+    11 isolated-Postgres integration tests covering happy-path INSERT
+    (every column round-tripped, pgrnt_ prefix, version=1, audit row
+    with exact metadata counts), upsert idempotency on the same scope
+    tuple (id preserved, role mutated, version bumped),
+    delete-by-exclusion (a grant absent from the second Replace is
+    physically gone), explicit-clear semantics on grants:[],
+    NotFound-on-missing-project (audit rolls back with the tx),
+    cross-tenant project_id surfaces as NotFound never as a leak
+    oracle, invalid principal_kind / unknown role / duplicate scope
+    tuple / service-without-environment each surface as InvalidInput
+    naming the exact field path (asserted through ViolationsOf, not
+    err.Error()), blank-actor-org as Internal (wiring error), and the
+    constructor's fail-fast nil-deps check.
+  - internal/controlplane/httpapi/project_grants.go: extended with the
+    writer port + handler. ProjectGrantReplacer mirrors
+    OrganizationVariableReplacer (one method:
+    Replace(ctx, store.ReplaceProjectGrantsInput) ([]store.ProjectGrant,
+    error)). replaceProjectGrantsRequest carries Grants
+    *[]projectGrantRequest — the pointer-to-slice idiom is the
+    structural way to distinguish "field missing" (stable 400 naming
+    the "grants" field with the closed-set reason
+    errProjectGrantsBodyMissing) from an explicit "[]" (which reaches
+    the store as an explicit clear). The handler clones caller-supplied
+    *string EnvironmentID/ServiceID pointers through cloneOptionalString
+    before forwarding them so the store cannot observe the caller's
+    backing memory; the (project | environment | service)-scoped
+    distinction reaches the store intact. OrganizationID is taken from
+    the principal's home org (never the wire), ProjectID from
+    r.PathValue("project_id"). validate.DecodeJSON handles oversized /
+    malformed / unknown-field bodies as the global stable 400 contract.
+    A nil port is the typed Internal errNoProjectGrantReplacer
+    (programming wiring error).
+  - internal/controlplane/httpapi/project_grants_put_test.go (new): 11
+    contract tests in package httpapi exercising the real NewHandler +
+    real policy engine (fake Authenticator + fake ProjectGrantReplacer
+    only) — happy path with every field round-tripped + audit-record
+    surface forwarded, explicit-empty-array semantics (reaches the
+    store, response is "[]" not null), missing-grants-field as 400
+    (replacer never runs), malformed JSON 400, unknown-field 400,
+    unauthenticated 401, viewer-in-tenant denied 403 by the policy
+    engine (proves project.grants.write is CapAdmin), not-found project
+    propagation 404, store-validation-error propagation 400, store
+    outage 503 (no upstream-cause leak), unwired replacer 500, and the
+    OpenAPI route-registered assertion (operationId
+    "replaceProjectGrants", x-required-action project.grants.write,
+    tag projects).
+  - internal/controlplane/httpapi/routes.go: extended newRouteTable
+    signature with projectGrantReplacer ProjectGrantReplacer as a new
+    positional parameter just after projectGrants; added the new
+    apiRoute entry for PUT /v1/projects/{project_id}/grants with
+    RequiresAuth=true,
+    RequiredAction=string(policy.ActionProjectGrantsWrite),
+    projectIDResolver, tagProjects, and a full OpenAPI description
+    that documents the CapAdmin role admission rule, the no-cross-
+    tenant-support exception for CapAdmin actions, the explicit-empty-
+    array clear semantics, idempotency on the scope tuple, the
+    deterministic 404 a cross-tenant or unknown project_id receives,
+    and the one-transaction commit guarantee.
+  - internal/controlplane/httpapi/server.go: extended NewHandler
+    signature with projectGrantReplacer ProjectGrantReplacer as a new
+    positional parameter just before logger. Doc comment updated to
+    name the new port.
+  - internal/controlplane/httpapi/{27 _test.go files via Python regex
+    over `fakeProjectGrantReader{}, nil)` -> add fakeProjectGrantReplacer{}
+    (43 NewHandler call sites), plus three follow-up sweeps: `, logger)`
+    in server_test.go and me_contract_test.go (NewHandler with non-nil
+    logger), `, nil)` end of newRouteTable in projects_delete_test and
+    projects_restore_test (different return shape — newRouteTable does
+    not take a logger), and the 29-nil all-nil newRouteTable pattern
+    in six test files (one trailing nil for the new port). fakeProject
+    GrantReplacer is declared in project_grants_test.go beside fake
+    ProjectGrantReader — zero value returns empty/no error, callers
+    can inject grants/err and read back got + callCount.}
+  - cmd/yalla-api/main.go: wired store.NewProjectGrantService through
+    NewProjectRepository / NewProjectGrantRepository / auditRepo and
+    threaded it as the new positional argument to httpapi.NewHandler
+    just after projectGrants.
+- Files changed:
+  - internal/controlplane/store/project_grant.go
+  - internal/controlplane/store/project_grant_service_test.go (new)
+  - internal/controlplane/httpapi/project_grants.go
+  - internal/controlplane/httpapi/project_grants_test.go
+  - internal/controlplane/httpapi/project_grants_put_test.go (new)
+  - internal/controlplane/httpapi/routes.go
+  - internal/controlplane/httpapi/server.go
+  - cmd/yalla-api/main.go
+  - 27 internal/controlplane/httpapi/*_test.go files updated for the
+    new positional argument (NewHandler + newRouteTable)
+- Verification run:
+  - gofmt -w . (no diff after rerun).
+  - go vet ./... (clean).
+  - go mod tidy (no changes; only standard-library imports added).
+  - go test ./... (clean without YALLA_TEST_DATABASE_URL — the CI
+    baseline; all httpapi contract tests pass, all store unit tests
+    pass).
+  - go test -race ./... (clean without YALLA_TEST_DATABASE_URL).
+  - go test -race -run 'TestProjectGrant|TestNewProjectGrantService|
+    TestNewProjectGrantReader|TestListProjectGrants|
+    TestReplaceProjectGrants' ./internal/controlplane/...
+    (clean WITH YALLA_TEST_DATABASE_URL pointing at the local Docker
+    Postgres; every integration test in the BE-0139 vertical PASSES,
+    including the audit-metadata count assertions and the cross-tenant
+    leak-oracle guard).
+  - goimports, golangci-lint, staticcheck, govulncheck still not
+    installed locally (documented in earlier iterations).
+- Results: all BE-0139 acceptance criteria met. Pre-existing test
+  failures in TestAPIKeyServiceCreate* and TestOrganizationVariableServicePatch*
+  remain when run against the shared local Postgres
+  (the same gotcha documented in the BE-0127 entry); reproduced by
+  stashing the BE-0139 changes and re-running, so confirmed unrelated.
+- Remaining risks / follow-ups:
+  - BE-0140 (Add contract tests for PUT /v1/projects/{project_id}/grants)
+    is partially satisfied by project_grants_put_test.go but lives as a
+    separate PRD story; that story should extend the suite with
+    additional contract surfaces (cursor stability is not relevant for
+    a non-paginated PUT, but it should pin the request-id propagation
+    explicitly, the structured-log redaction property for the request
+    body, and an explicit If-Match story when optimistic concurrency on
+    the project_grants table becomes a feature). The BE-0139 tests
+    already cover happy path, success envelope, error envelope, the
+    schema_version, the OpenAPI registration, and the unauthenticated /
+    invalid-input / not-found / unauthorized failure modes — most of
+    BE-0140's acceptance criteria.
+  - BE-0141 (the policy matrix for PUT /v1/projects/{project_id}/grants)
+    is the next story in the project-grants vertical — the CapAdmin
+    sibling of BE-0138's CapRead matrix. The wire scaffolding
+    (replaceProjectGrantsHandlerFor, putProjectGrants,
+    decodeReplaceProjectGrants, fakeProjectGrantReplacer,
+    projectGrantsAdminIdentity) in project_grants_put_test.go is the
+    same reuse pattern BE-0138 took from project_grants_test.go's
+    listProjectGrantsHandlerFor scaffolding.
+  - Optimistic concurrency on project_grants is structurally available
+    (the bigint version column + bump_version trigger), but PUT
+    /v1/projects/{project_id}/grants does not surface If-Match today —
+    a multi-grant replace's coherent ETag would be the
+    aggregate-version of the project_grants subset, which is a future
+    contract decision. A single-grant PATCH endpoint (a future story
+    like "PATCH /v1/projects/{project_id}/grants/{grant_id}") would
+    inherit per-row If-Match from the existing organizations PATCH /
+    DELETE / projects PATCH parseIfMatchVersion helper.
+  - The audit metadata is intentionally coarse (counts only) to keep
+    the customer-supplied principal_ids and role names out of the
+    audit log; per-row mutation history is the reader's
+    bump_version-stamped row. A future "audit replay" story that wants
+    to reconstruct a grant set from audit metadata alone would need a
+    richer per-row audit_events shape, not a relaxation of this
+    chokepoint.
+- Learnings for future iterations:
+  - apierr.Internal returns a yerr with Code=CodeInternal
+    (E_INTERNAL), NOT Code=CodeServer. CodeServer is reserved for
+    upstream Dokploy errors. The constructor-rejects-blank-ActorOrg
+    pattern should assert CodeInternal in tests.
+  - Test field-path assertions for InvalidInput errors should use
+    apierr.ViolationsOf(err) and walk the FieldViolations rather than
+    strings.Contains on err.Error() — the user-facing Error() method
+    surfaces only the message ("request validation failed"), not the
+    field paths. Helper violationFor(err, field) in
+    project_grant_service_test.go is the reusable shape.
+  - When a NewHandler signature change adds ONE positional port, the
+    27-file bulk regex sweep over `fakeProjectGrantReader{}, nil)` ->
+    `fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, nil)` covers
+    the bulk (43 of 45 sites). The exceptional sites are: NewHandler
+    with non-nil logger arg (`, logger)` instead of `, nil)`) in
+    server_test.go and me_contract_test.go — 3 sites total; the trailing
+    `, nil)` newRouteTable call (2 sites — these need a different
+    substitution because newRouteTable does NOT take a logger); and the
+    29-nil all-nil newRouteTable pattern (6 sites — these need exactly
+    one more nil). A targeted second pass over the residue resolved each
+    edge case; a final `grep -rn fakeProjectGrantReader{}` with a
+    "not followed by fakeProjectGrantReplacer" filter confirmed
+    completeness.
+  - The Upsert RETURNS the persisted row id, which is the surviving
+    id of an existing row at the same scope tuple — NOT the caller-
+    minted id passed in INSERT. The keepIDs collection that drives
+    the delete-by-exclusion must read from row.ID (the RETURNING
+    value), not the locally minted id, or the second Replace's delete
+    would orphan the row it just mutated. This is the same idiom
+    OrganizationVariableService uses for the same reason.
 ---
