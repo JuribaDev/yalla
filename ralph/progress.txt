@@ -1,6 +1,7 @@
 ## Codebase Patterns
 - New top-level resource family that already has its persistence table from an earlier migration (BE-0148 pattern, environments table from 0002 + version column from 0011, store/environment.go, httpapi/project_environments.go): a reader-only scoped-child vertical lands JUST the GET endpoint and pairs with the existing table — NO new migration. The vertical is structurally identical to BE-0142 (project_variables reader) with one narrowing worth pinning: when the table already exists (environments was created by 0002_tenant_hierarchy.up.sql at the same time as projects/services, and gained its version + bump_version trigger in 0011_optimistic_versions.up.sql), the story collapses into store layer + http layer + wiring + tests — no migration to declare composite FKs, scope-uniqueness indexes, or triggers. The store layer (Environment struct, EnvironmentRepository.ListByProject, EnvironmentReader.ListProjectEnvironments) mirrors ProjectVariableRepository/ProjectVariableReader exactly — every read is tenant-scoped at the SQL predicate, the reader Gets the project first inside the same Store.Read tx so a cross-tenant or unknown project_id surfaces as apierr.NotFound (never an empty list), and the repository has its own list cap (environmentListMaxRows = 500). Crucially, environments carry NO credential material (the table stores only id, organization_id, project_id, slug, display_name, version, created_at, updated_at) so the HTTP projection (projectEnvironmentOf) needs no value-redaction chokepoint — every field is structural — but the projection STILL exists as a single chokepoint so a future column added to store.Environment is reviewed for its wire exposure here rather than leaking by default. The integration tests (store/environment_test.go) prove ordering, tenant scoping (a cross-tenant (orgA, projB_id) pair yields no rows), the empty-project shape (non-nil empty slice), the reader's project existence check, and that a cross-tenant id surfaces as apierr.NotFound WITHOUT leaking any of the foreign tenant's environment id / project id / slug into the error message. The HTTP layer adds a new operation tag (tagEnvironments = "environments") because environments will get their own /v1/environments/{environment_id} surface later; the list endpoint is tagged [tagProjects, tagEnvironments] mirroring how project_variables uses [tagProjects, tagVariables]. NewHandler and newRouteTable signatures each grow ONE positional port (projectEnvironments ProjectEnvironmentReader at the TAIL of the arg list, after projectVariableReplacer); cmd/yalla-api/main.go wires *store.EnvironmentReader at startup. A Python regex sweep over 33 test files anchored on `fakeProjectVariableReplacer{}, nil)` -> `fakeProjectVariableReplacer{}, fakeProjectEnvironmentReader{}, nil)` (44 sites) plus a second sweep on `fakeProjectVariableReplacer{}, logger)` (server_test.go + me_contract_test.go) plus the named-replacer outlier `fakeProjectVariableReader{}, replacer, nil)` -> `..., replacer, fakeProjectEnvironmentReader{}, nil)` (project_variables_test.go's replaceProjectVariablesHandlerFor) plus the openapi-only newRouteTable form `fakeProjectVariableReader{}, fakeProjectVariableReplacer{})` -> `..., fakeProjectEnvironmentReader{})` (project_variables_test.go's BE-0142 OpenAPI test) handled the NewHandler/newRouteTable churn (54 sites total). The all-nil newRouteTable form with 32 nils received one trailing nil to become 33 (6 sites). projects_delete_test.go + projects_restore_test.go newRouteTable calls ended `fakeProjectGrantReader{}, nil, nil, nil)` and got one MORE trailing nil to become `nil, nil, nil, nil)`. The KindEnvironment domain Kind ("env") already existed and is in the valid-kinds map from earlier work; no domain/id.go changes were needed. Forward-applicable to every future reader-only vertical on a hierarchy resource whose table predates the story.
 - env.read-on-{project_id}-resolver policy matrix (BE-0144, internal/controlplane/httpapi/projects_variables_get_policy_test.go) is the structural sibling of the project.grants.read-on-{project_id}-resolver matrix (BE-0138, projects_grants_policy_test.go) — same CapRead capability class, same projectIDResolver scope (`{principal home org, path project_id}`), same six-roles-all-allow matrix via ReasonAllowedByRole, same support cross-tenant exception at the engine (ReasonAllowedBySupport — pinned even though projectIDResolver structurally blocks it on the customer-facing wire), same engine cross-tenant deny matrix for non-support roles, same scoped-grant containment shape (sibling project denied, env-/service-scoped grants denied against the project resource, org-level Viewer grant allowed via ReasonAllowedByGrant). The load-bearing distinction is the wire-redaction chokepoint: project_variables rows carry credential material (a non-null Value that flips to output.Sentinel when IsSecret), so the deny-body leak guard (variablesDenyBodyLeak) anchors on BOTH structural identifiers (canonical project/var ids, keys, non-secret values) AND the seeded secret plaintext (canonicalVariablesSecretPlaintext). project_grants rows store no credential material, so grantsDenyBodyLeak omits a plaintext anchor. The allow-path test also asserts secret rows project as output.Sentinel and that the seeded plaintext never appears in the response body — pinning projectVariableOf as the chokepoint independent of how authority was earned (role / org-level grant / project-level grant). Forward-applicable to every future env.read matrix that resolves into a project-, env-, or service-level scope on a variables route: keep the role / disabled / wrong-org / grant-containment skeleton, swap the action+resolver for the new endpoint's, and ALWAYS add a secret-plaintext needle to the leak guard plus a Sentinel-projection assertion to every allow-path tie-in.
+- environment.read-on-bare-{environment_id}-resolver policy matrix (BE-0156, internal/controlplane/httpapi/environments_get_policy_test.go) is the structural sibling of the {project_id}-resolver siblings (BE-0144 env.read on the variables route, BE-0150 environment.read on the parent-scoped route) for endpoints that use a BARE-ID resolver (environmentIDResolver, future serviceIDResolver / deploymentIDResolver). TWO load-bearing distinctions from the projectIDResolver siblings. (1) The resolver pins NO ProjectID leg on the resource scope (`policy.Scope{OrganizationID: principal.home, EnvironmentID: r.PathValue("environment_id")}`), so the engine's one-way Scope.covers() rule (internal/controlplane/policy/policy.go) denies EVERY scoped grant at the boundary via ReasonDeniedOutOfScope — project-scoped, env-scoped, AND service-scoped grants all DENY on this route, even when the grant names the target environment's own id or the target environment's own parent project, because the grant scope pins ProjectID and the resource scope does not. The acceptance criteria's three containment properties (sibling project not reached / staging-grant-doesn't-imply-production / service-grant-shields-parent-env-secrets) are still pinned at the engine against their natural resources (project / env / service Resource), but the wire tie-in INVERTS the projectIDResolver shape: instead of "project-scoped grant on target ALLOWS, sibling DENIES," every scoped-key type DENIES with ReasonDeniedOutOfScope on this route and only org-wide roles + the org-level grant allow. The org-level Viewer grant remains the load-bearing ALLOW because its grant scope pins nothing past OrganizationID — covers() matches a resource without ProjectID. Pin a "grant on the SAME environment id as the path names" engine-level deny too, so a future relaxation of covers() (e.g. admitting `Scope{EnvironmentID: env_X}` to cover `Resource{Scope{EnvironmentID: env_X}}` regardless of ProjectID) cannot land without failing this test. (2) The support cross-tenant exception is suppressed on the wire by construction — environmentIDResolver pins OrganizationID to principal.home — so the support cross-tenant ALLOW only fires at the engine layer against a hand-built foreign-org Resource. The wire-level "wrong organization" probe surfaces as 404 E_NOT_FOUND from the tenant-scoped GetByID query (never 403, which would confirm existence), and the body must not echo the foreign org id. The contract-test helper bakes in a single canonical principal (getEnvironmentHandlerFor takes `t, reader` only, with authForEnvGet's hardcoded principal), so this matrix introduces a per-test identity-injected helper LOCAL to the policy file (getEnvironmentByIDHandlerForIdentity, signature `(id auth.Identity, authErr error, reader EnvironmentReader) http.Handler`) modelled on listProjectsHandlerFor / listProjectEnvironmentsHandlerFor — adding the helper locally avoids modifying the 9 contract tests that already use the simpler form. ACTION-CONSTANT gotcha to pin: routes.go:574 sets `RequiredAction: string(policy.ActionEnvironmentRead)` for this route, NOT `policy.ActionEnvRead` — both are CapRead per catalog.go but they're different catalog entries (env-vars vs env entity); mixing them up silently swaps which catalog row a future tier-upgrade watches. Forward-applicable to every future bare-id matrix on a deep resource (service.read on /v1/services/{service_id}, deployment.read on /v1/deployments/{deployment_id}, etc).
 - environment.read-on-{project_id}-resolver policy matrix (BE-0150, internal/controlplane/httpapi/projects_environments_get_policy_test.go) is the structural sibling of the env.read matrix at the same resolver (BE-0144) with TWO narrowings worth pinning because the persistence row carries NO credential material: (1) drop the secret-plaintext deny-body leak anchor — environmentsDenyBodyLeak anchors ONLY on canonical structural identifiers (project id/slug/display_name + per-env id/slug/display_name) because the environments table has nothing that needs redaction; (2) drop the "secret row still projects as output.Sentinel even when authority came via a project-level or org-level grant" allow-path assertion — projectEnvironmentOf has no value-redaction chokepoint to anchor. Everything else stays one-for-one identical: same six-roles-all-allow ReasonAllowedByRole role matrix, same Disabled-principal 403 with ReasonDeniedPrincipalDisabled, same wire-level cross-tenant test (reader always called with principal home org id, the persistence layer rejects the cross-tenant project_id pair as 404 NotFound), same engine-level cross-tenant deny matrix for every non-support role + ReasonAllowedBySupport for support (CapRead inside the support cross-tenant exception clause), same four-wire-tie-in grant-containment shape (project-scoped Viewer on target ALLOWS, sibling project DENIES, env-scoped grant DENIES against parent project, service-scoped grant DENIES against parent project, org-level Viewer grant ALLOWS, scoped key planted in foreign home org DENIES at engine). CRITICAL action-constant gotcha: env.read variables and environment.read entities live in the same Org→Project→Env→Service hierarchy but use DIFFERENT action constants (policy.ActionEnvRead = "env.read" for env-vars vs policy.ActionEnvironmentRead = "environment.read" for the env entity); both are CapRead and both go through projectIDResolver on the project-scoped reader routes, but mixing them up silently swaps which catalog row a future tier-upgrade regression watches. Always grep the route registration in routes.go AND the existing contract test's OpenAPI assertion to confirm which action a route is gated on before writing the policy matrix. Forward-applicable to every future CapRead-on-{X}-resolver matrix where the underlying row carries no credential material (org_grants, members, audit_events, etc.): keep the four-test skeleton, swap action+resource Kind, and drop the secret-plaintext anchor + Sentinel-projection assertion.
 - CapAdmin-on-{project_id}-resolver policy matrix (BE-0141, internal/controlplane/httpapi/projects_grants_put_policy_test.go) is the structural sibling of the CapWrite-on-{project_id}-resolver matrix (projects_delete_policy_test.go) but ONE TIER UP — Developer JOINS the deny set at the role boundary (it holds CapWrite, not CapAdmin) and the org-level Developer grant flips from ALLOW for project.delete to DENY for project.grants.write. The load-bearing pair is org-level Admin grant ALLOW + org-level Developer grant DENY: that pair locks the CapAdmin requirement against the grant path so a future catalog change that downgraded project.grants.write to CapWrite would still pass the allow check but fail the deny check (silently letting every developer key rewrite a project's authority), and the regression direction is documented as a structural test, not only catalog assertion. The cross-tenant engine matrix DENIES every role including Support (CapAdmin is OUTSIDE the engine clause `roleCaps.has(CapSupport) && (required == CapRead || required == CapSupport)`); the CapRead-on-{project_id}-resolver siblings (project.grants.read at BE-0138 etc) ALLOW Support cross-tenant via ReasonAllowedBySupport — pinning the same-shape distinction in both directions documents that read-vs-write is the load-bearing axis for the support exception. Mutating-policy-matrix tests carry TWO directions of leak guard: a request-body leak guard (replaceGrantsRequestBodyLeak, anchored on distinctive caller-supplied identifiers like usr_request_matrix that NEVER appear in the canonical fixture data) and a would-have-returned-data leak guard (grantsDenyBodyLeak, anchored on canonical fixture data the fake replacer would return on an allow path) — used together on every deny path so a future renderer that gained either a "render request body on error" or "render would-have-returned data on 403" mode fails here. A read endpoint needs only the second; a write endpoint needs both. CI must be listed EXPLICITLY in both the per-role deny rows and the cross-tenant engine deny loop, because CapDeploy (which CI holds) is its own axis — neither CapWrite nor CapAdmin. The "scoped key planted in a foreign home org" engine assertion (a principal whose home org is org_sibling but whose grant scope still names a project in org_acme, authorized against org_sibling's resource) is independent of CapAdmin/CapWrite/CapRead — the engine refuses to consider the grant at all because the principal's OrganizationID no longer matches the grant scope's OrganizationID. Pin this on every grant-containment test so a stolen scoped key documentedly cannot be smuggled across tenants by anyone who finds it.
 - env.write-on-{project_id}-resolver policy matrix (BE-0147, internal/controlplane/httpapi/projects_variables_put_policy_test.go) is the writer-side structural sibling of the env.read matrix at the same resolver (BE-0144, projects_variables_get_policy_test.go) and the project-scope sibling of the org-level env.write matrix (BE-0111, variables_put_policy_test.go). Same CapWrite capability class as project.delete/project.update (CapAdmin lives one tier up at project.grants.write/BE-0141), so the role table is identical to the org-level env.write: owner/admin/developer ALLOW via ReasonAllowedByRole, viewer/ci/support DENY via ReasonDeniedNoCapability — CI denies despite holding CapDeploy because env.write is CapWrite, not CapDeploy (CapDeploy is its own axis). Cross-tenant engine matrix DENIES every role INCLUDING Support (CapWrite is OUTSIDE the `roleCaps.has(CapSupport) && (required == CapRead || required == CapSupport)` exception, same posture as CapAdmin and the load-bearing distinction from env.read where support IS allowed cross-tenant). Wire-level cross-tenant story is the projectIDResolver shape: the resource org is the principal's home org, never the path's tenant, so the engine admits the same-tenant resource and the persistence layer rejects the (attacker_home_org, foreign_project_id) pair as 404 NotFound — the replacer DOES run (callCount=1) but with the attacker's home org id, so a production store could not have replaced the victim's variables regardless. Grant containment proves the org-level Developer ALLOW + org-level Viewer DENY pair (locks CapWrite against the grant path against both directions of catalog drift); project-level Viewer grant on target project ALSO DENIES (Viewer is CapRead-only); project-level Developer grant on target project ALLOWS, sibling project DENIES, env-/service-scoped Admin grants DENY against the parent project (covers() one-way). Variables-flavoured leak guards carry the same TWO directions that BE-0141 introduced — a request-body leak guard (anchored on caller-supplied MATRIX_KEY/matrix_value that never appear in the canonical fixture) AND a would-have-returned-data leak guard (postWriteProjectVariablesBodyLeak, anchored on the seeded post-write rows: per-row ids, keys, the non-secret value AND every recognisable fragment of the seeded secret plaintext post-write-plaintext-correcthorsebatterystaple). The allow-path Sentinel-projection assertion is the chokepoint anchor: even right after a customer submitted a secret, the post-write re-read STILL redacts via projectVariableOf -> output.Sentinel, so PUT cannot leak a secret value the customer just submitted. Forward-applicable to every future CapWrite-on-{X}-resolver matrix at any scope — keep the role / disabled / wrong-org / grant-containment skeleton + dual-direction leak guard, swap the action+resolver target+resource Kind, and ALWAYS add a secret-plaintext needle to the post-write leak guard plus a Sentinel-projection assertion on every allow-path tie-in.
@@ -11834,4 +11835,171 @@
     is shared across handlers. Reuse it in any new handler that
     reads a principal — a handler that defines its own sentinel
     would split the typed-error surface for no benefit.
+---
+
+## 2026-05-15 - BE-0156
+- What was implemented: policy-matrix coverage for GET
+  /v1/environments/{environment_id}, proving the bare-id route's
+  authorization contract cannot be bypassed by — or leak an
+  environment row because of — the principal's role, revoked or
+  expired credentials, home organization, or scoped grants. The
+  contract test (BE-0154) proves WHAT the endpoint returns; this
+  matrix proves WHEN it is allowed to return anything at all.
+  - internal/controlplane/httpapi/environments_get_policy_test.go
+    (new, ~570 lines): four matrix tests driving the real
+    NewHandler + real policy.NewEngine() (the production request
+    path, fake Authenticator only).
+    - TestGetEnvironmentPolicyMatrixRoles: all six built-in roles
+      (owner/admin/developer/viewer/ci/support) ALLOW via
+      ReasonAllowedByRole at a same-tenant resource, the reader is
+      called with (principal.OrganizationID, path environment_id),
+      and the wire body carries the canonical environment in a
+      stable yalla.output.v1 envelope. ci runs as a service-account
+      kind, every other role runs as a user-kind principal.
+    - TestGetEnvironmentPolicyRevokedAndExpiredKeys: a Disabled
+      principal carrying an Owner role is 403 with
+      ReasonDeniedPrincipalDisabled, the reader never runs
+      (callCount=0, gotOrg="", gotEnv=""), and the denied body
+      never echoes the principal id, the organization id, or any
+      seeded environment identifier — the load-bearing property
+      that a revoked or expired credential cannot read an
+      environment of its former tenant.
+    - TestGetEnvironmentPolicyWrongOrganizationPrincipal: pins the
+      engine-vs-wire split for cross-tenant access. On the WIRE,
+      an attacker in org_attacker hitting GET
+      /v1/environments/{env_victim} surfaces as 404 E_NOT_FOUND
+      (the resolver pins OrganizationID to principal.home, the
+      engine admits the same-tenant resource, and the tenant-
+      scoped GetByID rejects the (org_attacker, env_victim) pair);
+      the reader IS called once but with the attacker's home org,
+      so a production store could not have surfaced the victim's
+      row regardless. The body never echoes the foreign org id.
+      At the ENGINE LAYER (independent of the resolver), every
+      non-support role denies a foreign-org Resource via
+      ReasonDeniedCrossTenant, and Support allows via
+      ReasonAllowedBySupport — pinning the documented support
+      exception for CapRead actions even though the customer-facing
+      route cannot reach that engine branch by construction.
+    - TestGetEnvironmentPolicyGrantContainment: the load-bearing
+      distinction from the projectIDResolver siblings. The
+      acceptance criteria's three containment properties are pinned
+      at the engine against their natural resources (project-scoped
+      Viewer ALLOWS environment.read at a project resource, sibling
+      DENIES; env-staging grant doesn't reach env.write on
+      production; service grant doesn't reach env.write on the
+      parent environment), THEN — because environmentIDResolver
+      pins NO ProjectID leg — every scoped-key type is also
+      proven DENIED on THIS endpoint by ReasonDeniedOutOfScope,
+      even when the grant names the target environment's own
+      project (a target-project Viewer grant) or the target
+      environment's own id (an env-target Admin grant). Wire tie-
+      ins for project-scoped, env-scoped, and service-scoped keys
+      all 403 with ReasonDeniedOutOfScope, reader never reached
+      (callCount=0), no canonical environment data echoed. The
+      org-level Viewer grant ALLOWS via ReasonAllowedByGrant
+      end-to-end (its grant scope pins nothing past
+      OrganizationID, so covers() admits a resource without
+      ProjectID), the reader reached on (home_org, path env_id).
+      Engine-twin: a project-scoped grant from org_acme planted
+      on a principal whose home org is org_sibling is denied
+      independently of CapRead/CapWrite — the cross-tenant guard
+      fires before the grant is even considered.
+  - internal/controlplane/httpapi/environments_get_policy_test.go
+    introduces ONE new helper local to the file:
+    getEnvironmentByIDHandlerForIdentity(id, authErr, reader). The
+    BE-0154 contract test's getEnvironmentHandlerFor(t, reader)
+    bakes in a single canonical principal via authForEnvGet and is
+    unsuitable for a matrix; the new helper mirrors
+    listProjectsHandlerFor / listProjectEnvironmentsHandlerFor's
+    shape and uses the shared fakeAuthenticator from
+    middleware_test.go. No changes to the contract test file or
+    its 9 existing tests.
+  - ralph/prd.json: BE-0156 passes=true. Remaining open: 502/614.
+- Verification run:
+  - gofmt -l . (clean)
+  - go mod tidy (clean)
+  - go vet ./... (clean)
+  - go test ./... (all packages pass)
+  - go test -race ./internal/controlplane/httpapi/... (passes)
+- Remaining risks / follow-ups:
+  - BE-0156's structural sibling stories for the rest of the
+    bare-id family (BE-0186 service.read on /v1/services/{service_id},
+    BE-0189 service.update, BE-0192 service.delete, etc.) can
+    copy this shape verbatim — same suppression of the support
+    cross-tenant exception on the wire by construction, same
+    universal scoped-grant deny via ReasonDeniedOutOfScope, same
+    org-level role + org-level Viewer/Developer/Admin grant as
+    the only allow vectors. The action-constant gotcha (env vs
+    environment) does NOT apply to services because there is
+    only one service.read in the catalog.
+  - The matrix proves grant-only principals cannot use this
+    endpoint at all. The parent-scoped GET
+    /v1/projects/{project_id}/environments (BE-0148/BE-0150)
+    remains the route for project- and env-scoped keys to address
+    an environment by its (project, env) tuple. If a future story
+    adds a service-scoped or env-scoped lookup-by-id endpoint
+    that DOES want to admit scoped keys, the resolver will need
+    to do a tenant-scoped Get FIRST to resolve the parent
+    project_id before the policy engine runs — an architectural
+    choice with its own consequences (the resolver gains I/O, the
+    tenant-scoped Get becomes part of the auth path, and a
+    cross-tenant id is detected at the resolver instead of the
+    handler). Not in scope for BE-0156 — the docstring on
+    environmentIDResolver and the route description already
+    pre-empt the confusion.
+  - golangci-lint / staticcheck / govulncheck still not installed
+    locally (documented in earlier iterations).
+- Learnings for future iterations:
+  - When a contract test (BE-0154) bakes in a single canonical
+    principal through a hardcoded authenticator (authForEnvGet),
+    do NOT refactor the existing helper to accept identity — that
+    cascades through every test in the contract file. Add a
+    parallel identity-injected helper LOCAL to the policy test
+    file, modelled on the listFooHandlerFor(id, authErr, reader)
+    shape from projects_test.go / project_environments_test.go,
+    and reuse the shared fakeAuthenticator from middleware_test.go.
+    Two helpers in two files is structurally simpler than one
+    helper with two call shapes; the contract suite stays
+    unchanged.
+  - Bare-id resolvers (path carries only the resource id, no
+    parent ids) have a SYSTEMATIC consequence the matrix must
+    pin: the engine's one-way Scope.covers() rule
+    (internal/controlplane/policy/policy.go) requires every level
+    the grant pins to match the resource scope. A grant with
+    pinned ProjectID cannot cover a resource scope without
+    ProjectID, so EVERY project-, env-, and service-scoped
+    grant — including grants on the target environment's own
+    id — is structurally denied by ReasonDeniedOutOfScope. The
+    matrix must pin this in BOTH directions: the engine-level
+    containment properties from the acceptance criteria
+    (sibling-project, production-not-implied, parent-secret-non-
+    leak) at their natural resources, AND a fixture set that
+    proves a target-id grant ALSO denies at this resolver,
+    because that's the regression direction a future relaxation
+    of covers() (admitting EnvID=env_X to cover Resource with
+    EnvID=env_X regardless of ProjectID) would break.
+  - The action-constant gotcha pinned in BE-0150 cuts deeper than
+    documented: env-vars (env.read / env.write — variables under
+    /v1/organizations/{org_id}/variables and
+    /v1/projects/{project_id}/variables) and env entities
+    (environment.read / environment.update — the env entity
+    itself on /v1/projects/{project_id}/environments and
+    /v1/environments/{environment_id}) use DIFFERENT catalog
+    constants even at the bare-id route. Confirm the action by
+    reading routes.go AT the route registration BEFORE writing
+    the matrix — for /v1/environments/{environment_id} the line
+    is "RequiredAction: string(policy.ActionEnvironmentRead)"
+    (the entity action), NOT ActionEnvRead.
+  - Reader-running-on-deny-path counters (callCount=0, gotOrg="",
+    gotEnv="") are the structural anti-leak guard the matrix
+    needs alongside the body-echo leak guard. The body guard
+    proves the renderer didn't echo data; the counter guard
+    proves the data wasn't read in the first place — so a
+    production store with a future "log on read" side effect
+    cannot silently observe the cross-tenant or out-of-scope
+    request. Both directions are needed because a future
+    regression could land either way (the renderer could grow a
+    "render on 403" mode without the reader running, or the
+    reader could run despite the engine denying through a
+    middleware ordering bug).
 ---
