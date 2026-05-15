@@ -91,6 +91,18 @@ orchestrator's job.
   401), `request_id` propagation, and OpenAPI registration + `x-required-action`.
 - For endpoints that read/mutate customer-owned resources, add tenant-isolation
   tests (a cross-tenant path id must be 403 or not-found, never a leak).
+- A separate "Add contract tests for <endpoint>" story usually finds the
+  implementation story's `<endpoint>_test.go` already covers most criteria —
+  diff against the story's `acceptanceCriteria` and add only the gaps in a
+  sibling `<endpoint>_contract_test.go`, do not duplicate. The recurring gaps
+  are (a) the server writes response data **only** through the
+  `http.ResponseWriter` and (b) the structured request log stays redacted on
+  both the success and the error path. See `me_contract_test.go`:
+  `captureProcessOutput(t, fn)` swaps `os.Stdout`/`os.Stderr` for `os.Pipe`
+  write-ends and drains the read-ends in goroutines (a non-drained pipe
+  deadlocks once its buffer fills) — the test that uses it must **not** be
+  `t.Parallel()`. Build the test logger at `slog.LevelDebug` so a level
+  threshold cannot mask the redaction assertion.
 
 ## Binary wiring
 

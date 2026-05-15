@@ -2978,3 +2978,64 @@
   - Use fakeOrganizationReader.gotID (a *string) to assert "reader never
     reached" on every deny path — set it and check it stayed "".
 ---
+
+## 2026-05-15 - BE-0041
+- Added the remaining public-API contract coverage for GET /v1/me. me_test.go
+  (shipped with BE-0040) already proved the success/error envelopes, request_id
+  propagation, OpenAPI registration, and the unauthenticated / invalid-
+  credential / disabled-principal / dependency-failure rejection space. BE-0041
+  closes the contract-test criteria those tests did not assert directly.
+- New file: internal/controlplane/httpapi/me_contract_test.go
+  - meHandlerWithLogger: the production GET /v1/me path (real policy engine,
+    fake Authenticator) with a caller-supplied *slog.Logger so a test can read
+    the structured request log.
+  - captureProcessOutput(t, fn): redirects os.Stdout/os.Stderr around fn via
+    os.Pipe and returns what was written to each (drains in goroutines to avoid
+    pipe-buffer deadlock; mutates globals, so the using test is NOT parallel).
+  - TestMeServerWritesResponseDataOnlyToResponseWriter: a served GET /v1/me
+    writes nothing to process stdout/stderr; the identity is carried by the
+    response body; the structured logger is the only sanctioned writer and
+    emits to its own sink.
+  - TestMeRequestLogRedactsBearerToken: table over the success (200) and
+    authorization-failure (403 disabled) paths — the bearer credential
+    (meContractSecret) never appears in the log buffer or the response body on
+    either outcome. Logger built at LevelDebug so nothing is gated out.
+  - TestMeErrorEnvelopeDoesNotLeakDependencyCause: a credential-store outage is
+    a typed 503 E_UNAVAILABLE whose error envelope carries a generic message —
+    the wrapped driver cause ("connection refused dialing 10.0.0.5:5432") and
+    the datastore address never reach the wire.
+- Files changed: internal/controlplane/httpapi/me_contract_test.go (new),
+  ralph/prd.json (BE-0041 passes:true), ralph/progress.txt.
+- Verification: gofmt -w . clean, go mod tidy clean, go build ./... clean,
+  go vet ./... clean, go test ./... PASS, go test -race ./... PASS (store
+  integration packages ran — docker compose Postgres up). goimports /
+  golangci-lint / staticcheck / govulncheck still not installed locally
+  (documented in earlier iterations).
+- Remaining risks / follow-ups:
+  - The "invalid input" and "not found" contract rows are N/A for GET /v1/me:
+    no request body, no path params, no query params — there is no caller
+    input to validate and no resource to look up. The rejection-space tests in
+    me_test.go cover the failure contract instead. Documented in the file
+    header so reviewers see it is deliberate.
+  - BE-0044 / BE-0047 / BE-0050 / BE-0053 (contract-test stories for the other
+    organization endpoints) remain passes:false. Their endpoints' _test.go
+    files already cover most criteria; the stdout/stderr + log-redaction
+    contract assertions added here are the reusable gap-closer for those too.
+- **Learnings for future iterations:**
+  - "Add contract tests for <endpoint>" stories where the implementation story
+    already shipped a thorough _test.go: do NOT duplicate. Read the existing
+    file, diff it against the story's acceptanceCriteria, and add only the
+    missing assertions in a sibling _contract_test.go. For the org/me read
+    endpoints the consistent gaps are (a) "stdout/stderr not used for response
+    data" and (b) "logs remain redacted" — neither is covered by the
+    implementation story's contract test.
+  - captureProcessOutput is the pattern for asserting the HTTP server writes
+    only through the ResponseWriter: swap os.Stdout/os.Stderr for os.Pipe
+    write-ends, drain the read-ends in goroutines (a non-drained pipe will
+    deadlock once its ~64KB buffer fills), restore + close after the call. The
+    test must not be t.Parallel() — it mutates process globals.
+  - telemetry.RequestLogging never logs request headers, so a bearer token in
+    Authorization is structurally absent from the log; the redaction test pins
+    that as a contract so a future logging change cannot silently regress it.
+    Build the test logger at slog.LevelDebug so the assertion is not masked by
+    a level threshold dropping the record.
