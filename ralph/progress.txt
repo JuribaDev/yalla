@@ -8,6 +8,7 @@
 - Tests inject dependencies (e.g. config.MapLookup) instead of touching real process env/filesystem. Use t.Parallel().
 - Quality gate before commit: gofmt -w ., go mod tidy, go build ./..., go vet ./..., go test ./..., go test -race ./....
 - Partial-update (PATCH) endpoints: the request DTO and store *Input use *string fields — nil means "field omitted, leave unchanged". The store builds+validates the patch BEFORE opening the transaction (rejecting a patch that names no field as a 400), then inside Store.Write reads the current row, applies the non-nil fields, and Updates. A repository Update using UPDATE ... RETURNING must check errors.Is(err, pgx.ErrNoRows) for the missing-row case BEFORE mapWriteError (which only classifies constraint-violation vs outage). Never set updated_at in an Update statement — the per-table set_updated_at() BEFORE UPDATE trigger owns it.
+- Customer-facing DELETE endpoints schedule a SOFT delete, never a hard delete: the store stamps a nullable deletion_scheduled_at column (migration 0010 for organizations) inside the same transaction as the <resource>.delete audit record, and the endpoint returns 202 Accepted. A hard DELETE would cascade through child tables AND the audit log (ON DELETE CASCADE), so the destructive teardown is a separate worker story. Re-scheduling an already-stamped row is apierr.Conflict, detected with a Get inside the tx (the repository ScheduleDeletion is an unconditional UPDATE).
 - Process lifecycle is owned by internal/controlplane/runtime: RunHTTPServer(ctx, srv, shutdownTimeout, logger) for the API and worker.Loop for background jobs. Backend binaries derive shutdown from one signal.NotifyContext and pass cfg.ShutdownTimeout; they do not hand-roll select/Shutdown blocks.
 - runtime.Readiness holds named startup gates (concurrency-safe). httpapi.NewHandler takes a runtime.ReadinessReporter; /readyz must be 503 yalla.error.v1 E_SERVER until every gate passes, 200 yalla.output.v1 after. /healthz is liveness-only and never depends on downstream checks.
 - worker.Loop depends only on the Claimer/Lease interfaces so the durable job store can land later. The loop checks ctx before every Claim (stop claiming on shutdown) and releases interrupted in-flight leases on a context.WithoutCancel context so the release survives shutdown. A job whose Run returns nil is committed and must never be released.
@@ -3167,4 +3168,84 @@
     updateOrganizationHandlerFor, patchOrganization, decodeUpdateOrganization,
     fakeOrganizationUpdater{org,err,got}. Assert "updater never reached" via
     captured.OrganizationID == "" (the got *store.UpdateOrganizationInput capture).
+---
+
+## 2026-05-15 - BE-0058
+- What was implemented: DELETE /v1/organizations/{org_id}, the first
+  customer-facing deletion endpoint. It is a *scheduled* soft delete: the
+  endpoint stamps organizations.deletion_scheduled_at and commits an immutable
+  organization.delete audit record in one transaction, then returns 202
+  Accepted with the organization carrying its deletion_scheduled_at stamp. The
+  destructive teardown (the ON DELETE CASCADE through projects/environments/
+  services and the audit log itself) is deliberately left to a later worker
+  story — a hard delete here would cascade away the very audit record the
+  request just wrote.
+- Files changed:
+  - new: store/migrate/migrations/0010_organization_deletion_schedule.{up,down}.sql
+    (adds nullable organizations.deletion_scheduled_at + a partial index for the
+    future teardown-scan worker)
+  - store/organization.go: Organization.DeletionScheduledAt *time.Time,
+    organizationColumns + scanOrganization extended, new
+    OrganizationRepository.ScheduleDeletion (unconditional UPDATE ... RETURNING,
+    pgx.ErrNoRows -> NotFound)
+  - store/organizationservice.go: organizationDeleteAction const,
+    DeleteOrganizationInput, OrganizationService.ScheduleDeletion (Get inside
+    tx -> Conflict if already stamped -> ScheduleDeletion -> audit Append;
+    records the resolved stamp time as audit metadata)
+  - httpapi/organizations.go: OrganizationDeleter port, errNoOrganizationDeleter,
+    deleteOrganizationPayload, deleteOrganizationHandler; organizationResource
+    gained DeletionScheduledAt *string `json:"...,omitempty"` and
+    organizationResourceOf maps it (nil -> omitted, so every other org
+    endpoint's wire shape is byte-identical)
+  - httpapi/routes.go: newRouteTable gained a deleter param + the DELETE route
+    (operationId deleteOrganization, RequiredAction organization.delete,
+    SuccessStatus 202, organizationIDResolver)
+  - httpapi/server.go: NewHandler gained a deleter param
+  - cmd/yalla-api/main.go: passes organizationService as the deleter (one
+    OrganizationService value now satisfies reader-adjacent creator/updater/deleter)
+  - new tests: httpapi/organizations_delete_test.go (15 handler contract /
+    authz / tenant-isolation / OpenAPI tests, incl. fakeOrganizationDeleter),
+    store/organization_delete_test.go (8 isolated-Postgres integration tests:
+    repo stamp + not-found, service success + audit, not-found, already-
+    scheduled rollback, tenant scoping, blank id, missing actor org)
+  - updated NewHandler/newRouteTable call sites: me_contract_test.go, me_test.go,
+    organizations_create_test.go, organizations_test.go, organizations_patch_test.go,
+    server_test.go, routes_test.go
+  - httpapi/AGENTS.md (NewHandler signature + the "adding a port breaks every
+    call site" note), store/AGENTS.md (DELETE = scheduled soft delete pattern)
+- Verification (YALLA_TEST_DATABASE_URL set, local Postgres via docker compose):
+  gofmt -l: clean; go mod tidy: no changes; go vet ./...: clean;
+  go test ./...: all pass; go test -race ./...: all pass (incl. the new
+  integration tests + TestMigrations applying 0010 from an empty database).
+  goimports: not installed (documented, gofmt covers formatting).
+- Results: 23 new tests, all green. BE-0058 marked passes: true.
+- Remaining risks / follow-ups:
+  - BE-0059 (contract tests for DELETE) and BE-0060 (policy matrix for DELETE)
+    are now unblocked — organizations_delete_test.go already covers most of
+    BE-0059's criteria; diff + add gaps in a sibling _contract_test.go, then
+    add the dedicated policy matrix following organizations_patch_policy_test.go.
+  - The actual destructive teardown of a scheduled organization is unbuilt — it
+    is a worker story. GET/LIST/PATCH still operate on a scheduled organization;
+    whether they should reject or surface the scheduled state is a future
+    product decision, intentionally out of scope here.
+  - Denied-authorization-decision auditing at the RequireAuth boundary remains
+    unwired for every endpoint (a cross-cutting concern, unchanged by this story).
+- **Learnings for future iterations:**
+  - organization.delete maps to CapOwner (catalog.go) — stricter than
+    organization.update's CapAdmin. Only RoleOwner holds CapOwner, so for a
+    principal acting on its OWN org the role matrix is "owner allow, everyone
+    else (admin/developer/viewer/ci/support) deny". The success/forwards tests
+    must use RoleOwner; RoleAdmin is the natural "insufficient role" case.
+  - Adding a *pointer* field to organizationResource is safe for existing
+    struct-equality tests: Go structs with pointer fields stay comparable with
+    ==, and json omitempty + a nil pointer omits the key entirely, so a decoded
+    response with the key absent compares equal to a literal with the field nil.
+  - pgx scans a nullable timestamptz straight into a *time.Time (NULL -> nil),
+    so adding deletion_scheduled_at to organizationColumns needed no NullTime
+    wrapper — just &o.DeletionScheduledAt in scanOrganization.
+  - Migrations are auto-discovered from the embed FS; no count/version literal
+    to bump. 0010 was picked up by TestMigrations with no test edit.
+  - Adding a port param to NewHandler breaks 7 *_test.go call sites (incl. two
+    bare newRouteTable calls in server_test.go and one in routes_test.go that
+    grep for 'NewHandler(' alone misses) — grep BOTH symbols.
 ---

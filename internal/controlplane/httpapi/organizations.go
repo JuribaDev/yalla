@@ -36,6 +36,13 @@ var errNoOrganizationCreator = errors.New("httpapi: no organization creator conf
 // typed internal failure rather than silently failing to persist the change.
 var errNoOrganizationUpdater = errors.New("httpapi: no organization updater configured")
 
+// errNoOrganizationDeleter is returned when DELETE /v1/organizations/{org_id}
+// is reached without an organization deleter wired into NewHandler. Like
+// errNoOrganizationUpdater it can only happen through a wiring error — a
+// programming mistake, not a client error — so the handler reports it as a
+// typed internal failure rather than silently failing to schedule the deletion.
+var errNoOrganizationDeleter = errors.New("httpapi: no organization deleter configured")
+
 // OrganizationReader is the narrow persistence port GET /v1/organizations
 // depends on. *store.OrganizationReader satisfies it in production; tests
 // supply a fake. Keeping the dependency an interface keeps the handler
@@ -62,26 +69,38 @@ type organizationsPayload struct {
 // lifecycle timestamps — as the control plane stores it. It is the HTTP wire
 // shape, deliberately distinct from store.Organization so the persistence
 // layout can evolve without breaking the public contract.
+//
+// DeletionScheduledAt is present only once a deletion has been scheduled for
+// the organization through DELETE /v1/organizations/{org_id}; it is omitted
+// entirely for a live organization, so adding it left the wire shape of every
+// other organization endpoint byte-for-byte unchanged.
 type organizationResource struct {
-	OrganizationID string `json:"organization_id"`
-	Slug           string `json:"slug"`
-	DisplayName    string `json:"display_name"`
-	CreatedAt      string `json:"created_at"`
-	UpdatedAt      string `json:"updated_at"`
+	OrganizationID      string  `json:"organization_id"`
+	Slug                string  `json:"slug"`
+	DisplayName         string  `json:"display_name"`
+	CreatedAt           string  `json:"created_at"`
+	UpdatedAt           string  `json:"updated_at"`
+	DeletionScheduledAt *string `json:"deletion_scheduled_at,omitempty"`
 }
 
 // organizationResourceOf projects a store.Organization into the stable wire
 // shape. Timestamps are rendered as UTC RFC 3339 strings so the contract is
 // independent of the database driver's time representation and the response is
-// deterministic for a given row.
+// deterministic for a given row. A nil DeletionScheduledAt — a live
+// organization — is omitted from the wire shape entirely.
 func organizationResourceOf(o store.Organization) organizationResource {
-	return organizationResource{
+	resource := organizationResource{
 		OrganizationID: o.ID,
 		Slug:           o.Slug,
 		DisplayName:    o.DisplayName,
 		CreatedAt:      o.CreatedAt.UTC().Format(time.RFC3339Nano),
 		UpdatedAt:      o.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
+	if o.DeletionScheduledAt != nil {
+		scheduled := o.DeletionScheduledAt.UTC().Format(time.RFC3339Nano)
+		resource.DeletionScheduledAt = &scheduled
+	}
+	return resource
 }
 
 // organizationsHandler builds the GET /v1/organizations handler. It lists the
@@ -346,6 +365,75 @@ func updateOrganizationHandler(updater OrganizationUpdater) http.HandlerFunc {
 		}
 
 		apienvelope.WriteData(w, http.StatusOK, requestID(r), updateOrganizationPayload{
+			Organization: organizationResourceOf(org),
+		})
+	}
+}
+
+// OrganizationDeleter is the narrow persistence port DELETE
+// /v1/organizations/{org_id} depends on. *store.OrganizationService satisfies
+// it in production; tests supply a fake. Like OrganizationUpdater it is an
+// interface declared here so the handler stays unit-testable without a real
+// database — the concrete orchestrator (the soft-delete write and the audit
+// record committed in one transaction) lives in the store layer.
+type OrganizationDeleter interface {
+	ScheduleDeletion(ctx context.Context, in store.DeleteOrganizationInput) (store.Organization, error)
+}
+
+// deleteOrganizationPayload is the data block of the DELETE
+// /v1/organizations/{org_id} success envelope: the organization with its
+// deletion_scheduled_at stamp set, in the same stable wire shape the other
+// organization endpoints return. It carries no credential material.
+type deleteOrganizationPayload struct {
+	Organization organizationResource `json:"organization"`
+}
+
+// deleteOrganizationHandler builds the DELETE /v1/organizations/{org_id}
+// handler. It delegates to the schedule-deletion unit of work — read the row,
+// stamp deletion_scheduled_at, append the audit record, all in one transaction
+// — which runs in the store layer through the OrganizationDeleter port. The
+// deletion is scheduled, not immediate: the response is 202 Accepted carrying
+// the organization with its deletion_scheduled_at stamp, and the destructive
+// teardown is a later worker story.
+//
+// RequireAuth gates the route on action organization.delete before the handler
+// runs — authorized through organizationIDResolver against the organization the
+// path names — and attaches the resolved principal, so a request that reaches
+// the handler has already cleared the tenant boundary: a cross-tenant {org_id}
+// was rejected as a 403 by the policy engine, never reaching this code. A
+// request that arrives here with no principal is therefore a wiring error and
+// is reported as a typed internal error. The principal and the request
+// correlation identifiers are passed to the deleter so the audit record names
+// the actor; a not-found {org_id}, an already-scheduled organization, and a
+// datastore outage each surface as their own typed status, never disguised as
+// one another.
+func deleteOrganizationHandler(deleter OrganizationDeleter) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if deleter == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoOrganizationDeleter))
+			return
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		org, err := deleter.ScheduleDeletion(r.Context(), store.DeleteOrganizationInput{
+			OrganizationID: r.PathValue("org_id"),
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		apienvelope.WriteData(w, http.StatusAccepted, requestID(r), deleteOrganizationPayload{
 			Organization: organizationResourceOf(org),
 		})
 	}

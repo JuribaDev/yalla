@@ -51,10 +51,11 @@ import (
 // panics at startup rather than serving an unprotected endpoint.
 //
 // orgs backs the store-reading endpoints (GET /v1/organizations), creator backs
-// POST /v1/organizations, and updater backs PATCH /v1/organizations/{org_id}.
-// All are narrow ports, not the concrete store, so the HTTP surface stays
-// unit-testable with fakes; cmd/yalla-api wires the real store.OrganizationReader
-// and store.OrganizationService at startup. A nil orgs, creator, or updater
+// POST /v1/organizations, updater backs PATCH /v1/organizations/{org_id}, and
+// deleter backs DELETE /v1/organizations/{org_id}. All are narrow ports, not the
+// concrete store, so the HTTP surface stays unit-testable with fakes;
+// cmd/yalla-api wires the real store.OrganizationReader and
+// store.OrganizationService at startup. A nil orgs, creator, updater, or deleter
 // still registers its route — the handler reports a typed internal error rather
 // than a misleading empty list or a silently dropped write — which suits tests
 // and tooling that only exercise the public surface.
@@ -63,11 +64,11 @@ import (
 // registers every entry on the mux and generates the OpenAPI document
 // (GET /openapi.json) from the same table, so a served route is always a
 // documented route.
-func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, authenticator Authenticator, engine *policy.Engine, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, logger *slog.Logger) http.Handler {
+func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, authenticator Authenticator, engine *policy.Engine, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, logger *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 	build = build.Normalized()
 
-	table := newRouteTable(build, readiness, meta, orgs, creator, updater)
+	table := newRouteTable(build, readiness, meta, orgs, creator, updater, deleter)
 
 	// Generate the OpenAPI document once, from the route table, at startup.
 	doc := openAPIDocument(build, table)

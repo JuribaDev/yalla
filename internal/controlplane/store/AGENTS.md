@@ -258,6 +258,15 @@ Postgres persistence for control-plane source-of-truth state.
   later `*.up.sql`, and `DROP CONSTRAINT ... IF EXISTS` it **first** in that
   migration's `*.down.sql` — it depends on the new table's composite `UNIQUE`
   key.
+- Customer-facing `DELETE` endpoints **schedule a soft delete**, they do not
+  hard-delete: `OrganizationService.ScheduleDeletion` stamps
+  `organizations.deletion_scheduled_at` (migration `0010`) inside the same
+  transaction as the `organization.delete` audit record. A hard delete cascades
+  (`ON DELETE CASCADE`) through projects/environments/services *and the audit
+  log itself* — so the destructive teardown is a later worker story; the
+  endpoint only records intent. Re-scheduling an already-stamped row is
+  `apierr.Conflict`, detected with a `Get` inside the tx (the repository's
+  `ScheduleDeletion` is an unconditional `UPDATE`, mirroring `Update`).
 - The store layer is the redaction chokepoint for **error-summary-style**
   free-text columns it owns (`provisioning_jobs.error_summary` is run through
   `output.NewRedactor()` on every `Insert`/`Transition`). This differs from

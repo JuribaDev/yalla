@@ -14,12 +14,18 @@ import (
 // Organization -> Project -> Environment -> Service hierarchy. It is the
 // persistence-layer shape; HTTP request and response shapes are the job of the
 // httpapi layer.
+//
+// DeletionScheduledAt is nil for a live organization and carries the stamp time
+// once a deletion has been scheduled through DELETE /v1/organizations/{org_id}.
+// The destructive teardown itself (the ON DELETE CASCADE) is a later worker
+// story, so a scheduled organization — and its audit trail — still exists.
 type Organization struct {
-	ID          string
-	Slug        string
-	DisplayName string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID                  string
+	Slug                string
+	DisplayName         string
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	DeletionScheduledAt *time.Time
 }
 
 // OrganizationRepository is the persistence layer for the organizations table.
@@ -43,7 +49,7 @@ func NewOrganizationRepository() *OrganizationRepository { return &OrganizationR
 
 // organizationColumns is the column list returned by every organization query,
 // in the order scanOrganization expects.
-const organizationColumns = `id, slug, display_name, created_at, updated_at`
+const organizationColumns = `id, slug, display_name, created_at, updated_at, deletion_scheduled_at`
 
 // Get returns the organization identified by organizationID. A missing id is
 // reported as a typed NotFound — the same shape any other unknown id produces,
@@ -120,10 +126,40 @@ func (r *OrganizationRepository) Update(ctx context.Context, tx *Tx, o Organizat
 	return updated, nil
 }
 
+// ScheduleDeletion stamps deletion_scheduled_at on the organization identified
+// by organizationID inside tx and returns the persisted row, including the
+// trigger-refreshed updated_at timestamp. It requires a *Tx — not a bare
+// Querier — so an organization can never be marked for teardown outside the
+// transaction that also carries its audit record. A missing id is reported as a
+// typed NotFound — the same shape any other unknown id produces, so a caller
+// can never tell "no such organization" apart from "an organization you cannot
+// see". The UPDATE is unconditional: re-scheduling an organization already
+// scheduled for deletion is a conflict the OrganizationService detects with a
+// prior read, not a not-found this repository can distinguish.
+func (r *OrganizationRepository) ScheduleDeletion(ctx context.Context, tx *Tx, organizationID string) (Organization, error) {
+	if tx == nil {
+		return Organization{}, apierr.Internal(errors.New("store: OrganizationRepository.ScheduleDeletion called with a nil transaction"))
+	}
+	row := tx.QueryRow(ctx,
+		`UPDATE organizations
+		    SET deletion_scheduled_at = now()
+		  WHERE id = $1
+		 RETURNING `+organizationColumns,
+		organizationID)
+	updated, err := scanOrganization(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Organization{}, apierr.NotFound("organization", organizationID)
+	}
+	if err != nil {
+		return Organization{}, apierr.StoreUnavailable(err)
+	}
+	return updated, nil
+}
+
 // scanOrganization scans one organizations row in organizationColumns order.
 func scanOrganization(row pgx.Row) (Organization, error) {
 	var o Organization
-	err := row.Scan(&o.ID, &o.Slug, &o.DisplayName, &o.CreatedAt, &o.UpdatedAt)
+	err := row.Scan(&o.ID, &o.Slug, &o.DisplayName, &o.CreatedAt, &o.UpdatedAt, &o.DeletionScheduledAt)
 	return o, err
 }
 

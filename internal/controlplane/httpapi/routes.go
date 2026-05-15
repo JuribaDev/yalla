@@ -76,12 +76,12 @@ type versionPayload struct {
 // no startup dependencies wired yet.
 //
 // orgs backs the organization read endpoints, creator backs POST
-// /v1/organizations, and updater backs PATCH /v1/organizations/{org_id}. Any
-// may be nil for tests and tooling that only inspect the route table's
-// metadata; a request that actually reaches a handler with a nil dependency is
-// reported as a typed internal error rather than a misleading empty list or a
-// silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater) []apiRoute {
+// /v1/organizations, updater backs PATCH /v1/organizations/{org_id}, and
+// deleter backs DELETE /v1/organizations/{org_id}. Any may be nil for tests and
+// tooling that only inspect the route table's metadata; a request that actually
+// reaches a handler with a nil dependency is reported as a typed internal error
+// rather than a misleading empty list or a silently dropped write.
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -257,6 +257,30 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// denied at the policy boundary before the handler mutates any data.
 			resolver: organizationIDResolver,
 			handler:  updateOrganizationHandler(updater),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodDelete,
+				Path:           "/v1/organizations/{org_id}",
+				OperationID:    "deleteOrganization",
+				Summary:        "Schedule an organization for deletion",
+				Description:    "Schedules the organization named by the {org_id} path parameter for deletion in the source-of-truth database. The deletion is scheduled, not immediate: the organization's deletion_scheduled_at stamp is set and the destructive teardown — the cascade that removes its projects, environments, services, and audit log — is carried out by a later worker story, so the organization and its audit trail still exist when this returns. Action organization.delete is authorized against the organization the path names before the handler runs: a principal deleting an organization outside its own tenant is rejected with a deterministic 403, so a cross-tenant id can never affect another tenant's data. Scheduling deletion for an organization already scheduled for deletion is a stable 409. The soft-delete write and an immutable audit record naming the authenticated principal are committed in one transaction. The response carries no credential material.",
+				Tags:           []string{tagOrganizations},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionOrganizationDelete),
+				PathParams: []openapi.PathParam{{
+					Name:        "org_id",
+					Description: "The id of the organization to schedule for deletion.",
+				}},
+				SuccessStatus:      http.StatusAccepted,
+				SuccessDescription: "The organization was scheduled for deletion.",
+			},
+			// organizationIDResolver authorizes action organization.delete
+			// against the organization the {org_id} path parameter names, not
+			// merely the principal's home organization, so a cross-tenant id is
+			// denied at the policy boundary before the handler mutates any data.
+			resolver: organizationIDResolver,
+			handler:  deleteOrganizationHandler(deleter),
 		},
 	}
 }

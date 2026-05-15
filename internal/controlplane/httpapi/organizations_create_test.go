@@ -60,7 +60,7 @@ type createOrganizationSuccessEnvelope struct {
 // organization.create.
 func createOrganizationHandlerFor(id auth.Identity, authErr error, creator OrganizationCreator) http.Handler {
 	a := fakeAuthenticator{identity: id, err: authErr}
-	return NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, a, policy.NewEngine(), fakeOrganizationReader{}, creator, fakeOrganizationUpdater{}, nil)
+	return NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, a, policy.NewEngine(), fakeOrganizationReader{}, creator, fakeOrganizationUpdater{}, fakeOrganizationDeleter{}, nil)
 }
 
 // postOrganizations issues POST /v1/organizations against handler with body,

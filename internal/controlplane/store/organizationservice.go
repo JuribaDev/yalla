@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -20,6 +21,7 @@ import (
 const (
 	organizationCreateAction = "organization.create"
 	organizationUpdateAction = "organization.update"
+	organizationDeleteAction = "organization.delete"
 	// organizationDisplayNameMaxLen bounds a human-authored organization
 	// display name, in runes. It is the same order of magnitude as every other
 	// display-name bound in the system and exists so an unbounded string can
@@ -64,6 +66,22 @@ type UpdateOrganizationInput struct {
 	CorrelationID  string
 }
 
+// DeleteOrganizationInput is the input to OrganizationService.ScheduleDeletion.
+// OrganizationID names the organization to schedule for teardown. The Actor*
+// and correlation fields describe the authenticated principal performing the
+// deletion and are recorded verbatim on the audit event. They are plain strings
+// so the store layer takes no build dependency on the policy or telemetry
+// packages — the httpapi handler, which already holds the resolved principal
+// and the request correlation, fills them in.
+type DeleteOrganizationInput struct {
+	OrganizationID string
+	ActorID        string
+	ActorKind      string
+	ActorOrgID     string
+	RequestID      string
+	CorrelationID  string
+}
+
 // AuditAppender records one immutable audit event inside the unit of work. The
 // store layer depends only on this narrow port; *AuditRepository satisfies it.
 // Append receives the *Tx of the surrounding unit of work, so the audit record
@@ -74,16 +92,18 @@ type AuditAppender interface {
 	Append(ctx context.Context, tx *Tx, e AuditEvent) (AuditEvent, error)
 }
 
-// OrganizationService is the unit-of-work orchestrator for creating and
-// updating organizations. Create and Update each compose — in a fixed order,
-// inside one transaction — the desired-state write and the immutable audit
-// record. Because both steps share the *Tx opened by Store.Write, a failure in
-// either rolls the other back: an organization is never persisted, and never
-// mutated, without its audit event.
+// OrganizationService is the unit-of-work orchestrator for creating, updating,
+// and scheduling the deletion of organizations. Create, Update, and
+// ScheduleDeletion each compose — in a fixed order, inside one transaction —
+// the desired-state write and the immutable audit record. Because both steps
+// share the *Tx opened by Store.Write, a failure in either rolls the other
+// back: an organization is never persisted, never mutated, and never marked for
+// teardown without its audit event.
 //
 // It enqueues no provisioning job: an organization is the tenant root of
 // Yalla's source-of-truth hierarchy, and the worker that mirrors it into
-// Dokploy is driven by a later story.
+// Dokploy — and the worker that performs the destructive teardown of a
+// scheduled organization — are driven by later stories.
 type OrganizationService struct {
 	store *Store
 	orgs  *OrganizationRepository
@@ -239,6 +259,90 @@ func (svc *OrganizationService) Update(ctx context.Context, in UpdateOrganizatio
 		return Organization{}, txErr
 	}
 	return updated, nil
+}
+
+// ScheduleDeletion schedules the organization named by in.OrganizationID for
+// teardown, inside one transaction: read the current row, reject a row already
+// scheduled, stamp deletion_scheduled_at, append the audit event. A blank
+// organization id is a typed validation failure raised before the transaction
+// is opened. An {org_id} with no row is the typed NotFound the repository
+// produces, and an organization whose deletion was already scheduled rolls the
+// whole transaction back as a typed Conflict — so an audit record can never
+// name a deletion that did not change the resource's state.
+//
+// This is a soft, scheduled deletion: it records the intent and stamps the
+// timestamp. The destructive teardown — the ON DELETE CASCADE that removes
+// projects, environments, services, and the audit log — is a later worker
+// story, so the organization row and its audit trail still exist after this
+// returns.
+func (svc *OrganizationService) ScheduleDeletion(ctx context.Context, in DeleteOrganizationInput) (Organization, error) {
+	organizationID := strings.TrimSpace(in.OrganizationID)
+	if organizationID == "" {
+		return Organization{}, apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "organization_id",
+			Reason: "must not be blank",
+		})
+	}
+
+	// The audit record is filed under the actor's home organization — the
+	// tenant the principal authenticated into — while its resource id names
+	// the organization that was scheduled for deletion. A missing actor
+	// organization is a wiring error (an authenticated request always carries
+	// one), not client input, so it is reported as Internal rather than a
+	// validation failure.
+	actorOrgID := strings.TrimSpace(in.ActorOrgID)
+	if actorOrgID == "" {
+		return Organization{}, apierr.Internal(errors.New("store: OrganizationService.ScheduleDeletion requires an actor organization for the audit record"))
+	}
+
+	event := AuditEvent{
+		OrganizationID: actorOrgID,
+		ActorID:        strings.TrimSpace(in.ActorID),
+		ActorKind:      strings.TrimSpace(in.ActorKind),
+		Action:         organizationDeleteAction,
+		ResourceKind:   string(domain.KindOrganization),
+		ResourceID:     organizationID,
+		Decision:       AuditDecisionAllowed,
+		Reason:         "authorization granted for organization.delete",
+		RequestID:      strings.TrimSpace(in.RequestID),
+		CorrelationID:  strings.TrimSpace(in.CorrelationID),
+	}
+
+	var scheduled Organization
+	txErr := svc.store.Write(ctx, func(ctx context.Context, tx *Tx) error {
+		current, getErr := svc.orgs.Get(ctx, tx, organizationID)
+		if getErr != nil {
+			return getErr
+		}
+		if current.DeletionScheduledAt != nil {
+			// Scheduling teardown for an organization already scheduled for
+			// teardown changes nothing: the caller's view of the resource
+			// lifecycle is stale, so it is a typed Conflict, not a silent
+			// success that would write a misleading audit record.
+			return apierr.Conflict("organization deletion is already scheduled")
+		}
+		row, updErr := svc.orgs.ScheduleDeletion(ctx, tx, organizationID)
+		if updErr != nil {
+			return updErr
+		}
+		// deletion_scheduled_at is database-assigned (now()); record the
+		// resolved timestamp — a non-secret value — as audit context so the
+		// trail captures exactly when teardown was scheduled.
+		if row.DeletionScheduledAt != nil {
+			event.Metadata = map[string]string{
+				"deletion_scheduled_at": row.DeletionScheduledAt.UTC().Format(time.RFC3339Nano),
+			}
+		}
+		if _, audErr := svc.audit.Append(ctx, tx, event); audErr != nil {
+			return audErr
+		}
+		scheduled = row
+		return nil
+	})
+	if txErr != nil {
+		return Organization{}, txErr
+	}
+	return scheduled, nil
 }
 
 // buildOrganizationToCreate validates in and returns the Organization row it
