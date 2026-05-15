@@ -107,12 +107,13 @@ type versionPayload struct {
 // /v1/projects/{project_id}, projectDeleter backs DELETE
 // /v1/projects/{project_id}, projectRestorer backs POST
 // /v1/projects/{project_id}/restore, projectGrants backs GET
-// /v1/projects/{project_id}/grants, and projectGrantReplacer backs PUT
-// /v1/projects/{project_id}/grants. Any may be nil for tests and tooling
+// /v1/projects/{project_id}/grants, projectGrantReplacer backs PUT
+// /v1/projects/{project_id}/grants, and projectVariables backs GET
+// /v1/projects/{project_id}/variables. Any may be nil for tests and tooling
 // that only inspect the route table's metadata; a request that actually
 // reaches a handler with a nil dependency is reported as a typed internal
 // error rather than a misleading empty list or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer) []apiRoute {
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -434,6 +435,34 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// support principal cannot replace grants in another tenant.
 			resolver: projectIDResolver,
 			handler:  replaceProjectGrantsHandler(projectGrantReplacer),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodGet,
+				Path:           "/v1/projects/{project_id}/variables",
+				OperationID:    "listProjectVariables",
+				Summary:        "List project variables",
+				Description:    "Lists the project-scoped environment variables configured for the project named by the {project_id} path parameter, in deterministic (key, id) order. Each entry carries the variable's id, the id of the organization that owns it, the id of the project it targets, key (a POSIX shell environment variable name), value, is_secret flag, optimistic-concurrency version, and lifecycle timestamps. Project-scoped variables are the second-from-lowest precedence layer of the Organization -> Project -> Environment -> Service variable hierarchy the Dokploy renderer composes: a value set here is a project-wide default every service in the project inherits unless overridden by a higher-scope variable, and it shadows any organization-scoped variable of the same key for services inside the project. Secret values are ALWAYS redacted on the wire — a customer can never read a secret value back through this endpoint by design, mirroring every credential-bearing resource in this API; non-secret values are projected verbatim so the customer can audit their own project-wide defaults. Action env.read is authorized against the (principal home organization, {project_id}) resource the path names before the handler runs: env.read is a CapRead action, so the gate admits the principal's organization-wide read roles (owner, admin, developer, viewer, ci) and admits a scoped grant that covers the resource (a project-scoped Viewer grant for THAT project, an environment- or service-scoped grant under it) while denying a grant that names only a SIBLING project, an unrelated environment, or an unrelated service because the policy engine asks whether the grant scope contains the resource scope, never the reverse. The support principal's deliberate cross-tenant read exception does NOT apply through this endpoint because the resource scope is pinned to the principal's home organization, not the path's tenant; support cross-tenant reads remain available through endpoints whose path carries an {org_id}. A cross-tenant or unknown project_id reaches the persistence layer with the principal's home organization id and is rejected as a deterministic 404 by the reader's project existence check, never disguised as an empty success. A project with no variables is a deterministic empty list.",
+				Tags:           []string{tagProjects, tagVariables},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionEnvRead),
+				PathParams: []openapi.PathParam{{
+					Name:        "project_id",
+					Description: "The id of the project whose variables to list.",
+				}},
+				SuccessDescription: "The variables of the project.",
+			},
+			// projectIDResolver authorizes action env.read against the
+			// (principal home organization, {project_id}) resource the path
+			// names, not merely the principal's home organization, so a
+			// scoped grant that names THIS project authorizes the read while
+			// a grant that names only a SIBLING project does not. The
+			// organization id is taken from the principal's home org (never
+			// the caller), so a cross-tenant project_id still hits the
+			// tenant-scoped repository query and surfaces as a 404 at the
+			// persistence boundary.
+			resolver: projectIDResolver,
+			handler:  listProjectVariablesHandler(projectVariables),
 		},
 		{
 			endpoint: openapi.Endpoint{

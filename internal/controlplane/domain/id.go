@@ -71,6 +71,17 @@ const (
 	// organization — but it carries its own stable, non-guessable id so
 	// PUT / DELETE stories have an addressable resource.
 	KindProjectGrant Kind = "pgrnt"
+	// KindProjectVariable is one row in the project-scoped variables surface —
+	// the second-from-lowest precedence layer of the
+	// Organization -> Project -> Environment -> Service variable hierarchy the
+	// Dokploy renderer composes. A project-scoped variable shadows any
+	// organization-scoped variable of the same key for services inside the
+	// project. Like KindOrganizationVariable, a variable is not a tenant root;
+	// the audit layer files variable mutations under the parent organization's
+	// audit scope (resource_kind=org), but a variable row carries its own
+	// stable, non-guessable id so a per-row PATCH / DELETE story has an
+	// addressable resource later.
+	KindProjectVariable Kind = "pvar"
 )
 
 // kinds is the authoritative set of valid resource kinds. It backs Kind.Valid
@@ -87,6 +98,7 @@ var kinds = map[Kind]struct{}{
 	KindJob:                  {},
 	KindOrganizationVariable: {},
 	KindProjectGrant:         {},
+	KindProjectVariable:      {},
 }
 
 // Valid reports whether k is one of the canonical resource kinds.

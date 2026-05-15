@@ -364,7 +364,7 @@ func TestUpdateLimitsMissingUpdaterIsInternalError(t *testing.T) {
 		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
 		fakeLimitsReader{}, nil, fakeUsageReader{}, fakeAuditEventReader{}, fakeOrgVariableReader{}, fakeOrgVariableReplacer{}, fakeOrgVariablePatcher{}, fakeOrgVariableDeleter{},
 		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
-		fakeProjectReader{}, fakeProjectCreator{}, fakeProjectUpdater{}, fakeProjectDeleter{}, fakeProjectRestorer{}, fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, nil)
+		fakeProjectReader{}, fakeProjectCreator{}, fakeProjectUpdater{}, fakeProjectDeleter{}, fakeProjectRestorer{}, fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, fakeProjectVariableReader{}, nil)
 
 	rec := patchLimits(handler, orgID, "a-valid-session-token", `{"limits":[{"resource":"projects","limit_value":99}]}`)
 	if rec.Code != http.StatusInternalServerError {
@@ -384,7 +384,7 @@ func TestUpdateLimitsMissingUpdaterIsInternalError(t *testing.T) {
 func TestUpdateLimitsRouteIsDocumentedAsRequiringLimitsWrite(t *testing.T) {
 	t.Parallel()
 
-	table := newRouteTable(runtime.BuildInfo{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	table := newRouteTable(runtime.BuildInfo{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	var found bool
 	for _, rt := range table {
 		if rt.endpoint.Method != http.MethodPatch || rt.endpoint.Path != "/v1/organizations/{org_id}/limits" {

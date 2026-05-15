@@ -183,6 +183,11 @@ func main() {
 		logger.Error("failed to initialize the project grant service", "error", err.Error())
 		os.Exit(1)
 	}
+	projectVariables, err := store.NewProjectVariableReader(dataStore)
+	if err != nil {
+		logger.Error("failed to initialize the project variable reader", "error", err.Error())
+		os.Exit(1)
+	}
 	authenticator, err := auth.NewAuthenticator(auth.AuthenticatorConfig{
 		Store:       credentials,
 		SigningKeys: cfg.SigningKeys,
@@ -215,7 +220,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              cfg.APIAddr,
-		Handler:           httpapi.NewHandler(build, readiness, meta, authenticator, engine, organizations, organizationService, organizationService, organizationService, members, membershipService, membershipService, membershipService, limits, limitsService, usage, auditEvents, orgVariables, orgVariableService, orgVariableService, orgVariableService, apiKeys, apiKeyService, apiKeyService, apiKeyService, apiKeyService, projects, projectService, projectService, projectService, projectService, projectGrants, projectGrantService, logger),
+		Handler:           httpapi.NewHandler(build, readiness, meta, authenticator, engine, organizations, organizationService, organizationService, organizationService, members, membershipService, membershipService, membershipService, limits, limitsService, usage, auditEvents, orgVariables, orgVariableService, orgVariableService, orgVariableService, apiKeys, apiKeyService, apiKeyService, apiKeyService, apiKeyService, projects, projectService, projectService, projectService, projectService, projectGrants, projectGrantService, projectVariables, logger),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
