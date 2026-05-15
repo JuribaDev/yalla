@@ -2788,3 +2788,63 @@
   - When adding a parameter to NewHandler, grep for ALL newRouteTable and
     NewHandler call sites — server_test.go has two newRouteTable calls.
 ---
+
+## 2026-05-15 - BE-0051
+- Added policy-matrix coverage for POST /v1/organizations: a dedicated test
+  file proving action organization.create's authorization contract end to end
+  through the real NewHandler + real policy.NewEngine() (the production request
+  path, fake Authenticator + fake OrganizationCreator only).
+- organization.create is a CapSelf action (policy/catalog.go) — like auth.me /
+  auth.orgs, every authenticated, enabled principal holds it regardless of
+  role or scope, and the POST /v1/organizations route carries no
+  ResourceResolver. The matrix is therefore "all allow"; the assertions that
+  matter pin that the forwarded audit actor is always exactly the caller's own
+  principal, never escalated, fabricated, or cross-tenant.
+- File changed: internal/controlplane/httpapi/organizations_create_policy_test.go
+  (new); ralph/prd.json, ralph/progress.txt.
+- organizations_create_policy_test.go covers:
+  - TestCreateOrganizationPolicyMatrixRoles: every built-in role (owner/admin/
+    developer/viewer/ci/support) plus a role-less grant-only principal is
+    allowed organization.create via ReasonAllowedSelf (asserted at the engine
+    level) and receives 201; the captured store.CreateOrganizationInput proves
+    the audit actor (ActorID/ActorOrgID/ActorKind) is the caller's own.
+  - TestCreateOrganizationPolicyRevokedAndExpiredKeys: a revoked/expired
+    credential surfaces as a Disabled principal -> 403 E_FORBIDDEN carrying
+    ReasonDeniedPrincipalDisabled; the creator is never reached and the denied
+    body never echoes the principal id or organization.
+  - TestCreateOrganizationPolicyWrongOrganizationPrincipal: the route has no
+    ResourceResolver, so RequireAuth authorizes against — and the handler
+    forwards as the actor — the principal's OWN org. A wrong-org principal
+    creates an organization stamped with its own org as actor, never a victim
+    org. Engine-level: organization.create is allowed against a foreign-org
+    resource via ReasonAllowedSelf precisely because a self action never reads
+    the resource, so the resource org can never become a cross-tenant write.
+  - TestCreateOrganizationPolicyGrantContainment: project/env/service grants
+    are confined by the engine (no sibling project, no production, no
+    parent-env secrets, no sibling service). Tie-back: a project-scoped
+    principal still gets 201 (the self shortcut, not the grant, confers the
+    action) and the forwarded actor is exactly the caller's own principal — a
+    grant referencing a deeper scope never widens the audit actor.
+- Verification run: gofmt -l . (clean); go mod tidy (clean); go vet ./...
+  (clean); go test ./... (all 35 packages PASS); go test -race
+  ./internal/controlplane/httpapi/ (PASS).
+- Results: all passed. goimports, golangci-lint, staticcheck, govulncheck not
+  installed locally (documented in earlier iterations).
+- Remaining risks / follow-ups: none for this story. BE-0050 (contract tests
+  for POST /v1/organizations) is still passes:false — organizations_create_test.go
+  already covers most of its criteria; a future iteration should confirm and
+  flip it.
+- **Learnings for future iterations:**
+  - A CapSelf mutating endpoint's policy matrix (organization.create) is shaped
+    like the CapSelf read families (auth.me/auth.orgs): "all allow" for every
+    role + grant-only principal, deny only for Disabled. The unique risk for a
+    *mutating* self action is the forwarded actor — assert via the captured
+    store input that ActorID/ActorOrgID are the principal's own, never widened
+    by a grant or pointed at another tenant.
+  - fakeOrganizationCreator{got: &captured} is the way to assert what the
+    handler forwarded to the store layer; reuse it in policy tests, not just
+    the contract suite.
+  - orgPrincipal() builds only a KindUser, grant-less, enabled principal —
+    build policy.Principal literals directly for ci (KindServiceAccount),
+    grant-only, disabled, or grant-bearing cases.
+---
