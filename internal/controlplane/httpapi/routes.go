@@ -23,6 +23,7 @@ const (
 	tagUsage         = "usage"
 	tagAuditEvents   = "audit-events"
 	tagAPIKeys       = "api-keys"
+	tagVariables     = "variables"
 )
 
 // apiRoute couples a served HTTP route with the OpenAPI metadata that
@@ -90,7 +91,8 @@ type versionPayload struct {
 // /v1/organizations/{org_id}/limits, limitsUpdater backs PATCH
 // /v1/organizations/{org_id}/limits, usage backs GET
 // /v1/organizations/{org_id}/usage, auditEvents backs GET
-// /v1/organizations/{org_id}/audit-events, apiKeys backs GET
+// /v1/organizations/{org_id}/audit-events, orgVariables backs GET
+// /v1/organizations/{org_id}/variables, apiKeys backs GET
 // /v1/organizations/{org_id}/api-keys and GET
 // /v1/organizations/{org_id}/api-keys/{key_id}, apiKeyCreator backs POST
 // /v1/organizations/{org_id}/api-keys, apiKeyUpdater backs PATCH
@@ -101,7 +103,7 @@ type versionPayload struct {
 // metadata; a request that actually reaches a handler with a nil dependency
 // is reported as a typed internal error rather than a misleading empty list
 // or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator) []apiRoute {
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -531,6 +533,31 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// read, exactly as the policy matrix specifies for read actions.
 			resolver: organizationIDResolver,
 			handler:  listAuditEventsHandler(auditEvents),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodGet,
+				Path:           "/v1/organizations/{org_id}/variables",
+				OperationID:    "listOrganizationVariables",
+				Summary:        "List organization-scoped variables",
+				Description:    "Lists the organization-scoped variables configured for the organization named by the {org_id} path parameter, in deterministic (key, id) order. Each entry carries the variable's id, key (a POSIX shell environment variable name), value, is_secret flag, optimistic-concurrency version, and lifecycle timestamps. Organization-scoped variables are the lowest-precedence layer of the Organization -> Project -> Environment -> Service variable hierarchy the Dokploy renderer composes: a value set here is the organization-wide default every service in the tenant inherits unless overridden by a higher-scope variable. Secret values are ALWAYS redacted on the wire — a customer can never read a secret value back through this endpoint by design, mirroring every credential-bearing resource in this API; non-secret values are projected verbatim so the customer can audit their own organization-wide defaults. Action env.read is authorized against the organization the path names before the handler runs: a principal listing variables outside its own tenant is rejected with a deterministic 403, so a cross-tenant id can never reveal another tenant's configuration. The read is tenant-scoped at the persistence layer, so a cross-tenant {org_id} yields the same empty list a tenant with no configured variables would, never another tenant's data.",
+				Tags:           []string{tagVariables},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionEnvRead),
+				PathParams: []openapi.PathParam{{
+					Name:        "org_id",
+					Description: "The id of the organization whose variables are listed.",
+				}},
+				SuccessDescription: "The organization-scoped variables of the organization.",
+			},
+			// organizationIDResolver authorizes action env.read against the
+			// organization the {org_id} path parameter names, not merely the
+			// principal's home organization, so a cross-tenant id is denied at
+			// the policy boundary before the handler reads any data — the lone
+			// exception is the support principal's deliberate cross-tenant
+			// read, exactly as the policy matrix specifies for read actions.
+			resolver: organizationIDResolver,
+			handler:  listOrganizationVariablesHandler(orgVariables),
 		},
 		{
 			endpoint: openapi.Endpoint{

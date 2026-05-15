@@ -50,6 +50,7 @@
 - HTTP reads of an "already-redacted at persistence" surface (audit log, job error_summary, redacted reservation reasons, ...) project the persisted values onto the wire VERBATIM — the handler must not silently re-scrub or un-scrub sentinel values. The contract is "redaction is the writer's job, the reader trusts the chokepoint": audit.Auditor redacts metadata + IP + UA before AuditRepository.Append persists the row (the store treats them as clean), and the HTTP handler renders them as-is. Pin this structurally with a "feed the fake reader a row whose values are output.Sentinel, assert the wire renders Sentinel" test — a future regression that "cleans up" sentinels in the projection fails this test, not only review.
 - Endpoints that expose N coupled scalar fields that are EITHER all-present OR all-absent project as ONE nullable nested OBJECT on the wire, not N coupled-nullable scalars. Canonical cases: usage.limit ({limit_value, enforcement_mode, source} or null), audit_event.actor ({id, kind} or null for an unauthenticated denied event), audit_event.resource ({id, kind} or null for an organization-root action). An agent reads one boolean (`actor != null`) instead of validating N invalid combinations. The store struct mirrors the wire (a single `*Foo` pointer or N pointers projected together with an all-or-nothing guard). Adding a new field to the nested object later is forward-compatible.
 - audit.read is the load-bearing example of a "read action that is NOT CapRead" in the policy catalog (catalog.go: ActionAuditRead -> CapAdmin). The audit log cannot be listed by a viewer or a developer — only by an owner, admin, or a support principal performing a cross-tenant read. A boilerplate "every in-tenant role allowed" assumption is wrong for audit.read; the policy matrix and a contract-test "viewer denied in own tenant" assertion together pin the property (the contract test makes a future accidental drop to CapRead a contract failure, not only a matrix failure).
+- Organization-scoped variables (0012_organization_variables, store/organization_variable.go, httpapi/variables.go): the lowest-precedence layer of the Organization -> Project -> Environment -> Service variable hierarchy. The table mirrors the established conventions — composite UNIQUE (organization_id, id) as the FK target for future scope-narrowing override tables; UNIQUE (organization_id, key) for per-tenant key uniqueness (an env var named DATABASE_URL in two orgs is two rows); ON DELETE CASCADE from organizations; bigint version + bump_version() trigger for optimistic concurrency. The repository follows the AuditRepository read pattern: ListByOrganization is tenant-scoped at the SQL predicate (cross-tenant id matches no rows, empty list, never another tenant's data), ordered deterministically by (key ASC, id ASC). The wire redaction contract is wire-side at the projection chokepoint, NOT store-side: store.OrganizationVariable.Value carries the literal verbatim (a future write path needs lossless round-trip), but httpapi/variables.go's organizationVariableOf replaces is_secret=true values with output.Sentinel on every projection — agents can never read a secret value back through this endpoint. Defence-in-depth: OrganizationVariable.LogValue redacts every value (regardless of is_secret) at the slog boundary, so a stray log record that captures the struct cannot leak the literal. Non-secret values pass through verbatim so customers can audit their own organization-wide defaults.
 
 ## 2026-05-15 - BE-0103
 - What was implemented: GET /v1/organizations/{org_id}/audit-events, the
@@ -7036,3 +7037,170 @@
     matrix for audit.read; future CapAdmin endpoints should mirror
     THIS test's structure (per-case wantAllow + wantReason).
 ---
+## 2026-05-15 - BE-0106
+- What was implemented: GET /v1/organizations/{org_id}/variables, the
+  organization-scoped variables list endpoint — the first endpoint to
+  expose the Organization -> Project -> Environment -> Service variable
+  hierarchy on the public API. env.read is the action; the wire redacts
+  secret values at projection.
+  - internal/controlplane/store/migrate/migrations/0012_organization_variables.up.sql
+    (new) + 0012_organization_variables.down.sql (new): organization_variables
+    table mirrors the established schema conventions — composite UNIQUE
+    (organization_id, id) as the FK target for future scope-narrowing
+    override tables; UNIQUE (organization_id, key) for per-tenant key
+    uniqueness; FK to organizations with ON DELETE CASCADE; bigint
+    version + bump_version() trigger; set_updated_at trigger; CHECK
+    (length(id)>0) and CHECK (length(key)>0). The schema decision-record
+    notes: "No secrets in the schema" — value is stored verbatim, but
+    every consumer that surfaces values is required to redact (HTTP
+    projection redacts secrets; audit metadata redacts every value
+    regardless of is_secret).
+  - internal/controlplane/store/organization_variable.go (new):
+    OrganizationVariable struct + OrganizationVariableRepository. The
+    struct's LogValue method redacts every variable value at the slog
+    boundary as defence-in-depth — a stray log record that captures the
+    struct cannot leak the literal. The repository follows the audit /
+    project pattern: ListByOrganization(ctx, q, organizationID) is
+    tenant-scoped at the SQL predicate (organization_id leg is
+    non-optional, so a cross-tenant id matches no rows), ordered by
+    (key ASC, id ASC), capped at 500 rows. apierr.StoreUnavailable
+    wraps every driver error.
+  - internal/controlplane/store/organization_variable_reader.go (new):
+    OrganizationVariableReader is the store-backed read adapter — mirrors
+    AuditEventReader / UsageReader. It composes the repository through a
+    short-lived Store.Read transaction so the tenant-scoping guarantees
+    the repository proves are inherited for free. The constructor
+    rejects a nil store (fail-fast).
+  - internal/controlplane/store/organization_variable_test.go (new):
+    6 integration tests against an isolated migrated Postgres database
+    — deterministic (key, id) ordering, tenant isolation (two-org seed
+    proves a cross-tenant id never returns another tenant's rows),
+    reader-adapter wiring through Store.Read, empty list for unknown
+    org, nil-store rejection, schema-level (organization_id, key)
+    unique enforcement, ON DELETE CASCADE from organizations, and
+    bump_version trigger on UPDATE.
+  - internal/controlplane/httpapi/variables.go (new):
+    OrganizationVariableReader port + listOrganizationVariablesHandler.
+    Request shape: only the {org_id} path parameter (no body, no query
+    parameters). Response is yalla.output.v1 carrying {variables: [...]}
+    where each entry carries id, key, value, is_secret, version,
+    created_at, updated_at. The wire redaction chokepoint is
+    organizationVariableOf: secret values become output.Sentinel,
+    non-secret values pass through verbatim — the projection is the
+    chokepoint, not the caller, so a future regression that adds
+    another caller cannot accidentally skip the redaction. The
+    handler is thin: read principal, call port, render.
+  - internal/controlplane/httpapi/variables_test.go (new): 8 contract
+    tests in package httpapi exercising the real NewHandler + real
+    policy engine (fake Authenticator + fake OrganizationVariableReader
+    only) — happy-path forwarding, secret-redaction proof (the literal
+    "postgres://user:hunter2@..." is never present in the wire body),
+    empty-list for an org with no configured variables, store outage
+    503 (no raw-cause leak), unauthenticated 401 (reader never runs),
+    cross-tenant 403 (reader never runs, no variable data leaked),
+    missing-reader 500, OpenAPI route-table contract (operationId,
+    x-required-action, tag), and a "handler does not reorder reader
+    output" proof (the store owns determinism; the wire mirrors
+    persistence).
+  - internal/controlplane/httpapi/routes.go: registered the new
+    apiRoute with RequiresAuth=true, RequiredAction=policy.ActionEnvRead,
+    resolver=organizationIDResolver (so a cross-tenant {org_id} is a
+    403 BEFORE the handler runs). Added the tagVariables="variables"
+    OpenAPI tag. newRouteTable signature gained
+    orgVariables OrganizationVariableReader (one new positional arg).
+  - internal/controlplane/httpapi/server.go: NewHandler signature
+    gained orgVariables OrganizationVariableReader threaded into
+    newRouteTable.
+  - cmd/yalla-api/main.go: builds the OrganizationVariableReader at
+    startup over dataStore and threads it into NewHandler.
+  - Mechanical churn: 24 NewHandler/newRouteTable call sites across
+    *_test.go files received the new positional argument. A python
+    script applied a multi-pattern substitution covering the four
+    regular forms in this codebase:
+    (1) single-line "fakeAuditEventReader, fakeAPIKeyReader" pair ->
+        insert fakeOrgVariableReader{} between them,
+    (2) multi-line equivalent across the newline,
+    (3) audit_events_test.go where the audit-events reader is a
+        named "reader" variable in the audit position ->
+        insert fakeOrgVariableReader{} between reader and APIKey,
+    (4) api_keys_test.go where the api-keys reader is a named
+        "reader" variable AFTER the audit position ->
+        insert fakeOrgVariableReader{} between AuditReader and reader.
+    Plus 3 newRouteTable() test call sites that pass 19 nil arguments
+    now passing 20 nil arguments (limits_patch_test.go, routes_test.go,
+    server_test.go).
+- Files changed: internal/controlplane/store/migrate/migrations/0012_organization_variables.up.sql
+  (new), 0012_organization_variables.down.sql (new),
+  internal/controlplane/store/{organization_variable.go (new),
+  organization_variable_reader.go (new), organization_variable_test.go
+  (new)}, internal/controlplane/httpapi/{variables.go (new),
+  variables_test.go (new), routes.go, routes_test.go, server.go,
+  server_test.go, limits_patch_test.go + 17 sibling test files updated
+  by substitution}, cmd/yalla-api/main.go, ralph/prd.json,
+  ralph/progress.txt.
+- Verification run: gofmt -w .; go mod tidy; go build ./...;
+  go vet ./... (clean); go test ./... (full suite, all pass);
+  go test -race ./... (full suite, all pass);
+  YALLA_TEST_DATABASE_URL=postgres://yalla:yalla@127.0.0.1:5432/yalla
+  go test -race -count=1 -run 'TestOrganizationVariable|TestNewOrganizationVariable'
+  ./internal/controlplane/store/... (all 6 integration tests pass);
+  go test -race -count=1 -run TestMigrations ./internal/controlplane/store/migrate/...
+  (clean from-empty-DB so the new 0012 migration applies cleanly).
+- Results: all my changes pass (-race included). goimports /
+  golangci-lint / staticcheck / govulncheck still not installed
+  locally (documented in earlier iterations). Pre-existing failures
+  in TestAPIKeyServiceCreate* under the DB env are unrelated to this
+  story — confirmed by re-running the same tests on the baseline
+  branch with my changes stashed.
+- Remaining risks / follow-ups:
+  - BE-0107 (contract tests) is largely covered by variables_test.go
+    already — the explicit-redaction proof, all four failure modes,
+    OpenAPI route registration, request_id propagation, and
+    schema_version assertion are present — but the two remain
+    separate PRD stories.
+  - BE-0108 (policy matrix) should table every built-in role x
+    env.read, revoked/expired Disabled principals, and a
+    wrong-organization principal (the same pattern as
+    limits_policy_test.go / usage_policy_test.go /
+    audit_events_policy_test.go). env.read is a CapRead-class action
+    with the support cross-tenant exception, NOT a CapAdmin action
+    like audit.read; the matrix shape mirrors usage.read rather
+    than audit.read.
+  - Higher-scope variables (project / environment / service) are
+    NOT in scope here — those are separate PRD stories that will
+    add project_variables / environment_variables / service_variables
+    tables with composite FKs back to organization_variables. The
+    composite UNIQUE (organization_id, id) in this migration is the
+    FK target a future override row will use to enforce that an
+    override's organization_id matches its parent variable's
+    organization_id.
+  - The PUT/PATCH/DELETE endpoints (BE-0109 through BE-0117) are
+    separate stories. The version column and bump_version trigger
+    are already in place so a later If-Match precondition will work
+    out of the box.
+- Learnings for future iterations:
+  - The 4-pattern bulk-substitution playbook for a new positional
+    argument inserted between AuditEventReader and APIKeyReader in
+    NewHandler is now documented in detail above. Total: 19+5 = 24
+    call sites updated in one python pass with a manual follow-up
+    only for the three newRouteTable() test call sites (which use a
+    different pattern — 19 nils -> 20 nils).
+  - The wire redaction policy for variables ("secret values redacted
+    on the wire; non-secret values pass through verbatim") is a NEW
+    chokepoint convention to remember: unlike audit metadata
+    (already-redacted at persistence; wire mirrors verbatim), the
+    variables wire projection is where the redaction happens. The
+    store layer keeps the literal verbatim so a future write path
+    can round-trip values losslessly. Defence-in-depth:
+    OrganizationVariable.LogValue redacts every value at the slog
+    boundary.
+  - The store.OrganizationVariable.LogValue helper is a useful
+    pattern to copy for any future struct that carries a literal
+    value reachable in a panic stack trace or a debug log. The
+    heavier "plaintext credential" defence is String / GoString /
+    LogValue / MarshalJSON all returning output.Sentinel; LogValue
+    alone is the lighter form suitable for "this struct probably
+    should not be logged but if it is the secret bits must be
+    hidden".
+---
+

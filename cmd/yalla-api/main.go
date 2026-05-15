@@ -128,6 +128,11 @@ func main() {
 		logger.Error("failed to initialize the audit event reader", "error", err.Error())
 		os.Exit(1)
 	}
+	orgVariables, err := store.NewOrganizationVariableReader(dataStore)
+	if err != nil {
+		logger.Error("failed to initialize the organization variable reader", "error", err.Error())
+		os.Exit(1)
+	}
 	apiKeys, err := store.NewAPIKeyReader(dataStore)
 	if err != nil {
 		logger.Error("failed to initialize the api key reader", "error", err.Error())
@@ -170,7 +175,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              cfg.APIAddr,
-		Handler:           httpapi.NewHandler(build, readiness, meta, authenticator, engine, organizations, organizationService, organizationService, organizationService, members, membershipService, membershipService, membershipService, limits, limitsService, usage, auditEvents, apiKeys, apiKeyService, apiKeyService, apiKeyService, apiKeyService, logger),
+		Handler:           httpapi.NewHandler(build, readiness, meta, authenticator, engine, organizations, organizationService, organizationService, organizationService, members, membershipService, membershipService, membershipService, limits, limitsService, usage, auditEvents, orgVariables, apiKeys, apiKeyService, apiKeyService, apiKeyService, apiKeyService, logger),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
