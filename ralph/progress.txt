@@ -8430,3 +8430,159 @@
     policy matrix test for BE-0120 just needs to assert this deny path
     rather than implementing per-project filtering in the handler.
 ---
+
+## 2026-05-15 - BE-0120
+- Added policy-matrix coverage for GET /v1/projects, proving action
+  project.read cannot be bypassed by, or leak data because of, the
+  principal's role, revoked credentials, home organization, or scoped
+  grants. Mirrors the variables_policy_test.go shape one-for-one because
+  project.read and env.read share the CapRead capability class — so the
+  same role-allow matrix, revoked/expired (Disabled) denial, Support
+  cross-tenant exception, and grant-containment chokepoints apply, and
+  this file pins exactly the same engine clauses against project.read.
+- File changed:
+  - internal/controlplane/httpapi/projects_policy_test.go (new)
+  - ralph/prd.json (BE-0120 passes=true)
+  - ralph/progress.txt (this entry)
+- The route uses a NIL ResourceResolver (routes.go), so RequireAuth
+  authorizes against the principal's own home organization scope — there
+  is NO path parameter that a foreign principal could fabricate to point
+  the read at another tenant. The test file documents this structural
+  difference vs. variables (which carries organizationIDResolver), and
+  the wrong-organization principal test pins the cross-tenant boundary
+  in two layers:
+  1. Wire: an attacker in org_attacker hitting /v1/projects has the
+     reader called with the attacker's home org id — never with a
+     fabricated or caller-controlled value. The response body never
+     echoes the victim's org id. This is the structural property that
+     makes the endpoint cross-tenant-safe.
+  2. Engine defence-in-depth: Decide(intruder, project.read,
+     foreign_org_resource) -> ReasonDeniedCrossTenant; and
+     Decide(support, project.read, foreign_org_resource) ->
+     ReasonAllowedBySupport. These are engine-only pins today (no route
+     constructs a foreign resource) so a future {org_id}-scoped project
+     endpoint inherits a working cross-tenant deny + the support
+     exception without re-deriving them.
+- projects_policy_test.go covers:
+  - TestListProjectsPolicyMatrixRoles: every built-in role
+    (owner/admin/developer/viewer/ci/support) is allowed project.read
+    via ReasonAllowedByRole (asserted at the engine level) and receives
+    200 with the seeded two-project fixture in stable yalla.output.v1
+    shape. Reader is reached with the principal's home org id, every
+    column of the wire shape (project_id, organization_id, slug,
+    display_name, version, created_at, updated_at) survives, and the
+    fixture has two distinct versions (1, 2) so a future regression
+    that hard-coded version=1 in the projection would fail here.
+  - TestListProjectsPolicyRevokedAndExpiredKeys: a Disabled principal —
+    even one whose underlying role is Owner — is rejected at the
+    policy boundary with E_FORBIDDEN + ReasonDeniedPrincipalDisabled.
+    Reader never runs; body never echoes the principal id, the org, or
+    the seeded project ids/slugs/display names. Case names map 1:1 to
+    the PRD principal classes ("revoked key", "expired key").
+  - TestListProjectsPolicyWrongOrganizationPrincipal: the structural
+    cross-tenant test described above. Wire-level: attacker sees only
+    their own org via seenAttacker == ownOrg and body !~ victimOrg.
+    Engine-level: ReasonDeniedCrossTenant for non-support owner of a
+    foreign org, ReasonAllowedBySupport for Support of yalla on a
+    foreign org. The Support engine clause is the same CapRead branch
+    that fires for env.read / limits.read / usage.read.
+  - TestListProjectsPolicyGrantContainment: all three PRD grant-
+    containment properties pinned at the engine — sibling project
+    (project grant does not reach proj_q via project.update),
+    production environment (staging grant does not reach env_prod via
+    environment.update), parent-level secrets (service grant does not
+    reach env.write on the parent environment, and does not reach a
+    sibling service). Tied back at the wire: the project-scoped key
+    hitting /v1/projects at its OWN home org is 403 with
+    ReasonDeniedOutOfScope (the scoped key cannot be widened to an
+    organization-wide list — covers() is one-way), reader never reached,
+    body does not leak the seeded project data. The org-level Viewer
+    grant DOES cover the org-root scope (ReasonAllowedByGrant) and is
+    allowed at the wire — this locks the CapRead requirement against
+    the grant path so a future catalog change that upgraded project.read
+    above CapRead would fail here (silently denying every org-level
+    Viewer grantee) before it could regress a real customer. A final
+    cross-tenant grant pin: the same project-grant carried by a
+    principal whose home org is foreign is denied at the engine — a
+    stolen scoped key cannot be smuggled across tenants by changing the
+    principal's home org.
+- Verification run:
+  - gofmt -w internal/controlplane/httpapi/projects_policy_test.go
+  - go vet ./internal/controlplane/httpapi/...
+  - go test -run 'TestListProjectsPolicy' ./internal/controlplane/httpapi/...
+  - go test ./...
+  - go test -race ./...
+  - go vet ./...
+- Results: all green. Initial wire-level cross-tenant assertion failed
+  because the canonical fakeProjectReader (from projects_test.go)
+  returns its seeded projects unconditionally regardless of the org id
+  it was called with — so seeding it with the victim's projects caused
+  them to surface in the attacker's 200 OK body. Fixed by seeding the
+  attacker reader with the attacker's OWN projects and asserting
+  structural isolation differently: the reader is hardcoded by the
+  handler to use principal.OrganizationID (seenAttacker == ownOrg), and
+  the response body never echoes the victim's org id literal. This is
+  the correct way to assert the property against a non-content-keyed
+  fake — the production ProjectReader.ListByOrganization tenant-scopes
+  by definition, so the handler-side contract under test is which org
+  id the handler asks for, not what the fake returns.
+- Remaining risks or follow-ups:
+  - The CapRead role matrix here is identical to env.read / limits.read
+    / usage.read in shape but with different fixtures. A future
+    refactor could lift the matrix into a shared table-driven helper
+    parameterised on (action, fixture, decoder) so a new CapRead
+    endpoint can adopt the matrix in five lines; intentionally not
+    done in this story to keep the change focused.
+  - BE-0123 (POST /v1/projects policy matrix) is priority 1 but
+    depends on BE-0121 (POST /v1/projects implement) — which is
+    priority 2 and not yet implemented. The next iteration should
+    pick BE-0121 to unblock BE-0122 (contract tests) + BE-0123
+    (policy matrix). The shape of BE-0123 will diverge from this
+    file: project.create is CapWrite (not CapRead), so the role
+    matrix splits along the write capability class (viewer denies,
+    Support denies cross-tenant), and the grant containment test
+    must prove an organization-level Viewer grant is DENIED
+    project.create (because the action requires CapWrite, which
+    Viewer does not hold) — the inverse of the CapRead-allowed
+    assertion in this file.
+- **Learnings for future iterations:**
+  - For nil-resolver list endpoints (organization-root scope of the
+    principal's home org), the cross-tenant property is STRUCTURAL —
+    there is no path parameter to forge. The policy matrix test still
+    needs to pin (a) that the reader is hardcoded to the principal's
+    home org id and (b) the engine-level cross-tenant verdict
+    defence-in-depth, so a future {org_id}-scoped variant inherits a
+    working cross-tenant deny. Do not try to assert a wire-level 403
+    for a wrong-organization principal on a nil-resolver route — the
+    route returns 200 with the principal's own org's projects, which
+    is correct.
+  - When asserting tenant isolation against a fake reader that returns
+    its seeded fixture unconditionally (the canonical pattern in
+    projects_test.go and variables_test.go for keyed-by-orgID fakes
+    that only echo the call's org id), do not seed the fake with the
+    victim's data — that data WILL surface in the body because the
+    fake does not enforce the production tenant-scope. Instead seed
+    with the principal's OWN org's data and prove (i) the reader was
+    called with the right org id (seenSomething == expectedOrg) and
+    (ii) the body does not echo the victim's org id literal. The
+    production ProjectReader.ListByOrganization is tenant-scoped at
+    the SQL layer; the handler-side contract under test is which org
+    id the handler asks for, not what the fake returns.
+  - The engine's same-tenant role-cap check fires BEFORE the
+    cross-tenant Support exception, so a Support principal reading its
+    OWN organization is allowed via ReasonAllowedByRole — NOT
+    ReasonAllowedBySupport. The Support exception only applies when
+    principal.OrganizationID != resource.Scope.OrganizationID. This
+    matters for the matrix-roles test (which asserts
+    ReasonAllowedByRole for support same-tenant) and for the
+    wrong-organization test (which asserts ReasonAllowedBySupport for
+    support cross-tenant). Asserting ReasonAllowedBySupport for support
+    same-tenant would silently fail.
+  - Mirror an existing policy matrix file exactly when adding the next
+    one — variables_policy_test.go is the canonical CapRead matrix
+    shape, projects_policy_test.go is now the canonical CapRead matrix
+    shape for nil-resolver list endpoints. Future CapRead nil-resolver
+    list endpoints (members, api-keys, etc.) should be derived from
+    projects_policy_test.go's structure; future CapRead resolver-bound
+    endpoints (variables, limits, usage) from variables_policy_test.go.
+---
