@@ -222,6 +222,11 @@ func main() {
 		logger.Error("failed to initialize the environment grant reader", "error", err.Error())
 		os.Exit(1)
 	}
+	environmentGrantService, err := store.NewEnvironmentGrantService(dataStore, store.NewEnvironmentRepository(), store.NewEnvironmentGrantRepository(), auditRepo)
+	if err != nil {
+		logger.Error("failed to initialize the environment grant service", "error", err.Error())
+		os.Exit(1)
+	}
 	authenticator, err := auth.NewAuthenticator(auth.AuthenticatorConfig{
 		Store:       credentials,
 		SigningKeys: cfg.SigningKeys,
@@ -254,7 +259,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              cfg.APIAddr,
-		Handler:           httpapi.NewHandler(build, readiness, meta, authenticator, engine, organizations, organizationService, organizationService, organizationService, members, membershipService, membershipService, membershipService, limits, limitsService, usage, auditEvents, orgVariables, orgVariableService, orgVariableService, orgVariableService, apiKeys, apiKeyService, apiKeyService, apiKeyService, apiKeyService, projects, projectService, projectService, projectService, projectService, projectGrants, projectGrantService, projectVariables, projectVariableService, projectEnvironments, environmentService, projectEnvironments, environmentService, environmentService, environmentService, environmentGrants, logger),
+		Handler:           httpapi.NewHandler(build, readiness, meta, authenticator, engine, organizations, organizationService, organizationService, organizationService, members, membershipService, membershipService, membershipService, limits, limitsService, usage, auditEvents, orgVariables, orgVariableService, orgVariableService, orgVariableService, apiKeys, apiKeyService, apiKeyService, apiKeyService, apiKeyService, projects, projectService, projectService, projectService, projectService, projectGrants, projectGrantService, projectVariables, projectVariableService, projectEnvironments, environmentService, projectEnvironments, environmentService, environmentService, environmentService, environmentGrants, environmentGrantService, logger),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

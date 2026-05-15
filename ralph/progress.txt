@@ -13245,3 +13245,198 @@
     cross-tenant role failure individually addressable from the test
     output.
 ---
+
+## 2026-05-16 - BE-0169 - Implement PUT /v1/environments/{environment_id}/grants
+- What was implemented: the PUT replace-environment-grants surface — store
+  service, HTTP handler, route registration, OpenAPI metadata, and full
+  contract + integration test coverage. Selected per the BE-0118 pattern:
+  BE-0171 (policy matrix, P1) is the lowest-id failing story but strictly
+  depends on BE-0169 (implement, P2). Implementing BE-0169 first unblocks
+  both follow-ups; the implement story is itself passing and the contract
+  suite shipped here covers most of what BE-0171 will additionally pin
+  down at the authorization layer.
+- Files changed:
+  - internal/controlplane/store/environment_grant.go: added
+    EnvironmentGrantRepository.Upsert (uses
+    environment_grants_principal_scope_idx as the ON CONFLICT target with
+    COALESCE(service_id, '') so a NULL service_id deduplicates cleanly
+    across rows; returns the persisted row via RETURNING so callers trust
+    the survive-set id, never the caller-supplied id),
+    DeleteByEnvironmentExceptIDs (bulk delete-by-exclusion, tenant-scoped
+    on organization_id + environment_id; empty keepIDs is the deliberate
+    clear semantic),  EnvironmentGrantReplace, ReplaceEnvironmentGrantsInput,
+    EnvironmentGrantService, NewEnvironmentGrantService, the Replace
+    unit-of-work (existence check, per-grant upsert, bulk delete, audit
+    append, post-write re-read — all in one Store.Write transaction),
+    buildEnvironmentGrantReplace + helpers (closed-set validation of
+    principal_kind / role, normaliseEnvironmentGrantScopeID, dedup keyed
+    on principal_id + service_id, environmentGrantViolations collector
+    that sorts violations for deterministic wire bytes),
+    classifyEnvironmentGrantScopes for audit-metadata counts, and the
+    closed-set principal-kind / built-in-role maps + the
+    environmentGrantsWriteAction constant. The structure mirrors
+    project_grant.go but drops the EnvironmentID column from the request
+    shape since the route already pins the parent environment — the only
+    optional scope leg is ServiceID.
+  - internal/controlplane/httpapi/environment_grants.go: added the
+    EnvironmentGrantReplacer port (Replace takes
+    store.ReplaceEnvironmentGrantsInput), errNoEnvironmentGrantReplacer
+    wiring sentinel, errEnvironmentGrantsBodyMissing rejection reason,
+    environmentGrantRequest + replaceEnvironmentGrantsRequest (pointer to
+    slice so a missing field is structurally distinguishable from an
+    explicit []), replaceEnvironmentGrantsPayload (re-uses the
+    environmentGrantResource projection so PUT and GET share one wire
+    shape), and replaceEnvironmentGrantsHandler. The handler is thin:
+    strict-decode the body, surface a 400 for a missing grants field
+    (never silently treated as clear), copy the body items into
+    store.EnvironmentGrantReplace (with cloneOptionalString so the store
+    can never observe or mutate caller string memory), pass the resolved
+    principal + telemetry correlation through as actor / request
+    identifiers, and project the committed rows back through
+    environmentGrantResourceOf.
+  - internal/controlplane/httpapi/routes.go: added
+    environmentGrantReplacer parameter to newRouteTable, the PUT
+    /v1/environments/{environment_id}/grants route entry (action
+    policy.ActionEnvironmentGrantsWrite, environmentIDResolver, tagged
+    tagEnvironments, OperationID replaceEnvironmentGrants), and extended
+    the function-level doc to name the new port.
+  - internal/controlplane/httpapi/server.go: extended the NewHandler
+    signature with environmentGrantReplacer EnvironmentGrantReplacer,
+    extended the descriptive doc, and forwarded the new dependency to
+    newRouteTable.
+  - cmd/yalla-api/main.go: construct store.NewEnvironmentGrantService at
+    startup and pass it to httpapi.NewHandler. The constructor's
+    fail-fast nil check protects against a misconfigured wiring.
+  - internal/controlplane/httpapi/environment_grants_put_test.go (NEW):
+    contract / authorization / tenant-isolation coverage for the new
+    surface — happy path proving every grant column reaches the wire and
+    the replacer receives the right actor, empty-array-is-explicit-clear,
+    missing-grants-field is 400 (the replacer never runs),
+    malformed-JSON / unknown-field 400 paths, authentication 401 (the
+    replacer never runs), viewer-denied 403 (CapAdmin gate), store-side
+    NotFound becomes 404, store-side InvalidInput becomes 400 (the
+    handler never re-validates), StoreUnavailable becomes 503 with no
+    upstream-cause leak, unwired-replacer becomes 500, and OpenAPI
+    registration assertion (operationId + x-required-action + tag).
+    fakeEnvironmentGrantReplacer lives here alongside the other PUT-side
+    fakes for the surface.
+  - internal/controlplane/store/environment_grant_service_test.go (NEW):
+    isolated-Postgres integration coverage for the new
+    EnvironmentGrantService — happy path (fresh inserts, egrnt_ prefix,
+    deterministic order, audit metadata counts only no identifiers),
+    upsert idempotency (same scope tuple updates role in place and bumps
+    version), delete-by-exclusion drops rows absent from the replacement
+    set, explicit empty-list clears every grant, missing environment
+    surfaces as NotFound with no audit row (rolled back with the tx),
+    cross-tenant environment_id is NotFound and never reaches the
+    foreign tenant's table, invalid principal_kind / unknown role become
+    apierr.InvalidInput naming the offending field path before any
+    database write, duplicate scope tuple rejected, blank ActorOrgID
+    surfaces as Internal (wiring invariant), and the constructor's
+    fail-fast nil-dep check.
+  - 37 NewHandler test-helper sites (every test file that constructs a
+    full handler) updated to pass fakeEnvironmentGrantReplacer{} between
+    fakeEnvironmentGrantReader{} and the trailing logger / nil — a Node
+    walker handled the bulk edit so the structural twin pattern stays
+    uniform across the package. Two single-line newRouteTable callers
+    (projects_delete_test.go, projects_restore_test.go) extended their
+    trailing nil run by one. The single-line all-nil callers (limits_*,
+    variables_*, project_*, server_test, routes_test) had one extra nil
+    inserted for the new EnvironmentGrantReplacer slot.
+  - ralph/prd.json (BE-0169 passes: true)
+  - ralph/progress.txt (this entry)
+- Verification (against the local Docker Postgres at
+  YALLA_TEST_DATABASE_URL=postgres://yalla:yalla@127.0.0.1:5432/yalla):
+  - gofmt -l . (clean)
+  - go mod tidy (no change)
+  - go vet ./... (clean)
+  - go build ./... (clean)
+  - go test ./internal/controlplane/httpapi/... (PASS — every contract
+    test green, including the 12 new TestReplaceEnvironmentGrants* cases)
+  - go test -run 'TestEnvironmentGrantService|TestReplaceEnvironmentGrants|TestListEnvironmentGrants' ./internal/controlplane/store/... ./internal/controlplane/httpapi/... (PASS)
+  - go test -race -run 'TestEnvironmentGrant|TestReplaceEnvironmentGrants|TestListEnvironmentGrants' ./internal/controlplane/httpapi/... ./internal/controlplane/store/... (clean)
+  - Pre-existing failures in TestEnvironmentServiceCreate*,
+    TestEnvironmentReaderRejectsCrossTenantProjectID,
+    TestOrganizationVariableServicePatch*,
+    TestEnvironmentRepoListByProjectReturnsDeterministicOrdering,
+    TestEnvironmentRepoGetByIDReturnsRow, and TestAPIKey*Create* are
+    reproduced on the parent commit (verified via git stash + rerun in
+    this session) with the same factory-state shape, so they are not
+    caused by this story; they remain tracked separately (first noted
+    in the BE-0166 progress entry).
+- Remaining risks or follow-ups:
+  - BE-0170 (contract tests follow-up) and BE-0171 (policy matrix, P1)
+    are the immediate next stories. The contract suite shipped here
+    covers most of BE-0170's acceptance criteria; BE-0171 still needs
+    the full role-x-tenant-x-grant-scope matrix on top of
+    environmentIDResolver against ActionEnvironmentGrantsWrite (the same
+    structural twin of projects_grants_put_policy_test.go, but with the
+    bare top-level path that pins NO ProjectID on the resource scope —
+    see BE-0168 / environment_grants_policy_test.go for the read-path
+    twin already in place).
+  - environment_grants surface still has no per-row PATCH / DELETE
+    endpoint (per the project_grants pattern, those are a separate set
+    of future stories — the unique (organization_id, id) target already
+    exists at the schema layer to support them).
+- **Learnings for future iterations:**
+  - PUT-replace-grants store-service pattern (BE-0169 store pattern,
+    internal/controlplane/store/environment_grant.go +
+    environment_grant_service_test.go): a customer-facing
+    replace-grants endpoint whose route uses an *IDResolver pinning the
+    parent resource is structurally identical to ProjectGrantService at
+    the persistence boundary, with one structural simplification:
+    because the parent is a route path parameter (not a body field),
+    the ReplaceInput drops the parent-id leg from the per-grant Replace
+    struct (here EnvironmentGrantReplace has only ServiceID; project
+    grants carry both EnvironmentID and ServiceID). The audit metadata
+    therefore tallies two scope counts (environment / service) instead
+    of three (project / environment / service), and the unique index
+    deduplicates on (organization_id, parent_id, principal_id,
+    COALESCE(child_id, '')) — one fewer COALESCE leg than project
+    grants. Everything else (existence check → per-grant Upsert with
+    RETURNING → bulk DeleteByParentExceptIDs → audit Append →
+    post-write re-read, all in one Store.Write) is byte-identical to
+    project_grant.go and can be lifted verbatim. The closed-set
+    principal-kind / built-in-role maps, the FieldViolation collector
+    that sorts for deterministic wire bytes, and the
+    normalise/safe scope-id helpers are also drop-in copies.
+  - PUT-replace-grants handler pattern (BE-0169 handler pattern,
+    internal/controlplane/httpapi/environment_grants.go +
+    environment_grants_put_test.go): the handler is a thin
+    strict-decode → validate body shape → forward-to-store →
+    re-project pipeline. The grants field is a pointer-to-slice so a
+    body that omits the field is a stable 400 (errors with the
+    must-be-supplied reason) and a body with an explicit empty array
+    reaches the store as a deliberate clear — the structural
+    distinction is load-bearing because PUT replaces the entire set.
+    cloneOptionalString protects the store from observing caller
+    string memory. Field-level validation (principal_kind, role,
+    duplicate scope tuple) is never re-done in the handler — it lives
+    in the store layer and the handler propagates apierr.InvalidInput
+    verbatim. fakeEnvironmentGrantReplacer mirrors
+    fakeProjectGrantReplacer (grants / err / got / callCount fields).
+  - Bulk NewHandler-signature edit pattern (BE-0169 bulk-edit pattern):
+    adding a new ReplacerPort to NewHandler ripples across ~46 test
+    files. A Node script that replaces the literal pattern
+    'fakeEnvironmentGrantReader{}, nil)' with
+    'fakeEnvironmentGrantReader{}, fakeEnvironmentGrantReplacer{}, nil)'
+    catches every routine NewHandler call site in one pass. The
+    remaining cases (NewHandler with reader-aliased to 'reader' and
+    NewHandler followed by ', logger)' and single-line newRouteTable
+    calls with N trailing nil args) need their own targeted
+    replacements but every variant has at most a handful of call
+    sites. The pre-existing newRouteTable test helpers (projects_*,
+    variables_*, server_test.go) pass nil for unused dependencies, so
+    those need an extra trailing nil — never an extra
+    fakeEnvironmentGrantReplacer{} — to match the new arity.
+  - Confirm pre-existing failures by git-stashing and re-running: a
+    failing test on this branch is only "yours" if it doesn't already
+    fail on the parent. The BE-0166 progress entry already documented
+    a set of factory-state failures (TestEnvironmentServiceCreate*,
+    TestEnvironmentReaderRejectsCrossTenantProjectID,
+    TestAPIKeyServiceCreate*, TestOrganizationVariableServicePatch*,
+    TestEnvironmentRepoListByProjectReturnsDeterministicOrdering,
+    TestEnvironmentRepoGetByIDReturnsRow) and they reproduce
+    identically on the parent commit of this story. Stash + rerun is
+    the cheapest sanity check before chasing a tail-of-the-suite red.
+---

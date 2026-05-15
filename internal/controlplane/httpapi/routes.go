@@ -109,7 +109,8 @@ type versionPayload struct {
 // /v1/projects/{project_id}, projectRestorer backs POST
 // /v1/projects/{project_id}/restore, projectGrants backs GET
 // /v1/projects/{project_id}/grants, projectGrantReplacer backs PUT
-// /v1/projects/{project_id}/grants, projectVariables backs GET
+// /v1/projects/{project_id}/grants, environmentGrantReplacer backs PUT
+// /v1/environments/{environment_id}/grants, projectVariables backs GET
 // /v1/projects/{project_id}/variables, projectVariableReplacer backs
 // PUT /v1/projects/{project_id}/variables, projectEnvironments backs
 // GET /v1/projects/{project_id}/environments, environmentCreator
@@ -123,7 +124,7 @@ type versionPayload struct {
 // table's metadata; a request that actually reaches a handler with a
 // nil dependency is reported as a typed internal error rather than a
 // misleading empty list or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter, environmentCloner EnvironmentCloner, environmentGrants EnvironmentGrantReader) []apiRoute {
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter, environmentCloner EnvironmentCloner, environmentGrants EnvironmentGrantReader, environmentGrantReplacer EnvironmentGrantReplacer) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -739,6 +740,37 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// parent-scoped routes.
 			resolver: environmentIDResolver,
 			handler:  listEnvironmentGrantsHandler(environmentGrants),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodPut,
+				Path:           "/v1/environments/{environment_id}/grants",
+				OperationID:    "replaceEnvironmentGrants",
+				Summary:        "Replace environment grants",
+				Description:    "Replaces the scoped grants attached to the environment named by the {environment_id} path parameter in one transaction. The request body supplies the complete replacement set — every grant absent from the body is removed, every grant present is upserted on its (principal_id, service_id) scope tuple — so a PUT with the same set is structurally idempotent. An explicit empty array means \"clear every grant of this environment\" — a meaningful (extreme) operation, never a silent no-op. Every field is validated before any database work; an invalid request (missing grants field, blank principal_id, unknown principal_kind, unknown role, duplicate scope tuple) never opens a transaction. Action environment.grants.write is authorized against the (principal home organization, {environment_id}) resource the path names before the handler runs: environment.grants.write is a CapAdmin action, so the gate admits the owner and admin roles, or a principal holding a scope-covering admin grant, and denies viewer, developer, ci, and support principals at the policy boundary. The path carries no parent project_id, so the policy engine cannot pin the ProjectID leg of the resource scope at authorization time — project-, environment-, and service-scoped grants are denied at the boundary by the engine's covers() rule (a grant with a pinned ProjectID cannot cover a resource with no ProjectID); scoped-grant-only principals must address grants through a parent-scoped route. The grant upserts, the bulk delete-by-exclusion that drops every grant absent from the replacement set, and the immutable audit record naming the authenticated principal are committed in one transaction, so a partial replace can never be observed and an orphaned audit record is impossible. A cross-tenant or unknown environment_id reaches the persistence layer with the principal's home organization id and is rejected as a deterministic 404. The response carries no credential material — a grants row stores only structural identifiers and a role enum — and the success body is the same wire shape GET /v1/environments/{environment_id}/grants returns — every column projected onto the deterministic (principal_id, service_id NULLS FIRST, id) order.",
+				Tags:           []string{tagEnvironments},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionEnvironmentGrantsWrite),
+				PathParams: []openapi.PathParam{{
+					Name:        "environment_id",
+					Description: "The id of the environment whose grants to replace.",
+				}},
+				SuccessDescription: "The grants attached to the environment after the replace.",
+			},
+			// environmentIDResolver authorizes action
+			// environment.grants.write against the (principal home
+			// organization, {environment_id}) resource the path names.
+			// The path carries no parent project_id, so the resource
+			// scope pins only OrganizationID and EnvironmentID —
+			// project-, environment-, and service-scoped grants are
+			// denied at the policy boundary by design (the engine's
+			// covers() rule), forcing scoped-grant-only principals onto
+			// parent-scoped routes. environment.grants.write is a
+			// CapAdmin action and has no cross-tenant support exception
+			// — unlike CapRead actions, a support principal cannot
+			// replace environment grants in another tenant.
+			resolver: environmentIDResolver,
+			handler:  replaceEnvironmentGrantsHandler(environmentGrantReplacer),
 		},
 		{
 			endpoint: openapi.Endpoint{
