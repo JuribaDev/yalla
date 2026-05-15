@@ -5523,3 +5523,86 @@
     contract assertions that overlap heavily with the implementation
     commit's own tests.
 ---
+
+## 2026-05-15 - BE-0090
+- What was implemented: api_keys_delete_policy_test.go — policy-matrix
+  coverage for DELETE /v1/organizations/{org_id}/api-keys/{key_id}.
+  Mirrors the BE-0087 sibling (PATCH api_keys_update_policy_test.go) since
+  both endpoints share action keys.manage + apiKeyIDResolver, only
+  swapping the handler/helper/fake/input triplet:
+    revokeAPIKeyHandlerFor / deleteAPIKey / decodeRevokeAPIKey /
+    fakeAPIKeyRevoker / store.RevokeAPIKeyInput.
+  Three Test functions, no new scaffolding:
+    1. TestRevokeAPIKeyPolicyMatrixRoles — every built-in role
+       (owner/admin/developer/viewer/ci/support) drives both the engine
+       Decide call and the wired handler against ({org_id},{key_id})
+       inside the principal's home org. CapAdmin holders allow via
+       ReasonAllowedByRole; the rest deny via ReasonDeniedNoCapability,
+       the revoker is never reached on a deny, and the denied body
+       cannot echo the seeded key id or prefix.
+    2. TestRevokeAPIKeyPolicyRevokedAndExpiredKeys — a Disabled principal
+       (the auth-layer surface for both revoked and expired credentials)
+       whose underlying role is Owner is denied via
+       ReasonDeniedPrincipalDisabled; the revoker is never reached and
+       the body never echoes principal id, organization, key id, or
+       prefix. The "stale credential scorched-earths the tenant's CI
+       keys" abuse is the load-bearing motivation.
+    3. TestRevokeAPIKeyPolicyWrongOrganizationPrincipal — a non-support
+       cross-tenant owner AND a Yalla support principal both deny against
+       a foreign org with ReasonDeniedCrossTenant; engine verdict pinned
+       directly. Bonus: support cannot revoke its OWN home-tenant keys
+       either (ReasonDeniedNoCapability — RoleSupport lacks CapAdmin),
+       which locks the support role's read-only-for-key-data posture
+       against silent catalog drift.
+    4. TestRevokeAPIKeyPolicyGrantContainment — sibling project,
+       production environment, and parent-level secrets pinned via the
+       project/env/service grant Decide calls; then the load-bearing
+       extension: a project/env/service-scoped Admin grant does NOT
+       cover the api-key scope of its OWN org (ReasonDeniedOutOfScope),
+       so a leaked scoped CI key cannot be weaponised to revoke
+       organization-wide owner keys. Tied back at the wire: project
+       grantee gets 403 OutOfScope at its own ({org_id},{key_id}); an
+       org-level Admin grant gets 200 with the revoker reached on both
+       parameters; an org-level Viewer grant is denied (CapAdmin not
+       CapRead); the same project grantee against a foreign {org_id} is
+       still denied via the cross-tenant guard.
+- Files changed: internal/controlplane/httpapi/api_keys_delete_policy_test.go
+  (new), ralph/prd.json (passes: true), ralph/progress.txt.
+- Verification run: gofmt -w .; go mod tidy; go build ./...; go vet ./...;
+  go test -run 'TestRevokeAPIKeyPolicy' ./internal/controlplane/httpapi/;
+  go test ./...; go test -race ./....
+- Results: all passed. goimports not installed locally (PATH); gofmt is
+  the source of truth and ran clean. golangci-lint, staticcheck, and
+  govulncheck still not installed locally (documented in earlier
+  iterations).
+- Remaining risks / follow-ups: none for BE-0090. The same load-bearing
+  property (a scoped key cannot widen to org-wide key.* operations)
+  applies identically to keys.manage on POST /v1/organizations/{org_id}/
+  api-keys/{key_id}/rotate (BE-0093, the next p1 in the queue), and the
+  matrix structure here transplants cleanly with no new helpers.
+- Learnings for future iterations:
+  - The "Add policy matrix coverage" stories for the api-keys endpoints
+    that share action keys.manage (PATCH/DELETE/rotate) are pure mirrors
+    of one another — only the handler/helper/fake/input quadruple
+    differs. Once BE-0087's structure existed, BE-0090 was a sub-200
+    line edit-with-substitutions; rotate (BE-0093) will be the same.
+  - DELETE has no body, so the "minimal valid body keeps the deny path
+    indistinguishable from a would-have-succeeded request" caveat the
+    PATCH file's preamble carries does NOT apply here. Replaced with a
+    one-sentence note that the policy boundary fires purely off the
+    {org_id} path parameter — keep this distinction when mirroring to
+    other body-less mutating endpoints (POST .../rotate also has no
+    body, so the same simplification applies there).
+  - The "revoker received the path's key_id verbatim" assertion only
+    holds for ALLOW cases — gotInput must be tested for empty fields on
+    DENY cases (proves the policy boundary stopped the request before
+    it reached the persistence layer). Mirror this everywhere:
+    `gotInput.OrganizationID != "" || gotInput.KeyID != ""` is the
+    structural anti-bypass invariant.
+  - seedAPIKey returns a store.APIKey whose RevokedAt is nil by default;
+    for the success-path assertions in a DELETE test the seeded row has
+    to mimic the post-revoke snapshot, so the test stamps a deterministic
+    revokedAt and assigns persisted.RevokedAt = &revokedAt before handing
+    it to the fake. The PATCH equivalent did not need this because the
+    success snapshot it returns is just the renamed row.
+---
