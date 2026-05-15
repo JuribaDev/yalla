@@ -7204,3 +7204,122 @@
     hidden".
 ---
 
+
+## 2026-05-15 - BE-0108
+- What was implemented: policy-matrix coverage for GET
+  /v1/organizations/{org_id}/variables, proving action env.read cannot
+  be bypassed by, or leak data because of, the principal's role,
+  revoked credentials, home organization, or scoped grants.
+  - internal/controlplane/httpapi/variables_policy_test.go (new): four
+    table-driven tests driving the REAL NewHandler + real
+    policy.NewEngine() (production request path, fake Authenticator
+    only). The matrix mirrors usage_policy_test.go's shape exactly
+    because env.read and limits.read share the CapRead capability class
+    and the organizationIDResolver scope (and so the same all-roles-
+    allow + support-cross-tenant exception).
+    1. TestListOrgVariablesPolicyMatrixRoles tables the six built-in
+       roles (owner, admin, developer, viewer, ci, support) against
+       the org root the {org_id} path names. Each is allowed via
+       ReasonAllowedByRole; the reader sees the path parameter
+       unchanged; the seeded variables project in reader order; and —
+       the property unique to this endpoint — the secret variable's
+       value projects as output.Sentinel in EVERY role's allowed
+       response. The role loop pins the redaction chokepoint inside
+       the policy-allowed branch so a future regression that bypassed
+       organizationVariableOf for a particular principal class would
+       fail here.
+    2. TestListOrgVariablesPolicyRevokedAndExpiredKeys names the two
+       PRD principal classes ("revoked key", "expired key") and proves
+       a Disabled principal — even one whose underlying role is Owner
+       — is rejected at the policy boundary with
+       ReasonDeniedPrincipalDisabled. Reader never runs; body never
+       echoes the principal id, organization, seeded ids/keys, the
+       non-secret value, or any fragment of the secret value (full
+       URL, "hunter2", "postgres://", "db.internal" all blocked).
+    3. TestListOrgVariablesPolicyWrongOrganizationPrincipal pins the
+       cross-tenant boundary in BOTH directions: a non-support owner
+       of org_attacker reading org_victim's variables is denied via
+       ReasonDeniedCrossTenant (reader never runs, body never echoes
+       the foreign org or seeded data); a Support principal of
+       org_yalla performing the same cross-tenant read IS allowed via
+       ReasonAllowedBySupport — the engine clause "CapRead inside the
+       cross-tenant branch" reaches env.read because the catalog maps
+       it to CapRead. The cross-tenant allowed branch STILL redacts
+       the secret value to output.Sentinel: a Support read is not a
+       secret-exfiltration channel.
+    4. TestListOrgVariablesPolicyGrantContainment proves scoped grants
+       cannot be widened past their scope. Project/environment/
+       service-scoped admin grants are denied env.read on the
+       organization root via ReasonDeniedOutOfScope (covers() is
+       one-way: a more-specific scope cannot reach a broader
+       resource). The sibling-project, production-environment, and
+       parent-level-secrets containment properties are pinned against
+       the engine via project-update/environment-update/service-update/
+       env-write actions. Tied back at the wire: the project-scoped
+       grantee is a 403 with the stable out-of-scope reason and no
+       leak; the project-scoped grantee against a foreign {org_id} is
+       still denied via ReasonDeniedCrossTenant (the cross-tenant guard
+       fires first). An organization-level Viewer grant IS allowed via
+       ReasonAllowedByGrant (Viewer holds CapRead, env.read is
+       CapRead), and the grant-allowed wire branch STILL redacts the
+       secret value — the twin of the role-allowed redaction
+       assertion.
+- Files changed:
+  - internal/controlplane/httpapi/variables_policy_test.go (new)
+  - ralph/prd.json (BE-0108 passes=true)
+  - ralph/progress.txt (this entry)
+- Verification run:
+  - gofmt -w internal/controlplane/httpapi/variables_policy_test.go
+  - go vet ./internal/controlplane/httpapi/...
+  - go build ./...
+  - go test -run 'TestListOrgVariablesPolicy' ./internal/controlplane/httpapi/...
+  - go test ./...
+  - go test -race ./...
+  - go vet ./...
+- Results: every check passes. The httpapi suite runs in 0.58s normal
+  and 2.07s under the race detector. No new pgx, no new deps, no new
+  test fixtures beyond the small seededOrgVariables + orgVariablesBodyLeak
+  pair this file owns.
+- Remaining risks or follow-ups: none for BE-0108. The next four PRD
+  rows (BE-0111 PUT variables, BE-0114 PATCH variable, BE-0117 DELETE
+  variable, then BE-0120 GET /v1/projects) extend the same matrix shape
+  to the variables-write actions and the project endpoints — the
+  redaction chokepoint pattern documented in the role-loop assertion
+  here is the one those PATCH/PUT matrices should mirror so the
+  variables-write surfaces can never leak the secret value they were
+  asked to set.
+- Learnings for future iterations:
+  - When the endpoint under test is a SECRET-BEARING list (anything
+    where output.Sentinel is the wire chokepoint), the policy matrix
+    should pin the sentinel inside every allow path (role-allowed,
+    grant-allowed, support-cross-tenant-allowed) AND inside the leak
+    guard for every deny path. This is the load-bearing distinction
+    from a plain-data list (usage, limits, audit): the redaction layer
+    and the policy layer can drift independently, so the matrix must
+    cover their intersection on EVERY branch. The seededOrgVariables
+    fixture deliberately mixes a non-secret row and a secret row in
+    one slice so a single fixture exercises both projections at once;
+    orgVariablesBodyLeak splits the secret value into four substring
+    needles (full URL, password, scheme prefix, hostname) so a partial
+    leak still trips.
+  - The variables policy matrix is structurally identical to the
+    limits.read / usage.read matrices because all three share
+    (action=CapRead, route=organizationIDResolver). The "all six
+    built-in roles allow + Support cross-tenant via
+    ReasonAllowedBySupport + Viewer org-grant ReasonAllowedByGrant"
+    shape can be copy-adapted for any future CapRead endpoint scoped
+    to the organization root. The audit.read matrix is the structural
+    foil (CapAdmin → only owner+admin in-tenant allow, Support
+    cross-tenant DENIED, Viewer org-grant DENIED via
+    ReasonDeniedNoCapability) — useful to compare side by side when
+    adding a new endpoint whose capability class is unfamiliar.
+  - The contract test for the same endpoint (variables_test.go) is the
+    right place to consume the shared helpers (fakeOrgVariableReader,
+    listOrgVariablesHandlerFor, getOrgVariables, decodeOrgVariables,
+    orgVariableActorIdentity). Resist the urge to add anything to that
+    file from the policy matrix file — keep the matrix file
+    self-contained except for those helpers and the wider httpapi
+    fixtures (orgPrincipal, decodeError, fakeAuthenticator). The two
+    files have non-overlapping responsibilities even though they
+    share scaffolding.
+---
