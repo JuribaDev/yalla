@@ -334,6 +334,39 @@ func (r *APIKeyRepository) Revoke(ctx context.Context, tx *Tx, organizationID, k
 	return revoked, nil
 }
 
+// RotateCredential replaces the credential primitives (prefix and secret_hash)
+// of the key identified by (organizationID, keyID) and returns the persisted
+// row, including the trigger-refreshed updated_at. Identity, ownership, scopes,
+// and lifecycle stamps (created_by, service_account_id, expires_at, revoked_at,
+// last_used_at) are deliberately untouched: rotation swaps the credential body
+// for the same key without minting a new identity, so an audit trail and any
+// outstanding access plans keep pointing at the same key id. It requires a
+// *Tx and is tenant scoped — a key id from another organization does not
+// match and is reported as the typed apierr.NotFound the GET endpoint uses, so
+// a cross-tenant id can never rotate another tenant's credentials. The unique
+// constraint on prefix is the database-side defence against a collision with
+// the random prefix the auth layer just minted; a violation surfaces as the
+// typed Conflict mapWriteError produces, never as a 5xx.
+func (r *APIKeyRepository) RotateCredential(ctx context.Context, tx *Tx, organizationID, keyID, prefix, secretHash string) (APIKey, error) {
+	if tx == nil {
+		return APIKey{}, apierr.Internal(errors.New("store: APIKeyRepository.RotateCredential called with a nil transaction"))
+	}
+	row := tx.QueryRow(ctx,
+		`UPDATE api_keys
+		    SET prefix = $3, secret_hash = $4
+		  WHERE organization_id = $1 AND id = $2
+		 RETURNING `+apiKeyColumns,
+		organizationID, keyID, prefix, secretHash)
+	rotated, err := scanAPIKey(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return APIKey{}, apierr.NotFound("api_key", keyID)
+	}
+	if err != nil {
+		return APIKey{}, mapWriteError(err, "the api key credential could not be rotated")
+	}
+	return rotated, nil
+}
+
 // APIKeyReader is the store-backed read adapter the httpapi layer depends on
 // for the GET /v1/organizations/{org_id}/api-keys endpoint surface. It mirrors
 // MembershipReader and OrganizationReader — it composes the APIKeyRepository

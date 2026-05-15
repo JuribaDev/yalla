@@ -143,6 +143,27 @@ func (f fakeAPIKeyRevoker) Revoke(_ context.Context, in store.RevokeAPIKeyInput,
 	return f.key, f.err
 }
 
+// fakeAPIKeyRotator is a canned APIKeyRotator for httpapi tests. The zero
+// value returns the zero store.APIKey and no error from Rotate, which is
+// all the tests that never reach the handler (the public-surface, GET-only,
+// POST-only, PATCH-only, DELETE-only, other-org-route, /v1/me, and members
+// suites) need. POST .../rotate-specific tests set key/err and read got back
+// to prove the handler forwards the path identifiers, the server-minted
+// (Prefix, SecretHash) pair, and the authenticated actor to the store layer
+// unchanged.
+type fakeAPIKeyRotator struct {
+	key store.APIKey
+	err error
+	got *store.RotateAPIKeyInput
+}
+
+func (f fakeAPIKeyRotator) Rotate(_ context.Context, in store.RotateAPIKeyInput, _ time.Time) (store.APIKey, error) {
+	if f.got != nil {
+		*f.got = in
+	}
+	return f.key, f.err
+}
+
 // listAPIKeysSuccessEnvelope is the decoded shape of the GET
 // /v1/organizations/{org_id}/api-keys success envelope.
 type listAPIKeysSuccessEnvelope struct {
@@ -161,7 +182,7 @@ func listAPIKeysHandlerFor(id auth.Identity, authErr error, reader APIKeyReader)
 	a := fakeAuthenticator{identity: id, err: authErr}
 	return NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, a, policy.NewEngine(),
 		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
-		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{}, reader, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, nil)
+		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{}, reader, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{}, nil)
 }
 
 // getAPIKeys issues GET /v1/organizations/{orgID}/api-keys against handler,

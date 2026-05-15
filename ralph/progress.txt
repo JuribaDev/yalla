@@ -5745,3 +5745,182 @@
     review-only actions for the service body keeps the deeper diff
     available without auto-repairing through a wrong-typed service.
 ---
+
+## 2026-05-15 - BE-0091
+- Implemented POST /v1/organizations/{org_id}/api-keys/{key_id}/rotate
+  (Rotate API key) end to end through the same vertical the rest of the
+  api-key endpoints follow: store-layer unit of work, narrow handler port,
+  thin handler, route + OpenAPI metadata folded into newRouteTable, full
+  test surface (contract/wire + policy matrix at handler, integration at
+  store).
+- Store layer:
+  - apikey.go: APIKeyRepository.RotateCredential — `UPDATE api_keys SET
+    prefix=$3, secret_hash=$4 WHERE organization_id=$1 AND id=$2 RETURNING ...`,
+    tenant-scoped (a cross-tenant key_id matches no rows → typed NotFound,
+    never a 5xx and never disguised as another tenant's key), nil-tx
+    guarded, mapWriteError funnels a prefix-collision into the same typed
+    Conflict the other writes produce.
+  - apikeyservice.go: RotateAPIKeyInput + APIKeyService.Rotate. Validates
+    id shape first (so an invalid id never opens a transaction), demands
+    server-minted Prefix and SecretHash as a wiring-error Internal (the
+    handler is responsible for minting through auth.Generate before
+    delegating), then runs read-current-row → reject revoked/expired as
+    typed Conflict → repository.RotateCredential → audit.Append, all in
+    one transaction. The audit metadata carries the new public prefix
+    (non-secret) as rotated_prefix; the secret hash is never recorded.
+- HTTP layer:
+  - api_keys.go: APIKeyRotator interface + rotateAPIKeyPayload (api_key +
+    one-time plaintext token) + rotateAPIKeyHandler. The handler mints
+    the new credential through auth.Generate BEFORE the store call so a
+    crypto failure cannot leave the row in a half-rotated state, projects
+    only the public Prefix on the response (no secret_hash on the wire),
+    and surfaces the plaintext token through auth.Token.Reveal() exactly
+    once — every subsequent read returns the projection without the
+    token, so a token not captured at rotation time is unrecoverable.
+  - routes.go: POST /v1/organizations/{org_id}/api-keys/{key_id}/rotate
+    route entry, RequiresAuth=true, RequiredAction=keys.manage, resolver
+    = apiKeyIDResolver. OpenAPI Description spells out the lifecycle
+    contract (rotated credential body invalidates the old prefix lookup
+    the moment the row is committed, revoked/expired is 409, cross-tenant
+    is 403/404, no cross-tenant support exception for CapAdmin).
+  - server.go: NewHandler takes apiKeyRotator APIKeyRotator. Threaded
+    through newRouteTable to the new route.
+- Binary wiring:
+  - cmd/yalla-api/main.go: existing apiKeyService value satisfies the
+    new APIKeyRotator port too, so the binary wiring is a single new
+    positional argument (`apiKeyService` reused for revoker AND rotator).
+- Tests:
+  - httpapi/api_keys_rotate_test.go (BE-0091 contract + BE-0092 surface
+    coverage at the wire): happy path projects the NEW prefix and surfaces
+    the plaintext token exactly once, the handler mints the credential
+    pair and forwards it verbatim (token prefix matches Reveal()), the
+    secret_hash sentinel never reaches the wire and `secret_hash` is not
+    even a field on the response, request_id propagation + envelope
+    schema + OpenAPI registration with x-required-action=keys.manage,
+    plus the full negative matrix (NotFound, revoked Conflict, expired
+    Conflict, store validation 400, store outage 5xx with no driver
+    cause leak, unauthenticated 401, invalid-credentials 401, viewer 403,
+    disabled-principal 403, cross-tenant 403, nil rotator 5xx, bare-handler
+    nil-rotator 500).
+  - httpapi/api_keys_rotate_policy_test.go (BE-0093 authorization matrix
+    @ p1): the production request path is driven by NewHandler + a real
+    policy.NewEngine; tests pin the verdict at BOTH the engine layer
+    (Decide) AND the wire (handler response + rotator-never-reached).
+    Matrix covers owner/admin allow via ReasonAllowedByRole, viewer/
+    developer/CI/support deny via ReasonDeniedNoCapability (with the
+    explicit "support cannot rotate even cross-tenant nor own-tenant
+    keys" property that locks CapAdmin out of the support cross-tenant
+    exception), disabled principals (revoked/expired credential) deny
+    via ReasonDeniedPrincipalDisabled, cross-tenant deny via
+    ReasonDeniedCrossTenant, grant containment for project/environment/
+    service scope (each denies the api-key scope via ReasonDeniedOutOfScope
+    while an org-level Admin grant allows via ReasonAllowedByGrant; a
+    Viewer grant at org level still denies because keys.manage is
+    CapAdmin not CapRead). Every denied response is asserted not to leak
+    the seeded key's id or prefix.
+  - store/apikeyservice_test.go: 8 new isolated-Postgres integration
+    tests for APIKeyService.Rotate — happy path (credential swapped in
+    place, identity/ownership/scopes preserved, updated_at advances,
+    audit record under the actor's home org with rotated_prefix as
+    non-secret metadata and no secret_hash anywhere in metadata),
+    missing key NotFound, cross-tenant key_id NotFound with the target
+    row untouched and no audit trail on either tenant, revoked key
+    Conflict (and the rejected rotate leaves the row's prefix
+    untouched), expired key Conflict (the row's expires_at is stamped
+    via direct UPDATE so this property is decoupled from Create's
+    input validator — see the gotcha below), invalid id shape rejected
+    as InvalidInput before any transaction, missing credential
+    primitives rejected as Internal (wiring error, never InvalidInput),
+    missing actor org rejected as Internal, and an integration property
+    test proving FindByPrefix(old prefix) → NotFound and
+    FindByPrefix(new prefix) → the same key id+org after rotation
+    (auth-time lookup follows the new credential immediately).
+- All existing httpapi tests updated to thread the new fakeAPIKeyRotator{}
+  argument through NewHandler / newRouteTable. The fake is a shared
+  zero-value type in api_keys_test.go next to fakeAPIKeyCreator/
+  fakeAPIKeyUpdater/fakeAPIKeyRevoker — same idiom, same Got pointer for
+  call-site verification.
+- Files changed:
+  - internal/controlplane/store/apikey.go (+RotateCredential repository method)
+  - internal/controlplane/store/apikeyservice.go (+RotateAPIKeyInput type
+    and +APIKeyService.Rotate orchestrator)
+  - internal/controlplane/store/apikeyservice_test.go (+8 integration tests)
+  - internal/controlplane/httpapi/api_keys.go (+errNoAPIKeyRotator,
+    +APIKeyRotator port, +rotateAPIKeyPayload, +rotateAPIKeyHandler)
+  - internal/controlplane/httpapi/routes.go (+route entry, +signature param)
+  - internal/controlplane/httpapi/server.go (NewHandler signature param)
+  - internal/controlplane/httpapi/api_keys_test.go (+fakeAPIKeyRotator)
+  - internal/controlplane/httpapi/api_keys_rotate_test.go (new contract suite)
+  - internal/controlplane/httpapi/api_keys_rotate_policy_test.go (new policy
+    matrix suite)
+  - 13 existing httpapi *_test.go files updated to thread the new fake
+  - internal/controlplane/httpapi/routes_test.go,
+    internal/controlplane/httpapi/server_test.go (newRouteTable call sites)
+  - cmd/yalla-api/main.go (wire apiKeyService as the rotator port too)
+  - ralph/prd.json (mark BE-0091 passes=true)
+- Verification run: gofmt -w .; go mod tidy; go vet ./...; go build ./...;
+  go test ./... ; go test -race ./...;
+  YALLA_TEST_DATABASE_URL=postgres://yalla:yalla@127.0.0.1:5432/yalla
+  go test ./internal/controlplane/store/ -run Rotate -race ;
+  go test ./internal/controlplane/httpapi/ -race.
+- Results: all passed. goimports binary not installed locally
+  (documented in earlier iterations); golangci-lint / staticcheck /
+  govulncheck not available in this environment either.
+- Remaining risks / follow-ups:
+  - BE-0092 (contract tests for POST .../rotate) and BE-0093 (policy
+    matrix coverage for POST .../rotate) are now unblocked — the new
+    api_keys_rotate_test.go and api_keys_rotate_policy_test.go already
+    cover much of those stories' acceptance surface, but they remain
+    separate PRD stories.
+  - There is a pre-existing factory/validator mismatch in the store
+    layer: testutil.NewFactory produces ids with a 20-character suffix
+    (e.g. `org_12be7c0a4209ea0b0001`), while domain.ParseID requires a
+    26-character Crockford-base32 suffix. TestAPIKeyServiceCreateWith
+    ServiceAccountAndExpiry already fails against a live Postgres for
+    this reason (Create's validator calls domain.ParseID for org_id and
+    created_by). All factory-id integration tests that bypass Create
+    (using seedAPIKeyForUpdate's direct Insert) are unaffected. This is
+    NOT introduced by BE-0091 — my Rotate tests deliberately seed the
+    expired key via direct UPDATE on api_keys to be decoupled from the
+    Create validator and demonstrate the Rotate path's own lifecycle
+    precondition. Fixing the factory/validator mismatch is its own
+    story.
+- Learnings for future iterations:
+  - The single-value APIKeyService satisfies four ports now
+    (Creator/Updater/Revoker/Rotator). Adding a fifth verb is just a
+    new method on APIKeyService, a new interface in api_keys.go, two
+    new positional args (NewHandler + newRouteTable), one new route
+    entry, and a single new positional arg in cmd/yalla-api/main.go
+    that reuses the same `apiKeyService` value. Don't multiply
+    services — the orchestrator is the unit of work boundary, not the
+    handler-facing port.
+  - "Rotate" is credential-body in place: identity, ownership, scopes,
+    and lifecycle stamps are immutable across the call. The plaintext
+    token is shown exactly once (mirrors Create), and the old prefix
+    is destroyed for authentication purposes the moment the row
+    commits — proved end to end via FindByPrefix(old) → NotFound and
+    FindByPrefix(new) → the same key id. This is the property the
+    BE-0091 acceptance contract is built on; if a future change adds
+    soft-rotate semantics (keep both prefixes for a grace period),
+    that property would have to be relaxed deliberately.
+  - When seeding an expired key for integration tests, stamp the row's
+    expires_at via a direct `UPDATE api_keys` SQL rather than going
+    through APIKeyService.Create with ExpiresAt set. Create validates
+    its input ids through domain.ParseID, which currently disagrees
+    with testutil.NewFactory's id shape (see remaining risks above);
+    seedAPIKeyForUpdate uses APIKeyRepository.Insert directly and
+    bypasses that validator, so an in-place UPDATE on the seeded row
+    is the closest equivalent for adding lifecycle stamps without
+    couplng the test to a separate latent bug.
+  - When `NewHandler` and `newRouteTable` grow a port parameter, the
+    grep target is wider than just `*_test.go`: a few files use the
+    full-signature `NewHandler(...)` directly (organizations_create_test,
+    organizations_test, me_test) and others use the multi-line form
+    (api_keys_*_test, members_*_test, organizations_*_test) — and the
+    *production* `newRouteTable` call sites (routes_test.go,
+    server_test.go) need updating too. The four routes_test/server_test
+    call sites use named arg-count placeholders like `nil, nil, nil, nil,
+    nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil` so they don't
+    match the "fakeAPIKeyRevoker{}, nil)" pattern — a follow-up grep
+    pass for "newRouteTable\\(" catches them.
+---

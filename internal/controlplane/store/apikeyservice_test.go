@@ -1250,3 +1250,598 @@ func TestAPIKeyServiceRevokeRequiresActorOrgID(t *testing.T) {
 		t.Errorf("Revoke code = %s, want %s", ye.Code, yerr.CodeInternal)
 	}
 }
+
+// TestAPIKeyServiceRotateSwapsCredentialAndAudits is the happy path of the
+// rotate-api-key unit of work: a server-minted (Prefix, SecretHash) pair
+// replaces the credential primitives on the row, every other field
+// (identity, ownership, scopes, lifecycle) is preserved verbatim, the
+// audit log records the rotation under the actor's home organization with
+// the new public prefix as non-secret metadata, and the row's
+// trigger-refreshed updated_at advances strictly past the original.
+func TestAPIKeyServiceRotateSwapsCredentialAndAudits(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	target := seedOrg(t, db, f, "acme")
+	actor := seedUser(t, db, f, target, "ada")
+	svc := newAPIKeyService(t, s)
+	key := seedAPIKeyForUpdate(t, ctx, s, target, actor, "Ada CLI", []string{"projects:read"})
+
+	if got := listAuditEvents(t, s, target.ID); len(got) != 0 {
+		t.Fatalf("pre-rotate audit events = %d, want 0", len(got))
+	}
+
+	gen, err := auth.Generate()
+	if err != nil {
+		t.Fatalf("auth.Generate: %v", err)
+	}
+	if gen.Prefix == key.Prefix {
+		t.Fatalf("auth.Generate returned a prefix identical to the seeded one — entropy failure")
+	}
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	rotated, err := svc.Rotate(ctx, store.RotateAPIKeyInput{
+		OrganizationID: target.ID,
+		KeyID:          key.ID,
+		Prefix:         gen.Prefix,
+		SecretHash:     gen.SecretHash,
+		ActorID:        actor,
+		ActorKind:      string(domain.KindUser),
+		ActorOrgID:     target.ID,
+		RequestID:      "req_rotate",
+		CorrelationID:  "corr_rotate",
+	}, now)
+	if err != nil {
+		t.Fatalf("Rotate returned %v, want nil", err)
+	}
+	if rotated.Prefix != gen.Prefix {
+		t.Errorf("Rotate prefix = %q, want the freshly minted %q", rotated.Prefix, gen.Prefix)
+	}
+	if rotated.SecretHash != gen.SecretHash {
+		t.Errorf("Rotate secret_hash did not match the freshly minted hash")
+	}
+	if rotated.ID != key.ID || rotated.OrganizationID != key.OrganizationID {
+		t.Errorf("Rotate changed identity: got %+v, want id=%q org=%q", rotated, key.ID, key.OrganizationID)
+	}
+	if rotated.Name != key.Name {
+		t.Errorf("Rotate renamed the key: %q -> %q", key.Name, rotated.Name)
+	}
+	if len(rotated.Scopes) != len(key.Scopes) || (len(rotated.Scopes) > 0 && rotated.Scopes[0] != key.Scopes[0]) {
+		t.Errorf("Rotate changed scopes: %v -> %v", key.Scopes, rotated.Scopes)
+	}
+	if rotated.CreatedBy != key.CreatedBy {
+		t.Errorf("Rotate changed created_by: %q -> %q", key.CreatedBy, rotated.CreatedBy)
+	}
+	if rotated.IsRevoked() {
+		t.Error("Rotate flipped revoked_at — rotation must preserve lifecycle")
+	}
+	if !rotated.UpdatedAt.After(key.UpdatedAt) {
+		t.Errorf("Rotate updated_at = %v, want strictly after the original %v",
+			rotated.UpdatedAt, key.UpdatedAt)
+	}
+
+	events := listAuditEvents(t, s, target.ID)
+	if len(events) != 1 {
+		t.Fatalf("audit events = %d, want exactly the rotate record", len(events))
+	}
+	rotateEv := events[0]
+	if rotateEv.Action != "keys.manage" {
+		t.Errorf("rotate audit action = %q, want keys.manage", rotateEv.Action)
+	}
+	if rotateEv.Decision != store.AuditDecisionAllowed {
+		t.Errorf("rotate audit decision = %q, want allowed", rotateEv.Decision)
+	}
+	if rotateEv.ResourceID != key.ID {
+		t.Errorf("rotate audit resource_id = %q, want %q", rotateEv.ResourceID, key.ID)
+	}
+	if rotateEv.ResourceKind != string(domain.KindAPIKey) {
+		t.Errorf("rotate audit resource_kind = %q, want %q", rotateEv.ResourceKind, domain.KindAPIKey)
+	}
+	if rotateEv.Metadata["organization_id"] != target.ID {
+		t.Errorf("rotate audit metadata organization_id = %q, want %q",
+			rotateEv.Metadata["organization_id"], target.ID)
+	}
+	if rotateEv.Metadata["rotated_prefix"] != gen.Prefix {
+		t.Errorf("rotate audit metadata rotated_prefix = %q, want %q",
+			rotateEv.Metadata["rotated_prefix"], gen.Prefix)
+	}
+	// The secret hash must NEVER appear in the audit metadata.
+	for k, v := range rotateEv.Metadata {
+		if v == gen.SecretHash {
+			t.Errorf("audit metadata field %q leaked the secret hash", k)
+		}
+	}
+}
+
+// TestAPIKeyServiceRotateMissingKeyIsNotFound proves a well-formed but
+// unknown key id is the typed NotFound the HTTP layer renders as 404. The
+// audit log records nothing for the failed rotation.
+func TestAPIKeyServiceRotateMissingKeyIsNotFound(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	target := seedOrg(t, db, f, "acme")
+	actor := seedUser(t, db, f, target, "ada")
+	svc := newAPIKeyService(t, s)
+
+	gen, err := auth.Generate()
+	if err != nil {
+		t.Fatalf("auth.Generate: %v", err)
+	}
+
+	ghost := domain.MustNewID(domain.KindAPIKey).String()
+	_, err = svc.Rotate(ctx, store.RotateAPIKeyInput{
+		OrganizationID: target.ID,
+		KeyID:          ghost,
+		Prefix:         gen.Prefix,
+		SecretHash:     gen.SecretHash,
+		ActorID:        actor,
+		ActorKind:      string(domain.KindUser),
+		ActorOrgID:     target.ID,
+		RequestID:      "req_rotate",
+		CorrelationID:  "corr_rotate",
+	}, time.Now().UTC())
+	if err == nil {
+		t.Fatal("Rotate(missing key) error = nil, want NotFound")
+	}
+	if ye := yerr.From(err); ye.Code != yerr.CodeNotFound {
+		t.Errorf("Rotate code = %s, want %s", ye.Code, yerr.CodeNotFound)
+	}
+	if events := listAuditEvents(t, s, target.ID); len(events) != 0 {
+		t.Errorf("audit events = %d, want 0 — a failed rotate must leave no trail", len(events))
+	}
+}
+
+// TestAPIKeyServiceRotateCrossTenantIsNotFound proves a key id from another
+// organization is the same typed NotFound — never a 5xx, never a 403,
+// never a Conflict — so the endpoint cannot be used as a presence oracle
+// for keys in other tenants. The store layer is the defence-in-depth
+// backstop for the policy engine's cross-tenant rejection at the request
+// edge, and the target row must remain untouched.
+func TestAPIKeyServiceRotateCrossTenantIsNotFound(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	target := seedOrg(t, db, f, "acme")
+	other := seedOrg(t, db, f, "other")
+	actor := seedUser(t, db, f, target, "ada")
+	otherActor := seedUser(t, db, f, other, "mallory")
+	svc := newAPIKeyService(t, s)
+
+	key := seedAPIKeyForUpdate(t, ctx, s, target, actor, "Ada CLI", nil)
+	originalPrefix := key.Prefix
+
+	gen, err := auth.Generate()
+	if err != nil {
+		t.Fatalf("auth.Generate: %v", err)
+	}
+
+	_, err = svc.Rotate(ctx, store.RotateAPIKeyInput{
+		OrganizationID: other.ID,
+		KeyID:          key.ID,
+		Prefix:         gen.Prefix,
+		SecretHash:     gen.SecretHash,
+		ActorID:        otherActor,
+		ActorKind:      string(domain.KindUser),
+		ActorOrgID:     other.ID,
+		RequestID:      "req_rotate",
+		CorrelationID:  "corr_rotate",
+	}, time.Now().UTC())
+	if err == nil {
+		t.Fatal("Rotate(cross-tenant) error = nil, want NotFound")
+	}
+	if ye := yerr.From(err); ye.Code != yerr.CodeNotFound {
+		t.Errorf("Rotate cross-tenant code = %s, want %s", ye.Code, yerr.CodeNotFound)
+	}
+
+	if events := listAuditEvents(t, s, target.ID); len(events) != 0 {
+		t.Errorf("target audit events = %d, want 0 — the failed cross-tenant rotate must leave no trail", len(events))
+	}
+	if otherEvents := listAuditEvents(t, s, other.ID); len(otherEvents) != 0 {
+		t.Errorf("other audit events = %d, want 0 — the failed rotate must leave no trail", len(otherEvents))
+	}
+
+	reader, err := store.NewAPIKeyReader(s)
+	if err != nil {
+		t.Fatalf("NewAPIKeyReader: %v", err)
+	}
+	stillThere, err := reader.GetAPIKey(ctx, target.ID, key.ID)
+	if err != nil {
+		t.Fatalf("GetAPIKey after cross-tenant attempt: %v", err)
+	}
+	if stillThere.Prefix != originalPrefix {
+		t.Errorf("api key prefix was rotated by a cross-tenant request: %q -> %q", originalPrefix, stillThere.Prefix)
+	}
+}
+
+// TestAPIKeyServiceRotateRevokedKeyIsConflict proves a rotation against a
+// revoked key is a typed Conflict, not a silent success. The customer must
+// mint a new key through Create instead — a fresh credential body cannot
+// revive a row that is permanently out of authentication service. The
+// row's prefix must not change, and the audit log must not record the
+// rejected rotation.
+func TestAPIKeyServiceRotateRevokedKeyIsConflict(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	target := seedOrg(t, db, f, "acme")
+	actor := seedUser(t, db, f, target, "ada")
+	svc := newAPIKeyService(t, s)
+	key := seedAPIKeyForUpdate(t, ctx, s, target, actor, "Ada CLI", nil)
+
+	// Revoke the key first so the lifecycle precondition fails on the
+	// subsequent Rotate attempt.
+	revokedAt := time.Now().UTC().Truncate(time.Microsecond)
+	if _, err := svc.Revoke(ctx, store.RevokeAPIKeyInput{
+		OrganizationID: target.ID,
+		KeyID:          key.ID,
+		ActorID:        actor,
+		ActorKind:      string(domain.KindUser),
+		ActorOrgID:     target.ID,
+		RequestID:      "req_revoke",
+		CorrelationID:  "corr_revoke",
+	}, revokedAt); err != nil {
+		t.Fatalf("Revoke returned %v, want nil", err)
+	}
+
+	gen, err := auth.Generate()
+	if err != nil {
+		t.Fatalf("auth.Generate: %v", err)
+	}
+
+	_, err = svc.Rotate(ctx, store.RotateAPIKeyInput{
+		OrganizationID: target.ID,
+		KeyID:          key.ID,
+		Prefix:         gen.Prefix,
+		SecretHash:     gen.SecretHash,
+		ActorID:        actor,
+		ActorKind:      string(domain.KindUser),
+		ActorOrgID:     target.ID,
+		RequestID:      "req_rotate",
+		CorrelationID:  "corr_rotate",
+	}, revokedAt.Add(time.Minute))
+	if err == nil {
+		t.Fatal("Rotate(revoked key) error = nil, want Conflict")
+	}
+	if ye := yerr.From(err); ye.Code != yerr.CodeConflict {
+		t.Errorf("Rotate code = %s, want %s", ye.Code, yerr.CodeConflict)
+	}
+
+	// The audit log must contain only the revoke record — the rejected
+	// rotate must leave no trail.
+	events := listAuditEvents(t, s, target.ID)
+	if len(events) != 1 {
+		t.Errorf("audit events = %d, want exactly the revoke record (no rotate record)", len(events))
+	}
+
+	// The row's prefix must still be the original — the rotate must not
+	// have persisted any credential change.
+	reader, err := store.NewAPIKeyReader(s)
+	if err != nil {
+		t.Fatalf("NewAPIKeyReader: %v", err)
+	}
+	current, err := reader.GetAPIKey(ctx, target.ID, key.ID)
+	if err != nil {
+		t.Fatalf("GetAPIKey after rejected rotate: %v", err)
+	}
+	if current.Prefix != key.Prefix {
+		t.Errorf("row prefix = %q, want %q — rejected rotate must not have changed the credential", current.Prefix, key.Prefix)
+	}
+}
+
+// TestAPIKeyServiceRotateExpiredKeyIsConflict proves a rotation against a
+// key whose expires_at has already passed at now is a typed Conflict.
+// Like a revoked key, an expired key cannot be revived by minting a
+// fresh credential body; the customer must mint a new key. The expired
+// row is seeded directly through the repository so the test is decoupled
+// from the Create unit of work's input validator: the property under test
+// is the Rotate path's lifecycle precondition, not Create's id-shape
+// rules.
+func TestAPIKeyServiceRotateExpiredKeyIsConflict(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	target := seedOrg(t, db, f, "acme")
+	actor := seedUser(t, db, f, target, "ada")
+	svc := newAPIKeyService(t, s)
+	key := seedAPIKeyForUpdate(t, ctx, s, target, actor, "Ada CLI", nil)
+	originalPrefix := key.Prefix
+
+	// Stamp the row's expires_at to a point we will then advance "now"
+	// past. The mutation is a direct UPDATE rather than going through
+	// Create with an ExpiresAt to keep this test decoupled from any
+	// id-shape validation on the Create input — the property under test
+	// is the Rotate path's lifecycle precondition.
+	expires := time.Now().UTC().Truncate(time.Microsecond)
+	if _, err := db.Exec(ctx, `UPDATE api_keys SET expires_at = $3 WHERE organization_id = $1 AND id = $2`,
+		target.ID, key.ID, expires); err != nil {
+		t.Fatalf("stamp expires_at: %v", err)
+	}
+
+	rotateGen, err := auth.Generate()
+	if err != nil {
+		t.Fatalf("auth.Generate: %v", err)
+	}
+
+	// "Now" for the Rotate call is at-or-past the expiry, so the
+	// lifecycle precondition fails.
+	pastExpiry := expires.Add(time.Hour)
+	_, err = svc.Rotate(ctx, store.RotateAPIKeyInput{
+		OrganizationID: target.ID,
+		KeyID:          key.ID,
+		Prefix:         rotateGen.Prefix,
+		SecretHash:     rotateGen.SecretHash,
+		ActorID:        actor,
+		ActorKind:      string(domain.KindUser),
+		ActorOrgID:     target.ID,
+		RequestID:      "req_rotate",
+		CorrelationID:  "corr_rotate",
+	}, pastExpiry)
+	if err == nil {
+		t.Fatal("Rotate(expired key) error = nil, want Conflict")
+	}
+	if ye := yerr.From(err); ye.Code != yerr.CodeConflict {
+		t.Errorf("Rotate code = %s, want %s", ye.Code, yerr.CodeConflict)
+	}
+
+	// The audit log must contain no records — the rejected rotate must
+	// leave no trail, and the seed bypassed the audit-appending unit of
+	// work.
+	events := listAuditEvents(t, s, target.ID)
+	if len(events) != 0 {
+		t.Errorf("audit events = %d, want 0 — a failed rotate must leave no trail", len(events))
+	}
+
+	// The row's prefix must still be the original.
+	reader, err := store.NewAPIKeyReader(s)
+	if err != nil {
+		t.Fatalf("NewAPIKeyReader: %v", err)
+	}
+	current, err := reader.GetAPIKey(ctx, target.ID, key.ID)
+	if err != nil {
+		t.Fatalf("GetAPIKey after rejected rotate: %v", err)
+	}
+	if current.Prefix != originalPrefix {
+		t.Errorf("row prefix = %q, want %q — rejected rotate must not have changed the credential", current.Prefix, originalPrefix)
+	}
+}
+
+// TestAPIKeyServiceRotateInvalidIDsAreRejected proves the id-shape
+// pre-check rejects a blank or non-prefixed identifier as a typed
+// InvalidInput before any transaction is opened. The audit log records
+// nothing for a rejected request.
+func TestAPIKeyServiceRotateInvalidIDsAreRejected(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	target := seedOrg(t, db, f, "acme")
+	actor := seedUser(t, db, f, target, "ada")
+	svc := newAPIKeyService(t, s)
+
+	gen, err := auth.Generate()
+	if err != nil {
+		t.Fatalf("auth.Generate: %v", err)
+	}
+
+	for name, in := range map[string]store.RotateAPIKeyInput{
+		"blank org": {
+			OrganizationID: "",
+			KeyID:          domain.MustNewID(domain.KindAPIKey).String(),
+			Prefix:         gen.Prefix,
+			SecretHash:     gen.SecretHash,
+			ActorID:        actor,
+			ActorKind:      string(domain.KindUser),
+			ActorOrgID:     target.ID,
+		},
+		"blank key": {
+			OrganizationID: target.ID,
+			KeyID:          "",
+			Prefix:         gen.Prefix,
+			SecretHash:     gen.SecretHash,
+			ActorID:        actor,
+			ActorKind:      string(domain.KindUser),
+			ActorOrgID:     target.ID,
+		},
+		"non-prefixed key": {
+			OrganizationID: target.ID,
+			KeyID:          "not-an-api-key-id",
+			Prefix:         gen.Prefix,
+			SecretHash:     gen.SecretHash,
+			ActorID:        actor,
+			ActorKind:      string(domain.KindUser),
+			ActorOrgID:     target.ID,
+		},
+	} {
+		in := in
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, err := svc.Rotate(ctx, in, time.Now().UTC())
+			if err == nil {
+				t.Fatalf("Rotate(%s) error = nil, want InvalidInput", name)
+			}
+			if ye := yerr.From(err); ye.Code != yerr.CodeInvalidInput {
+				t.Errorf("Rotate(%s) code = %s, want %s", name, ye.Code, yerr.CodeInvalidInput)
+			}
+		})
+	}
+}
+
+// TestAPIKeyServiceRotateRequiresCredentialPrimitives proves an empty
+// prefix or secret hash is rejected as a typed Internal — it can only
+// happen through a wiring error in the calling handler (the handler is
+// expected to always mint the primitives through auth.Generate), never
+// client input, so it must never be disguised as an InvalidInput that
+// a client could believe it caused.
+func TestAPIKeyServiceRotateRequiresCredentialPrimitives(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	target := seedOrg(t, db, f, "acme")
+	actor := seedUser(t, db, f, target, "ada")
+	svc := newAPIKeyService(t, s)
+	key := seedAPIKeyForUpdate(t, ctx, s, target, actor, "Ada CLI", nil)
+
+	gen, err := auth.Generate()
+	if err != nil {
+		t.Fatalf("auth.Generate: %v", err)
+	}
+
+	for name, in := range map[string]store.RotateAPIKeyInput{
+		"blank prefix": {
+			OrganizationID: target.ID,
+			KeyID:          key.ID,
+			Prefix:         "",
+			SecretHash:     gen.SecretHash,
+			ActorID:        actor,
+			ActorKind:      string(domain.KindUser),
+			ActorOrgID:     target.ID,
+		},
+		"blank secret hash": {
+			OrganizationID: target.ID,
+			KeyID:          key.ID,
+			Prefix:         gen.Prefix,
+			SecretHash:     "",
+			ActorID:        actor,
+			ActorKind:      string(domain.KindUser),
+			ActorOrgID:     target.ID,
+		},
+	} {
+		in := in
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, err := svc.Rotate(ctx, in, time.Now().UTC())
+			if err == nil {
+				t.Fatalf("Rotate(%s) error = nil, want Internal", name)
+			}
+			if ye := yerr.From(err); ye.Code != yerr.CodeInternal {
+				t.Errorf("Rotate(%s) code = %s, want %s", name, ye.Code, yerr.CodeInternal)
+			}
+		})
+	}
+}
+
+// TestAPIKeyServiceRotateRequiresActorOrgID proves a missing actor
+// organization is rejected as a typed Internal — wiring error, never
+// disguised as an InvalidInput.
+func TestAPIKeyServiceRotateRequiresActorOrgID(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	target := seedOrg(t, db, f, "acme")
+	actor := seedUser(t, db, f, target, "ada")
+	svc := newAPIKeyService(t, s)
+	key := seedAPIKeyForUpdate(t, ctx, s, target, actor, "Ada CLI", nil)
+
+	gen, err := auth.Generate()
+	if err != nil {
+		t.Fatalf("auth.Generate: %v", err)
+	}
+
+	_, err = svc.Rotate(ctx, store.RotateAPIKeyInput{
+		OrganizationID: target.ID,
+		KeyID:          key.ID,
+		Prefix:         gen.Prefix,
+		SecretHash:     gen.SecretHash,
+		ActorID:        actor,
+		ActorKind:      string(domain.KindUser),
+		// ActorOrgID intentionally omitted to simulate a wiring error.
+		RequestID:     "req_rotate",
+		CorrelationID: "corr_rotate",
+	}, time.Now().UTC())
+	if err == nil {
+		t.Fatal("Rotate with no actor org error = nil, want Internal")
+	}
+	if ye := yerr.From(err); ye.Code != yerr.CodeInternal {
+		t.Errorf("Rotate code = %s, want %s", ye.Code, yerr.CodeInternal)
+	}
+}
+
+// TestAPIKeyServiceRotateAuthenticationLookupFollowsNewPrefix is the
+// integration property the rotate-endpoint contract depends on: after a
+// successful rotation, the previous credential's prefix no longer matches
+// any row (FindByPrefix returns the typed NotFound the auth layer maps
+// to invalid-credentials), and the row's CURRENT prefix is what the
+// authentication lookup finds. Rotation makes the old token immediately
+// unusable through the same uniform invalid-credentials path that a
+// non-existent key produces.
+func TestAPIKeyServiceRotateAuthenticationLookupFollowsNewPrefix(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	target := seedOrg(t, db, f, "acme")
+	actor := seedUser(t, db, f, target, "ada")
+	svc := newAPIKeyService(t, s)
+	key := seedAPIKeyForUpdate(t, ctx, s, target, actor, "Ada CLI", nil)
+	originalPrefix := key.Prefix
+
+	gen, err := auth.Generate()
+	if err != nil {
+		t.Fatalf("auth.Generate: %v", err)
+	}
+
+	if _, err := svc.Rotate(ctx, store.RotateAPIKeyInput{
+		OrganizationID: target.ID,
+		KeyID:          key.ID,
+		Prefix:         gen.Prefix,
+		SecretHash:     gen.SecretHash,
+		ActorID:        actor,
+		ActorKind:      string(domain.KindUser),
+		ActorOrgID:     target.ID,
+		RequestID:      "req_rotate",
+		CorrelationID:  "corr_rotate",
+	}, time.Now().UTC()); err != nil {
+		t.Fatalf("Rotate returned %v, want nil", err)
+	}
+
+	// Drive the prefix-lookup the authenticator uses directly, through the
+	// repository, inside a short read transaction. The old prefix must be
+	// gone; the new prefix must resolve to the same key id and organization.
+	repo := store.NewAPIKeyRepository()
+	var (
+		oldErr error
+		now    store.APIKey
+	)
+	if err := s.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		_, oldErr = repo.FindByPrefix(ctx, q, originalPrefix)
+		var lookupErr error
+		now, lookupErr = repo.FindByPrefix(ctx, q, gen.Prefix)
+		return lookupErr
+	}); err != nil {
+		t.Fatalf("FindByPrefix new = %v, want nil", err)
+	}
+	if oldErr == nil {
+		t.Errorf("FindByPrefix(old prefix) = nil err, want NotFound — rotated credential must be immediately unusable")
+	} else if ye := yerr.From(oldErr); ye.Code != yerr.CodeNotFound {
+		t.Errorf("FindByPrefix(old prefix) code = %s, want %s", ye.Code, yerr.CodeNotFound)
+	}
+	if now.ID != key.ID || now.OrganizationID != target.ID {
+		t.Errorf("FindByPrefix(new prefix) returned %+v, want id=%q org=%q", now, key.ID, target.ID)
+	}
+}

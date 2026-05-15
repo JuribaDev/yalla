@@ -46,6 +46,15 @@ var errNoAPIKeyUpdater = errors.New("httpapi: no api key updater configured")
 // silently dropping the revocation.
 var errNoAPIKeyRevoker = errors.New("httpapi: no api key revoker configured")
 
+// errNoAPIKeyRotator is returned when POST
+// /v1/organizations/{org_id}/api-keys/{key_id}/rotate is reached without an
+// api-key rotator wired into NewHandler. Like errNoAPIKeyRevoker it can only
+// happen through a wiring error — a programming mistake, not a client error —
+// so the handler reports it as a typed internal failure rather than silently
+// dropping the rotation (which would leave the caller believing they have a
+// fresh credential they never received).
+var errNoAPIKeyRotator = errors.New("httpapi: no api key rotator configured")
+
 // APIKeyReader is the narrow persistence port GET
 // /v1/organizations/{org_id}/api-keys and GET
 // /v1/organizations/{org_id}/api-keys/{key_id} depend on. *store.APIKeyReader
@@ -651,6 +660,138 @@ func revokeAPIKeyHandler(revoker APIKeyRevoker) http.HandlerFunc {
 
 		apienvelope.WriteData(w, http.StatusOK, requestID(r), revokeAPIKeyPayload{
 			APIKey: apiKeyResourceOf(key),
+		})
+	}
+}
+
+// APIKeyRotator is the narrow persistence port POST
+// /v1/organizations/{org_id}/api-keys/{key_id}/rotate depends on.
+// *store.APIKeyService satisfies it in production; tests supply a fake. Like
+// APIKeyCreator it is an interface declared here so the handler stays
+// unit-testable without a real database — the concrete orchestrator (the
+// tenant-scoped existence read, the conflict checks against a revoked or
+// expired key, the in-place swap of the api_keys row's prefix and
+// secret_hash, and the immutable audit record committed in one transaction)
+// lives in the store layer.
+//
+// The plaintext credential never crosses this boundary. The handler mints
+// it through internal/controlplane/auth.Generate, passes the new (Prefix,
+// SecretHash) pair into store.RotateAPIKeyInput, and surfaces the one-time
+// plaintext token in the response — it never enters the store layer or the
+// database.
+type APIKeyRotator interface {
+	Rotate(ctx context.Context, in store.RotateAPIKeyInput, now time.Time) (store.APIKey, error)
+}
+
+// rotateAPIKeyPayload is the data block of the POST
+// /v1/organizations/{org_id}/api-keys/{key_id}/rotate success envelope: the
+// api key after the rotation (in the same stable wire shape every other
+// api-key endpoint returns) plus the one-time plaintext Token of the new
+// credential body. The token field is the ONLY place the secret half of the
+// new credential is ever exposed — every subsequent read of the key (GET
+// list and GET single) returns the projection without the token, so a
+// rotated credential not captured at rotation time is, by design,
+// unrecoverable, exactly like a freshly-minted one.
+//
+// The api_key projection deliberately omits the secret hash and reports the
+// row's CURRENT (post-rotation) prefix as the public lookup id; the old
+// prefix is not echoed in the response, because the old credential body is
+// permanently unusable from the moment the row is committed and surfacing
+// it would only invite the caller to keep using it.
+type rotateAPIKeyPayload struct {
+	APIKey apiKeyResource `json:"api_key"`
+	Token  string         `json:"token"`
+}
+
+// rotateAPIKeyHandler builds the POST
+// /v1/organizations/{org_id}/api-keys/{key_id}/rotate handler. It mints a
+// fresh credential primitive on the server, then delegates to the store
+// layer for the persistence unit of work: the auth-layer credential primitive
+// is minted once on the server (so a client cannot supply its own prefix or
+// hash), and the rotate-api-key unit of work — read the current row, reject
+// a revoked or expired key as a typed Conflict, swap the prefix and
+// secret_hash in place, append the audit record, all in one transaction —
+// runs in the store layer through the APIKeyRotator port.
+//
+// RequireAuth gates the route on action keys.manage before the handler
+// runs — authorized through apiKeyIDResolver against the organization the
+// path names — and attaches the resolved principal, so a request that
+// reaches the handler has already cleared the tenant boundary: a
+// cross-tenant {org_id} was rejected as a 403 by the policy engine, never
+// reaching this code. A request that arrives here with no principal is
+// therefore a wiring error and is reported as a typed internal error. The
+// principal and the request correlation identifiers are passed to the
+// rotator so the audit record names the actor; a not-found key (cross-tenant
+// or missing row), a revoked or expired key (typed 409), and a datastore
+// outage each surface as their own typed status, never disguised as one
+// another.
+//
+// keys.manage is a CapManage action: a viewer or developer in the tenant
+// cannot rotate an api key, only an owner or admin in the tenant can —
+// unlike CapRead actions there is no cross-tenant support exception. The
+// handler relies on the policy engine for that decision; it never re-checks
+// the role itself.
+//
+// The response is 200 OK carrying the rotated api-key projection and —
+// exactly once — the plaintext token of the NEW credential body. Every
+// subsequent read of the key returns the same projection without the token,
+// so a rotated credential not captured at the moment of rotation is
+// unrecoverable. The plaintext is materialised through auth.Token.Reveal(),
+// the only deliberately greppable escape hatch for the credential,
+// immediately before the response is written; it never reaches a log line,
+// an audit record, or the database. The OLD credential body is permanently
+// unusable from the moment this returns: the prefix-lookup authentication
+// path only ever sees the row's current prefix, so every subsequent
+// authentication attempt with the old token misses through the same uniform
+// invalid-credentials path that a non-existent key produces.
+func rotateAPIKeyHandler(rotator APIKeyRotator) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if rotator == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoAPIKeyRotator))
+			return
+		}
+
+		// Mint the new credential on the server before any persistence work.
+		// auth.Generate produces 192 bits of cryptographic entropy split into
+		// a public prefix and a secret body; only the prefix and the secret
+		// hash are passed to the store layer, so the plaintext never reaches
+		// persistence. A crypto/rand failure is an environment fault, not
+		// client input, and surfaces as a typed 5xx. We mint BEFORE the
+		// store call so a crypto failure cannot leave the row in a state
+		// where rotation half-succeeded — there is no transaction to roll
+		// back if Generate fails.
+		generated, err := auth.Generate()
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(err))
+			return
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		now := time.Now().UTC()
+		key, err := rotator.Rotate(r.Context(), store.RotateAPIKeyInput{
+			OrganizationID: r.PathValue("org_id"),
+			KeyID:          r.PathValue("key_id"),
+			Prefix:         generated.Prefix,
+			SecretHash:     generated.SecretHash,
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+		}, now)
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), rotateAPIKeyPayload{
+			APIKey: apiKeyResourceOf(key),
+			Token:  generated.Token.Reveal(),
 		})
 	}
 }

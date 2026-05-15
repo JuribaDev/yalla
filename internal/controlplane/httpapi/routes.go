@@ -87,13 +87,14 @@ type versionPayload struct {
 // GET /v1/organizations/{org_id}/api-keys and GET
 // /v1/organizations/{org_id}/api-keys/{key_id}, apiKeyCreator backs POST
 // /v1/organizations/{org_id}/api-keys, apiKeyUpdater backs PATCH
-// /v1/organizations/{org_id}/api-keys/{key_id}, and apiKeyRevoker backs
-// DELETE /v1/organizations/{org_id}/api-keys/{key_id}. Any may be nil for
-// tests and tooling that only inspect the route table's metadata; a request
-// that actually reaches a handler with a nil dependency is reported as a
-// typed internal error rather than a misleading empty list or a silently
-// dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker) []apiRoute {
+// /v1/organizations/{org_id}/api-keys/{key_id}, apiKeyRevoker backs
+// DELETE /v1/organizations/{org_id}/api-keys/{key_id}, and apiKeyRotator
+// backs POST /v1/organizations/{org_id}/api-keys/{key_id}/rotate. Any may
+// be nil for tests and tooling that only inspect the route table's
+// metadata; a request that actually reaches a handler with a nil dependency
+// is reported as a typed internal error rather than a misleading empty list
+// or a silently dropped write.
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -552,6 +553,32 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// principal cannot revoke keys in another tenant.
 			resolver: apiKeyIDResolver,
 			handler:  revokeAPIKeyHandler(apiKeyRevoker),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodPost,
+				Path:           "/v1/organizations/{org_id}/api-keys/{key_id}/rotate",
+				OperationID:    "rotateOrganizationAPIKey",
+				Summary:        "Rotate an API key of an organization",
+				Description:    "Rotates the credential body of the API key named by ({org_id}, {key_id}) in the source-of-truth database. Rotation swaps the credential primitives (the public prefix and the one-way secret hash) in place: the api_keys row keeps its id, name, scopes, ownership identifiers (created_by, service_account_id), and lifecycle stamps (expires_at) — only the credential body changes. The OLD credential body becomes permanently unusable from the moment the row is committed: the prefix-lookup authentication path only ever sees the row's current prefix, so every subsequent authentication attempt with the old token misses through the same uniform invalid-credentials path that a non-existent key produces. The new credential primitive is generated server-side (a client cannot supply its own prefix or hash). Action keys.manage is authorized against the organization the path names before the handler runs: a principal rotating a key outside its own tenant is rejected with a deterministic 403, so a cross-tenant id can never rotate another tenant's credential. A key id paired with the wrong organization is the same deterministic 404 as a missing row, so the endpoint can never reveal whether another tenant owns that key. Rotating a key that is revoked or expired is a stable 409 — the caller's view of the resource lifecycle is stale, and a fresh credential body cannot revive a row that is permanently out of authentication service; the customer must mint a new key through POST /v1/organizations/{org_id}/api-keys instead. The rotated row and an immutable audit record naming the authenticated principal are committed in one transaction: a rotation can never be persisted without its audit trail. The response carries the rotated api-key projection and — exactly once — the plaintext token of the new credential body; the secret never reaches a log line, an audit record, or any subsequent read endpoint, so a rotated credential not captured at rotation time is unrecoverable by design. keys.manage is a CapManage action: a viewer or developer cannot rotate keys, only an owner or admin in the tenant can; unlike CapRead actions there is no cross-tenant support exception.",
+				Tags:           []string{tagAPIKeys},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionKeysManage),
+				PathParams: []openapi.PathParam{
+					{Name: "org_id", Description: "The id of the organization the API key belongs to."},
+					{Name: "key_id", Description: "The id of the API key to rotate."},
+				},
+				SuccessDescription: "The API key was rotated; the plaintext token of the new credential body is shown exactly once.",
+			},
+			// apiKeyIDResolver authorizes action keys.manage against the
+			// organization the {org_id} path parameter names, not merely the
+			// principal's home organization, so a cross-tenant id is denied
+			// at the policy boundary before the handler mints any
+			// credential. keys.manage is a CapManage action and has no
+			// cross-tenant support exception — unlike CapRead actions, the
+			// support principal cannot rotate keys in another tenant.
+			resolver: apiKeyIDResolver,
+			handler:  rotateAPIKeyHandler(apiKeyRotator),
 		},
 	}
 }

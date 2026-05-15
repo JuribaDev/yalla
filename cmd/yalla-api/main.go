@@ -149,7 +149,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              cfg.APIAddr,
-		Handler:           httpapi.NewHandler(build, readiness, meta, authenticator, engine, organizations, organizationService, organizationService, organizationService, members, membershipService, membershipService, membershipService, apiKeys, apiKeyService, apiKeyService, apiKeyService, logger),
+		Handler:           httpapi.NewHandler(build, readiness, meta, authenticator, engine, organizations, organizationService, organizationService, organizationService, members, membershipService, membershipService, membershipService, apiKeys, apiKeyService, apiKeyService, apiKeyService, apiKeyService, logger),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

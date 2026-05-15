@@ -107,6 +107,53 @@ type RevokeAPIKeyInput struct {
 	CorrelationID string
 }
 
+// RotateAPIKeyInput is the unvalidated input to APIKeyService.Rotate.
+// OrganizationID and KeyID name the api_keys row whose credential primitives
+// are being swapped. Rotation is the customer-facing operation for swapping
+// the credential body of an existing key without minting a new identity: the
+// key id, name, scopes, ownership identifiers (created_by, service_account_id),
+// and the expires_at lifecycle stamp are deliberately preserved across the
+// rotation. The old credential body becomes unusable from the moment the row
+// is committed — every subsequent FindByPrefix that runs against the old
+// prefix simply misses, falling through to the same uniform
+// invalid-credentials path that revoked or non-existent keys produce.
+//
+// Prefix and SecretHash are the new credential primitives produced by
+// internal/controlplane/auth.Generate. They are passed in by the handler so
+// the store layer never touches the plaintext Token and never imports the
+// auth package. A blank Prefix or SecretHash is a wiring error and is
+// reported as Internal.
+//
+// The credential-identity fields (id, organization_id), the immutable
+// ownership fields (created_by, service_account_id), and the lifecycle
+// stamps (expires_at, revoked_at) are deliberately not on this struct:
+// rotation replaces the credential body in place — the key still has the
+// same identity, the same ownership, and the same lifecycle. A rotation of
+// a revoked or expired key is rejected at the service layer as a typed
+// Conflict, because the caller's view of the resource lifecycle is stale:
+// a key that can no longer authenticate cannot be revived by minting a
+// fresh credential body; it can only be replaced by a fresh mint through
+// the Create endpoint.
+//
+// The Actor* and correlation fields describe the authenticated principal
+// performing the rotation and are recorded verbatim on the audit event.
+// They are plain strings so the store layer takes no build dependency on
+// the policy or telemetry packages — the httpapi handler, which already
+// holds the resolved principal and the request correlation, fills them in.
+type RotateAPIKeyInput struct {
+	OrganizationID string
+	KeyID          string
+
+	Prefix     string
+	SecretHash string
+
+	ActorID       string
+	ActorKind     string
+	ActorOrgID    string
+	RequestID     string
+	CorrelationID string
+}
+
 // UpdateAPIKeyInput is the unvalidated input to APIKeyService.Update.
 // OrganizationID and KeyID name the api_keys row to update. Name and Scopes
 // are optional: a nil pointer means the caller did not include the field and
@@ -507,6 +554,156 @@ func (svc *APIKeyService) Revoke(ctx context.Context, in RevokeAPIKeyInput, now 
 		return APIKey{}, txErr
 	}
 	return revoked, nil
+}
+
+// Rotate runs the rotate-api-key unit of work for in inside one transaction:
+// confirm the key exists in the named tenant, reject the call as a typed
+// Conflict when the key is already revoked or expired (the caller's view of
+// the resource lifecycle is stale), swap the credential primitives on the
+// api_keys row, and append the immutable audit record naming the rotation.
+// Validation runs before any database work so an invalid request never opens
+// a transaction. A missing or cross-tenant key surfaces as the typed
+// NotFound the repository produces (the tenant-scoped read filters by
+// organization_id first, so a cross-tenant key_id is indistinguishable from
+// a missing row), and the audit record is rolled back with it, so an audit
+// trail can never name a rotation that did not happen.
+//
+// Rotation swaps the credential body in place: the api_keys row keeps its
+// id, name, scopes, ownership identifiers (created_by, service_account_id),
+// and lifecycle stamps (expires_at) — only the prefix and secret_hash change.
+// The old credential body becomes permanently unusable from the moment the
+// row is committed, because the prefix-lookup authentication path only ever
+// sees the row's current prefix. There is no "undo rotation" — the previous
+// secret never leaves the auth layer and is never persisted, so the old
+// body cannot be reconstructed even by the operator.
+//
+// A rotation against a key whose revoked_at is set, or whose expires_at has
+// already passed at now, is rejected as a typed Conflict at the service
+// layer. Both conditions render the key unusable for authentication: a
+// fresh credential body cannot rescue an identity whose lifecycle the
+// customer or the calendar already ended. The customer must mint a new
+// key through Create instead. The conflict check runs in the same
+// transaction as the read so the verdict cannot race a concurrent revoke
+// or update.
+//
+// The audit record is filed under the actor's home organization — the tenant
+// the principal authenticated into — while its resource id names the api key
+// that was rotated. metadata captures the target tenant and the rotated
+// prefix (non-secret, the public lookup id the caller now holds) so the
+// trail records exactly which credential body the row now serves without
+// carrying any secret material verbatim.
+//
+// now is the wall-clock the validator uses to reject a rotation of a key
+// whose expires_at is already past. It is plumbed in so a unit test can
+// pin time without monkey-patching time.Now.
+func (svc *APIKeyService) Rotate(ctx context.Context, in RotateAPIKeyInput, now time.Time) (APIKey, error) {
+	organizationID := strings.TrimSpace(in.OrganizationID)
+	keyID := strings.TrimSpace(in.KeyID)
+
+	// Path-parameter ids are treated as opaque identifiers the caller already
+	// has, so the rules mirror Update and Revoke: require the kind-prefix as
+	// a defensive guard and let the in-transaction tenant-scoped read enforce
+	// the rest. Format strictness is the job of internal/controlplane/domain
+	// when an id is minted.
+	var idViolations []apierr.FieldViolation
+	if organizationID == "" || !strings.HasPrefix(organizationID, string(domain.KindOrganization)+"_") {
+		idViolations = append(idViolations, apierr.FieldViolation{
+			Field:  "organization_id",
+			Reason: "must be a valid organization identifier",
+		})
+	}
+	if keyID == "" || !strings.HasPrefix(keyID, string(domain.KindAPIKey)+"_") {
+		idViolations = append(idViolations, apierr.FieldViolation{
+			Field:  "key_id",
+			Reason: "must be a valid api key identifier",
+		})
+	}
+	if len(idViolations) > 0 {
+		return APIKey{}, apierr.InvalidInput(idViolations...)
+	}
+
+	// The credential primitives are minted by the handler through
+	// auth.Generate; an empty value here means the handler skipped that step,
+	// which is a wiring error rather than client input. Surfacing it as a
+	// typed Internal keeps a client from believing it caused the failure and
+	// keeps the handler honest about always minting before delegating.
+	prefix := strings.TrimSpace(in.Prefix)
+	secretHash := strings.TrimSpace(in.SecretHash)
+	if prefix == "" {
+		return APIKey{}, apierr.Internal(errors.New("store: APIKeyService.Rotate requires a non-empty prefix"))
+	}
+	if secretHash == "" {
+		return APIKey{}, apierr.Internal(errors.New("store: APIKeyService.Rotate requires a non-empty secret hash"))
+	}
+
+	actorOrgID := strings.TrimSpace(in.ActorOrgID)
+	if actorOrgID == "" {
+		return APIKey{}, apierr.Internal(errors.New("store: APIKeyService.Rotate requires an actor organization for the audit record"))
+	}
+
+	whenUTC := now.UTC()
+
+	event := AuditEvent{
+		OrganizationID: actorOrgID,
+		ActorID:        strings.TrimSpace(in.ActorID),
+		ActorKind:      strings.TrimSpace(in.ActorKind),
+		Action:         keysManageAction,
+		ResourceKind:   string(domain.KindAPIKey),
+		ResourceID:     keyID,
+		Decision:       AuditDecisionAllowed,
+		Reason:         "authorization granted for keys.manage",
+		RequestID:      strings.TrimSpace(in.RequestID),
+		CorrelationID:  strings.TrimSpace(in.CorrelationID),
+		// organization_id is the target tenant of the rotation; rotated_prefix
+		// is the public, non-secret lookup id the row now serves. The audit
+		// trail records which credential body is now authoritative without
+		// carrying any secret material verbatim — the secret hash never
+		// appears in the metadata.
+		Metadata: map[string]string{
+			"organization_id": organizationID,
+			"rotated_prefix":  prefix,
+		},
+	}
+
+	var rotated APIKey
+	txErr := svc.store.Write(ctx, func(ctx context.Context, tx *Tx) error {
+		// Read the current row inside the same transaction so a missing key
+		// in this tenant is reported as NotFound without relying on the
+		// UPDATE's no-rows path, and so the lifecycle decision sees the same
+		// row the UPDATE would lock. A cross-tenant key_id is
+		// indistinguishable from a missing row — exactly what every other
+		// read endpoint of this resource guarantees.
+		current, getErr := svc.apiKeys.Get(ctx, tx, organizationID, keyID)
+		if getErr != nil {
+			return getErr
+		}
+		if current.IsRevoked() {
+			// Rotating a revoked key cannot revive it — the row is permanently
+			// out of authentication service, so a fresh credential body would
+			// be silently unusable. Surface a stable Conflict so the caller
+			// learns to mint a new key through Create instead.
+			return apierr.Conflict("api key is revoked")
+		}
+		if current.IsExpired(whenUTC) {
+			// Same reasoning for an expired key: the calendar has already
+			// taken the row out of authentication service.
+			return apierr.Conflict("api key is expired")
+		}
+
+		row, rotErr := svc.apiKeys.RotateCredential(ctx, tx, organizationID, keyID, prefix, secretHash)
+		if rotErr != nil {
+			return rotErr
+		}
+		if _, audErr := svc.audit.Append(ctx, tx, event); audErr != nil {
+			return audErr
+		}
+		rotated = row
+		return nil
+	})
+	if txErr != nil {
+		return APIKey{}, txErr
+	}
+	return rotated, nil
 }
 
 // apiKeyUpdate is the validated, normalised result of buildAPIKeyUpdate: a

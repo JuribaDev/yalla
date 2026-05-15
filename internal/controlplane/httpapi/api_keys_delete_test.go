@@ -57,7 +57,7 @@ func revokeAPIKeyHandlerFor(id auth.Identity, authErr error, revoker APIKeyRevok
 	return NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, a, policy.NewEngine(),
 		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
 		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
-		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, revoker, nil)
+		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, revoker, fakeAPIKeyRotator{}, nil)
 }
 
 // deleteAPIKey issues DELETE /v1/organizations/{orgID}/api-keys/{keyID}
