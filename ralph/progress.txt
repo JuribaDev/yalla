@@ -54,6 +54,7 @@
 - audit.read is the load-bearing example of a "read action that is NOT CapRead" in the policy catalog (catalog.go: ActionAuditRead -> CapAdmin). The audit log cannot be listed by a viewer or a developer — only by an owner, admin, or a support principal performing a cross-tenant read. A boilerplate "every in-tenant role allowed" assumption is wrong for audit.read; the policy matrix and a contract-test "viewer denied in own tenant" assertion together pin the property (the contract test makes a future accidental drop to CapRead a contract failure, not only a matrix failure).
 - Organization-scoped variables (0012_organization_variables, store/organization_variable.go, httpapi/variables.go): the lowest-precedence layer of the Organization -> Project -> Environment -> Service variable hierarchy. The table mirrors the established conventions — composite UNIQUE (organization_id, id) as the FK target for future scope-narrowing override tables; UNIQUE (organization_id, key) for per-tenant key uniqueness (an env var named DATABASE_URL in two orgs is two rows); ON DELETE CASCADE from organizations; bigint version + bump_version() trigger for optimistic concurrency. The repository follows the AuditRepository read pattern: ListByOrganization is tenant-scoped at the SQL predicate (cross-tenant id matches no rows, empty list, never another tenant's data), ordered deterministically by (key ASC, id ASC). The wire redaction contract is wire-side at the projection chokepoint, NOT store-side: store.OrganizationVariable.Value carries the literal verbatim (a future write path needs lossless round-trip), but httpapi/variables.go's organizationVariableOf replaces is_secret=true values with output.Sentinel on every projection — agents can never read a secret value back through this endpoint. Defence-in-depth: OrganizationVariable.LogValue redacts every value (regardless of is_secret) at the slog boundary, so a stray log record that captures the struct cannot leak the literal. Non-secret values pass through verbatim so customers can audit their own organization-wide defaults.
 - The env.write policy matrix (BE-0111, internal/controlplane/httpapi/variables_put_policy_test.go) is the structural twin of the CapWrite/no-cross-tenant-support family (project/environment/service create/update/delete) and the load-bearing distinction from the env.read matrix (BE-0108): same {org_id} resolver, same organizationIDResolver, but Developer JOINS the allow row (RoleDeveloper holds CapWrite), Viewer/CI/Support all deny via ReasonDeniedNoCapability, and the engine's cross-tenant clause (`required == CapRead || required == CapSupport`) excludes CapWrite — so a Support principal cannot cross tenants and cannot mutate its OWN home tenant either. The grant-containment row mirrors the env.read suite verbatim except that the org-level allow row tests a Developer grant (CapWrite) instead of a Viewer grant (CapRead); the Viewer grant at the same org scope is asserted to DENY, locking the CapWrite requirement against the grant path so a future catalog drift in either direction fails here. Wire-level redaction (organizationVariableOf -> output.Sentinel) is pinned on the allow-by-role AND allow-by-grant branches, and deny-path leak checks use a distinct seededPostWriteOrgVariables fixture (POST_WRITE_REGION/POST_WRITE_SECRET with the recognisable "post-write-plaintext-correcthorsebatterystaple" needle) so the matrix's request body (MATRIX_KEY/matrix_value) and the env.read suite's seededOrgVariables (REGION/DATABASE_URL) cannot false-positive a leak check. Cross-tenant assertions on the wire pin BOTH the submitted-payload non-echo (MATRIX_KEY, matrix_value) and the post-write-data non-echo — the policy boundary is the only place an env mutation is gated, so a denied caller seeing either would itself be a contract violation.
+- The CapWrite-on-nil-resolver policy matrix (BE-0123, internal/controlplane/httpapi/projects_create_policy_test.go) is the structural sibling of the env.write matrix above (BE-0111) but for endpoints that use a NIL ResourceResolver instead of organizationIDResolver — POST /v1/projects is the reference. The wire surface offers NO path/body field that could name another tenant (the strict JSON decoder rejects organization_id in the body, the contract suite TestCreateProjectIgnoresOrganizationIDInBody pins that), so tenant isolation on the wire is STRUCTURAL: the creator is always invoked with principal.OrganizationID and there is no caller-controlled value the policy boundary could fail open on. The cross-tenant probe therefore moves OFF the wire and ONTO a sub-test loop (cross_tenant_owner/admin/developer/viewer/ci/support, each t.Parallel()) that authorizes the action against a foreign-org Resource directly through policy.NewEngine().Decide; EVERY role — including Support — must deny via ReasonDeniedCrossTenant, because CapWrite is outside the engine's `roleCaps.has(CapSupport) && (required == CapRead || required == CapSupport)` exception. The role matrix proper still allows Owner/Admin/Developer (ReasonAllowedByRole) and denies Viewer/CI/Support (ReasonDeniedNoCapability) at the principal's own home org root. Grant-containment for a nil-resolver write authorizes against the org root, so project/env/service-scoped admin grants all deny with ReasonDeniedOutOfScope (covers() one-way); an org-level VIEWER grant denies with ReasonDeniedNoCapability (the load-bearing distinction from a CapRead matrix where the same grant ALLOWS), an org-level DEVELOPER grant allows via ReasonAllowedByGrant. Deny-path leak needles cover BOTH the caller-supplied request-body fields AND the canned-creator-output fields (two recognisable values per field, e.g. prj_matrix_alpha vs the request projectID) — a denied response leaking either is a separate regression direction, kept in one guard. Future CapWrite-on-nil-resolver endpoints (none yet planned; this is currently the only one) can copy this shape verbatim.
 - Hard-delete vs soft-delete decision rule: a customer-facing resource takes a SOFT delete (deletion_scheduled_at on organizations + 202 Accepted, revoked_at on api_keys + 200 OK with revocation snapshot) ONLY when the row carries a continuing tie that must outlive the resource — an audit-log FK that must keep the row reachable, a child cascade that must be ordered carefully, or a "lifecycle stale" property the customer's audit trail depends on. A resource with no continuing tie (the audit log records the deletion independently, no child tables, no FK ties) takes a HARD delete with a 200 OK response carrying the row's snapshot exactly as it stood at the moment of removal (DELETE /v1/organizations/{org_id}/variables/{key}, BE-0115). The store repository method uses `DELETE FROM ... WHERE org=$1 AND key=$2 RETURNING ...` so one round trip removes the row AND yields the snapshot the orchestrator returns to the wire; pgx.ErrNoRows -> apierr.NotFound (a cross-tenant key is indistinguishable from a missing row). The service files an audit event in the SAME tx as the delete, with Metadata={variable_id: row.ID} — customer-supplied key + the deleted value are never recorded, so the audit row is auditable without ever observing the variable name or its value. An agent can confirm what was deleted (id, key, version, timestamps) without a separate read; 204 No Content would have been less useful here.
 - Audit-event listing in tests: store.AuditRepository.ListByOrganization is ORDER BY occurred_at DESC, id DESC — events[0] is the NEWEST event. A test that reads events[len-1] gets the OLDEST event, which in a "seed then mutate" fixture is the seed event (with seed metadata), NOT the mutation under test. A test that probes the post-mutation state through ANOTHER mutation (e.g. a second Replace to verify the deleted row is gone) files yet another audit event and pushes the mutation-under-test to events[1] — so audit assertions must run BEFORE any further state-changing call, and post-state probes must read directly through the repository (NewOrganizationVariableRepository().ListByOrganization), NOT through another service-level mutation.
 
@@ -8741,4 +8742,167 @@
     pattern matches the way runtime.NewMeta is wired before the real
     migration probe lands.
 
+---
+
+## 2026-05-15 - BE-0123
+- What was implemented: policy matrix coverage for POST /v1/projects,
+  the second policy-matrix file in the project family (after BE-0120's
+  project.read matrix), and the first CapWrite matrix on a nil-resolver
+  route (every prior CapWrite matrix — variables put/patch/delete —
+  uses organizationIDResolver). project.create is CapWrite, so the
+  matrix splits along the write capability class: Owner/Admin/Developer
+  allow in own org (ReasonAllowedByRole); Viewer/CI/Support deny in own
+  org (ReasonDeniedNoCapability); EVERY role denies cross-tenant
+  (ReasonDeniedCrossTenant — CapWrite is outside the engine's support
+  cross-tenant exception, unlike CapRead). Privileged Yalla support
+  that needs to create a project on a customer's behalf goes through
+  explicit break-glass admin tooling, never this customer-facing route.
+  - internal/controlplane/httpapi/projects_create_policy_test.go (new):
+    four tests drive the real NewHandler + real policy.NewEngine() —
+    the production request path — so a regression in the middleware,
+    the action catalog, or the engine fails here. The file adds two
+    small fixtures (canonicalCreateProjectInput, canonicalCreatedProject)
+    and one deny-leak guard (createProjectDenyBodyLeak) and otherwise
+    consumes the shared scaffolding from projects_create_test.go
+    (createProjectHandlerFor, postProjects, createProjectRequestBody,
+    decodeCreateProject, decodeCreateProjectError, fakeProjectCreator)
+    and the wider httpapi test fixtures (orgPrincipal, decodeError).
+  - TestCreateProjectPolicyMatrixRoles is the role matrix proper. It
+    runs every built-in role (owner/admin/developer/viewer/ci/support)
+    through the full request path. Allow rows pin: 201 yalla.output.v1,
+    creator reached with input.OrganizationID == principal home org,
+    input.ActorOrgID == principal home org, input.ActorID == principal
+    id (so the audit row names the actor verbatim), and the canned
+    created project echoed back. Deny rows pin: 403 yalla.error.v1,
+    error message contains the stable reason, creator MUST NOT run
+    (gotInput.OrganizationID and gotInput.ActorID both unset), and the
+    body never echoes any of the recognisable request-body or canned-
+    project fields. Both the engine verdict and the wire verdict are
+    asserted side by side so a future drift between the two fails here.
+  - TestCreateProjectPolicyRevokedAndExpiredKeys covers the two PRD-
+    named credential-disabled cases ("revoked key", "expired key").
+    Both surface to the policy engine as Disabled=true; underlying role
+    is Owner so a working credential WOULD allow it, ensuring Disabled
+    is load-bearing. Asserts: 403, ReasonDeniedPrincipalDisabled in the
+    message, creator never reached, body never echoes the principal id,
+    the org id, or the request data.
+  - TestCreateProjectPolicyWrongOrganizationPrincipal pins the cross-
+    tenant boundary. The route uses a nil resolver and the strict JSON
+    decoder rejects organization_id in the body, so the wire surface
+    offers no path for a foreign principal to point the write at
+    another tenant — tenant isolation is structural and the creator is
+    ALWAYS called with the principal's home org id. The wire half
+    proves an attacker still creates in its OWN org and that the
+    response body never echoes the victim's org id. The engine half is
+    a sub-test loop (cross_tenant_owner/admin/developer/viewer/ci/
+    support) authorizing project.create against a foreign org Resource;
+    every role — INCLUDING Support — denies via
+    ReasonDeniedCrossTenant, because CapWrite is outside the engine's
+    `CapSupport && (CapRead || CapSupport)` exception. This is the
+    load-bearing distinction from BE-0120 (project.read), where the
+    same Support cross-tenant probe is the documented ALLOW exception.
+  - TestCreateProjectPolicyGrantContainment pins the three PRD-named
+    grant-containment properties (sibling project, production
+    environment, parent-level secrets) at the engine via project/env/
+    service-scoped admin grants, then ties the property back to the
+    wire by proving a project-scoped grantee is denied POST /v1/projects
+    at its own home org with ReasonDeniedOutOfScope (creator never
+    runs, body never echoes request data). The matrix additionally
+    pins: (a) org-level VIEWER grant denies via
+    ReasonDeniedNoCapability — the load-bearing distinction from
+    BE-0120's project.read containment where an org-level Viewer grant
+    is sufficient; (b) org-level DEVELOPER grant allows via
+    ReasonAllowedByGrant, with the wire returning 201, the creator
+    reached on the principal's home org id, and the actor id being the
+    grantee's id verbatim; (c) a project-scoped grant whose carrier
+    principal is planted in a foreign org denies — stealing a key
+    cannot smuggle a write across tenants.
+- Files changed:
+  - internal/controlplane/httpapi/projects_create_policy_test.go (new)
+  - ralph/prd.json, ralph/progress.txt
+- Verification run:
+  - gofmt -w .
+  - go mod tidy
+  - go vet ./...
+  - go test ./...
+  - go test -race ./...
+- Results: all green. goimports is not installed on this machine; gofmt
+  and go vet are both clean. The new file is the only addition; no
+  existing file changed.
+- Remaining risks or follow-ups:
+  - Next failing project-family stories: BE-0124 (implement GET
+    /v1/projects/{project_id}) and BE-0126 (its policy matrix). The
+    matrix shape will diverge again — GET /v1/projects/{project_id}
+    will use a project-id resolver (not the nil resolver and not the
+    org-id resolver), so the scoped-grant containment property
+    inverts: a project-scoped Admin grant for THAT project is the
+    allow path, while an org-scoped Viewer grant is the role-allowed
+    path. The cross-tenant deny will be a 404 (path id not found in
+    the principal's home org) rather than a 403 cross-tenant, since
+    the resolver would not surface a foreign-org id.
+  - The route description string in routes.go for POST /v1/projects
+    asserts "owner, admin, developer, ci" as the admitted role set,
+    but the actual policy engine denies CI (CI's capset is
+    CapSelf+CapRead+CapDeploy, no CapWrite). The matrix here pins the
+    engine's truth (CI denied). A future BE-0XXX could correct the
+    description to "owner, admin, developer" so the OpenAPI document
+    stops misleading agents reading the discovery surface; the matrix
+    will catch the wire/catalog half of any such drift.
+- **Learnings for future iterations:**
+  - The CapWrite-on-nil-resolver matrix shape is structurally NEW in
+    this codebase. Prior CapWrite matrices (variables put/patch/delete,
+    organization patch) all use organizationIDResolver, so they prove
+    "cross-tenant {org_id} denies as 403" at the WIRE. The project.create
+    matrix proves the same property STRUCTURALLY: the wire offers no
+    foreign-org path at all, so the only place the cross-tenant
+    boundary can fail is the engine. The matrix therefore drops the
+    wire-cross-tenant test and replaces it with a sub-test loop that
+    walks every role through the engine's foreign-org Resource probe.
+    Future CapWrite-on-nil-resolver endpoints (none yet planned, but
+    BE-0103-style CapAdmin-on-nil-resolver may appear) can copy this
+    shape verbatim.
+  - The CapWrite-vs-CapRead policy distinction at the grant boundary
+    is load-bearing: an org-level Viewer grant SATISFIES the scope
+    requirement for project.create (covers() the org root) but FAILS
+    the capability requirement (Viewer's capset doesn't include
+    CapWrite). The engine reports this as ReasonDeniedNoCapability,
+    not ReasonDeniedOutOfScope — distinguishing it from the project-
+    scoped grant denial. Both denies are asserted in the matrix so a
+    future engine regression that conflated the two reasons would
+    fail here. The sister allow assertion — that an org-level
+    Developer grant IS sufficient — locks the CapWrite requirement
+    against the grant path: a future catalog change that downgraded
+    project.create to CapRead would silently allow every org-level
+    Viewer grantee to create projects, and the deny assertion here
+    would fail before it could regress a customer.
+  - The strict JSON decoder is doing structural work in the
+    wrong-organization test: a foreign org id smuggled into the body
+    is rejected as 400 (unknown field), so a non-attacker test (which
+    posts a clean body) STILL never receives a path to point the
+    write at another tenant. The matrix doesn't need a separate
+    "body-injection cross-tenant" case because the contract suite
+    (TestCreateProjectIgnoresOrganizationIDInBody) already pins that
+    decoder behaviour. Cross-tenant on a nil-resolver POST is
+    therefore the engine's job, not the wire's; the matrix probes
+    the engine directly.
+  - A deny-path leak guard for a CREATE endpoint needles for the
+    REQUEST-body fields (caller-supplied) AND the canned-creator-
+    output fields (server-side). Both are recognisable on purpose
+    (prj_matrix_alpha / matrix-alpha / Matrix Alpha). A denied
+    response that accidentally rendered request fields would mean the
+    handler echoed user input after policy denial (a tenant boundary
+    smell); a denied response that accidentally rendered creator
+    output would mean the creator ran and the response leaked even
+    though the wire said 403. Two needles, two different regressions
+    — keeping them in one guard means a future leak in either
+    direction fails the same assertion.
+  - Subtest-loop pattern for engine-only probes inside a primarily-
+    wire test: TestCreateProjectPolicyWrongOrganizationPrincipal
+    opens with one wire probe (own-tenant 201) and then nests t.Run
+    sub-tests for the cross-tenant engine probes per role. Each
+    sub-test is t.Parallel() (each closes over its own tc shadow);
+    the parent test is also t.Parallel() at the file level. Mixing
+    one wire setup with a per-role engine sub-test loop keeps the
+    test name surface useful (cross_tenant_owner/cross_tenant_admin/
+    ...) and lets a failing role show up by name in test output.
 ---
