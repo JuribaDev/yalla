@@ -31,6 +31,23 @@ var errNoOrgVariableReader = errors.New("httpapi: no organization variable reade
 // than silently failing to persist the change.
 var errNoOrgVariableReplacer = errors.New("httpapi: no organization variable replacer configured")
 
+// errNoOrgVariablePatcher is returned when PATCH
+// /v1/organizations/{org_id}/variables/{key} is reached without a
+// variable patcher wired into NewHandler. Like errNoOrgVariableReplacer
+// it can only happen through a wiring error — a programming mistake,
+// not a client error — so the handler reports it as a typed internal
+// failure rather than silently failing to persist the change.
+var errNoOrgVariablePatcher = errors.New("httpapi: no organization variable patcher configured")
+
+// errOrgVariablePatchEmpty is returned when PATCH
+// /v1/organizations/{org_id}/variables/{key} decodes a body that names
+// neither value nor is_secret. A PATCH that changes nothing is a client
+// error (it would otherwise be a silent no-op write that still files an
+// audit record), so the handler surfaces it as a stable 400 with a
+// closed-set reason — agents can rely on the message to distinguish it
+// from any other validation failure.
+var errOrgVariablePatchEmpty = "at least one of value or is_secret must be provided"
+
 // errOrgVariablesBodyMissing is returned when PUT
 // /v1/organizations/{org_id}/variables decodes a body that does not name
 // the "variables" field. Because PUT replaces the tenant's entire variable
@@ -293,5 +310,138 @@ func replaceOrganizationVariablesHandler(replacer OrganizationVariableReplacer) 
 			payload.Variables = append(payload.Variables, organizationVariableOf(v))
 		}
 		apienvelope.WriteData(w, http.StatusOK, requestID(r), payload)
+	}
+}
+
+// OrganizationVariablePatcher is the narrow persistence port PATCH
+// /v1/organizations/{org_id}/variables/{key} depends on.
+// *store.OrganizationVariableService satisfies it in production; tests
+// supply a fake. Like OrganizationVariableReplacer it is an interface
+// declared here so the handler stays unit-testable without a real
+// database — the concrete orchestrator (the tenant-scoped existence
+// read, the partial update of the mutable fields, and the immutable
+// audit record committed in one transaction) lives in the store layer.
+type OrganizationVariablePatcher interface {
+	Patch(ctx context.Context, in store.PatchOrganizationVariableInput) (store.OrganizationVariable, error)
+}
+
+// patchOrganizationVariableRequest is the decoded PATCH
+// /v1/organizations/{org_id}/variables/{key} request body. Value and
+// IsSecret are the mutable fields on an organization_variables row; the
+// immutable identity fields (id, organization_id, key) and the
+// lifecycle stamps (created_at, updated_at, version) are deliberately
+// not part of this surface — a PATCH cannot rename a variable in
+// place, only mutate its value and its secret flag. The store layer
+// validates every supplied value before any database work — an invalid
+// request never opens a transaction — and the fields carry only the
+// caller-supplied content the handler forwards verbatim.
+//
+// Value and IsSecret are pointers so a missing field can be
+// distinguished from a supplied-but-empty one: omitting the field is
+// "leave unchanged", supplying it with an invalid value is a typed
+// validation failure naming the field, and a patch that names no
+// field is itself a 400 — a mutation that changes nothing is a client
+// error, not a silent success. is_secret accepts only the JSON
+// literals true and false (the global JSON decoder rejects anything
+// else as a stable 400 before the handler runs).
+type patchOrganizationVariableRequest struct {
+	Value    *string `json:"value,omitempty"`
+	IsSecret *bool   `json:"is_secret,omitempty"`
+}
+
+// patchOrganizationVariablePayload is the data block of the PATCH
+// /v1/organizations/{org_id}/variables/{key} success envelope: the
+// variable after the mutation — including the trigger-refreshed
+// version and updated_at — in the same stable wire shape every other
+// variable endpoint returns. Secret values are still redacted to the
+// sentinel on the wire, so a PATCH cannot leak a secret value the
+// customer just submitted; a customer can never read a secret value
+// back through this endpoint by design, including immediately after
+// submitting it.
+type patchOrganizationVariablePayload struct {
+	Variable organizationVariable `json:"variable"`
+}
+
+// patchOrganizationVariableHandler builds the PATCH
+// /v1/organizations/{org_id}/variables/{key} handler. It decodes and
+// delegates: the request body is strictly decoded (oversized,
+// malformed, or unknown-field bodies become a typed 400 that never
+// echoes the input), then the patch-variable unit of work — read the
+// current row, apply the caller-supplied fields, write the row, append
+// the audit record, all in one transaction — runs in the store layer
+// through the OrganizationVariablePatcher port.
+//
+// RequireAuth gates the route on action env.write before the handler
+// runs — authorized through organizationIDResolver against the
+// organization the path names — and attaches the resolved principal,
+// so a request that reaches the handler has already cleared the
+// tenant boundary: a cross-tenant {org_id} was rejected as a 403 by
+// the policy engine, never reaching this code. A request that arrives
+// here with no principal is therefore a wiring error and is reported
+// as a typed internal error. The principal and the request correlation
+// identifiers are passed to the patcher so the audit record names the
+// actor; a validation failure (no fields, invalid value encoding,
+// over-sized value), a not-found variable (cross-tenant or missing
+// row), and a datastore outage each surface as their own typed
+// status, never disguised as one another.
+//
+// env.write is a CapWrite action: a viewer or support principal in
+// the tenant cannot patch a variable, only an owner, admin, developer,
+// or CI principal can — and unlike CapRead actions there is no cross-
+// tenant support exception. The handler relies on the policy engine
+// for that decision; it never re-checks the role itself.
+func patchOrganizationVariableHandler(patcher OrganizationVariablePatcher) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if patcher == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoOrgVariablePatcher))
+			return
+		}
+
+		var req patchOrganizationVariableRequest
+		if err := validate.DecodeJSON(r.Body, &req, 0); err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		// A PATCH that names neither mutable field is itself a client
+		// error: the store layer rejects it the same way, but surfacing
+		// it here keeps the handler/store contract symmetric and gives
+		// agents a stable 400 for "patch with no field" before the
+		// store layer's identical rejection runs. The field name in
+		// the violation matches what the store layer reports, so the
+		// wire contract is identical regardless of where the rejection
+		// originates.
+		if req.Value == nil && req.IsSecret == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "value",
+				Reason: errOrgVariablePatchEmpty,
+			}))
+			return
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		v, err := patcher.Patch(r.Context(), store.PatchOrganizationVariableInput{
+			OrganizationID: r.PathValue("org_id"),
+			Key:            r.PathValue("key"),
+			Value:          req.Value,
+			IsSecret:       req.IsSecret,
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), patchOrganizationVariablePayload{
+			Variable: organizationVariableOf(v),
+		})
 	}
 }

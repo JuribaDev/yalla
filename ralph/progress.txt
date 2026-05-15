@@ -7734,3 +7734,199 @@
     the cross-tenant clause unchanged would fail the home-deny
     assertion before silently regressing a customer.
 ---
+
+## 2026-05-15 - BE-0112
+- Implemented PATCH /v1/organizations/{org_id}/variables/{key} end to
+  end through the store layer and the HTTP layer.
+- Files changed:
+  - internal/controlplane/store/organization_variable.go: added
+    OrganizationVariableRepository.GetByKey and UpdateMutable. GetByKey
+    runs against a Querier so it works both stand-alone and inside a
+    transaction (PATCH reads the current row in-transaction so the
+    field the patch does not name is preserved verbatim from the row
+    Postgres holds, not from a client-supplied value); UpdateMutable
+    requires a *Tx so a mutation can never be persisted outside the
+    transaction that also carries its audit record. Both filter by
+    organization_id first, so a cross-tenant key is the typed
+    apierr.NotFound the repository surfaces — never another tenant's
+    data and never disguised as a 5xx. The bump_version trigger
+    refreshes version and updated_at as part of the UPDATE so the
+    returned row always reflects the post-commit state.
+  - internal/controlplane/store/organization_variable_service.go:
+    added PatchOrganizationVariableInput and
+    OrganizationVariableService.Patch. The unit of work mirrors the
+    APIKeyService.Update shape: validate input shape (path
+    identifiers, at-least-one-field, structural value checks for
+    invalid UTF-8 or embedded NUL) before opening a transaction; in
+    one transaction, read the current row, compute the effective
+    post-state value/is_secret, enforce the final-state size ceiling
+    (MaxSecretValueLen for is_secret=true, MaxEnvVarValueLen
+    otherwise — so a demotion to is_secret=false cannot smuggle a
+    value above the non-secret ceiling), write the row through
+    UpdateMutable, and append an immutable audit record. The audit
+    event mirrors PUT's filing convention (resource_kind=org,
+    resource_id={org_id}) with metadata that records only the
+    variable's system-minted id and the closed-set names of the
+    fields the patch changed — the customer-supplied key and value
+    never reach the audit row. A missing or cross-tenant {key} is
+    the typed NotFound the GetByKey path produces, with the audit
+    record rolled back so a failed PATCH cannot leave an orphan.
+  - internal/controlplane/httpapi/variables.go: added port
+    OrganizationVariablePatcher, request/response DTOs
+    (patchOrganizationVariableRequest with *string Value and *bool
+    IsSecret so a missing field is structurally distinguishable from
+    a supplied-but-zero one, patchOrganizationVariablePayload), and
+    handler patchOrganizationVariableHandler. The handler is thin:
+    PrincipalFromContext, port-nil internal-error guard,
+    DecodeJSON (strict, unknown-field-rejecting body), reject a
+    patch that names neither field as InvalidInput (handler/store
+    contract symmetry — the store layer rejects the same shape, but
+    surfacing it here gives a stable 400 before the store layer
+    runs), forward to the patcher with principal/correlation
+    identifiers attached, render the result through the organization
+    variable projection (which redacts secret values to the
+    sentinel before they reach the wire — a customer can never read
+    a secret value back through this endpoint by design, including
+    immediately after submitting it). errNoOrgVariablePatcher and
+    errOrgVariablePatchEmpty are declared as named errors / strings
+    so future iterations can pattern-match on them.
+  - internal/controlplane/httpapi/routes.go: registered the PATCH
+    route. Uses organizationIDResolver (the same resolver every
+    other org-scoped endpoint uses) so action env.write is
+    authorized against the {org_id} path parameter, not merely the
+    principal's home organization — a cross-tenant id is denied at
+    the policy boundary before the handler runs, and env.write has
+    no cross-tenant support exception. The {key} path parameter is
+    declared on the endpoint metadata so the OpenAPI document
+    accurately reflects the address. RequiredAction=env.write,
+    tag=variables, OperationID=patchOrganizationVariable.
+  - internal/controlplane/httpapi/server.go: threaded
+    orgVariablePatcher through NewHandler. Doc-comment updated to
+    name the new port and the route it backs.
+  - internal/controlplane/httpapi/variables_test.go: added
+    fakeOrgVariablePatcher (a canned port, modeled on
+    fakeOrgVariableReplacer) so the patch tests can drive the real
+    handler through NewHandler with only the wire seam faked.
+  - internal/controlplane/httpapi/variables_patch_test.go (new):
+    13 contract tests cover the happy path (both fields, value-only,
+    is_secret-only), the wire-level redaction chokepoint (secret
+    submitted then redacted to the sentinel on the response), the
+    handler-forwarding contract (path params + principal +
+    correlation reach the patcher verbatim), validation failures
+    (empty body, malformed JSON, unknown field), store-error
+    pass-through (NotFound + StoreUnavailable -> E_UNAVAILABLE not
+    E_DB_UNAVAILABLE — see learning below), the auth gate, the
+    cross-tenant 403 (organizationIDResolver denies before the
+    handler runs), the missing-patcher 500 guard, and the OpenAPI
+    route-table registration.
+  - internal/controlplane/store/organization_variable_patch_test.go
+    (new): 9 isolated-Postgres integration tests for Patch covering
+    the happy path (value + is_secret, version bumps via the
+    schema trigger, audit metadata redacts customer input),
+    value-only and is_secret-only patches preserve the omitted
+    field, missing-key NotFound with no audit row filed, the
+    cross-tenant isolation (a key that exists in another tenant
+    cannot be patched from this tenant and the victim's row stays
+    untouched), empty-patch InvalidInput, non-POSIX path key
+    rejected as InvalidInput before any transaction, demotion size
+    violation (a 32 KiB+ value submitted under is_secret=true
+    cannot be demoted to is_secret=false — transaction rolls back),
+    and NUL-byte rejection. They run against an isolated migrated
+    Postgres and skip when YALLA_TEST_DATABASE_URL is unset.
+  - cmd/yalla-api/main.go: passed orgVariableService for the new
+    port (the *store.OrganizationVariableService satisfies both
+    Replacer and Patcher; one concrete service handles every
+    org-scoped variable mutation today).
+  - Mechanical churn: 22 NewHandler/newRouteTable call sites across
+    *_test.go files received a positional fakeOrgVariablePatcher{}
+    immediately after fakeOrgVariableReplacer{}; routes_test.go and
+    server_test.go received an extra `nil` to match the wider
+    signature; variables_put_test.go and limits_patch_test.go
+    needed manual edits (one call site uses a named `replacer`
+    rather than the {} literal, and the *_patch* tests have their
+    own custom `nil`/`updater` argument near the inserted slot). A
+    perl loop handled the literal-form sites; the two named-form
+    sites and the routes_test.go `nil` extension were edited
+    directly.
+- Verification run:
+  - gofmt -w .
+  - go mod tidy
+  - go vet ./... -> clean
+  - go test ./... -> all pass (cached + fresh)
+  - go test -race ./... -> all pass
+- Tools not installed locally and documented in earlier iterations:
+  goimports, golangci-lint, staticcheck, govulncheck. Docker compose
+  for live Postgres not invoked here; the integration tests skip
+  cleanly via testutil.RequireMigratedDB when YALLA_TEST_DATABASE_URL
+  is unset.
+- Remaining risks / follow-ups:
+  - BE-0113 (contract tests for PATCH /v1/organizations/{org_id}/variables/{key})
+    is now ready to land — variables_patch_test.go already covers
+    BE-0113's surface closely (the explicit-redaction proof, all
+    four CRUD-style failure modes, the missing-patcher guard, the
+    OpenAPI route-table contract). BE-0114 (the unblocked p=1
+    policy matrix) is the next iteration: it should table every
+    built-in role x env.write, revoked/expired Disabled principals,
+    a wrong-organization principal, project/environment/service
+    scoped grants, and the cross-tenant support-NOT-allowed clause
+    — the same pattern as variables_put_policy_test.go.
+- **Learnings for future iterations:**
+  - apierr.StoreUnavailable maps to yerr.CodeUnavailable
+    ("E_UNAVAILABLE"), NOT to a hypothetical "E_DB_UNAVAILABLE".
+    The PRD's error-contract stories mention E_DB_UNAVAILABLE as a
+    code that may exist later, but today the database-unavailable
+    wire code is the generic E_UNAVAILABLE — contract tests must
+    use the actual catalog value, not the planned one.
+  - In a PATCH service whose acceptance criteria includes a per-
+    kind value size ceiling and the ceiling is gated by is_secret,
+    the *final-state* ceiling must run inside the transaction
+    AFTER the current row is observed, not at the handler edge.
+    Otherwise a demotion (is_secret=true -> false, value unchanged
+    but now subject to the smaller non-secret ceiling) slips
+    through the input validation and either silently writes a too-
+    big non-secret value or surfaces as the wrong error (a raw
+    Postgres CHECK violation rather than InvalidInput naming the
+    field). The same pattern applies to any field whose validation
+    depends on a sibling field's effective value.
+  - For a PATCH that addresses a row by a *customer-supplied*
+    natural key (`{key}` rather than `{id}`), the path parameter
+    is BOTH an authorization input (rejected here by the
+    organizationIDResolver against the org scope) AND a domain
+    invariant (must be a POSIX env var name). Validate the
+    invariant in the service layer, not the handler — the handler
+    forwards opaque strings to the store, the store validates them
+    before any transaction, and InvalidInput carries the stable
+    field path "key" (not e.g. "path.key") so a structured client
+    can react to either layer's rejection uniformly.
+  - When a port has multiple methods that all satisfy a shared
+    contract (Replacer + Patcher both backed by
+    OrganizationVariableService), the HTTP layer should declare
+    one narrow interface per method and wire the SAME concrete
+    service to both at startup. Keeping the interfaces narrow
+    keeps handler-side fakes minimal (one method, one fake) and
+    keeps the production wiring trivial (one service instance,
+    multiple positional args). Do NOT collapse the ports into one
+    super-interface — a single big interface makes the test fakes
+    harder to maintain and couples the patch endpoint's fakes to
+    every other org-variable surface.
+  - The mechanical churn of inserting a new positional arg into
+    NewHandler/newRouteTable is real: 22 call sites in this story
+    alone. The perl one-liner pattern is
+    `s/<prior-arg-literal>,/<prior-arg-literal>, <new-arg-literal>,/g`,
+    BUT it will double-substitute if you run it twice. Use the
+    direct form once across all files (xargs perl -i -pe ...);
+    don't loop with a fixup pass that tries to detect "already
+    inserted" via lookbehind — perl's lookbehind with the literal
+    `{}` is fragile to escape and silently no-ops, which makes it
+    look like the first pass did nothing.
+  - newRouteTable's all-nil test call site (routes_test.go and
+    server_test.go) accepts an extra `nil` when the signature
+    grows, but the simpler call sites in other tests that pass
+    named fakes (variables_put_test.go's `replacer` parameter)
+    need a manual edit because the bulk-replacement regex is keyed
+    on the literal `fakeOrgVariableReplacer{}` and skips named
+    expressions. Always grep the build after the bulk pass — the
+    "not enough arguments" vet error is the only signal that a
+    call site was missed.
+---
+

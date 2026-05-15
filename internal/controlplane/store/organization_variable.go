@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
 	"github.com/JuribaDev/yalla/internal/output"
 )
@@ -181,6 +183,83 @@ func (r *OrganizationVariableRepository) DeleteByOrganizationExceptKeys(ctx cont
 		return mapWriteError(err, "the organization variables could not be reconciled")
 	}
 	return nil
+}
+
+// GetByKey returns the organization-scoped variable with key inside
+// organizationID. The query is tenant scoped — organization_id is the
+// first predicate — so a key that exists in another tenant simply does
+// not match and is reported as the typed apierr.NotFound the PATCH /
+// DELETE endpoints surface; a cross-tenant id can never reveal another
+// tenant's variable. A raw driver error surfaces as
+// apierr.StoreUnavailable with the cause wrapped for server-side
+// logging only — never leaked into the customer-facing message.
+//
+// q is a Querier so the method can run either against a pooled
+// connection (a stand-alone read) or inside a transaction (a read-then-
+// write unit of work like PATCH /v1/organizations/{org_id}/variables/{key},
+// where the row must be observed in the same transaction that updates
+// it so a row that vanishes mid-flight is impossible).
+func (r *OrganizationVariableRepository) GetByKey(ctx context.Context, q Querier, organizationID, key string) (OrganizationVariable, error) {
+	row := q.QueryRow(ctx,
+		`SELECT `+organizationVariableColumns+`
+		   FROM organization_variables
+		  WHERE organization_id = $1 AND key = $2`,
+		organizationID, key)
+	v, err := scanOrganizationVariable(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return OrganizationVariable{}, apierr.NotFound("organization_variable", key)
+	}
+	if err != nil {
+		return OrganizationVariable{}, apierr.StoreUnavailable(err)
+	}
+	return v, nil
+}
+
+// UpdateMutable writes the caller-supplied value and is_secret onto the
+// organization_variables row identified by (organizationID, key) inside
+// tx and returns the persisted row, including the trigger-refreshed
+// version and updated_at timestamp. It requires a *Tx — not a bare
+// Querier — so a mutation can never be persisted outside the transaction
+// that also carries its audit record. The query is tenant scoped: a key
+// that belongs to another organization simply does not match and is
+// reported as the typed apierr.NotFound the GET endpoint uses, never
+// disguised as a 5xx and never revealing whether another tenant owns
+// that key.
+//
+// The immutable identity fields (id, organization_id, key) and the
+// lifecycle stamps (created_at) are deliberately not part of this
+// method's surface — they are minted once at upsert time. The
+// bump_version trigger refreshes version and updated_at as part of the
+// row update, so the returned OrganizationVariable always reflects the
+// post-commit state. Validation of organizationID, key, and value
+// happens in the service layer before a transaction is opened; this
+// method assumes its inputs already cleared the same shape checks
+// PUT /v1/organizations/{org_id}/variables enforces.
+//
+// Returns apierr.NotFound when no row matches, apierr.Conflict for a
+// CHECK or constraint violation, and apierr.StoreUnavailable for any
+// other driver error. The raw driver error is wrapped as the cause for
+// server-side logging only and never reaches the user-facing message —
+// so a customer-facing 409 here never echoes value content.
+func (r *OrganizationVariableRepository) UpdateMutable(ctx context.Context, tx *Tx, organizationID, key, value string, isSecret bool) (OrganizationVariable, error) {
+	if tx == nil {
+		return OrganizationVariable{}, apierr.Internal(errors.New("store: OrganizationVariableRepository.UpdateMutable called with a nil transaction"))
+	}
+	row := tx.QueryRow(ctx,
+		`UPDATE organization_variables
+		    SET value     = $3,
+		        is_secret = $4
+		  WHERE organization_id = $1 AND key = $2
+		 RETURNING `+organizationVariableColumns,
+		organizationID, key, value, isSecret)
+	updated, err := scanOrganizationVariable(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return OrganizationVariable{}, apierr.NotFound("organization_variable", key)
+	}
+	if err != nil {
+		return OrganizationVariable{}, mapWriteError(err, "the organization variable could not be updated")
+	}
+	return updated, nil
 }
 
 // scanRow is the minimal Scan interface pgx.Row and pgx.Rows both satisfy.

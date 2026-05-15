@@ -252,6 +252,204 @@ func (svc *OrganizationVariableService) Replace(ctx context.Context, in ReplaceO
 	return committed, nil
 }
 
+// PatchOrganizationVariableInput is the typed input to
+// OrganizationVariableService.Patch. OrganizationID and Key name the
+// organization_variables row to update; Value and IsSecret are optional
+// — a nil pointer means the caller did not include the field and it is
+// left unchanged, which is what makes the operation a partial update. A
+// patch that names no updatable field is itself a validation failure —
+// a mutation that changes nothing is a client error, not a silent
+// success. The immutable identity fields (id, organization_id, key) and
+// the lifecycle stamps are deliberately not on this struct: a PATCH
+// cannot rename a variable in place, only mutate its value and is_secret
+// flag.
+//
+// The Actor* and correlation fields describe the authenticated principal
+// performing the patch and are recorded verbatim on the audit event.
+// They are plain strings so the store layer takes no build dependency on
+// the policy or telemetry packages — the httpapi handler, which already
+// holds the resolved principal and the request correlation, fills them
+// in.
+type PatchOrganizationVariableInput struct {
+	OrganizationID string
+	Key            string
+	Value          *string
+	IsSecret       *bool
+
+	ActorID       string
+	ActorKind     string
+	ActorOrgID    string
+	RequestID     string
+	CorrelationID string
+}
+
+// Patch validates in, then runs the patch-variable unit of work inside
+// one transaction: read the current row (so a missing variable in this
+// tenant is reported as NotFound without relying on the UPDATE's no-rows
+// path, and so the field the patch does not name is preserved verbatim
+// from the row Postgres holds rather than from a value the client
+// supplied), apply the caller-supplied fields against the row, validate
+// the post-state value against the post-state is_secret ceiling, write
+// the row, append the audit record. Validation of the input shape
+// (path identifiers, at-least-one-field, structural value checks) runs
+// before the transaction is opened, so an obviously invalid request
+// never touches the database.
+//
+// A {key} that has no matching row in this tenant is the typed NotFound
+// the repository produces (the tenant-scoped read filters by
+// organization_id first, so a cross-tenant key is indistinguishable
+// from a missing row), and the audit record is rolled back with it, so
+// an audit trail can never name a mutation that did not happen. Any
+// database constraint violation rolls the whole transaction back as a
+// typed apierr.Conflict.
+//
+// The audit event mirrors the PUT endpoint's filing convention: it is
+// recorded under the actor's home organization (the tenant the
+// principal authenticated into) with resource_kind=org and
+// resource_id={org_id}, so the audit reader exposes the parent
+// organization's full mutation history in one place. Metadata records
+// only the variable's stable id (system-minted, non-secret) and the
+// closed-set names of the fields the patch changed — the customer-
+// supplied key and value are never recorded, so a customer-supplied
+// variable name cannot leak into the audit row.
+func (svc *OrganizationVariableService) Patch(ctx context.Context, in PatchOrganizationVariableInput) (OrganizationVariable, error) {
+	organizationID := strings.TrimSpace(in.OrganizationID)
+	if organizationID == "" {
+		return OrganizationVariable{}, apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "organization_id",
+			Reason: "must not be blank",
+		})
+	}
+	key := strings.TrimSpace(in.Key)
+	if !posixEnvVarName(key) {
+		return OrganizationVariable{}, apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "key",
+			Reason: "must be a POSIX environment variable name ([A-Za-z_][A-Za-z0-9_]*)",
+		})
+	}
+	if len(key) > validate.MaxEnvVarNameLen {
+		return OrganizationVariable{}, apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "key",
+			Reason: "must be at most " + strconv.Itoa(validate.MaxEnvVarNameLen) + " characters",
+		})
+	}
+	if in.Value == nil && in.IsSecret == nil {
+		return OrganizationVariable{}, apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "value",
+			Reason: "at least one of value or is_secret must be provided",
+		})
+	}
+
+	actorOrgID := strings.TrimSpace(in.ActorOrgID)
+	if actorOrgID == "" {
+		return OrganizationVariable{}, apierr.Internal(errors.New("store: OrganizationVariableService.Patch requires an actor organization for the audit record"))
+	}
+
+	// Structural value checks run before the transaction is opened: the
+	// final-state size ceiling is applied inside the transaction once the
+	// effective is_secret state is known (the ceiling depends on it), but
+	// structural rejections (invalid UTF-8 or NUL bytes) are independent
+	// of is_secret and stable enough to surface as InvalidInput up front.
+	if in.Value != nil {
+		switch {
+		case !utf8.ValidString(*in.Value):
+			return OrganizationVariable{}, apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "value",
+				Reason: "must be valid UTF-8",
+			})
+		case strings.ContainsRune(*in.Value, 0):
+			return OrganizationVariable{}, apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "value",
+				Reason: "must not contain NUL bytes",
+			})
+		}
+	}
+
+	var updated OrganizationVariable
+	if txErr := svc.store.Write(ctx, func(ctx context.Context, tx *Tx) error {
+		current, getErr := svc.vars.GetByKey(ctx, tx, organizationID, key)
+		if getErr != nil {
+			return getErr
+		}
+
+		value := current.Value
+		if in.Value != nil {
+			value = *in.Value
+		}
+		isSecret := current.IsSecret
+		if in.IsSecret != nil {
+			isSecret = *in.IsSecret
+		}
+
+		// Apply the final-state size ceiling once both effective fields
+		// are known: a value submitted under is_secret=true (64 KiB) can
+		// be over the non-secret ceiling (32 KiB) and would silently
+		// exceed it on a demotion if the check were skipped.
+		maxValue := validate.MaxEnvVarValueLen
+		if isSecret {
+			maxValue = validate.MaxSecretValueLen
+		}
+		if len(value) > maxValue {
+			return apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "value",
+				Reason: "must be at most " + strconv.Itoa(maxValue) + " bytes",
+			})
+		}
+
+		row, upErr := svc.vars.UpdateMutable(ctx, tx, organizationID, key, value, isSecret)
+		if upErr != nil {
+			return upErr
+		}
+
+		updatedFields := patchedFieldNames(in)
+		event := AuditEvent{
+			OrganizationID: actorOrgID,
+			ActorID:        strings.TrimSpace(in.ActorID),
+			ActorKind:      strings.TrimSpace(in.ActorKind),
+			Action:         envWriteAction,
+			ResourceKind:   string(domain.KindOrganization),
+			ResourceID:     organizationID,
+			Decision:       AuditDecisionAllowed,
+			Reason:         "authorization granted for env.write",
+			RequestID:      strings.TrimSpace(in.RequestID),
+			CorrelationID:  strings.TrimSpace(in.CorrelationID),
+			// updated_fields names which fields the patch changed —
+			// stable, closed-set wire names, never the submitted values
+			// — so the audit trail records the shape of the mutation
+			// without carrying any input verbatim. variable_id is the
+			// system-minted, non-guessable id of the affected row.
+			Metadata: map[string]string{
+				"variable_id":    row.ID,
+				"updated_fields": strings.Join(updatedFields, ","),
+			},
+		}
+		if _, audErr := svc.audit.Append(ctx, tx, event); audErr != nil {
+			return audErr
+		}
+		updated = row
+		return nil
+	}); txErr != nil {
+		return OrganizationVariable{}, txErr
+	}
+	return updated, nil
+}
+
+// patchedFieldNames lists the closed-set names of the fields a
+// PatchOrganizationVariableInput names. Order is stable (value before
+// is_secret) so the audit metadata is byte-deterministic across runs;
+// the names are wire-stable and never include customer-supplied
+// content.
+func patchedFieldNames(in PatchOrganizationVariableInput) []string {
+	fields := make([]string, 0, 2)
+	if in.Value != nil {
+		fields = append(fields, "value")
+	}
+	if in.IsSecret != nil {
+		fields = append(fields, "is_secret")
+	}
+	return fields
+}
+
 // buildOrganizationVariableReplace validates and normalises the
 // caller-supplied items. It is split out from Replace so the validation
 // rules are unit testable without a database, and so an invalid request is

@@ -93,7 +93,8 @@ type versionPayload struct {
 // /v1/organizations/{org_id}/usage, auditEvents backs GET
 // /v1/organizations/{org_id}/audit-events, orgVariables backs GET
 // /v1/organizations/{org_id}/variables, orgVariableReplacer backs PUT
-// /v1/organizations/{org_id}/variables, apiKeys backs GET
+// /v1/organizations/{org_id}/variables, orgVariablePatcher backs PATCH
+// /v1/organizations/{org_id}/variables/{key}, apiKeys backs GET
 // /v1/organizations/{org_id}/api-keys and GET
 // /v1/organizations/{org_id}/api-keys/{key_id}, apiKeyCreator backs POST
 // /v1/organizations/{org_id}/api-keys, apiKeyUpdater backs PATCH
@@ -104,7 +105,7 @@ type versionPayload struct {
 // metadata; a request that actually reaches a handler with a nil dependency
 // is reported as a typed internal error rather than a misleading empty list
 // or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator) []apiRoute {
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -585,6 +586,35 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// cannot replace variables in another tenant.
 			resolver: organizationIDResolver,
 			handler:  replaceOrganizationVariablesHandler(orgVariableReplacer),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodPatch,
+				Path:           "/v1/organizations/{org_id}/variables/{key}",
+				OperationID:    "patchOrganizationVariable",
+				Summary:        "Patch an organization-scoped variable",
+				Description:    "Patches the organization-scoped variable named by the {key} path parameter inside the organization named by the {org_id} path parameter. The request body is a partial update over the mutable fields — value and is_secret — and omitting a field leaves the corresponding column unchanged; a PATCH that names neither field is itself a stable 400, so a mutation that changes nothing is never a silent success. Each supplied field is validated before any database work: a value that is not valid UTF-8 or that carries an embedded NUL byte each surfaces as a stable apierr.InvalidInput naming the offending field path — never echoing the submitted value, so a secret can never reach a validation reason. The per-kind size ceiling (32 KiB for plain values, 64 KiB for is_secret=true entries) is enforced against the final post-patch state inside the transaction so a demotion to is_secret=false cannot smuggle a value above the non-secret ceiling. Action env.write is authorized against the organization the path names before the handler runs: a principal patching a variable outside its own tenant is rejected with a deterministic 403, so a cross-tenant id can never mutate another tenant's configuration, and unlike env.read (a CapRead action) env.write has NO cross-tenant support exception — only an owner, admin, developer, or CI principal in the tenant can patch a variable. An {org_id} with no organizations row, or a {key} that does not exist in this tenant (the persistence read filters by organization_id first, so a cross-tenant key is indistinguishable from a missing row), is the typed 404 the repository produces. The single-row update and an immutable audit record naming the authenticated principal (with metadata that records only the variable's stable id and the closed-set names of the fields the patch changed — never the customer-supplied key or value) are committed in one transaction, then the committed row is returned so the response always reflects exactly the state that just persisted. The response carries the persisted variable in the same stable wire shape GET /v1/organizations/{org_id}/variables returns; secret values are ALWAYS redacted on the wire as the redaction sentinel — a customer can never read a secret value back through this endpoint by design, including immediately after submitting it.",
+				Tags:           []string{tagVariables},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionEnvWrite),
+				PathParams: []openapi.PathParam{
+					{Name: "org_id", Description: "The id of the organization whose variable is patched."},
+					{Name: "key", Description: "The POSIX environment variable name of the organization-scoped variable to patch."},
+				},
+				SuccessDescription: "The organization-scoped variable after the patch.",
+			},
+			// organizationIDResolver authorizes action env.write against the
+			// organization the {org_id} path parameter names, not merely the
+			// principal's home organization, so a cross-tenant id is denied
+			// at the policy boundary before the handler mutates any data.
+			// env.write is a CapWrite action and has no cross-tenant support
+			// exception — unlike CapRead actions, the support principal
+			// cannot patch a variable in another tenant. The {key} path
+			// parameter does not change the policy scope: variables live
+			// inside the organization and are addressed by name; the policy
+			// boundary is the organization the path names.
+			resolver: organizationIDResolver,
+			handler:  patchOrganizationVariableHandler(orgVariablePatcher),
 		},
 		{
 			endpoint: openapi.Endpoint{

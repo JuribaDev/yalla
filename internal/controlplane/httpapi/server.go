@@ -62,7 +62,8 @@ import (
 // /v1/organizations/{org_id}/usage, auditEvents backs GET
 // /v1/organizations/{org_id}/audit-events, orgVariables backs GET
 // /v1/organizations/{org_id}/variables, orgVariableReplacer backs PUT
-// /v1/organizations/{org_id}/variables, apiKeys backs GET
+// /v1/organizations/{org_id}/variables, orgVariablePatcher backs PATCH
+// /v1/organizations/{org_id}/variables/{key}, apiKeys backs GET
 // /v1/organizations/{org_id}/api-keys, apiKeyCreator backs POST
 // /v1/organizations/{org_id}/api-keys, apiKeyUpdater backs PATCH
 // /v1/organizations/{org_id}/api-keys/{key_id}, and apiKeyRevoker backs
@@ -76,7 +77,7 @@ import (
 // store.APIKeyService at startup. A nil orgs, creator, updater, deleter,
 // members, memberCreator, memberUpdater, memberRemover, limits,
 // limitsUpdater, usage, auditEvents, orgVariables, orgVariableReplacer,
-// apiKeys, apiKeyCreator, apiKeyUpdater, or apiKeyRevoker still registers
+// orgVariablePatcher, apiKeys, apiKeyCreator, apiKeyUpdater, or apiKeyRevoker still registers
 // its route — the handler reports a typed internal error rather than a
 // misleading empty list or a silently dropped write — which suits tests
 // and tooling that only exercise the public surface.
@@ -85,11 +86,11 @@ import (
 // registers every entry on the mux and generates the OpenAPI document
 // (GET /openapi.json) from the same table, so a served route is always a
 // documented route.
-func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, authenticator Authenticator, engine *policy.Engine, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, logger *slog.Logger) http.Handler {
+func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, authenticator Authenticator, engine *policy.Engine, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, logger *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 	build = build.Normalized()
 
-	table := newRouteTable(build, readiness, meta, orgs, creator, updater, deleter, members, memberCreator, memberUpdater, memberRemover, limits, limitsUpdater, usage, auditEvents, orgVariables, orgVariableReplacer, apiKeys, apiKeyCreator, apiKeyUpdater, apiKeyRevoker, apiKeyRotator)
+	table := newRouteTable(build, readiness, meta, orgs, creator, updater, deleter, members, memberCreator, memberUpdater, memberRemover, limits, limitsUpdater, usage, auditEvents, orgVariables, orgVariableReplacer, orgVariablePatcher, apiKeys, apiKeyCreator, apiKeyUpdater, apiKeyRevoker, apiKeyRotator)
 
 	// Generate the OpenAPI document once, from the route table, at startup.
 	doc := openAPIDocument(build, table)
