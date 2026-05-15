@@ -539,3 +539,382 @@ func TestAPIKeyReaderGetAPIKey(t *testing.T) {
 		t.Errorf("missing-id GetAPIKey code = %s, want %s", ye.Code, yerr.CodeNotFound)
 	}
 }
+
+// seedAPIKeyForUpdate persists an api_keys row directly through the
+// repository for the update integration tests. It bypasses APIKeyService.Create
+// deliberately: Create's input validation rejects the testutil factory's
+// short-suffix ids, but the Update unit of work only cares that the row
+// exists — the on-the-wire id format is the auth/HTTP layer's contract,
+// not the store's. Using the repository keeps the seed step lightweight and
+// every Update test focused on what the unit of work actually does.
+func seedAPIKeyForUpdate(t *testing.T, ctx context.Context, s *store.Store, org testutil.Organization, createdBy, name string, scopes []string) store.APIKey {
+	t.Helper()
+	gen, err := auth.Generate()
+	if err != nil {
+		t.Fatalf("auth.Generate: %v", err)
+	}
+	f := testutil.NewFactory(t)
+	keyID := f.APIKey(testutil.Organization{ID: org.ID}, testutil.User{ID: createdBy}, name).ID
+	row := store.APIKey{
+		ID:             keyID,
+		OrganizationID: org.ID,
+		Prefix:         gen.Prefix,
+		SecretHash:     gen.SecretHash,
+		Name:           name,
+		Scopes:         scopes,
+		CreatedBy:      createdBy,
+	}
+	repo := store.NewAPIKeyRepository()
+	var stored store.APIKey
+	if err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		inserted, insErr := repo.Insert(ctx, tx, row)
+		if insErr != nil {
+			return insErr
+		}
+		stored = inserted
+		return nil
+	}); err != nil {
+		t.Fatalf("seedAPIKeyForUpdate insert: %v", err)
+	}
+	return stored
+}
+
+// TestAPIKeyServiceUpdateRenamesAndRescopes is the happy path: an api key
+// renamed and re-scoped inside the same transaction as its audit event.
+// Both the api_keys row and the audit log reflect the mutation, and the
+// credential primitives (prefix and secret_hash) are preserved verbatim —
+// the PATCH endpoint never rotates a credential.
+func TestAPIKeyServiceUpdateRenamesAndRescopes(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	target := seedOrg(t, db, f, "acme")
+	actor := seedUser(t, db, f, target, "ada")
+	svc := newAPIKeyService(t, s)
+	key := seedAPIKeyForUpdate(t, ctx, s, target, actor, "Ada CLI", []string{"projects:read"})
+
+	// seedAPIKeyForUpdate persists through the repository directly, so the
+	// audit log is empty before Update runs — the seed is not part of the
+	// unit-of-work this test exercises.
+	if got := listAuditEvents(t, s, target.ID); len(got) != 0 {
+		t.Fatalf("pre-update audit events = %d, want 0", len(got))
+	}
+
+	newName := "Ada CLI v2"
+	newScopes := []string{"projects:read", "services:deploy"}
+	updated, err := svc.Update(ctx, store.UpdateAPIKeyInput{
+		OrganizationID: target.ID,
+		KeyID:          key.ID,
+		Name:           &newName,
+		Scopes:         &newScopes,
+		ActorID:        actor,
+		ActorKind:      string(domain.KindUser),
+		ActorOrgID:     target.ID,
+		RequestID:      "req_update",
+		CorrelationID:  "corr_update",
+	})
+	if err != nil {
+		t.Fatalf("Update returned %v, want nil", err)
+	}
+	if updated.ID != key.ID {
+		t.Errorf("Update id = %q, want %q", updated.ID, key.ID)
+	}
+	if updated.Name != newName {
+		t.Errorf("Update name = %q, want %q", updated.Name, newName)
+	}
+	if len(updated.Scopes) != 2 {
+		t.Errorf("Update scopes = %v, want two persisted scopes", updated.Scopes)
+	}
+	if !updated.UpdatedAt.After(key.UpdatedAt) {
+		t.Errorf("Update updated_at = %v, want strictly after the original %v", updated.UpdatedAt, key.UpdatedAt)
+	}
+	if updated.Prefix != key.Prefix || updated.SecretHash != key.SecretHash {
+		t.Error("Update mutated the credential primitives; prefix and secret_hash must be immutable here")
+	}
+	if !updated.CreatedAt.Equal(key.CreatedAt) {
+		t.Errorf("Update created_at = %v, want %v (immutable)", updated.CreatedAt, key.CreatedAt)
+	}
+
+	events := listAuditEvents(t, s, target.ID)
+	if len(events) != 1 {
+		t.Fatalf("audit events = %d, want exactly the update record", len(events))
+	}
+	updateEv := events[0]
+	if updateEv.Action != "keys.manage" {
+		t.Errorf("update audit action = %q, want keys.manage", updateEv.Action)
+	}
+	if updateEv.Decision != store.AuditDecisionAllowed {
+		t.Errorf("update audit decision = %q, want allowed", updateEv.Decision)
+	}
+	if updateEv.ResourceID != key.ID {
+		t.Errorf("update audit resource_id = %q, want %q", updateEv.ResourceID, key.ID)
+	}
+	if updateEv.ResourceKind != string(domain.KindAPIKey) {
+		t.Errorf("update audit resource_kind = %q, want %q", updateEv.ResourceKind, domain.KindAPIKey)
+	}
+	if updateEv.Metadata["organization_id"] != target.ID {
+		t.Errorf("update audit metadata organization_id = %q, want %q", updateEv.Metadata["organization_id"], target.ID)
+	}
+	if got := updateEv.Metadata["updated_fields"]; got != "name,scopes" {
+		t.Errorf("update audit metadata updated_fields = %q, want %q", got, "name,scopes")
+	}
+	for k, v := range updateEv.Metadata {
+		if v == newName || v == "services:deploy" {
+			t.Errorf("update audit metadata leaks a submitted value in %q=%q", k, v)
+		}
+	}
+}
+
+// TestAPIKeyServiceUpdateNameOnlyPreservesScopes asserts that a patch
+// naming only `name` preserves the row's existing scopes verbatim — the
+// store-layer "leave unchanged" contract for a nil pointer.
+func TestAPIKeyServiceUpdateNameOnlyPreservesScopes(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	target := seedOrg(t, db, f, "acme")
+	actor := seedUser(t, db, f, target, "ada")
+	svc := newAPIKeyService(t, s)
+	key := seedAPIKeyForUpdate(t, ctx, s, target, actor, "Ada CLI", []string{"projects:read", "services:deploy"})
+
+	newName := "Renamed"
+	updated, err := svc.Update(ctx, store.UpdateAPIKeyInput{
+		OrganizationID: target.ID,
+		KeyID:          key.ID,
+		Name:           &newName,
+		ActorID:        actor,
+		ActorKind:      string(domain.KindUser),
+		ActorOrgID:     target.ID,
+		RequestID:      "req_update",
+		CorrelationID:  "corr_update",
+	})
+	if err != nil {
+		t.Fatalf("Update returned %v, want nil", err)
+	}
+	if updated.Name != newName {
+		t.Errorf("Update name = %q, want %q", updated.Name, newName)
+	}
+	if len(updated.Scopes) != 2 {
+		t.Errorf("Update scopes = %v, want the original two scopes preserved", updated.Scopes)
+	}
+
+	events := listAuditEvents(t, s, target.ID)
+	updateEv := events[len(events)-1]
+	if got := updateEv.Metadata["updated_fields"]; got != "name" {
+		t.Errorf("update audit metadata updated_fields = %q, want %q", got, "name")
+	}
+}
+
+// TestAPIKeyServiceUpdateScopesOnlyPreservesName mirrors
+// TestAPIKeyServiceUpdateNameOnlyPreservesScopes for the scopes-only patch.
+func TestAPIKeyServiceUpdateScopesOnlyPreservesName(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	target := seedOrg(t, db, f, "acme")
+	actor := seedUser(t, db, f, target, "ada")
+	svc := newAPIKeyService(t, s)
+	key := seedAPIKeyForUpdate(t, ctx, s, target, actor, "Ada CLI", []string{"projects:read"})
+
+	newScopes := []string{"services:deploy"}
+	updated, err := svc.Update(ctx, store.UpdateAPIKeyInput{
+		OrganizationID: target.ID,
+		KeyID:          key.ID,
+		Scopes:         &newScopes,
+		ActorID:        actor,
+		ActorKind:      string(domain.KindUser),
+		ActorOrgID:     target.ID,
+		RequestID:      "req_update",
+		CorrelationID:  "corr_update",
+	})
+	if err != nil {
+		t.Fatalf("Update returned %v, want nil", err)
+	}
+	if updated.Name != "Ada CLI" {
+		t.Errorf("Update name = %q, want the original name preserved", updated.Name)
+	}
+	if len(updated.Scopes) != 1 || updated.Scopes[0] != "services:deploy" {
+		t.Errorf("Update scopes = %v, want [services:deploy]", updated.Scopes)
+	}
+}
+
+// TestAPIKeyServiceUpdateEmptyScopesClearsTheArray proves that supplying an
+// empty (but non-nil) scopes pointer clears the column to '{}' — the
+// deliberate "revoke all scopes" semantic, distinct from omitting the field.
+func TestAPIKeyServiceUpdateEmptyScopesClearsTheArray(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	target := seedOrg(t, db, f, "acme")
+	actor := seedUser(t, db, f, target, "ada")
+	svc := newAPIKeyService(t, s)
+	key := seedAPIKeyForUpdate(t, ctx, s, target, actor, "Ada CLI", []string{"projects:read", "services:deploy"})
+
+	emptyScopes := []string{}
+	updated, err := svc.Update(ctx, store.UpdateAPIKeyInput{
+		OrganizationID: target.ID,
+		KeyID:          key.ID,
+		Scopes:         &emptyScopes,
+		ActorID:        actor,
+		ActorKind:      string(domain.KindUser),
+		ActorOrgID:     target.ID,
+		RequestID:      "req_update",
+		CorrelationID:  "corr_update",
+	})
+	if err != nil {
+		t.Fatalf("Update returned %v, want nil", err)
+	}
+	if len(updated.Scopes) != 0 {
+		t.Errorf("Update scopes = %v, want empty slice (all scopes cleared)", updated.Scopes)
+	}
+}
+
+// TestAPIKeyServiceUpdateEmptyPatchIsInvalid proves a patch with no mutable
+// field is the typed InvalidInput the store-layer "no field" rejection
+// produces.
+func TestAPIKeyServiceUpdateEmptyPatchIsInvalid(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	target := seedOrg(t, db, f, "acme")
+	actor := seedUser(t, db, f, target, "ada")
+	svc := newAPIKeyService(t, s)
+	key := seedAPIKeyForUpdate(t, ctx, s, target, actor, "Ada CLI", nil)
+
+	_, err := svc.Update(ctx, store.UpdateAPIKeyInput{
+		OrganizationID: target.ID,
+		KeyID:          key.ID,
+		ActorID:        actor,
+		ActorKind:      string(domain.KindUser),
+		ActorOrgID:     target.ID,
+		RequestID:      "req_update",
+		CorrelationID:  "corr_update",
+	})
+	if err == nil {
+		t.Fatal("Update(empty patch) error = nil, want InvalidInput")
+	}
+	if ye := yerr.From(err); ye.Code != yerr.CodeInvalidInput {
+		t.Errorf("Update code = %s, want %s", ye.Code, yerr.CodeInvalidInput)
+	}
+
+	// The rejection is pre-transaction, so no audit row is appended.
+	// seedAPIKeyForUpdate uses the repository directly and does not record
+	// its own audit row, so the log must be empty.
+	if events := listAuditEvents(t, s, target.ID); len(events) != 0 {
+		t.Errorf("audit events = %d, want 0 — a rejected patch must leave no trail", len(events))
+	}
+}
+
+// TestAPIKeyServiceUpdateMissingKeyIsNotFound proves a well-formed but
+// unknown key id is the typed NotFound the HTTP layer renders as 404. The
+// audit log records nothing for the failed update.
+func TestAPIKeyServiceUpdateMissingKeyIsNotFound(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	target := seedOrg(t, db, f, "acme")
+	actor := seedUser(t, db, f, target, "ada")
+	svc := newAPIKeyService(t, s)
+
+	ghost := domain.MustNewID(domain.KindAPIKey).String()
+	newName := "Doomed rename"
+	_, err := svc.Update(ctx, store.UpdateAPIKeyInput{
+		OrganizationID: target.ID,
+		KeyID:          ghost,
+		Name:           &newName,
+		ActorID:        actor,
+		ActorKind:      string(domain.KindUser),
+		ActorOrgID:     target.ID,
+		RequestID:      "req_update",
+		CorrelationID:  "corr_update",
+	})
+	if err == nil {
+		t.Fatal("Update(missing key) error = nil, want NotFound")
+	}
+	if ye := yerr.From(err); ye.Code != yerr.CodeNotFound {
+		t.Errorf("Update code = %s, want %s", ye.Code, yerr.CodeNotFound)
+	}
+	if events := listAuditEvents(t, s, target.ID); len(events) != 0 {
+		t.Errorf("audit events = %d, want 0 — a failed update must leave no trail", len(events))
+	}
+}
+
+// TestAPIKeyServiceUpdateCrossTenantIsNotFound proves a key id from another
+// organization is the same typed NotFound — never a 5xx, never a 403, never
+// a Conflict — so the endpoint cannot be used as a presence oracle for keys
+// in other tenants. The store layer is the defence-in-depth backstop for
+// the policy engine's cross-tenant rejection at the request edge.
+func TestAPIKeyServiceUpdateCrossTenantIsNotFound(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	target := seedOrg(t, db, f, "acme")
+	other := seedOrg(t, db, f, "other")
+	actor := seedUser(t, db, f, target, "ada")
+	otherActor := seedUser(t, db, f, other, "mallory")
+	svc := newAPIKeyService(t, s)
+
+	key := seedAPIKeyForUpdate(t, ctx, s, target, actor, "Ada CLI", nil)
+
+	newName := "Stolen"
+	_, err := svc.Update(ctx, store.UpdateAPIKeyInput{
+		OrganizationID: other.ID,
+		KeyID:          key.ID,
+		Name:           &newName,
+		ActorID:        otherActor,
+		ActorKind:      string(domain.KindUser),
+		ActorOrgID:     other.ID,
+		RequestID:      "req_update",
+		CorrelationID:  "corr_update",
+	})
+	if err == nil {
+		t.Fatal("Update(cross-tenant) error = nil, want NotFound")
+	}
+	if ye := yerr.From(err); ye.Code != yerr.CodeNotFound {
+		t.Errorf("Update cross-tenant code = %s, want %s", ye.Code, yerr.CodeNotFound)
+	}
+
+	// seedAPIKeyForUpdate persists through the repository directly, so the
+	// target tenant's audit log is empty before any cross-tenant attempt
+	// runs — and remains empty after, because the failed Update never
+	// records.
+	if events := listAuditEvents(t, s, target.ID); len(events) != 0 {
+		t.Errorf("target audit events = %d, want 0 — the failed cross-tenant update must leave no trail", len(events))
+	}
+	if otherEvents := listAuditEvents(t, s, other.ID); len(otherEvents) != 0 {
+		t.Errorf("other audit events = %d, want 0 — the failed update must leave no trail", len(otherEvents))
+	}
+
+	reader, err := store.NewAPIKeyReader(s)
+	if err != nil {
+		t.Fatalf("NewAPIKeyReader: %v", err)
+	}
+	stillThere, err := reader.GetAPIKey(ctx, target.ID, key.ID)
+	if err != nil {
+		t.Fatalf("GetAPIKey after cross-tenant attempt: %v", err)
+	}
+	if stillThere.Name != key.Name {
+		t.Errorf("api key was mutated by a cross-tenant request; name = %q, want %q", stillThere.Name, key.Name)
+	}
+}

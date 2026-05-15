@@ -5150,3 +5150,128 @@
     accidentally lets the reader run would surface as a 200 with the
     seeded data, not as a confusing 404.
 ---
+
+## 2026-05-15 - BE-0085
+- What was implemented: PATCH /v1/organizations/{org_id}/api-keys/{key_id},
+  the partial-update endpoint for an api_keys row. The endpoint mutates only
+  the two fields the story actually needs (name and scopes); credential
+  primitives, ownership identifiers, and lifecycle stamps (expires_at,
+  revoked_at) stay immutable here — rotation and revocation are their own
+  separate stories.
+  - internal/controlplane/store/apikey.go: APIKeyRepository.UpdateMutable —
+    tenant-scoped UPDATE ... RETURNING that overwrites name+scopes and
+    leaves credential/identity columns untouched. Returns apierr.NotFound
+    on no-rows (a cross-tenant key_id is indistinguishable from a missing
+    row).
+  - internal/controlplane/store/apikeyservice.go: UpdateAPIKeyInput +
+    APIKeyService.Update + buildAPIKeyUpdate + apiKeyUpdate. The unit of
+    work reads the current row inside the tx, applies the non-nil pointer
+    fields, calls UpdateMutable, then appends an audit event with
+    Action=keys.manage, Decision=allowed, and Metadata carrying
+    organization_id + updated_fields (the stable wire-name list, never the
+    submitted values). A patch with no mutable field is apierr.InvalidInput
+    pre-transaction.
+  - internal/controlplane/httpapi/api_keys.go: APIKeyUpdater narrow port,
+    updateAPIKeyRequest/Payload DTOs, apiKeyIDResolver, updateAPIKeyHandler.
+    Handler is thin: decode → reject empty patch → forward to updater.
+    Action=keys.manage authorized via apiKeyIDResolver against {org_id}
+    (no support cross-tenant exception — CapManage).
+  - internal/controlplane/httpapi/routes.go: PATCH route registered with
+    full OpenAPI metadata; newRouteTable signature gains apiKeyUpdater.
+  - internal/controlplane/httpapi/server.go: NewHandler signature gains
+    apiKeyUpdater APIKeyUpdater (right after apiKeyCreator).
+  - cmd/yalla-api/main.go: wires apiKeyService as the updater port (the
+    same *store.APIKeyService that already backs the creator).
+  - internal/controlplane/httpapi/api_keys_test.go: fakeAPIKeyUpdater fake
+    with key/err/got fields.
+  - internal/controlplane/httpapi/api_keys_update_test.go (new):
+    14 handler tests — happy path, name-only, scopes-only, empty patch
+    400, malformed JSON 400, unknown field 400, store validation forward,
+    not-found forward, store outage forward, unauthenticated 401,
+    cross-tenant 403, viewer 403, missing-updater 5xx, OpenAPI publication.
+  - internal/controlplane/store/apikeyservice_internal_test.go: 11
+    buildAPIKeyUpdate white-box tests — accepts name, accepts scopes,
+    accepts both, accepts empty scopes (deliberate "revoke all"), rejects
+    empty patch, rejects blank/control-char/oversize name, rejects
+    malformed scope. Asserts errors never echo submitted values.
+  - internal/controlplane/store/apikeyservice_test.go: 7 Update
+    integration tests with seedAPIKeyForUpdate helper that bypasses
+    APIKeyService.Create (more below).
+  - All other NewHandler call sites updated (12 test files + main.go) to
+    pass fakeAPIKeyUpdater{}/apiKeyService.
+- Files changed:
+  - store/apikey.go, store/apikeyservice.go, store/apikeyservice_test.go,
+    store/apikeyservice_internal_test.go
+  - httpapi/api_keys.go, httpapi/api_keys_test.go,
+    httpapi/api_keys_update_test.go (new),
+    httpapi/{routes,server,routes_test,server_test}.go
+  - httpapi/{api_keys_create,me,me_contract,members_create,members_test,
+    members_delete,members_update,organizations,organizations_create,
+    organizations_delete,organizations_patch}_test.go
+  - cmd/yalla-api/main.go
+  - ralph/prd.json, ralph/progress.txt
+- Verification run: gofmt -w .; go mod tidy; go vet ./...;
+  go test ./...; go test -race ./...;
+  YALLA_TEST_DATABASE_URL=... go test -run 'TestAPIKeyServiceUpdate|TestBuildAPIKeyUpdate|TestUpdateAPIKey' ./internal/controlplane/store/ ./internal/controlplane/httpapi/.
+- Results: all targeted tests pass. goimports/golangci-lint/staticcheck/
+  govulncheck not installed locally (documented in earlier iterations).
+- Remaining risks / follow-ups:
+  - PRE-EXISTING (not introduced by this story): TestAPIKeyServiceCreate*
+    integration tests fail when run against a live Postgres because
+    buildAPIKeyToCreate calls domain.ParseID and the testutil Factory
+    produces ids with a 20-character suffix while ParseID requires 26
+    (Crockford base32 over idEntropyBytes=16). Every Create integration
+    test has always rejected the seeded fixture ids with E_INVALID_INPUT.
+    This is a long-standing test-infrastructure mismatch — either the
+    factory should mint canonical ids through domain.NewID, or
+    buildAPIKeyToCreate's ParseID guard should be relaxed to a HasPrefix
+    check the way validateMembershipUpdate already does. I sidestepped
+    the issue for BE-0085 by (a) using HasPrefix in the new Update
+    validation path, and (b) seeding api_keys rows directly through the
+    repository in seedAPIKeyForUpdate instead of going through Create.
+    This is worth its own dedicated story; fixing it here would expand
+    BE-0085 well past its scope.
+  - PATCH is a partial-update of name and scopes only. Lifecycle
+    mutations (extend expiry, revoke, rotate) are explicitly NOT in
+    scope — they belong to BE-0088 (DELETE) and BE-0091 (POST rotate).
+    If a future story adds expires_at to the patch surface, it must use
+    the **time double-pointer / sentinel idiom so a JSON `null` reaches
+    the store as "clear the column" rather than "leave unchanged".
+  - The api_keys schema (migration 0003) carries no `version` column, so
+    PATCH has no optimistic-concurrency precondition today — concurrent
+    re-writes are last-writer-wins. If the api-key surface ever needs
+    If-Match semantics, the migration must land first (parallel to the
+    organizations version+trigger from 0009).
+  - BE-0086 (contract tests for PATCH) and BE-0087 (policy matrix for
+    PATCH, priority 1) are now unblocked. The current handler tests
+    cover most of BE-0086 already, but the policy matrix tests will
+    need a sibling api_keys_update_policy_test.go that exercises every
+    role × scope combination, the same way api_keys_get_policy_test.go
+    does for GET.
+- Learnings for future iterations:
+  - The endpoint triplet (implement @ p2, contract tests @ p2, policy
+    matrix @ p1) means the p1 story is always blocked on its p2
+    implementation. When the next pending story is a policy matrix for
+    an endpoint that does not yet exist, pick the lower-priority
+    implementation first; do not block on the priority number alone.
+  - Adding a new dependency to NewHandler / newRouteTable touches
+    ~15 test files. The mechanical part is a one-pass regex rewrite over
+    `fakeAPIKeyCreator{}, nil)` → `fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, nil)`
+    (and the `, logger)` variant); the only non-mechanical site is the
+    file that uses a function variable instead of the canned fake
+    (api_keys_create_test.go's `, creator, nil)`). Plan for ~13 edits
+    when adding a port; the next port should consider whether the
+    newTestHandler helper can absorb it (server_test.go).
+  - The "partial update" pattern in this codebase is consistent across
+    organizations, memberships, and now api-keys: pointer fields on the
+    input DTO, validation produces a {fields, *value, ...} change record,
+    the in-tx read materialises the current row, the non-nil fields
+    overwrite, and the audit metadata carries `updated_fields` as a
+    stable wire-name list — never the submitted values. Following this
+    template keeps the patch surface uniform.
+  - The factory id ↔ ParseID mismatch is a real, long-standing
+    integration-test breakage in store/apikeyservice_test.go that I had
+    to navigate around. Worth a dedicated story to either fix the
+    factory or relax buildAPIKeyToCreate the same way validateMembership*
+    already does for member_id.
+---

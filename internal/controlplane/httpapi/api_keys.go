@@ -30,6 +30,14 @@ var errNoAPIKeyReader = errors.New("httpapi: no api key reader configured")
 // internal failure rather than silently failing to mint a credential.
 var errNoAPIKeyCreator = errors.New("httpapi: no api key creator configured")
 
+// errNoAPIKeyUpdater is returned when PATCH
+// /v1/organizations/{org_id}/api-keys/{key_id} is reached without an
+// api-key updater wired into NewHandler. Like errNoAPIKeyCreator it can only
+// happen through a wiring error — a programming mistake, not a client error —
+// so the handler reports it as a typed internal failure rather than
+// silently dropping a write.
+var errNoAPIKeyUpdater = errors.New("httpapi: no api key updater configured")
+
 // APIKeyReader is the narrow persistence port GET
 // /v1/organizations/{org_id}/api-keys and GET
 // /v1/organizations/{org_id}/api-keys/{key_id} depend on. *store.APIKeyReader
@@ -397,6 +405,148 @@ func createAPIKeyHandler(creator APIKeyCreator) http.HandlerFunc {
 		apienvelope.WriteData(w, http.StatusCreated, requestID(r), createAPIKeyPayload{
 			APIKey: apiKeyResourceOf(key),
 			Token:  generated.Token.Reveal(),
+		})
+	}
+}
+
+// APIKeyUpdater is the narrow persistence port PATCH
+// /v1/organizations/{org_id}/api-keys/{key_id} depends on.
+// *store.APIKeyService satisfies it in production; tests supply a fake. Like
+// APIKeyCreator it is an interface declared here so the handler stays
+// unit-testable without a real database — the concrete orchestrator (the
+// tenant-scoped existence read, the partial update of the mutable fields,
+// and the immutable audit record committed in one transaction) lives in the
+// store layer.
+type APIKeyUpdater interface {
+	Update(ctx context.Context, in store.UpdateAPIKeyInput) (store.APIKey, error)
+}
+
+// updateAPIKeyRequest is the decoded PATCH
+// /v1/organizations/{org_id}/api-keys/{key_id} request body. Name and Scopes
+// are the currently-mutable fields on an api_keys row; the credential
+// primitives (prefix and secret_hash), ownership identifiers (created_by and
+// service_account_id), and lifecycle stamps (expires_at and revoked_at) are
+// deliberately not part of this surface — the credential is minted once at
+// create time and never re-written, ownership is fixed at mint, and lifecycle
+// stamps are owned by their own dedicated endpoints (rotate and delete). The
+// store layer validates every supplied value before any database work — an
+// invalid request never opens a transaction — and the fields carry no
+// credential material.
+//
+// Name and Scopes are pointers so a missing field can be distinguished from
+// a supplied-but-empty one: omitting the field is "leave unchanged",
+// supplying it with an invalid value (a blank name, or a malformed scope
+// string) is a validation failure naming the field, and a patch that names
+// no field is itself a 400 — a mutation that changes nothing is a client
+// error, not a silent success.
+type updateAPIKeyRequest struct {
+	Name   *string   `json:"name,omitempty"`
+	Scopes *[]string `json:"scopes,omitempty"`
+}
+
+// updateAPIKeyPayload is the data block of the PATCH
+// /v1/organizations/{org_id}/api-keys/{key_id} success envelope: the api
+// key after the mutation — including the trigger-refreshed updated_at — in
+// the same stable wire shape every other api-key endpoint returns. It
+// carries no credential material: the secret hash is never projected onto
+// the wire, and the plaintext token is shown to its owner exactly once at
+// creation and never reaches a read or update endpoint.
+type updateAPIKeyPayload struct {
+	APIKey apiKeyResource `json:"api_key"`
+}
+
+// apiKeyIDResolver derives the policy.Resource a PATCH (or future
+// DELETE/rotate) /v1/organizations/{org_id}/api-keys/{key_id} request acts
+// on from its path parameters. The resource scope is the organization the
+// path names — the same scope used by the rest of the api-key endpoints —
+// so action keys.manage is authorized against the tenant boundary the path
+// declares. A cross-tenant {org_id} is denied at the policy boundary before
+// the handler runs, so a cross-tenant key_id can never mutate another
+// tenant's api-key graph.
+func apiKeyIDResolver(r *http.Request) policy.Resource {
+	return policy.Resource{
+		Kind:  domain.KindAPIKey,
+		Scope: policy.Scope{OrganizationID: r.PathValue("org_id")},
+	}
+}
+
+// updateAPIKeyHandler builds the PATCH
+// /v1/organizations/{org_id}/api-keys/{key_id} handler. It decodes and
+// delegates: the request body is strictly decoded (oversized, malformed, or
+// unknown-field bodies become a typed 400 that never echoes the input),
+// then the update-api-key unit of work — read the current row, apply the
+// caller-supplied fields, update the row, append the audit record, all in
+// one transaction — runs in the store layer through the APIKeyUpdater port.
+//
+// RequireAuth gates the route on action keys.manage before the handler
+// runs — authorized through apiKeyIDResolver against the organization the
+// path names — and attaches the resolved principal, so a request that
+// reaches the handler has already cleared the tenant boundary: a
+// cross-tenant {org_id} was rejected as a 403 by the policy engine, never
+// reaching this code. A request that arrives here with no principal is
+// therefore a wiring error and is reported as a typed internal error. The
+// principal and the request correlation identifiers are passed to the
+// updater so the audit record names the actor; a validation failure (bad
+// body, no fields, invalid name or scope), a not-found key (cross-tenant
+// or missing row), and a datastore outage each surface as their own typed
+// status, never disguised as one another.
+//
+// keys.manage is a CapManage action: a viewer or developer in the tenant
+// cannot update an api key, only an owner or admin in the tenant can —
+// unlike CapRead actions there is no cross-tenant support exception. The
+// handler relies on the policy engine for that decision; it never
+// re-checks the role itself.
+func updateAPIKeyHandler(updater APIKeyUpdater) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if updater == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoAPIKeyUpdater))
+			return
+		}
+
+		var req updateAPIKeyRequest
+		if err := validate.DecodeJSON(r.Body, &req, 0); err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		// A PATCH that names no mutable field is itself a client error: the
+		// store layer rejects it the same way, but surfacing it here keeps
+		// the handler/store contract symmetric and gives agents a stable
+		// 400 for "patch with no field" before the store layer's identical
+		// rejection runs. The field name in the violation matches what the
+		// store layer reports, so the wire contract is identical regardless
+		// of where the rejection originates.
+		if req.Name == nil && req.Scopes == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "name",
+				Reason: "at least one of name or scopes must be provided",
+			}))
+			return
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		key, err := updater.Update(r.Context(), store.UpdateAPIKeyInput{
+			OrganizationID: r.PathValue("org_id"),
+			KeyID:          r.PathValue("key_id"),
+			Name:           req.Name,
+			Scopes:         req.Scopes,
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), updateAPIKeyPayload{
+			APIKey: apiKeyResourceOf(key),
 		})
 	}
 }

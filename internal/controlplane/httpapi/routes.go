@@ -85,12 +85,14 @@ type versionPayload struct {
 // /v1/organizations/{org_id}/members/{member_id}, memberRemover backs
 // DELETE /v1/organizations/{org_id}/members/{member_id}, apiKeys backs
 // GET /v1/organizations/{org_id}/api-keys and GET
-// /v1/organizations/{org_id}/api-keys/{key_id}, and apiKeyCreator backs POST
-// /v1/organizations/{org_id}/api-keys. Any may be nil for tests and tooling
-// that only inspect the route table's metadata; a request that actually
-// reaches a handler with a nil dependency is reported as a typed internal
-// error rather than a misleading empty list or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator) []apiRoute {
+// /v1/organizations/{org_id}/api-keys/{key_id}, apiKeyCreator backs POST
+// /v1/organizations/{org_id}/api-keys, and apiKeyUpdater backs PATCH
+// /v1/organizations/{org_id}/api-keys/{key_id}. Any may be nil for tests
+// and tooling that only inspect the route table's metadata; a request that
+// actually reaches a handler with a nil dependency is reported as a typed
+// internal error rather than a misleading empty list or a silently dropped
+// write.
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -497,6 +499,32 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// mint keys in another tenant.
 			resolver: organizationIDResolver,
 			handler:  createAPIKeyHandler(apiKeyCreator),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodPatch,
+				Path:           "/v1/organizations/{org_id}/api-keys/{key_id}",
+				OperationID:    "updateOrganizationAPIKey",
+				Summary:        "Update an API key of an organization",
+				Description:    "Updates the mutable fields of the API key named by ({org_id}, {key_id}) in the source-of-truth database. The request body supplies the new name and/or scopes; each value is validated before any database work, so an invalid request never opens a transaction, and a patch that names no mutable field is itself a stable 400 — a mutation that changes nothing is a client error, not a silent success. Action keys.manage is authorized against the organization the path names before the handler runs: a principal updating a key outside its own tenant is rejected with a deterministic 403, so a cross-tenant id can never mutate another tenant's keys. A key id paired with the wrong organization is the same deterministic 404 as a missing row, so the endpoint can never reveal whether another tenant owns that key. The updated row and an immutable audit record naming the authenticated principal are committed in one transaction: an update can never be persisted without its audit trail. The response carries no credential material — the secret hash is never projected onto the wire and the plaintext token (the only usable credential) is shown to its owner once at creation and never reaches this endpoint, so an update endpoint can never reveal or rotate a credential. keys.manage is a CapManage action: a viewer or developer cannot update keys, only an owner or admin in the tenant can; unlike CapRead actions there is no cross-tenant support exception.",
+				Tags:           []string{tagAPIKeys},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionKeysManage),
+				PathParams: []openapi.PathParam{
+					{Name: "org_id", Description: "The id of the organization the API key belongs to."},
+					{Name: "key_id", Description: "The id of the API key to update."},
+				},
+				SuccessDescription: "The updated API key.",
+			},
+			// apiKeyIDResolver authorizes action keys.manage against the
+			// organization the {org_id} path parameter names, not merely the
+			// principal's home organization, so a cross-tenant id is denied
+			// at the policy boundary before the handler mutates any data.
+			// keys.manage is a CapManage action and has no cross-tenant
+			// support exception — unlike CapRead actions, the support
+			// principal cannot update keys in another tenant.
+			resolver: apiKeyIDResolver,
+			handler:  updateAPIKeyHandler(apiKeyUpdater),
 		},
 	}
 }

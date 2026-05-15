@@ -357,3 +357,192 @@ func uniqueScopeSuffix(i int) string {
 	}
 	return out.String()
 }
+
+// ---------------------------------------------------------------------------
+// White-box validation coverage for APIKeyService.Update via buildAPIKeyUpdate.
+// buildAPIKeyUpdate is the rejection boundary the PATCH endpoint uses: it runs
+// before any transaction is opened and is the only path that turns a
+// malformed body into the typed 400 the wire returns. The tests exercise
+// every classifiable failure mode and prove the rejection never echoes the
+// offending value back to the caller.
+
+// strPtr is a one-line helper for forming *string fields in test inputs.
+func strPtr(s string) *string { return &s }
+
+// scopesPtr is a one-line helper for forming *[]string fields in test inputs.
+func scopesPtr(scopes ...string) *[]string {
+	out := append([]string(nil), scopes...)
+	return &out
+}
+
+func TestBuildAPIKeyUpdateAcceptsName(t *testing.T) {
+	t.Parallel()
+
+	change, err := buildAPIKeyUpdate(UpdateAPIKeyInput{Name: strPtr("New Name")})
+	if err != nil {
+		t.Fatalf("buildAPIKeyUpdate(name) error = %v, want nil", err)
+	}
+	if change.name == nil || *change.name != "New Name" {
+		t.Errorf("buildAPIKeyUpdate name = %v, want pointer to %q", change.name, "New Name")
+	}
+	if change.scopes != nil {
+		t.Errorf("buildAPIKeyUpdate scopes = %v, want nil (untouched field)", change.scopes)
+	}
+	if len(change.fields) != 1 || change.fields[0] != "name" {
+		t.Errorf("buildAPIKeyUpdate fields = %v, want [name]", change.fields)
+	}
+}
+
+func TestBuildAPIKeyUpdateAcceptsScopes(t *testing.T) {
+	t.Parallel()
+
+	change, err := buildAPIKeyUpdate(UpdateAPIKeyInput{
+		Scopes: scopesPtr("projects:read", "services:deploy"),
+	})
+	if err != nil {
+		t.Fatalf("buildAPIKeyUpdate(scopes) error = %v, want nil", err)
+	}
+	if change.name != nil {
+		t.Errorf("buildAPIKeyUpdate name = %v, want nil (untouched field)", change.name)
+	}
+	if change.scopes == nil || len(*change.scopes) != 2 {
+		t.Errorf("buildAPIKeyUpdate scopes = %v, want pointer to a 2-element slice", change.scopes)
+	}
+	if len(change.fields) != 1 || change.fields[0] != "scopes" {
+		t.Errorf("buildAPIKeyUpdate fields = %v, want [scopes]", change.fields)
+	}
+}
+
+func TestBuildAPIKeyUpdateAcceptsBothFields(t *testing.T) {
+	t.Parallel()
+
+	change, err := buildAPIKeyUpdate(UpdateAPIKeyInput{
+		Name:   strPtr("Both Set"),
+		Scopes: scopesPtr("projects:read"),
+	})
+	if err != nil {
+		t.Fatalf("buildAPIKeyUpdate(both) error = %v, want nil", err)
+	}
+	if change.name == nil || *change.name != "Both Set" {
+		t.Errorf("buildAPIKeyUpdate name = %v, want pointer to %q", change.name, "Both Set")
+	}
+	if change.scopes == nil || len(*change.scopes) != 1 {
+		t.Errorf("buildAPIKeyUpdate scopes = %v, want pointer to a 1-element slice", change.scopes)
+	}
+	if len(change.fields) != 2 {
+		t.Errorf("buildAPIKeyUpdate fields = %v, want both updated_fields entries", change.fields)
+	}
+}
+
+func TestBuildAPIKeyUpdateAcceptsEmptyScopes(t *testing.T) {
+	t.Parallel()
+
+	// An empty scopes array is a deliberate revocation of all scope strings;
+	// it is materially different from omitting the field. The validator
+	// normalises it to a non-nil empty slice so the SQL UPDATE writes '{}',
+	// not NULL.
+	change, err := buildAPIKeyUpdate(UpdateAPIKeyInput{Scopes: scopesPtr()})
+	if err != nil {
+		t.Fatalf("buildAPIKeyUpdate(empty scopes) error = %v, want nil", err)
+	}
+	if change.scopes == nil || len(*change.scopes) != 0 {
+		t.Errorf("buildAPIKeyUpdate scopes = %v, want pointer to an empty slice", change.scopes)
+	}
+}
+
+func TestBuildAPIKeyUpdateRejectsEmptyPatch(t *testing.T) {
+	t.Parallel()
+
+	_, err := buildAPIKeyUpdate(UpdateAPIKeyInput{})
+	if err == nil {
+		t.Fatal("buildAPIKeyUpdate(empty) error = nil, want InvalidInput")
+	}
+	ye := yerr.From(err)
+	if ye.Code != yerr.CodeInvalidInput {
+		t.Fatalf("buildAPIKeyUpdate code = %s, want %s", ye.Code, yerr.CodeInvalidInput)
+	}
+}
+
+func TestBuildAPIKeyUpdateRejectsBlankName(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		in   string
+	}{
+		{"empty", ""},
+		{"whitespace", "   "},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := buildAPIKeyUpdate(UpdateAPIKeyInput{Name: strPtr(tc.in)})
+			if err == nil {
+				t.Fatal("buildAPIKeyUpdate(blank name) error = nil, want InvalidInput")
+			}
+			ye := yerr.From(err)
+			if ye.Code != yerr.CodeInvalidInput {
+				t.Fatalf("buildAPIKeyUpdate code = %s, want %s", ye.Code, yerr.CodeInvalidInput)
+			}
+			violations, _ := apierr.ViolationsOf(err)
+			if !hasField(violations, "name") {
+				t.Errorf("violations = %v, want a name violation", violations)
+			}
+			// The rejection must never echo the offending value back to the
+			// caller — only stable field paths.
+			if strings.Contains(ye.Message, tc.in) && tc.in != "" {
+				t.Errorf("error message echoed the rejected value: %s", ye.Message)
+			}
+		})
+	}
+}
+
+func TestBuildAPIKeyUpdateRejectsControlCharName(t *testing.T) {
+	t.Parallel()
+
+	_, err := buildAPIKeyUpdate(UpdateAPIKeyInput{Name: strPtr("Ada\x00CLI")})
+	if err == nil {
+		t.Fatal("buildAPIKeyUpdate(control char) error = nil, want InvalidInput")
+	}
+	ye := yerr.From(err)
+	if ye.Code != yerr.CodeInvalidInput {
+		t.Fatalf("buildAPIKeyUpdate code = %s, want %s", ye.Code, yerr.CodeInvalidInput)
+	}
+}
+
+func TestBuildAPIKeyUpdateRejectsOversizeName(t *testing.T) {
+	t.Parallel()
+
+	big := strings.Repeat("a", apiKeyNameMaxLen+1)
+	_, err := buildAPIKeyUpdate(UpdateAPIKeyInput{Name: strPtr(big)})
+	if err == nil {
+		t.Fatal("buildAPIKeyUpdate(oversize name) error = nil, want InvalidInput")
+	}
+	ye := yerr.From(err)
+	if ye.Code != yerr.CodeInvalidInput {
+		t.Fatalf("buildAPIKeyUpdate code = %s, want %s", ye.Code, yerr.CodeInvalidInput)
+	}
+	// The rejection must never echo the long string back into an error
+	// message that could land in a log line.
+	if strings.Contains(ye.Message, big) {
+		t.Errorf("error message echoed the oversize value")
+	}
+}
+
+func TestBuildAPIKeyUpdateRejectsMalformedScope(t *testing.T) {
+	t.Parallel()
+
+	// A scope with whitespace, mixed case, or a disallowed punctuation
+	// character is rejected against the conservative scope alphabet —
+	// validateAPIKeyScopes is the same predicate buildAPIKeyToCreate uses.
+	_, err := buildAPIKeyUpdate(UpdateAPIKeyInput{
+		Scopes: scopesPtr("projects:READ"),
+	})
+	if err == nil {
+		t.Fatal("buildAPIKeyUpdate(malformed scope) error = nil, want InvalidInput")
+	}
+	ye := yerr.From(err)
+	if ye.Code != yerr.CodeInvalidInput {
+		t.Fatalf("buildAPIKeyUpdate code = %s, want %s", ye.Code, yerr.CodeInvalidInput)
+	}
+}

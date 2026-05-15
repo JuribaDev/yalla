@@ -74,6 +74,39 @@ type CreateAPIKeyInput struct {
 	CorrelationID string
 }
 
+// UpdateAPIKeyInput is the unvalidated input to APIKeyService.Update.
+// OrganizationID and KeyID name the api_keys row to update. Name and Scopes
+// are optional: a nil pointer means the caller did not include the field and
+// it is left unchanged, which is what makes the operation a partial update.
+// A patch that names no updatable field is itself a validation failure — a
+// mutation that changes nothing is a client error, not a silent success.
+//
+// The credential primitives (prefix and secret_hash) and the immutable
+// identity fields (id, organization_id, created_by, service_account_id,
+// expires_at, revoked_at) are deliberately not on this struct: the credential
+// is minted once at create time and never re-written, ownership is fixed at
+// mint, and lifecycle stamps (expiry/revocation) are owned by their own
+// dedicated stories (PATCH does not rotate, revoke, or extend a key — the
+// rotate and delete endpoints do).
+//
+// The Actor* and correlation fields describe the authenticated principal
+// performing the update and are recorded verbatim on the audit event. They
+// are plain strings so the store layer takes no build dependency on the
+// policy or telemetry packages — the httpapi handler, which already holds
+// the resolved principal and the request correlation, fills them in.
+type UpdateAPIKeyInput struct {
+	OrganizationID string
+	KeyID          string
+	Name           *string
+	Scopes         *[]string
+
+	ActorID       string
+	ActorKind     string
+	ActorOrgID    string
+	RequestID     string
+	CorrelationID string
+}
+
 // APIKeyService is the unit-of-work orchestrator for minting API keys. Create
 // composes — in a fixed order, inside one transaction — the existence checks
 // for the target organization and (when supplied) the service account, the
@@ -206,6 +239,195 @@ func (svc *APIKeyService) Create(ctx context.Context, in CreateAPIKeyInput, now 
 		return APIKey{}, txErr
 	}
 	return created, nil
+}
+
+// Update validates in, then runs the update-api-key unit of work inside one
+// transaction: read the current row, apply the caller-supplied fields, write
+// the row back, append the audit event. Validation of every supplied field
+// runs before the transaction is opened, so an invalid request never touches
+// the database. A patch that names no updatable field is itself a validation
+// failure — a mutation that changes nothing is a client error, not a silent
+// success. A {key_id} with no row in the target tenant is the typed NotFound
+// the repository produces (the tenant-scoped read filters by organization_id
+// first, so a cross-tenant key_id is indistinguishable from a missing row),
+// and the audit record is rolled back with it, so an audit trail can never
+// name a mutation that did not happen.
+//
+// The audit record is filed under the actor's home organization — the tenant
+// the principal authenticated into — while its resource id names the api key
+// that was updated. metadata captures the target tenant and the stable wire
+// names of the fields the patch changed (never the submitted values), so the
+// trail records the shape of the mutation without leaking input.
+func (svc *APIKeyService) Update(ctx context.Context, in UpdateAPIKeyInput) (APIKey, error) {
+	organizationID := strings.TrimSpace(in.OrganizationID)
+	keyID := strings.TrimSpace(in.KeyID)
+
+	// Path-parameter ids are treated as opaque identifiers the caller already
+	// has, so the rules mirror validateMembershipUpdate: require the
+	// kind-prefix as a defensive guard and let the in-transaction tenant-
+	// scoped read enforce the rest. Format strictness is the job of
+	// internal/controlplane/domain when an id is minted; the auth/HTTP
+	// layer's earlier 403/404 also shields this layer from arbitrary
+	// cross-tenant probes.
+	var idViolations []apierr.FieldViolation
+	if organizationID == "" || !strings.HasPrefix(organizationID, string(domain.KindOrganization)+"_") {
+		idViolations = append(idViolations, apierr.FieldViolation{
+			Field:  "organization_id",
+			Reason: "must be a valid organization identifier",
+		})
+	}
+	if keyID == "" || !strings.HasPrefix(keyID, string(domain.KindAPIKey)+"_") {
+		idViolations = append(idViolations, apierr.FieldViolation{
+			Field:  "key_id",
+			Reason: "must be a valid api key identifier",
+		})
+	}
+	if len(idViolations) > 0 {
+		return APIKey{}, apierr.InvalidInput(idViolations...)
+	}
+
+	change, err := buildAPIKeyUpdate(in)
+	if err != nil {
+		return APIKey{}, err
+	}
+
+	actorOrgID := strings.TrimSpace(in.ActorOrgID)
+	if actorOrgID == "" {
+		return APIKey{}, apierr.Internal(errors.New("store: APIKeyService.Update requires an actor organization for the audit record"))
+	}
+
+	event := AuditEvent{
+		OrganizationID: actorOrgID,
+		ActorID:        strings.TrimSpace(in.ActorID),
+		ActorKind:      strings.TrimSpace(in.ActorKind),
+		Action:         keysManageAction,
+		ResourceKind:   string(domain.KindAPIKey),
+		ResourceID:     keyID,
+		Decision:       AuditDecisionAllowed,
+		Reason:         "authorization granted for keys.manage",
+		RequestID:      strings.TrimSpace(in.RequestID),
+		CorrelationID:  strings.TrimSpace(in.CorrelationID),
+		// updated_fields names which fields the patch changed — stable wire
+		// names, never the submitted values — so the audit trail records the
+		// shape of the mutation without carrying any input verbatim.
+		// organization_id is the target tenant of the update.
+		Metadata: map[string]string{
+			"organization_id": organizationID,
+			"updated_fields":  strings.Join(change.fields, ","),
+		},
+	}
+
+	var updated APIKey
+	txErr := svc.store.Write(ctx, func(ctx context.Context, tx *Tx) error {
+		// Read the current row inside the same transaction so a missing key
+		// in this tenant is reported as NotFound without relying on the
+		// UPDATE's no-rows path, and so the projected fields the patch does
+		// not name are preserved verbatim from the row Postgres holds rather
+		// than from a value the client supplied.
+		current, getErr := svc.apiKeys.Get(ctx, tx, organizationID, keyID)
+		if getErr != nil {
+			return getErr
+		}
+
+		name := current.Name
+		if change.name != nil {
+			name = *change.name
+		}
+		scopes := current.Scopes
+		if change.scopes != nil {
+			scopes = *change.scopes
+		}
+
+		row, updErr := svc.apiKeys.UpdateMutable(ctx, tx, organizationID, keyID, name, scopes)
+		if updErr != nil {
+			return updErr
+		}
+		if _, audErr := svc.audit.Append(ctx, tx, event); audErr != nil {
+			return audErr
+		}
+		updated = row
+		return nil
+	})
+	if txErr != nil {
+		return APIKey{}, txErr
+	}
+	return updated, nil
+}
+
+// apiKeyUpdate is the validated, normalised result of buildAPIKeyUpdate: a
+// list of the field names the patch changed (in a stable wire shape) and the
+// normalised values for each non-nil field. A nil pointer in change.name or
+// change.scopes means the caller did not supply that field and the unit of
+// work must preserve the current row's value.
+type apiKeyUpdate struct {
+	fields []string
+	name   *string
+	scopes *[]string
+}
+
+// buildAPIKeyUpdate validates the caller-supplied mutable fields of in and
+// returns the apiKeyUpdate the unit of work applies. It is split out from
+// Update so the validation rules are unit testable without a database, and
+// so an invalid request is rejected before a transaction is ever opened. On
+// failure it returns a typed apierr.InvalidInput carrying stable field
+// paths — never the submitted values — so the rejection can name the
+// offending field without leaking input.
+func buildAPIKeyUpdate(in UpdateAPIKeyInput) (apiKeyUpdate, error) {
+	var (
+		change     apiKeyUpdate
+		violations []apierr.FieldViolation
+	)
+
+	if in.Name != nil {
+		change.fields = append(change.fields, "name")
+		name := strings.TrimSpace(*in.Name)
+		switch {
+		case name == "":
+			violations = append(violations, apierr.FieldViolation{
+				Field:  "name",
+				Reason: "must not be blank",
+			})
+		case !utf8.ValidString(name):
+			violations = append(violations, apierr.FieldViolation{
+				Field:  "name",
+				Reason: "must be valid UTF-8",
+			})
+		case utf8.RuneCountInString(name) > apiKeyNameMaxLen:
+			violations = append(violations, apierr.FieldViolation{
+				Field:  "name",
+				Reason: "must be at most 100 characters",
+			})
+		case apiKeyHasControlRune(name):
+			violations = append(violations, apierr.FieldViolation{
+				Field:  "name",
+				Reason: "must not contain control characters",
+			})
+		default:
+			change.name = &name
+		}
+	}
+
+	if in.Scopes != nil {
+		change.fields = append(change.fields, "scopes")
+		scopes, scopeViolations := validateAPIKeyScopes(*in.Scopes)
+		if len(scopeViolations) > 0 {
+			violations = append(violations, scopeViolations...)
+		} else {
+			change.scopes = &scopes
+		}
+	}
+
+	if len(change.fields) == 0 {
+		violations = append(violations, apierr.FieldViolation{
+			Field:  "name",
+			Reason: "at least one of name or scopes must be provided",
+		})
+	}
+
+	if len(violations) > 0 {
+		return apiKeyUpdate{}, apierr.InvalidInput(violations...)
+	}
+	return change, nil
 }
 
 // buildAPIKeyToCreate validates in and returns the APIKey row it would

@@ -258,6 +258,49 @@ func (r *APIKeyRepository) TouchLastUsed(ctx context.Context, tx *Tx, organizati
 	return nil
 }
 
+// UpdateMutable writes the caller-supplied mutable fields (name and scopes)
+// onto the api_keys row identified by (organizationID, keyID) inside tx and
+// returns the persisted row, including the trigger-refreshed updated_at
+// timestamp. It requires a *Tx — not a bare Querier — so a mutation can
+// never be persisted outside the transaction that also carries its audit
+// record. The query is tenant scoped: a key id that belongs to another
+// organization simply does not match and is reported as the typed
+// apierr.NotFound the GET endpoint uses, never disguised as a 5xx and never
+// revealing whether another tenant owns that key.
+//
+// scopes is normalised to an empty (non-nil) slice for the same reason
+// Insert normalises it: the api_keys.scopes column is NOT NULL DEFAULT '{}',
+// so a nil slice would otherwise become SQL NULL. The credential primitives
+// (prefix and secret_hash) are deliberately not part of this method's
+// surface — they are minted once at create time and never re-written.
+//
+// Returns apierr.NotFound when no row matches, apierr.StoreUnavailable for
+// any other driver error. The single-row UPDATE has no constraint surface
+// (no UNIQUE on name or scopes) so a Conflict here is structurally
+// impossible; mapWriteError still classifies anything unexpected uniformly.
+func (r *APIKeyRepository) UpdateMutable(ctx context.Context, tx *Tx, organizationID, keyID, name string, scopes []string) (APIKey, error) {
+	if tx == nil {
+		return APIKey{}, apierr.Internal(errors.New("store: APIKeyRepository.UpdateMutable called with a nil transaction"))
+	}
+	if scopes == nil {
+		scopes = []string{}
+	}
+	row := tx.QueryRow(ctx,
+		`UPDATE api_keys
+		    SET name = $3, scopes = $4
+		  WHERE organization_id = $1 AND id = $2
+		 RETURNING `+apiKeyColumns,
+		organizationID, keyID, name, scopes)
+	updated, err := scanAPIKey(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return APIKey{}, apierr.NotFound("api_key", keyID)
+	}
+	if err != nil {
+		return APIKey{}, mapWriteError(err, "the api key could not be updated")
+	}
+	return updated, nil
+}
+
 // Revoke marks the key identified by (organizationID, keyID) as revoked at
 // revokedAt. It requires a *Tx and is tenant scoped. Revocation is idempotent:
 // COALESCE keeps the first revocation timestamp, so revoking an already-revoked

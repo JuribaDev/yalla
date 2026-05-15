@@ -48,7 +48,7 @@ func createAPIKeyHandlerFor(id auth.Identity, authErr error, creator APIKeyCreat
 	return NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, a, policy.NewEngine(),
 		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
 		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
-		fakeAPIKeyReader{}, creator, nil)
+		fakeAPIKeyReader{}, creator, fakeAPIKeyUpdater{}, nil)
 }
 
 // postAPIKey issues POST /v1/organizations/{orgID}/api-keys against handler
