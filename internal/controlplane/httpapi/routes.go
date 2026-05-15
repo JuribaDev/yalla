@@ -107,7 +107,7 @@ type versionPayload struct {
 // metadata; a request that actually reaches a handler with a nil dependency
 // is reported as a typed internal error rather than a misleading empty list
 // or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader) []apiRoute {
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -236,6 +236,27 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// organization's projects, so there is no deeper or cross-tenant
 			// resource target to resolve.
 			handler: listProjectsHandler(projects),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodPost,
+				Path:               "/v1/projects",
+				OperationID:        "createProject",
+				Summary:            "Create a project",
+				Description:        "Creates a project — the second level of Yalla's Organization -> Project -> Environment -> Service hierarchy — inside the authenticated principal's home organization. The request body supplies the caller-minted canonical project id (an idempotent retry is structural, not header-encoded), the canonical [a-z0-9-] slug the project is addressed by within its organization, and the human-authored display name. Every field is validated before any database work; an invalid request never opens a transaction. The project row, the durable provisioning job that mirrors it into Dokploy, and an immutable audit record naming the authenticated principal are committed in one transaction — a created project can never exist without its provisioning job or its audit trail, and a duplicate slug rolls the whole transaction back as a deterministic 409. Action project.create is authorized against the principal's home organization before the handler runs: project.create is a CapWrite action, so the gate admits organization-wide write roles (owner, admin, developer, ci) and denies viewer, denies support (CapRead-only), and denies a grant-only principal whose grants are narrower than the home organization — a project-, environment-, or service-level grant cannot create a sibling project through this endpoint. The response carries no credential material.",
+				Tags:               []string{tagProjects},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionProjectCreate),
+				SuccessStatus:      http.StatusCreated,
+				SuccessDescription: "The project was created.",
+			},
+			// A nil resolver authorizes action project.create against the
+			// principal's own organization scope. The created project does
+			// not exist yet, so there is no deeper resource target to
+			// resolve; the handler creates only inside the principal's home
+			// organization, so the tenant boundary is structural — there is
+			// no caller input that could point the write at another tenant.
+			handler: createProjectHandler(projectCreator),
 		},
 		{
 			endpoint: openapi.Endpoint{

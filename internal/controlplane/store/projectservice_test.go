@@ -70,14 +70,38 @@ func seedDomainOrg(t *testing.T, db *testutil.DB) string {
 	return id
 }
 
-// newCreateInput builds a valid CreateProjectInput for org.
+// newCreateInput builds a valid CreateProjectInput for org. ActorOrgID is the
+// principal's home organization — the tenant the audit record is filed under
+// — so seeding it with the resource organization matches the production wire
+// path where a member of org creates a project in their own org.
 func newCreateInput(orgID string) store.CreateProjectInput {
 	return store.CreateProjectInput{
 		OrganizationID: orgID,
 		ProjectID:      domain.MustNewID(domain.KindProject).String(),
 		Slug:           "web-api",
 		DisplayName:    "Web API",
+		ActorID:        "usr_ada",
+		ActorKind:      "usr",
+		ActorOrgID:     orgID,
+		RequestID:      "req_test",
+		CorrelationID:  "corr_test",
 	}
+}
+
+// listProjectAuditEvents returns every audit event filed under organizationID
+// — used by the success path test to prove the audit row commits inside the
+// same transaction as the project insert.
+func listProjectAuditEvents(t *testing.T, s *store.Store, organizationID string) []store.AuditEvent {
+	t.Helper()
+	var events []store.AuditEvent
+	if err := s.Read(context.Background(), func(ctx context.Context, q store.Querier) error {
+		var readErr error
+		events, readErr = store.NewAuditRepository().ListByOrganization(ctx, q, organizationID, 50)
+		return readErr
+	}); err != nil {
+		t.Fatalf("list audit events: %v", err)
+	}
+	return events
 }
 
 // projectExists reports whether a project row identified by (orgID, projectID)
@@ -110,7 +134,7 @@ func TestProjectServiceCreateSuccess(t *testing.T) {
 	authz := &recordingAuthorizer{}
 	quota := &recordingQuota{}
 	jobs := &recordingJobs{}
-	svc, err := store.NewProjectService(s, repo, authz, quota, jobs)
+	svc, err := store.NewProjectService(s, repo, authz, quota, jobs, store.NewAuditRepository())
 	if err != nil {
 		t.Fatalf("NewProjectService: %v", err)
 	}
@@ -132,6 +156,63 @@ func TestProjectServiceCreateSuccess(t *testing.T) {
 	if !projectExists(ctx, t, s, repo, orgID, in.ProjectID) {
 		t.Error("Create succeeded but the project row was not committed")
 	}
+
+	// The audit record commits inside the same transaction as the insert: a
+	// created project can never exist without its audit trail.
+	events := listProjectAuditEvents(t, s, orgID)
+	if len(events) != 1 {
+		t.Fatalf("audit events = %d, want exactly one for the create", len(events))
+	}
+	ev := events[0]
+	if ev.Action != "project.create" {
+		t.Errorf("audit action = %q, want project.create", ev.Action)
+	}
+	if ev.Decision != store.AuditDecisionAllowed {
+		t.Errorf("audit decision = %q, want allowed", ev.Decision)
+	}
+	if ev.ResourceID != created.ID {
+		t.Errorf("audit resource_id = %q, want the created project id %q", ev.ResourceID, created.ID)
+	}
+	if ev.ActorID != "usr_ada" || ev.ActorKind != "usr" {
+		t.Errorf("audit actor = %q/%q, want usr_ada/usr", ev.ActorID, ev.ActorKind)
+	}
+	if ev.RequestID != "req_test" || ev.CorrelationID != "corr_test" {
+		t.Errorf("audit correlation = %q/%q, want req_test/corr_test", ev.RequestID, ev.CorrelationID)
+	}
+	if got := ev.Metadata["slug"]; got != in.Slug {
+		t.Errorf("audit metadata[slug] = %q, want %q", got, in.Slug)
+	}
+}
+
+// TestProjectServiceCreateRequiresActorOrg proves a wiring error — an
+// authenticated request that nonetheless reaches the service with no actor
+// organization — is rejected as Internal before any database work runs, so
+// the audit row can never miss the tenant column it is filed under.
+func TestProjectServiceCreateRequiresActorOrg(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	repo := store.NewProjectRepository()
+	authz := &recordingAuthorizer{}
+	quota := &recordingQuota{}
+	jobs := &recordingJobs{}
+	svc, err := store.NewProjectService(s, repo, authz, quota, jobs, store.NewAuditRepository())
+	if err != nil {
+		t.Fatalf("NewProjectService: %v", err)
+	}
+
+	orgID := seedDomainOrg(t, db)
+	in := newCreateInput(orgID)
+	in.ActorOrgID = ""
+
+	_, createErr := svc.Create(context.Background(), in)
+	if ye := yerr.From(createErr); ye.Code != yerr.CodeInternal {
+		t.Fatalf("Create(no actor org) error code = %v, want %s", createErr, yerr.CodeInternal)
+	}
+	if authz.calls != 0 || quota.calls != 0 || jobs.calls != 0 {
+		t.Errorf("missing actor org still opened the transaction: authz:%d quota:%d jobs:%d",
+			authz.calls, quota.calls, jobs.calls)
+	}
 }
 
 func TestProjectServiceCreateValidationFailure(t *testing.T) {
@@ -141,7 +222,7 @@ func TestProjectServiceCreateValidationFailure(t *testing.T) {
 	authz := &recordingAuthorizer{}
 	quota := &recordingQuota{}
 	jobs := &recordingJobs{}
-	svc, err := store.NewProjectService(s, store.NewProjectRepository(), authz, quota, jobs)
+	svc, err := store.NewProjectService(s, store.NewProjectRepository(), authz, quota, jobs, store.NewAuditRepository())
 	if err != nil {
 		t.Fatalf("NewProjectService: %v", err)
 	}
@@ -171,7 +252,7 @@ func TestProjectServiceCreateAuthorizationFailure(t *testing.T) {
 	authz := &recordingAuthorizer{err: apierr.Forbidden("project.create denied")}
 	quota := &recordingQuota{}
 	jobs := &recordingJobs{}
-	svc, err := store.NewProjectService(s, repo, authz, quota, jobs)
+	svc, err := store.NewProjectService(s, repo, authz, quota, jobs, store.NewAuditRepository())
 	if err != nil {
 		t.Fatalf("NewProjectService: %v", err)
 	}
@@ -200,7 +281,7 @@ func TestProjectServiceCreateQuotaFailureRollsBack(t *testing.T) {
 	authz := &recordingAuthorizer{}
 	quota := &recordingQuota{err: apierr.QuotaExceeded("projects", 5)}
 	jobs := &recordingJobs{}
-	svc, err := store.NewProjectService(s, repo, authz, quota, jobs)
+	svc, err := store.NewProjectService(s, repo, authz, quota, jobs, store.NewAuditRepository())
 	if err != nil {
 		t.Fatalf("NewProjectService: %v", err)
 	}
@@ -234,7 +315,7 @@ func TestProjectServiceCreateEnqueueFailureRollsBack(t *testing.T) {
 	authz := &recordingAuthorizer{}
 	quota := &recordingQuota{}
 	jobs := &recordingJobs{err: errors.New("durable job queue write failed")}
-	svc, err := store.NewProjectService(s, repo, authz, quota, jobs)
+	svc, err := store.NewProjectService(s, repo, authz, quota, jobs, store.NewAuditRepository())
 	if err != nil {
 		t.Fatalf("NewProjectService: %v", err)
 	}
@@ -272,7 +353,7 @@ func TestProjectServiceCreateConflict(t *testing.T) {
 	db := testutil.RequireMigratedDB(t)
 	s := newStore(t, db)
 	repo := store.NewProjectRepository()
-	svc, err := store.NewProjectService(s, repo, &recordingAuthorizer{}, &recordingQuota{}, &recordingJobs{})
+	svc, err := store.NewProjectService(s, repo, &recordingAuthorizer{}, &recordingQuota{}, &recordingJobs{}, store.NewAuditRepository())
 	if err != nil {
 		t.Fatalf("NewProjectService: %v", err)
 	}

@@ -7,6 +7,8 @@
 - Secret-bearing structs implement slog.LogValuer + fmt.Stringer with redacted views as defence-in-depth.
 - Tests inject dependencies (e.g. config.MapLookup) instead of touching real process env/filesystem. Use t.Parallel().
 - Quality gate before commit: gofmt -w ., go mod tidy, go build ./..., go vet ./..., go test ./..., go test -race ./....
+- Mutating POST endpoints reject organization_id in the request body via the strict JSON decoder (validate.DecodeJSON disallows unknown fields). The handler builds the store *Input.OrganizationID from p.OrganizationID (principal), never from the body, so the tenant boundary is structural — a caller cannot point a create at another tenant even if defense-in-depth were skipped. ActorOrgID on the audit record is also the principal's home org; ResourceID names the created resource.
+- store.ProjectService is the canonical write-port unit-of-work with the full 5-step composition: authorize, reserve quota, INSERT, enqueue provisioning job, append audit — all in one Store.Write transaction. cmd/yalla-api wires placeholder alwaysAllowAuthorizer/noopQuotaReserver/noopJobEnqueuer adapters today (HTTP RequireAuth is the authoritative gate; real adapters land with the plan-resolver and provisioning-worker stories). store.NewProjectService rejects nil dependencies at construction, so placeholders must remain explicit-named values, never nil.
 - Partial-update (PATCH) endpoints: the request DTO and store *Input use *string fields — nil means "field omitted, leave unchanged". The store builds+validates the patch BEFORE opening the transaction (rejecting a patch that names no field as a 400), then inside Store.Write reads the current row, applies the non-nil fields, and Updates. A repository Update using UPDATE ... RETURNING must check errors.Is(err, pgx.ErrNoRows) for the missing-row case BEFORE mapWriteError (which only classifies constraint-violation vs outage). Never set updated_at in an Update statement — the per-table set_updated_at() BEFORE UPDATE trigger owns it.
 - Customer-facing DELETE endpoints schedule a SOFT delete, never a hard delete: the store stamps a nullable deletion_scheduled_at column (migration 0010 for organizations) inside the same transaction as the <resource>.delete audit record, and the endpoint returns 202 Accepted. A hard DELETE would cascade through child tables AND the audit log (ON DELETE CASCADE), so the destructive teardown is a separate worker story. Re-scheduling an already-stamped row is apierr.Conflict, detected with a Get inside the tx (the repository ScheduleDeletion is an unconditional UPDATE).
 - Optimistic concurrency on mutable customer-data tables: migration 0011 adds a bigint version column (DEFAULT 1, CHECK > 0) + bump_version() BEFORE UPDATE trigger to organizations/projects/environments/services. The trigger overwrites NEW.version with OLD.version+1 on every UPDATE (including no-op data UPDATEs), so the application cannot freeze the sequence. Repository UPDATE methods accept ifMatchVersion *int64: nil = no precondition, non-nil = WHERE id=$1 AND version=$N; on no rows, a tenant-scoped Get inside the same tx disambiguates "row gone" (NotFound) from "row stale" (apierr.ConflictStale carrying the row's current version). Service-layer Update/ScheduleDeletion also pre-check the version after the read so a no-op data patch still surfaces the conflict against the right row. The HTTP layer parses RFC 7232 strong ETag values (`"<n>"`, lenient unquoted form accepted; weak/wildcard/multi-value rejected as 400 E_INVALID_INPUT) from If-Match, mirrors the row's authoritative version into the ETag response header on every success path (GET/POST/PATCH/DELETE), and surfaces stale writes as 409 E_CONFLICT carrying current_version under the new structured error.details map (apierr.DetailKeyCurrentVersion). yerr.Error.Details (map[string]string, set by WithDetail) is the agent-friendly counterpart to Hint; apienvelope renders it through the same regex redaction backstop used for Message/Hint.
@@ -8585,4 +8587,158 @@
     list endpoints (members, api-keys, etc.) should be derived from
     projects_policy_test.go's structure; future CapRead resolver-bound
     endpoints (variables, limits, usage) from variables_policy_test.go.
+---
+
+## 2026-05-15 - BE-0121
+- What was implemented: POST /v1/projects, the create-project endpoint —
+  the second customer-facing mutating endpoint in Yalla's
+  Organization -> Project -> Environment -> Service hierarchy, and the
+  unblock for BE-0122 (contract tests) + BE-0123 (policy matrix, priority 1).
+  - internal/controlplane/store/projectservice.go: extended ProjectService
+    to take an AuditAppender dependency and to file an immutable audit
+    record inside the same transaction as the desired-state write. The
+    fixed-order unit of work is now: authorize, reserve quota, INSERT
+    project row, enqueue provisioning job, append audit. Every failure
+    after validation rolls the whole transaction back, so a created
+    project can never exist without its job AND audit trail. Added
+    Actor*/Request*/Correlation* fields to CreateProjectInput so the
+    httpapi handler can pass the resolved principal and request
+    correlation through. NewProjectService rejects a nil audit appender at
+    construction.
+  - internal/controlplane/store/projectservice_test.go: extended the
+    success test to assert the audit row commits with the right
+    action/actor/correlation/metadata; added
+    TestProjectServiceCreateRequiresActorOrg covering the wiring guard
+    (an authenticated request that reaches the service with no actor
+    organization is Internal before any database work runs). Threaded
+    store.NewAuditRepository() through every existing NewProjectService
+    call; added Actor*/correlation fields to the shared newCreateInput
+    fixture; added listProjectAuditEvents helper mirroring the
+    organizationservice_test.go pattern.
+  - internal/controlplane/store/internal_test.go: added nopAuditAppender
+    and extended TestNewProjectServiceRejectsNilDependencies to cover the
+    new nil-audit guard.
+  - internal/controlplane/httpapi/projects.go: added the ProjectCreator
+    port, createProjectRequest/createProjectPayload DTOs,
+    createProjectHandler, and errNoProjectCreator. The handler is thin —
+    decode (strict, unknown-field rejected), read principal off context,
+    forward to ProjectCreator with the principal's home org as both
+    OrganizationID (the create target) and ActorOrgID (the audit tenant).
+    A nil principal or nil creator surfaces as Internal; a missing creator
+    can only happen through a wiring error. The request body intentionally
+    does NOT include organization_id — the strict decoder rejects it as
+    unknown-field, so a caller cannot point the write at another tenant.
+  - internal/controlplane/httpapi/routes.go: registered POST /v1/projects
+    with RequiresAuth=true, RequiredAction=policy.ActionProjectCreate
+    (CapWrite), SuccessStatus=201, tagProjects, and a nil resolver — the
+    created project does not exist yet, so the resource scope authorized
+    against is the principal's home organization. Extended newRouteTable
+    with a projectCreator ProjectCreator parameter.
+  - internal/controlplane/httpapi/server.go: extended NewHandler with the
+    projectCreator parameter, threaded into newRouteTable.
+  - internal/controlplane/httpapi/projects_create_test.go (new): 11
+    contract tests exercising the full NewHandler + real policy.NewEngine()
+    (fake Authenticator + fake ProjectCreator only) — happy path 201 with
+    every column projected onto the wire shape, principal scope forwarding
+    (the creator is always called with the principal's home org and actor
+    fields), unknown-field rejection of a smuggled organization_id (the
+    structural tenant boundary), malformed JSON rejection, unauthenticated
+    401, viewer-CapWrite 403 (the load-bearing distinction from CapRead:
+    project.read is allowed for viewer but project.create is not),
+    InvalidInput propagation, Conflict propagation, StoreUnavailable
+    propagation (no driver-string leak), nil-creator wiring error, and
+    OpenAPI route-table contract (operation_id=createProject,
+    tag=projects, RequiredAction=project.create, RequiresAuth=true,
+    SuccessStatus=201). Also added the canonical fakeProjectCreator.
+  - 25 *_test.go files in internal/controlplane/httpapi/ received the
+    mechanical churn: every NewHandler call gained a trailing
+    fakeProjectCreator{} arg before its logger arg, and every
+    newRouteTable call gained a trailing nil. Done by a one-shot Node.js
+    rewriter against textual signatures; one site (projects_test.go
+    listProjectsHandlerFor) used a named reader parameter rather than a
+    literal fakeProjectReader{} and was patched by hand.
+  - cmd/yalla-api/main.go: constructed the production *store.ProjectService
+    and threaded it into httpapi.NewHandler. The Authorizer/QuotaReserver/
+    JobEnqueuer ports are wired with documented placeholder adapters
+    (alwaysAllowAuthorizer, noopQuotaReserver, noopJobEnqueuer) — the HTTP
+    RequireAuth middleware is the authoritative gate for project.create
+    today, and the real adapters land with their respective stories
+    (project-quota plan resolver and project provisioning worker).
+    store.NewProjectService still rejects nil dependencies, so the
+    placeholders are explicit, not silently zero-valued.
+- Files changed:
+  - internal/controlplane/store/projectservice.go
+  - internal/controlplane/store/projectservice_test.go
+  - internal/controlplane/store/internal_test.go
+  - internal/controlplane/httpapi/projects.go
+  - internal/controlplane/httpapi/projects_create_test.go (new)
+  - internal/controlplane/httpapi/projects_test.go
+  - internal/controlplane/httpapi/routes.go
+  - internal/controlplane/httpapi/server.go
+  - internal/controlplane/httpapi/AGENTS.md (NewHandler signature note)
+  - 24 other httpapi *_test.go files (mechanical fakeProjectCreator{}/nil
+    insertions)
+  - cmd/yalla-api/main.go
+  - ralph/prd.json, ralph/progress.txt
+- Verification run:
+  - gofmt -w .
+  - go mod tidy
+  - go vet ./...
+  - go test ./...
+  - go test -race ./...
+- Results: all green. goimports is not installed on this machine; gofmt
+  and go vet are both clean.
+- Remaining risks or follow-ups:
+  - BE-0123 (priority 1, POST /v1/projects policy matrix) is now
+    unblocked. The matrix shape diverges from BE-0120's nil-resolver list
+    matrix: project.create is CapWrite, so the role matrix splits along
+    the write capability class — viewer denies (the inverse of BE-0120's
+    viewer-allows assertion), support denies even same-tenant, and a
+    grant-only principal whose grants do not contain the home org denies.
+    The principal classes the PRD names are owner/admin/developer/viewer/
+    ci/support + revoked/expired keys + wrong-organization principal.
+  - BE-0122 (contract tests) and BE-0123 (policy matrix) can be picked
+    in either order; the contract tests are easier and the policy matrix
+    benefits from the contract tests' fixtures.
+  - The Authorizer/QuotaReserver/JobEnqueuer placeholders in main.go are
+    correct-but-empty — they need real adapters when (a) the project
+    quota plan resolver story lands and (b) the provisioning worker
+    story lands. The HTTP RequireAuth middleware is the authoritative
+    gate today; production traffic cannot bypass the policy.
+- **Learnings for future iterations:**
+  - When extending a unit-of-work service to record an audit event, add
+    Actor{ID,Kind,OrgID} + RequestID/CorrelationID fields to the input
+    struct; the httpapi handler fills them from
+    policy.PrincipalFromContext + telemetry.FromContext. The audit row's
+    OrganizationID is the actor's home org (the tenant the audit log
+    lives under), while ResourceID is the resource being created. Reject
+    a blank ActorOrgID as Internal — it is a wiring error, never a
+    client error — before opening the transaction.
+  - Existing test files with NewHandler call sites all share one
+    signature, but a small minority pass named parameter variables (e.g.
+    "reader" instead of "fakeProjectReader{}") in the last positional
+    slot. A regex pass on literal "fakeProjectReader{}" handles 35/36
+    sites; the holdout (listProjectsHandlerFor) needs a manual patch.
+    Future additions to NewHandler's signature will face the same
+    pattern.
+  - The route table arity is now 26 (build + 25 readers/services). New
+    newRouteTable test sites in newly-added test files must use 25 nils
+    after BuildInfo{}. A one-line audit (counting nils in the source) is
+    the fastest way to verify.
+  - The strict JSON decoder (validate.DecodeJSON with disallowUnknownFields)
+    is the load-bearing piece of structural tenant isolation for POST
+    endpoints: the request body has no organization_id field, and a body
+    that smuggles one is rejected as a 400 before the handler even reads
+    the principal. The handler builds CreateProjectInput.OrganizationID
+    from p.OrganizationID, never from the body, so a caller cannot point
+    the write at another tenant even if the decoder were to accept the
+    field. Both layers are required — defense-in-depth.
+  - Placeholder Authorizer/Quota/Jobs adapters in main.go are correct as
+    long as they are: (a) explicitly typed and named with a TODO-bearing
+    comment, (b) constructed at startup so store.NewProjectService's nil
+    guards still fire on a misconfigured binary, (c) never silently
+    zero-valued (a nil dependency must remain a startup error). The
+    pattern matches the way runtime.NewMeta is wired before the real
+    migration probe lands.
+
 ---

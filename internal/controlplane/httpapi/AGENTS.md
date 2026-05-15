@@ -149,7 +149,10 @@ Adding a port parameter to `NewHandler` breaks every test call site — `grep`
 for `NewHandler(` and `newRouteTable(` across `*_test.go` and add the new fake
 (`fakeOrganization{Reader,Creator,Updater,Deleter}{}`,
 `fakeMembership{Reader,Creator,Updater,Remover}{}`, `fakeAPIKeyReader{}`,
-`fakeProjectReader{}`) in one pass. Two call-site shapes coexist: single-line
+`fakeProjectReader{}`, `fakeProjectCreator{}`) in one pass. The
+`projects_test.go` `listProjectsHandlerFor` helper passes a named `reader`
+parameter rather than a literal `fakeProjectReader{}`, so a regex pass on the
+literal misses it — patch it by hand. Two call-site shapes coexist: single-line
 `..., fakeAPIKeyRotator{}, nil)` (most files) and multi-line where the last
 fake is on one line and `nil)` or `logger)` is on the next (audit_events,
 limits, usage, variables) — a single-line sed catches only the first; the

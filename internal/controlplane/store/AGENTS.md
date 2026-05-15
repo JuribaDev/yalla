@@ -185,10 +185,16 @@ Postgres persistence for control-plane source-of-truth state.
   impossible to bypass. When you add a repository, follow this split.
 - The unit of work (see `ProjectService.Create`) composes, inside one
   `Store.Write`: authorize → reserve quota → write desired state → enqueue
-  durable job. Validate input **before** opening the transaction. The policy,
-  quota, and jobs dependencies are narrow **port interfaces** (`Authorizer`,
-  `QuotaReserver`, `JobEnqueuer`) defined here — the real engines land in later
-  stories; tests use fakes. Do not import `policy`/`quota`/`jobs` from `store`.
+  durable job → append audit. Validate input **before** opening the
+  transaction. The policy, quota, jobs, and audit dependencies are narrow
+  **port interfaces** (`Authorizer`, `QuotaReserver`, `JobEnqueuer`,
+  `AuditAppender`) defined here — the real engines land in later stories;
+  tests use fakes. Do not import `policy`/`quota`/`jobs` from `store`.
+  `cmd/yalla-api` wires placeholder `alwaysAllowAuthorizer`/
+  `noopQuotaReserver`/`noopJobEnqueuer` adapters until the real engines
+  land; the HTTP `RequireAuth` middleware is the authoritative gate for
+  customer traffic today. `NewProjectService` rejects a nil dependency
+  (including nil audit), so a misconfigured binary fails at startup.
 - A unit of work that records an audit event (see `OrganizationService.Create`)
   composes the desired-state write + `AuditRepository.Append` inside the one
   `Store.Write`, so a created row can never exist without its audit record.

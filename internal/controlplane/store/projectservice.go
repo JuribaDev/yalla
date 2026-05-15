@@ -52,32 +52,46 @@ const (
 )
 
 // CreateProjectInput is the unvalidated input to ProjectService.Create.
+// OrganizationID, ProjectID, Slug, and DisplayName are the caller-supplied
+// resource fields; the Actor* and correlation fields describe the
+// authenticated principal performing the create and are recorded verbatim on
+// the audit event. They are plain strings so the store layer takes no build
+// dependency on the policy or telemetry packages — the httpapi handler, which
+// already holds the resolved principal and the request correlation, fills
+// them in.
 type CreateProjectInput struct {
 	OrganizationID string
 	ProjectID      string
 	Slug           string
 	DisplayName    string
+	ActorID        string
+	ActorKind      string
+	ActorOrgID     string
+	RequestID      string
+	CorrelationID  string
 }
 
 // ProjectService is the reference unit-of-work orchestrator for the repository
 // transaction pattern. Create composes — in this fixed order, inside one
 // transaction — an authorization check, a quota reservation, the desired-state
-// write, and the provisioning-job enqueue. Because every step shares the *Tx
-// opened by Store.Write, a failure in any step rolls back every other step:
-// the authorization and quota checks are impossible to bypass, and desired
-// state is never persisted without its provisioning job.
+// write, the provisioning-job enqueue, and the immutable audit record.
+// Because every step shares the *Tx opened by Store.Write, a failure in any
+// step rolls back every other step: the authorization, quota, and audit
+// checks are impossible to bypass, and desired state is never persisted
+// without its provisioning job or its audit trail.
 type ProjectService struct {
 	store *Store
 	repo  *ProjectRepository
 	authz Authorizer
 	quota QuotaReserver
 	jobs  JobEnqueuer
+	audit AuditAppender
 }
 
 // NewProjectService wires a ProjectService from its dependencies. It returns a
 // typed error if any dependency is nil, so a misconfigured service fails at
 // construction rather than on its first request.
-func NewProjectService(s *Store, repo *ProjectRepository, authz Authorizer, quota QuotaReserver, jobs JobEnqueuer) (*ProjectService, error) {
+func NewProjectService(s *Store, repo *ProjectRepository, authz Authorizer, quota QuotaReserver, jobs JobEnqueuer, audit AuditAppender) (*ProjectService, error) {
 	switch {
 	case s == nil:
 		return nil, errors.New("store: nil store")
@@ -89,22 +103,51 @@ func NewProjectService(s *Store, repo *ProjectRepository, authz Authorizer, quot
 		return nil, errors.New("store: nil quota reserver")
 	case jobs == nil:
 		return nil, errors.New("store: nil job enqueuer")
+	case audit == nil:
+		return nil, errors.New("store: nil audit appender")
 	}
-	return &ProjectService{store: s, repo: repo, authz: authz, quota: quota, jobs: jobs}, nil
+	return &ProjectService{store: s, repo: repo, authz: authz, quota: quota, jobs: jobs, audit: audit}, nil
 }
 
 // Create validates in, then runs the create-project unit of work inside one
 // transaction: authorize, reserve quota, write the project row, enqueue the
-// provisioning job. Validation runs before the transaction is opened, so an
-// invalid request never touches the database. Every failure after that point
-// — a denied authorization decision, an exhausted quota, a slug conflict, or a
-// failed provisioning-job enqueue — rolls the whole transaction back, so the
-// project row is never persisted without its job and the checks can never be
-// skipped.
+// provisioning job, append the immutable audit record. Validation runs before
+// the transaction is opened, so an invalid request never touches the database.
+// Every failure after that point — a denied authorization decision, an
+// exhausted quota, a slug conflict, a failed provisioning-job enqueue, or a
+// failed audit append — rolls the whole transaction back, so the project row
+// is never persisted without its job and audit trail and the checks can never
+// be skipped.
 func (svc *ProjectService) Create(ctx context.Context, in CreateProjectInput) (Project, error) {
 	project, err := validateCreateProjectInput(in)
 	if err != nil {
 		return Project{}, err
+	}
+
+	// The audit record is filed under the actor's home organization — the
+	// tenant the principal authenticated into — while its resource id names
+	// the project that was created. A missing actor organization is a wiring
+	// error (an authenticated request always carries one), not client input,
+	// so it is reported as Internal rather than a validation failure.
+	actorOrgID := strings.TrimSpace(in.ActorOrgID)
+	if actorOrgID == "" {
+		return Project{}, apierr.Internal(errors.New("store: ProjectService.Create requires an actor organization for the audit record"))
+	}
+
+	event := AuditEvent{
+		OrganizationID: actorOrgID,
+		ActorID:        strings.TrimSpace(in.ActorID),
+		ActorKind:      strings.TrimSpace(in.ActorKind),
+		Action:         projectCreateAction,
+		ResourceKind:   string(domain.KindProject),
+		ResourceID:     project.ID,
+		Decision:       AuditDecisionAllowed,
+		Reason:         "authorization granted for project.create",
+		RequestID:      strings.TrimSpace(in.RequestID),
+		CorrelationID:  strings.TrimSpace(in.CorrelationID),
+		// The slug is a canonical [a-z0-9-] identifier — it carries no secret
+		// material — so it is safe to record verbatim as audit context.
+		Metadata: map[string]string{"slug": project.Slug},
 	}
 
 	var created Project
@@ -120,6 +163,9 @@ func (svc *ProjectService) Create(ctx context.Context, in CreateProjectInput) (P
 			return err
 		}
 		if err := svc.jobs.Enqueue(ctx, tx, project.OrganizationID, projectProvisionJob, row.ID); err != nil {
+			return err
+		}
+		if _, err := svc.audit.Append(ctx, tx, event); err != nil {
 			return err
 		}
 		created = row

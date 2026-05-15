@@ -208,16 +208,30 @@ func TestNewProjectServiceRejectsNilDependencies(t *testing.T) {
 	authz := nopAuthorizer{}
 	quota := nopQuotaReserver{}
 	jobs := nopJobEnqueuer{}
+	audit := nopAuditAppender{}
 
 	cases := []struct {
 		name string
 		call func() (*ProjectService, error)
 	}{
-		{"nil store", func() (*ProjectService, error) { return NewProjectService(nil, repo, authz, quota, jobs) }},
-		{"nil repo", func() (*ProjectService, error) { return NewProjectService(s, nil, authz, quota, jobs) }},
-		{"nil authorizer", func() (*ProjectService, error) { return NewProjectService(s, repo, nil, quota, jobs) }},
-		{"nil quota", func() (*ProjectService, error) { return NewProjectService(s, repo, authz, nil, jobs) }},
-		{"nil jobs", func() (*ProjectService, error) { return NewProjectService(s, repo, authz, quota, nil) }},
+		{"nil store", func() (*ProjectService, error) {
+			return NewProjectService(nil, repo, authz, quota, jobs, audit)
+		}},
+		{"nil repo", func() (*ProjectService, error) {
+			return NewProjectService(s, nil, authz, quota, jobs, audit)
+		}},
+		{"nil authorizer", func() (*ProjectService, error) {
+			return NewProjectService(s, repo, nil, quota, jobs, audit)
+		}},
+		{"nil quota", func() (*ProjectService, error) {
+			return NewProjectService(s, repo, authz, nil, jobs, audit)
+		}},
+		{"nil jobs", func() (*ProjectService, error) {
+			return NewProjectService(s, repo, authz, quota, nil, audit)
+		}},
+		{"nil audit", func() (*ProjectService, error) {
+			return NewProjectService(s, repo, authz, quota, jobs, nil)
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -228,7 +242,7 @@ func TestNewProjectServiceRejectsNilDependencies(t *testing.T) {
 		})
 	}
 
-	if _, err := NewProjectService(s, repo, authz, quota, jobs); err != nil {
+	if _, err := NewProjectService(s, repo, authz, quota, jobs, audit); err != nil {
 		t.Errorf("NewProjectService(all set) error = %v, want nil", err)
 	}
 }
@@ -246,3 +260,9 @@ func (nopQuotaReserver) Reserve(context.Context, *Tx, string, string) error { re
 type nopJobEnqueuer struct{}
 
 func (nopJobEnqueuer) Enqueue(context.Context, *Tx, string, string, string) error { return nil }
+
+type nopAuditAppender struct{}
+
+func (nopAuditAppender) Append(context.Context, *Tx, AuditEvent) (AuditEvent, error) {
+	return AuditEvent{}, nil
+}

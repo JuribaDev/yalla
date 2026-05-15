@@ -10,6 +10,8 @@ import (
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
 	"github.com/JuribaDev/yalla/internal/controlplane/policy"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
+	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
+	"github.com/JuribaDev/yalla/internal/controlplane/validate"
 )
 
 // errNoProjectReader is returned when GET /v1/projects is reached without a
@@ -18,6 +20,13 @@ import (
 // error — so the handler reports it as a typed internal failure rather than
 // serving an empty or misleading list.
 var errNoProjectReader = errors.New("httpapi: no project reader configured")
+
+// errNoProjectCreator is returned when POST /v1/projects is reached without
+// a project creator wired into NewHandler. Like errNoProjectReader it can
+// only happen through a wiring error — a programming mistake, not a client
+// error — so the handler reports it as a typed internal failure rather than
+// silently failing to persist the resource.
+var errNoProjectCreator = errors.New("httpapi: no project creator configured")
 
 // ProjectReader is the narrow persistence port GET /v1/projects depends on.
 // *store.ProjectReader satisfies it in production; tests supply a fake.
@@ -126,5 +135,105 @@ func listProjectsHandler(reader ProjectReader) http.HandlerFunc {
 			out = append(out, projectResourceOf(project))
 		}
 		apienvelope.WriteData(w, http.StatusOK, requestID(r), listProjectsPayload{Projects: out})
+	}
+}
+
+// ProjectCreator is the narrow persistence port POST /v1/projects depends on.
+// *store.ProjectService satisfies it in production; tests supply a fake.
+// Like ProjectReader it is an interface declared here so the handler stays
+// unit-testable without a real database — the concrete orchestrator (the
+// in-transaction authorization, quota reservation, desired-state write,
+// provisioning-job enqueue, and audit record) lives in the store layer.
+type ProjectCreator interface {
+	Create(ctx context.Context, in store.CreateProjectInput) (store.Project, error)
+}
+
+// createProjectRequest is the decoded POST /v1/projects request body.
+// ProjectID is the caller-supplied canonical project id — the agent contract
+// mints ids client-side so an idempotent retry is structural rather than
+// header-encoded. Slug is the canonical [a-z0-9-] identifier the project is
+// addressed by within its organization; DisplayName is its human-authored
+// label. The store layer validates every field before any database work, so
+// an invalid request never opens a transaction — and the request body never
+// carries credential material.
+type createProjectRequest struct {
+	ProjectID   string `json:"project_id"`
+	Slug        string `json:"slug"`
+	DisplayName string `json:"display_name"`
+}
+
+// createProjectPayload is the data block of the POST /v1/projects success
+// envelope: the project that was created, in the same stable wire shape
+// GET /v1/projects returns. It carries no credential material — a projects
+// row stores no secrets.
+type createProjectPayload struct {
+	Project projectResource `json:"project"`
+}
+
+// createProjectHandler builds the POST /v1/projects handler. It decodes and
+// delegates: the request body is strictly decoded (oversized, malformed, or
+// unknown-field bodies become a typed 400 that never echoes the input), then
+// the create-project unit of work — authorize, reserve quota, write the
+// project row, enqueue the provisioning job, append the audit record, all in
+// one transaction — runs in the store layer through the ProjectCreator port.
+//
+// RequireAuth gates the route on action project.create before the handler
+// runs and attaches the resolved principal, so a request that reaches the
+// handler with no principal is a wiring error reported as a typed internal
+// error. project.create is a CapWrite action, so the gate admits the
+// principal's organization-wide write roles (owner, admin, developer, ci) but
+// denies viewer, denies support (a support principal is CapRead-only), and
+// denies a grant-only principal whose grants are narrower than the home
+// organization — a project-, environment-, or service-level grant cannot
+// create a sibling project through this endpoint because the engine asks
+// whether the grant scope contains the resource scope, never the reverse.
+//
+// The route uses a nil resolver: the new project does not exist yet, so the
+// resource scope authorized against is the principal's home organization.
+// The handler never widens or narrows that decision — it creates only inside
+// the principal's home organization, so the tenant boundary is structural
+// here: there is no caller input that could point the write at another
+// tenant. The principal and the request correlation identifiers are passed
+// to the creator so the audit record names the actor; a validation failure,
+// a slug conflict, an exhausted quota, and a datastore outage each surface
+// as their own typed status, never disguised as one another.
+func createProjectHandler(creator ProjectCreator) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if creator == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoProjectCreator))
+			return
+		}
+
+		var req createProjectRequest
+		if err := validate.DecodeJSON(r.Body, &req, 0); err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		project, err := creator.Create(r.Context(), store.CreateProjectInput{
+			OrganizationID: p.OrganizationID,
+			ProjectID:      req.ProjectID,
+			Slug:           req.Slug,
+			DisplayName:    req.DisplayName,
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		apienvelope.WriteData(w, http.StatusCreated, requestID(r), createProjectPayload{
+			Project: projectResourceOf(project),
+		})
 	}
 }

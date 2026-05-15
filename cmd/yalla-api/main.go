@@ -154,6 +154,25 @@ func main() {
 		logger.Error("failed to initialize the project reader", "error", err.Error())
 		os.Exit(1)
 	}
+	// Defense-in-depth ports for the project creation unit of work. The HTTP
+	// RequireAuth middleware is the authoritative gate for action
+	// project.create; the in-transaction Authorizer is a redundant check whose
+	// real adapter (a policy.Engine-driven port that reads grant rows from
+	// the same *Tx as the desired-state write) lands with the quota and jobs
+	// adapters in later stories. Until those land, the placeholder always
+	// allows — the policy boundary at the HTTP layer is what protects the
+	// tenant boundary — and the quota and jobs ports record no-ops. A nil
+	// dependency at the store-service construction site is rejected by
+	// store.NewProjectService, so the placeholders also guard the contract
+	// that ProjectService never runs with an unwired dependency.
+	projectAuthz := alwaysAllowAuthorizer{}
+	projectQuota := noopQuotaReserver{}
+	projectJobs := noopJobEnqueuer{}
+	projectService, err := store.NewProjectService(dataStore, store.NewProjectRepository(), projectAuthz, projectQuota, projectJobs, auditRepo)
+	if err != nil {
+		logger.Error("failed to initialize the project service", "error", err.Error())
+		os.Exit(1)
+	}
 	authenticator, err := auth.NewAuthenticator(auth.AuthenticatorConfig{
 		Store:       credentials,
 		SigningKeys: cfg.SigningKeys,
@@ -186,7 +205,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              cfg.APIAddr,
-		Handler:           httpapi.NewHandler(build, readiness, meta, authenticator, engine, organizations, organizationService, organizationService, organizationService, members, membershipService, membershipService, membershipService, limits, limitsService, usage, auditEvents, orgVariables, orgVariableService, orgVariableService, orgVariableService, apiKeys, apiKeyService, apiKeyService, apiKeyService, apiKeyService, projects, logger),
+		Handler:           httpapi.NewHandler(build, readiness, meta, authenticator, engine, organizations, organizationService, organizationService, organizationService, members, membershipService, membershipService, membershipService, limits, limitsService, usage, auditEvents, orgVariables, orgVariableService, orgVariableService, orgVariableService, apiKeys, apiKeyService, apiKeyService, apiKeyService, apiKeyService, projects, projectService, logger),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -231,3 +250,36 @@ func runStartupChecks(ctx context.Context, pool *pgxpool.Pool) error {
 	}
 	return nil
 }
+
+// alwaysAllowAuthorizer is a placeholder store.Authorizer for the project
+// creation unit of work. The authoritative authorization for POST
+// /v1/projects is the HTTP RequireAuth middleware, which authorizes action
+// project.create against the principal's home organization before the
+// handler runs; the in-transaction Authorizer step is defense-in-depth that
+// will become a real policy.Engine-driven adapter when its story lands.
+// Until then, this placeholder always allows — never overriding the HTTP
+// gate, but never running an extra check either.
+type alwaysAllowAuthorizer struct{}
+
+func (alwaysAllowAuthorizer) Authorize(context.Context, store.Querier, string, string) error {
+	return nil
+}
+
+// noopQuotaReserver is a placeholder store.QuotaReserver for the project
+// creation unit of work. The real adapter is quota.Checker; it lands with
+// the project-quota plan-resolver story. Until then, this placeholder never
+// rejects — a misconfigured limit cannot block production traffic before
+// the real plan resolver is wired.
+type noopQuotaReserver struct{}
+
+func (noopQuotaReserver) Reserve(context.Context, *store.Tx, string, string) error { return nil }
+
+// noopJobEnqueuer is a placeholder store.JobEnqueuer for the project
+// creation unit of work. The real adapter mints a durable provisioning job
+// row through store.JobRepository.Insert with a per-request idempotency key
+// and lands with the project provisioning worker story. Until then, this
+// placeholder records nothing — the desired-state row still commits, and
+// the provisioning side will be reconciled when the worker lands.
+type noopJobEnqueuer struct{}
+
+func (noopJobEnqueuer) Enqueue(context.Context, *store.Tx, string, string, string) error { return nil }

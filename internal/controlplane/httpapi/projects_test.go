@@ -72,7 +72,7 @@ func listProjectsHandlerFor(id auth.Identity, authErr error, reader ProjectReade
 		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{},
 		fakeOrgVariableReader{}, fakeOrgVariableReplacer{}, fakeOrgVariablePatcher{}, fakeOrgVariableDeleter{},
 		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
-		reader, nil)
+		reader, fakeProjectCreator{}, nil)
 }
 
 // getProjects issues GET /v1/projects against handler, optionally with a
