@@ -66,7 +66,7 @@ func listUsageHandlerFor(id auth.Identity, authErr error, reader UsageReader) ht
 	return NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, a, policy.NewEngine(),
 		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
 		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
-		fakeLimitsReader{}, fakeLimitsUpdater{}, reader, fakeAuditEventReader{}, fakeOrgVariableReader{},
+		fakeLimitsReader{}, fakeLimitsUpdater{}, reader, fakeAuditEventReader{}, fakeOrgVariableReader{}, fakeOrgVariableReplacer{},
 		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
 		nil)
 }
@@ -306,7 +306,7 @@ func TestListUsageMissingReaderIsTypedInternalError(t *testing.T) {
 	handler := NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, a, policy.NewEngine(),
 		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
 		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
-		fakeLimitsReader{}, fakeLimitsUpdater{}, nil, fakeAuditEventReader{}, fakeOrgVariableReader{},
+		fakeLimitsReader{}, fakeLimitsUpdater{}, nil, fakeAuditEventReader{}, fakeOrgVariableReader{}, fakeOrgVariableReplacer{},
 		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
 		nil)
 	rec := getUsage(handler, orgID, "a-valid-session-token")
@@ -325,7 +325,7 @@ func TestListUsageRouteIsRegistered(t *testing.T) {
 	handler := NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, a, policy.NewEngine(),
 		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
 		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
-		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{}, fakeOrgVariableReader{},
+		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{}, fakeOrgVariableReader{}, fakeOrgVariableReplacer{},
 		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
 		nil)
 

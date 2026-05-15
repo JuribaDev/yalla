@@ -92,6 +92,7 @@ type versionPayload struct {
 // /v1/organizations/{org_id}/limits, usage backs GET
 // /v1/organizations/{org_id}/usage, auditEvents backs GET
 // /v1/organizations/{org_id}/audit-events, orgVariables backs GET
+// /v1/organizations/{org_id}/variables, orgVariableReplacer backs PUT
 // /v1/organizations/{org_id}/variables, apiKeys backs GET
 // /v1/organizations/{org_id}/api-keys and GET
 // /v1/organizations/{org_id}/api-keys/{key_id}, apiKeyCreator backs POST
@@ -103,7 +104,7 @@ type versionPayload struct {
 // metadata; a request that actually reaches a handler with a nil dependency
 // is reported as a typed internal error rather than a misleading empty list
 // or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator) []apiRoute {
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -558,6 +559,32 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// read, exactly as the policy matrix specifies for read actions.
 			resolver: organizationIDResolver,
 			handler:  listOrganizationVariablesHandler(orgVariables),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodPut,
+				Path:           "/v1/organizations/{org_id}/variables",
+				OperationID:    "replaceOrganizationVariables",
+				Summary:        "Replace organization-scoped variables",
+				Description:    "Replaces the organization-scoped variables of the organization named by the {org_id} path parameter in the source-of-truth database. The request body carries the complete variable set the caller wants installed; the unit of work upserts every entry on (organization_id, key) — preserving the row's id and bumping its optimistic-concurrency version through the schema's bump_version trigger when a row already exists — and deletes every variable not named in the body, so the tenant's post-condition is exactly the submitted set. An explicit empty array clears every organization-scoped variable; omitting the variables field altogether is a stable 400 (so a misencoded request is never a silent clear). Each entry is validated before any database work: a key that is not a POSIX environment variable name ([A-Za-z_][A-Za-z0-9_]*) or that exceeds the length ceiling, a duplicated key, a value that is not valid UTF-8, a value carrying an embedded NUL byte, or a value above the per-kind size ceiling (32 KiB for plain values, larger for is_secret=true entries) each surfaces as a stable apierr.InvalidInput naming the offending field path — never echoing the submitted value, so a secret can never reach a validation reason. Action env.write is authorized against the organization the path names before the handler runs: a principal replacing variables outside its own tenant is rejected with a deterministic 403, so a cross-tenant id can never mutate another tenant's configuration, and unlike env.read (a CapRead action) env.write has NO cross-tenant support exception — only an owner, admin, developer, or CI principal in the tenant can replace variables. An {org_id} with no organizations row is the typed 404 the repository produces. The replacement set, the bulk delete of the rest, and an immutable audit record naming the authenticated principal (with metadata that records only variable and secret counts, never variable keys or values) are committed in one transaction, then the committed variables are re-read inside the same transaction so the response always reflects exactly the state that just persisted. The response carries the persisted variables in the same stable wire shape GET /v1/organizations/{org_id}/variables returns; secret values are ALWAYS redacted on the wire as the redaction sentinel — a customer can never read a secret value back through this endpoint by design, including immediately after submitting it.",
+				Tags:           []string{tagVariables},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionEnvWrite),
+				PathParams: []openapi.PathParam{{
+					Name:        "org_id",
+					Description: "The id of the organization whose variables are replaced.",
+				}},
+				SuccessDescription: "The organization-scoped variables of the organization after the replace.",
+			},
+			// organizationIDResolver authorizes action env.write against the
+			// organization the {org_id} path parameter names, not merely the
+			// principal's home organization, so a cross-tenant id is denied
+			// at the policy boundary before the handler mutates any data.
+			// env.write is a CapWrite action and has no cross-tenant support
+			// exception — unlike CapRead actions, the support principal
+			// cannot replace variables in another tenant.
+			resolver: organizationIDResolver,
+			handler:  replaceOrganizationVariablesHandler(orgVariableReplacer),
 		},
 		{
 			endpoint: openapi.Endpoint{

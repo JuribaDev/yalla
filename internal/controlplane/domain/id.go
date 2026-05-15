@@ -2,10 +2,10 @@
 // shared by every Yalla control-plane resource.
 //
 // These primitives are a public compatibility contract. Resource ID prefixes
-// (org_, usr_, sa_, key_, proj_, env_, svc_, dep_, job_), the ID encoding, the slug
-// normalisation rules, and the Dokploy-name layout are all treated as stable:
-// changing them is a breaking change for stored data, audit records, and any
-// agent or CLI that parses them.
+// (org_, usr_, sa_, key_, proj_, env_, svc_, dep_, job_, ovar_), the ID
+// encoding, the slug normalisation rules, and the Dokploy-name layout are all
+// treated as stable: changing them is a breaking change for stored data,
+// audit records, and any agent or CLI that parses them.
 //
 // IDs are non-guessable: a typed kind prefix joined to 128 bits of
 // cryptographically random entropy, encoded with a lowercase Crockford base32
@@ -50,20 +50,30 @@ const (
 	KindService        Kind = "svc"
 	KindDeployment     Kind = "dep"
 	KindJob            Kind = "job"
+	// KindOrganizationVariable is one row in the organization-scoped variables
+	// surface — the lowest-precedence layer of the
+	// Organization -> Project -> Environment -> Service variable hierarchy the
+	// Dokploy renderer composes. A variable is not a tenant root; the audit
+	// layer still files variable mutations under the parent organization's
+	// audit scope (resource_kind=org), but a variable row carries its own
+	// stable, non-guessable id so a per-row PATCH / DELETE story has an
+	// addressable resource later.
+	KindOrganizationVariable Kind = "ovar"
 )
 
 // kinds is the authoritative set of valid resource kinds. It backs Kind.Valid
 // and the ID parser; adding a Kind constant requires adding it here too.
 var kinds = map[Kind]struct{}{
-	KindOrganization:   {},
-	KindUser:           {},
-	KindServiceAccount: {},
-	KindAPIKey:         {},
-	KindProject:        {},
-	KindEnvironment:    {},
-	KindService:        {},
-	KindDeployment:     {},
-	KindJob:            {},
+	KindOrganization:         {},
+	KindUser:                 {},
+	KindServiceAccount:       {},
+	KindAPIKey:               {},
+	KindProject:              {},
+	KindEnvironment:          {},
+	KindService:              {},
+	KindDeployment:           {},
+	KindJob:                  {},
+	KindOrganizationVariable: {},
 }
 
 // Valid reports whether k is one of the canonical resource kinds.

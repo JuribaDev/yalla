@@ -10,7 +10,7 @@ func TestKindValid(t *testing.T) {
 	t.Parallel()
 	valid := []Kind{
 		KindOrganization, KindUser, KindServiceAccount, KindAPIKey, KindProject,
-		KindEnvironment, KindService, KindDeployment, KindJob,
+		KindEnvironment, KindService, KindDeployment, KindJob, KindOrganizationVariable,
 	}
 	for _, k := range valid {
 		if !k.Valid() {
@@ -28,7 +28,7 @@ func TestNewIDRoundTrip(t *testing.T) {
 	t.Parallel()
 	kinds := []Kind{
 		KindOrganization, KindUser, KindServiceAccount, KindAPIKey, KindProject,
-		KindEnvironment, KindService, KindDeployment, KindJob,
+		KindEnvironment, KindService, KindDeployment, KindJob, KindOrganizationVariable,
 	}
 	seen := make(map[ID]struct{})
 	const perKind = 500

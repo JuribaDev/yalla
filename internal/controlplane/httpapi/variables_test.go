@@ -51,6 +51,28 @@ func (f fakeOrgVariableReader) ListByOrganization(_ context.Context, organizatio
 	return f.vars, nil
 }
 
+// fakeOrgVariableReplacer is a canned OrganizationVariableReplacer for
+// httpapi tests. The zero value returns a nil slice and no error, which is
+// all the unrelated-endpoint suites need; the variables write tests set
+// vars/err and read got back to prove the handler forwards the
+// {org_id} path parameter and the principal/correlation fields to the
+// store layer unchanged. The replacer mirrors fakeLimitsUpdater in shape.
+type fakeOrgVariableReplacer struct {
+	vars []store.OrganizationVariable
+	err  error
+	got  *store.ReplaceOrganizationVariablesInput
+}
+
+func (f fakeOrgVariableReplacer) Replace(_ context.Context, in store.ReplaceOrganizationVariablesInput) ([]store.OrganizationVariable, error) {
+	if f.got != nil {
+		*f.got = in
+	}
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.vars, nil
+}
+
 // listOrgVariablesHandlerFor builds an http.Handler that points at the GET
 // /v1/organizations/{org_id}/variables route, wired through the same
 // NewHandler the production binary uses. id and authErr drive the fake
@@ -61,7 +83,7 @@ func listOrgVariablesHandlerFor(id auth.Identity, authErr error, reader Organiza
 	return NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, a, policy.NewEngine(),
 		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
 		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
-		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{}, reader,
+		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{}, reader, fakeOrgVariableReplacer{},
 		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
 		nil)
 }
@@ -364,7 +386,7 @@ func TestListOrgVariablesMissingReaderIsTypedInternalError(t *testing.T) {
 	handler := NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, a, policy.NewEngine(),
 		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
 		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
-		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{}, nil,
+		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{}, nil, fakeOrgVariableReplacer{},
 		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
 		nil)
 	rec := getOrgVariables(handler, orgID, "a-valid-session-token")
@@ -383,7 +405,7 @@ func TestListOrgVariablesRouteIsRegistered(t *testing.T) {
 	handler := NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, a, policy.NewEngine(),
 		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
 		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
-		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{}, fakeOrgVariableReader{},
+		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{}, fakeOrgVariableReader{}, fakeOrgVariableReplacer{},
 		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
 		nil)
 

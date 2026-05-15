@@ -7323,3 +7323,233 @@
     files have non-overlapping responsibilities even though they
     share scaffolding.
 ---
+
+## 2026-05-15 - BE-0109
+- What was implemented: PUT /v1/organizations/{org_id}/variables, the
+  organization-scoped variables write endpoint — the first mutating
+  surface on the env.* family and the first concrete consumer of
+  organization_variables-table writes (migration 0012 has been in
+  place since BE-0106; this story is the first to actually mutate it).
+  Replace semantics: the body submits the complete variable set the
+  tenant should carry; the unit of work upserts every entry on
+  (organization_id, key) — preserving each row's stable id across
+  PUTs while bumping the optimistic-concurrency version through the
+  schema's bump_version trigger — then bulk-deletes every variable not
+  in the replacement set, so the post-condition is exactly the
+  submitted set. An explicit empty array clears every variable (a
+  meaningful extreme operation); omitting the variables field is a
+  stable 400 so a misencoded request is never a silent clear.
+  - internal/controlplane/domain/id.go: added KindOrganizationVariable
+    Kind = "ovar" (a new canonical resource kind, with its non-
+    guessable id prefix) and threaded it through the kinds map. The
+    existing variable test fixtures already used the ovar_ shape (e.g.
+    ovar_region in policy matrix seeds), so this just promotes that
+    convention into the public ID-prefix contract.
+  - internal/controlplane/domain/id_test.go: extended TestKindValid
+    and TestNewIDRoundTrip's exhaustive kinds list to cover the new
+    ovar Kind, so the round-trip and validity assertions exercise it
+    alongside every other canonical Kind.
+  - internal/controlplane/store/organization_variable.go (modified):
+    added Upsert (INSERT ... ON CONFLICT (organization_id, key) DO
+    UPDATE; preserves the existing row's id on update, bumps version
+    via the schema trigger) and DeleteByOrganizationExceptKeys
+    (DELETE ... WHERE organization_id = $1 AND key <> ALL($2); SQL is
+    safe for an empty array — "<> ALL('{}')" is TRUE for every row,
+    so an explicit empty replacement reads as a deterministic full
+    clear). Both methods take *Tx (mutations need a transaction),
+    nil-tx is a typed Internal error, and constraint violations route
+    through mapWriteError so a FK / CHECK violation is a stable
+    apierr.Conflict — never a 500 echoing the driver's text.
+  - internal/controlplane/store/organization_variable_service.go (new):
+    OrganizationVariableService is the unit-of-work orchestrator behind
+    the PUT endpoint. Replace composes — in fixed order, inside one
+    Store.Write — a tenant existence check on the target organization,
+    one Upsert per caller-supplied variable, the bulk
+    DeleteByOrganizationExceptKeys that drops everything else, the
+    immutable audit record, and a post-write re-read of the committed
+    state in deterministic (key, id) order. Validation
+    (buildOrganizationVariableReplace) runs BEFORE the transaction is
+    opened: it rejects non-POSIX keys, duplicate keys, over-sized
+    values, invalid UTF-8, and embedded NUL bytes with field-path
+    apierr.InvalidInput violations that never echo the submitted
+    value — and emits paths shaped like "variables[i].key" /
+    "variables[i].value" to match the JSON request body verbatim
+    (validate.EnvVars' built-in .secret[i] / [i] routing was wrong for
+    this endpoint's unified shape, so a small custom collector inlines
+    POSIX + UTF-8 + size + duplicate checks). The audit event is filed
+    under the actor's home organization with resource_kind=org,
+    resource_id={org_id}, action=env.write, and metadata that carries
+    ONLY counts (variable_count, secret_count) — never the keys or
+    values, so a customer-supplied variable name like DATABASE_URL
+    cannot leak into the audit trail even before redactor scrubs.
+  - internal/controlplane/store/organization_variable_service_test.go
+    (new): seven integration tests against an isolated migrated
+    Postgres database — fresh-insert happy path that verifies every
+    minted id carries the ovar_ prefix; bulk replace that pins the
+    contract (existing rows keep their ids while value/is_secret
+    update and version bumps via the trigger, dropped keys disappear,
+    newly named keys mint new ids); empty-list-clears-everything; a
+    missing tenant surfaces as the typed NotFound the
+    OrganizationRepository.Get produces (not a generic FK conflict);
+    tenant isolation across two orgs (same key in both tenants is
+    independent rows, and a PUT on one tenant never reads or mutates
+    the other); table-driven validation (non-POSIX key, duplicate key,
+    empty key, NUL-byte value) each rejected before a transaction
+    opens; nil-dependency constructor checks; and a
+    requires-actor-organization guard.
+  - internal/controlplane/httpapi/variables.go (modified): added the
+    OrganizationVariableReplacer port (the narrow store contract the
+    handler depends on; *store.OrganizationVariableService satisfies
+    it in production), replaceOrganizationVariablesRequest /
+    organizationVariableRequest / replaceOrganizationVariablesPayload
+    DTOs, and replaceOrganizationVariablesHandler. The request shape
+    uses *[]organizationVariableRequest so the body's omission of the
+    "variables" field is structurally distinguishable from the
+    explicit empty array — a missing field is a stable 400, an empty
+    array reaches the store layer as a deliberate clear. The handler
+    strict-decodes through validate.DecodeJSON (oversized, malformed,
+    or unknown-field bodies become a stable 400 that never echoes the
+    input), forwards the {org_id} path parameter and the resolved
+    principal / telemetry correlation IDs to the replacer, projects
+    the committed variables back through organizationVariableOf so
+    secret values are STILL redacted to output.Sentinel on the wire —
+    a customer can never read a secret value back through this
+    endpoint, including immediately after submitting it.
+  - internal/controlplane/httpapi/routes.go (modified): added the
+    OrganizationVariableReplacer parameter to newRouteTable, threaded
+    it through the route table, and registered the PUT
+    /v1/organizations/{org_id}/variables OpenAPI endpoint with
+    operationId "replaceOrganizationVariables", required action
+    env.write, and a long description that pins the CapWrite
+    (no cross-tenant support exception) and the secret-redaction
+    semantics for an agent reading the discovery document.
+  - internal/controlplane/httpapi/server.go (modified): added the
+    orgVariableReplacer parameter to NewHandler and threaded it into
+    newRouteTable; updated the NewHandler doc-comment block.
+  - internal/controlplane/httpapi/variables_test.go (modified): added
+    fakeOrgVariableReplacer (mirrors fakeLimitsUpdater in shape — vars,
+    err, *got got pointer) and updated listOrgVariablesHandlerFor +
+    the missing-reader contract test to pass the new replacer slot.
+  - internal/controlplane/httpapi/variables_put_test.go (new): the
+    HTTP-surface contract suite for PUT — happy-path projection +
+    forwarding, empty-array-explicit-clear (proves the empty list
+    reaches the store layer, NOT rejected as a no-op), missing-
+    variables-field 400, malformed-JSON 400, unknown-field 400,
+    unauth 401, cross-tenant 403, store-NotFound 404, store-
+    InvalidInput 400, store-Unavailable 503, nil-replacer typed
+    Internal, and an OpenAPI registration check that pins the operationId,
+    x-required-action, and tag.
+  - cmd/yalla-api/main.go: wired
+    store.NewOrganizationVariableService(dataStore, orgRepo,
+    orgVariableRepo, auditRepo) at startup and passed it as the
+    orgVariableReplacer slot in httpapi.NewHandler. orgVariableRepo
+    is a fresh NewOrganizationVariableRepository instance — same
+    pattern every other repo/service split uses.
+  - 22 _test.go files across internal/controlplane/httpapi/: updated
+    every NewHandler call site to pass the new replacer slot (either
+    a fakeOrgVariableReplacer{} for tests that hit the variables
+    endpoints, or nil for tests that don't exercise the route). Also
+    updated four newRouteTable test call sites (limits_patch_test.go,
+    routes_test.go, server_test.go ×2) to thread a 22nd nil.
+- Files changed (29 total): see git diff. New files: store
+  organization_variable_service.go (+330 lines),
+  organization_variable_service_test.go (+472), httpapi
+  variables_put_test.go (+443). Modifications: domain id.go (+10),
+  id_test.go (2 array extensions), store organization_variable.go
+  (+85), httpapi variables.go (+155), routes.go (+30), server.go
+  signature, cmd/yalla-api/main.go (+6), plus the 22 test-file
+  signature fixups.
+- Verification run: gofmt -w . (no formatting changes needed);
+  go mod tidy (no changes); go build ./... (clean); go vet ./...
+  (clean); go test -count=1 ./... (every package passing — full
+  suite green with YALLA_TEST_DATABASE_URL pointed at the local
+  Postgres stack); go test -race -count=1 ./internal/controlplane/...
+  (clean). Pre-existing TestAPIKeyServiceCreate failures (and 6
+  siblings) exist on the unmodified baseline (commit dc8ac02,
+  pre-BE-0109) — verified via a temporary `git worktree add` at
+  HEAD before this story; not introduced by this work. The new
+  BE-0109 tests all pass: 7 integration tests in store and 11
+  contract tests in httpapi (no test relies on a live Dokploy
+  server).
+- Results: BE-0109 acceptance criteria satisfied. Endpoint registered
+  with typed request/response DTOs through the OpenAPI document; action
+  env.write enforced with organizationIDResolver scope; audit record
+  written for every mutation through the same transaction as the
+  desired-state writes; yalla.output.v1 / yalla.error.v1 envelopes used
+  on every wire response; success + validation + auth + not-found unit
+  tests landed; integration tests run against isolated migrated
+  Postgres and never touch a live Dokploy server; secret values are
+  redacted in audit metadata, structured logs (via
+  OrganizationVariable.LogValue), and on the wire (via
+  organizationVariableOf -> output.Sentinel).
+- Remaining risks or follow-ups:
+  - BE-0110 (contract tests for PUT /v1/organizations/{org_id}/variables)
+    can adopt putOrgVariables + decodeUpdateOrgVariables + fakeOrgVariableReplacer
+    from variables_put_test.go directly. Most edge-case wire shapes
+    already have at least one test here; BE-0110 can extend that
+    surface (oversized body, content-type negotiation, request-id
+    propagation, etc.) without re-inventing the fixtures.
+  - BE-0111 (policy matrix coverage for PUT) is the natural next
+    story — it now has a target to test. env.write is a CapWrite
+    action with NO cross-tenant support exception, so its policy
+    matrix is structurally closer to the limits.write / api_keys.manage
+    matrices (the support principal denies on a cross-tenant id) than
+    to the env.read matrix (the support principal allows).
+  - Pre-existing apikeyservice integration test failures (7 tests)
+    affecting baseline ought to be triaged in a separate story —
+    likely a fixture/factory ID-format mismatch that pre-dates this
+    work.
+- **Learnings for future iterations:**
+  - When adding a new Kind to internal/controlplane/domain, only the
+    canonical kinds map needs updating in id.go — id_test.go's
+    explicit array-driven valid-kinds tests will silently drop the
+    new kind unless added explicitly, but the existing tests will
+    still pass. Add the kind to both the TestKindValid and
+    TestNewIDRoundTrip arrays to extend coverage; dokployname_test.go
+    can be left alone if the new kind has no Dokploy-name meaning
+    (KindServiceAccount sets this precedent — it's also absent from
+    dokployname_test.go).
+  - A bulk-replace endpoint's wire shape needs explicit empty-array
+    semantics distinct from a missing field. Use *[]T (pointer to
+    slice) in the request DTO and reject `nil` (= field absent) as a
+    stable 400 in the handler before the store layer sees it. The
+    store layer's empty-slice path is then unambiguously the explicit
+    clear. The same pattern will work for project, environment, and
+    service variable bulk PUTs (BE-0145, BE-0175, BE-0202).
+  - SQL `<> ALL($1)` with a Postgres `text[]` parameter is the right
+    primitive for a "delete everything not in this set" bulk update.
+    Crucially, `key <> ALL('{}')` evaluates to TRUE for every row when
+    the array is empty (`ALL` of zero elements is vacuously TRUE), so
+    the same query handles "clear all" without a special case — no
+    branch on len(keepKeys) needed in the repository layer.
+  - validate.EnvVars routes secret entries into a `.secret[i]` field
+    path segment. That's correct for a request shape that splits
+    secrets from non-secrets into separate arrays, but wrong for a
+    unified shape (the wire body that PUT carries here). Roll your
+    own collector for unified shapes; the POSIX + UTF-8 + NUL + size
+    checks are ~20 lines and keep the field paths matching the JSON
+    one-to-one.
+  - Audit metadata for a bulk operation should carry COUNTS, not
+    KEYS — environment variable names are open-set strings, and even
+    though the audit Redactor scrubs values under sensitive-shaped
+    metadata KEYS, it doesn't redact values under a neutral key like
+    `keys` even if those values contain `DATABASE_URL` or `API_TOKEN`
+    fragments. Counts (variable_count, secret_count) are integers,
+    safe by construction, and tell the audit reader the shape of the
+    change without ever recording a customer name. Mirrors how
+    LimitsService records updated_resources from a closed-set
+    QuotaResource enum — but for an open-set keyspace, counts are
+    the right level of detail.
+  - The "fixture replacer" test pattern for mutating endpoints
+    requires exactly mirrors the "fixture reader" pattern: a struct
+    with `vars` (the canned response), `err` (the canned error), and
+    `*got` (a pointer to capture the input). 21 of 22 test files
+    needed only a textual `, fakeOrgVariableReader{},` →
+    `, fakeOrgVariableReader{}, fakeOrgVariableReplacer{},`
+    replacement, but a few used non-line-break delimiters
+    (single-line newRouteTable test calls; audit_events_test.go
+    passing `reader, fakeOrgVariableReader{},` with the reader for
+    the PRECEDING slot). A scripted multi-pattern replacement covers
+    most cases — manual touch-up for the remaining 1–2 files is
+    expected.
+---

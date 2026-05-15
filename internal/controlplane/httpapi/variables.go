@@ -10,6 +10,8 @@ import (
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
 	"github.com/JuribaDev/yalla/internal/controlplane/policy"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
+	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
+	"github.com/JuribaDev/yalla/internal/controlplane/validate"
 	"github.com/JuribaDev/yalla/internal/output"
 )
 
@@ -20,6 +22,24 @@ import (
 // client error — so the handler reports it as a typed internal failure
 // rather than serving an empty or misleading list.
 var errNoOrgVariableReader = errors.New("httpapi: no organization variable reader configured")
+
+// errNoOrgVariableReplacer is returned when PUT
+// /v1/organizations/{org_id}/variables is reached without a variable
+// replacer wired into NewHandler. Like errNoOrgVariableReader it can only
+// happen through a wiring error — a programming mistake, not a client
+// error — so the handler reports it as a typed internal failure rather
+// than silently failing to persist the change.
+var errNoOrgVariableReplacer = errors.New("httpapi: no organization variable replacer configured")
+
+// errOrgVariablesBodyMissing is returned when PUT
+// /v1/organizations/{org_id}/variables decodes a body that does not name
+// the "variables" field. Because PUT replaces the tenant's entire variable
+// set, the difference between "send no field" and "send the empty array"
+// is load-bearing: an empty array is an explicit clear, while a missing
+// field is almost always a misencoded request. We surface the missing
+// field as a stable 400 so an agent can distinguish the two without
+// guessing.
+var errOrgVariablesBodyMissing = "must be supplied (use an empty array to clear every variable)"
 
 // OrganizationVariableReader is the narrow persistence port GET
 // /v1/organizations/{org_id}/variables depends on.
@@ -128,6 +148,145 @@ func listOrganizationVariablesHandler(reader OrganizationVariableReader) http.Ha
 		}
 
 		payload := listOrganizationVariablesPayload{
+			Variables: make([]organizationVariable, 0, len(vars)),
+		}
+		for _, v := range vars {
+			payload.Variables = append(payload.Variables, organizationVariableOf(v))
+		}
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), payload)
+	}
+}
+
+// OrganizationVariableReplacer is the narrow persistence port PUT
+// /v1/organizations/{org_id}/variables depends on.
+// *store.OrganizationVariableService satisfies it in production; tests
+// supply a fake. Like OrganizationVariableReader it is an interface
+// declared here so the handler stays unit-testable without a real
+// database — the concrete orchestrator (the tenant existence check, the
+// per-variable upsert, the bulk delete-by-exclusion, the audit record,
+// and the post-write re-read, all in one transaction) lives in the store
+// layer.
+type OrganizationVariableReplacer interface {
+	Replace(ctx context.Context, in store.ReplaceOrganizationVariablesInput) ([]store.OrganizationVariable, error)
+}
+
+// replaceOrganizationVariablesRequest is the decoded PUT
+// /v1/organizations/{org_id}/variables request body: the complete set of
+// variables the caller asks to install in one transaction. Variables is a
+// pointer to a slice so the body's omission of the field is structurally
+// distinguishable from an explicit empty array — PUT replaces the entire
+// set, so an explicit empty array means "clear every variable" (a
+// meaningful extreme operation) while a missing field is almost always a
+// misencoded request and is rejected as a stable 400.
+type replaceOrganizationVariablesRequest struct {
+	Variables *[]organizationVariableRequest `json:"variables"`
+}
+
+// organizationVariableRequest is one entry in a
+// replaceOrganizationVariablesRequest body: the (key, value, is_secret)
+// triple the caller asks to persist. Each field is validated in the
+// store-layer unit of work before any database write — an invalid request
+// never opens a transaction — and the handler does no per-field
+// validation beyond strict-decoding the body (oversized, malformed, or
+// unknown-field bodies become a typed 400 that never echoes the input).
+// is_secret defaults to false when omitted, mirroring the schema default.
+type organizationVariableRequest struct {
+	Key      string `json:"key"`
+	Value    string `json:"value"`
+	IsSecret bool   `json:"is_secret,omitempty"`
+}
+
+// replaceOrganizationVariablesPayload is the data block of the PUT
+// /v1/organizations/{org_id}/variables success envelope: the
+// organization's variables after the replace, in the same stable wire
+// shape GET /v1/organizations/{org_id}/variables returns. The endpoint
+// always re-reads the variables in the same transaction that committed
+// the upsert + delete, so the body always reflects the state that just
+// persisted; secret values are still redacted to the sentinel on the
+// wire, so PUT cannot leak a secret value the customer just submitted.
+type replaceOrganizationVariablesPayload struct {
+	Variables []organizationVariable `json:"variables"`
+}
+
+// replaceOrganizationVariablesHandler builds the PUT
+// /v1/organizations/{org_id}/variables handler. It decodes and delegates:
+// the request body is strictly decoded (oversized, malformed, or
+// unknown-field bodies become a typed 400 that never echoes the input),
+// then the replace-variables unit of work — verify the organization,
+// upsert each variable, delete every variable not in the replacement
+// set, append the audit record, re-read the committed variables, all in
+// one transaction — runs in the store layer through the
+// OrganizationVariableReplacer port.
+//
+// RequireAuth gates the route on action env.write before the handler
+// runs — authorized through organizationIDResolver against the
+// organization the path names — and attaches the resolved principal, so
+// a request that reaches the handler has already cleared the tenant
+// boundary: a cross-tenant {org_id} was rejected as a 403 by the policy
+// engine, never reaching this code. A request that arrives here with no
+// principal is therefore a wiring error and is reported as a typed
+// internal error. The principal and the request correlation identifiers
+// are passed to the replacer so the audit record names the actor; a
+// validation failure (missing variables field, non-POSIX key, duplicate
+// key, oversize value, invalid UTF-8, embedded NUL), a not-found
+// {org_id}, and a datastore outage each surface as their own typed
+// status, never disguised as one another.
+//
+// env.write is a CapWrite action: a viewer or support principal in the
+// tenant cannot replace variables, only an owner, admin, developer, or
+// CI principal can — and unlike CapRead actions there is no cross-tenant
+// support exception. The handler relies on the policy engine for that
+// decision; it never re-checks the role itself.
+func replaceOrganizationVariablesHandler(replacer OrganizationVariableReplacer) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if replacer == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoOrgVariableReplacer))
+			return
+		}
+
+		var req replaceOrganizationVariablesRequest
+		if err := validate.DecodeJSON(r.Body, &req, 0); err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		if req.Variables == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "variables",
+				Reason: errOrgVariablesBodyMissing,
+			}))
+			return
+		}
+
+		items := make([]store.OrganizationVariableReplace, 0, len(*req.Variables))
+		for _, item := range *req.Variables {
+			items = append(items, store.OrganizationVariableReplace{
+				Key:      item.Key,
+				Value:    item.Value,
+				IsSecret: item.IsSecret,
+			})
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		vars, err := replacer.Replace(r.Context(), store.ReplaceOrganizationVariablesInput{
+			OrganizationID: r.PathValue("org_id"),
+			Variables:      items,
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		payload := replaceOrganizationVariablesPayload{
 			Variables: make([]organizationVariable, 0, len(vars)),
 		}
 		for _, v := range vars {
