@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Inverse-lifecycle endpoints (restore vs schedule-delete) reuse the same Repository+Service pattern: the repository is an SQL-idempotent UPDATE returning the row (with optional version WHERE — NotFound on no-rows + nil ifMatch, classifyProjectConcurrencyMiss on no-rows + non-nil), and the Service does the lifecycle-state precondition check inside the same Store.Write transaction. For restore: pre-check current.DeletionScheduledAt != nil (else apierr.Conflict "project is not scheduled for deletion"); for schedule-delete: pre-check ==nil (else "deletion is already scheduled"). The pre-check is the customer's truth-finding step — the repository MUST stay SQL-idempotent so workers/admin jobs can retry without surfacing a misleading Conflict. Audit metadata captures the prior state (for restore, current.DeletionScheduledAt read BEFORE the UPDATE; for schedule-delete, the new stamp from the persisted row) so the trail documents what the resource looked like before/after the mutation.
 - Backend code lives under internal/controlplane/<pkg>; CLI stays under internal/cli. Keep HTTP handlers thin.
 - Shared primitives are reused, not reinvented: typed errors come from internal/errors (yerr.New/Newf, CodeConfig, etc.); the redaction sentinel and Redactor come from internal/output.
 - API success envelopes use yalla.output.v1; API errors use yalla.error.v1. ALL HTTP responses render through internal/controlplane/apienvelope (WriteData/WriteError/WriteErrorStatus); envelope structs are unexported so handlers cannot hand-roll JSON. HTTP status derives from the error Code via apienvelope.StatusForCode (WriteErrorStatus is the explicit-override escape hatch, e.g. /readyz 503). Error envelopes carry documentation_url; apienvelope is also a regex-based redaction backstop for message/hint/warnings.
@@ -9714,4 +9715,214 @@
     deletion_scheduled_at field. Forgetting the latter would let a
     handler that silently dropped the scheduled stamp pass the test.
 
+---
+
+## 2026-05-15 - BE-0133
+- What was implemented: POST /v1/projects/{project_id}/restore — the
+  inverse of the soft-delete DELETE /v1/projects/{project_id} endpoint.
+  It clears deletion_scheduled_at on a project that was previously
+  scheduled for deletion but has not yet been destructively torn down by
+  the worker (worker is a later story). The route is gated by RequireAuth
+  on action project.restore through projectIDResolver — a CapWrite action
+  authorized against the (principal home organization, {project_id})
+  resource.
+  - internal/controlplane/store/projectservice.go: added the
+    projectRestoreAction constant, the RestoreProjectInput struct (mirrors
+    DeleteProjectInput — OrganizationID, ProjectID, IfMatchVersion,
+    Actor*, Request/Correlation IDs), and ProjectService.Restore which
+    composes the restore unit of work inside one Store.Write transaction:
+    Get the current row, optional If-Match precheck (stale -> typed
+    ConflictStale carrying current_version), reject when
+    DeletionScheduledAt is nil (typed Conflict "project is not scheduled
+    for deletion" — the inverse of the already-scheduled check on
+    ScheduleDeletion), capture the prior stamp into the audit metadata
+    BEFORE the clear, call repo.Restore, append the project.restore audit
+    record. The audit record is filed under the actor's home org with
+    metadata.deletion_scheduled_at recording the prior stamp — a
+    non-secret timestamp the audit trail captures verbatim so the trail
+    documents what state the resource was in BEFORE the restore.
+  - internal/controlplane/store/project.go: added
+    ProjectRepository.Restore — UPDATE projects SET
+    deletion_scheduled_at = NULL WHERE organization_id = $1 AND id = $2
+    [AND version = $3] RETURNING <projectColumns>. The UPDATE is
+    unconditional in its predicate apart from the optional version check;
+    the not-scheduled Conflict is the service's responsibility (the
+    repository must remain SQL-idempotent for non-customer callers —
+    workers, admin jobs — that need a stable retry surface). NotFound on
+    no-rows + nil ifMatchVersion; classifyProjectConcurrencyMiss
+    disambiguates a NotFound vs ConflictStale when a version precondition
+    fired.
+  - internal/controlplane/store/project_restore_test.go (new): 11
+    integration tests against an isolated migrated Postgres database —
+    repository happy path (stamp cleared, version bumped by trigger),
+    repository tenant isolation (orgA cannot restore orgB's project; orgB
+    row stays soft-deleted), repository nil-tx guard, service happy path
+    (project.restore audit row filed with metadata.deletion_scheduled_at
+    capturing the prior stamp; version bumped past the schedule's
+    bump), service not-scheduled rolls back (no audit row leaks from the
+    rejected restore), service unknown id -> NotFound, service
+    cross-tenant -> NotFound, service stale If-Match -> ConflictStale
+    with Details[current_version], service blank
+    organization_id/project_id -> InvalidInput (table-driven), service
+    blank ActorOrgID -> Internal. All 11 pass against postgres:16 via
+    YALLA_TEST_DATABASE_URL.
+  - internal/controlplane/httpapi/projects.go: added the
+    errNoProjectRestorer typed-internal sentinel, the ProjectRestorer
+    narrow persistence port, the restoreProjectPayload wire shape, and
+    restoreProjectHandler — the thin handler parses the optional If-Match
+    header via parseIfMatchVersion, builds the store.RestoreProjectInput
+    from the principal's home org (never the body — there is no body),
+    forwards to the restorer, mirrors the row's authoritative version into
+    the ETag response header on success, and returns 200 OK rendering the
+    live row in the stable yalla.output.v1 envelope. The handler is the
+    inverse of deleteProjectHandler but returns 200 (immediate restore)
+    rather than 202 (scheduled teardown).
+  - internal/controlplane/httpapi/routes.go: registered the new apiRoute
+    with RequiresAuth=true,
+    RequiredAction=policy.ActionProjectRestore (CapWrite),
+    resolver=projectIDResolver (so a cross-tenant {project_id} is a 403
+    BEFORE the handler runs because projectIDResolver scopes the
+    decision to the principal's home org), Tags=[tagProjects], and an
+    OpenAPI Description spelling out the lifecycle inverse contract.
+    project.restore was already in the policy action catalog at CapWrite
+    (catalog.go:101) from a prior story, so no policy change was needed.
+    Added projectRestorer ProjectRestorer to newRouteTable's signature.
+  - internal/controlplane/httpapi/server.go: NewHandler signature gained
+    projectRestorer ProjectRestorer (one new positional arg threaded into
+    newRouteTable).
+  - cmd/yalla-api/main.go: passes projectService at the projectRestorer
+    position (the same *store.ProjectService now satisfies four ports:
+    ProjectCreator, ProjectUpdater, ProjectDeleter, ProjectRestorer).
+  - internal/controlplane/httpapi/projects_restore_test.go (new): 10
+    contract tests in package httpapi exercising the real NewHandler +
+    real policy engine (fake Authenticator + fake ProjectRestorer
+    only) — happy path forwarding (org_id + project_id reach the
+    restorer; row rendered without DeletionScheduledAt; ETag header
+    mirrors version; 200 OK), If-Match forwarding (strong-tag parsed and
+    forwarded as the optimistic-concurrency precondition), malformed
+    If-Match -> 400 (weak/wildcard rejected before restorer runs), store
+    NotFound -> 404, store Conflict (not scheduled) -> 409, store
+    ConflictStale -> 409, missing-restorer -> 500 (typed internal),
+    unauthenticated -> 401 (RequireAuth runs before restorer), OpenAPI
+    route-table contract (operation_id, required_action, requires_auth).
+    Also added the fakeProjectRestorer type used by every test that wires
+    NewHandler.
+  - Mechanical churn: 32 test files received a positional
+    fakeProjectRestorer{} (or one more nil for newRouteTable). A python
+    regex script applied four patterns: `fakeProjectUpdater{}, deleter,
+    nil)` (named projectDeleter variable) -> insert
+    `fakeProjectRestorer{},`; `fakeProjectUpdater{}, fakeProjectDeleter{})`
+    (newRouteTable trailing) -> append `, fakeProjectRestorer{})`;
+    `fakeProjectUpdater{}, fakeProjectDeleter{}, nil)` (NewHandler
+    trailing nil logger) -> insert; `fakeProjectUpdater{},
+    fakeProjectDeleter{}, logger)` -> insert. A second pass caught
+    projects_update_test.go's `fakeProjectCreator{}, updater,
+    fakeProjectDeleter{}, nil)` shape. A third pass scanned every
+    newRouteTable call for the trailing 28-nil signature (the
+    routes-table inspection helpers) and appended one more `, nil`. All
+    call sites compiled cleanly afterward.
+- Files changed:
+  - internal/controlplane/store/projectservice.go (+ Restore method, +
+    RestoreProjectInput, + projectRestoreAction const)
+  - internal/controlplane/store/project.go (+ ProjectRepository.Restore)
+  - internal/controlplane/store/project_restore_test.go (new)
+  - internal/controlplane/httpapi/projects.go (+ ProjectRestorer port, +
+    restoreProjectHandler, + errNoProjectRestorer)
+  - internal/controlplane/httpapi/projects_restore_test.go (new, also
+    defines fakeProjectRestorer)
+  - internal/controlplane/httpapi/routes.go (+ POST
+    /v1/projects/{project_id}/restore route block, + projectRestorer
+    parameter)
+  - internal/controlplane/httpapi/server.go (NewHandler signature gained
+    projectRestorer)
+  - cmd/yalla-api/main.go (passes projectService at the projectRestorer
+    position)
+  - 32 *_test.go files in internal/controlplane/httpapi: positional
+    fakeProjectRestorer{} or nil added to NewHandler/newRouteTable call
+    sites.
+- Verification run:
+  - gofmt -w . — clean.
+  - go mod tidy — clean.
+  - go vet ./... — pass.
+  - go build ./... — pass.
+  - go test ./... (no DB) — pass.
+  - YALLA_TEST_DATABASE_URL=postgres://yalla:yalla@127.0.0.1:5432/yalla
+    go test ./internal/controlplane/store/... -run
+    TestProjectRepositoryRestore\|TestProjectServiceRestore — 11/11
+    pass.
+  - go test -race ./internal/controlplane/httpapi/...
+    ./internal/controlplane/store/ — pass.
+- Results:
+  - Code compiled cleanly after every churn pass (zero handcrafted edits
+    to the 32 mechanical call sites). All in-package httpapi tests pass.
+    All store integration tests for project restore pass against an
+    isolated migrated Postgres database.
+  - The full `go test ./... -count=1` against Postgres exposed
+    pre-existing failures in unrelated tests
+    (TestAPIKeyServiceCreate, TestOrganizationVariableServicePatch*) —
+    confirmed pre-existing by `git stash --include-untracked && go test
+    -count=1`, NOT caused by this story.
+- Remaining risks / follow-ups:
+  - BE-0134 (contract tests for POST /v1/projects/{project_id}/restore)
+    is the next deferred priority-2 story; this iteration's
+    projects_restore_test.go already provides 10 contract tests (success
+    envelope, error envelopes, request_id propagation, OpenAPI
+    operation registration, unauthenticated, malformed/stale If-Match,
+    not-found, not-scheduled conflict, missing-restorer 500), so
+    BE-0134 is materially complete and only needs PRD passes:true (kept
+    false this iteration to avoid scope creep).
+  - BE-0135 (policy matrix coverage) is the next priority-1 story; it
+    now has the endpoint to test against. Pattern: copy
+    projects_delete_policy_test.go and substitute project.restore for
+    project.delete, swap the HTTP verb/path, and re-confirm that an
+    inverse-conflict (not-scheduled) is the correct fixture instead of
+    already-scheduled. Drives REAL NewHandler + REAL policy.NewEngine()
+    + fake Authenticator + fake ProjectRestorer — the same pattern
+    BE-0132 used.
+  - The destructive teardown of soft-deleted projects (the ON DELETE
+    CASCADE worker that watches deletion_scheduled_at) is still a
+    future story, so a restore today still picks up the project's
+    environments, services, and audit trail intact — exactly what the
+    contract documents.
+- **Learnings for future iterations:**
+  - Inverse lifecycle endpoints (restore vs schedule-delete) reuse the
+    same Repository + Service pattern: the repository is an
+    SQL-idempotent UPDATE returning the row (with optional version
+    WHERE), and the Service does the lifecycle-state precondition check
+    inside the same transaction. For restore: pre-check
+    DeletionScheduledAt != nil; for schedule-delete: pre-check
+    DeletionScheduledAt == nil. The pre-check is the customer's
+    truth-finding step — the repository MUST stay SQL-idempotent so
+    workers/admin jobs can retry without surfacing a misleading
+    Conflict.
+  - When adding a new narrow port that participates in NewHandler's
+    arg list, the mechanical churn across NewHandler call sites
+    dominates effort. Predictable patterns to script: (a) `<lastArg>,
+    nil)` where lastArg is the prior new port, (b) `<lastArg>, logger)`
+    for the wired server, (c) `<lastArg>)` for newRouteTable callers
+    that omit the logger, (d) `<lastArg>, fakeProjectDeleter{}, nil)` for
+    cases where the new port sits between two existing positional
+    fakes. A second pass for named-variable arguments (e.g. `updater,
+    fakeProjectDeleter{}, nil)`) catches edge cases like the
+    projects_update_test helper. The newRouteTable callers with 28 nils
+    can be located by counting commas in the call's arg list.
+  - For an endpoint whose success status is 200 (the default), the
+    OpenAPI route-table contract assertion can match either
+    SuccessStatus == 0 (omitted, defaults to 200 in the document) OR
+    SuccessStatus == http.StatusOK — only a non-default success status
+    (e.g. 201 for Create, 202 for ScheduleDeletion) is asserted
+    verbatim. The route description should still spell out 200 OK for
+    discoverability.
+  - A POST endpoint with an EMPTY request body (like /restore) needs no
+    validate.DecodeJSON call — the strict-decode + body-buffering path
+    is the cost of having a request body. The handler should still
+    forward request correlation IDs and read PathValue from the
+    framework router rather than parse the URL.
+  - The audit metadata for an inverse-lifecycle endpoint should
+    capture the prior state — for restore, that is the cleared
+    deletion_scheduled_at stamp read from current.DeletionScheduledAt
+    BEFORE the UPDATE — so the audit trail documents what the resource
+    looked like before the mutation. Mirroring the schedule-delete's
+    metadata.deletion_scheduled_at (which records the new stamp) keeps
+    the audit shape symmetric.
 ---

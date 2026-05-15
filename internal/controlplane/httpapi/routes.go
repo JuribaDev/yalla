@@ -104,12 +104,13 @@ type versionPayload struct {
 // DELETE /v1/organizations/{org_id}/api-keys/{key_id}, and apiKeyRotator
 // backs POST /v1/organizations/{org_id}/api-keys/{key_id}/rotate.
 // projectCreator backs POST /v1/projects, projectUpdater backs PATCH
-// /v1/projects/{project_id}, and projectDeleter backs DELETE
-// /v1/projects/{project_id}. Any may be nil for tests and tooling that
-// only inspect the route table's metadata; a request that actually
+// /v1/projects/{project_id}, projectDeleter backs DELETE
+// /v1/projects/{project_id}, and projectRestorer backs POST
+// /v1/projects/{project_id}/restore. Any may be nil for tests and tooling
+// that only inspect the route table's metadata; a request that actually
 // reaches a handler with a nil dependency is reported as a typed internal
 // error rather than a misleading empty list or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter) []apiRoute {
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -344,6 +345,34 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// as a 404 at the persistence boundary.
 			resolver: projectIDResolver,
 			handler:  deleteProjectHandler(projectDeleter),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodPost,
+				Path:           "/v1/projects/{project_id}/restore",
+				OperationID:    "restoreProject",
+				Summary:        "Restore a soft-deleted project",
+				Description:    "Restores the project named by the {project_id} path parameter that was previously scheduled for deletion by DELETE /v1/projects/{project_id} but has not yet been destructively torn down by the worker. The restore is the inverse of the soft-delete: it clears the project's deletion_scheduled_at stamp in the source-of-truth database so the project is live again, and its environments, services, and audit trail (which the destructive teardown has not yet cascaded away) are recovered intact. Action project.restore is authorized against the (principal home organization, {project_id}) resource the path names before the handler runs: project.restore is a CapWrite action, so the gate admits the principal's organization-wide write roles (owner, admin, developer, ci) and denies viewer, denies support (CapRead-only — a support principal cannot mutate even within its home tenant), and admits a scoped grant that covers the resource (for example, a project-scoped Admin grant for THAT project) while denying a grant that names only a SIBLING project, an unrelated environment, or an unrelated service because the policy engine asks whether the grant scope contains the resource scope, never the reverse. A cross-tenant project_id reaches the persistence layer with the principal's home organization id and is rejected as a deterministic 404 by the tenant-scoped repository query, never restoring another tenant's data. The optional If-Match request header carries the row's optimistic-concurrency version (a strong ETag of the form \"<n>\"); a stale version is rejected as a deterministic 409 carrying the row's authoritative version under details.current_version. Restoring a project that is not currently scheduled for deletion is a stable 409: the caller's view of the resource lifecycle is stale, so a silent success would write a misleading audit record. The clear-stamp write and an immutable audit record naming the authenticated principal are committed in one transaction: a restore can never be persisted without its audit trail. The request body is empty. The response carries no credential material and mirrors the row's new version into the ETag response header so the caller can echo it back as the next If-Match precondition.",
+				Tags:           []string{tagProjects},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionProjectRestore),
+				PathParams: []openapi.PathParam{{
+					Name:        "project_id",
+					Description: "The id of the project to restore from soft-deletion.",
+				}},
+				SuccessDescription: "The project was restored from soft-deletion.",
+			},
+			// projectIDResolver authorizes action project.restore against the
+			// (principal home organization, {project_id}) resource the
+			// path names, not merely the principal's home organization,
+			// so a scoped grant that names THIS project authorizes the
+			// restore while a grant that names only a SIBLING project
+			// does not. The organization id is taken from the principal's
+			// home org (never the caller), so a cross-tenant project_id
+			// still hits the tenant-scoped repository query and surfaces
+			// as a 404 at the persistence boundary.
+			resolver: projectIDResolver,
+			handler:  restoreProjectHandler(projectRestorer),
 		},
 		{
 			endpoint: openapi.Endpoint{

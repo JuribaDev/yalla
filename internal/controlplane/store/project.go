@@ -389,3 +389,57 @@ func (r *ProjectRepository) ScheduleDeletion(ctx context.Context, tx *Tx, organi
 	}
 	return updated, nil
 }
+
+// Restore clears deletion_scheduled_at on the project identified by
+// (organizationID, projectID) inside tx and returns the persisted row,
+// including the trigger-refreshed updated_at timestamp and bumped version.
+// It requires a *Tx — not a bare Querier — so a project can never be
+// restored outside the transaction that also carries its audit record. The
+// query is tenant scoped by organization_id first, so a projectID that
+// belongs to another organization simply does not match and is reported as
+// NotFound — a cross-tenant id can never restore another organization's
+// project.
+//
+// The UPDATE is unconditional in its predicate apart from the optional
+// version check: restoring a project that was never scheduled for deletion
+// is a conflict the ProjectService detects with a prior read inside the
+// same transaction, not a not-found this repository can distinguish (the
+// repository must remain SQL-idempotent for non-customer callers —
+// workers, admin jobs — that need a stable retry surface).
+//
+// ifMatchVersion enforces optimistic concurrency identically to Update — a
+// nil pointer disables the check, a non-nil pointer adds a WHERE clause on
+// the current version, and a stale view is reported as a typed
+// apierr.ConflictStale carrying the row's authoritative version.
+func (r *ProjectRepository) Restore(ctx context.Context, tx *Tx, organizationID, projectID string, ifMatchVersion *int64) (Project, error) {
+	if tx == nil {
+		return Project{}, apierr.Internal(errors.New("store: ProjectRepository.Restore called with a nil transaction"))
+	}
+	var row pgx.Row
+	if ifMatchVersion == nil {
+		row = tx.QueryRow(ctx,
+			`UPDATE projects
+			    SET deletion_scheduled_at = NULL
+			  WHERE organization_id = $1 AND id = $2
+			 RETURNING `+projectColumns,
+			organizationID, projectID)
+	} else {
+		row = tx.QueryRow(ctx,
+			`UPDATE projects
+			    SET deletion_scheduled_at = NULL
+			  WHERE organization_id = $1 AND id = $2 AND version = $3
+			 RETURNING `+projectColumns,
+			organizationID, projectID, *ifMatchVersion)
+	}
+	updated, err := scanProject(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if ifMatchVersion == nil {
+			return Project{}, apierr.NotFound("project", projectID)
+		}
+		return Project{}, classifyProjectConcurrencyMiss(ctx, r, tx, organizationID, projectID)
+	}
+	if err != nil {
+		return Project{}, apierr.StoreUnavailable(err)
+	}
+	return updated, nil
+}

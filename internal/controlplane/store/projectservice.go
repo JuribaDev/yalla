@@ -51,6 +51,7 @@ const (
 	projectCreateAction  = "project.create"
 	projectUpdateAction  = "project.update"
 	projectDeleteAction  = "project.delete"
+	projectRestoreAction = "project.restore"
 	projectProvisionJob  = "project.provision"
 	projectQuotaResource = "projects"
 	// projectDisplayNameMaxLen bounds a human-authored project display name,
@@ -124,6 +125,28 @@ type UpdateProjectInput struct {
 // IfMatchVersion enforces optimistic concurrency for scheduling deletion,
 // with the same semantics as on UpdateProjectInput.
 type DeleteProjectInput struct {
+	OrganizationID string
+	ProjectID      string
+	IfMatchVersion *int64
+	ActorID        string
+	ActorKind      string
+	ActorOrgID     string
+	RequestID      string
+	CorrelationID  string
+}
+
+// RestoreProjectInput is the input to ProjectService.Restore.
+// OrganizationID identifies the tenant the project belongs to; ProjectID
+// names the project to restore from soft-deletion. The Actor* and correlation
+// fields describe the authenticated principal performing the restore and
+// are recorded verbatim on the audit event. They are plain strings so the
+// store layer takes no build dependency on the policy or telemetry packages
+// — the httpapi handler, which already holds the resolved principal and the
+// request correlation, fills them in.
+//
+// IfMatchVersion enforces optimistic concurrency for restore with the same
+// semantics as on UpdateProjectInput.
+type RestoreProjectInput struct {
 	OrganizationID string
 	ProjectID      string
 	IfMatchVersion *int64
@@ -587,4 +610,112 @@ func (svc *ProjectService) ScheduleDeletion(ctx context.Context, in DeleteProjec
 		return Project{}, txErr
 	}
 	return scheduled, nil
+}
+
+// Restore clears the deletion_scheduled_at stamp on the project named by
+// (in.OrganizationID, in.ProjectID) inside one transaction: read the current
+// row, optionally enforce the If-Match precondition, reject a project that
+// is not currently scheduled for deletion, clear the stamp, append the
+// audit event. A blank OrganizationID or ProjectID is a typed validation
+// failure raised before the transaction is opened. A {project_id} with no
+// row inside the tenant is the typed NotFound the repository produces, and
+// a project whose deletion was never scheduled rolls the whole transaction
+// back as a typed Conflict — so an audit record can never name a restore
+// that did not change the resource's state.
+//
+// Authorization for project.restore is enforced at the HTTP boundary by
+// RequireAuth against the (home organization, project_id) resource the
+// path names — the store layer never runs an in-transaction Authorize for
+// the restore path because the HTTP gate is authoritative and the
+// in-transaction Authorizer is reserved for Create (the create-time race
+// against grant changes during a quota reservation).
+//
+// Restore is the inverse of ScheduleDeletion: it clears the soft-delete
+// stamp so the project is live again. The destructive teardown the
+// scheduled deletion would have caused has not yet run — it is a later
+// worker story that watches deletion_scheduled_at — so restoring before
+// teardown returns the project to live state with its environments,
+// services, and audit trail intact.
+func (svc *ProjectService) Restore(ctx context.Context, in RestoreProjectInput) (Project, error) {
+	organizationID := strings.TrimSpace(in.OrganizationID)
+	if organizationID == "" {
+		return Project{}, apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "organization_id",
+			Reason: "must not be blank",
+		})
+	}
+	projectID := strings.TrimSpace(in.ProjectID)
+	if projectID == "" {
+		return Project{}, apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "project_id",
+			Reason: "must not be blank",
+		})
+	}
+
+	// The audit record is filed under the actor's home organization — the
+	// tenant the principal authenticated into — while its resource id names
+	// the project that was restored. A missing actor organization is a
+	// wiring error (an authenticated request always carries one), not
+	// client input, so it is reported as Internal rather than a validation
+	// failure.
+	actorOrgID := strings.TrimSpace(in.ActorOrgID)
+	if actorOrgID == "" {
+		return Project{}, apierr.Internal(errors.New("store: ProjectService.Restore requires an actor organization for the audit record"))
+	}
+
+	event := AuditEvent{
+		OrganizationID: actorOrgID,
+		ActorID:        strings.TrimSpace(in.ActorID),
+		ActorKind:      strings.TrimSpace(in.ActorKind),
+		Action:         projectRestoreAction,
+		ResourceKind:   string(domain.KindProject),
+		ResourceID:     projectID,
+		Decision:       AuditDecisionAllowed,
+		Reason:         "authorization granted for project.restore",
+		RequestID:      strings.TrimSpace(in.RequestID),
+		CorrelationID:  strings.TrimSpace(in.CorrelationID),
+	}
+
+	var restored Project
+	txErr := svc.store.Write(ctx, func(ctx context.Context, tx *Tx) error {
+		current, getErr := svc.repo.Get(ctx, tx, organizationID, projectID)
+		if getErr != nil {
+			return getErr
+		}
+		// The version pre-check surfaces a stale If-Match BEFORE the
+		// not-scheduled check, so the caller learns "your view of the
+		// version is stale" instead of a not-scheduled message that
+		// might race with a concurrent restore they did not see.
+		if in.IfMatchVersion != nil && current.Version != *in.IfMatchVersion {
+			return apierr.ConflictStale(current.Version)
+		}
+		if current.DeletionScheduledAt == nil {
+			// Restoring a project that was never scheduled for deletion
+			// changes nothing: the caller's view of the resource
+			// lifecycle is stale, so it is a typed Conflict, not a silent
+			// success that would write a misleading audit record.
+			return apierr.Conflict("project is not scheduled for deletion")
+		}
+		// Record the deletion_scheduled_at the restore cleared as audit
+		// context — a non-secret timestamp — so the trail captures what
+		// state the resource was in BEFORE the restore. It is captured
+		// from the current row, not the input, so a caller cannot inject
+		// arbitrary metadata through the audit field.
+		event.Metadata = map[string]string{
+			"deletion_scheduled_at": current.DeletionScheduledAt.UTC().Format(time.RFC3339Nano),
+		}
+		row, updErr := svc.repo.Restore(ctx, tx, organizationID, projectID, in.IfMatchVersion)
+		if updErr != nil {
+			return updErr
+		}
+		if _, audErr := svc.audit.Append(ctx, tx, event); audErr != nil {
+			return audErr
+		}
+		restored = row
+		return nil
+	})
+	if txErr != nil {
+		return Project{}, txErr
+	}
+	return restored, nil
 }

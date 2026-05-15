@@ -45,6 +45,14 @@ var errNoProjectUpdater = errors.New("httpapi: no project updater configured")
 // teardown.
 var errNoProjectDeleter = errors.New("httpapi: no project deleter configured")
 
+// errNoProjectRestorer is returned when POST /v1/projects/{project_id}/restore
+// is reached without a project restorer wired into NewHandler. Like
+// errNoProjectDeleter it can only happen through a wiring error — a
+// programming mistake, not a client error — so the handler reports it as a
+// typed internal failure rather than silently failing to clear the
+// soft-delete stamp.
+var errNoProjectRestorer = errors.New("httpapi: no project restorer configured")
+
 // ProjectReader is the narrow persistence port GET /v1/projects and GET
 // /v1/projects/{project_id} depend on. *store.ProjectReader satisfies it in
 // production; tests supply a fake. Keeping the dependency an interface keeps
@@ -578,6 +586,103 @@ func deleteProjectHandler(deleter ProjectDeleter) http.HandlerFunc {
 
 		writeOrganizationETag(w, project.Version)
 		apienvelope.WriteData(w, http.StatusAccepted, requestID(r), deleteProjectPayload{
+			Project: projectResourceOf(project),
+		})
+	}
+}
+
+// ProjectRestorer is the narrow persistence port POST
+// /v1/projects/{project_id}/restore depends on. *store.ProjectService
+// satisfies it in production; tests supply a fake. Like ProjectDeleter it
+// is an interface declared here so the handler stays unit-testable without
+// a real database — the concrete orchestrator (the deletion_scheduled_at
+// clear and the immutable audit record committed in one transaction)
+// lives in the store layer.
+type ProjectRestorer interface {
+	Restore(ctx context.Context, in store.RestoreProjectInput) (store.Project, error)
+}
+
+// restoreProjectPayload is the data block of the POST
+// /v1/projects/{project_id}/restore success envelope: the project with its
+// deletion_scheduled_at stamp cleared, in the same stable wire shape the
+// other project endpoints return. It carries no credential material — a
+// projects row stores no secrets.
+type restoreProjectPayload struct {
+	Project projectResource `json:"project"`
+}
+
+// restoreProjectHandler builds the POST /v1/projects/{project_id}/restore
+// handler. It clears the project's deletion_scheduled_at stamp in the
+// source-of-truth database through the ProjectRestorer port, then renders
+// the persisted row in a stable yalla.output.v1 envelope. Restore is the
+// inverse of the DELETE /v1/projects/{project_id} soft-delete: it returns
+// a project to live state before the worker-driven destructive teardown
+// runs, so the project's environments, services, and audit trail are
+// recovered intact.
+//
+// RequireAuth gates the route on action project.restore before the handler
+// runs — authorized through projectIDResolver against the (principal home
+// organization, {project_id}) resource the path names — and attaches the
+// resolved principal, so a request that reaches the handler has already
+// cleared the policy boundary. project.restore is a CapWrite action, so
+// the gate admits the principal's organization-wide write roles (owner,
+// admin, developer, ci) and denies viewer, denies support (a support
+// principal is CapRead-only and cannot mutate even within its home
+// tenant), and admits a scoped grant that covers the (home_org,
+// project_id) resource (for example, a project-scoped Admin grant for
+// THAT project) while denying a grant that names only a SIBLING project
+// because the engine asks whether the grant scope contains the resource
+// scope, never the reverse.
+//
+// The handler never trusts a caller-supplied organization id: the store
+// call is built from principal.OrganizationID and r.PathValue("project_id"),
+// so a cross-tenant project_id reaches the tenant-scoped repository query
+// with the principal's home organization id and is reported as a
+// deterministic NotFound by the persistence layer, never another tenant's
+// row. A request that arrives with no principal is a wiring error reported
+// as a typed internal error; an If-Match parse failure, a stale If-Match
+// version, a not-found {project_id}, a project that is not scheduled for
+// deletion, and a datastore outage each surface as their own typed
+// status, never disguised as one another. On success, the handler mirrors
+// the row's authoritative version into the ETag response header so the
+// caller can echo it back as the next If-Match precondition without
+// re-reading the row.
+func restoreProjectHandler(restorer ProjectRestorer) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if restorer == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoProjectRestorer))
+			return
+		}
+
+		ifMatchVersion, ifMatchErr := parseIfMatchVersion(r)
+		if ifMatchErr != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(ifMatchErr))
+			return
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		project, err := restorer.Restore(r.Context(), store.RestoreProjectInput{
+			OrganizationID: p.OrganizationID,
+			ProjectID:      r.PathValue("project_id"),
+			IfMatchVersion: ifMatchVersion,
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		writeOrganizationETag(w, project.Version)
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), restoreProjectPayload{
 			Project: projectResourceOf(project),
 		})
 	}
