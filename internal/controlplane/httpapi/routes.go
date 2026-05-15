@@ -105,12 +105,13 @@ type versionPayload struct {
 // backs POST /v1/organizations/{org_id}/api-keys/{key_id}/rotate.
 // projectCreator backs POST /v1/projects, projectUpdater backs PATCH
 // /v1/projects/{project_id}, projectDeleter backs DELETE
-// /v1/projects/{project_id}, and projectRestorer backs POST
-// /v1/projects/{project_id}/restore. Any may be nil for tests and tooling
+// /v1/projects/{project_id}, projectRestorer backs POST
+// /v1/projects/{project_id}/restore, and projectGrants backs GET
+// /v1/projects/{project_id}/grants. Any may be nil for tests and tooling
 // that only inspect the route table's metadata; a request that actually
 // reaches a handler with a nil dependency is reported as a typed internal
 // error rather than a misleading empty list or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer) []apiRoute {
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -373,6 +374,34 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// as a 404 at the persistence boundary.
 			resolver: projectIDResolver,
 			handler:  restoreProjectHandler(projectRestorer),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodGet,
+				Path:           "/v1/projects/{project_id}/grants",
+				OperationID:    "listProjectGrants",
+				Summary:        "List project grants",
+				Description:    "Lists the scoped grants attached to the project named by the {project_id} path parameter, as the source-of-truth database stores them — each with its id, the id of the organization that owns it, the id of the project it targets, the principal it confers a role on, the role it confers, optional further (environment, service) scoping, optimistic-concurrency version, and lifecycle timestamps. Grants narrow or widen a principal's authority below the organization level: a developer with a project-scoped Viewer grant for one project cannot mutate sibling projects, and a viewer with a project-scoped Admin grant for one project can mutate it without becoming an admin of the whole organization. Action project.grants.read is authorized against the (principal home organization, {project_id}) resource the path names before the handler runs: project.grants.read is a CapRead action, so the gate admits the principal's organization-wide read roles (owner, admin, developer, viewer, ci) and admits a scoped grant that covers the resource (a project-scoped Viewer grant for THAT project, an environment- or service-scoped grant under it) while denying a grant that names only a SIBLING project, an unrelated environment, or an unrelated service because the policy engine asks whether the grant scope contains the resource scope, never the reverse. The support principal's deliberate cross-tenant read exception does NOT apply through this endpoint because the resource scope is pinned to the principal's home organization, not the path's tenant; support cross-tenant reads remain available through endpoints whose path carries an {org_id}. A cross-tenant or unknown project_id reaches the persistence layer with the principal's home organization id and is rejected as a deterministic 404 by the reader's project existence check, never disguised as an empty success. A project with no grants is a deterministic empty list. The response carries no credential material — a grants row stores only structural identifiers and a role enum.",
+				Tags:           []string{tagProjects},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionProjectGrantsRead),
+				PathParams: []openapi.PathParam{{
+					Name:        "project_id",
+					Description: "The id of the project whose grants to list.",
+				}},
+				SuccessDescription: "The grants attached to the project.",
+			},
+			// projectIDResolver authorizes action project.grants.read against
+			// the (principal home organization, {project_id}) resource the
+			// path names, not merely the principal's home organization, so a
+			// scoped grant that names THIS project authorizes the read while
+			// a grant that names only a SIBLING project does not. The
+			// organization id is taken from the principal's home org (never
+			// the caller), so a cross-tenant project_id still hits the
+			// tenant-scoped repository query and surfaces as a 404 at the
+			// persistence boundary.
+			resolver: projectIDResolver,
+			handler:  listProjectGrantsHandler(projectGrants),
 		},
 		{
 			endpoint: openapi.Endpoint{

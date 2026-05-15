@@ -59,6 +59,18 @@ const (
 	// stable, non-guessable id so a per-row PATCH / DELETE story has an
 	// addressable resource later.
 	KindOrganizationVariable Kind = "ovar"
+	// KindProjectGrant is one row in the project-scoped grants surface — a
+	// scoped grant that confers a built-in role on a principal at a specific
+	// (project, optional environment, optional service) target. Project
+	// grants narrow or widen a principal's authority below the organization
+	// level: a developer with a project-scoped Viewer grant for one project
+	// can read it, and a viewer with a project-scoped Admin grant for one
+	// project can mutate it without becoming an admin of the whole
+	// organization. Like KindOrganizationVariable, a grant is not a tenant
+	// root — its audit events are filed under the parent project's
+	// organization — but it carries its own stable, non-guessable id so
+	// PUT / DELETE stories have an addressable resource.
+	KindProjectGrant Kind = "pgrnt"
 )
 
 // kinds is the authoritative set of valid resource kinds. It backs Kind.Valid
@@ -74,6 +86,7 @@ var kinds = map[Kind]struct{}{
 	KindDeployment:           {},
 	KindJob:                  {},
 	KindOrganizationVariable: {},
+	KindProjectGrant:         {},
 }
 
 // Valid reports whether k is one of the canonical resource kinds.

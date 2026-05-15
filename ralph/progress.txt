@@ -63,6 +63,8 @@
 - The CapWrite-on-deep-resource policy matrix (BE-0129, internal/controlplane/httpapi/projects_update_policy_test.go) is the structural sibling of the CapWrite-on-nil-resolver matrix (BE-0123, projects_create) but for endpoints that use projectIDResolver (or any deep-resource resolver: future environmentIDResolver, serviceIDResolver). The role matrix is the same CapWrite split (Owner/Admin/Developer allow via ReasonAllowedByRole; Viewer/CI/Support deny via ReasonDeniedNoCapability) because the resource org id comes from the principal's home org and falls same-tenant at the engine. The cross-tenant probe stays at the engine layer (the wire cannot name another tenant — a foreign project_id surfaces as 404 from the tenant-scoped repository query, with the body never echoing the foreign org), and EVERY role — including Support — must deny via ReasonDeniedCrossTenant on a foreign-org Resource. Grant-containment for a deep-resource write authorizes against the resource (project / env / service) scope, NOT the org root, so a project-level grant naming THIS resource ALLOWS via ReasonAllowedByGrant and a project-level grant naming a SIBLING resource denies via ReasonDeniedOutOfScope (covers() one-way); a project-level VIEWER grant on the SAME resource denies via ReasonDeniedNoCapability (the grant covers the resource but does NOT confer CapWrite — this is the NEW assertion vs CapRead matrices, where a Viewer grant covers + allows); env-/service-scoped grants on the parent project deny via ReasonDeniedOutOfScope; an org-level Admin grant allows via ReasonAllowedByGrant; an org-level Viewer grant denies via ReasonDeniedNoCapability (mirror-image of the org-level Viewer ALLOW on CapRead). The engine-twin "scoped key in a foreign home org" deny is also pinned (a scoped key cannot be smuggled across tenants — the cross-tenant guard fires before the grant is even considered). Deny-path leak guards needle for the canonical row identifiers AND the caller-supplied request-body fields (display_name patch payload), because either echo is a separate regression direction. Future CapWrite-on-deep-resource endpoints (project DELETE/restore, environment update/delete, service update/delete) copy this shape verbatim.
 - Deep-resource PATCH pattern (BE-0127, PATCH /v1/projects/{project_id}, internal/controlplane/httpapi/projects.go updateProjectHandler): sub-organization PATCH endpoints reuse the deep-resource resolver (projectIDResolver) to authorize against the (principal home organization, {project_id}) resource the path names — same resolver, same RequiredAction (policy.ActionProjectUpdate), and the store call is built from principal.OrganizationID and r.PathValue("project_id"), NEVER from the request body. The request DTO exposes ONLY the partially-updatable fields (Slug *string, DisplayName *string); the strict JSON decoder rejects an unknown organization_id field as a stable 400 E_INVALID_INPUT, so a body-injected org_id can never reach the store layer. Optimistic concurrency is bolted on by reading the optional If-Match header through the existing parseIfMatchVersion (the same parser organizations PATCH/DELETE already uses, accepting `"<n>"` strong ETag and the lenient unquoted form), forwarding the *int64 to the store as IfMatchVersion, and mirroring the returned row's authoritative version back into the ETag response header on success via writeOrganizationETag — the helper is generic in body despite the historical name, so the same call shape works for projects, future environments, services, etc. The handler stays thin: read principal, parse If-Match, validate.DecodeJSON, call port, render. The orchestrator (ProjectService.Update) follows the OrganizationService.Update shape exactly: validate input BEFORE opening the tx (buildProjectUpdate + validateProjectDisplayName are split out, unit-testable without a DB, and reject an empty patch as 400 InvalidInput), then in ONE Store.Write tx Get current, version pre-check (current.Version != *IfMatchVersion -> apierr.ConflictStale(current.Version)), apply non-nil fields, repo.Update(tx, desired, IfMatchVersion), audit.Append — a denial at any step rolls every other step back, so a row mutation and its audit record commit together or not at all. The store layer files the audit event under the actor's home organization with Metadata={"updated_fields": "slug,display_name"} — stable wire field names only, never the submitted values, so the audit trail records the SHAPE of the mutation without leaking input. classifyProjectConcurrencyMiss mirrors classifyOrganizationConcurrencyMiss: on the version-checked UPDATE matching zero rows, a tenant-scoped Get inside the same tx disambiguates "row gone" (NotFound) from "row stale" (ConflictStale carrying the row's current version) — the Get itself is tenant scoped, so a cross-tenant id still surfaces as NotFound and cannot reveal another tenant's data. Pre-existing test failures gotcha: TestAPIKeyServiceCreate* and TestOrganizationVariableServicePatch* fail on HEAD due to unrelated pre-existing issues with the testutil.Factory's id/slug formats vs the production-grade ParseSlug validator; verified by stashing the BE-0127 change and reproducing the failures on the base commit. These are NOT caused by BE-0127 and are out of scope.
 
+- New customer-data resource = full vertical (BE-0136 pattern, project_grants migration 0014, store/project_grant.go, httpapi/project_grants.go): one story is allowed to land the whole vertical when the resource has no foundation yet (no migration, no repo, no port, no handler, no wiring). The migration declares the table tenant-scoped at the database (composite (organization_id, project_id) FK -> projects with ON DELETE CASCADE, composite UNIQUE (organization_id, id) as the FK target for future scope-narrowing override tables, bigint version + bump_version trigger from 0011, set_updated_at trigger), CHECKs the enum-shaped columns to a closed set (principal_kind IN ('usr','sa'), role IN (six built-in roles)), and uses a UNIQUE index with COALESCE(env_id,'') / COALESCE(svc_id,'') so per-principal scope-tuple dedup works through NULLs (Postgres unique constraints treat NULLs as distinct by default until v15's NULLS NOT DISTINCT). The repository (ProjectGrantRepository) and reader adapter (ProjectGrantReader) follow OrganizationVariableReader exactly — repo accepts a Querier for reads, mutations need *Tx, reader composes the repo through Store.Read; cross-tenant queries return empty (no rows) at the SQL leg, but the LIST-FOR-PARENT shape (list grants OF a project) requires the reader to Get the project first inside the same transaction so a cross-tenant or unknown project_id surfaces as apierr.NotFound — never as an empty list, which would invite an agent to believe the project exists with no grants. The HTTP layer adds a new ProjectGrantReader port + handler + projection (projectGrantResource), and the route plugs into the existing projectIDResolver and policy.ActionProjectGrantsRead in routes.go's newRouteTable. EnvironmentID / ServiceID stay nullable pointers all the way from the schema to the wire so the (project | environment | service)-scoped distinction reaches an agent intact; the principal projects as a nested object Principal(id, kind) for the same reason the audit_event.actor and usage.limit endpoints do — one boolean (principal.kind == 'usr') instead of branching on coupled scalars. NewHandler signature gets ONE more positional port, which forces a sweep of every test file that constructs the production handler (a Python regex over 28 test files anchored on `fakeProjectRestorer{}, X)` plus manual edits to projects_restore_test.go and projects_delete_test.go whose end-of-call shape didn't match the dominant anchor; six single-line newRouteTable calls with all-nil args need a separate sweep to add one trailing nil). cmd/yalla-api wires *store.ProjectGrantReader at startup. The story implicitly delivers most of BE-0439's repository acceptance criteria (CRUD comes with the PUT story BE-0139 later) and BE-0440's tenant-isolation criteria for the list path.
+
 ## 2026-05-15 - BE-0103
 - What was implemented: GET /v1/organizations/{org_id}/audit-events, the
   organization-scoped audit-trail read endpoint — the first endpoint to
@@ -10078,4 +10080,174 @@
     file in parallel and we want test failure messages to point at
     the right story); the meaningful inversion is asserted in the
     allow-path body decode, not the deny-path leak guard.
+---
+
+## 2026-05-15 - BE-0136
+- What was implemented: GET /v1/projects/{project_id}/grants, the
+  project-scoped grants read endpoint — the first endpoint to expose
+  scoped grants on the public API. The story landed the whole vertical
+  for the project_grants resource because no foundation existed yet
+  (no migration, no repository, no reader, no handler, no wiring).
+  - internal/controlplane/domain/id.go: added KindProjectGrant Kind =
+    "pgrnt" to the const block and the kinds map so domain.NewID /
+    ParseID accept project-grant ids.
+  - internal/controlplane/store/migrate/migrations/0014_project_grants.up.sql
+    + 0014_project_grants.down.sql (new): table project_grants with
+    composite (organization_id, project_id) FK -> projects ON DELETE
+    CASCADE, composite UNIQUE (organization_id, id) as the FK target
+    for future scope-narrowing override tables, CHECKs for the
+    principal_kind ('usr','sa') and role (six built-in roles) closed
+    enums, optimistic-concurrency version + bump_version trigger from
+    0011, set_updated_at trigger, UNIQUE index using
+    COALESCE(env_id,'') / COALESCE(svc_id,'') so per-principal scope-
+    tuple dedup works through NULLs.
+  - internal/controlplane/store/project_grant.go (new): ProjectGrant
+    struct, ProjectGrantRepository.ListByProject (tenant-scoped,
+    deterministic ordering by principal_id, env_id NULLS FIRST,
+    svc_id NULLS FIRST, id), and ProjectGrantReader as the Store.Read
+    adapter. The reader Gets the project first inside the same
+    transaction so a cross-tenant or unknown project_id surfaces as
+    apierr.NotFound — never as an empty list, which would invite an
+    agent to believe the project exists with no grants.
+    NewProjectGrantReader(nil) is rejected at construction.
+  - internal/controlplane/store/project_grant_test.go (new): six
+    integration tests against an isolated migrated Postgres database
+    — deterministic ordering, tenant isolation across two orgs with
+    overlapping-looking grants, empty-project non-nil empty slice,
+    reader happy path, cross-tenant project_id rejected as a typed
+    apierr.NotFound (no leak of cross-tenant identifiers in the
+    error string), unknown project_id surfaces the same NotFound,
+    NewProjectGrantReader(nil) rejection.
+  - internal/controlplane/httpapi/project_grants.go (new):
+    ProjectGrantReader port + listProjectGrantsHandler. Projects the
+    store.ProjectGrant onto a stable projectGrantResource in
+    deterministic order. EnvironmentID / ServiceID stay nullable
+    pointers all the way from the schema to the wire so the
+    (project | environment | service)-scoped distinction reaches an
+    agent intact; the principal projects as a nested object so an
+    agent reads one boolean (principal.kind == "usr") instead of
+    branching on coupled scalars. A nil reader yields a typed
+    internal error (wiring error, not a client error).
+  - internal/controlplane/httpapi/project_grants_test.go (new): seven
+    contract tests in package httpapi exercising the real NewHandler
+    + real policy engine (fake Authenticator only) — happy path with
+    all wire fields round-tripped + deterministic ordering, empty
+    project yields the JSON empty array [] (not null), 401 from
+    RequireAuth when no credentials are supplied (reader never
+    called), 404 forwarded verbatim from the reader, 503 store
+    outage keeps the upstream cause out of Message/Hint, 500 for an
+    unwired reader (programming error), and a route-documented
+    assertion against /openapi.json so a regression in either
+    direction fails here too. The happy-path test also pins the
+    structural property that the reader is called with (principal
+    home org id, path project_id) — never a caller-controlled
+    organization id.
+  - internal/controlplane/httpapi/routes.go: extended newRouteTable
+    signature with the projectGrants ProjectGrantReader port; added
+    an apiRoute entry for GET /v1/projects/{project_id}/grants with
+    RequiresAuth=true,
+    RequiredAction=string(policy.ActionProjectGrantsRead),
+    projectIDResolver, tagProjects tag, and a full OpenAPI
+    description that documents the CapRead role admission rule, the
+    support principal's cross-tenant read exception NOT applying
+    through projectIDResolver, and the deterministic 404 a
+    cross-tenant or unknown project_id receives.
+  - internal/controlplane/httpapi/server.go: extended NewHandler
+    signature with projectGrants ProjectGrantReader as a new
+    positional parameter just before logger. Doc comment updated to
+    name the new port.
+  - internal/controlplane/httpapi/{28 _test.go files via Python
+    regex over `fakeProjectRestorer{}, X)`, plus manual Edit calls
+    for projects_restore_test.go (three call shapes) and
+    projects_delete_test.go (one NewHandler with mixed nil args).
+    Six single-line newRouteTable calls with all nils received one
+    trailing nil for the new projectGrants slot.}
+  - cmd/yalla-api/main.go: wired store.NewProjectGrantReader and
+    passed it as the new positional argument to httpapi.NewHandler.
+- Files changed:
+  - internal/controlplane/domain/id.go
+  - internal/controlplane/store/migrate/migrations/0014_project_grants.up.sql (new)
+  - internal/controlplane/store/migrate/migrations/0014_project_grants.down.sql (new)
+  - internal/controlplane/store/project_grant.go (new)
+  - internal/controlplane/store/project_grant_test.go (new)
+  - internal/controlplane/httpapi/project_grants.go (new)
+  - internal/controlplane/httpapi/project_grants_test.go (new)
+  - internal/controlplane/httpapi/routes.go
+  - internal/controlplane/httpapi/server.go
+  - cmd/yalla-api/main.go
+  - 30 internal/controlplane/httpapi/*_test.go files updated for the
+    new positional argument.
+- Verification run:
+  - gofmt -w . (clean)
+  - go vet ./... (clean)
+  - go build ./... (clean)
+  - go mod tidy (no-op)
+  - go test ./... (PASS; integration tests skip when
+    YALLA_TEST_DATABASE_URL is unset)
+  - go test -race ./... (PASS, all packages)
+  - With YALLA_TEST_DATABASE_URL set to the docker-compose Postgres:
+    - go test -v -run TestProjectGrant ./internal/controlplane/store/
+      (6/6 PASS)
+    - go test ./internal/controlplane/store/migrate/ (PASS — including
+      TestMigrationsDownIsReversible which exercises
+      0014_project_grants up-then-down round-trip)
+    - go test ./internal/controlplane/httpapi/ (PASS)
+- Results: BE-0136 acceptance criteria met. Route registered, action
+  enforced via projectIDResolver + policy.ActionProjectGrantsRead,
+  cross-tenant project_id behaves as 404, response uses stable
+  yalla.output.v1 envelope, no secrets leak through this surface (the
+  schema stores only structural identifiers and a role enum). Audit
+  event coverage is N/A for read endpoints (the acceptance criteria
+  call out "every mutating request" — this is a read; the
+  RequireAuth-side denied-decision auditing remains unwired across
+  the API per the project_create patterns docs, not specific to this
+  story).
+- Remaining risks or follow-ups:
+  - Mutation-side acceptance criteria of BE-0439 (Insert/Update/Delete
+    repository methods) intentionally not included; they land with
+    BE-0139 (PUT /v1/projects/{project_id}/grants).
+  - BE-0440 (tenant-isolation) is partially covered by
+    TestProjectGrantRepoListByProjectIsTenantScoped; a full sibling
+    test file beside the repository will help when BE-0439's mutation
+    methods land.
+  - Pre-existing test failures (TestAPIKeyServiceCreate*,
+    TestOrganizationVariableServicePatch*) remain failing on this
+    branch when YALLA_TEST_DATABASE_URL is set; verified independent
+    of this story per the patterns doc note from BE-0127.
+- Learnings for future iterations:
+  - When a story's resource has no foundation yet, the right scope
+    is ONE big vertical (migration + repo + reader + handler + route
+    + wiring + tests). Recent commit history (BE-0106 for variables,
+    BE-0118 for projects) confirms this pattern.
+  - NewHandler signature extension forces a 30+ file sweep. A Python
+    regex over a stable anchor pattern (e.g. `fakeProjectRestorer{},
+    X)`) handles the common case; the rare outliers
+    (projects_restore_test.go, projects_delete_test.go) need manual
+    Edit calls because their NewHandler call ends with mixed
+    nil/var args. Single-line newRouteTable calls with all-nil args
+    need a separate sweep.
+  - LIST-FOR-PARENT endpoints (list grants OF a project, list
+    environments OF a project, ...) need the reader to Get the
+    parent first inside the same Store.Read transaction so a missing
+    or cross-tenant parent surfaces as 404 — never as an empty list,
+    which would mislead an agent. The Get is cheap (one
+    tenant-scoped SELECT) and the transaction guarantees a
+    consistent snapshot across both legs.
+  - Postgres UNIQUE constraints treat NULLs as DISTINCT by default
+    (until v15's NULLS NOT DISTINCT). To de-dup rows where two
+    nullable columns participate in the uniqueness check (here:
+    (env_id, svc_id) on a per-principal-per-project grant), use a
+    UNIQUE INDEX with COALESCE(col, '') so the NULL-NULL pair
+    collapses to ('', '') and dedups cleanly. The plain UNIQUE
+    constraint would let a principal hold two grants at the same
+    NULL-NULL scope.
+  - Nullable nested-object projection vs coupled-nullable scalars
+    (existing patterns line 54): the principal block on
+    projectGrantResource is one nested object {id, kind} instead of
+    two coupled-nullable scalars. EnvironmentID / ServiceID remain
+    nullable scalars because they are NOT coupled — a grant can
+    have env_id without svc_id, but a principal cannot have an id
+    without a kind. The rule: if N fields are EITHER all-present OR
+    all-absent, project them as a nested object; if they vary
+    independently, scalars are fine.
 ---
