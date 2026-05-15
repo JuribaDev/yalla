@@ -51,6 +51,7 @@
 - Endpoints that expose N coupled scalar fields that are EITHER all-present OR all-absent project as ONE nullable nested OBJECT on the wire, not N coupled-nullable scalars. Canonical cases: usage.limit ({limit_value, enforcement_mode, source} or null), audit_event.actor ({id, kind} or null for an unauthenticated denied event), audit_event.resource ({id, kind} or null for an organization-root action). An agent reads one boolean (`actor != null`) instead of validating N invalid combinations. The store struct mirrors the wire (a single `*Foo` pointer or N pointers projected together with an all-or-nothing guard). Adding a new field to the nested object later is forward-compatible.
 - audit.read is the load-bearing example of a "read action that is NOT CapRead" in the policy catalog (catalog.go: ActionAuditRead -> CapAdmin). The audit log cannot be listed by a viewer or a developer — only by an owner, admin, or a support principal performing a cross-tenant read. A boilerplate "every in-tenant role allowed" assumption is wrong for audit.read; the policy matrix and a contract-test "viewer denied in own tenant" assertion together pin the property (the contract test makes a future accidental drop to CapRead a contract failure, not only a matrix failure).
 - Organization-scoped variables (0012_organization_variables, store/organization_variable.go, httpapi/variables.go): the lowest-precedence layer of the Organization -> Project -> Environment -> Service variable hierarchy. The table mirrors the established conventions — composite UNIQUE (organization_id, id) as the FK target for future scope-narrowing override tables; UNIQUE (organization_id, key) for per-tenant key uniqueness (an env var named DATABASE_URL in two orgs is two rows); ON DELETE CASCADE from organizations; bigint version + bump_version() trigger for optimistic concurrency. The repository follows the AuditRepository read pattern: ListByOrganization is tenant-scoped at the SQL predicate (cross-tenant id matches no rows, empty list, never another tenant's data), ordered deterministically by (key ASC, id ASC). The wire redaction contract is wire-side at the projection chokepoint, NOT store-side: store.OrganizationVariable.Value carries the literal verbatim (a future write path needs lossless round-trip), but httpapi/variables.go's organizationVariableOf replaces is_secret=true values with output.Sentinel on every projection — agents can never read a secret value back through this endpoint. Defence-in-depth: OrganizationVariable.LogValue redacts every value (regardless of is_secret) at the slog boundary, so a stray log record that captures the struct cannot leak the literal. Non-secret values pass through verbatim so customers can audit their own organization-wide defaults.
+- The env.write policy matrix (BE-0111, internal/controlplane/httpapi/variables_put_policy_test.go) is the structural twin of the CapWrite/no-cross-tenant-support family (project/environment/service create/update/delete) and the load-bearing distinction from the env.read matrix (BE-0108): same {org_id} resolver, same organizationIDResolver, but Developer JOINS the allow row (RoleDeveloper holds CapWrite), Viewer/CI/Support all deny via ReasonDeniedNoCapability, and the engine's cross-tenant clause (`required == CapRead || required == CapSupport`) excludes CapWrite — so a Support principal cannot cross tenants and cannot mutate its OWN home tenant either. The grant-containment row mirrors the env.read suite verbatim except that the org-level allow row tests a Developer grant (CapWrite) instead of a Viewer grant (CapRead); the Viewer grant at the same org scope is asserted to DENY, locking the CapWrite requirement against the grant path so a future catalog drift in either direction fails here. Wire-level redaction (organizationVariableOf -> output.Sentinel) is pinned on the allow-by-role AND allow-by-grant branches, and deny-path leak checks use a distinct seededPostWriteOrgVariables fixture (POST_WRITE_REGION/POST_WRITE_SECRET with the recognisable "post-write-plaintext-correcthorsebatterystaple" needle) so the matrix's request body (MATRIX_KEY/matrix_value) and the env.read suite's seededOrgVariables (REGION/DATABASE_URL) cannot false-positive a leak check. Cross-tenant assertions on the wire pin BOTH the submitted-payload non-echo (MATRIX_KEY, matrix_value) and the post-write-data non-echo — the policy boundary is the only place an env mutation is gated, so a denied caller seeing either would itself be a contract violation.
 
 ## 2026-05-15 - BE-0103
 - What was implemented: GET /v1/organizations/{org_id}/audit-events, the
@@ -7552,4 +7553,184 @@
     the PRECEDING slot). A scripted multi-pattern replacement covers
     most cases — manual touch-up for the remaining 1–2 files is
     expected.
+---
+
+## 2026-05-15 - BE-0111
+- Added policy-matrix coverage for PUT /v1/organizations/{org_id}/variables
+  (env.write authorization contract). One new test file: internal/
+  controlplane/httpapi/variables_put_policy_test.go (4 tests, all in
+  package httpapi alongside the existing PUT contract suite and the
+  env.read policy suite, no new scaffolding beyond two small fixture
+  helpers).
+- Files changed:
+  - internal/controlplane/httpapi/variables_put_policy_test.go (new):
+    TestReplaceOrgVariablesPolicyMatrixRoles drives all six built-in
+    roles through the real NewHandler + real policy.NewEngine() against
+    an {org_id} that names its own home organization, pinning both the
+    engine verdict and the wire verdict on each row. CapWrite is the
+    distinguishing capability: Owner, Admin, and Developer each hold
+    CapWrite so all three reach 200 (ReasonAllowedByRole) with the
+    replacer reached on the path's {org_id} and the seeded post-write
+    rows projected through organizationVariableOf — secret values
+    redact to output.Sentinel even on the allow-by-role branch.
+    Viewer, CI, and Support all lack CapWrite and 403 with
+    ReasonDeniedNoCapability — the replacer is never reached, and the
+    deny body never echoes the seeded post-write data
+    (postWriteOrgVariablesBodyLeak guards every recognisable fragment).
+    TestReplaceOrgVariablesPolicyRevokedAndExpiredKeys mirrors the
+    env.read suite's revoked/expired pair: an Owner principal with
+    Disabled=true is denied via ReasonDeniedPrincipalDisabled even
+    though the underlying role WOULD allow env.write — the replacer
+    is never reached, and the deny body carries neither the principal
+    id nor the organization id nor the seeded post-write data.
+    TestReplaceOrgVariablesPolicyWrongOrganizationPrincipal pins the
+    load-bearing distinction from BE-0108's env.read matrix: the
+    engine's cross-tenant clause is gated on required==CapRead ||
+    required==CapSupport, so CapWrite is OUTSIDE the support
+    cross-tenant exception. A non-support owner of org_attacker
+    writing variables in org_victim is a deterministic 403
+    (ReasonDeniedCrossTenant) AND a support principal of org_yalla
+    performing the same cross-tenant write is ALSO denied with the
+    same reason — the only role that crosses the tenant boundary for
+    CapRead reads cannot do so for CapWrite mutations. The bonus
+    "support in its OWN home tenant" verdict locks the role's
+    read-only-for-config posture against any future catalog drift:
+    even at home, RoleSupport lacks CapWrite and denies via
+    ReasonDeniedNoCapability. Each cross-tenant deny pins the wire
+    body's non-echo of the victim organization, the submitted
+    payload (MATRIX_KEY/matrix_value), and the seeded post-write
+    variable data (postWriteOrgVariablesBodyLeak).
+    TestReplaceOrgVariablesPolicyGrantContainment proves scoped
+    grants cannot be widened: project, environment, and service
+    grants each fail to cover the organization-root scope the
+    {org_id} resolver emits, denying env.write with
+    ReasonDeniedOutOfScope (the same property env.read pins, but
+    here the abuse is active credential overwrite, not enumeration).
+    The grant-allow row tests an organization-level Developer grant
+    (CapWrite) — distinct from the env.read suite's Viewer grant
+    (CapRead) — and pins a Viewer-grant DENY at the same
+    organization scope so a future catalog change that downgraded
+    env.write below CapWrite would fail the Viewer-deny assertion
+    here, and one that upgraded it above CapWrite would fail the
+    Developer-allow assertion. The grant-allow wire path STILL
+    redacts secret values to output.Sentinel (the redaction
+    chokepoint guards both the role-allowed and grant-allowed
+    branches). The cross-tenant scoped-grant case proves a leaked
+    scoped key cannot be smuggled across tenants by fabricating
+    {org_id} to overwrite somebody else's variables — the
+    cross-tenant guard fires first since the scope's organization
+    id no longer matches the principal's own.
+  - Two new file-local fixture helpers (alongside seededOrgVariables
+    and orgVariablesBodyLeak from variables_policy_test.go, plus
+    replaceOrgVariablesHandlerFor, putOrgVariables,
+    decodeUpdateOrgVariables, fakeOrgVariableReplacer, and
+    orgVariableActorIdentity from variables_put_test.go, all reused
+    verbatim):
+      - envWritePutBody — the minimal valid request body the matrix
+        sends (a single non-secret MATRIX_KEY=matrix_value). The
+        distinctive key/value let deny-path leak checks prove the
+        submitted payload is not echoed, and intentionally do NOT
+        collide with the post-write fixture.
+      - seededPostWriteOrgVariables(orgID) and
+        postWriteOrgVariablesBodyLeak — the distinctive post-write
+        fixture the fake replacer returns on allow
+        (ovar_post_region/POST_WRITE_REGION=eu-west-3 and
+        ovar_post_secret/POST_WRITE_SECRET=<long plaintext>). The
+        leak helper splits the secret value into distinct substrings
+        (the full plaintext, "correcthorsebatterystaple", and
+        "post-write-plaintext") so a partial leak that drops only
+        one piece still trips the guard.
+  - ralph/prd.json: BE-0111.passes flipped false -> true (passing
+    count 81 -> 82 of 614).
+- Verification run: gofmt -w (clean — no formatting changes after
+  the initial author pass); go vet ./... (clean); go test -count=1
+  ./internal/controlplane/httpapi/... (PASS, 0.43s); go test -race
+  -count=1 ./internal/controlplane/httpapi/... (PASS, 2.09s); go
+  test -count=1 ./... (every package green — full suite passes
+  including the postgres-backed integration suites under
+  internal/controlplane/store/... and store/migrate with
+  YALLA_TEST_DATABASE_URL pointed at the local Postgres stack); go
+  mod tidy (no changes). All 4 new TestReplaceOrgVariablesPolicy*
+  tests use t.Parallel consistent with the rest of the package.
+- Results: BE-0111 acceptance criteria satisfied. Policy tests cover
+  owner, admin, developer, viewer, ci, support, revoked key,
+  expired key, and wrong-organization principal for action env.write
+  (acceptance #1); project-level grants do not imply access to
+  sibling projects (acceptance #2 — pinned by the engine
+  ActionProjectUpdate sibling-deny verdict that frames the
+  project-scoped key's env.write denial); environment-level grants
+  do not imply access to production unless explicitly granted
+  (acceptance #3 — pinned by the env_staging grantee being denied
+  ActionEnvironmentUpdate on env_prod); service-level grants do not
+  expose parent-level secrets or unrelated services (acceptance #4
+  — pinned by the svc_a grantee being denied ActionEnvWrite on the
+  parent environment AND ActionServiceUpdate on svc_b); all public
+  responses use yalla.output.v1 / yalla.error.v1 (acceptance #5);
+  unit tests cover success (every allow row + grant-allow),
+  authorization failure, revoked/expired credentials, and
+  cross-tenant denial (acceptance #6); the new tests are isolated
+  unit tests against the http surface and require no postgres /
+  no Dokploy (acceptance #7); the redaction chokepoint is
+  independently verified on BOTH the allow-by-role and
+  allow-by-grant branches and every deny-path body is searched for
+  every recognisable fragment of the seeded secret value
+  (acceptance #8 — secrets, tokens, API keys, and rendered env
+  values redacted in logs, errors, and test output).
+- Remaining risks or follow-ups:
+  - BE-0112 (Implement PATCH /v1/organizations/{org_id}/variables/{key})
+    is the natural next variables story. It can reuse the
+    Upsert path inside OrganizationVariableService and introduce a
+    narrower Update port on the *_service.go side, following the
+    env.write policy invariants pinned here.
+  - BE-0114 (policy matrix coverage for PATCH .../variables/{key})
+    will be structurally identical to this story — the resolver is
+    still organizationIDResolver (the {key} is a sub-resource within
+    the organization-root scope), env.write is still CapWrite, and
+    the matrix shape (Owner/Admin/Developer allow, Viewer/CI/Support
+    deny, no support cross-tenant exception) applies verbatim. The
+    leak-guard fixtures here (seededPostWriteOrgVariables and
+    postWriteOrgVariablesBodyLeak) can be reused as-is.
+- **Learnings for future iterations:**
+  - For a policy matrix test on a CapWrite endpoint that uses
+    organizationIDResolver, the structure mirrors limits.write
+    (BE-0099) exactly except the role row table grows by one
+    allow: Developer JOINS Owner/Admin in the allow column because
+    RoleDeveloper holds CapWrite (limits.write requires CapAdmin,
+    which Developer lacks; env.write requires CapWrite, which
+    Developer holds). The deny rows (Viewer/CI/Support deny via
+    ReasonDeniedNoCapability) and the cross-tenant story (support
+    cannot cross — CapWrite is outside the engine required==CapRead
+    || required==CapSupport exception) are identical. The
+    grant-containment story has the same project/env/service
+    ReasonDeniedOutOfScope verdicts; the only swap is that the
+    org-level allow grant tests RoleDeveloper instead of RoleAdmin
+    (limits.write) or RoleViewer (env.read).
+  - When a deny-path leak check needs to assert "the seeded
+    response data was not echoed", DO NOT reuse the env.read
+    suite's seededOrgVariables fixture for a CapWrite endpoint:
+    the fake replacer returns the SEEDED post-write rows, not the
+    seeded readable rows, and the leak guard must search for the
+    distinct values the replacer would have produced. The
+    convention is one seed per direction (seeded* for read,
+    seededPostWrite* for write) so a write-suite leak check is
+    provably distinct from a read-suite leak check and cannot
+    false-positive against unrelated fixtures.
+  - For a PUT/PATCH/POST policy matrix's deny-path body check,
+    pin BOTH the submitted-payload non-echo (the matrix request
+    body's distinctive needles) AND the seeded post-write data
+    non-echo (what the replacer would have returned). The request
+    body can trivially echo back in some failure modes (e.g. an
+    apierr that names the offending field), but the post-write
+    data is data the caller has not yet seen — leaking it would
+    itself be the contract violation under test.
+  - The cross-tenant support assertion for a CapWrite endpoint
+    must pin THREE verdicts: the wire 403, the engine
+    Decide(action, foreign org) deny via ReasonDeniedCrossTenant,
+    AND the bonus engine Decide(action, own home org) deny via
+    ReasonDeniedNoCapability. The third locks the role's
+    structural inability to reach the endpoint at all (vs.
+    "support cannot cross tenants"), so a future catalog change
+    that promoted RoleSupport to hold CapWrite at home but kept
+    the cross-tenant clause unchanged would fail the home-deny
+    assertion before silently regressing a customer.
 ---
