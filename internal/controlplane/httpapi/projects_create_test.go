@@ -70,7 +70,7 @@ func createProjectHandlerFor(id auth.Identity, authErr error, creator ProjectCre
 		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{},
 		fakeOrgVariableReader{}, fakeOrgVariableReplacer{}, fakeOrgVariablePatcher{}, fakeOrgVariableDeleter{},
 		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
-		fakeProjectReader{}, creator, fakeProjectUpdater{}, nil)
+		fakeProjectReader{}, creator, fakeProjectUpdater{}, fakeProjectDeleter{}, nil)
 }
 
 // postProjects issues POST /v1/projects against handler with body and an
@@ -380,7 +380,7 @@ func TestCreateProjectNilCreatorReturnsInternalError(t *testing.T) {
 func TestCreateProjectRouteIsDocumented(t *testing.T) {
 	t.Parallel()
 
-	table := newRouteTable(runtime.BuildInfo{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	table := newRouteTable(runtime.BuildInfo{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	var found bool
 	for _, rt := range table {
 		if rt.endpoint.Method == http.MethodPost && rt.endpoint.Path == "/v1/projects" {

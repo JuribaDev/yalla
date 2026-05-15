@@ -63,7 +63,7 @@ func patchOrgVariableHandlerFor(id auth.Identity, authErr error, patcher Organiz
 		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
 		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{}, fakeOrgVariableReader{}, fakeOrgVariableReplacer{}, patcher, fakeOrgVariableDeleter{},
 		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
-		fakeProjectReader{}, fakeProjectCreator{}, fakeProjectUpdater{}, nil)
+		fakeProjectReader{}, fakeProjectCreator{}, fakeProjectUpdater{}, fakeProjectDeleter{}, nil)
 }
 
 // patchOrgVariable issues PATCH /v1/organizations/{orgID}/variables/{key}
@@ -431,7 +431,7 @@ func TestPatchOrgVariableMissingPatcherReturns500(t *testing.T) {
 		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
 		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{}, fakeOrgVariableReader{}, fakeOrgVariableReplacer{}, nil, fakeOrgVariableDeleter{},
 		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
-		fakeProjectReader{}, fakeProjectCreator{}, fakeProjectUpdater{}, nil)
+		fakeProjectReader{}, fakeProjectCreator{}, fakeProjectUpdater{}, fakeProjectDeleter{}, nil)
 	rec := patchOrgVariable(handler, orgID, "DATABASE_URL", "a-valid-session-token",
 		`{"value":"x"}`)
 	if rec.Code != http.StatusInternalServerError {
@@ -447,7 +447,7 @@ func TestPatchOrgVariableMissingPatcherReturns500(t *testing.T) {
 func TestPatchOrgVariableRouteIsRegistered(t *testing.T) {
 	t.Parallel()
 
-	table := newRouteTable(runtime.BuildInfo{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	table := newRouteTable(runtime.BuildInfo{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	var found bool
 	for _, rt := range table {
 		if rt.endpoint.Method != http.MethodPatch ||

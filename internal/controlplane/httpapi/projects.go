@@ -37,6 +37,14 @@ var errNoProjectCreator = errors.New("httpapi: no project creator configured")
 // mutation.
 var errNoProjectUpdater = errors.New("httpapi: no project updater configured")
 
+// errNoProjectDeleter is returned when DELETE /v1/projects/{project_id} is
+// reached without a project deleter wired into NewHandler. Like
+// errNoProjectUpdater it can only happen through a wiring error — a
+// programming mistake, not a client error — so the handler reports it as a
+// typed internal failure rather than silently failing to schedule the
+// teardown.
+var errNoProjectDeleter = errors.New("httpapi: no project deleter configured")
+
 // ProjectReader is the narrow persistence port GET /v1/projects and GET
 // /v1/projects/{project_id} depend on. *store.ProjectReader satisfies it in
 // production; tests supply a fake. Keeping the dependency an interface keeps
@@ -78,24 +86,32 @@ type listProjectsPayload struct {
 // layout can evolve without breaking the public contract.
 //
 // Version is the database-owned optimistic-concurrency token. It is
-// exposed so future PATCH /v1/projects/{project_id} (BE-0127) callers can
-// echo it back as the If-Match precondition without re-reading the row.
+// exposed so PATCH /v1/projects/{project_id} and DELETE
+// /v1/projects/{project_id} callers can echo it back as the If-Match
+// precondition without re-reading the row.
+//
+// DeletionScheduledAt is present only once a deletion has been scheduled
+// for the project by DELETE /v1/projects/{project_id}, and is omitted
+// entirely for a live project, so adding it left the wire shape of every
+// other project endpoint byte-for-byte unchanged.
 type projectResource struct {
-	ProjectID      string `json:"project_id"`
-	OrganizationID string `json:"organization_id"`
-	Slug           string `json:"slug"`
-	DisplayName    string `json:"display_name"`
-	Version        int64  `json:"version"`
-	CreatedAt      string `json:"created_at"`
-	UpdatedAt      string `json:"updated_at"`
+	ProjectID           string  `json:"project_id"`
+	OrganizationID      string  `json:"organization_id"`
+	Slug                string  `json:"slug"`
+	DisplayName         string  `json:"display_name"`
+	Version             int64   `json:"version"`
+	CreatedAt           string  `json:"created_at"`
+	UpdatedAt           string  `json:"updated_at"`
+	DeletionScheduledAt *string `json:"deletion_scheduled_at,omitempty"`
 }
 
 // projectResourceOf projects a store.Project into the stable wire shape.
 // Timestamps are rendered as UTC RFC 3339 strings so the contract is
 // independent of the database driver's time representation and the
-// response is deterministic for a given row.
+// response is deterministic for a given row. A nil DeletionScheduledAt —
+// a live project — is omitted from the wire shape entirely.
 func projectResourceOf(p store.Project) projectResource {
-	return projectResource{
+	resource := projectResource{
 		ProjectID:      p.ID,
 		OrganizationID: p.OrganizationID,
 		Slug:           p.Slug,
@@ -104,6 +120,11 @@ func projectResourceOf(p store.Project) projectResource {
 		CreatedAt:      p.CreatedAt.UTC().Format(time.RFC3339Nano),
 		UpdatedAt:      p.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
+	if p.DeletionScheduledAt != nil {
+		scheduled := p.DeletionScheduledAt.UTC().Format(time.RFC3339Nano)
+		resource.DeletionScheduledAt = &scheduled
+	}
+	return resource
 }
 
 // listProjectsHandler builds the GET /v1/projects handler. It lists the
@@ -459,6 +480,104 @@ func updateProjectHandler(updater ProjectUpdater) http.HandlerFunc {
 
 		writeOrganizationETag(w, project.Version)
 		apienvelope.WriteData(w, http.StatusOK, requestID(r), updateProjectPayload{
+			Project: projectResourceOf(project),
+		})
+	}
+}
+
+// ProjectDeleter is the narrow persistence port DELETE
+// /v1/projects/{project_id} depends on. *store.ProjectService satisfies it
+// in production; tests supply a fake. Like ProjectUpdater it is an
+// interface declared here so the handler stays unit-testable without a
+// real database — the concrete orchestrator (the desired-state soft-delete
+// stamp and the immutable audit record committed in one transaction)
+// lives in the store layer.
+type ProjectDeleter interface {
+	ScheduleDeletion(ctx context.Context, in store.DeleteProjectInput) (store.Project, error)
+}
+
+// deleteProjectPayload is the data block of the DELETE
+// /v1/projects/{project_id} success envelope: the project with its
+// deletion_scheduled_at stamp set, in the same stable wire shape the other
+// project endpoints return. It carries no credential material — a projects
+// row stores no secrets.
+type deleteProjectPayload struct {
+	Project projectResource `json:"project"`
+}
+
+// deleteProjectHandler builds the DELETE /v1/projects/{project_id} handler.
+// It schedules the project for teardown by stamping deletion_scheduled_at
+// in the source-of-truth database through the ProjectDeleter port, then
+// renders the persisted row in a stable yalla.output.v1 envelope. The
+// teardown is scheduled, not immediate: the destructive cascade that
+// removes environments, services, and the audit log under the project is
+// a later worker story, so the project and its audit trail still exist
+// when this returns.
+//
+// RequireAuth gates the route on action project.delete before the handler
+// runs — authorized through projectIDResolver against the (principal home
+// organization, {project_id}) resource the path names — and attaches the
+// resolved principal, so a request that reaches the handler has already
+// cleared the policy boundary. project.delete is a CapWrite action, so
+// the gate admits the principal's organization-wide write roles (owner,
+// admin, developer, ci) and denies viewer, denies support (a support
+// principal is CapRead-only and cannot mutate even within its home
+// tenant), and admits a scoped grant that covers the (home_org,
+// project_id) resource (for example, a project-scoped Admin grant for
+// THAT project) while denying a grant that names only a SIBLING project
+// because the engine asks whether the grant scope contains the resource
+// scope, never the reverse.
+//
+// The handler never trusts a caller-supplied organization id: the store
+// call is built from principal.OrganizationID and r.PathValue("project_id"),
+// so a cross-tenant project_id reaches the tenant-scoped repository query
+// with the principal's home organization id and is reported as a
+// deterministic NotFound by the persistence layer, never another tenant's
+// row. A request that arrives with no principal is a wiring error reported
+// as a typed internal error; an If-Match parse failure, a stale If-Match
+// version, a not-found {project_id}, a project whose deletion is already
+// scheduled, and a datastore outage each surface as their own typed
+// status, never disguised as one another. On success, the handler mirrors
+// the row's authoritative version into the ETag response header so the
+// caller can echo it back as the next If-Match precondition without
+// re-reading the row, and returns 202 Accepted — the scheduling is durable
+// but the destructive teardown is a later worker job.
+func deleteProjectHandler(deleter ProjectDeleter) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if deleter == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoProjectDeleter))
+			return
+		}
+
+		ifMatchVersion, ifMatchErr := parseIfMatchVersion(r)
+		if ifMatchErr != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(ifMatchErr))
+			return
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		project, err := deleter.ScheduleDeletion(r.Context(), store.DeleteProjectInput{
+			OrganizationID: p.OrganizationID,
+			ProjectID:      r.PathValue("project_id"),
+			IfMatchVersion: ifMatchVersion,
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		writeOrganizationETag(w, project.Version)
+		apienvelope.WriteData(w, http.StatusAccepted, requestID(r), deleteProjectPayload{
 			Project: projectResourceOf(project),
 		})
 	}

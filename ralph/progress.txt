@@ -9428,3 +9428,148 @@
     fail here. Document this as a CapWrite-policy-matrix template
     addition in Codebase Patterns.
 ---
+
+## 2026-05-15 - BE-0130
+- What was implemented: DELETE /v1/projects/{project_id}, the first
+  destructive surface on the project resource. Scheduled (soft) deletion:
+  stamps deletion_scheduled_at + audit + bumped version in one tx, leaving
+  the destructive teardown (environments/services/audit cascade) for a
+  later worker story so the project and its audit trail still exist after
+  the response returns.
+  - internal/controlplane/store/migrate/migrations/0013_project_deletion_schedule.up.sql
+    + .down.sql (new): nullable timestamptz column on projects + partial
+    index for the cleanup worker scan. Mirrors migration 0010 for
+    organizations one-for-one — same nullability convention (NULL = live),
+    same write-once-in-spirit posture, same column-name and index shape.
+  - internal/controlplane/store/project.go: new DeletionScheduledAt *time.Time
+    field on Project, extended projectColumns + scanProject, and a new
+    ScheduleDeletion(ctx, tx, orgID, projectID, ifMatchVersion) method on
+    ProjectRepository. The repository keeps the unconditional-UPDATE posture
+    deliberately: the customer-facing already-scheduled distinction is the
+    service’s job, the repository must remain SQL-idempotent for
+    non-customer callers (workers, admin jobs). Stale If-Match goes through
+    classifyProjectConcurrencyMiss — the same disambiguation Update
+    already uses — so a stale view is reported as ConflictStale with the
+    row’s authoritative version, a cross-tenant id stays NotFound.
+  - internal/controlplane/store/projectservice.go: new projectDeleteAction
+    constant, DeleteProjectInput type (mirrors DeleteOrganizationInput),
+    and a new ProjectService.ScheduleDeletion unit-of-work method. The
+    composition is: validate (blank orgID/projectID + missing actor org are
+    typed errors BEFORE the tx opens), then in Store.Write: Get the current
+    row, optionally enforce IfMatchVersion (the version pre-check runs
+    BEFORE the already-scheduled check so a stale If-Match wins over an
+    already-scheduled message — the same ordering OrganizationService
+    uses), reject an already-scheduled row as apierr.Conflict, call the
+    repository ScheduleDeletion, record deletion_scheduled_at as audit
+    metadata (verbatim RFC3339Nano UTC, non-secret), append the audit
+    event. A failure in any step rolls the whole tx back: an audit row
+    can never name a deletion that did not change resource state, and a
+    second-schedule failure cannot leak a duplicate audit row.
+  - internal/controlplane/httpapi/projects.go: extended projectResource
+    with an optional DeletionScheduledAt *string ',omitempty' field —
+    the SAME forward-compatible wire convention organizationResource used.
+    Live projects keep the byte-for-byte same wire shape: the field is
+    omitted entirely for a NULL stamp. projectResourceOf now projects the
+    timestamp. New errNoProjectDeleter sentinel, ProjectDeleter port
+    (ScheduleDeletion(ctx, in) (Project, error) — mirroring
+    OrganizationDeleter), deleteProjectPayload, and deleteProjectHandler.
+    The handler is the same thin shape PATCH uses: principal-from-context
+    guard, deleter-nil internal guard, optional If-Match parse (400 on
+    malformed), correlation-from-context, delegate to ScheduleDeletion,
+    on success ETag header + 202 Accepted envelope (Accepted because the
+    destructive teardown is a later worker job, not actually deleted yet).
+  - internal/controlplane/httpapi/routes.go: registered the new apiRoute
+    after PATCH /v1/projects/{project_id}, with RequiresAuth=true,
+    RequiredAction=policy.ActionProjectDelete (CapWrite — already in
+    the policy catalog at catalog.go:100), resolver=projectIDResolver (so
+    cross-tenant project_ids are denied at the policy boundary BEFORE the
+    handler runs), SuccessStatus=http.StatusAccepted. Extended
+    newRouteTable to accept the new projectDeleter ProjectDeleter param.
+  - internal/controlplane/httpapi/server.go: NewHandler signature gained
+    projectDeleter ProjectDeleter (one new positional parameter, slot 30
+    in the chain — after projectUpdater, before logger) and the
+    newRouteTable call site was updated.
+  - cmd/yalla-api/main.go: the existing projectService now also wires the
+    new ProjectDeleter slot (the same store.ProjectService satisfies
+    Creator, Updater, and Deleter, so the wiring stays a single-symbol
+    pass-through).
+  - internal/controlplane/store/project_delete_test.go (new): integration
+    tests against an isolated migrated Postgres database covering the
+    repository (happy-path stamp, missing-id NotFound, cross-tenant
+    isolation, nil-tx guard) AND the service (happy-path with audit
+    metadata stamp, already-scheduled rolls back as Conflict — no
+    audit leak, unknown id NotFound, cross-tenant scheduling stays
+    NotFound and leaves orgB’s row untouched, stale If-Match
+    ConflictStale with current_version in details, blank-input
+    invalid-input cases, missing actor-org Internal error).
+  - internal/controlplane/httpapi/projects_delete_test.go (new): 9 contract
+    tests in package httpapi driving the real NewHandler + real policy
+    engine (fake Authenticator + fake ProjectDeleter only) — happy-path
+    forwarding (organization from principal, project_id from path, actor
+    identifiers from principal, deletion_scheduled_at projected, ETag
+    mirrored, 202 status); If-Match precondition forwarded; malformed
+    If-Match is 400 before the deleter runs; NotFound surfaces as 404;
+    already-scheduled Conflict surfaces as 409; stale-version Conflict
+    surfaces as 409; missing-deleter is a typed 500; missing-credentials
+    is 401 at the RequireAuth boundary; OpenAPI route-table contract
+    (operation id, required action, requires auth, success status).
+  - 28 existing *_test.go files in package httpapi had their NewHandler /
+    newRouteTable call sites updated to pass fakeProjectDeleter{} in the
+    new positional slot (the same pattern earlier "new positional port"
+    stories used).
+- Verification run: gofmt -w ., go mod tidy, go vet ./..., go build ./...,
+  YALLA_TEST_DATABASE_URL=... go test -race -run
+  "TestProject|TestDeleteProject" ./internal/controlplane/store/
+  ./internal/controlplane/httpapi/.
+- Results: all the targeted tests pass on the migrated Postgres database;
+  go vet and gofmt are clean across the whole tree. Pre-existing failures
+  in unrelated store packages (TestAPIKeyServiceCreate*,
+  TestOrganizationVariableServicePatch*) reproduce on the parent commit
+  (f63e8ce) with my changes stashed, so they are not regressions from
+  this story; flagged for a separate fix.
+- Remaining risks or follow-ups:
+  - BE-0131 (contract tests) and BE-0132 (policy matrix) for DELETE
+    /v1/projects/{project_id} are now unblocked. BE-0131 should extend
+    the full grid using the deleteProjectHandlerFor helper this story
+    established. BE-0132 should mirror projects_update_policy_test.go’s
+    structure: every built-in role x action project.delete,
+    revoked/expired Disabled principals, wrong-organization principal,
+    project-scoped grants (owner-of-THIS vs sibling), env-scoped and
+    service-scoped grants must NOT authorize a parent-level delete.
+  - The eventual destructive-teardown worker (separate PRD story) will
+    actually remove the soft-deleted project and CASCADE its
+    environments/services/audit log. Until then a scheduled project is
+    still visible to reads — deletion_scheduled_at is the only signal
+    a client has that teardown is pending.
+- Learnings for future iterations:
+  - The "DELETE on a customer resource" pattern is now stable for the
+    second time (organization first, project second): nullable
+    deletion_scheduled_at column + partial index, repository
+    ScheduleDeletion returns the persisted row, service-layer
+    already-scheduled Conflict (the repository stays SQL-idempotent),
+    audit metadata captures the resolved stamp time. The next DELETE on
+    a customer resource (environments, services) can mechanically copy
+    the same six-file shape: migration + struct field + repo method +
+    service input/method + httpapi port/handler/route + cmd/yalla-api
+    wiring. Returns 202 Accepted because destructive teardown is a
+    later worker job.
+  - The nullable-omitempty wire convention is now load-bearing on two
+    resources (organizationResource.DeletionScheduledAt and
+    projectResource.DeletionScheduledAt). New customer resources that
+    grow optional projected timestamps should reach for the same pattern
+    (string pointer with json:"...,omitempty").
+  - The version pre-check inside ScheduleDeletion runs BEFORE the
+    already-scheduled check so a caller with a stale If-Match learns
+    "your view is stale" rather than an already-scheduled message that
+    might race with a concurrent edit they did not see. Intentional,
+    parallels OrganizationService.
+  - The bulk substitution `fakeProjectUpdater{}, nil)` ->
+    `fakeProjectUpdater{}, fakeProjectDeleter{}, nil)` covered 27/28
+    files; the variant `fakeProjectUpdater{}, logger)` in
+    me_contract_test.go + server_test.go needed handling separately.
+    Workflow for every "add new port to NewHandler" story: (1) define
+    new fake in the new contract-test file, (2) python pass over the
+    common terminating pattern, (3) grep for residue and fix manually.
+    Route-discovery tests using the 27-nil-arg newRouteTable shape need
+    exactly one extra nil.
+---

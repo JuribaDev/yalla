@@ -103,12 +103,13 @@ type versionPayload struct {
 // /v1/organizations/{org_id}/api-keys/{key_id}, apiKeyRevoker backs
 // DELETE /v1/organizations/{org_id}/api-keys/{key_id}, and apiKeyRotator
 // backs POST /v1/organizations/{org_id}/api-keys/{key_id}/rotate.
-// projectCreator backs POST /v1/projects and projectUpdater backs PATCH
+// projectCreator backs POST /v1/projects, projectUpdater backs PATCH
+// /v1/projects/{project_id}, and projectDeleter backs DELETE
 // /v1/projects/{project_id}. Any may be nil for tests and tooling that
 // only inspect the route table's metadata; a request that actually
 // reaches a handler with a nil dependency is reported as a typed internal
 // error rather than a misleading empty list or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater) []apiRoute {
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -314,6 +315,35 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// 404 at the persistence boundary.
 			resolver: projectIDResolver,
 			handler:  updateProjectHandler(projectUpdater),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodDelete,
+				Path:           "/v1/projects/{project_id}",
+				OperationID:    "deleteProject",
+				Summary:        "Schedule a project for deletion",
+				Description:    "Schedules the project named by the {project_id} path parameter for deletion in the source-of-truth database. The deletion is scheduled, not immediate: the project's deletion_scheduled_at stamp is set and the destructive teardown — the ON DELETE CASCADE that removes its environments, services, and audit log — is carried out by a later worker story, so the project and its audit trail still exist when this returns. Action project.delete is authorized against the (principal home organization, {project_id}) resource the path names before the handler runs: project.delete is a CapWrite action, so the gate admits the principal's organization-wide write roles (owner, admin, developer, ci) and denies viewer, denies support (CapRead-only — a support principal cannot mutate even within its home tenant), and admits a scoped grant that covers the resource (for example, a project-scoped Admin grant for THAT project) while denying a grant that names only a SIBLING project, an unrelated environment, or an unrelated service because the policy engine asks whether the grant scope contains the resource scope, never the reverse. A cross-tenant project_id reaches the persistence layer with the principal's home organization id and is rejected as a deterministic 404 by the tenant-scoped repository query, never scheduling another tenant's data for teardown. The optional If-Match request header carries the row's optimistic-concurrency version (a strong ETag of the form \"<n>\"); a stale version is rejected as a deterministic 409 carrying the row's authoritative version under details.current_version. Scheduling deletion for a project already scheduled for deletion is a stable 409. The soft-delete write and an immutable audit record naming the authenticated principal are committed in one transaction: a scheduled deletion can never be persisted without its audit trail. The response carries no credential material and mirrors the row's new version into the ETag response header so the caller can echo it back as the next If-Match precondition.",
+				Tags:           []string{tagProjects},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionProjectDelete),
+				PathParams: []openapi.PathParam{{
+					Name:        "project_id",
+					Description: "The id of the project to schedule for deletion.",
+				}},
+				SuccessStatus:      http.StatusAccepted,
+				SuccessDescription: "The project was scheduled for deletion.",
+			},
+			// projectIDResolver authorizes action project.delete against the
+			// (principal home organization, {project_id}) resource the
+			// path names, not merely the principal's home organization,
+			// so a scoped grant that names THIS project authorizes the
+			// teardown while a grant that names only a SIBLING project
+			// does not. The organization id is taken from the principal's
+			// home org (never the caller), so a cross-tenant project_id
+			// still hits the tenant-scoped repository query and surfaces
+			// as a 404 at the persistence boundary.
+			resolver: projectIDResolver,
+			handler:  deleteProjectHandler(projectDeleter),
 		},
 		{
 			endpoint: openapi.Endpoint{

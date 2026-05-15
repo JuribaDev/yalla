@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
@@ -49,6 +50,7 @@ type JobEnqueuer interface {
 const (
 	projectCreateAction  = "project.create"
 	projectUpdateAction  = "project.update"
+	projectDeleteAction  = "project.delete"
 	projectProvisionJob  = "project.provision"
 	projectQuotaResource = "projects"
 	// projectDisplayNameMaxLen bounds a human-authored project display name,
@@ -102,6 +104,28 @@ type UpdateProjectInput struct {
 	ProjectID      string
 	Slug           *string
 	DisplayName    *string
+	IfMatchVersion *int64
+	ActorID        string
+	ActorKind      string
+	ActorOrgID     string
+	RequestID      string
+	CorrelationID  string
+}
+
+// DeleteProjectInput is the input to ProjectService.ScheduleDeletion.
+// OrganizationID identifies the tenant the project belongs to; ProjectID
+// names the project to schedule for teardown. The Actor* and correlation
+// fields describe the authenticated principal performing the deletion and
+// are recorded verbatim on the audit event. They are plain strings so the
+// store layer takes no build dependency on the policy or telemetry packages
+// — the httpapi handler, which already holds the resolved principal and the
+// request correlation, fills them in.
+//
+// IfMatchVersion enforces optimistic concurrency for scheduling deletion,
+// with the same semantics as on UpdateProjectInput.
+type DeleteProjectInput struct {
+	OrganizationID string
+	ProjectID      string
 	IfMatchVersion *int64
 	ActorID        string
 	ActorKind      string
@@ -456,4 +480,111 @@ func validateProjectDisplayName(raw string) (string, *apierr.FieldViolation) {
 		return "", &apierr.FieldViolation{Field: "display_name", Reason: "exceeds the maximum length"}
 	}
 	return displayName, nil
+}
+
+// ScheduleDeletion schedules the project named by (in.OrganizationID,
+// in.ProjectID) for teardown, inside one transaction: read the current row,
+// optionally enforce the If-Match precondition, reject a project already
+// scheduled, stamp deletion_scheduled_at, append the audit event. A blank
+// OrganizationID or ProjectID is a typed validation failure raised before
+// the transaction is opened. A {project_id} with no row inside the tenant
+// is the typed NotFound the repository produces, and a project whose
+// deletion was already scheduled rolls the whole transaction back as a
+// typed Conflict — so an audit record can never name a deletion that did
+// not change the resource's state.
+//
+// Authorization for project.delete is enforced at the HTTP boundary by
+// RequireAuth against the (home organization, project_id) resource the
+// path names — the store layer never runs an in-transaction Authorize for
+// the delete path because the HTTP gate is authoritative and the
+// in-transaction Authorizer is reserved for Create (the create-time race
+// against grant changes during a quota reservation).
+//
+// This is a soft, scheduled deletion: it records the intent and stamps the
+// timestamp. The destructive teardown — the ON DELETE CASCADE that removes
+// environments, services, and the audit log under the project — is a later
+// worker story, so the project row and its audit trail still exist after
+// this returns.
+func (svc *ProjectService) ScheduleDeletion(ctx context.Context, in DeleteProjectInput) (Project, error) {
+	organizationID := strings.TrimSpace(in.OrganizationID)
+	if organizationID == "" {
+		return Project{}, apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "organization_id",
+			Reason: "must not be blank",
+		})
+	}
+	projectID := strings.TrimSpace(in.ProjectID)
+	if projectID == "" {
+		return Project{}, apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "project_id",
+			Reason: "must not be blank",
+		})
+	}
+
+	// The audit record is filed under the actor's home organization — the
+	// tenant the principal authenticated into — while its resource id names
+	// the project that was scheduled for deletion. A missing actor
+	// organization is a wiring error (an authenticated request always
+	// carries one), not client input, so it is reported as Internal rather
+	// than a validation failure.
+	actorOrgID := strings.TrimSpace(in.ActorOrgID)
+	if actorOrgID == "" {
+		return Project{}, apierr.Internal(errors.New("store: ProjectService.ScheduleDeletion requires an actor organization for the audit record"))
+	}
+
+	event := AuditEvent{
+		OrganizationID: actorOrgID,
+		ActorID:        strings.TrimSpace(in.ActorID),
+		ActorKind:      strings.TrimSpace(in.ActorKind),
+		Action:         projectDeleteAction,
+		ResourceKind:   string(domain.KindProject),
+		ResourceID:     projectID,
+		Decision:       AuditDecisionAllowed,
+		Reason:         "authorization granted for project.delete",
+		RequestID:      strings.TrimSpace(in.RequestID),
+		CorrelationID:  strings.TrimSpace(in.CorrelationID),
+	}
+
+	var scheduled Project
+	txErr := svc.store.Write(ctx, func(ctx context.Context, tx *Tx) error {
+		current, getErr := svc.repo.Get(ctx, tx, organizationID, projectID)
+		if getErr != nil {
+			return getErr
+		}
+		// The version pre-check surfaces a stale If-Match BEFORE the
+		// already-scheduled check, so the caller learns "your view of the
+		// version is stale" instead of an already-scheduled message that
+		// might race with a concurrent edit they did not see.
+		if in.IfMatchVersion != nil && current.Version != *in.IfMatchVersion {
+			return apierr.ConflictStale(current.Version)
+		}
+		if current.DeletionScheduledAt != nil {
+			// Scheduling teardown for a project already scheduled for
+			// teardown changes nothing: the caller's view of the resource
+			// lifecycle is stale, so it is a typed Conflict, not a silent
+			// success that would write a misleading audit record.
+			return apierr.Conflict("project deletion is already scheduled")
+		}
+		row, updErr := svc.repo.ScheduleDeletion(ctx, tx, organizationID, projectID, in.IfMatchVersion)
+		if updErr != nil {
+			return updErr
+		}
+		// deletion_scheduled_at is database-assigned (now()); record the
+		// resolved timestamp — a non-secret value — as audit context so the
+		// trail captures exactly when teardown was scheduled.
+		if row.DeletionScheduledAt != nil {
+			event.Metadata = map[string]string{
+				"deletion_scheduled_at": row.DeletionScheduledAt.UTC().Format(time.RFC3339Nano),
+			}
+		}
+		if _, audErr := svc.audit.Append(ctx, tx, event); audErr != nil {
+			return audErr
+		}
+		scheduled = row
+		return nil
+	})
+	if txErr != nil {
+		return Project{}, txErr
+	}
+	return scheduled, nil
 }

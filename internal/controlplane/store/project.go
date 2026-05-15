@@ -16,14 +16,23 @@ import (
 // Version is the database-owned optimistic-concurrency token: it starts at 1
 // on INSERT and is bumped by the projects_bump_version trigger on every
 // UPDATE. Callers must not mutate it; the trigger is the only writer.
+//
+// DeletionScheduledAt is nil for a live project and carries the stamp time
+// once DELETE /v1/projects/{project_id} has scheduled the project for
+// teardown. The destructive teardown — the ON DELETE CASCADE that removes
+// environments, services, and the audit log — is a later worker story, so
+// the row, and its audit trail, still exist while DeletionScheduledAt is
+// set. The column is database-assigned (now()); callers must not mutate it
+// outside ProjectRepository.ScheduleDeletion.
 type Project struct {
-	ID             string
-	OrganizationID string
-	Slug           string
-	DisplayName    string
-	Version        int64
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID                  string
+	OrganizationID      string
+	Slug                string
+	DisplayName         string
+	Version             int64
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	DeletionScheduledAt *time.Time
 }
 
 // ProjectRepository is the reference repository for the transaction pattern
@@ -50,7 +59,7 @@ func NewProjectRepository() *ProjectRepository { return &ProjectRepository{} }
 
 // projectColumns is the column list returned by every project query, in the
 // order scanProject expects.
-const projectColumns = `id, organization_id, slug, display_name, version, created_at, updated_at`
+const projectColumns = `id, organization_id, slug, display_name, version, created_at, updated_at, deletion_scheduled_at`
 
 // Insert writes a new project row inside tx and returns the persisted row,
 // including the database-assigned timestamps. It requires a *Tx — not a bare
@@ -146,7 +155,7 @@ func (r *ProjectRepository) CountByOrganization(ctx context.Context, q Querier, 
 // scanProject scans one project row in projectColumns order.
 func scanProject(row pgx.Row) (Project, error) {
 	var p Project
-	err := row.Scan(&p.ID, &p.OrganizationID, &p.Slug, &p.DisplayName, &p.Version, &p.CreatedAt, &p.UpdatedAt)
+	err := row.Scan(&p.ID, &p.OrganizationID, &p.Slug, &p.DisplayName, &p.Version, &p.CreatedAt, &p.UpdatedAt, &p.DeletionScheduledAt)
 	return p, err
 }
 
@@ -325,4 +334,58 @@ func classifyProjectConcurrencyMiss(ctx context.Context, r *ProjectRepository, t
 		return getErr
 	}
 	return apierr.ConflictStale(current.Version)
+}
+
+// ScheduleDeletion stamps deletion_scheduled_at = now() on the project
+// identified by (organizationID, projectID) inside tx and returns the
+// persisted row, including the trigger-refreshed updated_at timestamp and
+// bumped version. It requires a *Tx — not a bare Querier — so a project can
+// never be marked for teardown outside the transaction that also carries
+// its audit record. The query is tenant scoped by organization_id first, so
+// a projectID that belongs to another organization simply does not match
+// and is reported as NotFound — a cross-tenant id can never schedule
+// another organization's project for teardown.
+//
+// The UPDATE is unconditional in its predicate apart from the optional
+// version check: re-scheduling a project already scheduled for deletion is
+// a conflict the ProjectService detects with a prior read inside the same
+// transaction, not a not-found this repository can distinguish (the
+// repository must remain SQL-idempotent for non-customer callers — workers,
+// admin jobs — that need a stable retry surface).
+//
+// ifMatchVersion enforces optimistic concurrency identically to Update — a
+// nil pointer disables the check, a non-nil pointer adds a WHERE clause on
+// the current version, and a stale view is reported as a typed
+// apierr.ConflictStale carrying the row's authoritative version.
+func (r *ProjectRepository) ScheduleDeletion(ctx context.Context, tx *Tx, organizationID, projectID string, ifMatchVersion *int64) (Project, error) {
+	if tx == nil {
+		return Project{}, apierr.Internal(errors.New("store: ProjectRepository.ScheduleDeletion called with a nil transaction"))
+	}
+	var row pgx.Row
+	if ifMatchVersion == nil {
+		row = tx.QueryRow(ctx,
+			`UPDATE projects
+			    SET deletion_scheduled_at = now()
+			  WHERE organization_id = $1 AND id = $2
+			 RETURNING `+projectColumns,
+			organizationID, projectID)
+	} else {
+		row = tx.QueryRow(ctx,
+			`UPDATE projects
+			    SET deletion_scheduled_at = now()
+			  WHERE organization_id = $1 AND id = $2 AND version = $3
+			 RETURNING `+projectColumns,
+			organizationID, projectID, *ifMatchVersion)
+	}
+	updated, err := scanProject(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if ifMatchVersion == nil {
+			return Project{}, apierr.NotFound("project", projectID)
+		}
+		return Project{}, classifyProjectConcurrencyMiss(ctx, r, tx, organizationID, projectID)
+	}
+	if err != nil {
+		return Project{}, apierr.StoreUnavailable(err)
+	}
+	return updated, nil
 }
