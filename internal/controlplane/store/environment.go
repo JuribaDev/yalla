@@ -58,6 +58,38 @@ type EnvironmentRepository struct{}
 // NewEnvironmentRepository builds a stateless EnvironmentRepository.
 func NewEnvironmentRepository() *EnvironmentRepository { return &EnvironmentRepository{} }
 
+// Insert writes a new environments row inside the supplied transaction
+// and returns the persisted row, in environmentColumns order, so the
+// caller sees the database-assigned timestamps and the initial version
+// (1) without re-reading. Calling Insert with a nil transaction is a
+// wiring error and is reported as a typed apierr.Internal so the bug
+// can never silently degrade into a "succeeded with no audit trail"
+// failure mode.
+//
+// The schema enforces the tenant invariant — the composite foreign key
+// (organization_id, project_id) references projects (organization_id, id)
+// — so an environment whose organization_id does not match its parent
+// project's row is rejected at the database before it can be persisted,
+// regardless of application bugs. A slug already taken by another
+// environment in the same project violates UNIQUE (project_id, slug)
+// and surfaces through mapWriteError as a deterministic
+// apierr.Conflict, never as a 500 leaking the constraint name.
+func (r *EnvironmentRepository) Insert(ctx context.Context, tx *Tx, e Environment) (Environment, error) {
+	if tx == nil {
+		return Environment{}, apierr.Internal(errors.New("store: EnvironmentRepository.Insert called with a nil transaction"))
+	}
+	row := tx.QueryRow(ctx,
+		`INSERT INTO environments (id, organization_id, project_id, slug, display_name)
+		 VALUES ($1, $2, $3, $4, $5)
+		 RETURNING `+environmentColumns,
+		e.ID, e.OrganizationID, e.ProjectID, e.Slug, e.DisplayName)
+	created, err := scanEnvironment(row)
+	if err != nil {
+		return Environment{}, mapWriteError(err, "an environment with this slug already exists in the project")
+	}
+	return created, nil
+}
+
 // ListByProject returns every environment owned by (organizationID,
 // projectID), in deterministic (slug ASC, id ASC) order so an agent
 // observing the response sees a stable ordering across calls. The read

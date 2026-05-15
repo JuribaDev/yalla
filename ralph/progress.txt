@@ -11342,3 +11342,203 @@
   - The action constants for variables vs environments are intentionally different despite living in the same hierarchy: variables route uses policy.ActionEnvRead ("env.read" — env-vars), environments route uses policy.ActionEnvironmentRead ("environment.read" — env *entity*). Both are CapRead, both go through projectIDResolver. Mixing them up would silently regress tenant isolation; always grep the route registration in routes.go and the existing project_environments_test.go OpenAPI assertion to confirm which action a route is gated on before writing the policy matrix.
   - The fakeProjectEnvironmentReader, listProjectEnvironmentsHandlerFor, getProjectEnvironments, decodeListProjectEnvironments, and seedEnvironmentWire helpers from project_environments_test.go (BE-0148) are sufficient scaffolding — no new fakes were needed. Confirms the pattern: the contract story (BE-0148) lands the test scaffolding, and the policy-matrix story (BE-0150) reuses it without addition.
 ---
+
+## 2026-05-15 - BE-0151
+- What was implemented: POST /v1/projects/{project_id}/environments, the first
+  mutating endpoint on the environments surface. It creates an environment
+  under the project named by the {project_id} path parameter, returning the
+  source-of-truth row in a 201 yalla.output.v1 envelope.
+  - internal/controlplane/store/environmentservice.go (new): EnvironmentService
+    is the reference unit-of-work orchestrator. Create composes — in this
+    fixed order, inside one Store.Write transaction — (1) validate the input
+    before any database work runs, (2) confirm the parent project exists in
+    (OrganizationID, ProjectID) — tenant-scoped, so a cross-tenant or unknown
+    project_id surfaces as apierr.NotFound never a 500, (3) in-transaction
+    authorize action environment.create against the resource org (defense-in-
+    depth against grant changes between the HTTP RequireAuth gate and the
+    write), (4) reserve quota against QuotaResourceEnvironments, (5) insert
+    the environments row, (6) enqueue the environment.provision job, (7)
+    append an immutable audit record under the actor's home organization
+    with metadata {slug, project_id} — no secret material since environments
+    carry none. Validation rejects invalid OrganizationID/ProjectID/
+    EnvironmentID kinds (domain.ParseID + Kind check), non-canonical slugs
+    (domain.ParseSlug), and unbounded/blank/control-char/non-UTF-8 display
+    names (validateEnvironmentDisplayName), each as a typed FieldViolation
+    naming the field but never echoing the submitted value. Actor
+    organization missing is reported as apierr.Internal — a wiring error,
+    not client input — so the audit row can never miss its tenant column.
+    NewEnvironmentService rejects every nil dependency at construction so a
+    misconfigured service fails fast rather than on first request.
+  - internal/controlplane/store/environment.go: added EnvironmentRepository.
+    Insert(ctx, tx, e) — writes a new environments row inside the supplied
+    *Tx and returns the persisted row in environmentColumns order (the
+    caller sees the database-assigned timestamps and the initial version
+    without re-reading). The schema's composite (organization_id, project_id)
+    FK to projects(organization_id, id) rejects an organization/project
+    mismatch at the database; a duplicate (project_id, slug) tuple violates
+    UNIQUE and is mapped by mapWriteError to apierr.Conflict (the same
+    chokepoint projects/variables use), never a 500 leaking the constraint
+    name. A nil *Tx is apierr.Internal.
+  - internal/controlplane/httpapi/project_environments.go: added the
+    EnvironmentCreator narrow port (Create(ctx, store.CreateEnvironmentInput)
+    -> (store.Environment, error)) — *store.EnvironmentService satisfies it
+    in production; tests supply fakeEnvironmentCreator. The handler
+    (createProjectEnvironmentHandler) reads the principal off the context
+    (RequireAuth attaches it), rejects a wired-nil creator with the typed
+    errNoEnvironmentCreator internal error, strictly decodes the request
+    body via validate.DecodeJSON (rejects unknown fields and oversized
+    payloads, never echoes input), forwards the resolved (principal home
+    org id, path {project_id}, decoded EnvironmentID/Slug/DisplayName,
+    principal id+kind, actor home org id, request id, correlation id)
+    tuple to the creator, and renders the resulting row through
+    projectEnvironmentOf in a 201 yalla.output.v1 envelope. The request
+    body intentionally exposes no organization_id or project_id field —
+    the strict decoder rejects either as an unknown field at 400 — so a
+    caller cannot point the write at another tenant or another project by
+    smuggling them in the body.
+  - internal/controlplane/httpapi/routes.go: registered the POST route
+    with OperationID=createProjectEnvironment, Tags=[tagProjects,
+    tagEnvironments] (the same dual-tag shape PUT
+    /v1/projects/{project_id}/variables uses), RequiresAuth=true,
+    RequiredAction=policy.ActionEnvironmentCreate (CapWrite in the
+    catalog), SuccessStatus=201, resolver=projectIDResolver.
+  - internal/controlplane/httpapi/server.go: NewHandler signature gained
+    the environmentCreator port (one new positional arg threaded into
+    newRouteTable).
+  - cmd/yalla-api/main.go: wires *store.EnvironmentService at startup
+    composed over dataStore + project repository + environment repository
+    + placeholder Authorizer/QuotaReserver/JobEnqueuer (the same
+    alwaysAllowAuthorizer / noopQuotaReserver / noopJobEnqueuer
+    ProjectService uses until the real adapters land) + auditRepo.
+    Threads it as the environmentCreator arg into NewHandler.
+  - Mechanical churn: 34 test files received a positional
+    fakeEnvironmentCreator{} (or one extra nil for newRouteTable all-nil
+    calls and the existing routes_test.go fixture). A javascript
+    ctx_execute walked every NewHandler / newRouteTable invocation
+    across the suite, found the last top-level comma at depth=0 (so
+    nested struct/paren bodies didn't confuse the split), and inserted
+    "fakeEnvironmentCreator{}, " before the last argument (logger for
+    NewHandler, the new last port for newRouteTable). 59 insertions
+    across 34 files; no manual edits needed.
+- New tests:
+  - internal/controlplane/store/environmentservice_test.go (new): 9
+    integration tests proving the create-environment unit of work
+    commits transactionally and rolls back on any step's failure.
+    TestEnvironmentServiceCreateSuccess proves the row, the audit record,
+    and the recorded step calls all reach the right state; the audit
+    row names the actor, the resource id, environment.create, the slug,
+    and the project_id verbatim. TestEnvironmentServiceCreateRequiresActorOrg
+    pins the wiring-error contract (no transaction opens, error is
+    Internal). TestEnvironmentServiceCreateValidationFailure proves
+    invalid input surfaces as InvalidInput with field violations, the
+    transaction never opens, and the violation reason never echoes the
+    submitted value. TestEnvironmentServiceCreateRejectsCrossTenantProject
+    and TestEnvironmentServiceCreateUnknownProject prove the
+    parent-project existence check is tenant-scoped: a foreign or
+    unknown project surfaces as NotFound and authorize/quota/jobs never
+    run. TestEnvironmentServiceCreateAuthorizationFailure proves an
+    in-tx Forbidden propagates as 403 and rolls back.
+    TestEnvironmentServiceCreateQuotaFailureRollsBack proves an
+    exhausted quota propagates the typed code and rolls back.
+    TestEnvironmentServiceCreateEnqueueFailureRollsBack is the
+    load-bearing rollback test: a successful write followed by a failed
+    job enqueue rolls back the entire transaction (the row AND the
+    audit record), so an environment can never exist without its job
+    or its audit trail. TestEnvironmentServiceCreateConflict proves a
+    duplicate slug surfaces as Conflict and the second row is not
+    persisted. TestNewEnvironmentServiceRejectsNilDependencies covers
+    all seven nil constructor inputs with a table-driven subtest matrix.
+  - internal/controlplane/httpapi/project_environments_create_test.go
+    (new): 14 contract tests driving the real NewHandler + real policy
+    engine (fake Authenticator + fakeEnvironmentCreator only) —
+    happy-path 201, forwarded scope (principal home org id never from
+    body, path {project_id} never from body, actor id/kind, request id),
+    strict decoder rejects organization_id and project_id smuggled in
+    the body (400 unknown field), rejects malformed JSON (400),
+    unauthenticated (401), viewer forbidden (403 — environment.create
+    is CapWrite, viewer has CapRead only), and typed propagation of
+    InvalidInput (400), Conflict (409), NotFound (404), QuotaExceeded,
+    and StoreUnavailable (5xx, no driver detail leaked) from the
+    creator. TestCreateProjectEnvironmentNilCreatorReturnsInternalError
+    proves the wiring-error path returns a typed 5xx rather than
+    panicking. TestCreateProjectEnvironmentRouteIsDocumented proves
+    the route registration is structurally complete:
+    OperationID=createProjectEnvironment, both tagProjects and
+    tagEnvironments present, RequiredAction=
+    policy.ActionEnvironmentCreate, RequiresAuth=true, SuccessStatus=201.
+- Files changed: internal/controlplane/store/{environment.go,
+  environmentservice.go (new), environmentservice_test.go (new)},
+  internal/controlplane/httpapi/{project_environments.go, routes.go,
+  server.go, project_environments_create_test.go (new) + 33 test files
+  for the positional creator arg}, cmd/yalla-api/main.go, ralph/prd.json,
+  ralph/progress.txt.
+- Verification: gofmt clean, go mod tidy clean, go vet ./... clean,
+  go test ./... PASS (Postgres-backed integration suites skip without
+  YALLA_TEST_DATABASE_URL — they validate in CI), go test -race
+  ./internal/controlplane/... PASS.
+- Remaining risks/follow-ups:
+  - The Authorizer/QuotaReserver/JobEnqueuer wired in cmd/yalla-api/main.go
+    are still placeholders (alwaysAllowAuthorizer, noopQuotaReserver,
+    noopJobEnqueuer) — the real adapters land in their own stories. The
+    HTTP RequireAuth middleware is the authoritative gate today; the
+    in-transaction Authorizer is defense-in-depth.
+  - BE-0152 (contract tests) and BE-0153 (policy matrix) for POST
+    /v1/projects/{project_id}/environments stay open. The contract-test
+    surface already exists in project_environments_create_test.go;
+    BE-0152 can either be marked complete against the same file or
+    extend it with additional fixture-driven cases. BE-0153 follows the
+    BE-0150 environment GET policy matrix one-for-one but for
+    environment.create (CapWrite).
+
+- **Learnings for future iterations:**
+  - New mutating endpoint on a hierarchy resource whose persistence
+    table already exists (environments table from migration 0002 +
+    version trigger from 0011 — same pattern BE-0148 used for the GET
+    reader): the create story collapses to (a) one *Repository.Insert
+    method on the existing repo file, (b) a new *Service file
+    (environmentservice.go) that mirrors projectservice.go for the
+    unit-of-work composition, (c) a new *Creator port + handler in the
+    existing http file alongside the GET handler, (d) a new POST route
+    in routes.go, (e) NewHandler / newRouteTable signature gains one
+    positional port. No migration, no repository file rename, no
+    domain id package changes.
+  - Mechanical handler-port churn (n test files have to receive a
+    positional zero-value fake or an extra nil) is best handled by a
+    one-shot javascript walk that locates the last top-level comma of
+    every NewHandler/newRouteTable invocation and inserts the new arg
+    before the final positional (logger or the new port itself for
+    newRouteTable). The depth=0 split tolerates nested struct literals
+    like fakeProjectGrantReplacer{} without confusion. A sed-style
+    line-anchored substitution would have failed on the calls that
+    wrap differently — the AST-aware comma walk handles them
+    uniformly.
+  - The orchestrator's first step must be the tenant-scoped
+    parent-Get, NOT the in-tx authorize. Authorize takes (action,
+    resource_org_id); if the project is wrong we have no proof yet
+    that the action even has a resource to apply to. Get-first also
+    short-circuits a cross-tenant or unknown id into a clean NotFound
+    before any quota or audit cost is paid; deferring it would either
+    disguise NotFound as Forbidden (which confirms the foreign
+    resource's existence) or open a transaction that rolls back after
+    every step. The same ordering is now load-bearing for every
+    hierarchy create endpoint that follows (env-scoped service creates,
+    etc.).
+  - The store layer must keep its action/job/quota names as plain
+    string constants in the service file
+    (environmentCreateAction = "environment.create",
+    environmentProvisionJob = "environment.provision",
+    QuotaResourceEnvironments from quota.go) rather than importing the
+    policy/jobs/quota catalogs. The catalogs are private to their
+    packages; the duplication is intentional. The HTTP layer
+    references the typed policy.ActionEnvironmentCreate constant in
+    routes.go for the same reason — the wire boundary type-checks
+    against the policy catalog, the store boundary doesn't.
+  - The audit record's metadata{slug, project_id} carries no secret
+    material — environment slugs are canonical [a-z0-9-], project ids
+    are structural — so no redaction chokepoint is needed at the
+    projection, unlike variables which need an output.Sentinel. This
+    is the same narrowing BE-0148 documented for the GET reader: when
+    a resource table stores only structural data, the projection
+    still exists as a single review chokepoint but does not need a
+    redaction transform.
+---

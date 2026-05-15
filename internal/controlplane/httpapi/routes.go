@@ -111,13 +111,14 @@ type versionPayload struct {
 // /v1/projects/{project_id}/grants, projectGrantReplacer backs PUT
 // /v1/projects/{project_id}/grants, projectVariables backs GET
 // /v1/projects/{project_id}/variables, projectVariableReplacer backs
-// PUT /v1/projects/{project_id}/variables, and projectEnvironments
-// backs GET /v1/projects/{project_id}/environments. Any may be nil
+// PUT /v1/projects/{project_id}/variables, projectEnvironments backs
+// GET /v1/projects/{project_id}/environments, and environmentCreator
+// backs POST /v1/projects/{project_id}/environments. Any may be nil
 // for tests and tooling that only inspect the route table's metadata;
 // a request that actually reaches a handler with a nil dependency is
 // reported as a typed internal error rather than a misleading empty
 // list or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader) []apiRoute {
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -526,6 +527,39 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// persistence boundary.
 			resolver: projectIDResolver,
 			handler:  listProjectEnvironmentsHandler(projectEnvironments),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodPost,
+				Path:           "/v1/projects/{project_id}/environments",
+				OperationID:    "createProjectEnvironment",
+				Summary:        "Create a project environment",
+				Description:    "Creates an environment — the third level of Yalla's Organization -> Project -> Environment -> Service hierarchy — inside the project named by the {project_id} path parameter. The request body supplies the caller-minted canonical environment id (an idempotent retry is structural, not header-encoded), the canonical [a-z0-9-] slug the environment is addressed by within its project, and the human-authored display name. Every field is validated before any database work; an invalid request never opens a transaction. The environment row, the durable provisioning job that mirrors it into Dokploy, and an immutable audit record naming the authenticated principal are committed in one transaction — a created environment can never exist without its provisioning job or its audit trail, and a duplicate slug within the same project rolls the whole transaction back as a deterministic 409. Action environment.create is authorized against the (principal home organization, {project_id}) resource the path names before the handler runs: environment.create is a CapWrite action, so the gate admits the principal's organization-wide write roles (owner, admin, developer, ci), admits a scoped grant that covers the project (a project-scoped Admin grant for THIS project, an environment- or service-scoped grant under it), denies viewer (CapRead only), denies support (CapRead-only — support is a deliberate cross-tenant READ exception, never a write one), and denies a grant that names only a sibling project, an unrelated environment, or an unrelated service because the policy engine asks whether the grant scope contains the resource scope, never the reverse. A cross-tenant or unknown project_id reaches the persistence layer with the principal's home organization id and is rejected as a deterministic 404 by the store-layer project existence check, never disguised as a 200 or a 403 that would confirm the foreign project's existence. The response carries no credential material.",
+				Tags:           []string{tagProjects, tagEnvironments},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionEnvironmentCreate),
+				SuccessStatus:  http.StatusCreated,
+				PathParams: []openapi.PathParam{{
+					Name:        "project_id",
+					Description: "The id of the project the new environment will belong to.",
+				}},
+				SuccessDescription: "The environment was created.",
+			},
+			// projectIDResolver authorizes action environment.create against
+			// the (principal home organization, {project_id}) resource the
+			// path names, so a scoped grant that names THIS project
+			// authorizes the write while a grant that names only a SIBLING
+			// project does not. The organization id on the persistence
+			// input is taken from the principal's home org (never the
+			// caller), so a cross-tenant project_id still hits the
+			// tenant-scoped repository query and surfaces as a 404 at the
+			// persistence boundary — never disguised as a 200 with an
+			// environment minted under another tenant. environment.create
+			// is a CapWrite action and has no cross-tenant support
+			// exception — unlike CapRead actions, the support principal
+			// cannot create environments in another tenant.
+			resolver: projectIDResolver,
+			handler:  createProjectEnvironmentHandler(environmentCreator),
 		},
 		{
 			endpoint: openapi.Endpoint{

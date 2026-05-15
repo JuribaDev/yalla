@@ -64,6 +64,33 @@ func (f fakeProjectEnvironmentReader) ListProjectEnvironments(_ context.Context,
 	return f.envs, f.err
 }
 
+// fakeEnvironmentCreator is a canned EnvironmentCreator for httpapi
+// tests. The zero value returns a zero Environment and a nil error from
+// Create, which is all the tests that never reach the POST endpoint
+// (the public-surface, /v1/me, and other-route suites) need. Tests that
+// drive POST /v1/projects/{project_id}/environments set env/err and
+// read gotInput + callCount back to prove the handler forwarded the
+// resolved (principal home org id, path project_id, decoded body
+// fields, principal id+kind, actor home org id, request id, correlation
+// id) tuple verbatim — the boundary the policy engine and the audit
+// record share.
+type fakeEnvironmentCreator struct {
+	env       store.Environment
+	err       error
+	gotInput  *store.CreateEnvironmentInput
+	callCount *int
+}
+
+func (f fakeEnvironmentCreator) Create(_ context.Context, in store.CreateEnvironmentInput) (store.Environment, error) {
+	if f.gotInput != nil {
+		*f.gotInput = in
+	}
+	if f.callCount != nil {
+		*f.callCount++
+	}
+	return f.env, f.err
+}
+
 // listProjectEnvironmentsSuccessEnvelope is the decoded shape of the
 // GET /v1/projects/{project_id}/environments success envelope.
 type listProjectEnvironmentsSuccessEnvelope struct {
@@ -87,7 +114,7 @@ func listProjectEnvironmentsHandlerFor(id auth.Identity, authErr error, reader P
 		fakeOrgVariableReader{}, fakeOrgVariableReplacer{}, fakeOrgVariablePatcher{}, fakeOrgVariableDeleter{},
 		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
 		fakeProjectReader{}, fakeProjectCreator{}, fakeProjectUpdater{}, fakeProjectDeleter{}, fakeProjectRestorer{},
-		fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, fakeProjectVariableReader{}, fakeProjectVariableReplacer{}, reader, nil)
+		fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, fakeProjectVariableReader{}, fakeProjectVariableReplacer{}, reader, fakeEnvironmentCreator{}, nil)
 }
 
 // getProjectEnvironments issues GET /v1/projects/{project_id}/environments
@@ -373,7 +400,7 @@ func TestListProjectEnvironmentsOpenAPIRouteIsRegistered(t *testing.T) {
 		fakeOrgVariableReader{}, fakeOrgVariableReplacer{}, fakeOrgVariablePatcher{}, fakeOrgVariableDeleter{},
 		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
 		fakeProjectReader{}, fakeProjectCreator{}, fakeProjectUpdater{}, fakeProjectDeleter{}, fakeProjectRestorer{},
-		fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, fakeProjectVariableReader{}, fakeProjectVariableReplacer{}, fakeProjectEnvironmentReader{})
+		fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, fakeProjectVariableReader{}, fakeProjectVariableReplacer{}, fakeProjectEnvironmentReader{}, fakeEnvironmentCreator{})
 
 	var found bool
 	for _, rt := range table {

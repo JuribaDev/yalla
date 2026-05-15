@@ -198,6 +198,25 @@ func main() {
 		logger.Error("failed to initialize the environment reader", "error", err.Error())
 		os.Exit(1)
 	}
+	// Defense-in-depth ports for the environment creation unit of work. The
+	// HTTP RequireAuth middleware is the authoritative gate for action
+	// environment.create; the in-transaction Authorizer is a redundant check
+	// whose real adapter (a policy.Engine-driven port that reads grant rows
+	// from the same *Tx as the desired-state write) lands with the quota and
+	// jobs adapters in later stories. Until those land, the placeholder always
+	// allows — the policy boundary at the HTTP layer is what protects the
+	// tenant boundary — and the quota and jobs ports record no-ops. A nil
+	// dependency at the store-service construction site is rejected by
+	// store.NewEnvironmentService, so the placeholders also guard the
+	// contract that EnvironmentService never runs with an unwired dependency.
+	environmentAuthz := alwaysAllowAuthorizer{}
+	environmentQuota := noopQuotaReserver{}
+	environmentJobs := noopJobEnqueuer{}
+	environmentService, err := store.NewEnvironmentService(dataStore, store.NewProjectRepository(), store.NewEnvironmentRepository(), environmentAuthz, environmentQuota, environmentJobs, auditRepo)
+	if err != nil {
+		logger.Error("failed to initialize the environment service", "error", err.Error())
+		os.Exit(1)
+	}
 	authenticator, err := auth.NewAuthenticator(auth.AuthenticatorConfig{
 		Store:       credentials,
 		SigningKeys: cfg.SigningKeys,
@@ -230,7 +249,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              cfg.APIAddr,
-		Handler:           httpapi.NewHandler(build, readiness, meta, authenticator, engine, organizations, organizationService, organizationService, organizationService, members, membershipService, membershipService, membershipService, limits, limitsService, usage, auditEvents, orgVariables, orgVariableService, orgVariableService, orgVariableService, apiKeys, apiKeyService, apiKeyService, apiKeyService, apiKeyService, projects, projectService, projectService, projectService, projectService, projectGrants, projectGrantService, projectVariables, projectVariableService, projectEnvironments, logger),
+		Handler:           httpapi.NewHandler(build, readiness, meta, authenticator, engine, organizations, organizationService, organizationService, organizationService, members, membershipService, membershipService, membershipService, limits, limitsService, usage, auditEvents, orgVariables, orgVariableService, orgVariableService, orgVariableService, apiKeys, apiKeyService, apiKeyService, apiKeyService, apiKeyService, projects, projectService, projectService, projectService, projectService, projectGrants, projectGrantService, projectVariables, projectVariableService, projectEnvironments, environmentService, logger),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

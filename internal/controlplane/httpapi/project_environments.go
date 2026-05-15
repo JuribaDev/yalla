@@ -10,6 +10,8 @@ import (
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
 	"github.com/JuribaDev/yalla/internal/controlplane/policy"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
+	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
+	"github.com/JuribaDev/yalla/internal/controlplane/validate"
 )
 
 // errNoProjectEnvironmentReader is returned when GET
@@ -19,6 +21,13 @@ import (
 // client error — so the handler reports it as a typed internal failure
 // rather than serving an empty or misleading list.
 var errNoProjectEnvironmentReader = errors.New("httpapi: no project environment reader configured")
+
+// errNoEnvironmentCreator is returned when POST
+// /v1/projects/{project_id}/environments is reached without an
+// EnvironmentCreator wired into NewHandler. Like errNoProjectCreator it
+// can only happen through a wiring error and is reported as a typed
+// internal failure rather than a misleading 2xx with no side effect.
+var errNoEnvironmentCreator = errors.New("httpapi: no environment creator configured")
 
 // ProjectEnvironmentReader is the narrow persistence port GET
 // /v1/projects/{project_id}/environments depends on.
@@ -146,5 +155,136 @@ func listProjectEnvironmentsHandler(reader ProjectEnvironmentReader) http.Handle
 			out = append(out, projectEnvironmentOf(e))
 		}
 		apienvelope.WriteData(w, http.StatusOK, requestID(r), listProjectEnvironmentsPayload{Environments: out})
+	}
+}
+
+// EnvironmentCreator is the narrow persistence port POST
+// /v1/projects/{project_id}/environments depends on.
+// *store.EnvironmentService satisfies it in production; tests supply a
+// fake. Keeping the dependency an interface keeps the handler unit-
+// testable without a real database — the concrete orchestrator (the
+// authorize / quota / desired-state write / provisioning-job / audit
+// composition committed in one transaction) lives in the store layer.
+//
+// The HTTP boundary is the authoritative authorization gate: RequireAuth
+// authorizes action environment.create against the (principal home
+// organization, {project_id}) resource the path names through
+// projectIDResolver, so a request that reaches the creator has already
+// cleared the policy boundary. The store layer still re-authorizes
+// inside the same *Tx as the desired-state write — defense-in-depth
+// against a grant change that landed between the HTTP authorize and the
+// quota reservation.
+type EnvironmentCreator interface {
+	Create(ctx context.Context, in store.CreateEnvironmentInput) (store.Environment, error)
+}
+
+// createProjectEnvironmentRequest is the decoded POST
+// /v1/projects/{project_id}/environments request body.
+// EnvironmentID is the caller-supplied canonical environment id — the
+// agent contract mints ids client-side so an idempotent retry is
+// structural rather than header-encoded; Slug is the canonical
+// [a-z0-9-] identifier the environment is addressed by within its
+// project; DisplayName is its human-authored label. The request body
+// intentionally exposes no organization_id or project_id field: the
+// organization is derived from the authenticated principal's home
+// organization and the project comes from the {project_id} path
+// parameter, never from the body. The store layer validates every
+// field before any database work, so an invalid request never opens a
+// transaction — and the request body never carries credential
+// material.
+type createProjectEnvironmentRequest struct {
+	EnvironmentID string `json:"environment_id"`
+	Slug          string `json:"slug"`
+	DisplayName   string `json:"display_name"`
+}
+
+// createProjectEnvironmentPayload is the data block of the POST
+// /v1/projects/{project_id}/environments success envelope: the
+// environment that was created, in the same stable wire shape GET
+// /v1/projects/{project_id}/environments returns. It carries no
+// credential material — an environments row stores no secrets.
+type createProjectEnvironmentPayload struct {
+	Environment projectEnvironment `json:"environment"`
+}
+
+// createProjectEnvironmentHandler builds the POST
+// /v1/projects/{project_id}/environments handler. It decodes and
+// delegates: the request body is strictly decoded (oversized,
+// malformed, or unknown-field bodies become a typed 400 that never
+// echoes the input), then the create-environment unit of work —
+// re-authorize, reserve quota, write the environment row, enqueue the
+// provisioning job, append the audit record, all in one transaction —
+// runs in the store layer through the EnvironmentCreator port.
+//
+// RequireAuth gates the route on action environment.create through
+// projectIDResolver before the handler runs and attaches the resolved
+// principal, so a request that reaches the handler with no principal
+// is a wiring error reported as a typed internal error.
+// environment.create is a CapWrite action evaluated against the
+// (principal home organization, {project_id}) resource, so the gate
+// admits the principal's organization-wide write roles (owner, admin,
+// developer, ci) and a scoped grant that covers the project (a
+// project-scoped Admin grant for THIS project, an environment- or
+// service-scoped grant under it), denies viewer (CapRead only), denies
+// support (CapRead-only — support is a deliberate cross-tenant READ
+// exception, never a write one), and denies a grant that names only a
+// sibling project, an unrelated environment, or an unrelated service
+// because the policy engine asks whether the grant scope contains the
+// resource scope, never the reverse.
+//
+// The handler resolves the organization id from the authenticated
+// principal's home organization and the project id from the {project_id}
+// PATH parameter — never from the request body — so the tenant
+// boundary is structural here: there is no caller input that could
+// point the write at another tenant. A cross-tenant project_id
+// reaches the persistence layer with the principal's home organization
+// id and is rejected as a deterministic 404 by the store-layer's
+// tenant-scoped project existence check (the same property GET
+// /v1/projects/{project_id}/environments inherits), never disguised as
+// a 200 or a 403 that would confirm the foreign project's existence.
+// The principal and the request correlation identifiers are passed to
+// the creator so the audit record names the actor; a validation
+// failure, a slug conflict, an exhausted quota, a denied in-tx
+// authorize, and a datastore outage each surface as their own typed
+// status, never disguised as one another.
+func createProjectEnvironmentHandler(creator EnvironmentCreator) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if creator == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoEnvironmentCreator))
+			return
+		}
+
+		var req createProjectEnvironmentRequest
+		if err := validate.DecodeJSON(r.Body, &req, 0); err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		environment, err := creator.Create(r.Context(), store.CreateEnvironmentInput{
+			OrganizationID: p.OrganizationID,
+			ProjectID:      r.PathValue("project_id"),
+			EnvironmentID:  req.EnvironmentID,
+			Slug:           req.Slug,
+			DisplayName:    req.DisplayName,
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		apienvelope.WriteData(w, http.StatusCreated, requestID(r), createProjectEnvironmentPayload{
+			Environment: projectEnvironmentOf(environment),
+		})
 	}
 }
