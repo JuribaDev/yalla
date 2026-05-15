@@ -3130,3 +3130,41 @@
     documents its method/path/action/path-params but not a JSON body schema —
     PATCH and POST are documented the same way GET is.
 ---
+
+## 2026-05-15 - BE-0057
+- Added policy-matrix coverage for PATCH /v1/organizations/{org_id} (action
+  organization.update). New test file proves the authorization contract that
+  organizations_patch_test.go's wire-contract suite does not: role matrix,
+  revoked/expired credentials, cross-tenant principals, and scoped-grant
+  containment — all driven through the real NewHandler + policy.NewEngine().
+- Files changed:
+  - internal/controlplane/httpapi/organizations_patch_policy_test.go (new)
+  - ralph/prd.json (BE-0057 passes: true)
+  - ralph/progress.txt (this entry)
+- Verification: gofmt -w ., go mod tidy, go vet ./..., go test ./...,
+  go test -race ./... — all pass. Focused run:
+  go test -run TestUpdateOrganizationPolicy ./internal/controlplane/httpapi/ ok.
+- Results: 4 new tests, all green. No production code changed — test-only story.
+- Remaining risks/follow-ups: none. The same pattern applies to the remaining
+  org-subresource policy-matrix stories (BE-0060, BE-0063, ...).
+- **Learnings for future iterations:**
+  - organization.update maps to CapAdmin (catalog.go), unlike organization.read
+    (CapRead). builtinRoleCaps: only RoleOwner and RoleAdmin hold CapAdmin, so
+    the role matrix for a CapAdmin action is "owner/admin allow via
+    ReasonAllowedByRole, developer/viewer/ci/support deny via
+    ReasonDeniedNoCapability" when the principal targets its OWN org.
+  - The support cross-tenant carve-out in engine.go only fires for
+    `required == CapRead || required == CapSupport`. So for any CapAdmin/CapWrite
+    /CapOwner/CapDeploy action, support is denied cross-tenant via
+    ReasonDeniedCrossTenant exactly like every other role — a key contrast with
+    the GET /{org_id} policy suite where support IS the documented exception.
+  - A grant whose Scope is narrower than the resource Scope (e.g. a project-
+    scoped grant vs. the organization-root resource) yields
+    ReasonDeniedOutOfScope even when the grant's role is admin-capable. Only an
+    org-root-scoped grant with an admin-capable role covers organization.update.
+  - PATCH policy tests reuse the contract suite's helpers: orgPrincipal (set
+    .Kind = domain.KindServiceAccount afterward for ci/scoped keys),
+    updateOrganizationHandlerFor, patchOrganization, decodeUpdateOrganization,
+    fakeOrganizationUpdater{org,err,got}. Assert "updater never reached" via
+    captured.OrganizationID == "" (the got *store.UpdateOrganizationInput capture).
+---
