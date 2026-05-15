@@ -1570,7 +1570,7 @@
       "type": "validation",
       "priority": 1,
       "passes": true,
-      "notes": "Implemented internal/controlplane/validate: Collector accumulates apierr.FieldViolation entries (field path + value-free reason) into one apierr.InvalidInput. Validators: Name, Slug, ID, Path, URL, Domain (DomainOptions.AllowWildcard gates wildcards \u2014 caller resolves feature flag + quota), Resources, EnvVars (secret vs non-secret split via .secret[] path segment + larger secret ceiling), GitRepoURL, GitBranch, GitCommit, ImageRef, DecodeJSON (strict, size-capped, body-free errors). 8 fuzz targets cover malformed JSON, long strings, invalid UTF-8, path traversal. No value is ever echoed into a reason/error."
+      "notes": "Implemented internal/controlplane/validate: Collector accumulates apierr.FieldViolation entries (field path + value-free reason) into one apierr.InvalidInput. Validators: Name, Slug, ID, Path, URL, Domain (DomainOptions.AllowWildcard gates wildcards — caller resolves feature flag + quota), Resources, EnvVars (secret vs non-secret split via .secret[] path segment + larger secret ceiling), GitRepoURL, GitBranch, GitCommit, ImageRef, DecodeJSON (strict, size-capped, body-free errors). 8 fuzz targets cover malformed JSON, long strings, invalid UTF-8, path traversal. No value is ever echoed into a reason/error."
     },
     {
       "id": "BE-0037",
@@ -1873,7 +1873,7 @@
       ],
       "type": "endpoint-organization",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Endpoint belongs to the organization backend surface."
     },
     {

@@ -193,6 +193,29 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 		},
 		{
 			endpoint: openapi.Endpoint{
+				Method:         http.MethodGet,
+				Path:           "/v1/organizations/{org_id}",
+				OperationID:    "getOrganization",
+				Summary:        "Get an organization",
+				Description:    "Returns the organization named by the {org_id} path parameter, as the source-of-truth database stores it — its id, slug, display name, and lifecycle timestamps. Action organization.read is authorized against the organization the path names before the handler runs: a principal requesting an organization outside its own tenant is rejected with a deterministic 403, so a cross-tenant id can never reveal another tenant's data. The response carries no credential material.",
+				Tags:           []string{tagOrganizations},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionOrganizationRead),
+				PathParams: []openapi.PathParam{{
+					Name:        "org_id",
+					Description: "The id of the organization to retrieve.",
+				}},
+				SuccessDescription: "The requested organization.",
+			},
+			// organizationIDResolver authorizes action organization.read against
+			// the organization the {org_id} path parameter names, not merely the
+			// principal's home organization, so a cross-tenant id is denied at
+			// the policy boundary before the handler reads any data.
+			resolver: organizationIDResolver,
+			handler:  getOrganizationHandler(orgs),
+		},
+		{
+			endpoint: openapi.Endpoint{
 				Method:             http.MethodPost,
 				Path:               "/v1/organizations",
 				OperationID:        "createOrganization",

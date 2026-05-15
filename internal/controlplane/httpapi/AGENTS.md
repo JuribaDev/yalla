@@ -20,14 +20,26 @@ service packages — handlers only decode, delegate, and render.
 3. `apiRoute.resolver` (a `ResourceResolver`) derives the `policy.Resource`
    from path/query params. Leave it `nil` for self / organization-root actions
    — `RequireAuth` then authorizes against the principal's own org scope. Set a
-   path-param resolver whenever the endpoint targets a child resource, so a
-   cross-tenant id is a 403 rather than a silent allow.
+   path-param resolver whenever the endpoint targets a resource named in the
+   path, so a cross-tenant id is a 403 rather than a silent allow. The resolver
+   reads `r.PathValue("<name>")` — Go 1.22 ServeMux path values survive
+   `RequireAuth`'s `r.WithContext` (shallow struct copy), so both the resolver
+   and the handler can call `PathValue`. The resolver **is** the tenant
+   boundary: scoping the `policy.Resource` to the path's org makes the engine
+   deny cross-tenant reads (`ReasonDeniedCrossTenant`) for non-support
+   principals before the handler runs; a support principal's cross-tenant
+   `CapRead` is `ReasonAllowedBySupport` and is intended, not a leak. See
+   `organizationIDResolver` + `getOrganizationHandler`.
 4. Keep the handler thin: read `policy.PrincipalFromContext`, call a service,
    and render through `apienvelope.WriteData` / `WriteError`. Never marshal
    JSON directly; never hand-roll an error — return typed `apierr` errors.
 5. Update OpenAPI implicitly by filling in the `openapi.Endpoint` fields
    (`Summary`, `Description`, `Tags`, `SuccessDescription`, `SuccessStatus`,
-   `SuccessSchema`). The document is generated from the route table.
+   `SuccessSchema`). The document is generated from the route table. For a
+   path with a `{placeholder}`, also declare it in `openapi.Endpoint.PathParams`
+   — each renders as a required `in:"path"` string parameter. A `{placeholder}`
+   in the route pattern without a matching `PathParams` entry serves fine but
+   publishes an undocumented parameter.
 
 ## Self endpoints (`/v1/me*`)
 

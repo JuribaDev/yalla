@@ -59,17 +59,29 @@ type Info struct {
 // The httpapi route table builds these and feeds them to Build; nothing in
 // this package knows how a route is actually served.
 type Endpoint struct {
-	Method             string   // HTTP method, e.g. http.MethodGet.
-	Path               string   // Route pattern, e.g. "/healthz".
-	OperationID        string   // Stable, unique operationId.
-	Summary            string   // One-line summary.
-	Description        string   // Longer human description.
-	Tags               []string // Grouping tags.
-	RequiresAuth       bool     // false => public (security: []).
-	RequiredAction     string   // Policy action the operation authorizes; "" for public endpoints.
-	SuccessStatus      int      // Documented success status; 0 => 200.
-	SuccessDescription string   // Description of the success response.
-	SuccessSchema      string   // Success body component schema; "" => SuccessEnvelope.
+	Method             string      // HTTP method, e.g. http.MethodGet.
+	Path               string      // Route pattern, e.g. "/healthz".
+	OperationID        string      // Stable, unique operationId.
+	Summary            string      // One-line summary.
+	Description        string      // Longer human description.
+	Tags               []string    // Grouping tags.
+	RequiresAuth       bool        // false => public (security: []).
+	RequiredAction     string      // Policy action the operation authorizes; "" for public endpoints.
+	PathParams         []PathParam // Path-template parameters, e.g. {org_id}; in declaration order.
+	SuccessStatus      int         // Documented success status; 0 => 200.
+	SuccessDescription string      // Description of the success response.
+	SuccessSchema      string      // Success body component schema; "" => SuccessEnvelope.
+}
+
+// PathParam describes one {placeholder} segment of an Endpoint's path. Every
+// path parameter is a required, non-secret string identifier — the control
+// plane addresses resources by opaque ids — so the rendered OpenAPI parameter
+// is always required:true with a string schema. The httpapi route table is the
+// single source of truth: a route whose path contains a placeholder declares
+// the matching PathParam here so the published document describes it.
+type PathParam struct {
+	Name        string // Placeholder name without braces, e.g. "org_id".
+	Description string // Human description of what the parameter identifies.
 }
 
 // Document is the root OpenAPI 3.1 document.
@@ -134,8 +146,21 @@ type Operation struct {
 	Summary        string                `json:"summary"`
 	Description    string                `json:"description,omitempty"`
 	Security       []map[string][]string `json:"security"`
+	Parameters     []Parameter           `json:"parameters,omitempty"`
 	RequiredAction string                `json:"x-required-action,omitempty"`
 	Responses      Responses             `json:"responses"`
+}
+
+// Parameter is a single OpenAPI operation parameter. Only path parameters are
+// emitted today, so In is always "path" and Required is always true; the shape
+// is deliberately minimal and extends cleanly if query or header parameters are
+// documented later.
+type Parameter struct {
+	Name        string `json:"name"`
+	In          string `json:"in"`
+	Required    bool   `json:"required"`
+	Description string `json:"description,omitempty"`
+	Schema      Schema `json:"schema"`
 }
 
 // Responses maps a status code (or "default") to its response. Sorted on marshal.
@@ -261,12 +286,34 @@ func operationFor(ep Endpoint) Operation {
 		Summary:        ep.Summary,
 		Description:    ep.Description,
 		Security:       security,
+		Parameters:     pathParameters(ep.PathParams),
 		RequiredAction: ep.RequiredAction,
 		Responses: Responses{
 			strconv.Itoa(status): jsonResponse(successDesc, successSchema),
 			"default":            jsonResponse("Error response using the stable yalla.error.v1 envelope.", SchemaErrorEnvelope),
 		},
 	}
+}
+
+// pathParameters renders an endpoint's path placeholders into OpenAPI
+// parameter objects. It returns nil for an endpoint with no path parameters so
+// the parameters field is omitted entirely rather than emitted as an empty
+// array. Every path parameter is a required string identifier.
+func pathParameters(params []PathParam) []Parameter {
+	if len(params) == 0 {
+		return nil
+	}
+	out := make([]Parameter, 0, len(params))
+	for _, p := range params {
+		out = append(out, Parameter{
+			Name:        p.Name,
+			In:          "path",
+			Required:    true,
+			Description: p.Description,
+			Schema:      Schema{Type: "string"},
+		})
+	}
+	return out
 }
 
 // jsonResponse builds an application/json response referencing a component

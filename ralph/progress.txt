@@ -2848,3 +2848,70 @@
     build policy.Principal literals directly for ci (KindServiceAccount),
     grant-only, disabled, or grant-bearing cases.
 ---
+
+## 2026-05-15 - BE-0052
+- Implemented GET /v1/organizations/{org_id}: the first path-parameterized
+  customer-facing endpoint. Returns the single source-of-truth organization
+  named by {org_id}, read through the existing OrganizationReader port.
+- New httpapi pieces in organizations.go: getOrganizationPayload (data block
+  {"organization": {...}}), organizationIDResolver (a ResourceResolver that
+  reads r.PathValue("org_id") into policy.Resource{Kind: KindOrganization,
+  Scope:{OrganizationID: org_id}}), and getOrganizationHandler. The resolver
+  is the tenant boundary: RequireAuth authorizes organization.read against the
+  org the PATH names, so a cross-tenant {org_id} is a deterministic 403
+  (ReasonDeniedCrossTenant) before the handler runs; a support principal
+  performing a read is the one allowed cross-tenant exception.
+- openapi package gained path-parameter support: new Endpoint.PathParams
+  ([]openapi.PathParam), new Operation.Parameters ([]openapi.Parameter,
+  json omitempty), pathParameters() renderer in operationFor. Every path
+  param renders required:true, in:"path", string schema. Endpoints with no
+  path params still omit the parameters field entirely.
+- Route registered in newRouteTable with resolver: organizationIDResolver.
+  No NewHandler/newRouteTable signature change — orgs reader was already a
+  parameter, so no test call-site churn.
+- Files changed: internal/controlplane/openapi/openapi.go,
+  internal/controlplane/openapi/openapi_param_test.go (new),
+  internal/controlplane/httpapi/organizations.go,
+  internal/controlplane/httpapi/routes.go,
+  internal/controlplane/httpapi/organizations_get_test.go (new),
+  ralph/prd.json, ralph/progress.txt.
+- Verification (Postgres up via docker compose, YALLA_TEST_DATABASE_URL set):
+  gofmt -w . clean, go mod tidy clean, go build ./... clean, go vet ./...
+  clean, go test ./... PASS (all packages incl. store integration), go test
+  -race ./internal/controlplane/{httpapi,openapi}/ PASS.
+- organizations_get_test.go covers: success (own org), read scoped to the
+  path parameter, cross-tenant {org_id} -> 403 with reader never reached and
+  the foreign id never echoed, support principal cross-tenant read -> 200,
+  authorized-but-missing org -> 404, unauthenticated -> 401, invalid
+  credentials -> 401, disabled (revoked/expired) principal -> 403, reader
+  outage -> 503 with the wrapped cause not leaked, request_id propagation,
+  no-principal/nil-reader wiring errors -> 500, and OpenAPI documentation
+  (operationId, x-required-action, the org_id path parameter).
+- Remaining risks / follow-ups:
+  - BE-0053 (contract tests for GET /v1/organizations/{org_id}) and BE-0054
+    (policy matrix) are still passes:false. organizations_get_test.go already
+    covers most of BE-0053's criteria; a future iteration should confirm/
+    extend and flip it, then add the dedicated policy matrix for BE-0054.
+  - GET is non-mutating so no audit event is recorded for the request.
+    Denied-authorization-decision auditing at the RequireAuth boundary is
+    still unwired for every endpoint (a cross-cutting concern, unchanged by
+    this story).
+- **Learnings for future iterations:**
+  - Path-param endpoints: declare the placeholder in openapi.Endpoint.PathParams
+    AND supply a ResourceResolver on the apiRoute. The resolver reads
+    r.PathValue("<name>") — Go 1.22 ServeMux path values survive RequireAuth's
+    r.WithContext (shallow struct copy preserves the unexported pat/matches),
+    so both the resolver and the handler can call PathValue.
+  - The resolver IS the tenant boundary for {org_id}-style routes: returning
+    policy.Resource scoped to the path's org makes the engine deny cross-tenant
+    reads (ReasonDeniedCrossTenant) for non-support principals before the
+    handler runs. Support principals get ReasonAllowedBySupport for CapRead
+    actions — that cross-tenant read IS intended, not a leak.
+  - For a GET-by-id endpoint there is no request body / query to validate;
+    the {org_id} is opaque. "Validation failure" coverage for such a story is
+    satisfied by the not-found and cross-tenant-forbidden paths — document
+    that decision in the test file so reviewers see it is deliberate.
+  - openapi.Operation has no custom MarshalJSON; a new field with json
+    `omitempty` is safe — existing endpoints just omit it. There is no golden
+    full-document byte test, only a determinism test, so additive openapi
+    fields don't require regenerating fixtures.

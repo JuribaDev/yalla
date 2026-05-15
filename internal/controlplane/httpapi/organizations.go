@@ -8,6 +8,7 @@ import (
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apienvelope"
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
+	"github.com/JuribaDev/yalla/internal/controlplane/domain"
 	"github.com/JuribaDev/yalla/internal/controlplane/policy"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
 	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
@@ -112,6 +113,65 @@ func organizationsHandler(reader OrganizationReader) http.HandlerFunc {
 		}
 		apienvelope.WriteData(w, http.StatusOK, requestID(r), organizationsPayload{
 			Organizations: []organizationResource{organizationResourceOf(org)},
+		})
+	}
+}
+
+// getOrganizationPayload is the data block of the GET /v1/organizations/{org_id}
+// success envelope: the single organization addressed by the {org_id} path
+// parameter, in the same stable wire shape GET /v1/organizations returns for
+// each list element. It carries no credential material.
+type getOrganizationPayload struct {
+	Organization organizationResource `json:"organization"`
+}
+
+// organizationIDResolver derives the policy.Resource a GET
+// /v1/organizations/{org_id} request acts on from its {org_id} path parameter.
+// RequireAuth calls it before the handler runs, so action organization.read is
+// authorized against the organization the path actually names — not merely the
+// principal's home organization. That is what turns a cross-tenant {org_id}
+// into a deterministic 403 (or, for a support principal performing a read, an
+// explicit cross-tenant allow) rather than a silent read of another tenant's
+// data.
+func organizationIDResolver(r *http.Request) policy.Resource {
+	return policy.Resource{
+		Kind:  domain.KindOrganization,
+		Scope: policy.Scope{OrganizationID: r.PathValue("org_id")},
+	}
+}
+
+// getOrganizationHandler builds the GET /v1/organizations/{org_id} handler. It
+// reads the organization named by the {org_id} path parameter from the
+// source-of-truth database and renders it in a stable yalla.output.v1 envelope.
+//
+// RequireAuth gates the route on action organization.read before the handler
+// runs — authorized through organizationIDResolver against the organization the
+// path names — and attaches the resolved principal, so a request that reaches
+// the handler has already cleared the tenant boundary: a cross-tenant {org_id}
+// was rejected as a 403 by the policy engine, never reaching this code. A
+// request that arrives here with no principal is therefore a wiring error and
+// is reported as a typed internal error rather than reading for a zero
+// principal. A reader-store outage surfaces as its own typed 5xx, and an
+// {org_id} with no row is the typed NotFound the reader produces — never
+// disguised as an empty success.
+func getOrganizationHandler(reader OrganizationReader) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if reader == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoOrganizationReader))
+			return
+		}
+		org, err := reader.GetOrganization(r.Context(), r.PathValue("org_id"))
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), getOrganizationPayload{
+			Organization: organizationResourceOf(org),
 		})
 	}
 }
