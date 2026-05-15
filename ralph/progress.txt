@@ -11542,3 +11542,110 @@
     still exists as a single review chokepoint but does not need a
     redaction transform.
 ---
+
+## 2026-05-15 - BE-0153 - Add policy matrix coverage for POST /v1/projects/{project_id}/environments
+- Added `internal/controlplane/httpapi/projects_environments_create_policy_test.go`
+  (~720 lines, four top-level tests) modelling the same projectIDResolver-
+  bound shape BE-0150 / BE-0144 / BE-0141 / BE-0138 use, and the same
+  CapWrite role/cross-tenant split BE-0123 / BE-0147 use.
+- Tests added:
+  - `TestCreateProjectEnvironmentPolicyMatrixRoles` drives all six built-in
+    roles through real NewHandler + real policy.NewEngine(). The matrix
+    splits on CapWrite: Owner/Admin/Developer allow via
+    ReasonAllowedByRole (201, creator reached with the principal's home
+    org + path project_id + grantee's id as ActorID); Viewer/CI/Support
+    deny via ReasonDeniedNoCapability (403, creator never runs, body
+    leak guard fires on the canonical request body and the canned
+    created-environment row).
+  - `TestCreateProjectEnvironmentPolicyRevokedAndExpiredKeys` pins
+    `principal.Disabled = true` is load-bearing: an Owner credential
+    that has been revoked or expired is denied with
+    ReasonDeniedPrincipalDisabled, the creator never runs, and the
+    body never echoes the principal id, the home org, the path
+    project_id, or the request body.
+  - `TestCreateProjectEnvironmentPolicyWrongOrganizationPrincipal` pins
+    the cross-tenant boundary. Wire-level: an attacker in org_attacker
+    hitting POST /v1/projects/{prj_victim}/environments — handler
+    derives org from the principal's home, reaches the orchestrator
+    with (org_attacker, prj_victim_envs), creator returns NotFound,
+    wire surfaces 404 E_NOT_FOUND, body never echoes org_victim. Then
+    the engine-level twin: a foreign-org resource against every role
+    INCLUDING Support is denied via ReasonDeniedCrossTenant (CapWrite
+    is outside the support cross-tenant exception — the load-bearing
+    distinction from environment.read in BE-0150 which DID admit
+    support cross-tenant via ReasonAllowedBySupport).
+  - `TestCreateProjectEnvironmentPolicyGrantContainment` proves all
+    four scoped-grant containments: project-scoped Admin grant on THIS
+    project allows (ReasonAllowedByGrant; wire 201, creator reached
+    with home org + path project_id + grantee actor id); project-
+    scoped Admin grant on a SIBLING project denies
+    (ReasonDeniedOutOfScope; wire 403, creator never runs, body leak
+    guard fires); project-scoped Viewer grant denies
+    (ReasonDeniedNoCapability — scope is sufficient, role's caps are
+    not); env-scoped grant on staging denies the parent project
+    (ReasonDeniedOutOfScope; wire tie-in proves creator never runs);
+    env grant on staging cannot reach production (ReasonDeniedOutOfScope
+    on env.write); service-scoped grant denies sibling service, denies
+    parent env.write, and denies the parent project's
+    environment.create (wire tie-in proves creator never runs); org-
+    level Viewer grant denies (ReasonDeniedNoCapability — same
+    capability gap that pins the wire CapWrite property); org-level
+    Developer grant allows (ReasonAllowedByGrant; wire 201, creator
+    reached with home org + path project_id + sa_org_dev actor id);
+    project-scoped Admin grant planted in a foreign home org is denied
+    by the cross-tenant guard.
+- Verification:
+  - `gofmt -w internal/controlplane/httpapi/projects_environments_create_policy_test.go` — no diff
+  - `go vet ./...` — clean
+  - `go test ./...` — all packages pass
+  - `go test -race ./internal/controlplane/httpapi/...` — clean
+  - `goimports` is not installed locally, so the formatting step is
+    `gofmt` only (same posture as BE-0150).
+- Remaining risks / follow-ups: none for this story. Mirrors BE-0150
+  and BE-0123 verbatim except for the action constant and the resource
+  Kind, so a future regression in projectIDResolver, the action
+  catalog, or builtinRoleCaps fails here.
+- **Learnings for future iterations:**
+  - The most analogous template for a "policy matrix for a project-
+    scoped MUTATING endpoint" is BE-0150 (project-scoped resolver
+    shape and cross-tenant-as-NotFound) intersected with BE-0123
+    (CapWrite role split and ALL-roles-cross-tenant-deny including
+    Support). Copy structure from BE-0150 for the wire shape and from
+    BE-0123 for the engine matrix.
+  - The cross-tenant wire-level test for a CapWrite endpoint with a
+    projectIDResolver MUST expect the creator to be called exactly
+    once (engine admits same-tenant resource because resolver pins
+    org to the principal's home; persistence layer rejects). This is
+    the same posture BE-0150 establishes for the GET — the only
+    difference is that on a CapWrite endpoint, the engine's support
+    cross-tenant exception does NOT apply, so the engine deny matrix
+    enumerates ALL six roles (including Support), not just five.
+  - The wire-tie-ins MUST verify `callCount == 0` for every deny
+    path. `gotInput.OrganizationID == "" && gotInput.ActorID == ""`
+    is not load-bearing on its own because the fake's pointer fields
+    are only populated when called; `callCount` is the structural
+    signal that the creator never ran.
+  - For an env-grant containment test, the existing GET file uses
+    `policy.ActionEnvWrite` on a production env scope to prove the
+    staging-grant can't reach production. The CREATE file needs the
+    same `ActionEnvWrite` probe AND a fresh
+    `ActionEnvironmentCreate`-on-parent-project probe because the
+    parent-project resource is what projectIDResolver builds, and
+    that's the only resource the route's RequireAuth actually
+    authorizes against.
+  - The deny-body leak guard for a CREATE endpoint needs to needle
+    the caller-supplied request-body fields AND the canned creator-
+    output row. Re-using the GET file's `environmentsDenyBodyLeak`
+    would miss the request-body echo case, so a per-endpoint leak
+    guard (`createEnvironmentDenyBodyLeak`) is justified.
+  - The shared fixtures `canonicalEnvironmentsProject`,
+    `seedEnvironmentWire`, `fakeEnvironmentCreator`, `orgPrincipal`,
+    `createProjectEnvironmentHandlerFor`, `postProjectEnvironments`,
+    `createProjectEnvironmentRequestBody`,
+    `decodeCreateProjectEnvironment`, `decodeCreateProjectEnvironmentError`,
+    and `decodeError` already cover everything this test file needs.
+    No new scaffolding beyond two small canonical-fixture builders
+    and one leak-guard helper was required, matching the BE-0150
+    learning that a new policy-matrix file should be ~0 KB of new
+    fixtures.
+---
