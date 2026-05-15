@@ -6696,3 +6696,93 @@
     everywhere or fails everywhere (which is the diagnostic you
     want for a positional signature change).
 ---
+
+## 2026-05-15 - BE-0102
+- What was implemented: policy-matrix coverage for GET
+  /v1/organizations/{org_id}/usage. The endpoint shares action
+  limits.read (CapRead) with GET /v1/organizations/{org_id}/limits, so
+  the matrix mirrors limits_policy_test.go exactly — all six built-in
+  roles allow, disabled principals 403, support cross-tenant 200,
+  scoped grants out-of-scope at the organization root.
+  - internal/controlplane/httpapi/usage_policy_test.go (new): four test
+    functions following the BE-0096/BE-0099 sibling pattern, driving
+    the real NewHandler + policy.NewEngine() through the existing
+    listUsageHandlerFor / getUsage / decodeUsageList / orgPrincipal /
+    decodeError scaffolding (no new helpers needed beyond a one-shot
+    seededUsage() fixture builder):
+    - TestListUsagePolicyMatrixRoles: every built-in role (owner,
+      admin, developer, viewer, ci, support) acting on its OWN tenant
+      is allowed via ReasonAllowedByRole; the reader receives the
+      {org_id} path parameter verbatim; the wire shape — including the
+      nullable nested limit object (projects=3/10 hard organization,
+      domains=5 unconstrained) — is asserted on every role.
+    - TestListUsagePolicyRevokedAndExpiredKeys: a Disabled principal
+      (the engine-visible shape of both revoked-key and expired-key,
+      with Owner role underneath as the load-bearing "would have
+      allowed it" baseline) is denied via ReasonDeniedPrincipalDisabled;
+      the reader is never reached; the error body never echoes the
+      principal id, the organization id, or any seeded resource
+      name/enforcement-mode/scope.
+    - TestListUsagePolicyWrongOrganizationPrincipal: a non-support
+      owner of org_attacker reading org_victim's usage is 403
+      ReasonDeniedCrossTenant (engine verdict pinned alongside wire
+      verdict); a Support principal of org_yalla performing the same
+      cross-tenant read IS allowed via ReasonAllowedBySupport and
+      receives the victim org's seeded usage (CapRead inside the
+      cross-tenant support exception — the load-bearing parallel to
+      limits.read's matrix and the distinguishing property from a
+      CapAdmin endpoint like keys.read).
+    - TestListUsagePolicyGrantContainment: pins all three acceptance
+      criteria containment properties at the engine — sibling project
+      not reached by a project grant, production not reached by a
+      staging environment grant, parent-level secrets not reached by a
+      service grant — then ties back to the wire by proving the
+      project-scoped grantee is 403 ReasonDeniedOutOfScope at its OWN
+      {org_id} (reader never runs, denied body never leaks seeded
+      usage data), while an organization-level Viewer grant IS allowed
+      via ReasonAllowedByGrant (Viewer holds CapRead, the action's
+      capability — so a future catalog downgrade below CapRead would
+      fail here). A cross-tenant {org_id} on the project-scoped
+      grantee is still 403 ReasonDeniedCrossTenant (the cross-tenant
+      guard fires before the out-of-scope guard).
+- Files changed: internal/controlplane/httpapi/usage_policy_test.go
+  (new); ralph/prd.json (passes=true); ralph/progress.txt.
+- Verification run: gofmt -w .; go mod tidy; go build ./...; go vet
+  ./...; go test -race -count=1 ./... (full suite, including
+  -run 'TestListUsagePolicy' as the focused suite).
+- Results: every test in the repo passes with -race included. The
+  four new TestListUsagePolicy* tests cover the BE-0102 acceptance
+  criteria; no existing tests regressed.
+  - goimports / golangci-lint / staticcheck / govulncheck still not
+    installed locally (documented in earlier iterations).
+- Remaining risks / follow-ups:
+  - The matrix proves the engine and the wire verdict for limits.read
+    against GET /v1/organizations/{org_id}/usage. Because the action
+    is shared with /limits, a future divergence between the two
+    endpoints would require splitting the action — at that point this
+    test file and limits_policy_test.go would diverge too. Today they
+    are deliberately parallel.
+  - The seededUsage() fixture builder is local to this test file (one
+    shape used four ways); if a third policy file ever needs the
+    same fixture, move it to a shared httpapi_test.go helper.
+- Learnings for future iterations:
+  - When two endpoints share an action constant (limits.read here
+    gates both GET /limits and GET /usage), their policy matrices
+    must be parallel even though the contract tests, payload shapes,
+    and reader ports diverge. The matrix property under test is the
+    action's capability + the resolver's scope, not the wire shape —
+    so the four tests (roles, disabled, cross-tenant+support,
+    grant-containment) are structurally identical and the wire-shape
+    differences are pure assertion-block details.
+  - The "no leaked data" assertions in deny paths must scrub on the
+    actual wire field names, not just resource names. For usage:
+    "used_value", "organization" (the scope source), and "hard" (the
+    enforcement mode) all show up in the JSON shape and were added
+    to the denial body checks — a stricter version of the limits
+    matrix's checks because the usage envelope has the nested limit
+    object and an additional source field.
+  - "net/http/httptest" is already pulled in by the existing
+    httpapi_test files (orgPrincipal, getUsage, etc.); a sibling
+    _test.go that only routes through those helpers should NOT
+    re-import it, or go vet flags it as unused.
+---
