@@ -3832,3 +3832,73 @@
     zero-value behavior the largest existing caller is already implicitly
     relying on, not the one that's easiest to write.
 ---
+
+## 2026-05-15 - BE-0069
+- What was implemented: policy-matrix coverage for GET
+  /v1/organizations/{org_id}/members/{member_id} (action members.read,
+  organizationIDResolver) — the priority-1 sibling of the
+  already-passing BE-0067 implementation and BE-0063 LIST policy matrix.
+  - internal/controlplane/httpapi/members_get_policy_test.go (new):
+    - TestGetMemberPolicyMatrixRoles: all six built-in roles (owner, admin,
+      developer, viewer, ci, support) reading a member of their own
+      organization — direct policy.Engine.Decide assertion (allow via
+      ReasonAllowedByRole) plus full NewHandler request that asserts
+      gotMemberOrgID == path org AND gotMemberUserID == path member, so the
+      reader is invoked with both path parameters and never a fabricated id.
+    - TestGetMemberPolicyRevokedAndExpiredKeys: a Disabled principal
+      (revoked-key sa_revoked, expired-key sa_expired) is 403 E_FORBIDDEN
+      carrying ReasonDeniedPrincipalDisabled; the reader's GetMember is
+      never reached (both gotMemberOrgID and gotMemberUserID stay ""), and
+      the error body never echoes the principal id, organization id, or
+      member id.
+    - TestGetMemberPolicyWrongOrganizationPrincipal: a non-support owner of
+      org_intruder requesting (org_victim, usr_v) is 403 carrying
+      ReasonDeniedCrossTenant — reader never reached — and the error body
+      never echoes org_victim or usr_v; engine-level Decide on the same
+      cross-tenant resource is asserted directly; the documented support
+      exception (ReasonAllowedBySupport) is allowed end-to-end and reaches
+      the reader with the path-named (org_victim, usr_v).
+    - TestGetMemberPolicyGrantContainment: project-scoped, environment-
+      scoped, and service-scoped Developer grants are confined to their
+      own scopes (proj_p / env_staging / svc_a) and never widen to
+      sibling projects, sibling environments, sibling services, or the
+      parent environment; the same project grantee is then denied
+      members.read on the organization root with ReasonDeniedOutOfScope
+      (engine + handler — handler also proves the reader never runs); an
+      organization-level Viewer grant IS allowed members.read on the same
+      root via ReasonAllowedByGrant and the response carries the addressed
+      member; finally a foreign {org_id} for the project-scoped key is
+      still denied.
+- Files changed: internal/controlplane/httpapi/members_get_policy_test.go (new),
+  ralph/prd.json (BE-0069 passes=true), ralph/progress.txt.
+- Verification run: gofmt -l .; go mod tidy; go vet ./...; go test ./...;
+  go test -race ./....
+- Results: all passed. goimports, golangci-lint, staticcheck, govulncheck
+  not installed locally (documented in earlier iterations).
+- Remaining risks or follow-ups: none for BE-0069. The endpoint triplet for
+  the single-member route is now complete at p2 (BE-0067 impl) and p1
+  (BE-0069 policy matrix); the p2 contract-test story BE-0068 remains
+  pending and is the next member-route unblocker.
+- Learnings for future iterations:
+  - The single-member GET route uses the SAME organizationIDResolver as the
+    LIST route, so its policy story is structurally identical: members.read
+    is decided against the organization-root scope of the {org_id} path
+    parameter; {member_id} is not part of the decision. The wire-level
+    distinction in the matrix is that EVERY allow path must prove the
+    reader was reached with BOTH path parameters (gotMemberOrgID AND
+    gotMemberUserID), and every deny path must prove the reader was reached
+    with NEITHER — so a probed {member_id} can never reveal whether the
+    user belongs to the victim organization.
+  - fakeMembershipReader (in members_test.go) already carries the right
+    instrumentation for both reads: gotOrgID for ListMembers and the pair
+    gotMemberOrgID/gotMemberUserID for GetMember. Reuse it; do not add a
+    new fake. The zero-value GetMember returns apierr.NotFound("membership",
+    userID) when member.UserID is empty, which is the right not-found
+    contract for a tenant-missing row.
+  - The "support exception" matters for read CapRead actions whenever a
+    route resolves its resource from the path (organizationIDResolver,
+    projectIDResolver, etc.). It does NOT apply when the route uses
+    CapSelf or evaluates against the principal's own organization — those
+    are different decisions. For every new policy-matrix story on a
+    path-resolved read, add an explicit support cross-tenant allow case.
+---
