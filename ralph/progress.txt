@@ -12240,3 +12240,24 @@
     "E_AUTHENTICATION_REQUIRED"`. Saved here so the next iteration
     does not waste a build cycle on the same typo.
 ---
+
+## 2026-05-15 - BE-0159
+- Implemented policy matrix coverage for PATCH /v1/environments/{environment_id}.
+- New file: internal/controlplane/httpapi/environments_update_policy_test.go (~660 lines)
+  - TestUpdateEnvironmentPolicyMatrixRoles: drives owner/admin/developer (allow via ReasonAllowedByRole) and viewer/ci/support (deny via ReasonDeniedNoCapability) through the production NewHandler path. CapWrite split — same as project.update. Allow rows assert updater receives principal home org, path env_id, actor id, decoded display_name; deny rows assert updater never runs and body never leaks canonical row.
+  - TestUpdateEnvironmentPolicyRevokedAndExpiredKeys: disabled-principal deny via ReasonDeniedPrincipalDisabled even when underlying role is Owner.
+  - TestUpdateEnvironmentPolicyWrongOrganizationPrincipal: wire-level cross-tenant env_id surfaces as 404 (persistence boundary, since environmentIDResolver pins resource scope to principal home org); engine-level pin shows ALL six roles INCLUDING Support deny via ReasonDeniedCrossTenant (CapWrite is OUTSIDE support exception, distinct from environment.read).
+  - TestUpdateEnvironmentPolicyGrantContainment: project-/env-/service-scoped grants all denied OutOfScope on this route (envIDResolver pins no ProjectID; covers() is one-way). Org-level Admin grant allowed end-to-end; org-level Viewer denied via ReasonDeniedNoCapability. Cross-tenant grant smuggling denied at engine.
+- Verification:
+  - gofmt -l . : clean
+  - go vet ./... : clean
+  - go test ./... : all passing
+  - go test -race ./... : all passing
+  - go test -run 'TestUpdateEnvironmentPolicy' -v ./internal/controlplane/httpapi/ : 4 functions, all PASS
+- Remaining risks: environments.go file-level doc still says CapWrite admits "owner, admin, developer, ci" — catalog actually denies CI (CapDeploy only). Comment is stale; tests verify the actual catalog behavior. Worth a doc-only fix in a future story but does not affect this matrix.
+- **Learnings for future iterations:**
+  - The env-id route (environmentIDResolver, no ProjectID on resource) and parent-scoped routes (projectIDResolver, with ProjectID) authorize DIFFERENTLY for scoped grants. All scoped grants pin a ProjectID; covers() is one-way; so scoped grants ALWAYS deny OutOfScope on env-id routes. This is also why support cross-tenant cannot reach env-id routes by construction — and why org-level grants are the only grant flavor that ever authorizes through env-id routes.
+  - For CapWrite actions, ALL six roles (including Support) deny cross-tenant — distinct from CapRead where Support is admitted. Pin both engine verdicts in cross-tenant tests so a future catalog change is caught.
+  - fakeEnvironmentUpdater fields are env/err/gotInput/callCount (gotInput captures the full store.UpdateEnvironmentInput). Same shape as fakeProjectUpdater but field names differ from fakeEnvironmentReader (which uses gotOrgID/gotEnvID directly).
+  - Constants like canonicalPatchDisplayName already declared in projects_update_policy_test.go would collide if reused — use distinct names per file (e.g., canonicalUpdateEnvDisplayName) since policy tests live in the same package.
+---
