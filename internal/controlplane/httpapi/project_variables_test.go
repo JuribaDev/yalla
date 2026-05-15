@@ -146,6 +146,64 @@ func decodeListProjectVariables(t *testing.T, rec *httptest.ResponseRecorder) li
 	return env
 }
 
+// replaceProjectVariablesSuccessEnvelope is the decoded shape of the PUT
+// /v1/projects/{project_id}/variables success envelope.
+type replaceProjectVariablesSuccessEnvelope struct {
+	SchemaVersion string                         `json:"schema_version"`
+	OK            bool                           `json:"ok"`
+	RequestID     string                         `json:"request_id"`
+	Data          replaceProjectVariablesPayload `json:"data"`
+}
+
+// replaceProjectVariablesHandlerFor builds the full NewHandler surface
+// with an Authenticator that resolves every credential to id and the
+// given ProjectVariableReplacer. It is the production request path: the
+// PUT /v1/projects/{project_id}/variables route is wrapped in
+// RequireAuth for action env.write.
+func replaceProjectVariablesHandlerFor(id auth.Identity, authErr error, replacer ProjectVariableReplacer) http.Handler {
+	a := fakeAuthenticator{identity: id, err: authErr}
+	return NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, a, policy.NewEngine(),
+		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
+		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
+		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{},
+		fakeOrgVariableReader{}, fakeOrgVariableReplacer{}, fakeOrgVariablePatcher{}, fakeOrgVariableDeleter{},
+		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
+		fakeProjectReader{}, fakeProjectCreator{}, fakeProjectUpdater{}, fakeProjectDeleter{}, fakeProjectRestorer{},
+		fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, fakeProjectVariableReader{}, replacer, nil)
+}
+
+// putProjectVariables issues PUT /v1/projects/{project_id}/variables
+// against handler, optionally with a bearer token.
+func putProjectVariables(handler http.Handler, projectID, token, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPut,
+		"/v1/projects/"+projectID+"/variables",
+		strings.NewReader(body))
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec
+}
+
+func decodeReplaceProjectVariables(t *testing.T, rec *httptest.ResponseRecorder) replaceProjectVariablesSuccessEnvelope {
+	t.Helper()
+	var env replaceProjectVariablesSuccessEnvelope
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode success envelope: %v; body %s", err, rec.Body.String())
+	}
+	if env.SchemaVersion != "yalla.output.v1" {
+		t.Errorf("schema_version = %q, want yalla.output.v1", env.SchemaVersion)
+	}
+	if !env.OK {
+		t.Errorf("ok = false, want true")
+	}
+	if env.RequestID == "" {
+		t.Errorf("request_id is empty, want a generated id")
+	}
+	return env
+}
+
 // principalForProjectVariables returns an auth.Identity for an
 // organization-wide developer principal homed at organizationID.
 // env.read is a CapRead action so a developer in the principal's home
