@@ -3450,8 +3450,8 @@
       ],
       "type": "policy-project",
       "priority": 1,
-      "passes": false,
-      "notes": "Authorization coverage for POST /v1/projects/{project_id}/restore."
+      "passes": true,
+      "notes": "Policy matrix coverage delivered in internal/controlplane/httpapi/projects_restore_policy_test.go: TestRestoreProjectPolicyMatrixRoles (six roles split by CapWrite), TestRestoreProjectPolicyRevokedAndExpiredKeys (Disabled principal denied via ReasonDeniedPrincipalDisabled), TestRestoreProjectPolicyWrongOrganizationPrincipal (wire + every-role engine cross-tenant deny — including Support, since CapWrite is OUTSIDE the support exception), and TestRestoreProjectPolicyGrantContainment (project/env/service/org-level grants, viewer-grant no-capability, foreign-home grantee deny, sibling-env environment.delete deny). Drives REAL NewHandler + real policy.NewEngine() against fake Authenticator + fake ProjectRestorer; allow path asserts 200 OK with deletion_scheduled_at == nil; every deny asserts restorer never ran and body never echoes canonical project."
     },
     {
       "id": "BE-0136",

@@ -9926,3 +9926,156 @@
     metadata.deletion_scheduled_at (which records the new stamp) keeps
     the audit shape symmetric.
 ---
+
+## 2026-05-15 - BE-0135
+- What was implemented: policy-matrix coverage for POST
+  /v1/projects/{project_id}/restore — the authorization contract of the
+  endpoint BE-0133 wired, parallel to BE-0132 for DELETE
+  /v1/projects/{project_id}. project.restore is CapWrite (same class as
+  project.delete), so the role matrix splits identically: Owner / Admin
+  / Developer allow via ReasonAllowedByRole, Viewer / CI / Support deny
+  via ReasonDeniedNoCapability, and the cross-tenant Support exception
+  in the engine (`CapSupport && (CapRead || CapSupport)`) does NOT admit
+  CapWrite — so EVERY role, including Support, is denied cross-tenant.
+  - internal/controlplane/httpapi/projects_restore_policy_test.go (new):
+    one canonical fixture (canonicalRestoreProject — a project row whose
+    deletion_scheduled_at has been CLEARED, the inverse of
+    canonicalDeleteProject's set stamp; on the wire body this is the
+    authoritative restored lifecycle state) + a single leak guard
+    (restoreProjectDenyBodyLeak) used by every deny branch, then four
+    tests driving the REAL NewHandler + real policy.NewEngine() against
+    fake Authenticator + fake ProjectRestorer:
+    - TestRestoreProjectPolicyMatrixRoles tables all six built-in roles
+      against project.restore at a same-tenant project resource. The
+      allow path asserts 200 OK (the restore is immediate, unlike
+      schedule-delete's 202), the restorer was reached with
+      (home_org, path project_id, principal id, actor_org_id), the
+      canonical restored row rendered on the wire, AND
+      DeletionScheduledAt == nil (the inverse of the delete matrix's
+      `!= nil` assertion — this is the lifecycle-state property a
+      handler regression that rendered a stale, still-scheduled row
+      from a store cache would fail). Deny rows assert 403 + the
+      restorer never ran + the body never echoes the canonical project.
+    - TestRestoreProjectPolicyRevokedAndExpiredKeys proves a Disabled
+      Owner principal (revoked OR expired credential) is denied via
+      ReasonDeniedPrincipalDisabled, the restorer never runs, and the
+      body never echoes the principal id, the home org id, or any
+      seeded project data. Underlying role is Owner so a working
+      credential WOULD allow — Disabled is the only thing in the way.
+    - TestRestoreProjectPolicyWrongOrganizationPrincipal pins the
+      cross-tenant boundary at both the wire and the engine. Wire-level:
+      an attacker in org_attacker hitting POST
+      /v1/projects/{prj_victim}/restore surfaces as 404 NotFound at the
+      persistence boundary because projectIDResolver builds the resource
+      from the principal's HOME org (never the path), so the
+      tenant-scoped repository query runs against
+      (org_attacker, prj_victim_alpha) and matches no row; assertions
+      are structural — the restorer is ALWAYS called with the
+      attacker's home org id, never with a caller-controlled value,
+      and the body never echoes the victim's org id. Engine-level:
+      every role (including Support) denies cross-tenant via
+      ReasonDeniedCrossTenant. Mirror of BE-0132 — restore and delete
+      sit on the SAME side of the support cross-tenant exception
+      because they're both CapWrite.
+    - TestRestoreProjectPolicyGrantContainment is the long containment
+      test: a project-scoped Admin grant naming THIS project allowed
+      at the engine AND end-to-end at the wire (200 + restorer reached
+      with home_org + path project_id + actor id + actor_org_id), then
+      five deny wire tie-ins — a sibling project hitting the SAME
+      project-scoped Admin grant (ReasonDeniedOutOfScope), a
+      project-VIEWER grant on the target project (covers the resource
+      but holds no CapWrite — ReasonDeniedNoCapability, the property a
+      "grant role enum re-mapping" regression would catch), an
+      environment-scoped grant on the parent project (covers() is
+      one-way — ReasonDeniedOutOfScope), a service-scoped grant on the
+      parent project (and engine-pinned deny on sibling-service
+      ServiceUpdate + parent-env EnvWrite to enforce
+      "service grant does not expose parent-level secrets or unrelated
+      services"), and an organization-level Admin grant (allowed via
+      ReasonAllowedByGrant at the engine + 200 at the wire). The
+      acceptance criterion "environment-level grants do not imply
+      access to production unless production is explicitly granted" is
+      doubly enforced: the env-scope grantee can't escalate from
+      staging-env to production-env (sibling-env property pinned with
+      ActionEnvironmentDelete), and can't escalate from any env to the
+      parent project (the shallow-resource property). An org-level
+      Viewer is the load-bearing distinction from the project.read
+      grant matrix — allowed for read, denied for restore. The final
+      assertion pins the foreign-home-grantee deny: a stolen
+      project-scoped key cannot smuggle the grant across tenants
+      because the engine refuses to consider the grant when the
+      principal's home org no longer matches the grant's scope.
+- Files changed:
+  - internal/controlplane/httpapi/projects_restore_policy_test.go (new)
+  - ralph/prd.json (BE-0135 passes:true + notes)
+  - ralph/progress.txt (this entry)
+- Verification run: gofmt -w .; go mod tidy; go vet ./...; go build ./...;
+  go test ./... -count=1 (full suite green); go test -race ./... -count=1
+  (full suite green); plus the focused TestRestoreProjectPolicy* run for
+  fast feedback (also green). goimports / golangci-lint / staticcheck /
+  govulncheck still not installed locally (documented in earlier
+  iterations); no live Postgres needed for a pure policy-matrix story.
+- Results: all my changes pass (-race included). No flaky cross-test
+  fakes — this story added a single new test file using only existing
+  fakes (fakeProjectRestorer, fakeAuthenticator, orgPrincipal,
+  seedProject, restoreProjectHandlerFor, restoreProject,
+  decodeRestoreProject, decodeError) and the existing
+  policy.ActionProjectRestore in the catalog. No NewHandler /
+  newRouteTable signature change — no call-site churn at all (in
+  contrast to BE-0133, which had to thread fakeProjectRestorer{}
+  through 32 sibling test files).
+- Remaining risks / follow-ups:
+  - The next p=1 pending story is BE-0138 (policy matrix for GET
+    /v1/projects/{project_id}/grants). That endpoint is BE-0137 (still
+    passes:false) — the grants endpoint hasn't been implemented yet,
+    so the matrix can't land before it. The intermediate p=2 backlog
+    (BE-0033 migration import, BE-0034 break-glass, BE-0035 rate
+    limiting, BE-0037 pagination, BE-0038 soft delete) remains
+    available if the iteration order shifts back to p=2.
+  - The acceptance criterion "Integration tests run against isolated
+    Postgres migrations" is N/A for a pure policy-matrix story (no
+    persistence path is added here). store/project_restore_test.go
+    already covers Restore with Postgres.
+  - The acceptance criterion "Secrets, tokens, API keys, cookies, and
+    rendered environment variable values are redacted" is N/A for a
+    projects row, which stores no secrets. The leak guard covers the
+    tenant-identity property (id/slug/display name) instead — the
+    relevant invariant for this resource.
+- **Learnings for future iterations:**
+  - The restore policy matrix mirrors the delete matrix almost
+    one-to-one: BOTH are CapWrite, BOTH are OUTSIDE the support
+    cross-tenant exception, BOTH split the role table identically
+    (Owner/Admin/Developer allow, Viewer/CI/Support deny), and BOTH
+    are resource-scoped through projectIDResolver so a project-level
+    grant CAN authorize them (load-bearing distinction from
+    project.create's organization-root resource). The two assertions
+    that differ are (a) the allow-path status is 200 (restore is
+    immediate) versus 202 (schedule-delete is asynchronous), and
+    (b) the canonical row carries DeletionScheduledAt == nil
+    (restore cleared it) versus != nil (delete set it). Mirror
+    matrices like this are a great pattern: write the inverse-scope
+    test by COPYING the existing matrix file and changing the four
+    surface bindings (action constant, fake type, store input type,
+    decode helper) plus the two assertion differentials above.
+  - When the previous iteration ALREADY added a narrow port to
+    NewHandler's argument list (BE-0133 added fakeProjectRestorer{}
+    to all 32 sibling tests), a follow-up policy-matrix story for the
+    SAME endpoint adds zero call-site churn — it reuses the existing
+    fakes by simply parameterising over fakeProjectRestorer{project,
+    err, got}. Bundling endpoint implementation + matrix into the
+    same iteration would have been worse: BE-0133 was already the
+    biggest churn-producer in the projects sequence, and dragging
+    matrix coverage in would have ballooned its diff further. The
+    natural seam is "endpoint + contract tests, then matrix as a
+    follow-up" — exactly the BE-0133 -> BE-0135 split here.
+  - For an inverse-lifecycle endpoint like restore, the canonical
+    fixture's distinguishing property on the wire body is the
+    AUTHORITATIVE LIFECYCLE STATE THAT THE OPERATION JUST PRODUCED —
+    a cleared stamp for restore, a set stamp for schedule-delete.
+    The leak guard's id/slug/display name needles are the same as
+    the inverse fixture's (here they differ — prj_restore_alpha vs
+    prj_matrix_alpha — only because the BE-0132 matrix used the same
+    file in parallel and we want test failure messages to point at
+    the right story); the meaningful inversion is asserted in the
+    allow-path body decode, not the deny-path leak guard.
+---
