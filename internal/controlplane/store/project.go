@@ -95,6 +95,40 @@ func (r *ProjectRepository) Get(ctx context.Context, q Querier, organizationID, 
 	return p, nil
 }
 
+// ListByOrganization returns every project owned by organizationID, ordered
+// deterministically by (slug, id) so a given set of rows always renders the
+// same response. The query is tenant scoped at the persistence layer: it
+// filters by organization_id, so a cross-tenant id simply matches no rows
+// and yields an empty slice — a cross-tenant id can never reveal another
+// organization's projects. It accepts a Querier so it works against a
+// read-only transaction or an open write transaction. The result is always
+// a non-nil slice (possibly empty) so callers can iterate it without a nil
+// check.
+func (r *ProjectRepository) ListByOrganization(ctx context.Context, q Querier, organizationID string) ([]Project, error) {
+	rows, err := q.Query(ctx,
+		`SELECT `+projectColumns+`
+		 FROM projects
+		 WHERE organization_id = $1
+		 ORDER BY slug ASC, id ASC`,
+		organizationID)
+	if err != nil {
+		return nil, apierr.StoreUnavailable(err)
+	}
+	defer rows.Close()
+	projects := make([]Project, 0)
+	for rows.Next() {
+		p, scanErr := scanProject(rows)
+		if scanErr != nil {
+			return nil, apierr.StoreUnavailable(scanErr)
+		}
+		projects = append(projects, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, apierr.StoreUnavailable(err)
+	}
+	return projects, nil
+}
+
 // CountByOrganization returns the number of projects owned by organizationID.
 // It is the read the quota layer uses to enforce a per-organization project
 // limit; running it through the same *Tx as the insert keeps the check
@@ -114,6 +148,46 @@ func scanProject(row pgx.Row) (Project, error) {
 	var p Project
 	err := row.Scan(&p.ID, &p.OrganizationID, &p.Slug, &p.DisplayName, &p.Version, &p.CreatedAt, &p.UpdatedAt)
 	return p, err
+}
+
+// ProjectReader is the store-backed read adapter for project resources: the
+// persistence surface the httpapi layer needs to render GET /v1/projects.
+// It mirrors OrganizationReader / MembershipReader — it composes the
+// ProjectRepository rather than issuing its own SQL, so the tenant-scoping
+// guarantees the repository proves in its integration tests are inherited
+// for free, and every method opens its own short-lived read transaction
+// through Store.Read.
+type ProjectReader struct {
+	store    *Store
+	projects *ProjectRepository
+}
+
+// NewProjectReader builds a ProjectReader over store. It returns an error
+// for a nil store so a misconfigured adapter fails at construction rather
+// than on its first request.
+func NewProjectReader(s *Store) (*ProjectReader, error) {
+	if s == nil {
+		return nil, errors.New("store: nil store")
+	}
+	return &ProjectReader{store: s, projects: NewProjectRepository()}, nil
+}
+
+// ListProjects returns every project of organizationID, reading them inside
+// a short-lived read-only transaction. The read is tenant scoped: a
+// cross-tenant id simply matches no rows and yields an empty slice, never
+// another organization's projects. A datastore failure is propagated as
+// its own typed error.
+func (r *ProjectReader) ListProjects(ctx context.Context, organizationID string) ([]Project, error) {
+	var projects []Project
+	err := r.store.Read(ctx, func(ctx context.Context, q Querier) error {
+		var listErr error
+		projects, listErr = r.projects.ListByOrganization(ctx, q, organizationID)
+		return listErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	return projects, nil
 }
 
 // UpdateDisplayName writes a new display_name for the project identified by

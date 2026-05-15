@@ -148,7 +148,13 @@ reader (`store.NewAPIKeyReader`), plus a `policy.NewEngine()`.
 Adding a port parameter to `NewHandler` breaks every test call site — `grep`
 for `NewHandler(` and `newRouteTable(` across `*_test.go` and add the new fake
 (`fakeOrganization{Reader,Creator,Updater,Deleter}{}`,
-`fakeMembership{Reader,Creator,Updater,Remover}{}`, `fakeAPIKeyReader{}`)
-in one pass.
+`fakeMembership{Reader,Creator,Updater,Remover}{}`, `fakeAPIKeyReader{}`,
+`fakeProjectReader{}`) in one pass. Two call-site shapes coexist: single-line
+`..., fakeAPIKeyRotator{}, nil)` (most files) and multi-line where the last
+fake is on one line and `nil)` or `logger)` is on the next (audit_events,
+limits, usage, variables) — a single-line sed catches only the first; the
+second needs a multi-line pass (awk/python) or manual edits. The N-nil
+`newRouteTable` test stubs in `routes_test.go`, `server_test.go`,
+`variables_*_test.go`, `limits_patch_test.go` need a parallel bump.
 Registering a `RequiresAuth` route with a nil authenticator/engine panics at
 startup — a wiring error, never a runtime 500.

@@ -24,6 +24,7 @@ const (
 	tagAuditEvents   = "audit-events"
 	tagAPIKeys       = "api-keys"
 	tagVariables     = "variables"
+	tagProjects      = "projects"
 )
 
 // apiRoute couples a served HTTP route with the OpenAPI metadata that
@@ -106,7 +107,7 @@ type versionPayload struct {
 // metadata; a request that actually reaches a handler with a nil dependency
 // is reported as a typed internal error rather than a misleading empty list
 // or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator) []apiRoute {
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -216,6 +217,25 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// organization, so there is no deeper or cross-tenant resource
 			// target to resolve.
 			handler: organizationsHandler(orgs),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodGet,
+				Path:               "/v1/projects",
+				OperationID:        "listProjects",
+				Summary:            "Projects visible to the caller",
+				Description:        "Lists the projects the authenticated principal can see through the control plane, as the source-of-truth database stores them — each with its id, the id of the organization that owns it, slug, display name, optimistic-concurrency version, and lifecycle timestamps. The endpoint carries no path parameter and the handler only ever reads the principal's own home organization's projects, so the tenant boundary is structural: there is no caller-supplied parameter that could point the read at another tenant. Projects are returned in deterministic (slug, id) order so a given set of rows always renders the same response. Action project.read is authorized against the principal's home organization before the handler runs — a CapRead action gated by an organization-wide role (owner, admin, developer, viewer, ci) or, for cross-tenant reads, a support principal; a grant-only principal whose grants are narrower than the home organization is rejected at the boundary because the policy engine asks whether the grant scope contains the resource scope, never the reverse, so a project-, environment-, or service-level grant cannot list sibling projects, unrelated environments, or parent secrets through this endpoint. The response carries no credential material — a projects row stores no secrets — and an organization with no projects is the deterministic empty list every list endpoint returns.",
+				Tags:               []string{tagProjects},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionProjectRead),
+				SuccessDescription: "The projects visible to the authenticated principal.",
+			},
+			// A nil resolver authorizes action project.read against the
+			// principal's own organization scope. The endpoint carries no path
+			// parameter and the handler only ever reads the principal's home
+			// organization's projects, so there is no deeper or cross-tenant
+			// resource target to resolve.
+			handler: listProjectsHandler(projects),
 		},
 		{
 			endpoint: openapi.Endpoint{

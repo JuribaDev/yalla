@@ -8292,3 +8292,141 @@
     so the deny-path "deleter never reached" check is shorter than
     PATCH's — just OrganizationID == "" && Key == "".
 ---
+
+## 2026-05-15 - BE-0118
+- Implemented GET /v1/projects — the customer-facing list endpoint for the
+  Project layer of the Organization → Project → Environment → Service
+  hierarchy. The route is the first project surface; it is gated on action
+  project.read with a nil resolver (the principal's home-organization scope),
+  so a request can never point the read at another tenant. The wire shape is
+  `listProjectsPayload{ projects: [...] }` with every column projected onto
+  a stable resource (project_id, organization_id, slug, display_name,
+  version, created_at, updated_at) — version is exposed so future
+  PATCH /v1/projects/{project_id} (BE-0127) callers can echo it as If-Match
+  without re-reading.
+- Picked story per the documented codebase pattern: BE-0120 (policy matrix,
+  priority 1) is the lowest-id failing story but strictly depends on BE-0118
+  (implement) + BE-0119 (contract tests). Implementing BE-0118 first unblocks
+  both follow-ups; the implement story is itself passing and the contract
+  suite shipped here covers most of what BE-0119 requires.
+- Files changed:
+  - internal/controlplane/store/project.go — added
+    ProjectRepository.ListByOrganization (tenant-scoped, deterministic
+    ORDER BY slug, id, non-nil empty slice) and a *store.ProjectReader
+    adapter (composes ProjectRepository inside Store.Read — mirrors
+    *store.OrganizationReader / *store.MembershipReader exactly; never
+    issues fresh SQL).
+  - internal/controlplane/store/project_test.go — added three Postgres
+    integration tests: empty list (non-nil), tenant scoping (orgA vs orgB
+    with non-alphabetic insert order to observe ORDER BY), reader adapter
+    happy path, and a nil-store constructor guard.
+  - internal/controlplane/httpapi/projects.go (new) — declares the narrow
+    ProjectReader port, the wire payload, the resource projection, and the
+    listProjectsHandler closure. Mirrors organizations.go: typed Internal
+    error for nil reader / missing principal, toAPIError for store
+    outages, stable yalla.output.v1 envelope through apienvelope.WriteData.
+  - internal/controlplane/httpapi/projects_test.go (new) — full contract
+    suite driving NewHandler with a fake Authenticator + the real
+    policy.NewEngine() + a fakeProjectReader: happy path (multi-project,
+    every field projected), scope-to-principal-home-org (reader called with
+    principal.OrganizationID, never caller input), empty-array projection
+    (non-nil JSON array), 401 for missing/invalid credentials,
+    role-matrix-allows (Owner/Admin/Developer/Viewer/CI all reach the
+    handler and see their own org's projects), cross-tenant principal sees
+    only its own org's projects, store-outage forwarding as 503, and two
+    direct handler tests for missing-reader / missing-principal wiring
+    errors.
+  - internal/controlplane/httpapi/routes.go — added tagProjects constant,
+    threaded projects ProjectReader through newRouteTable, registered the
+    /v1/projects route with a nil resolver, action project.read, an
+    OpenAPI description that names every authorization rule (CapRead roles
+    allowed, grant-only denied at the boundary because the engine asks
+    whether the grant scope CONTAINS the resource scope), and the typical
+    contract guarantees (deterministic order, no credential material,
+    no validation surface).
+  - internal/controlplane/httpapi/server.go — added projects ProjectReader
+    to NewHandler (after apiKeyRotator, before logger), forwarded to
+    newRouteTable.
+  - cmd/yalla-api/main.go — constructs store.NewProjectReader(dataStore)
+    and passes it to httpapi.NewHandler.
+  - Test wrappers updated to pass fakeProjectReader{} after fakeAPIKeyRotator{}
+    in every NewHandler call across the httpapi package (single-line and
+    multi-line call sites): organizations_*_test.go, members_*_test.go,
+    me_test.go, me_contract_test.go, api_keys_*_test.go,
+    audit_events_test.go, variables_*_test.go, limits_*_test.go,
+    usage_test.go, server_test.go, limits_patch_test.go. Also bumped the
+    24-nil newRouteTable test stubs to 25 nils in routes_test.go,
+    server_test.go (two call sites), variables_patch_test.go,
+    variables_delete_test.go, limits_patch_test.go.
+  - ralph/prd.json — BE-0118.passes flipped to true.
+- Verification (with YALLA_TEST_DATABASE_URL=postgres://yalla:yalla@127.0.0.1:5432/yalla?sslmode=disable):
+  - gofmt -l . — clean.
+  - go mod tidy — clean.
+  - go vet ./... — clean.
+  - go build ./... — clean.
+  - go test ./internal/controlplane/httpapi/ — pass (full suite, every existing
+    test wrapper survived the new fakeProjectReader{} parameter).
+  - go test -race ./internal/controlplane/httpapi/ — pass.
+  - go test -run 'TestProject|TestListProjects' ./internal/controlplane/store/
+    ./internal/controlplane/httpapi/ — pass (new persistence + contract
+    tests with the live migrated Postgres).
+  - go test -race -run 'TestProject|TestListProjects' ./internal/controlplane/store/
+    ./internal/controlplane/httpapi/ — pass.
+  - go test ./... (no DB) — pass.
+  - go test ./... (with DB) revealed 9 pre-existing failures in
+    internal/controlplane/store unrelated to this story (TestAPIKeyService*,
+    TestOrganizationVariableServicePatch*). Verified by checking out the
+    parent commit (50097dd, BE-0115) and re-running the same test — failure
+    reproduces identically there, so these are NOT a regression introduced
+    by BE-0118. They look like environment-state issues in the prior
+    iteration's BE-0115/0114 test data; flagging here so a future iteration
+    can root-cause without scope creep. goimports / golangci-lint /
+    staticcheck / govulncheck not installed locally.
+- Remaining risks / follow-ups:
+  - BE-0119 (contract tests) and BE-0120 (policy matrix) for GET /v1/projects
+    are next. The contract surface this story shipped already covers most
+    of BE-0119 (per the documented "contract-test stories covered by the
+    sibling implement story" pattern) — the next iteration can either flip
+    BE-0119 directly or extend projects_test.go marginally. BE-0120 is the
+    structural twin of audit_events_policy_test.go (nil-resolver, principal
+    home-org scope, CapRead matrix, no support cross-tenant exception
+    because the resolver is structural rather than path-driven).
+  - The pre-existing TestAPIKeyService* / TestOrganizationVariableServicePatch*
+    failures predate this story (reproduce on 50097dd) and warrant their
+    own root-cause iteration. They never reach any project code path.
+  - Pagination is not implemented yet; the stable empty-array contract +
+    deterministic ORDER BY is forward-compatible with the pagination
+    contract BE-0037 will introduce.
+- Learnings for future iterations:
+  - The first endpoint of every resource layer is the one that adds the
+    layer to NewHandler's parameter list — every test wrapper across
+    httpapi/ needs a matching update. Two call-site shapes coexist:
+    single-line `..., fakeAPIKeyRotator{}, nil)` (most files) and
+    multi-line where the rotator is on one line and `nil)` is on the next
+    (audit_events, limits, usage, variables). A single-line sed catches
+    the first; the second needs either a multi-line awk/python pass or a
+    manual visit. The 24-nil → 25-nil newRouteTable test stubs need a
+    parallel update in 4-5 files. Plan both up front so the build doesn't
+    bounce between vet errors.
+  - The reader-port pattern carries verbatim for project listing:
+    `httpapi.ProjectReader` interface declares the narrow contract;
+    `*store.ProjectReader` adapts the repository inside Store.Read (never
+    fresh SQL); the port is threaded NewHandler → newRouteTable → handler
+    closure. fakeProjectReader{} (zero value returns empty slice) is the
+    correct default for every other test wrapper because no other route
+    consults it.
+  - The testutil.Factory's slug() method suffixes every slug with the
+    per-factory token (e.g., "alpha-999d270f…-4"). Tests asserting list
+    ordering MUST keep the returned fixture's .Slug and assert against
+    that value, never a hard-coded literal — the suffix is intentional
+    so concurrent tests cannot collide.
+  - For a list endpoint with a nil resolver (scope = principal home org),
+    a grant-only principal is denied at the policy gate because the engine
+    asks "does the grant scope CONTAIN the resource scope" — grant scope
+    is narrower than the home-org resource scope, so it fails. This is
+    the SAME behaviour as GET /v1/organizations (organizationsHandler)
+    and is the correct enforcement: project-, environment-, and service-
+    level grants do NOT imply project.read at the org-level scope. The
+    policy matrix test for BE-0120 just needs to assert this deny path
+    rather than implementing per-project filtering in the handler.
+---

@@ -193,3 +193,138 @@ func TestProjectRepositoryInsertRejectsNilTx(t *testing.T) {
 		t.Fatal("Insert(nil tx) error = nil, want an error")
 	}
 }
+
+// TestProjectRepositoryListByOrganizationReturnsEmpty proves the list query
+// against an organization with no projects yields a non-nil empty slice —
+// the deterministic shape every list endpoint depends on.
+func TestProjectRepositoryListByOrganizationReturnsEmpty(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	repo := store.NewProjectRepository()
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	org := seedOrg(t, db, f, "tenant-empty")
+
+	var got []store.Project
+	if err := s.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		var listErr error
+		got, listErr = repo.ListByOrganization(ctx, q, org.ID)
+		return listErr
+	}); err != nil {
+		t.Fatalf("ListByOrganization: %v", err)
+	}
+	if got == nil {
+		t.Fatal("ListByOrganization returned nil slice, want a non-nil empty slice")
+	}
+	if len(got) != 0 {
+		t.Errorf("ListByOrganization returned %d projects, want 0", len(got))
+	}
+}
+
+// TestProjectRepositoryListByOrganizationIsTenantScoped proves a cross-tenant
+// organization id never returns another tenant's projects: orgA's list is
+// every orgA project (in (slug, id) order) and orgB's list is every orgB
+// project — with no row leaking across.
+func TestProjectRepositoryListByOrganizationIsTenantScoped(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	repo := store.NewProjectRepository()
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	orgA := seedOrg(t, db, f, "tenant-a")
+	orgB := seedOrg(t, db, f, "tenant-b")
+
+	// Insert in a non-alphabetic order so the (slug, id) ORDER BY is
+	// observable: a wrong-ordering bug would echo insert order, not slug
+	// order. Each fixture's slug is the label prefixed onto a per-factory
+	// token, so labels with the same alphabetical ordering produce slugs
+	// with the same alphabetical ordering.
+	ledger := insertProject(ctx, t, s, repo, projectFixture(f.Project(orgA, "ledger")))
+	alpha := insertProject(ctx, t, s, repo, projectFixture(f.Project(orgA, "alpha")))
+	billing := insertProject(ctx, t, s, repo, projectFixture(f.Project(orgA, "billing")))
+	betaonly := insertProject(ctx, t, s, repo, projectFixture(f.Project(orgB, "betaonly")))
+
+	var gotA, gotB []store.Project
+	if err := s.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		var listErr error
+		gotA, listErr = repo.ListByOrganization(ctx, q, orgA.ID)
+		if listErr != nil {
+			return listErr
+		}
+		gotB, listErr = repo.ListByOrganization(ctx, q, orgB.ID)
+		return listErr
+	}); err != nil {
+		t.Fatalf("ListByOrganization: %v", err)
+	}
+
+	if got := len(gotA); got != 3 {
+		t.Fatalf("ListByOrganization(orgA) returned %d projects, want 3", got)
+	}
+	wantOrder := []string{alpha.Slug, billing.Slug, ledger.Slug}
+	for i, want := range wantOrder {
+		if gotA[i].Slug != want {
+			t.Errorf("ListByOrganization(orgA)[%d].Slug = %q, want %q (slug, id order)",
+				i, gotA[i].Slug, want)
+		}
+	}
+	for _, p := range gotA {
+		if p.OrganizationID != orgA.ID {
+			t.Errorf("ListByOrganization(orgA) returned a project belonging to %q, want %q", p.OrganizationID, orgA.ID)
+		}
+	}
+
+	if got := len(gotB); got != 1 {
+		t.Fatalf("ListByOrganization(orgB) returned %d projects, want 1", got)
+	}
+	if gotB[0].OrganizationID != orgB.ID {
+		t.Errorf("ListByOrganization(orgB) returned project owned by %q, want %q", gotB[0].OrganizationID, orgB.ID)
+	}
+	if gotB[0].Slug != betaonly.Slug {
+		t.Errorf("ListByOrganization(orgB) returned slug %q, want %q", gotB[0].Slug, betaonly.Slug)
+	}
+}
+
+// TestProjectReaderListProjects proves the store-backed reader adapter
+// runs the list inside a short-lived read transaction and returns the
+// repository's results unchanged.
+func TestProjectReaderListProjects(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	repo := store.NewProjectRepository()
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	org := seedOrg(t, db, f, "tenant-reader")
+	alpha := insertProject(ctx, t, s, repo, projectFixture(f.Project(org, "alpha")))
+	beta := insertProject(ctx, t, s, repo, projectFixture(f.Project(org, "beta")))
+
+	reader, err := store.NewProjectReader(s)
+	if err != nil {
+		t.Fatalf("NewProjectReader: %v", err)
+	}
+	got, err := reader.ListProjects(ctx, org.ID)
+	if err != nil {
+		t.Fatalf("ListProjects: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("ListProjects returned %d projects, want 2", len(got))
+	}
+	if got[0].Slug != alpha.Slug || got[1].Slug != beta.Slug {
+		t.Errorf("ListProjects ordering = [%s, %s], want [%s, %s]",
+			got[0].Slug, got[1].Slug, alpha.Slug, beta.Slug)
+	}
+}
+
+// TestNewProjectReaderRejectsNilStore proves the constructor fails fast on
+// a misconfigured adapter so a misconfigured server cannot ship.
+func TestNewProjectReaderRejectsNilStore(t *testing.T) {
+	t.Parallel()
+	if _, err := store.NewProjectReader(nil); err == nil {
+		t.Fatal("NewProjectReader(nil) error = nil, want an error")
+	}
+}
