@@ -112,6 +112,27 @@ const (
 	QuotaScopeOrganization QuotaScope = "organization"
 )
 
+// OrganizationResourceUsage is one resource's currently-allocated count for
+// an organization, paired with the effective limit that applies to it (when
+// any limit is configured at all). It is what the customer-facing GET
+// /v1/organizations/{org_id}/usage endpoint projects onto the wire: a single
+// SQL statement joins the live quota_usage counter row with the resolved
+// effective limit (organization override beats plan default, exactly as
+// EffectiveQuotaLimit does for the limits endpoint), so the wire shape is
+// always consistent with what the quota checker would see at allocation
+// time. A resource that has no usage counter row yet reports UsedValue=0; a
+// resource that has no policy at either scope (the plan default or an
+// organization-level override) reports LimitValue=nil, which marks the
+// dimension as unconstrained — the same semantics the limits endpoint uses
+// when it omits the resource entirely.
+type OrganizationResourceUsage struct {
+	Resource        QuotaResource
+	UsedValue       int64
+	LimitValue      *int64
+	EnforcementMode *EnforcementMode
+	Scope           *QuotaScope
+}
+
 // EffectiveQuotaLimit is one resource's resolved limit, along with the scope
 // that produced it. It is what the customer-facing GET
 // /v1/organizations/{org_id}/limits endpoint projects onto the wire: the
@@ -239,6 +260,90 @@ func (r *QuotaRepository) ListEffectiveLimits(ctx context.Context, q Querier, or
 			EnforcementMode: EnforcementMode(mode),
 			Scope:           QuotaScope(scopeKind),
 		})
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return nil, apierr.StoreUnavailable(rowsErr)
+	}
+	return out, nil
+}
+
+// ListOrganizationUsage returns one row per resource that has either a live
+// quota_usage counter for organizationID or a configured policy at the
+// tenant's scope (an organization-level override or the named plan's
+// default), in deterministic resource order. A resource with a usage row but
+// no configured policy is unconstrained: UsedValue is the live counter and
+// LimitValue/EnforcementMode/Scope are nil. A resource with a configured
+// policy but no usage row yet has UsedValue=0 — the same value the quota
+// checker would observe before the first allocation, since LockUsage only
+// materializes the counter row the first time a reservation runs.
+//
+// The resolution is done in a single SQL statement: the per-resource
+// EffectiveLimit (the lookup the quota checker uses) is computed as a
+// DISTINCT ON CTE so the wire shape can never disagree with what an
+// allocation would evaluate, and the FULL OUTER JOIN against quota_usage
+// makes the result the union of "has a policy" and "has usage". The query is
+// tenant scoped at every leg: only plan defaults for the named plan and
+// organization overrides for organizationID enter the policies CTE, and only
+// counter rows owned by organizationID enter the usage CTE — so the result
+// never reveals another tenant's policies or counters.
+func (r *QuotaRepository) ListOrganizationUsage(ctx context.Context, q Querier, organizationID, plan string) ([]OrganizationResourceUsage, error) {
+	rows, err := q.Query(ctx,
+		`WITH policies AS (
+		    SELECT DISTINCT ON (resource)
+		           resource,
+		           limit_value,
+		           enforcement_mode,
+		           scope_kind
+		      FROM quota_policies
+		     WHERE (scope_kind = 'organization' AND organization_id = $1)
+		        OR (scope_kind = 'plan_default'  AND plan = $2)
+		     ORDER BY resource, (scope_kind = 'organization') DESC
+		 ),
+		 usage AS (
+		    SELECT resource, used_value
+		      FROM quota_usage
+		     WHERE organization_id = $1
+		 )
+		 SELECT COALESCE(p.resource, u.resource) AS resource,
+		        COALESCE(u.used_value, 0)        AS used_value,
+		        p.limit_value,
+		        p.enforcement_mode,
+		        p.scope_kind
+		   FROM policies p
+		   FULL OUTER JOIN usage u ON p.resource = u.resource
+		  ORDER BY resource`,
+		organizationID, plan)
+	if err != nil {
+		return nil, apierr.StoreUnavailable(err)
+	}
+	defer rows.Close()
+
+	out := make([]OrganizationResourceUsage, 0)
+	for rows.Next() {
+		var (
+			resource  string
+			used      int64
+			limit     *int64
+			mode      *string
+			scopeKind *string
+		)
+		if scanErr := rows.Scan(&resource, &used, &limit, &mode, &scopeKind); scanErr != nil {
+			return nil, apierr.StoreUnavailable(scanErr)
+		}
+		row := OrganizationResourceUsage{
+			Resource:   QuotaResource(resource),
+			UsedValue:  used,
+			LimitValue: limit,
+		}
+		if mode != nil {
+			m := EnforcementMode(*mode)
+			row.EnforcementMode = &m
+		}
+		if scopeKind != nil {
+			s := QuotaScope(*scopeKind)
+			row.Scope = &s
+		}
+		out = append(out, row)
 	}
 	if rowsErr := rows.Err(); rowsErr != nil {
 		return nil, apierr.StoreUnavailable(rowsErr)

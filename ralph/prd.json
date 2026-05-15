@@ -2785,7 +2785,7 @@
       ],
       "type": "endpoint-quota",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Endpoint belongs to the quota backend surface."
     },
     {

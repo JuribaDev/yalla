@@ -45,6 +45,8 @@
 - Crockford Base32 (lowercase) excludes i / l / o / u — hand-rolled test IDs containing those letters (e.g. "demo", "kvl", "old", "ufo") fail domain.ParseID with E_INVALID_INPUT. Use domain.MustNewID(domain.KindX) for fixtures (the convention in dokploy/mapping_test.go and reconcile_test.go); a test failure where every port-level case fails with the same E_INVALID_INPUT is almost always the ID validator rejecting the fixture before any port runs.
 - ON CONFLICT against a PARTIAL unique index requires the WHERE predicate in the conflict_target clause (`ON CONFLICT (cols) WHERE <same predicate> DO UPDATE`), otherwise Postgres rejects the upsert because the index is not eligible. quota_policies_org_resource_idx is the canonical case: ON CONFLICT (organization_id, resource) WHERE scope_kind = 'organization' DO UPDATE. The freshly-minted id from newQuotaID is only used on insert; on conflict the existing row's id and created_at are preserved (and updated_at is owned by the per-table trigger).
 - List/upsert PATCH endpoints (e.g. PATCH .../limits): the request DTO carries a top-level array (not a partial-update of individual fields), each entry is an upsert, and the response is the post-write effective state re-read inside the SAME Store.Write tx — so the wire body and the committed state agree byte-for-byte. Validation rules: at least one entry (empty array = 400), every entry must be self-consistent (closed-set resource, range-checked limit, closed-set enforcement mode, no duplicate keys across entries), and a `*int64` for numeric fields whose zero is meaningful distinguishes "field omitted" (400) from "set to zero" (legitimate extreme). Field paths use `field[i].subfield` so an agent can pinpoint which entry was rejected.
+- Nullable scalar fields that always travel together project as a SINGLE nullable nested OBJECT on the wire, never as coupled-nullable scalars. GET /v1/organizations/{org_id}/usage is the canonical case: `{resource, used_value, limit: null}` for unconstrained vs `{resource, used_value, limit: {limit_value, enforcement_mode, source}}` when a policy is configured — three nullable scalar siblings would force every agent to handle each invalid (limit_value null but enforcement_mode set, etc) permutation. The store struct mirrors the wire: a single `*Limit` (or three pointers projected together with an all-or-nothing guard in the projector). Adding a new field to the nested object later (e.g. a billing period for metered limits) is then forward-compatible with existing readers, whereas adding a new top-level field next to coupled scalars is not.
+- Reads that union "configured" + "live" state for the same key set (a quota policy join with quota_usage, a desired-state join with reconciled actual state, ...) use ONE SQL statement with FULL OUTER JOIN + COALESCE(left.key, right.key) for the projection key, never two queries with a Go-side merge. The repository method takes (organizationID, plan) and stays tenant-scoped at every leg of the join — the CTE shape `WITH policies AS (... WHERE org=$1 OR plan=$2), usage AS (... WHERE org=$1) FULL OUTER JOIN ... ORDER BY resource` is the reference; two queries would force the handler to re-implement deterministic ordering AND would leak observability (the two queries can see different snapshots).
 
 ## 2026-05-15 - BE-0097
 - What was implemented: PATCH /v1/organizations/{org_id}/limits, the
@@ -6474,4 +6476,223 @@
     a literal policy.Principal{} struct with Grants is the right
     shape, matching the pattern in api_keys_rotate_policy_test.go and
     limits_policy_test.go.
+---
+
+## 2026-05-15 - BE-0100
+- What was implemented: GET /v1/organizations/{org_id}/usage, the
+  organization-scoped resource-usage read endpoint. Where the BE-0094
+  limits endpoint exposes "what ceilings are configured for this tenant",
+  BE-0100 exposes "what is currently allocated against those ceilings" —
+  the live used_value counter joined with the same effective-limit
+  resolution the quota checker uses at allocation time, so the wire
+  shape is byte-coherent with what an allocation would observe.
+  - internal/controlplane/store/quota.go: new OrganizationResourceUsage
+    struct (Resource, UsedValue, plus nullable LimitValue/EnforcementMode/
+    Scope so unconstrained resources are distinguishable from "limit of
+    zero") and QuotaRepository.ListOrganizationUsage. The repository
+    method uses one SQL statement: a DISTINCT ON CTE that computes the
+    per-resource effective-limit (the same lookup as ListEffectiveLimits
+    — organization override beats plan default), then a FULL OUTER JOIN
+    against quota_usage so the result is the union of "has a policy" and
+    "has usage", with COALESCE(p.resource, u.resource) projecting the
+    join key and COALESCE(u.used_value, 0) projecting used_value when no
+    counter row has been materialized yet by LockUsage. Tenant scoped at
+    every leg (only the org's overrides and counters; only the named
+    plan's defaults), so a cross-tenant id matches no rows.
+  - internal/controlplane/store/usage.go (new): UsageReader adapter. It
+    mirrors LimitsReader almost line-for-line — composes the
+    QuotaRepository through a short-lived read transaction
+    (Store.Read), resolves the plan name through a configurable
+    PlanLookup with the DefaultPlan fallback, and exposes
+    ListOrganizationUsage(ctx, organizationID). Deliberately the same
+    PlanLookup signature LimitsReader uses, so a future plans table
+    can be wired into both adapters by a single constructor without
+    drift between the limits and usage projections.
+  - internal/controlplane/httpapi/usage.go (new): UsageReader narrow
+    port + the listUsageHandler. The wire shape is one stable JSON
+    envelope: `{usage: [{resource, used_value, limit}]}` where `limit`
+    is a nested *object* — null for unconstrained dimensions, an
+    object {limit_value, enforcement_mode, source} when a policy
+    exists at either scope. That nested-nullable shape keeps "limit
+    configured or not" a single boolean for agents instead of three
+    coupled-nullable fields, and is forward-compatible: future fields
+    on the limit object never break readers that already handle null.
+    The handler is thin: principal/reader guards → reader call →
+    projection through resourceUsageOf → WriteData. A cross-tenant
+    id, a missing principal, and a missing reader are deterministic
+    typed errors; a tenant with no policies and no counters is a
+    deterministic empty list (the same shape every list endpoint
+    serves), exactly so an agent can iterate without a nil check.
+  - internal/controlplane/httpapi/routes.go: new `tagUsage = "usage"`
+    OpenAPI tag (the usage surface is distinct from the limits surface
+    even though it shares an action), newRouteTable signature gains
+    `usage UsageReader` between `limitsUpdater` and `apiKeys`, and the
+    GET /v1/organizations/{org_id}/usage entry is registered between
+    PATCH /…/limits and GET /…/api-keys. RequiresAuth=true,
+    RequiredAction=policy.ActionLimitsRead, resolver=
+    organizationIDResolver — so a cross-tenant {org_id} is denied at
+    the policy boundary BEFORE the handler runs (with the support
+    principal's deliberate cross-tenant read exception preserved,
+    exactly as the matrix specifies for CapRead actions). No new
+    policy action constant: the BE-0102 matrix story names limits.read
+    explicitly, and reusing it keeps the read surfaces ("see what's
+    configured" + "see what's allocated against it") behind the same
+    capability — only one place to change if support visibility of
+    the quota system is ever widened or narrowed.
+  - internal/controlplane/httpapi/server.go: NewHandler signature
+    gained `usage UsageReader` (one new positional arg threaded into
+    newRouteTable in the same slot it occupies in the route table
+    signature).
+  - cmd/yalla-api/main.go: builds store.NewUsageReader(dataStore, nil)
+    at startup and threads it into httpapi.NewHandler. The "nil"
+    PlanLookup is the placeholder every other quota reader uses today
+    (DefaultPlan); when the plans table lands, a single PlanLookup
+    constructor will replace it everywhere at once.
+  - Tests:
+    - internal/controlplane/store/usage_test.go (new): 5 isolated-
+      Postgres integration tests. JoinsPolicyAndCounter (the happy
+      path — projects with override+usage, services with plan default
+      only and used=0, domains with usage and no policy — proves the
+      FULL OUTER JOIN union, the COALESCE, and the alphabetical
+      order). Empty (tenant with no policies and no counters is a
+      non-nil empty slice). TenantScoped (org A's override of 50 and
+      its counter of 12 never leak into org B's read; org B sees only
+      the shared plan default at used=0). UsageReader (the adapter
+      composes the repo through Store.Read and respects DefaultPlan
+      fallback). RespectsCustomPlanLookup (the custom PlanLookup is
+      observed in the same read transaction the join runs in).
+      NewUsageReaderRejectsNilStore (misconfiguration fails at
+      construction).
+    - internal/controlplane/httpapi/usage_test.go (new): 7 handler
+      contract tests. Happy path (forwards {org_id} to the reader
+      unchanged; projects unconstrained domains entry with limit=null
+      and projects+override entry with the nested limit object; pins
+      schema_version=yalla.output.v1 and request_id presence).
+      EmptyList (non-nil slice). StoreUnavailable (typed 503 with no
+      driver leak). RequiresAuthentication (401 from authenticator;
+      reader never runs). CrossTenantPrincipal (403 from policy
+      engine; reader never runs; no used_value in body). MissingReader
+      (typed 500). RouteIsRegistered (OpenAPI document carries the
+      "getOrganizationUsage" operation with the "usage" tag).
+    - 20 sibling NewHandler/newRouteTable call sites in the same
+      package updated to pass fakeUsageReader{} / one more nil — the
+      shared positional signature is the only place that ripples on
+      any new port addition; the cost is one positional argument per
+      call site and is the same cost every prior endpoint paid.
+- Files changed:
+  - internal/controlplane/store/quota.go (new
+    OrganizationResourceUsage + ListOrganizationUsage)
+  - internal/controlplane/store/usage.go (new — UsageReader adapter)
+  - internal/controlplane/store/usage_test.go (new)
+  - internal/controlplane/httpapi/usage.go (new — port + handler)
+  - internal/controlplane/httpapi/usage_test.go (new — fakeUsageReader
+    + 7 contract tests)
+  - internal/controlplane/httpapi/routes.go (tagUsage, signature,
+    route entry)
+  - internal/controlplane/httpapi/server.go (NewHandler signature)
+  - cmd/yalla-api/main.go (UsageReader wiring)
+  - 20 NewHandler/newRouteTable test call sites threaded
+  - ralph/prd.json (BE-0100 passes -> true)
+- Verification run:
+  - gofmt -l .  (clean after gofmt -w on the two new httpapi files)
+  - go mod tidy  (no diff)
+  - go vet ./...  (clean)
+  - go build ./...  (clean)
+  - go test ./...  (without YALLA_TEST_DATABASE_URL, the CI default —
+    all packages pass; store tests skip cleanly via
+    testutil.RequireMigratedDB exactly like every other persistence
+    test).
+  - go test -race ./...  (without YALLA_TEST_DATABASE_URL — all
+    packages pass).
+  - YALLA_TEST_DATABASE_URL=postgres://yalla:yalla@127.0.0.1:5432/yalla
+    go test -count=1 -run 'TestQuotaRepositoryListOrganizationUsage|TestUsageReader|TestNewUsageReaderRejectsNilStore'
+    ./internal/controlplane/store/  — all 5 new store integration
+    tests PASS against an isolated, freshly migrated Postgres.
+  - YALLA_TEST_DATABASE_URL=…  go test -count=1 -run 'TestListUsage'
+    ./internal/controlplane/httpapi/  — all 7 new httpapi tests PASS.
+  - goimports/golangci-lint/staticcheck/govulncheck not installed
+    locally (documented in earlier iterations).
+  - Pre-existing TestAPIKeyService* failures still present on
+    db6692e (the parent commit) when running with
+    YALLA_TEST_DATABASE_URL — explicitly verified by stashing my
+    changes and re-running; documented as out-of-scope in BE-0085's
+    progress entry. NOT introduced by this story.
+- Remaining risks / follow-ups:
+  - BE-0101 (contract tests for GET /v1/organizations/{org_id}/usage)
+    and BE-0102 (the policy matrix, now the lowest-id p1 with all
+    prerequisites met) are next iterations. usage_test.go covers
+    most of BE-0101's wire surface already, but the two remain
+    separate PRD stories.
+  - This endpoint reads through a separate UsageReader port even
+    though it could have been folded into LimitsReader. That
+    separation is deliberate: a future "metering" endpoint that
+    answers "how much have you used over a period" will fit the same
+    UsageReader naturally (it's a usage-axis question, not a
+    limit-axis question), whereas LimitsReader stays scoped to
+    "what ceilings are configured". The two surfaces also have
+    different write counterparts (LimitsService for PATCH /…/limits;
+    the quota.Reserver for usage mutations through the worker), so
+    keeping the read ports symmetric to the write surfaces avoids
+    a forced join.
+  - resourceUsageOf checks that all three nullable limit fields are
+    non-nil before projecting them onto the wire. That mirrors the
+    SQL invariant (the policies CTE produces either all three or
+    none, because COALESCE on a non-existent left side of the join
+    leaves all three NULL together). If a future ListOrganizationUsage
+    variant ever returns a partial limit projection (e.g. a "soft
+    limit" override that supplies only enforcement_mode), this
+    handler-side guard is the explicit place to relax the
+    invariant — it never silently emits a half-populated limit
+    object.
+  - The audit event for "denied authorization decision" is recorded
+    by the policy engine wrapper, not this handler — exactly the
+    posture every other read endpoint in the package takes. When the
+    "engine records denied decisions" follow-up lands (called out in
+    earlier progress entries), it lights up this endpoint
+    automatically.
+- Learnings for future iterations:
+  - For an endpoint that joins quota_policies with quota_usage,
+    FULL OUTER JOIN + COALESCE(p.resource, u.resource) is the right
+    shape: it's the only way to get "every resource that has either
+    a policy or a counter" in deterministic resource order in one
+    round trip. INNER JOIN would silently drop unconstrained-but-
+    used resources; two queries + Go-side merge would force the
+    handler to re-implement the deterministic ordering and would
+    leak observability (one query could see a different snapshot
+    than the other).
+  - Nullable scalar fields (`limit_value`, `enforcement_mode`,
+    `source`) that always travel together should be projected as a
+    single nullable nested OBJECT on the wire, not as three
+    coupled-nullable scalar fields. The boolean "limit configured
+    or not" then becomes a single field check for any reader — and
+    crucially, adding a NEW field to the limit object later (e.g.
+    a billing period for metered limits) is forward-compatible with
+    existing clients, whereas adding a new top-level field is not.
+  - The "lowest-id p1 → implement prerequisite first" pattern
+    triggered again: BE-0102 is the lowest-id failing p1, but it
+    strictly depends on BE-0100 (the implement story). Picking
+    BE-0100 unblocks BE-0101 (contract tests) and BE-0102 (policy
+    matrix) in the next two iterations and is itself a passing
+    story. This is the same shape that produced BE-0061 ->
+    BE-0062 -> BE-0063 and BE-0094 -> BE-0095 -> BE-0096.
+  - Reusing ActionLimitsRead for both /…/limits and /…/usage was a
+    deliberate choice the BE-0102 acceptance text confirms: it lists
+    "for action limits.read" explicitly. Reading the BE-0102
+    acceptance criteria BEFORE the BE-0100 implementation locked in
+    that decision; the alternative (a new ActionUsageRead constant)
+    would have forced a second matrix that's identical to the
+    limits matrix today, doubling the surface for no behavioural
+    difference. Add new actions only when the capability requirement
+    actually diverges — not just to give the OpenAPI tag a
+    same-named sibling.
+  - Adding a new persistence port causes one positional ripple per
+    NewHandler/newRouteTable call site (now 20 sites). The
+    `fakeLimitsReader{}, fakeLimitsUpdater{}, fakeAPIKeyReader{}`
+    triple is unique inside every single-line variant, and
+    `fakeLimitsReader{}, fakeLimitsUpdater{},\n\t\tfakeAPIKeyReader{}`
+    is unique inside every multi-line variant — so a single Edit
+    per file (no replace_all needed) is enough to propagate the
+    new port through the package, and the build either compiles
+    everywhere or fails everywhere (which is the diagnostic you
+    want for a positional signature change).
 ---

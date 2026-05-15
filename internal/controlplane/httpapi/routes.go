@@ -20,6 +20,7 @@ const (
 	tagOrganizations = "organizations"
 	tagMembers       = "members"
 	tagLimits        = "limits"
+	tagUsage         = "usage"
 	tagAPIKeys       = "api-keys"
 )
 
@@ -85,7 +86,9 @@ type versionPayload struct {
 // /v1/organizations/{org_id}/members, memberUpdater backs PATCH
 // /v1/organizations/{org_id}/members/{member_id}, memberRemover backs
 // DELETE /v1/organizations/{org_id}/members/{member_id}, limits backs GET
-// /v1/organizations/{org_id}/limits, apiKeys backs GET
+// /v1/organizations/{org_id}/limits, limitsUpdater backs PATCH
+// /v1/organizations/{org_id}/limits, usage backs GET
+// /v1/organizations/{org_id}/usage, apiKeys backs GET
 // /v1/organizations/{org_id}/api-keys and GET
 // /v1/organizations/{org_id}/api-keys/{key_id}, apiKeyCreator backs POST
 // /v1/organizations/{org_id}/api-keys, apiKeyUpdater backs PATCH
@@ -96,7 +99,7 @@ type versionPayload struct {
 // metadata; a request that actually reaches a handler with a nil dependency
 // is reported as a typed internal error rather than a misleading empty list
 // or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator) []apiRoute {
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -476,6 +479,31 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// principal cannot update limits in another tenant.
 			resolver: organizationIDResolver,
 			handler:  updateLimitsHandler(limitsUpdater),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodGet,
+				Path:           "/v1/organizations/{org_id}/usage",
+				OperationID:    "getOrganizationUsage",
+				Summary:        "Get current resource usage of an organization",
+				Description:    "Returns the current resource usage of the organization named by the {org_id} path parameter, paired with the effective quota limit configured for each resource (when any limit is configured at all), in deterministic resource order. Each entry carries the resource dimension, the live used_value counter, and a nullable limit object — when limit is non-null it carries the numeric ceiling, the enforcement mode (hard, soft, metered, or disabled), and the source scope that produced the value (\"organization\" for an organization-level override, \"plan_default\" for the tenant's plan default); when limit is null the dimension is unconstrained at this tenant's scope. Resources without any usage counter and without any configured policy are omitted, so the absence of a resource means \"no usage and no limit\" rather than \"used_value is zero\". used_value is the same counter the quota checker reads at allocation time (zero until the first reservation materializes the counter row), and the join with the effective limit is computed in a single SQL statement so the wire shape can never disagree with what the quota checker would observe. Action limits.read is authorized against the organization the path names before the handler runs: a principal reading usage outside its own tenant is rejected with a deterministic 403, so a cross-tenant id can never reveal another tenant's usage. The response carries no credential material — quota dimensions, counts, and ceilings are not sensitive — and the read is tenant scoped at the persistence layer, so a cross-tenant {org_id} yields the same empty list a tenant with no usage and no policies would, never another tenant's data.",
+				Tags:           []string{tagUsage},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionLimitsRead),
+				PathParams: []openapi.PathParam{{
+					Name:        "org_id",
+					Description: "The id of the organization whose current resource usage is read.",
+				}},
+				SuccessDescription: "The current resource usage of the organization.",
+			},
+			// organizationIDResolver authorizes action limits.read against the
+			// organization the {org_id} path parameter names, not merely the
+			// principal's home organization, so a cross-tenant id is denied at
+			// the policy boundary before the handler reads any data — the lone
+			// exception is the support principal's deliberate cross-tenant
+			// read, exactly as the policy matrix specifies for CapRead actions.
+			resolver: organizationIDResolver,
+			handler:  listUsageHandler(usage),
 		},
 		{
 			endpoint: openapi.Endpoint{
