@@ -2671,3 +2671,59 @@
     repository Get is scoped by id directly — there is no parent organization_id
     to filter by first, unlike projects/environments/services.
 ---
+
+## 2026-05-15 - BE-0048
+- Added policy-matrix coverage for GET /v1/organizations: a dedicated test file
+  proving action organization.read's authorization contract end to end through
+  the real NewHandler + real policy.NewEngine() (the production request path).
+  Unlike auth.orgs (CapSelf, covered by BE-0045), organization.read is a CapRead
+  action — the matrix is shaped by the read capability, not the self shortcut.
+- File changed: internal/controlplane/httpapi/organizations_policy_test.go (new);
+  ralph/prd.json, ralph/progress.txt.
+- organizations_policy_test.go covers:
+  - TestOrganizationsPolicyMatrixRoles: every built-in role (owner/admin/
+    developer/viewer/ci/support) holds CapRead, so each is allowed
+    organization.read via ReasonAllowedByRole (asserted at the engine level) and
+    receives exactly its own home org through the HTTP handler.
+  - TestOrganizationsPolicyRevokedAndExpiredKeys: a revoked/expired credential
+    surfaces as a Disabled principal -> 403 E_FORBIDDEN carrying
+    ReasonDeniedPrincipalDisabled; the denied body never echoes the principal id
+    or organization. Reader is wired but must never be reached.
+  - TestOrganizationsPolicyWrongOrganizationPrincipal: the /v1/organizations
+    route has no ResourceResolver, so RequireAuth authorizes against the
+    principal's OWN org scope — a wrong-org principal only ever sees its own org.
+    Engine-level: a non-support role is denied a foreign-org organization.read
+    with ReasonDeniedCrossTenant; the support role is the documented cross-tenant
+    read exception (ReasonAllowedBySupport) but cannot reach customers through
+    this route's own-org resolver.
+  - TestOrganizationsPolicyGrantContainment: project/env/service grants are
+    confined by the engine (no sibling project, no production, no parent-env
+    secrets, no sibling service). Crucially: organization.read is evaluated
+    against the org-root scope, which a project/env/service grant does not cover
+    — a project-scoped key is denied the endpoint with ReasonDeniedOutOfScope
+    (403 asserted through the real handler), while an org-scoped grant covers
+    the root and is allowed via ReasonAllowedByGrant (200 through the handler).
+- Verification run: gofmt -w .; go mod tidy; go vet ./...; go test ./...;
+  go test -race ./internal/controlplane/httpapi/ ./internal/controlplane/policy/.
+- Results: all passed. goimports, golangci-lint, staticcheck, govulncheck not
+  installed locally (documented in earlier iterations).
+- Remaining risks / follow-ups: none. "Isolated Postgres migrations" / "fake
+  Dokploy" acceptance criteria are N/A — the policy matrix drives the real
+  handler + real engine with a fake Authenticator and a fake OrganizationReader;
+  the store-backed reader has its own isolated-Postgres coverage in
+  store/organization_test.go (BE-0046).
+- Learnings for future iterations:
+  - Policy-matrix files for CapRead/CapWrite/etc. endpoints differ from the
+    CapSelf families (auth.me, auth.orgs): a self action is "all allow" so the
+    matrix only pins identity non-escalation, but a capability action's matrix
+    must assert the verdict path (ReasonAllowedByRole vs ByGrant vs deny) and
+    that scoped keys cannot be widened. Use engine-level Decide() for the
+    capability/scope assertions and the HTTP handler for the integration proof.
+  - For a route registered with a nil ResourceResolver, RequireAuth authorizes
+    against policy.Resource{Scope:{OrganizationID: principal.OrganizationID}} —
+    the principal's own org root. A project/env/service-scoped grant does NOT
+    cover that root scope, so a scoped key is correctly denied an org-root read
+    (ReasonDeniedOutOfScope) even though the same grant authorizes deeper writes.
+  - orgPrincipal() in organizations_test.go takes no grants; build
+    policy.Principal literals directly when a test needs Grants or Disabled.
+---
