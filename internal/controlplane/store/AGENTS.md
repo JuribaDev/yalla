@@ -258,15 +258,30 @@ Postgres persistence for control-plane source-of-truth state.
   later `*.up.sql`, and `DROP CONSTRAINT ... IF EXISTS` it **first** in that
   migration's `*.down.sql` — it depends on the new table's composite `UNIQUE`
   key.
-- Customer-facing `DELETE` endpoints **schedule a soft delete**, they do not
-  hard-delete: `OrganizationService.ScheduleDeletion` stamps
+- Customer-facing `DELETE` endpoints on **tenant-root or tree-owning
+  resources** schedule a soft delete, they do not hard-delete:
+  `OrganizationService.ScheduleDeletion` stamps
   `organizations.deletion_scheduled_at` (migration `0010`) inside the same
-  transaction as the `organization.delete` audit record. A hard delete cascades
-  (`ON DELETE CASCADE`) through projects/environments/services *and the audit
-  log itself* — so the destructive teardown is a later worker story; the
-  endpoint only records intent. Re-scheduling an already-stamped row is
-  `apierr.Conflict`, detected with a `Get` inside the tx (the repository's
-  `ScheduleDeletion` is an unconditional `UPDATE`, mirroring `Update`).
+  transaction as the `organization.delete` audit record. A hard delete
+  cascades (`ON DELETE CASCADE`) through projects/environments/services *and
+  the audit log itself* — so the destructive teardown is a later worker
+  story; the endpoint only records intent. Re-scheduling an already-stamped
+  row is `apierr.Conflict`, detected with a `Get` inside the tx (the
+  repository's `ScheduleDeletion` is an unconditional `UPDATE`, mirroring
+  `Update`).
+- **Join rows that own no child tree are exempt** — they hard-delete inside
+  the same transaction as their audit record. `MembershipService.Remove`
+  follows this pattern: read the current `OrganizationMember` inside the
+  tx (so the audit metadata can capture the role the member held at
+  removal time and a missing row is a typed `NotFound`), call
+  `MembershipRepository.Delete` (tenant-scoped on `(organization_id,
+  user_id)`; `tag.RowsAffected()==0` is also `NotFound`), append the
+  audit event, return the pre-delete row. The httpapi layer renders that
+  pre-delete row through the same wire shape every other membership
+  endpoint uses — agents get the audit-grade terminal view in one round
+  trip instead of a bodyless 204. A membership owns no child tree, so
+  there is no soft-delete state to track; the audit row is the only
+  surviving trace.
 - The store layer is the redaction chokepoint for **error-summary-style**
   free-text columns it owns (`provisioning_jobs.error_summary` is run through
   `output.NewRedactor()` on every `Insert`/`Transition`). This differs from

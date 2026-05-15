@@ -2272,8 +2272,8 @@
       ],
       "type": "endpoint-membership",
       "priority": 2,
-      "passes": false,
-      "notes": "Endpoint belongs to the membership backend surface."
+      "passes": true,
+      "notes": "Implemented DELETE /v1/organizations/{org_id}/members/{member_id} end to end: MembershipRepository.Delete (tenant-scoped hard delete), MembershipService.Remove (existence read + delete + audit in one transaction), MembershipRemover port + removeMemberHandler + memberIDResolver-gated route, OpenAPI metadata, wiring in cmd/yalla-api, handler unit tests, store integration tests, validator white-box tests. Returns the membership as it stood at removal time so agents see the audit-grade terminal view."
     },
     {
       "id": "BE-0074",

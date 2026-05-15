@@ -574,3 +574,99 @@ func TestMembershipRepositoryUpdateRoleIsTenantScoped(t *testing.T) {
 		t.Errorf("orgA membership after cross-tenant UpdateRole = %+v, want unchanged role owner / role_version 3", live)
 	}
 }
+
+// TestMembershipRepositoryDelete is the happy path for the membership DELETE
+// primitive: the row is removed inside the transaction, and a follow-up Get
+// surfaces the typed NotFound the read path produces.
+func TestMembershipRepositoryDelete(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	repo := store.NewMembershipRepository()
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	org := seedOrg(t, db, f, "acme")
+	userID := seedUser(t, db, f, org, "ada")
+	seedMembership(t, db, org.ID, userID, "owner", 2)
+
+	if err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		return repo.Delete(ctx, tx, org.ID, userID)
+	}); err != nil {
+		t.Fatalf("Delete returned %v, want nil", err)
+	}
+
+	err := s.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		_, getErr := repo.Get(ctx, q, org.ID, userID)
+		return getErr
+	})
+	var ye *yerr.Error
+	if !stderrors.As(err, &ye) || ye.Code != yerr.CodeNotFound {
+		t.Fatalf("Get after Delete = %v, want a typed E_NOT_FOUND — the row must be gone", err)
+	}
+}
+
+// TestMembershipRepositoryDeleteMissingIsNotFound proves a DELETE that
+// matched no rows — for any reason, including a cross-tenant pairing — is
+// the typed apierr.NotFound the GET endpoint uses, so a 404 contract is
+// preserved at the persistence boundary.
+func TestMembershipRepositoryDeleteMissingIsNotFound(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	repo := store.NewMembershipRepository()
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	org := seedOrg(t, db, f, "acme")
+	userID := seedUser(t, db, f, org, "ada") // the user exists, but no membership row
+
+	err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		return repo.Delete(ctx, tx, org.ID, userID)
+	})
+	var ye *yerr.Error
+	if !stderrors.As(err, &ye) || ye.Code != yerr.CodeNotFound {
+		t.Fatalf("Delete error = %v, want a typed E_NOT_FOUND", err)
+	}
+}
+
+// TestMembershipRepositoryDeleteIsTenantScoped proves the persistence
+// layer's tenant guard: a user id paired with another organization is the
+// same deterministic NotFound as a missing row, and the original tenant's
+// row is left untouched.
+func TestMembershipRepositoryDeleteIsTenantScoped(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	repo := store.NewMembershipRepository()
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	orgA := seedOrg(t, db, f, "alpha")
+	orgB := seedOrg(t, db, f, "beta")
+	userID := seedUser(t, db, f, orgA, "ada")
+	seedMembership(t, db, orgA.ID, userID, "owner", 3)
+
+	err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		return repo.Delete(ctx, tx, orgB.ID, userID)
+	})
+	var ye *yerr.Error
+	if !stderrors.As(err, &ye) || ye.Code != yerr.CodeNotFound {
+		t.Fatalf("cross-tenant Delete error = %v, want E_NOT_FOUND — no membership leak", err)
+	}
+
+	// orgA's row must be untouched: a cross-tenant DELETE cannot reach into
+	// another tenant's data.
+	var live store.Membership
+	if err := s.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		var err error
+		live, err = repo.Get(ctx, q, orgA.ID, userID)
+		return err
+	}); err != nil {
+		t.Fatalf("Get(orgA) returned %v, want nil", err)
+	}
+	if live.Role != "owner" || live.RoleVersion != 3 {
+		t.Errorf("orgA membership after cross-tenant Delete = %+v, want unchanged role owner / role_version 3",
+			live)
+	}
+}

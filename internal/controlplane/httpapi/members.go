@@ -37,6 +37,14 @@ var errNoMembershipCreator = errors.New("httpapi: no membership creator configur
 // rather than silently failing to persist the role change.
 var errNoMembershipUpdater = errors.New("httpapi: no membership updater configured")
 
+// errNoMembershipRemover is returned when DELETE
+// /v1/organizations/{org_id}/members/{member_id} is reached without a
+// membership remover wired into NewHandler. Like errNoMembershipUpdater it
+// can only happen through a wiring error — a programming mistake, not a
+// client error — so the handler reports it as a typed internal failure
+// rather than silently failing to persist the removal.
+var errNoMembershipRemover = errors.New("httpapi: no membership remover configured")
+
 // MembershipReader is the narrow persistence port GET
 // /v1/organizations/{org_id}/members and GET
 // /v1/organizations/{org_id}/members/{member_id} depend on.
@@ -407,6 +415,86 @@ func updateMemberHandler(updater MembershipUpdater) http.HandlerFunc {
 		}
 
 		apienvelope.WriteData(w, http.StatusOK, requestID(r), updateMemberPayload{
+			Member: memberResourceOf(member),
+		})
+	}
+}
+
+// MembershipRemover is the narrow persistence port DELETE
+// /v1/organizations/{org_id}/members/{member_id} depends on.
+// *store.MembershipService satisfies it in production; tests supply a fake.
+// Like MembershipUpdater it is an interface declared here so the handler
+// stays unit-testable without a real database — the concrete orchestrator
+// (the existence check, the memberships row DELETE, and the audit record
+// committed in one transaction) lives in the store layer.
+type MembershipRemover interface {
+	Remove(ctx context.Context, in store.RemoveMembershipInput) (store.OrganizationMember, error)
+}
+
+// removeMemberPayload is the data block of the DELETE
+// /v1/organizations/{org_id}/members/{member_id} success envelope: the
+// membership exactly as it stood at the moment of removal, in the same
+// stable wire shape the GET endpoint uses. Returning the terminal view
+// (rather than 204 No Content) mirrors the organization scheduled-deletion
+// contract and lets agents and CI see what was removed without a second
+// request. The row no longer exists by the time the response is rendered;
+// this payload is the audit-grade record of what was removed. It carries no
+// credential material — a membership row stores a role, never a secret.
+type removeMemberPayload struct {
+	Member memberResource `json:"member"`
+}
+
+// removeMemberHandler builds the DELETE
+// /v1/organizations/{org_id}/members/{member_id} handler. It delegates to
+// the remove-member unit of work — confirm the membership exists, delete
+// the memberships row, append the audit record, all in one transaction —
+// which runs in the store layer through the MembershipRemover port.
+//
+// RequireAuth gates the route on action members.manage before the handler
+// runs — authorized through memberIDResolver against the organization the
+// path names — and attaches the resolved principal, so a request that
+// reaches the handler has already cleared the tenant boundary: a
+// cross-tenant {org_id} was rejected as a 403 by the policy engine, never
+// reaching this code. A request that arrives here with no principal is
+// therefore a wiring error and is reported as a typed internal error. The
+// principal and the request correlation identifiers are passed to the
+// remover so the audit record names the actor; a not-found membership
+// (cross-tenant or missing user) and a datastore outage each surface as
+// their own typed status, never disguised as one another.
+//
+// The response is 200 OK carrying the membership that was just removed —
+// the same wire shape every other membership endpoint returns, projected
+// from the row as it stood at the moment of removal. The row no longer
+// exists when this returns; the body is the audit-grade record of what was
+// removed.
+func removeMemberHandler(remover MembershipRemover) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if remover == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoMembershipRemover))
+			return
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		member, err := remover.Remove(r.Context(), store.RemoveMembershipInput{
+			OrganizationID: r.PathValue("org_id"),
+			UserID:         r.PathValue("member_id"),
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), removeMemberPayload{
 			Member: memberResourceOf(member),
 		})
 	}

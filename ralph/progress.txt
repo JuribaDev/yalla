@@ -4198,3 +4198,120 @@
     KindUser in direct Decide assertions keeps the test honest about
     what the production resolver emits.
 ---
+
+## 2026-05-15 - BE-0073
+- What was implemented: DELETE /v1/organizations/{org_id}/members/{member_id}
+  end to end — the third triplet sibling for the membership PATCH/GET/POST
+  surface. The endpoint removes the member named by ({org_id}, {member_id})
+  from the source-of-truth database. Removal is a hard delete: the
+  memberships row is dropped and an immutable audit record naming the actor
+  and capturing the role held at removal time is committed in the same
+  transaction. The success response is 200 OK carrying the membership as it
+  stood at removal time — the audit-grade terminal view — in the same wire
+  shape every other membership endpoint returns. Action members.manage is
+  authorized through memberIDResolver against the organization the path
+  names; cross-tenant {org_id} is denied as 403 by the policy engine before
+  the handler runs; a cross-tenant member_id is the same deterministic 404
+  the persistence layer produces. The OpenAPI document gains the
+  removeOrganizationMember operation with both path parameters and a 200
+  response. cmd/yalla-api wires the existing store.MembershipService as the
+  MembershipRemover (it now implements Remove, Add, and UpdateMember).
+- Files changed:
+  - internal/controlplane/store/membership.go: MembershipRepository.Delete
+    (tenant-scoped DELETE, tag.RowsAffected()==0 → typed apierr.NotFound;
+    requires *Tx; driver errors flow through mapWriteError).
+  - internal/controlplane/store/membershipservice.go: RemoveMembershipInput
+    + MembershipService.Remove (validate → Write tx: GetMember →
+    repo.Delete → audit.Append; audit metadata captures the target
+    organization_id and the role at removal time; missing actor_org_id is a
+    typed Internal); MembershipService doc updated to describe all three
+    unit-of-work flows.
+  - internal/controlplane/store/membership_test.go: integration tests for
+    Delete — happy path (re-read surfaces NotFound), missing-membership
+    NotFound, tenant-scoped NotFound (orgA row untouched after orgB DELETE).
+  - internal/controlplane/store/membershipservice_test.go: integration
+    tests for Remove — happy path (row gone via reader, audit row with
+    role=admin), missing-membership NotFound + no audit, cross-tenant
+    NotFound + audit-empty + orgA untouched, malformed user_id is
+    InvalidInput + row untouched, blank actor org is Internal.
+  - internal/controlplane/store/membershipservice_internal_test.go:
+    white-box tests for validateMembershipRemove — accepted trimming +
+    rejection cases that never echo submitted values.
+  - internal/controlplane/httpapi/members.go: errNoMembershipRemover,
+    MembershipRemover port, removeMemberPayload, removeMemberHandler. The
+    handler is thin: principal check → nil-remover check → call Remove →
+    render via apienvelope.WriteData. The doc describes returning the
+    terminal view (audit-grade) rather than 204.
+  - internal/controlplane/httpapi/routes.go: newRouteTable signature gains
+    memberRemover MembershipRemover; DELETE /v1/organizations/{org_id}/
+    members/{member_id} route registered with memberIDResolver, action
+    members.manage, two path params, success 200. Comments updated.
+  - internal/controlplane/httpapi/server.go: NewHandler signature gains
+    memberRemover MembershipRemover; threaded into newRouteTable. Doc
+    comment lists every port the handler depends on.
+  - internal/controlplane/httpapi/members_test.go: fakeMembershipRemover
+    canned fake (mirrors fakeMembershipUpdater shape).
+  - internal/controlplane/httpapi/members_delete_test.go (new): contract +
+    policy wiring tests — success returns the audit-grade member,
+    forwarding of path + actor, not-found 404, unauthenticated/invalid-cred
+    401, cross-tenant 403 with stable reason, disabled-principal 403,
+    datastore outage typed 5xx (no driver string leak), request_id
+    propagation, defensive no-principal/no-remover internal errors, OpenAPI
+    operation entry assertions, single-resource (not list) response shape.
+  - internal/controlplane/httpapi/{me_test,me_contract_test,members_create_test,
+    members_update_test,organizations_create_test,organizations_test,
+    organizations_patch_test,organizations_delete_test,server_test,
+    routes_test}.go: positional NewHandler / newRouteTable call sites get
+    the new memberRemover argument (fakeMembershipRemover{} / nil).
+  - cmd/yalla-api/main.go: NewHandler call passes membershipService as the
+    MembershipRemover (same concrete satisfies creator, updater, remover).
+  - ralph/prd.json, ralph/progress.txt.
+- Verification run: gofmt -w .; goimports -w .; go mod tidy; go build ./...;
+  go vet ./...; go test ./...; go test -race ./....
+- Results: all passed (handler suite + store suite both green;
+  TestRemoveMember* and TestMembershipService{Remove,RemoveMissing*,
+  RemoveCrossTenantIsNotFound,RemoveInvalidIsValidationError,
+  RemoveRejectsBlankActorOrg} + TestMembershipRepositoryDelete*
+  + TestValidateMembershipRemove*). golangci-lint, staticcheck, govulncheck
+  still not installed locally (documented previously).
+- Remaining risks / follow-ups:
+  - BE-0074 (contract tests for DELETE) and BE-0075 (policy matrix coverage
+    for DELETE) are now unblocked — the handler is reachable, RequireAuth
+    gates it on members.manage through memberIDResolver, and a
+    fakeMembershipRemover is available. members_delete_test.go already
+    covers most of BE-0074's surface; the contract gap audit and the
+    full role × tenant matrix remain separate stories.
+  - "Record an audit event for ... denied authorization decision" remains
+    the pending cross-cutting follow-up from BE-0040; not piecemeal in this
+    story.
+  - The endpoint returns 200 with the terminal view rather than 204 No
+    Content. Documented in the OpenAPI description and the doc comment so
+    agents do not expect a bodyless response. The contract-test story will
+    pin this further with strict body assertions.
+- Learnings for future iterations:
+  - When extending NewHandler / newRouteTable with another positional
+    dependency, the cheapest update is a sed pass over the two trailing
+    forms: `fakeXxx{}, nil)` → `fakeXxx{}, fakeNewDep{}, nil)` and
+    `fakeXxx{}, logger)` → `fakeXxx{}, fakeNewDep{}, logger)`. The only
+    manual edit is the local-variable form (`updater, nil)` in
+    members_update_test.go). All-nil newRouteTable test sites just need
+    one more `, nil` before the trailing paren. Running `go vet
+    ./internal/controlplane/httpapi/...` immediately catches a missed
+    site as a positional-argument error.
+  - The membership service now exposes Add, UpdateMember, and Remove. All
+    three are unit-of-work flows that read first, mutate, audit — never
+    "DELETE returning". The audit metadata for Remove records `role` (the
+    role at removal time), mirroring Add's `role` (the newly granted role)
+    and UpdateMember's `previous_role` / `role` pair. Future
+    membership-mutating flows should keep "the role at the moment of the
+    decision" in metadata so the audit trail captures both sides of a
+    change.
+  - DELETE endpoints that return 200 with the terminal view (audit-grade
+    record) instead of 204 No Content mirror the organization
+    scheduled-deletion contract: agents see exactly what was removed in
+    one round trip, and CI can diff against the previous GET without a
+    follow-up call. Pattern: read-current-row → mutate → return the
+    pre-mutation row through the same wire shape every other endpoint
+    uses. Reserve 204 for endpoints where the row is *not* the resource
+    (e.g. session logout).
+---

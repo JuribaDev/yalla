@@ -165,6 +165,46 @@ func (r *MembershipRepository) UpdateRole(ctx context.Context, tx *Tx, organizat
 	return m, nil
 }
 
+// Delete removes the (organizationID, userID) row from the memberships table
+// inside tx. It requires a *Tx — not a bare Querier — so a membership can
+// never be removed outside the transaction that also carries its audit
+// record. The query is tenant scoped: it filters on (organization_id,
+// user_id), so a user id paired with the wrong organization simply does not
+// match and is reported as the typed apierr.NotFound the GET endpoint uses,
+// never disguised as a 5xx and never revealing whether another tenant has
+// that member.
+//
+// Removing a membership is a hard delete, not a soft delete: a membership
+// row stores no source-of-truth content itself (role, role_version,
+// timestamps), it is the join between a user and an organization, and the
+// teardown of an organization tree already takes a separate scheduled path.
+// The destructive semantic is therefore the right primitive here — the
+// caller is the membership service, which appends an immutable audit record
+// in the same transaction so the trail of "who removed whom" survives the
+// row.
+//
+// A driver error that is not a missing row surfaces as
+// apierr.StoreUnavailable through mapWriteError; the memberships row has no
+// outbound foreign key that a delete could realistically violate (every FK
+// targets memberships, not the other way), so a Conflict here is reported
+// through the generic mapWriteError contract rather than disguised as a
+// not-found.
+func (r *MembershipRepository) Delete(ctx context.Context, tx *Tx, organizationID, userID string) error {
+	if tx == nil {
+		return apierr.Internal(errors.New("store: MembershipRepository.Delete called with a nil transaction"))
+	}
+	tag, err := tx.Exec(ctx,
+		`DELETE FROM memberships WHERE organization_id = $1 AND user_id = $2`,
+		organizationID, userID)
+	if err != nil {
+		return mapWriteError(err, "the membership cannot be removed")
+	}
+	if tag.RowsAffected() == 0 {
+		return apierr.NotFound("membership", userID)
+	}
+	return nil
+}
+
 // UserExists reports whether userID names a row in the global users table. It
 // is the membership service's pre-check before INSERT: a missing user is
 // surfaced as the typed apierr.NotFound a caller can read, instead of relying

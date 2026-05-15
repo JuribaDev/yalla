@@ -115,6 +115,25 @@ func (f fakeMembershipUpdater) UpdateMember(_ context.Context, in store.UpdateMe
 	return f.member, f.err
 }
 
+// fakeMembershipRemover is a canned MembershipRemover for httpapi tests. The
+// zero value returns a zero OrganizationMember and no error, which is all the
+// test helpers that never reach the DELETE handler (the public-surface, GET,
+// POST, and PATCH suites) need; the DELETE member tests set member/err and
+// read got back to prove the handler forwards the validated request and the
+// authenticated actor to the store layer unchanged.
+type fakeMembershipRemover struct {
+	member store.OrganizationMember
+	err    error
+	got    *store.RemoveMembershipInput
+}
+
+func (f fakeMembershipRemover) Remove(_ context.Context, in store.RemoveMembershipInput) (store.OrganizationMember, error) {
+	if f.got != nil {
+		*f.got = in
+	}
+	return f.member, f.err
+}
+
 // listMembersSuccessEnvelope is the decoded shape of the GET
 // /v1/organizations/{org_id}/members success envelope.
 type listMembersSuccessEnvelope struct {
@@ -132,7 +151,7 @@ type listMembersSuccessEnvelope struct {
 func listMembersHandlerFor(id auth.Identity, authErr error, reader MembershipReader) http.Handler {
 	a := fakeAuthenticator{identity: id, err: authErr}
 	return NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, a, policy.NewEngine(),
-		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{}, reader, fakeMembershipCreator{}, fakeMembershipUpdater{}, nil)
+		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{}, reader, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{}, nil)
 }
 
 // getMembers issues GET /v1/organizations/{orgID}/members against handler,

@@ -80,13 +80,14 @@ type versionPayload struct {
 // /v1/organizations, updater backs PATCH /v1/organizations/{org_id}, deleter
 // backs DELETE /v1/organizations/{org_id}, members backs GET
 // /v1/organizations/{org_id}/members, memberCreator backs POST
-// /v1/organizations/{org_id}/members, and memberUpdater backs PATCH
-// /v1/organizations/{org_id}/members/{member_id}. Any may be nil for tests
-// and tooling that only inspect the route table's metadata; a request that
-// actually reaches a handler with a nil dependency is reported as a typed
-// internal error rather than a misleading empty list or a silently dropped
-// write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater) []apiRoute {
+// /v1/organizations/{org_id}/members, memberUpdater backs PATCH
+// /v1/organizations/{org_id}/members/{member_id}, and memberRemover backs
+// DELETE /v1/organizations/{org_id}/members/{member_id}. Any may be nil for
+// tests and tooling that only inspect the route table's metadata; a request
+// that actually reaches a handler with a nil dependency is reported as a
+// typed internal error rather than a misleading empty list or a silently
+// dropped write.
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -389,6 +390,32 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// principal cannot manage members of another tenant.
 			resolver: memberIDResolver,
 			handler:  updateMemberHandler(memberUpdater),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodDelete,
+				Path:           "/v1/organizations/{org_id}/members/{member_id}",
+				OperationID:    "removeOrganizationMember",
+				Summary:        "Remove a member from an organization",
+				Description:    "Removes the member named by ({org_id}, {member_id}) from the source-of-truth database. The deletion is immediate, not scheduled: the memberships row is dropped and an immutable audit record naming the authenticated principal — and capturing the role the member held at removal time — is committed in the same transaction, so the audit trail of who removed whom survives the row. Action members.manage is authorized against the organization the path names before the handler runs: a principal removing a member outside its own tenant is rejected with a deterministic 403, so a cross-tenant id can never mutate another tenant's membership graph. A user id paired with the wrong organization is the same deterministic 404 as a missing row, so the endpoint can never reveal whether another tenant has that member. The response carries the membership exactly as it stood at the moment of removal, in the same wire shape every other membership endpoint returns; it carries no credential material — a membership row stores a role, never a secret.",
+				Tags:           []string{tagMembers},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionMembersManage),
+				PathParams: []openapi.PathParam{
+					{Name: "org_id", Description: "The id of the organization the member belongs to."},
+					{Name: "member_id", Description: "The id of the user whose membership is removed."},
+				},
+				SuccessDescription: "The removed membership.",
+			},
+			// memberIDResolver authorizes action members.manage against the
+			// organization the {org_id} path parameter names, not merely the
+			// principal's home organization, so a cross-tenant id is denied
+			// at the policy boundary before the handler mutates any data.
+			// members.manage is a CapManage action and has no cross-tenant
+			// support exception — unlike CapRead actions, the support
+			// principal cannot manage members of another tenant.
+			resolver: memberIDResolver,
+			handler:  removeMemberHandler(memberRemover),
 		},
 	}
 }

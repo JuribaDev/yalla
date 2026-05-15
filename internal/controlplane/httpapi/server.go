@@ -54,26 +54,27 @@ import (
 // POST /v1/organizations, updater backs PATCH /v1/organizations/{org_id},
 // deleter backs DELETE /v1/organizations/{org_id}, members backs GET
 // /v1/organizations/{org_id}/members, memberCreator backs POST
-// /v1/organizations/{org_id}/members, and memberUpdater backs PATCH
-// /v1/organizations/{org_id}/members/{member_id}. All are narrow ports, not
-// the concrete store, so the HTTP surface stays unit-testable with fakes;
-// cmd/yalla-api wires the real store.OrganizationReader,
+// /v1/organizations/{org_id}/members, memberUpdater backs PATCH
+// /v1/organizations/{org_id}/members/{member_id}, and memberRemover backs
+// DELETE /v1/organizations/{org_id}/members/{member_id}. All are narrow
+// ports, not the concrete store, so the HTTP surface stays unit-testable
+// with fakes; cmd/yalla-api wires the real store.OrganizationReader,
 // store.OrganizationService, store.MembershipReader, and
 // store.MembershipService at startup. A nil orgs, creator, updater, deleter,
-// members, memberCreator, or memberUpdater still registers its route — the
-// handler reports a typed internal error rather than a misleading empty list
-// or a silently dropped write — which suits tests and tooling that only
-// exercise the public surface.
+// members, memberCreator, memberUpdater, or memberRemover still registers
+// its route — the handler reports a typed internal error rather than a
+// misleading empty list or a silently dropped write — which suits tests and
+// tooling that only exercise the public surface.
 //
 // Routes come from the newRouteTable single source of truth: NewHandler
 // registers every entry on the mux and generates the OpenAPI document
 // (GET /openapi.json) from the same table, so a served route is always a
 // documented route.
-func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, authenticator Authenticator, engine *policy.Engine, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, logger *slog.Logger) http.Handler {
+func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, authenticator Authenticator, engine *policy.Engine, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, logger *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 	build = build.Normalized()
 
-	table := newRouteTable(build, readiness, meta, orgs, creator, updater, deleter, members, memberCreator, memberUpdater)
+	table := newRouteTable(build, readiness, meta, orgs, creator, updater, deleter, members, memberCreator, memberUpdater, memberRemover)
 
 	// Generate the OpenAPI document once, from the route table, at startup.
 	doc := openAPIDocument(build, table)
