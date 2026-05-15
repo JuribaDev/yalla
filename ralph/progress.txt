@@ -6151,3 +6151,95 @@
     — that is the right way to disambiguate "introduced by my story" from
     "long-standing test infra mismatch".
 ---
+
+## 2026-05-15 - BE-0096
+- Added policy matrix coverage for GET /v1/organizations/{org_id}/limits.
+  Where limits_test.go (BE-0094 / BE-0095) pins the wire contract, this
+  file pins the authorization contract: action limits.read cannot be
+  bypassed by — or leak data because of — the principal's role, revoked
+  credentials, home organization, or scoped grants.
+- Files changed:
+  - internal/controlplane/httpapi/limits_policy_test.go (new):
+    - TestListLimitsPolicyMatrixRoles drives the six built-in roles
+      (owner/admin/developer/viewer/ci/support) through the real
+      NewHandler + real policy.NewEngine() against an {org_id} naming the
+      principal's own home organization. Since ActionLimitsRead is
+      CapRead (catalog.go:81), every role allows via ReasonAllowedByRole;
+      the assertions that matter are the engine reason and that the
+      fakeLimitsReader is reached with the path's {org_id}.
+    - TestListLimitsPolicyRevokedAndExpiredKeys: a disabled principal
+      whose underlying role would otherwise allow (Owner) is denied with
+      ReasonDeniedPrincipalDisabled; the reader is never reached and the
+      body never echoes the principal id, organization id, or any
+      seeded limit field ("projects", "hard").
+    - TestListLimitsPolicyWrongOrganizationPrincipal pins the load-
+      bearing distinction from the keys.read sibling story (BE-0078):
+      keys.read is CapAdmin and OUTSIDE the engine's support cross-
+      tenant exception, but limits.read is CapRead and INSIDE it (engine
+      clause: `roleCaps.has(CapSupport) && (required == CapRead ||
+      required == CapSupport)`). A non-support owner cross-tenant is
+      denied (ReasonDeniedCrossTenant) with no reader reach and no
+      foreign-id/limit leakage; a Support principal cross-tenant is
+      ALLOWED (ReasonAllowedBySupport) and the handler returns 200 with
+      the limits of the {org_id} the path named, the reader reached with
+      that org id. Both the engine verdict and the wire verdict are
+      pinned for both principals.
+    - TestListLimitsPolicyGrantContainment pins the three containment
+      properties the acceptance criteria name (sibling project,
+      production environment, parent-level secrets) against the engine
+      via project/env/service Admin grants, then ties them back to the
+      wire: a project-scoped Admin grantee reading limits of its OWN
+      organization is denied with ReasonDeniedOutOfScope (covers() is
+      one-way — a more-specific scope cannot reach a broader resource),
+      the reader is never reached, and the body never echoes the seeded
+      limit data. An organization-scoped VIEWER grant DOES allow the
+      endpoint (CapRead is enough; ReasonAllowedByGrant) and the same
+      key is end-to-end allowed at the wire. The project-scoped grantee
+      against a foreign {org_id} is still denied (ReasonDeniedCrossTenant
+      fires first).
+  - ralph/prd.json: BE-0096 passes=true.
+- Verification run:
+  - gofmt -w . (clean)
+  - go mod tidy (no diff)
+  - go vet ./... (clean)
+  - go test ./... (all packages green; httpapi 0.292s for the new tests)
+  - go test -race ./... (httpapi 1.860s, full suite green)
+- Results: BE-0096 passes. All four tests pass under race; no other
+  package is touched and no existing test changed.
+- Remaining risks or follow-ups: none for this story. BE-0097
+  (PATCH /v1/organizations/{org_id}/limits) and onward remain pending.
+- Learnings for future iterations:
+  - Reusing the limits_test.go scaffolding (fakeLimitsReader,
+    listLimitsHandlerFor, limitsActorIdentity, decodeLimitsList,
+    decodeErrorEnvelope) plus orgPrincipal and decodeError from the
+    wider httpapi test fixtures kept this story to a single new file
+    with one small request helper (getLimits) — no new fakes, no NewHandler
+    rewiring. The established "policy matrix story adds no scaffolding"
+    pattern held: every dependency it needed already existed because the
+    BE-0094 implementation story landed the contract suite that built
+    them.
+  - The CapRead-vs-CapAdmin split is the load-bearing structural
+    difference between resolver-based read endpoints, and the policy
+    matrix story is the ONLY place it gets directly pinned. keys.read
+    (BE-0078, CapAdmin) had to prove Support cross-tenant DENY because
+    CapAdmin is outside the engine's support exception; limits.read
+    (BE-0096, CapRead) has to prove Support cross-tenant ALLOW because
+    CapRead is inside it. The engine clause
+    `roleCaps.has(CapSupport) && (required == CapRead || required ==
+    CapSupport)` is the single line of policy code that splits the two
+    matrices. Future resolver-based read endpoints: copy the limits
+    template if the action is CapRead; copy the keys template if it is
+    CapAdmin.
+  - For grant containment on a CapRead endpoint, an organization-scoped
+    VIEWER grant is enough to allow the endpoint via
+    ReasonAllowedByGrant — viewer holds CapRead. The CapAdmin keys.read
+    matrix had to use an organization-scoped ADMIN grant for the
+    positive case (and intentionally proved Viewer NOT enough). Pick the
+    weakest grant role that satisfies the required capability so the
+    test pins the capability requirement, not an over-privileged grant.
+  - When asserting "denied body does not leak limit data", grep for
+    distinctive field VALUES ("projects", "\"hard\"", numeric literals
+    like ":42"), not just the resource enum strings — the engine reason
+    contains identifiers like "scoped" or "role", so checking only for
+    the word "limits" would have false positives.
+---
