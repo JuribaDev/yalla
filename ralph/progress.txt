@@ -13031,3 +13031,149 @@
     reuse it verbatim.
 ---
 
+## 2026-05-16 - BE-0166
+- Implemented GET /v1/environments/{environment_id}/grants — the first
+  endpoint of the environment-grants surface. The new endpoint lists the
+  scoped grants attached to the environment named by the {environment_id}
+  path parameter through the EnvironmentGrantReader port and renders them
+  in the stable yalla.output.v1 envelope. Authorized through
+  environmentIDResolver against the (principal home org, {environment_id})
+  resource — environment.grants.read is CapRead, so org-wide read roles
+  (owner/admin/developer/viewer/ci) are admitted; the support
+  cross-tenant exception is structurally blocked because the resolver
+  pins to the principal's own home org, not the path env's tenant; and
+  scoped grants are denied at the boundary because the path carries no
+  parent project_id and the engine's covers() rule cannot bind ProjectID.
+- Picked story per the documented codebase pattern: BE-0168 (policy matrix,
+  priority 1) is the lowest-id failing story but strictly depends on
+  BE-0166 (implement) + BE-0167 (contract tests). Implementing BE-0166
+  first unblocks both follow-ups; the implement story is itself passing
+  and the contract suite shipped here covers most of what BE-0167
+  requires.
+- Files changed:
+  - internal/controlplane/store/migrate/migrations/0017_environment_grants.up.sql
+    (new): new environment_grants table with composite (organization_id,
+    environment_id) FK to environments ON DELETE CASCADE, closed enum
+    CHECKs for principal_kind ('usr','sa') and role
+    ('owner','admin','developer','viewer','ci','support'), optional
+    service_id (no FK so a grant survives a recreated service of the same
+    id), optimistic version + bump_version/set_updated_at triggers (from
+    0011), COALESCE-based unique scope-tuple index for NULL service_id
+    dedup, and UNIQUE (organization_id, id) for future per-row PATCH/
+    DELETE story FK targets.
+  - internal/controlplane/store/migrate/migrations/0017_environment_grants.down.sql
+    (new).
+  - internal/controlplane/domain/id.go: KindEnvironmentGrant = "egrnt"
+    added to the id taxonomy + the kinds set. Mirrors KindProjectGrant
+    but at the environment layer.
+  - internal/controlplane/store/environment_grant.go (new):
+    EnvironmentGrant struct (mirrors the table schema, ServiceID *string
+    so the wire/audit layers can distinguish environment-only from
+    service-scoped), stateless EnvironmentGrantRepository with
+    ListByEnvironment (tenant-scoped predicate + deterministic
+    principal_id ASC, service_id ASC NULLS FIRST, id ASC ordering +
+    LIMIT 500, never returns nil), and EnvironmentGrantReader adapter
+    that composes EnvironmentRepository.GetByID + ListByEnvironment
+    inside one short-lived Store.Read so a cross-tenant or unknown
+    environment_id surfaces as a typed apierr.NotFound through the
+    GetByID call — never as an empty list (which would be a leak
+    oracle).
+  - internal/controlplane/store/environment_grant_test.go (new):
+    isolated-Postgres integration tests proving deterministic ordering,
+    two-org tenant isolation (cross-tenant returns empty at the
+    repository, NotFound at the reader), the empty-environment non-nil
+    empty slice posture, the reader happy path, cross-tenant
+    environment_id surfaces as NotFound without leaking foreign
+    identifiers, unknown environment_id surfaces the same NotFound, and
+    NewEnvironmentGrantReader(nil) rejection.
+  - internal/controlplane/httpapi/environment_grants.go (new):
+    EnvironmentGrantReader port (interface, so the handler stays
+    unit-testable without a real DB), listEnvironmentGrantsPayload +
+    environmentGrantResource (nested principal projection, nullable
+    service_id pointer preserved end-to-end, RFC 3339Nano UTC
+    timestamps), and listEnvironmentGrantsHandler that pulls the
+    principal off context, rejects an unwired reader as typed Internal,
+    forwards store errors through toAPIError, and writes the success
+    envelope through apienvelope.WriteData.
+  - internal/controlplane/httpapi/environment_grants_test.go (new):
+    contract tests through the real NewHandler + real policy.NewEngine()
+    pinning the success envelope, the deterministic empty body
+    ("grants":[]), RequireAuth's 401 E_AUTH before the reader is
+    called, 404 E_NOT_FOUND forwarding from the reader, the 503
+    store-outage path keeping the upstream cause out of Message/Hint,
+    the 500 unwired-reader posture, and the OpenAPI documentation
+    invariant.
+  - internal/controlplane/httpapi/routes.go: newRouteTable signature
+    gains environmentGrants EnvironmentGrantReader; the new route entry
+    /v1/environments/{environment_id}/grants is registered with
+    environmentIDResolver + policy.ActionEnvironmentGrantsRead +
+    tagEnvironments. Long-form description spells out the resolver
+    consequences (no parent project_id pin -> scoped grants denied at
+    the boundary by covers(); support cross-tenant exception blocked
+    structurally).
+  - internal/controlplane/httpapi/server.go: NewHandler signature gains
+    environmentGrants EnvironmentGrantReader; threaded into
+    newRouteTable. Doc comment updated.
+  - cmd/yalla-api/main.go: store.NewEnvironmentGrantReader(dataStore)
+    wired and forwarded to httpapi.NewHandler.
+  - Every existing *_test.go file under internal/controlplane/httpapi/
+    that calls NewHandler or newRouteTable: trailing argument list
+    extended with fakeEnvironmentGrantReader{} (for NewHandler) or one
+    additional nil (for newRouteTable). A Node walker handled the bulk
+    edit so the structural twin pattern stays uniform across the
+    package. fakeEnvironmentGrantReader lives in environment_grants_
+    test.go alongside the other fakes for this surface.
+  - ralph/prd.json: BE-0166 marked passes=true.
+- Verification (gofmt -w ., go mod tidy, go vet ./..., go test ./..., go
+  test -race ./..., go test ./internal/controlplane/httpapi/..., and the
+  environment_grant integration suite against the local Docker Postgres)
+  all pass. Pre-existing failures in
+  TestEnvironmentRepoListByProjectReturnsDeterministicOrdering,
+  TestEnvironmentServiceCreateSuccess,
+  TestEnvironmentReaderRejectsCrossTenantProjectID,
+  TestProjectVariableServiceReplaceCrossTenantProjectIsNotFound, and
+  TestAPIKeyServiceCreate* are reproduced on the parent commit (BE-0033)
+  with the same factory-state shape, so they are not caused by this
+  story; they are tracked separately.
+- Remaining risks or follow-ups:
+  - BE-0167 (contract tests) and BE-0168 (policy matrix) follow next in
+    sequence; the contract suite shipped here covers most of BE-0167's
+    acceptance criteria.
+  - BE-0169 (PUT) needs a sibling EnvironmentGrantReplacer +
+    environment_grant_service.go + audit + the projectGrantsWriteAction
+    twin, plus a structurally-twin PUT handler. The schema, store
+    repository, and reader are now in place — the PUT lift is the same
+    shape as project_grants's PUT.
+  - environment_grants currently has no per-row PATCH/DELETE endpoint;
+    UNIQUE (organization_id, id) is exposed for the future story.
+- **Learnings for future iterations:**
+  - The structural-twin pattern between project_grants and
+    environment_grants pays off: every layer (migration, store struct,
+    repository, reader, HTTP port, payload projection, handler, route
+    entry, OpenAPI description, test fakes, integration tests, contract
+    tests) maps 1:1, so the diff stays small and reviewable. The only
+    real divergences are (a) no EnvironmentID/ProjectID pair in the
+    grants row (just OrganizationID + EnvironmentID), and (b) the
+    ordering tuple drops the (environment_id, service_id) leg down to
+    just (service_id) because EnvironmentID is now a singleton in the
+    scope.
+  - When the route path carries no parent project_id (top-level
+    /v1/environments/{environment_id}/...), the resolver cannot pin
+    the ProjectID leg of the resource scope, so the engine's covers()
+    rule denies project-/environment-/service-scoped grants at the
+    boundary by design. Document this explicitly in the route comment
+    so a future story doesn't relax the boundary thinking the engine
+    will catch the difference.
+  - When extending NewHandler/newRouteTable signatures, the bulk edit
+    across *_test.go callers is mechanical: a Node walker that tracks
+    paren depth across multi-line calls and rewrites the closing line
+    is faster and safer than 50+ Edit invocations, and it leaves the
+    AGENTS.md "add the new fake" workflow intact.
+  - The Postgres integration suite has pre-existing factory-name
+    collisions in environments_test.go / apikeyservice_test.go that
+    fail when YALLA_TEST_DATABASE_URL is set. They reproduce on the
+    parent commit, so they are not regressions from this story. Future
+    work should land a fix in the factory or the assertion side and
+    keep it scoped to its own story.
+---
+

@@ -71,6 +71,18 @@ const (
 	// organization — but it carries its own stable, non-guessable id so
 	// PUT / DELETE stories have an addressable resource.
 	KindProjectGrant Kind = "pgrnt"
+	// KindEnvironmentGrant is one row in the environment-scoped grants surface —
+	// a scoped grant that confers a built-in role on a principal at a specific
+	// (environment, optional service) target. Environment grants narrow or
+	// widen a principal's authority below the project level: a developer with
+	// an environment-scoped Viewer grant for one environment can read it, and
+	// a viewer with an environment-scoped Admin grant for one environment can
+	// mutate it without becoming an admin of the whole project. Like
+	// KindProjectGrant, a grant is not a tenant root — its audit events are
+	// filed under the parent environment's organization — but it carries its
+	// own stable, non-guessable id so PUT / DELETE stories have an addressable
+	// resource.
+	KindEnvironmentGrant Kind = "egrnt"
 	// KindProjectVariable is one row in the project-scoped variables surface —
 	// the second-from-lowest precedence layer of the
 	// Organization -> Project -> Environment -> Service variable hierarchy the
@@ -98,6 +110,7 @@ var kinds = map[Kind]struct{}{
 	KindJob:                  {},
 	KindOrganizationVariable: {},
 	KindProjectGrant:         {},
+	KindEnvironmentGrant:     {},
 	KindProjectVariable:      {},
 }
 

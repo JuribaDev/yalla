@@ -123,7 +123,7 @@ type versionPayload struct {
 // table's metadata; a request that actually reaches a handler with a
 // nil dependency is reported as a typed internal error rather than a
 // misleading empty list or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter, environmentCloner EnvironmentCloner) []apiRoute {
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter, environmentCloner EnvironmentCloner, environmentGrants EnvironmentGrantReader) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -706,6 +706,39 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// environments in another tenant.
 			resolver: environmentIDResolver,
 			handler:  cloneEnvironmentHandler(environmentCloner),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodGet,
+				Path:           "/v1/environments/{environment_id}/grants",
+				OperationID:    "listEnvironmentGrants",
+				Summary:        "List environment grants",
+				Description:    "Lists the scoped grants attached to the environment named by the {environment_id} path parameter, as the source-of-truth database stores them — each with its id, the id of the organization that owns it, the id of the environment it targets, the principal it confers a role on, the role it confers, optional further (service) scoping, optimistic-concurrency version, and lifecycle timestamps. Environment grants narrow or widen a principal's authority below the project level: a developer with an environment-scoped Viewer grant for one environment cannot mutate sibling environments, and a viewer with an environment-scoped Admin grant for one environment can mutate it without becoming an admin of the whole project. Action environment.grants.read is authorized against the (principal home organization, {environment_id}) resource the path names before the handler runs: a CapRead action gated by the principal's organization-wide read roles (owner, admin, developer, viewer, ci). The support principal's deliberate cross-tenant read exception does NOT apply through this endpoint because the resource scope is pinned to the principal's home organization, not the path env's tenant; support cross-tenant reads remain available through endpoints whose path carries an {org_id}. The path carries no parent project_id, so the policy engine cannot pin the ProjectID leg of the resource scope at authorization time — project-, environment-, and service-scoped grants are denied at the boundary by the engine's covers() rule (a grant with a pinned ProjectID cannot cover a resource with no ProjectID); principals whose only access is a scoped grant must address grants through a parent-scoped route. A cross-tenant or unknown environment_id reaches the persistence layer with the principal's home organization id and is rejected as a deterministic 404 by the reader's environment existence check, never disguised as an empty success. An environment with no grants is a deterministic empty list. The response carries no credential material — a grants row stores only structural identifiers and a role enum.",
+				Tags:           []string{tagEnvironments},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionEnvironmentGrantsRead),
+				PathParams: []openapi.PathParam{{
+					Name:        "environment_id",
+					Description: "The id of the environment whose grants to list.",
+				}},
+				SuccessDescription: "The grants attached to the environment.",
+			},
+			// environmentIDResolver authorizes action
+			// environment.grants.read against the (principal home
+			// organization, {environment_id}) resource the path names,
+			// not merely the principal's home organization. The
+			// organization id is taken from the principal's home org
+			// (never the caller), so a cross-tenant environment_id
+			// still hits the tenant-scoped repository query and
+			// surfaces as a 404 at the persistence boundary. The path
+			// carries no parent project_id, so the resource scope
+			// pins only OrganizationID and EnvironmentID — project-,
+			// environment-, and service-scoped grants are denied at
+			// the policy boundary by design (the engine's covers()
+			// rule), forcing scoped-grant-only principals onto
+			// parent-scoped routes.
+			resolver: environmentIDResolver,
+			handler:  listEnvironmentGrantsHandler(environmentGrants),
 		},
 		{
 			endpoint: openapi.Endpoint{
