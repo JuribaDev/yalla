@@ -3633,3 +3633,93 @@
     members.manage. The contract test
     TestAddMemberCrossTenantIsForbidden pins this.
 ---
+
+## 2026-05-15 - BE-0066
+- What was implemented: members_create_policy_test.go — the policy-matrix
+  coverage for POST /v1/organizations/{org_id}/members. Where the sibling
+  members_create_test.go proves the wire contract, this file proves the
+  authorization contract for action members.manage. Each test drives the real
+  NewHandler + real policy.NewEngine() (production request path; only the
+  Authenticator and MembershipCreator are faked, mirroring the
+  members_policy_test.go convention for GET /members and the
+  organizations_create_policy_test.go split).
+  - TestAddMemberPolicyMatrixRoles: table-drives every built-in role
+    (owner, admin, developer, viewer, ci, support) against an {org_id}
+    naming the principal's home organization. members.manage is CapAdmin, so
+    only owner/admin allow (ReasonAllowedByRole) and create the membership
+    with the caller's principal as the forwarded audit actor;
+    developer/viewer/ci/support each deny 403 (ReasonDeniedNoCapability) and
+    the creator never runs. Each case pins the engine-level verdict before
+    exercising the wired handler, and the denied body must not echo the
+    principal id or the path's organization back.
+  - TestAddMemberPolicyRevokedAndExpiredKeys: a revoked or expired credential
+    surfaces to the engine as a Disabled principal and is denied 403
+    (ReasonDeniedPrincipalDisabled) before reaching the creator, even though
+    the underlying role is owner. The denied body never echoes the principal
+    id or org id back.
+  - TestAddMemberPolicyWrongOrganizationPrincipal: a non-support principal
+    whose home org is org_intruder calling POST against org_victim's members
+    is denied 403 (ReasonDeniedCrossTenant); the creator never runs and the
+    body never echoes the foreign id. Critically, support is NOT a
+    cross-tenant exception here either — the engine's support escape hatch
+    covers CapRead/CapSupport only, never CapAdmin — so a support principal
+    targeting another tenant's members is denied with the same cross-tenant
+    reason as any other role. The engine-level Decide verdict is pinned for
+    both intruder and support, then the served-handler outcome confirms the
+    contract end-to-end.
+  - TestAddMemberPolicyGrantContainment: a scoped service-account API key
+    holds no organization role and is authorized purely by its grants.
+    members.manage is evaluated against the organization-root scope the path
+    names, so a project/environment/service grant does not cover that scope
+    even for the key's own organization — the project-scoped admin grantee
+    is denied (ReasonDeniedOutOfScope). The right role at the wrong scope is
+    out_of_scope; the wrong role at the right scope is no_capability — pinned
+    by an organization-scoped Viewer grant denying with
+    ReasonDeniedNoCapability. An organization-scoped Admin grant allows the
+    endpoint (ReasonAllowedByGrant), creates the membership, and forwards
+    the caller's principal as the audit actor — a grant cannot widen the
+    actor to the deeper scope it references. A project-scoped grant must
+    also not widen to a sibling-organization {org_id}: the cross-tenant guard
+    and the out-of-scope guard both hold.
+- Files changed: internal/controlplane/httpapi/members_create_policy_test.go
+  (new), ralph/prd.json, ralph/progress.txt.
+- Verification run: gofmt -w .; go mod tidy; go build ./...; go vet ./...;
+  go test ./...; go test -race ./....
+- Results: all passed. goimports/golangci-lint/staticcheck/govulncheck still
+  not installed locally (documented in earlier iterations).
+- Remaining risks / follow-ups:
+  - Acceptance criterion "Integration tests run against isolated Postgres
+    migrations" is N/A for a policy-matrix story: this file is a pure unit-
+    test of the engine + middleware decision path (fake creator, no DB). The
+    store-backed MembershipService integration suite covers the persistence
+    side under store/membershipservice_test.go.
+  - The sibling DELETE policy matrix (organizations_delete_policy_test.go
+    pattern) is not yet covered for members because the DELETE /members/{id}
+    and PATCH /members/{id} endpoints don't exist yet — those are blocked by
+    the implementation stories (BE-0070 PATCH, BE-0073 DELETE) and their own
+    policy matrix stories (BE-0072 PATCH, BE-0075 DELETE).
+- Learnings for future iterations:
+  - members.manage = CapAdmin, which only RoleOwner and RoleAdmin hold. This
+    is the FIRST policy-matrix story so far where the role table is split
+    (auth.me/members.read were "all allow" for active roles). The right
+    structure is a single table-driven test with an allow bool + a wantReason
+    Reason: pin the engine-level verdict on every row first, then branch the
+    wire-level assertions (201 + forwarded-actor for allow rows, 403 + reason
+    + creator-never-ran for deny rows). This keeps the matrix dense and the
+    contract explicit per role.
+  - The engine support-exception covers CapRead and CapSupport ONLY (see
+    engine.go:115). For any non-read CapAdmin/CapWrite/CapDeploy/CapOwner
+    action, support behaves identically to any other role at a foreign
+    {org_id} — it is denied with ReasonDeniedCrossTenant. Pin this directly
+    when an action's policy-matrix story names support: don't assume the
+    "support cross-tenant read" exception applies; check the action's
+    capability.
+  - For grant containment on an organization-root action, the contract has
+    THREE distinct deny reasons that must be distinguished: right role at
+    wrong scope = out_of_scope (project-scoped admin denied for org root);
+    wrong role at right scope = no_capability (org-scoped viewer denied for
+    members.manage); foreign tenant = cross_tenant. A test that only checks
+    "denied" misses regressions where the engine swaps one reason for
+    another — the policy matrix is the contract of WHICH deny reason fires,
+    not just that something denies.
+---
