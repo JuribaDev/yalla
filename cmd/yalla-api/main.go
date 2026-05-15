@@ -87,6 +87,11 @@ func main() {
 		logger.Error("failed to initialize the organization reader", "error", err.Error())
 		os.Exit(1)
 	}
+	organizationService, err := store.NewOrganizationService(dataStore, store.NewOrganizationRepository(), store.NewAuditRepository())
+	if err != nil {
+		logger.Error("failed to initialize the organization service", "error", err.Error())
+		os.Exit(1)
+	}
 	authenticator, err := auth.NewAuthenticator(auth.AuthenticatorConfig{
 		Store:       credentials,
 		SigningKeys: cfg.SigningKeys,
@@ -119,7 +124,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              cfg.APIAddr,
-		Handler:           httpapi.NewHandler(build, readiness, meta, authenticator, engine, organizations, logger),
+		Handler:           httpapi.NewHandler(build, readiness, meta, authenticator, engine, organizations, organizationService, logger),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

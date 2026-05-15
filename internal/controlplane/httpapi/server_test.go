@@ -20,10 +20,11 @@ import (
 // routes). The fake authenticator never authenticates a request, which is all
 // the public routes need; the authenticated /v1/me and /v1/organizations
 // routes have their own auth-aware coverage in me_test.go and
-// organizations_test.go. The fake organization reader is supplied so the
-// handler is fully wired even though the public-surface tests never reach it.
+// organizations_test.go. The fake organization reader and creator are supplied
+// so the handler is fully wired even though the public-surface tests never
+// reach them.
 func newTestHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, logger *slog.Logger) http.Handler {
-	return NewHandler(build, readiness, meta, fakeAuthenticator{}, policy.NewEngine(), fakeOrganizationReader{}, logger)
+	return NewHandler(build, readiness, meta, fakeAuthenticator{}, policy.NewEngine(), fakeOrganizationReader{}, fakeOrganizationCreator{}, logger)
 }
 
 func TestHandlerServesBootstrapEndpoints(t *testing.T) {
@@ -587,7 +588,7 @@ func TestEveryRegisteredRouteIsDocumented(t *testing.T) {
 	t.Parallel()
 
 	build := runtime.BuildInfo{}
-	table := newRouteTable(build, nil, nil, nil)
+	table := newRouteTable(build, nil, nil, nil, nil)
 	doc := openAPIDocument(build, table)
 
 	want := append(endpointsOf(table), openAPIEndpoint())
@@ -610,7 +611,7 @@ func TestRegisteredRoutesAreServable(t *testing.T) {
 	t.Parallel()
 
 	handler := newTestHandler(runtime.BuildInfo{}, nil, nil, nil)
-	table := newRouteTable(runtime.BuildInfo{}, nil, nil, nil)
+	table := newRouteTable(runtime.BuildInfo{}, nil, nil, nil, nil)
 
 	for _, ep := range append(endpointsOf(table), openAPIEndpoint()) {
 		req := httptest.NewRequest(ep.Method, ep.Path, nil)

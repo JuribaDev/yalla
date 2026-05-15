@@ -75,11 +75,12 @@ type versionPayload struct {
 // reports an unknown migration version, which suits tests and processes with
 // no startup dependencies wired yet.
 //
-// orgs backs GET /v1/organizations. It may be nil for tests and tooling that
-// only inspect the route table's metadata; a request that actually reaches the
-// organizations handler with a nil reader is reported as a typed internal
-// error rather than a misleading empty list.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader) []apiRoute {
+// orgs backs GET /v1/organizations and creator backs POST /v1/organizations.
+// Both may be nil for tests and tooling that only inspect the route table's
+// metadata; a request that actually reaches a handler with a nil dependency is
+// reported as a typed internal error rather than a misleading empty list or a
+// silently dropped write.
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -189,6 +190,26 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// organization, so there is no deeper or cross-tenant resource
 			// target to resolve.
 			handler: organizationsHandler(orgs),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodPost,
+				Path:               "/v1/organizations",
+				OperationID:        "createOrganization",
+				Summary:            "Create an organization",
+				Description:        "Creates an organization — the tenant root of Yalla's Organization -> Project -> Environment -> Service hierarchy — in the source-of-truth database. The request body supplies the canonical slug and the human-authored display name; both are validated before any database work, so an invalid request never opens a transaction. The organization row and an immutable audit record naming the authenticated principal are committed in one transaction: a created organization can never exist without its audit trail. The response carries no credential material.",
+				Tags:               []string{tagOrganizations},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionOrganizationCreate),
+				SuccessStatus:      http.StatusCreated,
+				SuccessDescription: "The organization was created.",
+			},
+			// A nil resolver authorizes action organization.create against the
+			// principal's own organization scope. organization.create is a
+			// CapSelf action — permitted for any authenticated, enabled
+			// principal — and the created organization does not exist yet, so
+			// there is no deeper resource target to resolve.
+			handler: createOrganizationHandler(creator),
 		},
 	}
 }

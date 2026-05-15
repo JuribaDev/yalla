@@ -189,6 +189,16 @@ Postgres persistence for control-plane source-of-truth state.
   quota, and jobs dependencies are narrow **port interfaces** (`Authorizer`,
   `QuotaReserver`, `JobEnqueuer`) defined here — the real engines land in later
   stories; tests use fakes. Do not import `policy`/`quota`/`jobs` from `store`.
+- A unit of work that records an audit event (see `OrganizationService.Create`)
+  composes the desired-state write + `AuditRepository.Append` inside the one
+  `Store.Write`, so a created row can never exist without its audit record.
+  Audit lives *inside* `store` — the narrow `AuditAppender` port is satisfied by
+  `*AuditRepository` directly, no import cycle. The orchestrator builds the
+  `store.AuditEvent` from **plain-string** actor/correlation fields the caller
+  passes in the `CreateXInput` (`ActorID`/`ActorKind`/`ActorOrgID`/`RequestID`/
+  `CorrelationID`) — `store` still imports neither `policy` nor `telemetry`.
+  Keep recorded `Metadata` to structurally-safe values (a canonical slug);
+  richer, redacted context is `audit.Auditor`'s job, not `store`'s.
 - Error mapping is uniform: `pgx.ErrNoRows` → `apierr.NotFound`; constraint
   violations (SQLSTATE class 23) → `apierr.Conflict`; any other driver error →
   `apierr.StoreUnavailable`. The raw driver error is wrapped as the cause for

@@ -66,6 +66,29 @@ func (r *OrganizationRepository) Get(ctx context.Context, q Querier, organizatio
 	return o, nil
 }
 
+// Insert writes a new organization row inside tx and returns the persisted
+// row, including the database-assigned timestamps. It requires a *Tx — not a
+// bare Querier — so an organization can never be created outside the
+// transaction that also carries its audit record. A slug that collides with an
+// existing organization is reported as a typed Conflict; the raw driver error,
+// which may name the constraint, is preserved only as the wrapped cause for
+// server-side logging and never reaches the user-facing message.
+func (r *OrganizationRepository) Insert(ctx context.Context, tx *Tx, o Organization) (Organization, error) {
+	if tx == nil {
+		return Organization{}, apierr.Internal(errors.New("store: OrganizationRepository.Insert called with a nil transaction"))
+	}
+	row := tx.QueryRow(ctx,
+		`INSERT INTO organizations (id, slug, display_name)
+		 VALUES ($1, $2, $3)
+		 RETURNING `+organizationColumns,
+		o.ID, o.Slug, o.DisplayName)
+	created, err := scanOrganization(row)
+	if err != nil {
+		return Organization{}, mapWriteError(err, "an organization with this slug already exists")
+	}
+	return created, nil
+}
+
 // scanOrganization scans one organizations row in organizationColumns order.
 func scanOrganization(row pgx.Row) (Organization, error) {
 	var o Organization

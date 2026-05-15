@@ -10,6 +10,8 @@ import (
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
 	"github.com/JuribaDev/yalla/internal/controlplane/policy"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
+	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
+	"github.com/JuribaDev/yalla/internal/controlplane/validate"
 )
 
 // errNoOrganizationReader is returned when GET /v1/organizations is reached
@@ -18,6 +20,13 @@ import (
 // programming mistake, not a client error — so the handler reports it as a
 // typed internal failure rather than serving an empty or misleading list.
 var errNoOrganizationReader = errors.New("httpapi: no organization reader configured")
+
+// errNoOrganizationCreator is returned when POST /v1/organizations is reached
+// without an organization creator wired into NewHandler. Like
+// errNoOrganizationReader it can only happen through a wiring error — a
+// programming mistake, not a client error — so the handler reports it as a
+// typed internal failure rather than silently failing to persist the resource.
+var errNoOrganizationCreator = errors.New("httpapi: no organization creator configured")
 
 // OrganizationReader is the narrow persistence port GET /v1/organizations
 // depends on. *store.OrganizationReader satisfies it in production; tests
@@ -103,6 +112,86 @@ func organizationsHandler(reader OrganizationReader) http.HandlerFunc {
 		}
 		apienvelope.WriteData(w, http.StatusOK, requestID(r), organizationsPayload{
 			Organizations: []organizationResource{organizationResourceOf(org)},
+		})
+	}
+}
+
+// OrganizationCreator is the narrow persistence port POST /v1/organizations
+// depends on. *store.OrganizationService satisfies it in production; tests
+// supply a fake. Like OrganizationReader it is an interface declared here so
+// the handler stays unit-testable without a real database — the concrete
+// orchestrator (the desired-state write and the audit record committed in one
+// transaction) lives in the store layer.
+type OrganizationCreator interface {
+	Create(ctx context.Context, in store.CreateOrganizationInput) (store.Organization, error)
+}
+
+// createOrganizationRequest is the decoded POST /v1/organizations request body.
+// Slug is the canonical [a-z0-9-] identifier the organization is addressed by;
+// DisplayName is its human-authored label. The store layer validates both
+// before any database work — an invalid request never opens a transaction —
+// and neither field carries credential material.
+type createOrganizationRequest struct {
+	Slug        string `json:"slug"`
+	DisplayName string `json:"display_name"`
+}
+
+// createOrganizationPayload is the data block of the POST /v1/organizations
+// success envelope: the organization that was created, in the same stable wire
+// shape GET /v1/organizations returns. It carries no credential material.
+type createOrganizationPayload struct {
+	Organization organizationResource `json:"organization"`
+}
+
+// createOrganizationHandler builds the POST /v1/organizations handler. It
+// decodes and delegates: the request body is strictly decoded (oversized,
+// malformed, or unknown-field bodies become a typed 400 that never echoes the
+// input), then the create-organization unit of work — validate, write the
+// row, append the audit record, all in one transaction — runs in the store
+// layer through the OrganizationCreator port.
+//
+// RequireAuth gates the route on action organization.create before the handler
+// runs and attaches the resolved principal, so a request that reaches the
+// handler with no principal is a wiring error reported as a typed internal
+// error. The principal and the request correlation identifiers are passed to
+// the creator so the audit record names the actor; a slug conflict, a
+// validation failure, and a datastore outage each surface as their own typed
+// status, never disguised as one another.
+func createOrganizationHandler(creator OrganizationCreator) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if creator == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoOrganizationCreator))
+			return
+		}
+
+		var req createOrganizationRequest
+		if err := validate.DecodeJSON(r.Body, &req, 0); err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		org, err := creator.Create(r.Context(), store.CreateOrganizationInput{
+			Slug:          req.Slug,
+			DisplayName:   req.DisplayName,
+			ActorID:       p.ID,
+			ActorKind:     string(p.Kind),
+			ActorOrgID:    p.OrganizationID,
+			RequestID:     correlation.RequestID,
+			CorrelationID: correlation.CorrelationID,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		apienvelope.WriteData(w, http.StatusCreated, requestID(r), createOrganizationPayload{
+			Organization: organizationResourceOf(org),
 		})
 	}
 }
