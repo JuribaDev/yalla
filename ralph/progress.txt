@@ -3249,3 +3249,52 @@
     bare newRouteTable calls in server_test.go and one in routes_test.go that
     grep for 'NewHandler(' alone misses) — grep BOTH symbols.
 ---
+
+## 2026-05-15 - BE-0060
+- What was implemented: policy-matrix coverage for DELETE
+  /v1/organizations/{org_id} — the authorization contract for action
+  organization.delete, proving it cannot be bypassed by role, revoked/expired
+  credentials, home organization, or scoped grants.
+  - internal/controlplane/httpapi/organizations_delete_policy_test.go (new):
+    drives the real NewHandler + real policy.NewEngine() (production request
+    path). Four tests:
+    - TestDeleteOrganizationPolicyMatrixRoles: organization.delete requires
+      CapOwner, so only RoleOwner is allowed (ReasonAllowedByRole, 202);
+      RoleAdmin/Developer/Viewer/CI/Support are all denied
+      ReasonDeniedNoCapability (403) with the deleter never reached. The admin
+      row is the headline — admin can update an org but cannot delete it.
+    - TestDeleteOrganizationPolicyRevokedAndExpiredKeys: a Disabled owner
+      principal is denied ReasonDeniedPrincipalDisabled; deleter never runs;
+      body leaks neither principal id nor org id.
+    - TestDeleteOrganizationPolicyWrongOrganizationPrincipal: cross-tenant
+      {org_id} is ReasonDeniedCrossTenant for owner/admin/support alike (support
+      is NOT a carve-out here — CapOwner is outside its CapRead/CapSupport
+      reach); deleter never runs; body never echoes the foreign id.
+    - TestDeleteOrganizationPolicyGrantContainment: project/env/service grants
+      stay contained; an org-root grant needs an owner-capable role — an
+      org-scoped RoleAdmin grant is denied, an org-scoped RoleOwner grant is
+      allowed (ReasonAllowedByGrant, 202); a project-scoped owner grant is
+      denied ReasonDeniedOutOfScope and cannot be widened to a sibling org.
+- Files changed: internal/controlplane/httpapi/organizations_delete_policy_test.go
+  (new), ralph/prd.json, ralph/progress.txt.
+- Verification run: gofmt -w; go build ./...; go vet ./...; go test ./...;
+  go test -race ./internal/controlplane/httpapi/;
+  go test -run TestDeleteOrganizationPolicy -v ./internal/controlplane/httpapi/.
+- Results: all passed. goimports, golangci-lint, staticcheck, govulncheck not
+  installed locally (documented in earlier entries).
+- Remaining risks / follow-ups: none. Acceptance criteria for Postgres
+  integration / fake Dokploy / audit are N/A — this is an httpapi policy-matrix
+  test story; the store-backed orchestrator has its own isolated-Postgres
+  coverage in store/organizationservice_delete_test.go.
+- **Learnings for future iterations:**
+  - organization.delete maps to CapOwner (catalog.go:128), strictly above
+    organization.update's CapAdmin. Only RoleOwner holds CapOwner — so the
+    delete role matrix is "owner allow, everyone else (incl. admin) deny". When
+    cloning the PATCH policy test for DELETE, flip admin's allow to false and
+    the org-scoped grant case from RoleAdmin to RoleOwner.
+  - The delete endpoint returns 202 Accepted (not 200) on success — assert
+    http.StatusAccepted in the allowed-path checks.
+  - Policy-matrix test files reuse the sibling contract suite's helpers
+    (deleteOrganizationHandlerFor, deleteOrganization, decodeDeleteOrganization,
+    fakeOrganizationDeleter, orgPrincipal, decodeError) — no new helpers needed.
+---
