@@ -8215,3 +8215,80 @@
     single variable) must NOT shadow this function; it should
     compose it or be obviously different in shape.
 ---
+
+## 2026-05-15 - BE-0117
+- Added policy-matrix coverage for DELETE
+  /v1/organizations/{org_id}/variables/{key} — every built-in role,
+  revoked/expired credentials, wrong-organization principals, and
+  scoped-grant containment are pinned against the production request
+  path (real NewHandler + real policy.NewEngine + a fake
+  OrganizationVariableDeleter). The matrix mirrors BE-0114 (PATCH) and
+  BE-0111 (PUT) and proves the {key} sub-resource path does NOT widen
+  the engine's required scope on the irreversible class of write —
+  delete.
+- Files changed:
+  - internal/controlplane/httpapi/variables_delete_policy_test.go: new
+    file. Four tests (TestDeleteOrgVariablePolicyMatrixRoles,
+    TestDeleteOrgVariablePolicyRevokedAndExpiredKeys,
+    TestDeleteOrgVariablePolicyWrongOrganizationPrincipal,
+    TestDeleteOrgVariablePolicyGrantContainment) plus two
+    file-private fixtures (envWriteDeleteKey/seededDeletedOrgVariable
+    + deletedOrgVariableBodyLeak for "data the deleter would have
+    returned" needles). All shared helpers
+    (deleteOrgVariableHandlerFor, deleteOrgVariable,
+    decodeDeleteOrgVariable, fakeOrgVariableDeleter,
+    orgVariableActorIdentity, orgPrincipal, decodeError) are reused
+    from the existing DELETE contract suite and the env.read /
+    PATCH / PUT policy test files — no new helpers, no signature
+    churn.
+  - ralph/prd.json: BE-0117.passes flipped to true.
+- Verification run: gofmt -w on the new file; go build ./...;
+  go vet ./...; go mod tidy; go test ./...; go test -race ./....
+  All green (86/614 passing).
+- Results: every DELETE role row matches PATCH/PUT
+  (Owner/Admin/Developer allow via ReasonAllowedByRole reaching the
+  deleter on {org_id}+{key}; Viewer/CI/Support deny via
+  ReasonDeniedNoCapability without reaching the deleter). Disabled
+  Owner principal denied via ReasonDeniedPrincipalDisabled. Owner of
+  org_attacker against org_victim denied via ReasonDeniedCrossTenant,
+  and crucially Support is ALSO denied cross-tenant because
+  ActionEnvWrite is CapWrite, which is OUTSIDE the engine's CapRead/
+  CapSupport cross-tenant exception (same load-bearing distinction as
+  PATCH/PUT). Scoped grants (project/env/service-level admin) deny
+  the endpoint via ReasonDeniedOutOfScope at the engine and via
+  E_FORBIDDEN at the wire; an organization-level Developer grant
+  allows via ReasonAllowedByGrant and still redacts the secret value
+  on the deletion-snapshot wire shape; an organization-level Viewer
+  grant denies because env.write is CapWrite, not CapRead.
+- Remaining risks or follow-ups: store-layer DeleteByKey integration
+  coverage already exists for BE-0115; nothing further required for
+  authorization coverage of this endpoint. Future audit-metadata tests
+  for the deleter's audit record will land with the broader audit
+  coverage stories.
+- **Learnings for future iterations:**
+  - The variables CRUD authorization matrix is now fully pinned
+    (BE-0108 read / BE-0111 PUT / BE-0114 PATCH / BE-0117 DELETE). All
+    four use the same organizationIDResolver scoping the policy
+    resource to the {org_id} path parameter at Kind=KindOrganization.
+    PUT/PATCH/DELETE all require ActionEnvWrite (CapWrite); read
+    requires ActionEnvRead (CapRead). The {key} sub-resource path is
+    NEVER a deeper-scoped resource — it is a sub-resource within the
+    organization-root scope — so scoped grants below the org root do
+    not reach it.
+  - Pattern for "{key} sub-resource on an org-root scope" matrix
+    tests: identical structure to the bulk endpoint, with the URL
+    {key} as a caller-submitted needle in deny-leak checks AND a
+    distinct "data the orchestrator would have returned" fixture
+    (different id/key/value from URL inputs and from sibling matrix
+    fixtures) so a leak check searching for the seeded data never
+    false-positives against unrelated fixtures or the URL needle.
+  - For DELETE specifically: the deletion snapshot the deleter
+    returns IS the response body — secret values must STILL redact
+    to output.Sentinel on this path because a customer can never read
+    a secret value back through DELETE either. The role-allow and
+    grant-allow branches both need this assertion.
+  - The deleter's input struct has only OrganizationID/Key/Actor*
+    /Request*/Correlation* fields (no Value/IsSecret like PUT/PATCH),
+    so the deny-path "deleter never reached" check is shorter than
+    PATCH's — just OrganizationID == "" && Key == "".
+---
