@@ -13177,3 +13177,71 @@
     keep it scoped to its own story.
 ---
 
+
+## 2026-05-16 - BE-0168
+- Added policy-matrix coverage for GET /v1/environments/{environment_id}/grants.
+- Files changed:
+  - internal/controlplane/httpapi/environment_grants_policy_test.go (NEW)
+  - ralph/prd.json (BE-0168 passes: true)
+  - ralph/progress.txt (this entry)
+- Verification run:
+  - gofmt -l . (clean)
+  - go mod tidy (no change)
+  - go vet ./... (clean)
+  - go test ./... (all green)
+  - go test -race ./internal/controlplane/httpapi/... (clean)
+  - go test -run TestListEnvironmentGrantsPolicy ./internal/controlplane/httpapi/ (PASS)
+- Remaining risks or follow-ups: none for this story; BE-0166 already
+  delivered the wire endpoint and the persistence-side tenant-isolation
+  proofs; this story locks the authorization contract on top of that.
+- **Learnings for future iterations:**
+  - Policy-matrix-on-environmentIDResolver-grants pattern (BE-0168 pattern,
+    internal/controlplane/httpapi/environment_grants_policy_test.go): a
+    customer-facing grants list whose route uses environmentIDResolver
+    (the env-id resolver that pins NO ProjectID on the resource scope)
+    is structurally identical at the policy boundary to
+    environments_get_policy_test.go (BE-0156): same KindEnvironment
+    resource on the route, same "covers() is one-way" property that
+    denies every project-, environment-, AND service-scoped grant by
+    ReasonDeniedOutOfScope (the grant scope pins ProjectID and the
+    resource scope does not). The grants-list aspect adds the
+    projects_grants_policy_test.go (BE-0138) deny-leak guard pattern:
+    a denied response must never echo the canonical grant ids,
+    principal ids, service id, environment id, OR the synthetic parent
+    project id (even though no wire input could place the parent
+    project id on the response — the leak guard catches an accidental
+    renderer regression that projected it through). The four-test
+    skeleton is fixed: roles matrix (all six built-in roles allow via
+    ReasonAllowedByRole; spot-check both nullable-ServiceID variants on
+    the wire projection), revoked/expired keys (Disabled principal
+    denied 403 even when Owner; reader never runs; body redacted),
+    wrong-organization principal (wire-level NotFound through the
+    persistence layer at (own_org, foreign_env_id); engine-level
+    cross-tenant deny pinned for every non-support role + support
+    cross-tenant allow under the CapRead clause), grant containment
+    (project / env-same-id / service scoped grants all denied at engine
+    + 403 at wire with reader never reached + body leak-guarded; org-
+    level Viewer allowed end-to-end; stolen scoped key planted in a
+    foreign home org denied at the engine cross-tenant boundary).
+  - The action constant is policy.ActionEnvironmentGrantsRead (catalog
+    maps to CapRead, same class as environment.read /
+    project.grants.read / project.read / limits.read / usage.read).
+  - Reader-call fixture pattern for environment grants matches the
+    BE-0166 fakeEnvironmentGrantReader (fields: grants, err, gotOrgID,
+    gotEnvID, callCount); the test helper listEnvironmentGrantsHandlerFor
+    (auth.Identity, authErr, EnvironmentGrantReader) and request helper
+    getEnvironmentGrants(handler, environmentID, token) are shared with
+    environment_grants_test.go — no new scaffolding is needed.
+  - The wire body has no environment_id in the request (the path
+    parameter is the only input), so there is no body-input leak guard
+    to write (unlike project_grants_put_policy_test.go's "body echoes
+    the caller-supplied org_id" property). The needle list is purely
+    seeded grant + environment + parent-project identifiers.
+  - Engine-level wrong-tenant assertion uses a subtest-per-role pattern
+    inside the wire-level wrong-organization test (a single t.Run
+    block per non-support role, all asserting ReasonDeniedCrossTenant;
+    Support then asserted at the outer scope for ReasonAllowedBySupport).
+    This shape avoids a separate test function while still making each
+    cross-tenant role failure individually addressable from the test
+    output.
+---
