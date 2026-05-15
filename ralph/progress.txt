@@ -12439,3 +12439,105 @@
     for every existing reader). projectResource went through this
     exact change in BE-0130 and projectEnvironment now follows.
 ---
+
+## 2026-05-15 - BE-0162
+- Added policy matrix coverage for DELETE /v1/environments/{environment_id}.
+- New file: internal/controlplane/httpapi/environments_delete_policy_test.go (~600 lines)
+  - canonicalDeleteEnvForMatrix(orgID, projectID): builds an
+    Environment row with deletion_scheduled_at already set (the
+    authoritative lifecycle state the production deleter returns
+    on an allow path). Distinct ids/slug/display from every other
+    canonical env fixture (canonicalEnvForGet, canonicalGetEnvForMatrix,
+    canonicalUpdatedEnv, canonicalUpdateEnvForMatrix) so deny-path
+    leak guards can't false-negative through shared state.
+  - deleteEnvDenyBodyLeak(body): single leak guard reused across
+    every deny branch. Needles cover env.ID, slug, display name,
+    parent project id, and the RFC3339Nano deletion_scheduled_at
+    stamp (both bare and quoted forms catch a case-collapsing
+    renderer regression). DELETE has no request body so unlike
+    update there is no caller-supplied field to protect.
+  - TestDeleteEnvironmentPolicyMatrixRoles: drives all six built-in
+    roles (owner/admin/developer allow via ReasonAllowedByRole;
+    viewer/ci/support deny via ReasonDeniedNoCapability) through
+    the production NewHandler path. Pins both engine verdict AND
+    wire verdict — a catalog or builtinRoleCaps regression fails
+    here. Allow rows assert deleter received {home_org, path env_id,
+    actor_id, actor_org_id, IfMatchVersion=nil}, status 202, the
+    canonical row in the wire envelope, AND the deletion_scheduled_at
+    stamp on the wire. Deny rows assert deleter never reached, status
+    403 with stable reason on the wire, body never echoes canonical
+    env / parent project / deletion stamp.
+  - TestDeleteEnvironmentPolicyRevokedAndExpiredKeys: revoked key +
+    expired key (Disabled principal) deny via
+    ReasonDeniedPrincipalDisabled even with Owner role. Body never
+    echoes principal id / org / canonical env data.
+  - TestDeleteEnvironmentPolicyWrongOrganizationPrincipal: wire-level
+    cross-tenant env_id surfaces as 404 (persistence boundary, since
+    environmentIDResolver pins resource scope to principal home org);
+    engine-level pin shows ALL six roles INCLUDING Support deny via
+    ReasonDeniedCrossTenant (CapWrite is OUTSIDE the support
+    cross-tenant exception, distinct from environment.read). Body
+    never echoes the foreign org id.
+  - TestDeleteEnvironmentPolicyGrantContainment: project-/env-/
+    service-scoped grants all denied OutOfScope on this route
+    (envIDResolver pins no ProjectID; covers() is one-way). Org-level
+    Admin grant allowed end-to-end (status 202, deleter reached with
+    home_org/env_id/actor_id/actor_org_id, response carries
+    deletion_scheduled_at); org-level Viewer denied via
+    ReasonDeniedNoCapability. Cross-tenant grant smuggling denied at
+    engine. Wire tie-ins for project-/env-/service-scoped denies
+    pin: 403 + stable OutOfScope reason + deleter never reached +
+    body never echoes canonical env / parent project / deletion
+    stamp.
+- Verification:
+  - gofmt -l . : clean
+  - go mod tidy : clean
+  - go vet ./... : clean
+  - go test ./... : all passing (httpapi 0.659s)
+  - go test -race ./... : all passing (httpapi 3.077s)
+  - go test -run 'TestDeleteEnvironmentPolicy' -v ./internal/controlplane/httpapi/ :
+    4 functions / 18 subtests, all PASS
+- Remaining risks: none from BE-0162 itself. Stale doc-comment in
+  environments.go ("CapWrite admits owner, admin, developer, ci")
+  noted in BE-0159 still applies — tests verify the actual catalog
+  behavior; doc-only fix is a future story.
+- Learnings for future iterations:
+  - DELETE policy matrix mirrors PATCH almost line-for-line, with
+    four wire-shape adjustments: (1) deleter fake instead of updater
+    fake, (2) status 202 Accepted instead of 200 OK, (3) no request
+    body so the leak guard drops the request-body needle but ADDS
+    the deletion_scheduled_at stamp needle (the row's lifecycle
+    state is itself information a denied principal must not learn),
+    (4) DeleteEnvironmentInput carries ActorOrgID where
+    UpdateEnvironmentInput at the time of writing did not — assert
+    ActorOrgID on the deleter capture so the audit record names the
+    actor's tenant verbatim.
+  - The deletion_scheduled_at leak needle has to use the same
+    timestamp constant the canonical fixture uses (defined inline in
+    deleteEnvDenyBodyLeak). Putting it in a package-level var would
+    risk breakage if the fixture timestamp ever shifts, but
+    duplicating the time.Date(...) call in the leak guard keeps the
+    coupling explicit and local to this file.
+  - canonicalDeleteEnvForMatrix uses distinct ids ("env_matrix_delete",
+    "prj_delete_matrix_parent", "delete-matrix", "Delete Matrix v3")
+    from every other canonical env fixture in the package — five
+    fixtures now coexist (get / get-matrix / updated / update-matrix
+    / delete-matrix), so the naming convention is becoming
+    load-bearing for ensuring future shared-fake regressions surface
+    deterministically. The env_matrix_delete id appears in the leak
+    guard needles and in the wire-tie-in fakes' env field; if a
+    future env-matrix fixture reuses any of these tokens, the leak
+    guard becomes a false negative.
+  - The DELETE policy matrix needs the SAME engine-level cross-
+    tenant proof that PATCH does (CapWrite outside support
+    exception), but for completeness BOTH policy matrices must pin
+    it independently — a future catalog change that downgraded ONE
+    of them into the support exception (without the other) would
+    silently regress half the contract. Subtests are run as
+    "engine_cross_tenant_deny_<role>" for greppable failure attribution.
+  - Wire tie-ins for scoped grants need three independent fake
+    deleters (project / env / service captures) because each call
+    site asserts `captured.OrganizationID == ""` — sharing the
+    capture across all three would let a regression in one tie-in
+    pollute the other tie-ins' captures and mask itself.
+---

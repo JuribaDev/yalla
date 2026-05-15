@@ -3963,7 +3963,7 @@
       ],
       "type": "policy-environment",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Authorization coverage for DELETE /v1/environments/{environment_id}."
     },
     {
