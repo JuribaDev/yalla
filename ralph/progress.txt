@@ -1,5 +1,6 @@
 ## Codebase Patterns
 
+- Pure orchestrator / workflow package = reconcile-shaped vertical (BE-0033 pattern, internal/controlplane/migrateimport/{doc.go, AGENTS.md, types.go, importer.go, importer_test.go}, the second instance of this shape after internal/controlplane/reconcile): canonical shape for ANY workflow that ingests external state, classifies it, and writes through ports — Dokploy import, drift reconciliation, billing reconciliation, compliance scanning, lifecycle teardown, etc. Package layout: doc.go (boundary + plan/apply + dry-run + redaction sections), AGENTS.md (conventions), types.go (every port interface PLUS every value type those interfaces reference — Scanner/Repository ports, Snapshot/Existing*/Create*Input value types, OwnerAssignment, PlanItem and Plan with stable JSON tags because the Plan IS the dry-run yalla.output.v1 payload; ItemStatus + ItemReason as the closed classification surface), importer.go (Config with Scanner + Repository + Logger + Now + Redactor; New() returns apierr.Internal on a missing port; Plan(ctx, in) is pure and never writes; Apply(ctx, plan) is best-effort and collects per-item failures in Result.Failures with redacted error strings; classify*() helpers are unit-testable in isolation; wrap{Scanner,Repository}Err() preserves catalogued apierr.* codes and upgrades untyped errors to apierr.DokployUnavailable (scanner) / apierr.StoreUnavailable (repository) / apierr.Internal (defensive contract assertions); a resolvedParents map seeded with the org-root entry lets the apply loop resolve child-after-parent in a single pass through the hierarchy-ordered items). The test file houses an in-package fakeScanner + fakeRepo with concurrent-safe mutexes and call recording, and covers: construction port validation (one nil per case → CodeInternal); Plan input validation (every required field, every kind/format check → CodeInvalidInput with the named field recoverable via apierr.ViolationsOf); the dry-run-doesn't-query-Repository contract (no-assignment Plan never calls the repo); every classification Status × Reason combination as a positive case (StatusReady / StatusSkipDuplicate / StatusSkipMissingParent / StatusSkipUnsupported / StatusSkipAlreadyImported / StatusPendingOwner); Scanner failure surfaces as the right apierr code (DokployUnavailable → yerr.CodeServer, NOT CodeUnavailable — that's for Yalla-owned dependencies); Repository failure preserves catalogued codes; secrets redacted in error strings AND in log buffer (slog over a bytes.Buffer, output.NewRedactor(secret), assert secret never appears); Apply persists in hierarchy order (organization → project → environment → service, asserted by scanning the recorded calls slice for ordering invariants); Apply continues past per-item failures (inject failServiceByDokployID for one specific service create, prove sibling creates still succeeded); Apply ctx-cancellation propagates (errors.Is(err, context.Canceled)); Apply on no-ready-items is a valid no-op accounting Skipped count. The Plan JSON shape is PUBLIC compatibility contract before the customer-facing endpoint even exists — stable field names, no pointers in PlanItem, no embedded interfaces, no time.Time on the wire — because the eventual POST endpoint (BE-0289 et al) serialises it as-is. Canonical test fixture ID format: kind prefix + "_" + 26-char Crockford base32 lowercase suffix from "0123456789abcdefghjkmnpqrstvwxyz" (no i, l, o, u); use "org_01hz00000000000000000000xx" style (4-char prefix + 20 zeros + 2-char tag = 26) — the testutil factory's IDs are deliberately non-canonical for some tests and will fail strict ParseID. Slug derivation goes one-way: domain.NormalizeSlug(dokployName) for the Dokploy → Yalla direction (a NormalizeSlug rejection is itself a classification, NOT an error to propagate); domain.DokployName(label, yallaID) is the OPPOSITE direction and must not be reused here. supportedServiceType(svc) AND-s dokploy.ServiceType.Valid() with the database-requires-engine rule and collapses both failure modes into a single StatusSkipUnsupported reason — the operator's remediation is the same. Reconcile and migrateimport are siblings under this pattern; future "resource lifecycle worker", "drift admin reconciler", "billing reconciler" packages should reuse the package layout verbatim.
 - POST sub-action endpoint on a deep resource by bare id (BE-0163 pattern, POST /v1/environments/{environment_id}/clone, store/environmentservice.go EnvironmentService.Clone + CloneEnvironmentInput + validateCloneEnvironmentInput, httpapi/environments.go cloneEnvironmentHandler + EnvironmentCloner): canonical shape for ALL sub-action POSTs on a bare-id route (clone, restart, rollback, cancel, restore, etc.). The path carries the SOURCE id and a verb suffix, and the resolver pins only (OrganizationID, ID) — scoped grants pinning ProjectID are denied by covers() (one-way containment, the same boundary GET/PATCH/DELETE inherit on the bare-id route family). The structural parent_id of the new row (project_id for env.clone, etc.) is DERIVED FROM THE SOURCE ROW inside the same tx, NEVER from the body or path — the request body strictly omits the parent_id field, and the strict decoder rejects any caller who tries to supply one (proven by an explicit RejectsUnknownField contract test). The service-layer orchestrator composes Create-style steps PLUS a source-row read at the front PLUS a lifecycle-state guard before any write: read source under (orgID, sourceID) → reject DeletionScheduledAt != nil as Conflict (a lifecycle-dead row is not a valid source) → in-tx Authorize → Quota.Reserve → Repository.Insert (the new row inherits source.ProjectID) → JobEnqueue → Audit.Append with Metadata{"slug","project_id","cloned_from": source.ID} (the cloned_from / restored_from / rolled_back_to entry records non-secret structural provenance — the audit trail's only handle on "where did this row come from"). Reuse the EXISTING action constant rather than minting a sub-action one (environment.create on a clone route, not environment.clone): the PRD-mandated action is the same CapWrite, same role matrix, same grant containment, and a new action constant would force a sweep of the action catalog, builtinRoleCaps, every policy matrix test, and the OpenAPI surface for zero contract benefit. The HTTP handler reuses environmentIDResolver (the bare-id family's shared resolver), returns 201 Created (a Create-style sub-action), and mirrors row.Version into the ETag header via writeOrganizationETag. Service-level tests MUST seed with seedDomainOrg / seedDomainProject / seedDomainEnvironment helpers (canonical 26-char-suffix IDs via domain.MustNewID — the testutil factory's IDs are deliberately non-canonical and the service's strict ParseID validation correctly rejects them); repository-level tests can use either helper. NewHandler+newRouteTable each grow ONE positional port (environmentCloner EnvironmentCloner at the tail of the env-ports group, after environmentDeleter); the three-pattern sweep across ~38 test files anchors on `fakeEnvironmentDeleter{}, nil)` → `fakeEnvironmentDeleter{}, fakeEnvironmentCloner{}, nil)`, plus the `fakeEnvironmentDeleter{})` newRouteTable form → `fakeEnvironmentDeleter{}, fakeEnvironmentCloner{})`, plus the all-nils OpenAPI-shape tests bumped from N to N+1 nils. cmd/yalla-api/main.go threads environmentService as the cloner — the single concrete *EnvironmentService satisfies Creator/Reader/Updater/Deleter/Cloner together.
 - PATCH endpoint for a deep resource by bare id (BE-0157 pattern, PATCH /v1/environments/{environment_id}, store/environment.go EnvironmentRepository.Update + classifyEnvironmentConcurrencyMiss, store/environmentservice.go EnvironmentService.Update + buildEnvironmentUpdate, httpapi/environments.go updateEnvironmentHandler): canonical shape for ALL deep-resource PATCH endpoints. Repository.Update takes a fully-formed row + *int64 ifMatchVersion, runs a tenant-scoped (organization_id, id) UPDATE that touches only the mutable columns (slug, display_name — NEVER the composite tenant key), and classifies a zero-row return via a classify*ConcurrencyMiss helper that disambiguates gone-vs-stale by Get-in-same-tx. The service-layer orchestrator runs the validation BEFORE the transaction is opened (buildXxxUpdate is split out for unit-testability, rejects empty patches as 400, never echoes submitted values in violations), then in ONE Store.Write: read current row, check If-Match pre-condition (stale -> ConflictStale with row's authoritative version BEFORE the version-checked UPDATE — even a trivial no-op patch with stale If-Match surfaces the conflict), apply patch in-memory, call Repository.Update, append audit row. UNLIKE Create, the orchestrator does NOT invoke the in-tx Authorizer or QuotaReserver — the HTTP RequireAuth gate is authoritative for the update path; the in-tx Authorize is reserved for Create's defence-in-depth against grant-change races during quota reservation. The HTTP handler reuses the shared parseIfMatchVersion + writeOrganizationETag helpers (yes, the helper is org-named but it is the SHARED chokepoint for every endpoint mirroring versions to ETag — do not duplicate it per resource family). Body is strictly decoded with `slug *string` and `display_name *string` (pointer nil-ness IS the partial-update contract); the body intentionally exposes no organization_id/parent_id/self_id field — tenant isolation is structural. Response is yalla.output.v1 carrying the same wire shape GET returns, plus ETag header. Path with NO parent_id (bare-id route): the resource scope pins only OrganizationID + the deep id, so the engine's covers() rule DENIES every scoped grant at the policy boundary (a grant with a pinned ProjectID cannot cover a resource with no ProjectID); principals whose only access is a scoped grant must use a parent-scoped route. Every NewHandler positional-arg addition triggers a ~50-site sweep across ~35 existing test files — anchor on `fakeXxxReader{}, nil)` and `fakeXxxReader{}, logger)` plus the `reader, nil)` / `reader, logger)` outliers in the resource's own get/policy test helpers. The newRouteTable-only OpenAPI shape tests (all-nils form, partial-fakes-with-trailing-nils form) each need one more `nil` appended. AVOID double-counting: run go vet AFTER each automated sweep and undo overshoots before continuing.
 - DELETE endpoint for a deep resource by bare id (BE-0160 pattern, DELETE /v1/environments/{environment_id}, migration 0016_environment_deletion_schedule, store/environment.go EnvironmentRepository.ScheduleDeletion, store/environmentservice.go EnvironmentService.ScheduleDeletion + DeleteEnvironmentInput, httpapi/environments.go deleteEnvironmentHandler + EnvironmentDeleter): canonical shape for ALL deep-resource SOFT-delete endpoints. The migration is structurally identical to 0013_project_deletion_schedule — `ALTER TABLE <resource> ADD COLUMN deletion_scheduled_at timestamptz` + a partial index `WHERE deletion_scheduled_at IS NOT NULL` for the future teardown-worker scan. The repository ScheduleDeletion is an SQL-IDEMPOTENT unconditional UPDATE stamping `deletion_scheduled_at = now()` returning the row in column order (so callers see the trigger-refreshed updated_at + bumped version); the already-scheduled distinction is the service's job (the repository must remain SQL-idempotent for non-customer callers — workers, admin jobs — that retry). ifMatchVersion uses the SAME pattern as Update — nil disables, non-nil adds `AND version = $N` to the WHERE — and classify*ConcurrencyMiss disambiguates the no-rows case (gone vs stale) by Get-in-same-tx. The service-layer orchestrator validates blank-input BEFORE opening the tx (typed InvalidInput, missing actor org is Internal — wiring error, never client input), then in ONE Store.Write: read current row, check If-Match pre-condition (stale -> ConflictStale BEFORE the already-scheduled check, so a stale caller learns version-stale instead of an already-scheduled message that races with concurrent edits they did not see), reject already-scheduled as apierr.Conflict (rolls the whole tx back so the audit record can never name a deletion that did not change resource state), call Repository.ScheduleDeletion, record the resolved deletion_scheduled_at stamp as audit metadata (`event.Metadata["deletion_scheduled_at"] = row.DeletionScheduledAt.UTC().Format(time.RFC3339Nano)` — a non-secret timestamp, safe to record verbatim), append audit row. UNLIKE Create, the orchestrator does NOT invoke the in-tx Authorizer or QuotaReserver — the HTTP RequireAuth gate is authoritative for the delete path; the in-tx Authorize is reserved for Create's defence-in-depth against grant-change races during quota reservation. The HTTP handler reuses parseIfMatchVersion + writeOrganizationETag + telemetry.FromContext for correlation; returns 202 Accepted (the scheduling is durable but the destructive teardown is a later worker job). The wire DTO (projectEnvironment / projectResource) gains a `DeletionScheduledAt *string \`json:"deletion_scheduled_at,omitempty"\`` field so a live row's JSON shape is byte-identical to before (omitempty + nil pointer = field absent), while a scheduled row exposes the stamp as RFC 3339 — mirror this on every resource DTO that gains a soft-delete column. Routes.go registration uses `Method: http.MethodDelete`, `SuccessStatus: http.StatusAccepted`, the same `environmentIDResolver` as GET/PATCH (the bare-id three routes share one resolver), and the same description shape as `deleteProject`'s scheduled-not-immediate / version-pre-check / one-tx-audit clauses. NewHandler+newRouteTable signatures each grow ONE positional port (`environmentDeleter EnvironmentDeleter` at the very tail of the env ports group, after `environmentUpdater`); a Python regex sweep over the test directory anchored on `fakeEnvironmentUpdater{}, nil)` -> `fakeEnvironmentUpdater{}, fakeEnvironmentDeleter{}, nil)` and `fakeEnvironmentUpdater{}, logger)` (37 NewHandler call sites across 37 files) handled the bulk; the named-updater outlier `fakeEnvironmentReader{}, updater, nil)` in the resource's own update test got `..., updater, fakeEnvironmentDeleter{}, nil)`; the all-nil newRouteTable form (7 files) received one trailing nil; the partial-fakes-with-trailing-nils form (projects_delete_test.go + projects_restore_test.go ending `fakeProjectGrantReader{}, nil, nil, nil, nil, nil, nil, nil)`) needed one MORE trailing nil; the multi-line newRouteTable-with-explicit-fakes form (3 files ending `fakeEnvironmentUpdater{})`) became `fakeEnvironmentUpdater{}, fakeEnvironmentDeleter{})`. Run `go vet ./...` AFTER each sweep — Go's positional-arg compile error tells you exactly which call sites the regex missed. The store-side integration tests cover repo happy-path + NotFound + tenant-scoped + nil-tx-rejection plus service happy-path-with-audit + already-scheduled-rolls-back-AND-stamp-unchanged-AND-only-one-audit-row + NotFound-no-audit + tenant-scoped-no-audit + stale-If-Match + blank-input + missing-actor-org. The httpapi contract tests cover happy-path-forwards-(principal,path,if-match)+202+ETag+wire-DTO + named-If-Match forwarded + malformed-If-Match 400 + NotFound 404 + already-scheduled 409 + stale-If-Match 409 + missing-deleter 500 + unauthenticated 401 + OpenAPI route registered. Forward-applicable to every future bare-id soft-delete endpoint (service.delete on /v1/services/{service_id}, etc.).
@@ -12861,3 +12862,172 @@
     decode cleanly under any other role, so a 403 must come from
     the engine's verdict, not from a body-shape regression.
 ---
+## 2026-05-16 - BE-0033
+- What was implemented: BE-0033 "Implement migration import workflow" — the
+  pure orchestrator that plans and applies the import of pre-existing Dokploy
+  resources (organization → project → environment → service) into Yalla's
+  source-of-truth hierarchy. Landed as a new package
+  internal/controlplane/migrateimport, structurally mirroring the reconcile
+  package: pure planner (Importer.Plan), best-effort applier (Importer.Apply),
+  port-based persistence (Scanner + Repository ports), no Dokploy/Postgres I/O
+  inside the package.
+- Files changed:
+  - internal/controlplane/migrateimport/doc.go (new, package doc with
+    boundary + plan/apply + dry-run + redaction sections).
+  - internal/controlplane/migrateimport/AGENTS.md (new, conventions: pure
+    orchestrator, plan-is-pure, explicit-owner-only, value-free
+    classification, deterministic order, best-effort apply, validation
+    surface, slug derivation, unsupported services skip not fail).
+  - internal/controlplane/migrateimport/types.go (new, ResourceLevel,
+    ItemStatus, ItemReason, Snapshot/SnapshotOrganization/SnapshotProject/
+    SnapshotEnvironment/SnapshotService, OwnerAssignment, PlanItem, Plan,
+    Failure, Result, ExistingOrganization/Project/Environment/Service,
+    CreateProjectInput/CreateEnvironmentInput/CreateServiceInput, Scanner
+    and Repository ports). PlanItem is stable-JSON-friendly: every field
+    named, no pointers, no cycles — the eventual admin endpoint will emit
+    Plan as the yalla.output.v1 payload.
+  - internal/controlplane/migrateimport/importer.go (new, Config + Importer
+    + New + Plan + Apply + classify[Project|Environment|Service] +
+    pendingOwnerItems + proposeSlug + supportedServiceType + indexers +
+    sorters + wrapScannerErr/wrapRepositoryErr/scrubErr + logFailure).
+  - internal/controlplane/migrateimport/importer_test.go (new, fakeScanner
+    + fakeRepo + 17 tests covering: construction port validation; Plan
+    input validation — blank dokploy_organization_id, assignment mismatch,
+    assignment without dokploy org, malformed/wrong-kind yalla org; dry-run
+    pending-owner doesn't query the Repository; classification of
+    duplicate-name, missing-parent, unsupported-type, ready, already-linked;
+    NotFound owner surfaces as apierr.NotFound; scanner failure surfaces as
+    apierr.DokployUnavailable (CodeServer); scanner returning wrong
+    organization is Internal; secrets redacted in scanner errors; Apply
+    persists in hierarchy order; Apply partial failure continues and
+    collects failure; Apply no-ready-items is a valid no-op; Apply failure
+    errors are redacted; Apply ctx-cancellation stops loop; Apply log
+    output never leaks secrets).
+  - ralph/prd.json (BE-0033.passes set to true; 119/614 passing).
+- Verification run: gofmt -w .; go mod tidy; go vet ./...;
+  go test ./...; go test -race ./...; go test -race
+  ./internal/controlplane/migrateimport/.
+- Results: all repo packages pass under -race; the new package's 17 tests
+  pass under -race. goimports / golangci-lint / staticcheck / govulncheck
+  still not installed locally (documented in earlier iterations).
+- Remaining risks / follow-ups:
+  - This is the pure orchestrator only. The concrete Dokploy-backed Scanner
+    (list-projects / list-environments / list-services on the Dokploy
+    client + dokployfake list routes) and the store-backed Repository
+    (CreateProject/Environment/Service with a Dokploy-link column) land in
+    separate stories. Dokploy.Client.go currently exposes Get + Post +
+    Delete; List operations will need to land before the
+    Dokploy-backed Scanner adapter is implementable, but the Scanner port
+    is contract-stable, so adapter work proceeds in parallel.
+  - Service-level persistence has no schema yet (no services table). The
+    Repository port already exposes CreateService / FindServiceByDokployID
+    / FindServiceBySlug so the store adapter can land in one go when the
+    schema migration ships — no churn here.
+  - BE-0289 / BE-0290 / BE-0291 (POST /v1/admin/dokploy/import + contract
+    tests + policy matrix) are the customer-facing wrapper for this
+    workflow; the wire shape of Plan is the dry-run response and the
+    OwnerAssignment is the request input. No further surface changes are
+    expected before that story.
+  - The planner sorts by Dokploy resource ID at each hierarchy depth, but
+    emits items in hierarchy order
+    (organization → project → environment → service). Apply iterates the
+    plan in its emitted order so child-after-parent is structurally
+    guaranteed. If a future story needs cross-hierarchy interleaving
+    (e.g. detect a domain at the service level whose parent is in the
+    SAME plan), the Apply loop's resolvedParents map already supports it.
+  - The classifier asks the Repository up to four queries per item
+    (FindByDokployID, FindBySlug for each level); a future "scan-once"
+    optimisation could batch these by parent, but the per-item ports are
+    the simplest contract and tests assert ordering.
+- **Learnings for future iterations:**
+  - When a story names a pure workflow (Importer / Reconciler / Renderer)
+    the reconcile package is the canonical template — see
+    internal/controlplane/reconcile/reconcile.go for the pattern: Config
+    with port interfaces, New() rejects nil ports with apierr.Internal,
+    Logger defaults to slog.Default, Now defaults to time.Now().UTC,
+    Redactor defaults to output.NewRedactor(). Plan-vs-Apply split lets
+    "dry run" be just calling Plan without Apply, and the Plan JSON shape
+    is the eventual endpoint's yalla.output.v1 payload — so PlanItem must
+    have stable named fields, no pointers, no embedded interfaces.
+  - apierr.NotFound is the catalogued NotFound; check via stderrors.As to
+    *yerr.Error then ye.Code == yerr.CodeNotFound. apierr.DokployUnavailable
+    maps to yerr.CodeServer (E_SERVER), NOT yerr.CodeUnavailable
+    (E_UNAVAILABLE — that's StoreUnavailable / JobQueueUnavailable for
+    Yalla-owned dependencies). apierr.ViolationsOf(err) recovers the field
+    violations from an InvalidInput error — the err.Error() message itself
+    is the generic "request validation failed" without the field name.
+  - Canonical Yalla ID test fixtures: kind prefix + "_" + 26-char Crockford
+    base32 lowercase suffix. The alphabet is
+    "0123456789abcdefghjkmnpqrstvwxyz" (no i, l, o, u). The testutil
+    factory's IDs are deliberately non-canonical for some tests; for any
+    test that runs a real ParseID / Kind check, mint a canonical fixture
+    by hand: "org_01hz00000000000000000000xx" (4-char prefix + 20 zeros +
+    2-char tag = 26).
+  - dokploy.Client currently exposes Get + Post + Delete intents only
+    (EnsureOrganization, EnsureProject, EnsureEnvironment, EnsureService,
+    EnsureDomain, DeployService, ReadDeploymentLogs, GetServiceStatus,
+    RemoveService). A Snapshot-shaped reader (list-projects-under-org,
+    list-environments-under-project, list-services-under-env) is the
+    missing piece for the migrateimport.Scanner adapter and for BE-0283
+    (GET /v1/admin/dokploy/drift). Add the List* methods + dokployfake
+    list routes when the first consumer of either lands.
+  - Slug derivation: never reuse domain.DokployName (Yalla → Dokploy) for
+    Dokploy → Yalla. Use domain.NormalizeSlug(name) on the Dokploy
+    resource name. A name that NormalizeSlug rejects (no usable alnum
+    content) is itself a classification — StatusSkipDuplicate with reason
+    ReasonDuplicateName — not an error to propagate.
+  - Dokploy.ServiceType.Valid() is "application | compose | database".
+    Database services additionally require a non-blank engine, so
+    supportedServiceType(svc) AND-s the two checks. The importer
+    classifies an unsupported type or a database-missing-engine as
+    StatusSkipUnsupported / ReasonUnsupportedServiceType — both surfaces
+    are intentionally collapsed into one reason code because the
+    operator's remediation is the same: fix the Dokploy resource first.
+  - Hierarchy order in Apply matters: the resolvedParents map seeds the
+    root-org entry at construction so projects can resolve. Each
+    successful CreateProject populates the map under the Dokploy project
+    ID so child environments resolve, and so on. A failed parent leaves
+    its slot empty — the child item's Status was already classified as
+    StatusReady, so Apply emits an Internal "no resolved parent" failure
+    for it (not a planner bug — Apply-side guard for an upstream-failed
+    parent in a best-effort loop). The classifier could pre-detect this
+    by treating a parent's failure as a missing-parent, but the
+    pure-planner contract is "Repository state at Plan time"; runtime
+    Apply ordering is owned by Apply.
+- **Codebase Pattern (reusable):**
+  - **Pure import / orchestrator package = reconcile-shaped vertical**
+    (BE-0033 pattern, internal/controlplane/migrateimport/...): canonical
+    shape for ANY pure workflow that consumes external state through
+    ports and writes through ports. Structure: doc.go (package doc with
+    boundary + plan/apply + dry-run + redaction sections), AGENTS.md
+    (conventions), types.go (every port interface + every value type used
+    in those interfaces + the planner's output Plan/PlanItem with stable
+    JSON tags), importer.go (Config with port + Logger + Now + Redactor;
+    New() returns apierr.Internal on missing ports; Plan(ctx, in) is pure
+    and never writes; Apply(ctx, plan) is best-effort and collects per-
+    item failures; classify*() functions are unit-testable in isolation;
+    wrap*Err helpers preserve catalogued apierr codes and upgrade
+    untyped errors to apierr.DokployUnavailable / apierr.StoreUnavailable
+    /apierr.Internal as appropriate; logFailure() emits structured slog
+    diagnostics with scrubbed error strings). Test file (importer_test.go
+    or {workflow}_test.go) houses an in-package fake Scanner + fake
+    Repository with concurrent-safe mutexes and call recording, and
+    covers: construction port validation (one nil per case); input
+    validation (every required field and every kind/format check); the
+    dry-run-doesn't-query-Repository contract; every classification
+    Status × Reason combination as a positive case; one tenant-isolation
+    / cross-binding contract; Scanner failure surfaces as the right
+    apierr code; Repository failure surfaces as the right apierr code;
+    secrets redacted in error strings AND in log buffer (slog over a
+    bytes.Buffer); Apply persists in hierarchy order; Apply continues
+    past per-item failures; Apply ctx-cancellation propagates; Apply on
+    no-ready-items is a valid no-op accounting skipped count. The Plan
+    JSON shape is what the eventual customer-facing endpoint serialises
+    into yalla.output.v1, so stable field names and no embedded
+    interfaces are PUBLIC compatibility contract before the endpoint
+    even exists. Reconcile (drift detection) and migrateimport (Dokploy
+    import) are siblings under this pattern; future "resource lifecycle
+    worker", "compliance scanner", "billing reconciler" packages should
+    reuse it verbatim.
+---
+
