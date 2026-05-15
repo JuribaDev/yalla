@@ -12701,3 +12701,163 @@
     misses them. Run go vet after each automated sweep; the error
     message names every site that still has the wrong arity.
 ---
+
+## 2026-05-15 - BE-0165
+- What was implemented: policy-matrix coverage for POST
+  /v1/environments/{environment_id}/clone — the authorization
+  contract of the endpoint BE-0163 wires, parallel to BE-0162 for
+  DELETE /v1/environments/{environment_id}.
+  - internal/controlplane/httpapi/environments_clone_policy_test.go
+    (new, ~670 lines): one canonical fixture
+    (canonicalCloneEnvForMatrix / cloneEnvSourcePathID /
+    canonicalCloneRequestBody) + a single leak guard
+    (cloneEnvDenyBodyLeak) used by every deny branch, then four
+    tests that drive the REAL NewHandler + real policy.NewEngine()
+    against fake Authenticator + fakeEnvironmentCloner (the
+    production request path minus the database):
+    - TestCloneEnvironmentPolicyMatrixRoles tables all six built-in
+      roles against environment.create at a same-tenant env-id
+      resource (no ProjectID leg, because the bare clone route
+      pins none). CapWrite splits the matrix: Owner / Admin /
+      Developer allow via ReasonAllowedByRole (201 + cloner reached
+      with home_org + path source_env_id + decoded body's new id /
+      slug / display_name + actor id + actor_org_id; allow path
+      response has no deletion_scheduled_at and the row's version
+      is mirrored to the ETag header); Viewer / CI / Support deny
+      via ReasonDeniedNoCapability (403 + cloner never reached +
+      body never leaks the new clone, source env id, inherited
+      project, or caller-supplied body fields). CI denies despite
+      holding CapDeploy — CapDeploy is service lifecycle, not
+      desired-state mutation.
+    - TestCloneEnvironmentPolicyRevokedAndExpiredKeys proves a
+      Disabled Owner principal (revoked OR expired credential) is
+      denied via ReasonDeniedPrincipalDisabled, the cloner never
+      runs, and the body never leaks the principal id, the
+      organization id, the canonical clone, or the caller-supplied
+      body fields.
+    - TestCloneEnvironmentPolicyWrongOrganizationPrincipal: wire-
+      level cross-tenant source env_id surfaces as 404 from the
+      persistence boundary (environmentIDResolver pins resource
+      scope to principal home org, so the engine admits the
+      same-tenant resource and the cloner IS reached once with
+      (ownOrg, foreignSourceEnvID), whereupon the
+      production EnvironmentService's tenant-scoped source read
+      returns NotFound). Engine-level pin tables every role
+      INCLUDING Support — all denied via ReasonDeniedCrossTenant
+      because CapWrite is OUTSIDE the support exception clause
+      (CapSupport && (CapRead || CapSupport)). Load-bearing
+      distinction from environment.read which DOES admit Support
+      cross-tenant.
+    - TestCloneEnvironmentPolicyGrantContainment: project-, env-,
+      and service-scoped grants are all denied OutOfScope on this
+      route, even when the grant scope names the source
+      environment's own project or the source environment's own
+      id — environmentIDResolver pins no ProjectID and covers()
+      is one-way (a grant that pins ProjectID cannot cover a
+      resource scope that does not). Engine-level twins pin: a
+      project-scoped admin grant DOES allow environment.create on
+      a project resource (the parent-scoped POST
+      /v1/projects/{project_id}/environments route) but DOES NOT
+      cover this env-id route; sibling project denied; staging-env
+      grant does not imply production env.write; service-scoped
+      grant does not expose parent-level env.write or sibling
+      services. Org-level Admin grant allowed end-to-end via
+      ReasonAllowedByGrant (201 + cloner reached with all required
+      fields, ETag header mirrored). Org-level Viewer grant denied
+      via ReasonDeniedNoCapability — load-bearing distinction from
+      environment.read grant matrix where Viewer is allowed.
+      Cross-tenant grant smuggling (sa_proj_admin planted in
+      org_sibling with a grant scoped to org_acme) denied at the
+      engine — a scoped key's home org must match the grant
+      scope's org or the engine refuses to consider the grant.
+  - ralph/prd.json (BE-0165 passes -> true).
+- Files changed:
+  - internal/controlplane/httpapi/environments_clone_policy_test.go (new)
+  - ralph/prd.json (BE-0165 passes -> true)
+  - ralph/progress.txt (this entry)
+- Verification run from repo root:
+  - gofmt -w .                                                : clean
+  - gofmt -l .                                                : clean
+  - go mod tidy                                               : clean
+  - go vet ./...                                              : clean
+  - go test -count=1 ./...                                    : PASS
+  - go test -race -count=1 ./...                              : PASS
+  - go test -count=1 -run TestCloneEnvironmentPolicy
+      ./internal/controlplane/httpapi/                        : PASS (4 tests + table subtests)
+  - goimports / golangci-lint / staticcheck / govulncheck     : not installed locally (documented in earlier iterations).
+- Results: all green. No regressions to any pre-existing matrix.
+  The new file shares fakeEnvironmentCloner with the contract
+  suite environments_clone_test.go (BE-0163); no scaffolding was
+  added beyond the per-file canonical fixture builders.
+- Remaining risks / follow-ups:
+  - BE-0166 (the natural neighbour) implements
+    POST /v1/environments/{environment_id}/restore — the bare-id
+    env restore route. BE-0167 will be its policy matrix and
+    will reuse THIS file's structural template byte-for-byte: the
+    bare-id env resolver pins no ProjectID, environment.create
+    is CapWrite, leak guard adds body needles. The only
+    distinction is that restore is "lifecycle resurrection"
+    (Conflict if NOT scheduled for deletion) rather than "fresh
+    write" — the engine verdict is structurally identical.
+  - The contract test docstring for cloneEnvironmentHandler in
+    internal/controlplane/httpapi/environments.go says "the gate
+    admits the principal's organization-wide write roles (owner,
+    admin, developer, ci) and denies viewer, denies support" —
+    this is inaccurate. CI holds CapDeploy/CapRead/CapSelf but
+    NOT CapWrite (verified in catalog.go builtinRoleCaps), so CI
+    is DENIED for environment.create — the matrix test confirms
+    this. The handler implementation itself is correct (delegates
+    to the engine); only the docstring is misleading. A
+    separate doc-correction story could fix this but it is not
+    in scope for BE-0165.
+- Learnings for future iterations:
+  - POST-verb bare-id route policy matrix: the canonical shape
+    (BE-0162 for DELETE) extends cleanly to POST verbs with a
+    body (BE-0165 for clone). Two additions over the DELETE
+    template:
+    (1) The leak guard MUST include needles for the
+        caller-supplied request body fields — for clone, the new
+        env_id, the new slug (quoted), and the new display_name
+        (quoted). Even though the policy gate runs BEFORE body
+        decode (RequireAuth middleware authorizes via
+        environmentIDResolver before the handler is reached, so a
+        denied principal never has their body decoded), the leak
+        guard still anchors on the body fields because the new
+        slug/display_name happen to equal the canonical clone
+        env's slug/display_name — so a regression that rendered
+        the cloner's return value on a deny path would fire the
+        leak guard. Setting body needles distinct from the
+        canonical-row needles is a future hardening.
+    (2) The PATH-supplied source env id is distinct from the
+        BODY-supplied new env id (cloneEnvSourcePathID =
+        "env_matrix_clone_source" vs canonical.ID =
+        "env_matrix_clone"), so the leak guard catches "renderer
+        echoed the path parameter" and "renderer echoed the body
+        field" as independent regressions.
+  - Wrong-organization cross-tenant for clone: the wire-level
+    test asserts the cloner IS called once with (ownOrg,
+    foreignSourceEnvID) — distinct from "the cloner must never
+    run" deny rows. The PRODUCTION cloner has its own
+    persistence-layer NotFound (the source read is tenant-scoped),
+    so the wire test asserts the structural property that the
+    cloner ALWAYS receives the principal's home org id — never
+    the caller-controlled value — so a production
+    EnvironmentService could not have read the victim's row.
+    Pinning callCount == 1 here (not 0) is the load-bearing
+    contract: a regression that built the store call from a
+    caller-controlled org id would silently pass a 0 callCount
+    assertion.
+  - environment.create's allow path returns 201 Created (not 200
+    OK or 202 Accepted). The contract test (BE-0163) verifies
+    this through the route table's SuccessStatus; the policy
+    matrix verifies it through the wire response. The
+    deletion_scheduled_at field is nil on the allow path
+    response — distinct from the DELETE allow path where the
+    field MUST carry the row's lifecycle stamp.
+  - Reusing canonicalCloneRequestBody as a const (rather than a
+    builder) means every test sends a byte-identical body, which
+    proves the deny path is policy-driven (never validation-
+    driven): a body that decoded cleanly under Owner would also
+    decode cleanly under any other role, so a 403 must come from
+    the engine's verdict, not from a body-shape regression.
+---
