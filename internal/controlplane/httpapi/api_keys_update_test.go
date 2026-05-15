@@ -58,7 +58,7 @@ func updateAPIKeyHandlerFor(id auth.Identity, authErr error, updater APIKeyUpdat
 	return NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, a, policy.NewEngine(),
 		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
 		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
-		fakeLimitsReader{},
+		fakeLimitsReader{}, fakeLimitsUpdater{},
 		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, updater, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{}, nil)
 }
 

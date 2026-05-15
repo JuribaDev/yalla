@@ -246,6 +246,43 @@ func (r *QuotaRepository) ListEffectiveLimits(ctx context.Context, q Querier, or
 	return out, nil
 }
 
+// UpsertOrganizationPolicy upserts the organization-scoped quota policy for
+// (organizationID, resource). When no organization override exists it is
+// inserted; when one already exists its limit_value and enforcement_mode are
+// overwritten. Plan defaults are untouched: this method is the customer-facing
+// override surface. It requires a *Tx so the upsert can only run inside the
+// transaction that also carries the authorization decision and the audit
+// record it guards.
+//
+// The unique index quota_policies_org_resource_idx is partial — it covers only
+// rows whose scope_kind = 'organization' — so ON CONFLICT must name the same
+// predicate to target the index, otherwise the database refuses the upsert.
+// The freshly-minted id is used only when a brand-new row is inserted; an
+// existing row keeps its id (and its created_at), and updated_at is owned by
+// the per-table set_updated_at() trigger.
+func (r *QuotaRepository) UpsertOrganizationPolicy(ctx context.Context, tx *Tx, organizationID string, resource QuotaResource, limitValue int64, mode EnforcementMode) error {
+	if tx == nil {
+		return apierr.Internal(errors.New("store: QuotaRepository.UpsertOrganizationPolicy called with a nil transaction"))
+	}
+	id, err := newQuotaID("qpol")
+	if err != nil {
+		return apierr.Internal(err)
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO quota_policies
+		    (id, scope_kind, organization_id, resource, limit_value, enforcement_mode)
+		 VALUES ($1, 'organization', $2, $3, $4, $5)
+		 ON CONFLICT (organization_id, resource)
+		   WHERE scope_kind = 'organization'
+		 DO UPDATE SET
+		    limit_value      = EXCLUDED.limit_value,
+		    enforcement_mode = EXCLUDED.enforcement_mode`,
+		id, organizationID, string(resource), limitValue, string(mode)); err != nil {
+		return mapWriteError(err, "an organization-scoped quota policy with this id already exists")
+	}
+	return nil
+}
+
 // LockUsage ensures the (organization, resource) counter row exists and locks
 // it FOR UPDATE for the remainder of tx, returning the current used_value. A
 // concurrent unit of work that calls LockUsage for the same tenant and

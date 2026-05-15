@@ -96,7 +96,7 @@ type versionPayload struct {
 // metadata; a request that actually reaches a handler with a nil dependency
 // is reported as a typed internal error rather than a misleading empty list
 // or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator) []apiRoute {
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -450,6 +450,32 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// read, exactly as the policy matrix specifies for CapRead actions.
 			resolver: organizationIDResolver,
 			handler:  listLimitsHandler(limits),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodPatch,
+				Path:           "/v1/organizations/{org_id}/limits",
+				OperationID:    "updateOrganizationLimits",
+				Summary:        "Update organization-scoped quota limits",
+				Description:    "Upserts the organization-scoped quota policies of the organization named by the {org_id} path parameter in the source-of-truth database. The request body carries a non-empty list of {resource, limit_value, enforcement_mode} entries; each entry creates an organization override for the named quota dimension if none exists, or overwrites the limit_value and enforcement_mode of the existing override otherwise. Plan defaults are untouched: this endpoint is the customer-facing override surface. Every entry is validated before any database work (resource must be in the closed quota_resource set, limit_value must be zero or positive, and enforcement_mode if supplied must be one of hard, soft, metered, or disabled — empty defaults to hard, matching the schema), and a patch with no entries or a duplicated resource is itself a stable 400 — a mutation that changes nothing or is internally inconsistent is a client error, not a silent success. Action limits.write is authorized against the organization the path names before the handler runs: a principal updating limits outside its own tenant is rejected with a deterministic 403, so a cross-tenant id can never mutate another tenant's limits, and unlike limits.read (a CapRead action) limits.write has NO cross-tenant support exception — only an owner or admin in the tenant can update limits, never a support principal. An {org_id} with no row is the typed 404 the repository produces. The organization-scoped policy upserts and an immutable audit record naming the authenticated principal and the affected resources are committed in one transaction, then the effective limits are re-read inside the same transaction so the response always reflects exactly the state that just persisted. The response carries no credential material — quota dimensions and counts are not sensitive — and uses the same stable wire shape GET /v1/organizations/{org_id}/limits returns.",
+				Tags:           []string{tagLimits},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionLimitsWrite),
+				PathParams: []openapi.PathParam{{
+					Name:        "org_id",
+					Description: "The id of the organization whose limits are updated.",
+				}},
+				SuccessDescription: "The effective limits of the organization after the upsert.",
+			},
+			// organizationIDResolver authorizes action limits.write against
+			// the organization the {org_id} path parameter names, not merely
+			// the principal's home organization, so a cross-tenant id is
+			// denied at the policy boundary before the handler mutates any
+			// data. limits.write is a CapAdmin action and has no cross-tenant
+			// support exception — unlike CapRead actions, the support
+			// principal cannot update limits in another tenant.
+			resolver: organizationIDResolver,
+			handler:  updateLimitsHandler(limitsUpdater),
 		},
 		{
 			endpoint: openapi.Endpoint{

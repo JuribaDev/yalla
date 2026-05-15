@@ -43,6 +43,124 @@
 - HTTP endpoints are data-driven entries in internal/controlplane/httpapi/routes.go newRouteTable: apiRoute{endpoint, handler, resolver}. Authorization is declarative — set openapi.Endpoint.RequiresAuth=true + RequiredAction=string(policy.ActionX), and NewHandler auto-wraps the handler in RequireAuth(authenticator, engine, action, resolver) before registering it, so a served authenticated route is structurally impossible without authorization. TestEveryAuthenticatedRouteHasMappedAction enforces the RequiresAuth<->RequiredAction invariant in CI. The optional apiRoute.resolver derives the policy.Resource from path/query params; leave it nil for self/org-root actions (RequireAuth then authorizes against the principal's own org scope). NewHandler signature is (build, readiness, meta, authenticator, engine, logger); httpapi tests build it through the newTestHandler helper (canned fakeAuthenticator + policy.NewEngine()). Handlers stay thin: read policy.PrincipalFromContext, render via apienvelope.WriteData/WriteError. cmd/yalla-api wires the real stack at startup (pgxpool -> store.New -> store.NewCredentialReader -> auth.NewAuthenticator + policy.NewEngine) and requires YALLA_DATABASE_URL in every profile.
 - Drift reconciliation is internal/controlplane/reconcile: a pure engine that classifies every Yalla<->Dokploy divergence into exactly one of three buckets — DriftSafe (auto-repaired through the Repairer port: env var ensures/updates/removals, re-bound managed domains), DriftDangerous (recorded through the ReviewRecorder port: missing managed service, missing managed database, renamed domain on a known Dokploy ID, service type changed), or DriftUnmanaged (a Dokploy resource without a Yalla counterpart, recorded through the UnmanagedRecorder port — never auto-deleted and never exposed to customers by default). Diff(desired, actual) is a pure function; the Reconciler depends only on the four port interfaces (DesiredStateReader, ActualStateReader, Repairer, ReviewRecorder, UnmanagedRecorder) so adapters land in store/worker/dokploy without reaching back into reconcile. Every classification field carries a stable, value-free DriftReason (env_var_changed, domain_renamed, service_missing, database_missing, resource_unmanaged, ...) — an env var value reaches Action only via DesiredValue, consumed by the Repairer adapter and nowhere else. Apply is best-effort: per-action failures land in Result.Failures with their error string scrubbed through output.Redactor; the loop only stops on ctx cancellation. Untyped adapter errors are upgraded to apierr.StoreUnavailable (desired) or apierr.DokployUnavailable (actual); typed apierr.* from adapters (NotFound, Forbidden) flow through unchanged so callers keep the real taxonomy.
 - Crockford Base32 (lowercase) excludes i / l / o / u — hand-rolled test IDs containing those letters (e.g. "demo", "kvl", "old", "ufo") fail domain.ParseID with E_INVALID_INPUT. Use domain.MustNewID(domain.KindX) for fixtures (the convention in dokploy/mapping_test.go and reconcile_test.go); a test failure where every port-level case fails with the same E_INVALID_INPUT is almost always the ID validator rejecting the fixture before any port runs.
+- ON CONFLICT against a PARTIAL unique index requires the WHERE predicate in the conflict_target clause (`ON CONFLICT (cols) WHERE <same predicate> DO UPDATE`), otherwise Postgres rejects the upsert because the index is not eligible. quota_policies_org_resource_idx is the canonical case: ON CONFLICT (organization_id, resource) WHERE scope_kind = 'organization' DO UPDATE. The freshly-minted id from newQuotaID is only used on insert; on conflict the existing row's id and created_at are preserved (and updated_at is owned by the per-table trigger).
+- List/upsert PATCH endpoints (e.g. PATCH .../limits): the request DTO carries a top-level array (not a partial-update of individual fields), each entry is an upsert, and the response is the post-write effective state re-read inside the SAME Store.Write tx — so the wire body and the committed state agree byte-for-byte. Validation rules: at least one entry (empty array = 400), every entry must be self-consistent (closed-set resource, range-checked limit, closed-set enforcement mode, no duplicate keys across entries), and a `*int64` for numeric fields whose zero is meaningful distinguishes "field omitted" (400) from "set to zero" (legitimate extreme). Field paths use `field[i].subfield` so an agent can pinpoint which entry was rejected.
+
+## 2026-05-15 - BE-0097
+- What was implemented: PATCH /v1/organizations/{org_id}/limits, the
+  organization-scoped quota-overrides write endpoint.
+  - internal/controlplane/store/limitsservice.go (new): LimitsService
+    composes the unit of work — buildLimitsUpdate validation (closed-set
+    resource, non-negative limit, closed-set enforcement mode, no
+    duplicates, default enforcement_mode='hard'), an OrganizationRepository
+    pre-check that turns a missing tenant into the typed NotFound (so a
+    missing org is a 404, not the FK-constraint 409 that mapWriteError
+    would otherwise collapse to), QuotaRepository.UpsertOrganizationPolicy
+    upserts inside one *Tx, an immutable AuditRepository.Append with
+    metadata.updated_resources = sorted closed-set names, and a post-write
+    re-read of effective limits inside the same tx so the wire body matches
+    the committed state byte-for-byte. PlanLookup convention mirrors
+    LimitsReader — nil falls back to DefaultPlan.
+  - internal/controlplane/store/quota.go: new QuotaRepository.
+    UpsertOrganizationPolicy uses `INSERT ... ON CONFLICT (organization_id,
+    resource) WHERE scope_kind='organization' DO UPDATE` to target the
+    partial unique index quota_policies_org_resource_idx (a partial index
+    requires the matching WHERE clause in the conflict_target). The
+    freshly-minted id is only used on insert; on conflict the existing
+    row's id and created_at are preserved, and updated_at is owned by the
+    per-table trigger.
+  - internal/controlplane/httpapi/limits.go: LimitsUpdater port + the PATCH
+    handler. Request DTO carries `limits: [{resource, limit_value,
+    enforcement_mode?}, ...]`; limit_value is a *int64 pointer so
+    `{"limit_value":0}` (zero is a meaningful extreme) is distinguished
+    from a missing field (handler-side 400 with stable
+    "limits[i].limit_value must be supplied" violation). Empty patch is
+    400. Handler is thin: decode, validate "at least one entry" + "every
+    entry supplies limit_value", call updater, render the post-write
+    effective limits in updateLimitsPayload (same wire shape as
+    listLimitsPayload).
+  - internal/controlplane/httpapi/routes.go: registered the new apiRoute
+    with RequiresAuth=true, RequiredAction=policy.ActionLimitsWrite,
+    resolver=organizationIDResolver (so a cross-tenant {org_id} is a 403
+    BEFORE the handler runs). limits.write is CapAdmin (catalog.go:
+    ActionLimitsWrite -> CapAdmin) and has NO cross-tenant support
+    exception — the load-bearing distinction from limits.read (CapRead).
+  - internal/controlplane/httpapi/server.go: NewHandler signature gained
+    LimitsUpdater (one new positional arg threaded into newRouteTable).
+  - cmd/yalla-api/main.go: builds the LimitsService at startup (composed
+    over the existing OrganizationRepository/AuditRepository plus a fresh
+    QuotaRepository) and threads it into NewHandler.
+  - Tests: 11 new httpapi contract tests in limits_patch_test.go (happy
+    path with limit forwarding + actor wiring proof, zero-limit-round-trip,
+    missing limit_value 400, empty-array 400, malformed body 400,
+    unauthenticated 401, cross-tenant 403, viewer-in-tenant 403 — the
+    CapAdmin proof, not-found org 404, store outage 503 with no raw-cause
+    leak, missing-updater 500, OpenAPI route-table contract). 4 internal
+    unit tests for buildLimitsUpdate + NewLimitsService nil-dependency
+    guards (no DB). 7 store integration tests (happy-path upsert + audit
+    record + sorted updated_resources metadata, update-overrides-existing
+    keeps a single row in the partial unique index, override-beats-plan-
+    default in the post-write readback, missing-org NotFound, tenant
+    isolation, invalid input never opens a transaction, missing actor org
+    is Internal). All 18 test functions pass with -race.
+- Files changed: internal/controlplane/store/{quota.go,limitsservice.go (new),
+  limitsservice_internal_test.go (new),limitsservice_test.go (new)},
+  internal/controlplane/httpapi/{limits.go,limits_patch_test.go (new),
+  routes.go,server.go}, internal/controlplane/httpapi/*_test.go (every
+  NewHandler/newRouteTable call site gained a fakeLimitsUpdater positional
+  argument — mechanical churn across 16 test files), cmd/yalla-api/main.go,
+  ralph/prd.json, ralph/progress.txt.
+- Verification run: gofmt -w .; go mod tidy; go build ./...; go vet ./...;
+  go test -race -count=1 ./... (unit + httpapi); YALLA_TEST_DATABASE_URL=...
+  go test -race -count=1 -run 'TestLimits|TestQuota|TestUpdateLimits|TestListLimits|TestBuildLimits|TestOrganizationService' ./internal/controlplane/store/... ./internal/controlplane/httpapi/...
+- Results: all my changes pass (-race included). goimports / golangci-lint /
+  staticcheck / govulncheck still not installed locally (documented in
+  earlier iterations).
+  - Pre-existing TestAPIKeyService* integration tests fail on main as well
+    (confirmed by stashing my changes and re-running with
+    YALLA_TEST_DATABASE_URL set) — these are unrelated to BE-0097 and are
+    outside this story's scope.
+- Remaining risks / follow-ups:
+  - BE-0098 (contract tests for PATCH /v1/organizations/{org_id}/limits)
+    and BE-0099 (policy matrix coverage, the unblocked p1) are now ready.
+    limits_patch_test.go covers most of BE-0098's surface, but the two
+    remain separate PRD stories.
+  - Removing an organization override (reverting to plan default) is NOT
+    in scope here: this endpoint upserts only. A separate "remove
+    override" story (or supporting a sentinel value) would land later if
+    the customer surface needs it.
+  - The audit event currently records updated_resources as
+    "projects,services" (closed-set names sorted). It does NOT record the
+    submitted limit_value/enforcement_mode pairs — those are sensitive
+    business inputs that a future audit-redaction story may decide to
+    record under a different policy. The shape is forward-compatible: the
+    metadata map can grow without breaking the wire contract.
+- Learnings for future iterations:
+  - ON CONFLICT against a PARTIAL unique index MUST repeat the WHERE
+    predicate in the conflict_target clause: Postgres treats the partial
+    index as not eligible for ON CONFLICT otherwise. The pattern is `ON
+    CONFLICT (cols) WHERE <same predicate> DO UPDATE`.
+  - Adding a new dependency to a constructor with ~17 call sites (the
+    NewHandler / newRouteTable signature) is genuinely O(N) churn in tests
+    — but every test file follows the same wiring pattern, so a single
+    consistent substring substitution covers the bulk of it. The two
+    files where the substring differed (api_keys_test.go used `reader,
+    fakeAPIKeyReader`, limits_test.go used `nil, fakeAPIKeyReader{}` in
+    the missing-reader test) needed targeted edits, but the rest fell out
+    of one mechanical search/replace.
+  - For numeric request fields whose zero is meaningful (a limit of 0
+    forbids the resource), use `*int64`. A non-pointer int64 cannot
+    distinguish "field omitted" from "set to zero", and the body decoder
+    would silently treat the latter as the former — leaking a real client
+    intent through a default-zero floor.
+  - The handler's "at least one entry / every entry supplies limit_value"
+    rejection mirrors the store layer's identical violation. This is
+    intentional symmetry — both layers must validate at the boundary —
+    not duplication. The field paths match byte-for-byte
+    ("limits[i].limit_value"), so a future caller cannot tell whether the
+    rejection came from the handler or the store, which keeps the wire
+    contract stable across refactors.
+---
 
 ## 2026-05-15 - BE-0040
 - What was implemented: GET /v1/me, the first authenticated customer-facing

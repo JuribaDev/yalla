@@ -55,6 +55,27 @@ func (f fakeLimitsReader) ListEffectiveLimits(_ context.Context, organizationID 
 	return f.limits, nil
 }
 
+// fakeLimitsUpdater is a canned LimitsUpdater for httpapi tests. The zero
+// value returns a nil slice and no error and records nothing, which is all
+// the suites that never reach the PATCH handler need; the PATCH tests set
+// limits/err and read got back to prove the handler forwards the validated
+// input to the store layer unchanged.
+type fakeLimitsUpdater struct {
+	limits []store.EffectiveQuotaLimit
+	err    error
+	got    *store.UpdateLimitsInput
+}
+
+func (f fakeLimitsUpdater) UpdateLimits(_ context.Context, in store.UpdateLimitsInput) ([]store.EffectiveQuotaLimit, error) {
+	if f.got != nil {
+		*f.got = in
+	}
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.limits, nil
+}
+
 // listLimitsHandlerFor builds an http.Handler that points at the GET
 // /v1/organizations/{org_id}/limits route, wired through the same
 // NewHandler the production binary uses. id and authErr drive the fake
@@ -64,7 +85,21 @@ func listLimitsHandlerFor(id auth.Identity, authErr error, reader LimitsReader) 
 	return NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, a, policy.NewEngine(),
 		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
 		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
-		reader,
+		reader, fakeLimitsUpdater{},
+		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
+		nil)
+}
+
+// updateLimitsHandlerFor builds an http.Handler that points at the PATCH
+// /v1/organizations/{org_id}/limits route, wired through the same NewHandler
+// the production binary uses. id and authErr drive the fake authenticator;
+// updater is the LimitsUpdater the handler writes through.
+func updateLimitsHandlerFor(id auth.Identity, authErr error, updater LimitsUpdater) http.Handler {
+	a := fakeAuthenticator{identity: id, err: authErr}
+	return NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, a, policy.NewEngine(),
+		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
+		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
+		fakeLimitsReader{}, updater,
 		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
 		nil)
 }
@@ -331,7 +366,7 @@ func TestListLimitsMissingReaderIsInternalError(t *testing.T) {
 	handler := NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, a, policy.NewEngine(),
 		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
 		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
-		nil,
+		nil, fakeLimitsUpdater{},
 		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
 		nil)
 

@@ -2728,8 +2728,8 @@
       ],
       "type": "endpoint-quota",
       "priority": 2,
-      "passes": false,
-      "notes": "Endpoint belongs to the quota backend surface."
+      "passes": true,
+      "notes": "Implemented: PATCH /v1/organizations/{org_id}/limits upserts organization-scoped quota policies. Request body: {limits:[{resource,limit_value,enforcement_mode?}, ...]} validated by httpapi (missing limit_value -> 400) and by the store layer (closed-set resource, non-negative limit, closed-set mode, no duplicates). Required action limits.write (CapAdmin, no support cross-tenant exception). Store-layer LimitsService composes a tenant existence pre-check (typed NotFound on missing org), one organization-scoped quota_policies upsert per entry, an immutable audit record (action=limits.write, metadata.updated_resources=sorted closed-set names), and an in-tx re-read of effective limits — all in one Store.Write. New QuotaRepository.UpsertOrganizationPolicy uses ON CONFLICT (organization_id, resource) WHERE scope_kind='organization' to target the partial unique index. Wired through NewHandler/newRouteTable as a new LimitsUpdater port; the route uses organizationIDResolver so cross-tenant {org_id} is a 403 before the handler runs. cmd/yalla-api builds the LimitsService at startup."
     },
     {
       "id": "BE-0098",
