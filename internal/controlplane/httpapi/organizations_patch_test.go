@@ -63,7 +63,7 @@ type updateOrganizationSuccessEnvelope struct {
 func updateOrganizationHandlerFor(id auth.Identity, authErr error, updater OrganizationUpdater) http.Handler {
 	a := fakeAuthenticator{identity: id, err: authErr}
 	return NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, a, policy.NewEngine(),
-		fakeOrganizationReader{}, fakeOrganizationCreator{}, updater, fakeOrganizationDeleter{}, fakeMembershipReader{}, nil)
+		fakeOrganizationReader{}, fakeOrganizationCreator{}, updater, fakeOrganizationDeleter{}, fakeMembershipReader{}, fakeMembershipCreator{}, nil)
 }
 
 // patchOrganization issues PATCH /v1/organizations/{orgID} against handler with

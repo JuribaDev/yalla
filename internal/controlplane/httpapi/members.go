@@ -10,6 +10,8 @@ import (
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
 	"github.com/JuribaDev/yalla/internal/controlplane/policy"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
+	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
+	"github.com/JuribaDev/yalla/internal/controlplane/validate"
 )
 
 // errNoMembershipReader is returned when GET /v1/organizations/{org_id}/members
@@ -18,6 +20,13 @@ import (
 // programming mistake, not a client error — so the handler reports it as a
 // typed internal failure rather than serving an empty or misleading list.
 var errNoMembershipReader = errors.New("httpapi: no membership reader configured")
+
+// errNoMembershipCreator is returned when POST /v1/organizations/{org_id}/members
+// is reached without a membership creator wired into NewHandler. Like
+// errNoMembershipReader it can only happen through a wiring error — a
+// programming mistake, not a client error — so the handler reports it as a
+// typed internal failure rather than silently failing to persist the resource.
+var errNoMembershipCreator = errors.New("httpapi: no membership creator configured")
 
 // MembershipReader is the narrow persistence port GET
 // /v1/organizations/{org_id}/members depends on. *store.MembershipReader
@@ -117,5 +126,97 @@ func listMembersHandler(reader MembershipReader) http.HandlerFunc {
 			out = append(out, memberResourceOf(m))
 		}
 		apienvelope.WriteData(w, http.StatusOK, requestID(r), listMembersPayload{Members: out})
+	}
+}
+
+// MembershipCreator is the narrow persistence port POST
+// /v1/organizations/{org_id}/members depends on. *store.MembershipService
+// satisfies it in production; tests supply a fake. Like OrganizationCreator
+// it is an interface declared here so the handler stays unit-testable without
+// a real database — the concrete orchestrator (the existence checks, the
+// memberships row, and the audit record committed in one transaction) lives
+// in the store layer.
+type MembershipCreator interface {
+	Add(ctx context.Context, in store.AddMembershipInput) (store.OrganizationMember, error)
+}
+
+// addMemberRequest is the decoded POST /v1/organizations/{org_id}/members
+// request body. UserID names the existing global user to add to the
+// organization the {org_id} path parameter names, and Role is the
+// organization-wide role to grant. The store layer validates both before any
+// database work — an invalid request never opens a transaction — and neither
+// field carries credential material; the user identifier is the opaque
+// global id, never a password or token.
+type addMemberRequest struct {
+	UserID string `json:"user_id"`
+	Role   string `json:"role"`
+}
+
+// addMemberPayload is the data block of the POST
+// /v1/organizations/{org_id}/members success envelope: the membership that
+// was created, in the same stable wire shape GET
+// /v1/organizations/{org_id}/members returns for each list element. It
+// carries no credential material.
+type addMemberPayload struct {
+	Member memberResource `json:"member"`
+}
+
+// addMemberHandler builds the POST /v1/organizations/{org_id}/members
+// handler. It decodes and delegates: the request body is strictly decoded
+// (oversized, malformed, or unknown-field bodies become a typed 400 that
+// never echoes the input), then the add-member unit of work — confirm the
+// organization exists, confirm the user exists, write the memberships row,
+// append the audit record, all in one transaction — runs in the store layer
+// through the MembershipCreator port.
+//
+// RequireAuth gates the route on action members.manage before the handler
+// runs — authorized through organizationIDResolver against the organization
+// the path names — and attaches the resolved principal, so a request that
+// reaches the handler has already cleared the tenant boundary: a
+// cross-tenant {org_id} was rejected as a 403 by the policy engine, never
+// reaching this code. A request that arrives here with no principal is
+// therefore a wiring error and is reported as a typed internal error. The
+// principal and the request correlation identifiers are passed to the
+// creator so the audit record names the actor; a validation failure, a
+// not-found {org_id} or user_id, an already-a-member conflict, and a
+// datastore outage each surface as their own typed status, never disguised
+// as one another.
+func addMemberHandler(creator MembershipCreator) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if creator == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoMembershipCreator))
+			return
+		}
+
+		var req addMemberRequest
+		if err := validate.DecodeJSON(r.Body, &req, 0); err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		member, err := creator.Add(r.Context(), store.AddMembershipInput{
+			OrganizationID: r.PathValue("org_id"),
+			UserID:         req.UserID,
+			Role:           req.Role,
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		apienvelope.WriteData(w, http.StatusCreated, requestID(r), addMemberPayload{
+			Member: memberResourceOf(member),
+		})
 	}
 }

@@ -87,7 +87,10 @@ func main() {
 		logger.Error("failed to initialize the organization reader", "error", err.Error())
 		os.Exit(1)
 	}
-	organizationService, err := store.NewOrganizationService(dataStore, store.NewOrganizationRepository(), store.NewAuditRepository())
+	orgRepo := store.NewOrganizationRepository()
+	membershipRepo := store.NewMembershipRepository()
+	auditRepo := store.NewAuditRepository()
+	organizationService, err := store.NewOrganizationService(dataStore, orgRepo, auditRepo)
 	if err != nil {
 		logger.Error("failed to initialize the organization service", "error", err.Error())
 		os.Exit(1)
@@ -95,6 +98,11 @@ func main() {
 	members, err := store.NewMembershipReader(dataStore)
 	if err != nil {
 		logger.Error("failed to initialize the membership reader", "error", err.Error())
+		os.Exit(1)
+	}
+	membershipService, err := store.NewMembershipService(dataStore, orgRepo, membershipRepo, auditRepo)
+	if err != nil {
+		logger.Error("failed to initialize the membership service", "error", err.Error())
 		os.Exit(1)
 	}
 	authenticator, err := auth.NewAuthenticator(auth.AuthenticatorConfig{
@@ -129,7 +137,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              cfg.APIAddr,
-		Handler:           httpapi.NewHandler(build, readiness, meta, authenticator, engine, organizations, organizationService, organizationService, organizationService, members, logger),
+		Handler:           httpapi.NewHandler(build, readiness, meta, authenticator, engine, organizations, organizationService, organizationService, organizationService, members, membershipService, logger),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

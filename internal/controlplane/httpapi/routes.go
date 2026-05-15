@@ -78,12 +78,13 @@ type versionPayload struct {
 //
 // orgs backs the organization read endpoints, creator backs POST
 // /v1/organizations, updater backs PATCH /v1/organizations/{org_id}, deleter
-// backs DELETE /v1/organizations/{org_id}, and members backs GET
+// backs DELETE /v1/organizations/{org_id}, members backs GET
+// /v1/organizations/{org_id}/members, and memberCreator backs POST
 // /v1/organizations/{org_id}/members. Any may be nil for tests and tooling
 // that only inspect the route table's metadata; a request that actually
 // reaches a handler with a nil dependency is reported as a typed internal
 // error rather than a misleading empty list or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader) []apiRoute {
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -308,6 +309,33 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// read, exactly as the policy matrix specifies.
 			resolver: organizationIDResolver,
 			handler:  listMembersHandler(members),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodPost,
+				Path:           "/v1/organizations/{org_id}/members",
+				OperationID:    "addOrganizationMember",
+				Summary:        "Add a member to an organization",
+				Description:    "Adds an existing global user to the organization named by the {org_id} path parameter, with the requested organization-wide role, in the source-of-truth database. The request body supplies the user identifier and the role; both are validated before any database work, so an invalid request never opens a transaction. Action members.manage is authorized against the organization the path names before the handler runs: a principal adding a member outside its own tenant is rejected with a deterministic 403, so a cross-tenant id can never mutate another tenant's membership graph. The memberships row and an immutable audit record naming the authenticated principal are committed in one transaction: a created membership can never exist without its audit trail. The role must be one of owner, admin, or member; a user that does not exist is a stable 404, and a user that is already a member of the organization is a stable 409. The response carries no credential material.",
+				Tags:           []string{tagMembers},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionMembersManage),
+				PathParams: []openapi.PathParam{{
+					Name:        "org_id",
+					Description: "The id of the organization to add the member to.",
+				}},
+				SuccessStatus:      http.StatusCreated,
+				SuccessDescription: "The membership was created.",
+			},
+			// organizationIDResolver authorizes action members.manage against
+			// the organization the {org_id} path parameter names, not merely
+			// the principal's home organization, so a cross-tenant id is
+			// denied at the policy boundary before the handler mutates any
+			// data. members.manage is a CapManage action and has no
+			// cross-tenant support exception — unlike CapRead actions, the
+			// support principal cannot manage members of another tenant.
+			resolver: organizationIDResolver,
+			handler:  addMemberHandler(memberCreator),
 		},
 	}
 }

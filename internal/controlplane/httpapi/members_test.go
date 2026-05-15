@@ -54,6 +54,25 @@ func (f fakeMembershipReader) ListMembers(_ context.Context, organizationID stri
 	return f.members, f.err
 }
 
+// fakeMembershipCreator is a canned MembershipCreator for httpapi tests. The
+// zero value returns a zero OrganizationMember and no error, which is all the
+// test helpers that never reach the handler (the public-surface and GET
+// suites) need; the POST member tests set member/err and read got back to
+// prove the handler forwards the validated request and the authenticated
+// actor to the store layer unchanged.
+type fakeMembershipCreator struct {
+	member store.OrganizationMember
+	err    error
+	got    *store.AddMembershipInput
+}
+
+func (f fakeMembershipCreator) Add(_ context.Context, in store.AddMembershipInput) (store.OrganizationMember, error) {
+	if f.got != nil {
+		*f.got = in
+	}
+	return f.member, f.err
+}
+
 // listMembersSuccessEnvelope is the decoded shape of the GET
 // /v1/organizations/{org_id}/members success envelope.
 type listMembersSuccessEnvelope struct {
@@ -71,7 +90,7 @@ type listMembersSuccessEnvelope struct {
 func listMembersHandlerFor(id auth.Identity, authErr error, reader MembershipReader) http.Handler {
 	a := fakeAuthenticator{identity: id, err: authErr}
 	return NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, a, policy.NewEngine(),
-		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{}, reader, nil)
+		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{}, reader, fakeMembershipCreator{}, nil)
 }
 
 // getMembers issues GET /v1/organizations/{orgID}/members against handler,

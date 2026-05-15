@@ -73,6 +73,60 @@ func (r *MembershipRepository) Get(ctx context.Context, q Querier, organizationI
 	return m, nil
 }
 
+// Insert writes a new memberships row inside tx, joins it with the member's
+// global user identity, and returns the persisted OrganizationMember —
+// including the database-assigned role_version, timestamps, and the user's
+// email and display name. It requires a *Tx — not a bare Querier — so a
+// membership can never be created outside the transaction that also carries
+// its audit record.
+//
+// role_version is left to the schema default (1): a freshly added member
+// starts at version 1, the same monotonic-positive counter that backs
+// session-token revocation for human members.
+//
+// A constraint violation is reported as a typed apierr.Conflict: the caller's
+// view of the resource lifecycle is stale. The service layer pre-checks both
+// organization and user existence before this call, so a violation at this
+// layer can only be the primary-key duplicate — the user is already a member
+// of the organization. A non-violation driver error surfaces as
+// apierr.StoreUnavailable through mapWriteError. The raw driver error, which
+// may name the constraint, is preserved only as the wrapped cause for
+// server-side logging and never reaches the user-facing message.
+func (r *MembershipRepository) Insert(ctx context.Context, tx *Tx, organizationID, userID, role string) (OrganizationMember, error) {
+	if tx == nil {
+		return OrganizationMember{}, apierr.Internal(errors.New("store: MembershipRepository.Insert called with a nil transaction"))
+	}
+	row := tx.QueryRow(ctx,
+		`WITH inserted AS (
+		     INSERT INTO memberships (organization_id, user_id, role)
+		     VALUES ($1, $2, $3)
+		     RETURNING organization_id, user_id, role, role_version, created_at, updated_at
+		 )
+		 SELECT i.organization_id, i.user_id, i.role, i.role_version, i.created_at, i.updated_at, u.email, u.display_name
+		   FROM inserted i
+		   JOIN users u ON u.id = i.user_id`,
+		organizationID, userID, role)
+	m, err := scanOrganizationMember(row)
+	if err != nil {
+		return OrganizationMember{}, mapWriteError(err, "the user is already a member of this organization")
+	}
+	return m, nil
+}
+
+// UserExists reports whether userID names a row in the global users table. It
+// is the membership service's pre-check before INSERT: a missing user is
+// surfaced as the typed apierr.NotFound a caller can read, instead of relying
+// on a foreign-key constraint violation collapsing into a generic Conflict at
+// the INSERT site. It accepts a Querier so it works against an open write
+// transaction.
+func (r *MembershipRepository) UserExists(ctx context.Context, q Querier, userID string) (bool, error) {
+	var exists bool
+	if err := q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)`, userID).Scan(&exists); err != nil {
+		return false, apierr.StoreUnavailable(err)
+	}
+	return exists, nil
+}
+
 // OrganizationMember is a memberships row joined with the member's global user
 // identity: the shape GET /v1/organizations/{org_id}/members needs. It carries
 // the organization-wide role and lifecycle timestamps from the memberships
