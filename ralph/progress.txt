@@ -2915,3 +2915,66 @@
     `omitempty` is safe — existing endpoints just omit it. There is no golden
     full-document byte test, only a determinism test, so additive openapi
     fields don't require regenerating fixtures.
+
+## 2026-05-15 - BE-0054
+- Added policy-matrix coverage for GET /v1/organizations/{org_id}: the
+  authorization contract for the first path-parameterized customer endpoint.
+  Unlike GET /v1/organizations (no resolver), this route carries
+  organizationIDResolver, so RequireAuth authorizes organization.read against
+  the org the {org_id} PATH names — the cross-tenant boundary is real here and
+  is the central property under test.
+- New file: internal/controlplane/httpapi/organizations_get_policy_test.go
+  with four tests, all driving the real NewHandler + real policy.NewEngine():
+  - TestGetOrganizationPolicyMatrixRoles: all six built-in roles
+    (owner/admin/developer/viewer/ci/support) reading their own {org_id} are
+    allowed via ReasonAllowedByRole (asserted at the engine) and get 200; the
+    reader receives exactly the path parameter.
+  - TestGetOrganizationPolicyRevokedAndExpiredKeys: revoked/expired credential
+    surfaces as a Disabled principal -> 403 E_FORBIDDEN
+    ReasonDeniedPrincipalDisabled; reader never reached; body never echoes the
+    principal id or organization.
+  - TestGetOrganizationPolicyWrongOrganizationPrincipal: a non-support
+    principal requesting a foreign {org_id} -> deterministic 403
+    ReasonDeniedCrossTenant, reader never reached, foreign id not echoed.
+    Engine-level: non-support denied cross-tenant, support allowed
+    (ReasonAllowedBySupport). Handler-level: a support principal reading
+    another tenant's {org_id} -> 200 — the documented cross-tenant exception
+    IS reachable through this route precisely because the resolver derives the
+    resource from the path.
+  - TestGetOrganizationPolicyGrantContainment: project/env/service grants are
+    confined at the engine level (sibling project, production, sibling
+    service, parent-env secrets all denied). The route-specific assertions: a
+    project-scoped key is denied organization.read on its OWN {org_id} root
+    via ReasonDeniedOutOfScope (403, reader never reached) — a scoped key
+    cannot be widened to an org read even for its own tenant — while an
+    org-scoped grant is allowed via ReasonAllowedByGrant (200). Also pins that
+    a project grant is denied a sibling-org {org_id} (out-of-scope holds
+    regardless of which org the path names).
+- Files changed: internal/controlplane/httpapi/organizations_get_policy_test.go
+  (new), ralph/prd.json, ralph/progress.txt.
+- Verification (Postgres up via docker compose): gofmt -w . clean, go mod tidy
+  clean, go build ./... clean, go vet ./... clean, go test ./... PASS (all
+  packages incl. store integration), go test -race
+  ./internal/controlplane/httpapi/ PASS.
+- Remaining risks / follow-ups: BE-0053 (contract tests for GET
+  /v1/organizations/{org_id}) is still passes:false — organizations_get_test.go
+  already covers most of its criteria; a future iteration should confirm and
+  flip it. goimports/golangci-lint/staticcheck/govulncheck still not installed
+  locally (documented in earlier iterations).
+- **Learnings for future iterations:**
+  - Policy-matrix files for a path-parameterized route mirror the no-resolver
+    sibling (organizations_policy_test.go) but flip one property: the
+    cross-tenant case is a real handler-level 403 (not just an engine-level
+    assertion), AND the support cross-tenant read is a real handler-level 200.
+    With a resolver, the engine sees the PATH's org as the resource — so both
+    the deny and the support-allow exception become reachable through the
+    route, not merely engine facts.
+  - For a resolver-backed route, "out of scope" is testable for the principal's
+    OWN organization: a project/env/service-scoped key hitting {org_id}=its own
+    org is still denied organization.read (ReasonDeniedOutOfScope) because the
+    grant does not cover the org root. The no-resolver list endpoint can only
+    show this for the home org too, but here it is the same {org_id} a 200
+    would use — a sharper proof the scoped key cannot be widened.
+  - Use fakeOrganizationReader.gotID (a *string) to assert "reader never
+    reached" on every deny path — set it and check it stayed "".
+---
