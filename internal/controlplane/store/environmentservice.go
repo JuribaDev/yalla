@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
@@ -22,6 +23,7 @@ import (
 const (
 	environmentCreateAction = "environment.create"
 	environmentUpdateAction = "environment.update"
+	environmentDeleteAction = "environment.delete"
 	environmentProvisionJob = "environment.provision"
 	// environmentDisplayNameMaxLen bounds a human-authored environment
 	// display name, in runes. It mirrors the project display-name bound
@@ -97,6 +99,46 @@ type UpdateEnvironmentInput struct {
 	EnvironmentID  string
 	Slug           *string
 	DisplayName    *string
+	IfMatchVersion *int64
+	ActorID        string
+	ActorKind      string
+	ActorOrgID     string
+	RequestID      string
+	CorrelationID  string
+}
+
+// DeleteEnvironmentInput is the input to EnvironmentService.ScheduleDeletion.
+// OrganizationID identifies the tenant the environment belongs to;
+// EnvironmentID names the environment to schedule for teardown. The
+// Actor* and correlation fields describe the authenticated principal
+// performing the deletion and are recorded verbatim on the audit event.
+// They are plain strings so the store layer takes no build dependency on
+// the policy or telemetry packages — the httpapi handler, which already
+// holds the resolved principal and the request correlation, fills them
+// in.
+//
+// OrganizationID is sourced from the principal's home organization at
+// the HTTP boundary (never from the request body or path), so a
+// cross-tenant id cannot point the write at another tenant by
+// construction. EnvironmentID is sourced from the {environment_id} PATH
+// parameter; the scheduling unit of work reads the current row under
+// (OrganizationID, EnvironmentID) before any mutation, so a cross-tenant
+// or unknown environment_id surfaces as a deterministic apierr.NotFound
+// rather than a 500 or a silent success.
+//
+// IfMatchVersion is the optional optimistic-concurrency precondition:
+// when non-nil, the scheduling succeeds only if the row's current
+// version equals *IfMatchVersion at write time, otherwise it returns a
+// typed apierr.ConflictStale carrying the row's authoritative version.
+// The httpapi layer fills it from the request's If-Match header. A nil
+// pointer disables the check (next-write-wins, the legacy behaviour).
+// The pointer indirection is deliberate: it distinguishes "caller did
+// not supply a precondition" from "caller supplied version 0", which is
+// impossible by schema CHECK and must not silently behave like the
+// unchecked path.
+type DeleteEnvironmentInput struct {
+	OrganizationID string
+	EnvironmentID  string
 	IfMatchVersion *int64
 	ActorID        string
 	ActorKind      string
@@ -377,6 +419,113 @@ func (svc *EnvironmentService) Update(ctx context.Context, in UpdateEnvironmentI
 		return Environment{}, txErr
 	}
 	return updated, nil
+}
+
+// ScheduleDeletion schedules the environment named by (in.OrganizationID,
+// in.EnvironmentID) for teardown, inside one transaction: read the current
+// row, optionally enforce the If-Match precondition, reject an environment
+// already scheduled, stamp deletion_scheduled_at, append the audit event.
+// A blank OrganizationID or EnvironmentID is a typed validation failure
+// raised before the transaction is opened. An {environment_id} with no
+// row inside the tenant is the typed NotFound the repository produces,
+// and an environment whose deletion was already scheduled rolls the whole
+// transaction back as a typed Conflict — so an audit record can never
+// name a deletion that did not change the resource's state.
+//
+// Authorization for environment.delete is enforced at the HTTP boundary
+// by RequireAuth against the (home organization, environment_id) resource
+// the path names — the store layer never runs an in-transaction Authorize
+// for the delete path because the HTTP gate is authoritative and the
+// in-transaction Authorizer is reserved for Create (the create-time race
+// against grant changes during a quota reservation).
+//
+// This is a soft, scheduled deletion: it records the intent and stamps
+// the timestamp. The destructive teardown — the ON DELETE CASCADE that
+// removes services and the audit log under the environment — is a later
+// worker story, so the environment row and its audit trail still exist
+// after this returns.
+func (svc *EnvironmentService) ScheduleDeletion(ctx context.Context, in DeleteEnvironmentInput) (Environment, error) {
+	organizationID := strings.TrimSpace(in.OrganizationID)
+	if organizationID == "" {
+		return Environment{}, apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "organization_id",
+			Reason: "must not be blank",
+		})
+	}
+	environmentID := strings.TrimSpace(in.EnvironmentID)
+	if environmentID == "" {
+		return Environment{}, apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "environment_id",
+			Reason: "must not be blank",
+		})
+	}
+
+	// The audit record is filed under the actor's home organization — the
+	// tenant the principal authenticated into — while its resource id names
+	// the environment that was scheduled for deletion. A missing actor
+	// organization is a wiring error (an authenticated request always
+	// carries one), not client input, so it is reported as Internal rather
+	// than a validation failure.
+	actorOrgID := strings.TrimSpace(in.ActorOrgID)
+	if actorOrgID == "" {
+		return Environment{}, apierr.Internal(errors.New("store: EnvironmentService.ScheduleDeletion requires an actor organization for the audit record"))
+	}
+
+	event := AuditEvent{
+		OrganizationID: actorOrgID,
+		ActorID:        strings.TrimSpace(in.ActorID),
+		ActorKind:      strings.TrimSpace(in.ActorKind),
+		Action:         environmentDeleteAction,
+		ResourceKind:   string(domain.KindEnvironment),
+		ResourceID:     environmentID,
+		Decision:       AuditDecisionAllowed,
+		Reason:         "authorization granted for environment.delete",
+		RequestID:      strings.TrimSpace(in.RequestID),
+		CorrelationID:  strings.TrimSpace(in.CorrelationID),
+	}
+
+	var scheduled Environment
+	txErr := svc.store.Write(ctx, func(ctx context.Context, tx *Tx) error {
+		current, getErr := svc.environments.GetByID(ctx, tx, organizationID, environmentID)
+		if getErr != nil {
+			return getErr
+		}
+		// The version pre-check surfaces a stale If-Match BEFORE the
+		// already-scheduled check, so the caller learns "your view of the
+		// version is stale" instead of an already-scheduled message that
+		// might race with a concurrent edit they did not see.
+		if in.IfMatchVersion != nil && current.Version != *in.IfMatchVersion {
+			return apierr.ConflictStale(current.Version)
+		}
+		if current.DeletionScheduledAt != nil {
+			// Scheduling teardown for an environment already scheduled for
+			// teardown changes nothing: the caller's view of the resource
+			// lifecycle is stale, so it is a typed Conflict, not a silent
+			// success that would write a misleading audit record.
+			return apierr.Conflict("environment deletion is already scheduled")
+		}
+		row, updErr := svc.environments.ScheduleDeletion(ctx, tx, organizationID, environmentID, in.IfMatchVersion)
+		if updErr != nil {
+			return updErr
+		}
+		// deletion_scheduled_at is database-assigned (now()); record the
+		// resolved timestamp — a non-secret value — as audit context so the
+		// trail captures exactly when teardown was scheduled.
+		if row.DeletionScheduledAt != nil {
+			event.Metadata = map[string]string{
+				"deletion_scheduled_at": row.DeletionScheduledAt.UTC().Format(time.RFC3339Nano),
+			}
+		}
+		if _, audErr := svc.audit.Append(ctx, tx, event); audErr != nil {
+			return audErr
+		}
+		scheduled = row
+		return nil
+	})
+	if txErr != nil {
+		return Environment{}, txErr
+	}
+	return scheduled, nil
 }
 
 // environmentUpdate is the validated, normalised form of an

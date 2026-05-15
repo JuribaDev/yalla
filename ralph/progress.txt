@@ -1,6 +1,7 @@
 ## Codebase Patterns
 
 - PATCH endpoint for a deep resource by bare id (BE-0157 pattern, PATCH /v1/environments/{environment_id}, store/environment.go EnvironmentRepository.Update + classifyEnvironmentConcurrencyMiss, store/environmentservice.go EnvironmentService.Update + buildEnvironmentUpdate, httpapi/environments.go updateEnvironmentHandler): canonical shape for ALL deep-resource PATCH endpoints. Repository.Update takes a fully-formed row + *int64 ifMatchVersion, runs a tenant-scoped (organization_id, id) UPDATE that touches only the mutable columns (slug, display_name — NEVER the composite tenant key), and classifies a zero-row return via a classify*ConcurrencyMiss helper that disambiguates gone-vs-stale by Get-in-same-tx. The service-layer orchestrator runs the validation BEFORE the transaction is opened (buildXxxUpdate is split out for unit-testability, rejects empty patches as 400, never echoes submitted values in violations), then in ONE Store.Write: read current row, check If-Match pre-condition (stale -> ConflictStale with row's authoritative version BEFORE the version-checked UPDATE — even a trivial no-op patch with stale If-Match surfaces the conflict), apply patch in-memory, call Repository.Update, append audit row. UNLIKE Create, the orchestrator does NOT invoke the in-tx Authorizer or QuotaReserver — the HTTP RequireAuth gate is authoritative for the update path; the in-tx Authorize is reserved for Create's defence-in-depth against grant-change races during quota reservation. The HTTP handler reuses the shared parseIfMatchVersion + writeOrganizationETag helpers (yes, the helper is org-named but it is the SHARED chokepoint for every endpoint mirroring versions to ETag — do not duplicate it per resource family). Body is strictly decoded with `slug *string` and `display_name *string` (pointer nil-ness IS the partial-update contract); the body intentionally exposes no organization_id/parent_id/self_id field — tenant isolation is structural. Response is yalla.output.v1 carrying the same wire shape GET returns, plus ETag header. Path with NO parent_id (bare-id route): the resource scope pins only OrganizationID + the deep id, so the engine's covers() rule DENIES every scoped grant at the policy boundary (a grant with a pinned ProjectID cannot cover a resource with no ProjectID); principals whose only access is a scoped grant must use a parent-scoped route. Every NewHandler positional-arg addition triggers a ~50-site sweep across ~35 existing test files — anchor on `fakeXxxReader{}, nil)` and `fakeXxxReader{}, logger)` plus the `reader, nil)` / `reader, logger)` outliers in the resource's own get/policy test helpers. The newRouteTable-only OpenAPI shape tests (all-nils form, partial-fakes-with-trailing-nils form) each need one more `nil` appended. AVOID double-counting: run go vet AFTER each automated sweep and undo overshoots before continuing.
+- DELETE endpoint for a deep resource by bare id (BE-0160 pattern, DELETE /v1/environments/{environment_id}, migration 0016_environment_deletion_schedule, store/environment.go EnvironmentRepository.ScheduleDeletion, store/environmentservice.go EnvironmentService.ScheduleDeletion + DeleteEnvironmentInput, httpapi/environments.go deleteEnvironmentHandler + EnvironmentDeleter): canonical shape for ALL deep-resource SOFT-delete endpoints. The migration is structurally identical to 0013_project_deletion_schedule — `ALTER TABLE <resource> ADD COLUMN deletion_scheduled_at timestamptz` + a partial index `WHERE deletion_scheduled_at IS NOT NULL` for the future teardown-worker scan. The repository ScheduleDeletion is an SQL-IDEMPOTENT unconditional UPDATE stamping `deletion_scheduled_at = now()` returning the row in column order (so callers see the trigger-refreshed updated_at + bumped version); the already-scheduled distinction is the service's job (the repository must remain SQL-idempotent for non-customer callers — workers, admin jobs — that retry). ifMatchVersion uses the SAME pattern as Update — nil disables, non-nil adds `AND version = $N` to the WHERE — and classify*ConcurrencyMiss disambiguates the no-rows case (gone vs stale) by Get-in-same-tx. The service-layer orchestrator validates blank-input BEFORE opening the tx (typed InvalidInput, missing actor org is Internal — wiring error, never client input), then in ONE Store.Write: read current row, check If-Match pre-condition (stale -> ConflictStale BEFORE the already-scheduled check, so a stale caller learns version-stale instead of an already-scheduled message that races with concurrent edits they did not see), reject already-scheduled as apierr.Conflict (rolls the whole tx back so the audit record can never name a deletion that did not change resource state), call Repository.ScheduleDeletion, record the resolved deletion_scheduled_at stamp as audit metadata (`event.Metadata["deletion_scheduled_at"] = row.DeletionScheduledAt.UTC().Format(time.RFC3339Nano)` — a non-secret timestamp, safe to record verbatim), append audit row. UNLIKE Create, the orchestrator does NOT invoke the in-tx Authorizer or QuotaReserver — the HTTP RequireAuth gate is authoritative for the delete path; the in-tx Authorize is reserved for Create's defence-in-depth against grant-change races during quota reservation. The HTTP handler reuses parseIfMatchVersion + writeOrganizationETag + telemetry.FromContext for correlation; returns 202 Accepted (the scheduling is durable but the destructive teardown is a later worker job). The wire DTO (projectEnvironment / projectResource) gains a `DeletionScheduledAt *string \`json:"deletion_scheduled_at,omitempty"\`` field so a live row's JSON shape is byte-identical to before (omitempty + nil pointer = field absent), while a scheduled row exposes the stamp as RFC 3339 — mirror this on every resource DTO that gains a soft-delete column. Routes.go registration uses `Method: http.MethodDelete`, `SuccessStatus: http.StatusAccepted`, the same `environmentIDResolver` as GET/PATCH (the bare-id three routes share one resolver), and the same description shape as `deleteProject`'s scheduled-not-immediate / version-pre-check / one-tx-audit clauses. NewHandler+newRouteTable signatures each grow ONE positional port (`environmentDeleter EnvironmentDeleter` at the very tail of the env ports group, after `environmentUpdater`); a Python regex sweep over the test directory anchored on `fakeEnvironmentUpdater{}, nil)` -> `fakeEnvironmentUpdater{}, fakeEnvironmentDeleter{}, nil)` and `fakeEnvironmentUpdater{}, logger)` (37 NewHandler call sites across 37 files) handled the bulk; the named-updater outlier `fakeEnvironmentReader{}, updater, nil)` in the resource's own update test got `..., updater, fakeEnvironmentDeleter{}, nil)`; the all-nil newRouteTable form (7 files) received one trailing nil; the partial-fakes-with-trailing-nils form (projects_delete_test.go + projects_restore_test.go ending `fakeProjectGrantReader{}, nil, nil, nil, nil, nil, nil, nil)`) needed one MORE trailing nil; the multi-line newRouteTable-with-explicit-fakes form (3 files ending `fakeEnvironmentUpdater{})`) became `fakeEnvironmentUpdater{}, fakeEnvironmentDeleter{})`. Run `go vet ./...` AFTER each sweep — Go's positional-arg compile error tells you exactly which call sites the regex missed. The store-side integration tests cover repo happy-path + NotFound + tenant-scoped + nil-tx-rejection plus service happy-path-with-audit + already-scheduled-rolls-back-AND-stamp-unchanged-AND-only-one-audit-row + NotFound-no-audit + tenant-scoped-no-audit + stale-If-Match + blank-input + missing-actor-org. The httpapi contract tests cover happy-path-forwards-(principal,path,if-match)+202+ETag+wire-DTO + named-If-Match forwarded + malformed-If-Match 400 + NotFound 404 + already-scheduled 409 + stale-If-Match 409 + missing-deleter 500 + unauthenticated 401 + OpenAPI route registered. Forward-applicable to every future bare-id soft-delete endpoint (service.delete on /v1/services/{service_id}, etc.).
 - New top-level resource family that already has its persistence table from an earlier migration (BE-0148 pattern, environments table from 0002 + version column from 0011, store/environment.go, httpapi/project_environments.go): a reader-only scoped-child vertical lands JUST the GET endpoint and pairs with the existing table — NO new migration. The vertical is structurally identical to BE-0142 (project_variables reader) with one narrowing worth pinning: when the table already exists (environments was created by 0002_tenant_hierarchy.up.sql at the same time as projects/services, and gained its version + bump_version trigger in 0011_optimistic_versions.up.sql), the story collapses into store layer + http layer + wiring + tests — no migration to declare composite FKs, scope-uniqueness indexes, or triggers. The store layer (Environment struct, EnvironmentRepository.ListByProject, EnvironmentReader.ListProjectEnvironments) mirrors ProjectVariableRepository/ProjectVariableReader exactly — every read is tenant-scoped at the SQL predicate, the reader Gets the project first inside the same Store.Read tx so a cross-tenant or unknown project_id surfaces as apierr.NotFound (never an empty list), and the repository has its own list cap (environmentListMaxRows = 500). Crucially, environments carry NO credential material (the table stores only id, organization_id, project_id, slug, display_name, version, created_at, updated_at) so the HTTP projection (projectEnvironmentOf) needs no value-redaction chokepoint — every field is structural — but the projection STILL exists as a single chokepoint so a future column added to store.Environment is reviewed for its wire exposure here rather than leaking by default. The integration tests (store/environment_test.go) prove ordering, tenant scoping (a cross-tenant (orgA, projB_id) pair yields no rows), the empty-project shape (non-nil empty slice), the reader's project existence check, and that a cross-tenant id surfaces as apierr.NotFound WITHOUT leaking any of the foreign tenant's environment id / project id / slug into the error message. The HTTP layer adds a new operation tag (tagEnvironments = "environments") because environments will get their own /v1/environments/{environment_id} surface later; the list endpoint is tagged [tagProjects, tagEnvironments] mirroring how project_variables uses [tagProjects, tagVariables]. NewHandler and newRouteTable signatures each grow ONE positional port (projectEnvironments ProjectEnvironmentReader at the TAIL of the arg list, after projectVariableReplacer); cmd/yalla-api/main.go wires *store.EnvironmentReader at startup. A Python regex sweep over 33 test files anchored on `fakeProjectVariableReplacer{}, nil)` -> `fakeProjectVariableReplacer{}, fakeProjectEnvironmentReader{}, nil)` (44 sites) plus a second sweep on `fakeProjectVariableReplacer{}, logger)` (server_test.go + me_contract_test.go) plus the named-replacer outlier `fakeProjectVariableReader{}, replacer, nil)` -> `..., replacer, fakeProjectEnvironmentReader{}, nil)` (project_variables_test.go's replaceProjectVariablesHandlerFor) plus the openapi-only newRouteTable form `fakeProjectVariableReader{}, fakeProjectVariableReplacer{})` -> `..., fakeProjectEnvironmentReader{})` (project_variables_test.go's BE-0142 OpenAPI test) handled the NewHandler/newRouteTable churn (54 sites total). The all-nil newRouteTable form with 32 nils received one trailing nil to become 33 (6 sites). projects_delete_test.go + projects_restore_test.go newRouteTable calls ended `fakeProjectGrantReader{}, nil, nil, nil)` and got one MORE trailing nil to become `nil, nil, nil, nil)`. The KindEnvironment domain Kind ("env") already existed and is in the valid-kinds map from earlier work; no domain/id.go changes were needed. Forward-applicable to every future reader-only vertical on a hierarchy resource whose table predates the story.
 - env.read-on-{project_id}-resolver policy matrix (BE-0144, internal/controlplane/httpapi/projects_variables_get_policy_test.go) is the structural sibling of the project.grants.read-on-{project_id}-resolver matrix (BE-0138, projects_grants_policy_test.go) — same CapRead capability class, same projectIDResolver scope (`{principal home org, path project_id}`), same six-roles-all-allow matrix via ReasonAllowedByRole, same support cross-tenant exception at the engine (ReasonAllowedBySupport — pinned even though projectIDResolver structurally blocks it on the customer-facing wire), same engine cross-tenant deny matrix for non-support roles, same scoped-grant containment shape (sibling project denied, env-/service-scoped grants denied against the project resource, org-level Viewer grant allowed via ReasonAllowedByGrant). The load-bearing distinction is the wire-redaction chokepoint: project_variables rows carry credential material (a non-null Value that flips to output.Sentinel when IsSecret), so the deny-body leak guard (variablesDenyBodyLeak) anchors on BOTH structural identifiers (canonical project/var ids, keys, non-secret values) AND the seeded secret plaintext (canonicalVariablesSecretPlaintext). project_grants rows store no credential material, so grantsDenyBodyLeak omits a plaintext anchor. The allow-path test also asserts secret rows project as output.Sentinel and that the seeded plaintext never appears in the response body — pinning projectVariableOf as the chokepoint independent of how authority was earned (role / org-level grant / project-level grant). Forward-applicable to every future env.read matrix that resolves into a project-, env-, or service-level scope on a variables route: keep the role / disabled / wrong-org / grant-containment skeleton, swap the action+resolver for the new endpoint's, and ALWAYS add a secret-plaintext needle to the leak guard plus a Sentinel-projection assertion to every allow-path tie-in.
 - environment.read-on-bare-{environment_id}-resolver policy matrix (BE-0156, internal/controlplane/httpapi/environments_get_policy_test.go) is the structural sibling of the {project_id}-resolver siblings (BE-0144 env.read on the variables route, BE-0150 environment.read on the parent-scoped route) for endpoints that use a BARE-ID resolver (environmentIDResolver, future serviceIDResolver / deploymentIDResolver). TWO load-bearing distinctions from the projectIDResolver siblings. (1) The resolver pins NO ProjectID leg on the resource scope (`policy.Scope{OrganizationID: principal.home, EnvironmentID: r.PathValue("environment_id")}`), so the engine's one-way Scope.covers() rule (internal/controlplane/policy/policy.go) denies EVERY scoped grant at the boundary via ReasonDeniedOutOfScope — project-scoped, env-scoped, AND service-scoped grants all DENY on this route, even when the grant names the target environment's own id or the target environment's own parent project, because the grant scope pins ProjectID and the resource scope does not. The acceptance criteria's three containment properties (sibling project not reached / staging-grant-doesn't-imply-production / service-grant-shields-parent-env-secrets) are still pinned at the engine against their natural resources (project / env / service Resource), but the wire tie-in INVERTS the projectIDResolver shape: instead of "project-scoped grant on target ALLOWS, sibling DENIES," every scoped-key type DENIES with ReasonDeniedOutOfScope on this route and only org-wide roles + the org-level grant allow. The org-level Viewer grant remains the load-bearing ALLOW because its grant scope pins nothing past OrganizationID — covers() matches a resource without ProjectID. Pin a "grant on the SAME environment id as the path names" engine-level deny too, so a future relaxation of covers() (e.g. admitting `Scope{EnvironmentID: env_X}` to cover `Resource{Scope{EnvironmentID: env_X}}` regardless of ProjectID) cannot land without failing this test. (2) The support cross-tenant exception is suppressed on the wire by construction — environmentIDResolver pins OrganizationID to principal.home — so the support cross-tenant ALLOW only fires at the engine layer against a hand-built foreign-org Resource. The wire-level "wrong organization" probe surfaces as 404 E_NOT_FOUND from the tenant-scoped GetByID query (never 403, which would confirm existence), and the body must not echo the foreign org id. The contract-test helper bakes in a single canonical principal (getEnvironmentHandlerFor takes `t, reader` only, with authForEnvGet's hardcoded principal), so this matrix introduces a per-test identity-injected helper LOCAL to the policy file (getEnvironmentByIDHandlerForIdentity, signature `(id auth.Identity, authErr error, reader EnvironmentReader) http.Handler`) modelled on listProjectsHandlerFor / listProjectEnvironmentsHandlerFor — adding the helper locally avoids modifying the 9 contract tests that already use the simpler form. ACTION-CONSTANT gotcha to pin: routes.go:574 sets `RequiredAction: string(policy.ActionEnvironmentRead)` for this route, NOT `policy.ActionEnvRead` — both are CapRead per catalog.go but they're different catalog entries (env-vars vs env entity); mixing them up silently swaps which catalog row a future tier-upgrade watches. Forward-applicable to every future bare-id matrix on a deep resource (service.read on /v1/services/{service_id}, deployment.read on /v1/deployments/{deployment_id}, etc).
@@ -12260,4 +12261,181 @@
   - For CapWrite actions, ALL six roles (including Support) deny cross-tenant — distinct from CapRead where Support is admitted. Pin both engine verdicts in cross-tenant tests so a future catalog change is caught.
   - fakeEnvironmentUpdater fields are env/err/gotInput/callCount (gotInput captures the full store.UpdateEnvironmentInput). Same shape as fakeProjectUpdater but field names differ from fakeEnvironmentReader (which uses gotOrgID/gotEnvID directly).
   - Constants like canonicalPatchDisplayName already declared in projects_update_policy_test.go would collide if reused — use distinct names per file (e.g., canonicalUpdateEnvDisplayName) since policy tests live in the same package.
+---
+
+## 2026-05-15 - BE-0160
+- Implemented DELETE /v1/environments/{environment_id}: customer-facing
+  soft-delete endpoint for the environment row that schedules teardown
+  by stamping deletion_scheduled_at and atomically recording an
+  environment.delete audit event, returning 202 Accepted with the
+  persisted row + ETag header so the caller can echo the new version
+  back as the next If-Match precondition.
+- Files changed (production):
+  - internal/controlplane/store/migrate/migrations/0016_environment_deletion_schedule.up.sql (new):
+    adds environments.deletion_scheduled_at timestamptz column + partial
+    index `WHERE deletion_scheduled_at IS NOT NULL` (the future teardown
+    worker scan target). Mirror of migration 0013 for projects.
+  - internal/controlplane/store/migrate/migrations/0016_environment_deletion_schedule.down.sql (new):
+    DROP INDEX IF EXISTS + ALTER TABLE DROP COLUMN IF EXISTS reverse path.
+  - internal/controlplane/store/environment.go: new DeletionScheduledAt
+    *time.Time field on Environment, extended environmentColumns +
+    scanEnvironment, new ScheduleDeletion(ctx, tx, orgID, envID,
+    ifMatchVersion) method on EnvironmentRepository. The repository keeps
+    the unconditional-UPDATE posture deliberately: the customer-facing
+    already-scheduled distinction is the service's job, the repository
+    must remain SQL-idempotent for non-customer callers (workers, admin
+    jobs). Stale If-Match goes through the existing
+    classifyEnvironmentConcurrencyMiss (the same disambiguation Update
+    already uses) so a stale view is reported as ConflictStale.
+  - internal/controlplane/store/environmentservice.go: new
+    `environmentDeleteAction = "environment.delete"` constant, new
+    DeleteEnvironmentInput type, new EnvironmentService.ScheduleDeletion
+    unit-of-work method. Composition: validate (blank orgID/envID +
+    missing actor org are typed errors BEFORE the tx opens), then in
+    Store.Write: GetByID the current row, optionally enforce
+    IfMatchVersion (the version pre-check runs BEFORE the
+    already-scheduled check so a stale If-Match wins over an
+    already-scheduled message — the same ordering ProjectService uses),
+    reject already-scheduled as apierr.Conflict, call
+    EnvironmentRepository.ScheduleDeletion, record
+    deletion_scheduled_at as audit metadata (verbatim RFC3339Nano UTC,
+    non-secret), append the audit event. A failure in any step rolls
+    the whole tx back: an audit row can never name a deletion that did
+    not happen.
+  - internal/controlplane/httpapi/environments.go: new
+    errNoEnvironmentDeleter sentinel, EnvironmentDeleter port (narrow:
+    ScheduleDeletion(ctx, store.DeleteEnvironmentInput) ->
+    (store.Environment, error)), deleteEnvironmentPayload wire shape,
+    deleteEnvironmentHandler. The handler builds the store input from
+    `principal.OrganizationID` and `r.PathValue("environment_id")` —
+    NEVER from a request body (DELETE has none) — so the tenant
+    boundary is structural. parseIfMatchVersion + writeOrganizationETag
+    are reused for the version handshake. 202 Accepted, mirroring
+    DELETE /v1/projects/{project_id}.
+  - internal/controlplane/httpapi/project_environments.go: extended the
+    projectEnvironment wire DTO with `DeletionScheduledAt *string
+    \`json:"deletion_scheduled_at,omitempty"\``, and made
+    projectEnvironmentOf project a non-nil DeletionScheduledAt as
+    `e.DeletionScheduledAt.UTC().Format(time.RFC3339Nano)`. A live env
+    keeps its byte-for-byte original wire shape (omitempty + nil
+    pointer = field absent), only a scheduled row exposes the stamp.
+    Mirror of projectResource.DeletionScheduledAt from
+    project_resource.
+  - internal/controlplane/httpapi/routes.go: registered DELETE
+    /v1/environments/{environment_id} as an apiRoute under
+    tagEnvironments with RequiresAuth=true,
+    RequiredAction=policy.ActionEnvironmentDelete (already in the
+    catalog from earlier work as CapWrite),
+    resolver=environmentIDResolver (same resolver as GET/PATCH —
+    the bare-id three routes share one resolver),
+    SuccessStatus=http.StatusAccepted. The path carries no parent
+    project_id, so the resource scope pins only OrganizationID +
+    EnvironmentID — project-, environment-, and service-scoped grants
+    are denied at the boundary by the engine's covers() rule (a grant
+    with a pinned ProjectID cannot cover a resource with no
+    ProjectID); principals whose only access is a scoped grant must
+    use a parent-scoped route. Added the OpenAPI operation
+    `deleteEnvironment`. newRouteTable signature gained
+    EnvironmentDeleter (one new positional arg at the tail of the env
+    group, after environmentUpdater).
+  - internal/controlplane/httpapi/server.go: NewHandler signature
+    gained EnvironmentDeleter (one new positional arg threaded into
+    newRouteTable). Doc comment updated to name the new dependency.
+  - cmd/yalla-api/main.go: builds the EnvironmentService once and now
+    passes it as BOTH EnvironmentCreator (POST) AND EnvironmentUpdater
+    (PATCH) AND EnvironmentDeleter (DELETE) at startup — the single
+    *store.EnvironmentService satisfies all three narrow ports.
+- Files changed (tests):
+  - internal/controlplane/store/environment_delete_test.go (new):
+    eleven integration tests against isolated migrated Postgres —
+    EnvironmentRepository.ScheduleDeletion success (stamps + bumps
+    version + survives a separate read tx), NotFound, tenant-scoped
+    (cross-tenant id rejected as NotFound AND tenant A's env stays
+    live), nil-Tx is Internal; EnvironmentService.ScheduleDeletion
+    success (audits environment.delete with deletion_scheduled_at
+    metadata, in-tx Authorize/Quota/JobEnqueue ports NOT called —
+    HTTP gate is authoritative for delete), already-scheduled rolls
+    back (stamp unchanged AND only one environment.delete audit row
+    survives), NotFound at the orchestrator (no audit row),
+    tenant-scoped at the orchestrator (no audit row for the
+    rejected cross-tenant attempt), stale If-Match (Conflict, env
+    stays live), blank organization/environment id (InvalidInput),
+    missing actor org (Internal — wiring failure, not client input).
+  - internal/controlplane/httpapi/environments_delete_test.go (new):
+    nine contract tests in package httpapi exercising the real
+    NewHandler + real policy engine (fake Authenticator + fake
+    EnvironmentDeleter only) — happy-path forwards
+    (principal+path+If-Match)+202+ETag+wire-DTO,
+    If-Match-version-forwarded, malformed-If-Match 400,
+    NotFound 404, already-scheduled 409, stale-If-Match 409,
+    missing-deleter 500 (typed Internal not silent success),
+    unauthenticated 401, OpenAPI route registered with
+    operationId=deleteEnvironment + action=environment.delete +
+    SuccessStatus=202.
+  - internal/controlplane/httpapi/environments_test.go: added the
+    fakeEnvironmentDeleter type (records the
+    store.DeleteEnvironmentInput the handler called with so contract
+    tests can pin the principal/path/If-Match wire-through).
+  - 37 other httpapi test files: mechanical fakeEnvironmentDeleter{}
+    arg insertion (no behavioural changes) at the
+    NewHandler/newRouteTable call sites. Patterns applied:
+    `fakeEnvironmentUpdater{}, nil)` -> `fakeEnvironmentUpdater{},
+    fakeEnvironmentDeleter{}, nil)` (most sites);
+    `fakeEnvironmentUpdater{}, logger)` -> with logger variant;
+    `fakeEnvironmentReader{}, updater, nil)` ->
+    `fakeEnvironmentReader{}, updater, fakeEnvironmentDeleter{},
+    nil)` for environments_update_test.go's named-updater outlier;
+    the all-nil newRouteTable form (7 files) received one trailing
+    nil; projects_delete_test.go + projects_restore_test.go had
+    their existing partial-fakes-with-trailing-nils form extended by
+    one more `nil`; the multi-line newRouteTable-with-explicit-fakes
+    form (3 files ending `fakeEnvironmentUpdater{})`) became
+    `fakeEnvironmentUpdater{}, fakeEnvironmentDeleter{})`.
+- Verification run:
+  - gofmt -w .                                              -> clean
+  - go mod tidy                                             -> clean
+  - go vet ./...                                            -> clean
+  - go test ./...                                           -> all PASS
+  - go test -race ./...                                     -> all PASS
+  - go test -run 'TestDeleteEnvironment' ./internal/controlplane/httpapi/ -> PASS
+  - go test -run 'TestEnvironment' ./internal/controlplane/store/ -> PASS
+- Remaining risks: none from BE-0160 itself. The pre-existing
+  TestProjectEnvironmentReplaceServiceReplaceCrossTenantProjectIsNotFound
+  + similar suites still skip without YALLA_TEST_DATABASE_URL (the
+  Ralph quality-check contract runs go test without a DB) — these
+  are existing skips, unchanged by this story.
+- Learnings for future iterations:
+  - The "deletion stamp must survive across separate transactions"
+    assertion needs `s.Read(...)` AFTER the `s.Write(...)` that
+    stamped it, not a read inside the SAME write tx — a same-tx read
+    sees uncommitted data even when the tx rolls back later, so it
+    cannot prove the stamp persisted. project_delete_test.go follows
+    the same pattern. Future soft-delete-style tests should re-Read
+    on a fresh tx for the "persistence survived commit" assertion.
+  - `apierr.Error` is NOT exported as a struct type; the public
+    surface is `*yerr.Error` via `yerr.From(err)`. The
+    error-is-conflict assertion is `if ye := yerr.From(err);
+    ye.Code != yerr.CodeConflict { ... }`, NOT
+    `errors.As(err, &apierr.Error)`. Caught and fixed during local
+    test compile.
+  - When a NewHandler signature grows by one positional port, count
+    the trailing nils carefully on EVERY call shape. The Python
+    bulk regex handled four patterns (`updater{}, nil)`, `updater{},
+    logger)`, `reader{}, updater, nil)`, all-nil newRouteTable) but
+    MISSED the "explicit fakes with trailing nils" form
+    (projects_delete_test.go ended `fakeProjectGrantReader{},
+    nil, nil, nil, nil, nil, nil, nil)` after BE-0148's previous
+    sweep) and the "multi-line newRouteTable closing on
+    `fakeEnvironmentUpdater{})`" form (env routes test files). Both
+    need a follow-up grep on `<resource_X>Updater{})` and a count of
+    existing trailing nils. `go vet` will tell you which call sites
+    are short by name + line — trust the compiler over the regex.
+  - The wire DTO seam (projectEnvironmentOf / projectResourceOf /
+    etc.) is the single chokepoint for "should this column appear
+    on the wire?". Adding a soft-delete column to the schema must
+    be paired with adding `*string DeletionScheduledAt
+    \`json:",omitempty"\`` to the wire DTO (omitempty + nil = field
+    absent on live rows, so the change is byte-backward-compatible
+    for every existing reader). projectResource went through this
+    exact change in BE-0130 and projectEnvironment now follows.
 ---

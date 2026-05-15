@@ -114,13 +114,14 @@ type versionPayload struct {
 // PUT /v1/projects/{project_id}/variables, projectEnvironments backs
 // GET /v1/projects/{project_id}/environments, environmentCreator
 // backs POST /v1/projects/{project_id}/environments,
-// environmentReader backs GET /v1/environments/{environment_id}, and
-// environmentUpdater backs PATCH /v1/environments/{environment_id}.
+// environmentReader backs GET /v1/environments/{environment_id},
+// environmentUpdater backs PATCH /v1/environments/{environment_id},
+// and environmentDeleter backs DELETE /v1/environments/{environment_id}.
 // Any may be nil for tests and tooling that only inspect the route
 // table's metadata; a request that actually reaches a handler with a
 // nil dependency is reported as a typed internal error rather than a
 // misleading empty list or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater) []apiRoute {
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -630,6 +631,42 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// environments in another tenant.
 			resolver: environmentIDResolver,
 			handler:  updateEnvironmentHandler(environmentUpdater),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodDelete,
+				Path:           "/v1/environments/{environment_id}",
+				OperationID:    "deleteEnvironment",
+				Summary:        "Schedule an environment for deletion",
+				Description:    "Schedules the environment named by the {environment_id} path parameter for deletion in the source-of-truth database. The deletion is scheduled, not immediate: the environment's deletion_scheduled_at stamp is set and the destructive teardown — the ON DELETE CASCADE that removes its services and audit log — is carried out by a later worker story, so the environment and its audit trail still exist when this returns. Action environment.delete is authorized against the (principal home organization, {environment_id}) resource the path names before the handler runs: environment.delete is a CapWrite action, so the gate admits the principal's organization-wide write roles (owner, admin, developer, ci) and denies viewer, denies support (CapRead-only — a support principal cannot mutate even within its home tenant). The path carries no parent project_id, so the policy engine cannot pin the ProjectID leg of the resource scope at authorization time — project-, environment-, and service-scoped grants are denied at the boundary by the engine's covers() rule (a grant with a pinned ProjectID cannot cover a resource with no ProjectID); principals whose only access is a scoped grant must use a parent-scoped route to address an environment by its (project, environment) tuple. A cross-tenant or unknown environment_id reaches the persistence layer with the principal's home organization id and is rejected as a deterministic 404 by the tenant-scoped repository query, never revealing another tenant's environment. The optional If-Match request header carries the row's optimistic-concurrency version (a strong ETag of the form \"<n>\"); a stale version is rejected as a deterministic 409 carrying the row's authoritative version under details.current_version. Scheduling deletion for an environment already scheduled for deletion is a stable 409. The soft-delete write and an immutable audit record naming the authenticated principal are committed in one transaction: a scheduled deletion can never be persisted without its audit trail. The response carries no credential material and mirrors the row's new version into the ETag response header so the caller can echo it back as the next If-Match precondition.",
+				Tags:           []string{tagEnvironments},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionEnvironmentDelete),
+				SuccessStatus:  http.StatusAccepted,
+				PathParams: []openapi.PathParam{{
+					Name:        "environment_id",
+					Description: "The id of the environment to schedule for deletion.",
+				}},
+				SuccessDescription: "The environment was scheduled for deletion.",
+			},
+			// environmentIDResolver authorizes action environment.delete
+			// against the (principal home organization, {environment_id})
+			// resource the path names, not merely the principal's home
+			// organization. The organization id is taken from the
+			// principal's home org (never the caller), so a cross-tenant
+			// environment_id still hits the tenant-scoped repository
+			// query and surfaces as a 404 at the persistence boundary.
+			// The path carries no parent project_id, so the resource
+			// scope pins only OrganizationID and EnvironmentID —
+			// project-, environment-, and service-scoped grants are
+			// denied at the policy boundary by design (the engine's
+			// covers() rule), forcing scoped-grant-only principals onto
+			// parent-scoped routes. environment.delete is a CapWrite
+			// action and has no cross-tenant support exception — unlike
+			// CapRead actions, a support principal cannot mutate
+			// environments in another tenant.
+			resolver: environmentIDResolver,
+			handler:  deleteEnvironmentHandler(environmentDeleter),
 		},
 		{
 			endpoint: openapi.Endpoint{

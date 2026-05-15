@@ -72,16 +72,21 @@ type listProjectEnvironmentsPayload struct {
 // UpdatedAt are RFC 3339 timestamps with the same semantics as every
 // other dated resource the API surfaces; Version is the database-owned
 // optimistic-concurrency counter callers use as an If-Match precondition
-// on PATCH / DELETE in later stories.
+// on PATCH and DELETE. DeletionScheduledAt is the soft-delete marker
+// added by migration 0016 (mirroring projectResource.deletion_scheduled_at
+// from 0013): omitted entirely on a live environment and rendered as
+// an RFC 3339 timestamp on one already scheduled for teardown by DELETE
+// /v1/environments/{environment_id}.
 type projectEnvironment struct {
-	ID             string    `json:"id"`
-	OrganizationID string    `json:"organization_id"`
-	ProjectID      string    `json:"project_id"`
-	Slug           string    `json:"slug"`
-	DisplayName    string    `json:"display_name"`
-	Version        int64     `json:"version"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID                  string    `json:"id"`
+	OrganizationID      string    `json:"organization_id"`
+	ProjectID           string    `json:"project_id"`
+	Slug                string    `json:"slug"`
+	DisplayName         string    `json:"display_name"`
+	Version             int64     `json:"version"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
+	DeletionScheduledAt *string   `json:"deletion_scheduled_at,omitempty"`
 }
 
 // projectEnvironmentOf projects a store.Environment into the stable
@@ -89,9 +94,11 @@ type projectEnvironment struct {
 // environments table itself carries no credential material — but the
 // projection remains the single chokepoint so a future column added to
 // store.Environment is reviewed for its wire exposure here rather than
-// leaking by default.
+// leaking by default. A nil DeletionScheduledAt — a live environment —
+// is omitted from the wire shape entirely, matching the
+// projectResource.deletion_scheduled_at omitempty convention.
 func projectEnvironmentOf(e store.Environment) projectEnvironment {
-	return projectEnvironment{
+	out := projectEnvironment{
 		ID:             e.ID,
 		OrganizationID: e.OrganizationID,
 		ProjectID:      e.ProjectID,
@@ -101,6 +108,11 @@ func projectEnvironmentOf(e store.Environment) projectEnvironment {
 		CreatedAt:      e.CreatedAt,
 		UpdatedAt:      e.UpdatedAt,
 	}
+	if e.DeletionScheduledAt != nil {
+		scheduled := e.DeletionScheduledAt.UTC().Format(time.RFC3339Nano)
+		out.DeletionScheduledAt = &scheduled
+	}
+	return out
 }
 
 // listProjectEnvironmentsHandler builds the GET

@@ -30,6 +30,14 @@ var errNoEnvironmentReader = errors.New("httpapi: no environment reader configur
 // rather than silently failing to persist the mutation.
 var errNoEnvironmentUpdater = errors.New("httpapi: no environment updater configured")
 
+// errNoEnvironmentDeleter is returned when DELETE
+// /v1/environments/{environment_id} is reached without an environment
+// deleter wired into NewHandler. Like errNoEnvironmentUpdater it can
+// only happen through a wiring error — a programming mistake, not a
+// client error — so the handler reports it as a typed internal failure
+// rather than silently failing to persist the soft-delete.
+var errNoEnvironmentDeleter = errors.New("httpapi: no environment deleter configured")
+
 // EnvironmentReader is the narrow persistence port GET
 // /v1/environments/{environment_id} depends on.
 // *store.EnvironmentReader satisfies it in production; tests supply a
@@ -289,6 +297,111 @@ func updateEnvironmentHandler(updater EnvironmentUpdater) http.HandlerFunc {
 
 		writeOrganizationETag(w, environment.Version)
 		apienvelope.WriteData(w, http.StatusOK, requestID(r), updateEnvironmentPayload{
+			Environment: projectEnvironmentOf(environment),
+		})
+	}
+}
+
+// EnvironmentDeleter is the narrow persistence port DELETE
+// /v1/environments/{environment_id} depends on.
+// *store.EnvironmentService satisfies it in production; tests supply a
+// fake. Like EnvironmentUpdater it is an interface declared here so the
+// handler stays unit-testable without a real database — the concrete
+// orchestrator (the desired-state soft-delete stamp and the immutable
+// audit record committed in one transaction) lives in the store layer.
+type EnvironmentDeleter interface {
+	ScheduleDeletion(ctx context.Context, in store.DeleteEnvironmentInput) (store.Environment, error)
+}
+
+// deleteEnvironmentPayload is the data block of the DELETE
+// /v1/environments/{environment_id} success envelope: the environment
+// with its deletion_scheduled_at stamp set, in the same stable wire
+// shape the other environment endpoints return. It carries no credential
+// material — the environments table itself stores no secrets;
+// environment-scoped variables and other secrets live behind their own
+// endpoints where the redaction policy applies.
+type deleteEnvironmentPayload struct {
+	Environment projectEnvironment `json:"environment"`
+}
+
+// deleteEnvironmentHandler builds the DELETE
+// /v1/environments/{environment_id} handler. It schedules the
+// environment for teardown by stamping deletion_scheduled_at in the
+// source-of-truth database through the EnvironmentDeleter port, then
+// renders the persisted row in a stable yalla.output.v1 envelope. The
+// teardown is scheduled, not immediate: the destructive cascade that
+// removes services and the audit log under the environment is a later
+// worker story, so the environment and its audit trail still exist when
+// this returns.
+//
+// RequireAuth gates the route on action environment.delete before the
+// handler runs — authorized through environmentIDResolver against the
+// (principal home organization, {environment_id}) resource the path
+// names — and attaches the resolved principal, so a request that reaches
+// the handler has already cleared the policy boundary.
+// environment.delete is a CapWrite action, so the gate admits the
+// principal's organization-wide write roles (owner, admin, developer,
+// ci) and denies viewer, denies support (a support principal is
+// CapRead-only and cannot mutate even within its home tenant). The path
+// carries no parent project_id, so the policy engine cannot pin the
+// ProjectID leg of the resource scope at authorization time — project-,
+// environment-, and service-scoped grants are denied at the boundary by
+// the engine's covers() rule (a grant with a pinned ProjectID cannot
+// cover a resource with no ProjectID); principals whose only access is a
+// scoped grant must use a parent-scoped route to address an environment
+// by its (project, environment) tuple.
+//
+// The handler never trusts a caller-supplied organization id: the store
+// call is built from principal.OrganizationID and
+// r.PathValue("environment_id"), so a cross-tenant environment_id
+// reaches the tenant-scoped repository query with the principal's home
+// organization id and is reported as a deterministic NotFound by the
+// persistence layer, never another tenant's row. A request that arrives
+// with no principal is a wiring error reported as a typed internal
+// error; an If-Match parse failure, a stale If-Match version, a
+// not-found {environment_id}, an environment whose deletion is already
+// scheduled, and a datastore outage each surface as their own typed
+// status, never disguised as one another. On success, the handler
+// mirrors the row's authoritative version into the ETag response header
+// so the caller can echo it back as the next If-Match precondition
+// without re-reading the row, and returns 202 Accepted — the scheduling
+// is durable but the destructive teardown is a later worker job.
+func deleteEnvironmentHandler(deleter EnvironmentDeleter) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if deleter == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoEnvironmentDeleter))
+			return
+		}
+
+		ifMatchVersion, ifMatchErr := parseIfMatchVersion(r)
+		if ifMatchErr != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(ifMatchErr))
+			return
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		environment, err := deleter.ScheduleDeletion(r.Context(), store.DeleteEnvironmentInput{
+			OrganizationID: p.OrganizationID,
+			EnvironmentID:  r.PathValue("environment_id"),
+			IfMatchVersion: ifMatchVersion,
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		writeOrganizationETag(w, environment.Version)
+		apienvelope.WriteData(w, http.StatusAccepted, requestID(r), deleteEnvironmentPayload{
 			Environment: projectEnvironmentOf(environment),
 		})
 	}

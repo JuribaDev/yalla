@@ -23,25 +23,34 @@ import (
 // counter callers use as an If-Match precondition on PATCH / DELETE in
 // later stories.
 //
+// DeletionScheduledAt is the soft-delete marker added by migration 0016
+// (mirroring projects.deletion_scheduled_at from 0013): NULL means the
+// environment is live; a non-NULL value means it has been scheduled for
+// teardown. The destructive teardown — the cascade that removes the
+// environment's services and audit trail — is carried out by a later
+// worker story, so the row and its audit trail still exist after a
+// scheduled deletion returns.
+//
 // The struct carries no credential material — the environments table stores
 // only structural identifiers and lifecycle timestamps. Environment-scoped
 // secrets live in a later environment_variables migration and are redacted
 // wherever they are handled.
 type Environment struct {
-	ID             string
-	OrganizationID string
-	ProjectID      string
-	Slug           string
-	DisplayName    string
-	Version        int64
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID                  string
+	OrganizationID      string
+	ProjectID           string
+	Slug                string
+	DisplayName         string
+	Version             int64
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	DeletionScheduledAt *time.Time
 }
 
 // environmentColumns is the SELECT projection used by every read in this
 // repository. Keeping it as a single string keeps the column list in
 // lockstep with scanEnvironment.
-const environmentColumns = `id, organization_id, project_id, slug, display_name, version, created_at, updated_at`
+const environmentColumns = `id, organization_id, project_id, slug, display_name, version, created_at, updated_at, deletion_scheduled_at`
 
 // environmentListMaxRows caps how many rows a single ListByProject call
 // returns. An unbounded query can never be issued by accident; an HTTP
@@ -247,10 +256,69 @@ func scanEnvironment(row scanRow) (Environment, error) {
 		&e.Version,
 		&e.CreatedAt,
 		&e.UpdatedAt,
+		&e.DeletionScheduledAt,
 	); err != nil {
 		return Environment{}, err
 	}
 	return e, nil
+}
+
+// ScheduleDeletion stamps deletion_scheduled_at = now() on the environment
+// identified by (organizationID, environmentID) inside tx and returns the
+// persisted row, including the trigger-refreshed updated_at timestamp and
+// bumped version. It requires a *Tx — not a bare Querier — so an
+// environment can never be marked for teardown outside the transaction
+// that also carries its audit record. The query is tenant scoped by
+// organization_id first, so an environmentID that belongs to another
+// organization simply does not match and is reported as NotFound — a
+// cross-tenant id can never schedule another organization's environment
+// for teardown. The parent project relationship is preserved by
+// construction: the UPDATE touches only deletion_scheduled_at and never
+// the composite (organization_id, project_id) tenant key.
+//
+// The UPDATE is unconditional in its predicate apart from the optional
+// version check: re-scheduling an environment already scheduled for
+// deletion is a conflict the EnvironmentService detects with a prior read
+// inside the same transaction, not a not-found this repository can
+// distinguish (the repository must remain SQL-idempotent for non-customer
+// callers — workers, admin jobs — that need a stable retry surface).
+//
+// ifMatchVersion enforces optimistic concurrency identically to Update — a
+// nil pointer disables the check, a non-nil pointer adds a WHERE clause on
+// the current version, and a stale view is reported as a typed
+// apierr.ConflictStale carrying the row's authoritative version through
+// classifyEnvironmentConcurrencyMiss.
+func (r *EnvironmentRepository) ScheduleDeletion(ctx context.Context, tx *Tx, organizationID, environmentID string, ifMatchVersion *int64) (Environment, error) {
+	if tx == nil {
+		return Environment{}, apierr.Internal(errors.New("store: EnvironmentRepository.ScheduleDeletion called with a nil transaction"))
+	}
+	var row pgx.Row
+	if ifMatchVersion == nil {
+		row = tx.QueryRow(ctx,
+			`UPDATE environments
+			    SET deletion_scheduled_at = now()
+			  WHERE organization_id = $1 AND id = $2
+			 RETURNING `+environmentColumns,
+			organizationID, environmentID)
+	} else {
+		row = tx.QueryRow(ctx,
+			`UPDATE environments
+			    SET deletion_scheduled_at = now()
+			  WHERE organization_id = $1 AND id = $2 AND version = $3
+			 RETURNING `+environmentColumns,
+			organizationID, environmentID, *ifMatchVersion)
+	}
+	updated, err := scanEnvironment(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if ifMatchVersion == nil {
+			return Environment{}, apierr.NotFound("environment", environmentID)
+		}
+		return Environment{}, classifyEnvironmentConcurrencyMiss(ctx, r, tx, organizationID, environmentID)
+	}
+	if err != nil {
+		return Environment{}, apierr.StoreUnavailable(err)
+	}
+	return updated, nil
 }
 
 // EnvironmentReader is the store-backed read adapter for the environments

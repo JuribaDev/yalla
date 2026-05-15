@@ -73,6 +73,37 @@ func (f fakeEnvironmentUpdater) Update(_ context.Context, in store.UpdateEnviron
 	return f.env, f.err
 }
 
+// fakeEnvironmentDeleter is a canned EnvironmentDeleter for httpapi
+// contract tests of DELETE /v1/environments/{environment_id}. It
+// supplies a fixed response (or error) and records the
+// store.DeleteEnvironmentInput the handler called with so tests can
+// assert the handler forwards exactly the principal's home organization
+// (never a caller-supplied id), the path environment_id, and the parsed
+// If-Match precondition verbatim.
+//
+// The fake intentionally does not enforce tenant scoping or
+// validation itself — that is the production
+// *store.EnvironmentService's job, proven by its integration tests.
+// The HTTP-layer contract under test is "the handler asks the port
+// using the principal's home org, the path env_id, and the parsed
+// If-Match version", regardless of how the port answers.
+type fakeEnvironmentDeleter struct {
+	env       store.Environment
+	err       error
+	gotInput  *store.DeleteEnvironmentInput
+	callCount *int
+}
+
+func (f fakeEnvironmentDeleter) ScheduleDeletion(_ context.Context, in store.DeleteEnvironmentInput) (store.Environment, error) {
+	if f.gotInput != nil {
+		*f.gotInput = in
+	}
+	if f.callCount != nil {
+		*f.callCount++
+	}
+	return f.env, f.err
+}
+
 func (f fakeEnvironmentReader) GetEnvironment(_ context.Context, organizationID, environmentID string) (store.Environment, error) {
 	if f.gotOrgID != nil {
 		*f.gotOrgID = organizationID
@@ -138,7 +169,7 @@ func getEnvironmentHandlerFor(t *testing.T, reader EnvironmentReader) http.Handl
 		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
 		fakeProjectReader{}, fakeProjectCreator{}, fakeProjectUpdater{}, fakeProjectDeleter{}, fakeProjectRestorer{},
 		fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, fakeProjectVariableReader{}, fakeProjectVariableReplacer{},
-		fakeProjectEnvironmentReader{}, fakeEnvironmentCreator{}, reader, fakeEnvironmentUpdater{}, nil)
+		fakeProjectEnvironmentReader{}, fakeEnvironmentCreator{}, reader, fakeEnvironmentUpdater{}, fakeEnvironmentDeleter{}, nil)
 }
 
 // getEnvironment fires GET /v1/environments/{environment_id} with the
@@ -418,7 +449,7 @@ func TestGetEnvironmentDoesNotLogBearerToken(t *testing.T) {
 		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
 		fakeProjectReader{}, fakeProjectCreator{}, fakeProjectUpdater{}, fakeProjectDeleter{}, fakeProjectRestorer{},
 		fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, fakeProjectVariableReader{}, fakeProjectVariableReplacer{},
-		fakeProjectEnvironmentReader{}, fakeEnvironmentCreator{}, reader, fakeEnvironmentUpdater{}, logger)
+		fakeProjectEnvironmentReader{}, fakeEnvironmentCreator{}, reader, fakeEnvironmentUpdater{}, fakeEnvironmentDeleter{}, logger)
 
 	rec := getEnvironment(handler, canonicalEnvForGet.ID, "a-valid-token")
 	if rec.Code != http.StatusOK {
@@ -450,7 +481,7 @@ func TestGetEnvironmentOpenAPIRouteIsRegistered(t *testing.T) {
 		fakeOrgVariableReader{}, fakeOrgVariableReplacer{}, fakeOrgVariablePatcher{}, fakeOrgVariableDeleter{},
 		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
 		fakeProjectReader{}, fakeProjectCreator{}, fakeProjectUpdater{}, fakeProjectDeleter{}, fakeProjectRestorer{},
-		fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, fakeProjectVariableReader{}, fakeProjectVariableReplacer{}, fakeProjectEnvironmentReader{}, fakeEnvironmentCreator{}, fakeEnvironmentReader{}, fakeEnvironmentUpdater{})
+		fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, fakeProjectVariableReader{}, fakeProjectVariableReplacer{}, fakeProjectEnvironmentReader{}, fakeEnvironmentCreator{}, fakeEnvironmentReader{}, fakeEnvironmentUpdater{}, fakeEnvironmentDeleter{})
 
 	var found bool
 	for _, rt := range table {

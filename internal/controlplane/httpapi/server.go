@@ -75,8 +75,9 @@ import (
 // projectVariableReplacer backs PUT /v1/projects/{project_id}/variables,
 // projectEnvironments backs GET /v1/projects/{project_id}/environments,
 // environmentCreator backs POST /v1/projects/{project_id}/environments,
-// environmentReader backs GET /v1/environments/{environment_id}, and
-// environmentUpdater backs PATCH /v1/environments/{environment_id}.
+// environmentReader backs GET /v1/environments/{environment_id},
+// environmentUpdater backs PATCH /v1/environments/{environment_id}, and
+// environmentDeleter backs DELETE /v1/environments/{environment_id}.
 // All are narrow ports, not the concrete store, so the HTTP surface stays
 // unit-testable with fakes; cmd/yalla-api wires the real
 // store.OrganizationReader, store.OrganizationService,
@@ -91,20 +92,21 @@ import (
 // orgVariablePatcher, orgVariableDeleter, apiKeys, apiKeyCreator,
 // apiKeyUpdater, apiKeyRevoker, projectGrants, projectGrantReplacer,
 // projectVariables, projectVariableReplacer, projectEnvironments,
-// environmentCreator, environmentReader, or environmentUpdater still
-// registers its route — the handler reports a typed internal error
-// rather than a misleading empty list or a silently dropped write —
-// which suits tests and tooling that only exercise the public surface.
+// environmentCreator, environmentReader, environmentUpdater, or
+// environmentDeleter still registers its route — the handler reports a
+// typed internal error rather than a misleading empty list or a silently
+// dropped write — which suits tests and tooling that only exercise the
+// public surface.
 //
 // Routes come from the newRouteTable single source of truth: NewHandler
 // registers every entry on the mux and generates the OpenAPI document
 // (GET /openapi.json) from the same table, so a served route is always a
 // documented route.
-func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, authenticator Authenticator, engine *policy.Engine, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, logger *slog.Logger) http.Handler {
+func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, authenticator Authenticator, engine *policy.Engine, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter, logger *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 	build = build.Normalized()
 
-	table := newRouteTable(build, readiness, meta, orgs, creator, updater, deleter, members, memberCreator, memberUpdater, memberRemover, limits, limitsUpdater, usage, auditEvents, orgVariables, orgVariableReplacer, orgVariablePatcher, orgVariableDeleter, apiKeys, apiKeyCreator, apiKeyUpdater, apiKeyRevoker, apiKeyRotator, projects, projectCreator, projectUpdater, projectDeleter, projectRestorer, projectGrants, projectGrantReplacer, projectVariables, projectVariableReplacer, projectEnvironments, environmentCreator, environmentReader, environmentUpdater)
+	table := newRouteTable(build, readiness, meta, orgs, creator, updater, deleter, members, memberCreator, memberUpdater, memberRemover, limits, limitsUpdater, usage, auditEvents, orgVariables, orgVariableReplacer, orgVariablePatcher, orgVariableDeleter, apiKeys, apiKeyCreator, apiKeyUpdater, apiKeyRevoker, apiKeyRotator, projects, projectCreator, projectUpdater, projectDeleter, projectRestorer, projectGrants, projectGrantReplacer, projectVariables, projectVariableReplacer, projectEnvironments, environmentCreator, environmentReader, environmentUpdater, environmentDeleter)
 
 	// Generate the OpenAPI document once, from the route table, at startup.
 	doc := openAPIDocument(build, table)
