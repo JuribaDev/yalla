@@ -6361,3 +6361,117 @@
     contains identifiers like "scoped" or "role", so checking only for
     the word "limits" would have false positives.
 ---
+
+## 2026-05-15 - BE-0099
+- What was implemented: policy-matrix coverage for PATCH
+  /v1/organizations/{org_id}/limits — the authorization contract for the
+  story BE-0097 implemented. Where limits_patch_test.go (BE-0098 surface)
+  proves the wire contract, this story proves that action limits.write
+  cannot be bypassed by — or leak data because of — the principal's role,
+  revoked credentials, home organization, or scoped grants.
+  - internal/controlplane/httpapi/limits_patch_policy_test.go: four tests
+    drive the real NewHandler + real policy.NewEngine() (production
+    request path, fake authenticator + updater only) against the
+    organizationIDResolver-emitted org-root scope:
+    - TestUpdateLimitsPolicyMatrixRoles: all six built-in roles, both at
+      the engine (Decide(limits.write, org-root) verdict + reason) and
+      the wire (200/403 with the stable reason + redaction proofs).
+      Owner/Admin allow via ReasonAllowedByRole; Developer/Viewer/CI/
+      Support deny via ReasonDeniedNoCapability. The allow path also
+      pins the updater receiving the {org_id}, the decoded item, and
+      the principal's actor identifiers.
+    - TestUpdateLimitsPolicyRevokedAndExpiredKeys: revoked / expired
+      credentials (Disabled principal) deny with
+      ReasonDeniedPrincipalDisabled even when the underlying role
+      would have allowed; updater never reached; body never echoes the
+      principal id, the organization id, the seeded post-write value,
+      or the source field.
+    - TestUpdateLimitsPolicyWrongOrganizationPrincipal: cross-tenant
+      owner denied via ReasonDeniedCrossTenant at engine AND wire;
+      cross-tenant support ALSO denied via ReasonDeniedCrossTenant
+      (CapAdmin is excluded from the engine's support cross-tenant
+      exception — the load-bearing distinction from BE-0096's
+      limits.read matrix, where support IS allowed cross-tenant);
+      bonus: support is denied in its OWN home org too via
+      ReasonDeniedNoCapability (it lacks CapAdmin entirely).
+    - TestUpdateLimitsPolicyGrantContainment: project/env/service-scoped
+      Admin grants pinned against project/env/service update actions
+      (sibling project, production env, parent-level secrets — the
+      three acceptance-criteria containment properties), then tied to
+      the endpoint: each scoped grantee denied at engine + wire via
+      ReasonDeniedOutOfScope; an org-level Admin grant allowed via
+      ReasonAllowedByGrant (200 with the seeded post-write limits,
+      updater reached with the {org_id} and actor identifiers); an
+      org-level Viewer grant denied at the engine (limits.write
+      requires CapAdmin, not CapRead, so an org-root Viewer is
+      structurally not enough); a project-scoped grantee against a
+      foreign {org_id} still denied via ReasonDeniedCrossTenant (the
+      cross-tenant guard fires first, even on a scoped key).
+  - The file adds no scaffolding: it reuses updateLimitsHandlerFor,
+    patchLimits, decodeUpdateLimits, fakeLimitsUpdater (limits/err/got),
+    orgPrincipal, and decodeError from limits_test.go /
+    limits_patch_test.go / organizations_test.go. The single tiny
+    local constant — limitsWritePatchBody = a single projects=42
+    override — doubles as the request payload and as a redaction
+    probe: the fake updater seeds a different value (99 or 77) so
+    deny-path body assertions can search for the seeded post-write
+    value without false-matching the request body.
+- Files changed: internal/controlplane/httpapi/limits_patch_policy_test.go
+  (new); ralph/prd.json (BE-0099 passes -> true); ralph/progress.txt.
+- Verification run: gofmt -l . (clean); go mod tidy (no diff); go vet
+  ./... (clean); go test ./... (all packages pass); go test -race ./...
+  (all packages pass); go test -race -count=1 -run TestUpdateLimitsPolicy
+  ./internal/controlplane/httpapi/ (4 tests, all subcases, pass).
+- Results: BE-0099 implemented; PRD updated; full -race suite green.
+- Remaining risks / follow-ups:
+  - The matrix asserts the wire surface and the engine verdict
+    simultaneously, so a future drift between catalog.go (Action ->
+    Capability) and the engine's cross-tenant clause fails BOTH the
+    engine assertion AND the wire assertion. There is no audit-event
+    matrix here: BE-0097's progress entry already noted "audit currently
+    records the apply, not the denied authorization decisions" as a
+    follow-up — that's a separate change to the engine wrapper, not
+    matrix coverage, and remains out of scope.
+  - The Viewer-grant deny at the engine pins limits.write as CapAdmin
+    against the grant path. If a future story adds an "auditor"-style
+    grant that is permitted to mutate quota without admin, this test
+    will need to be updated explicitly — that's the desired posture (a
+    catalog change must surface in a matrix test, not silently widen
+    write authority).
+- Learnings for future iterations:
+  - The "policy matrix" story for a mutating endpoint follows the
+    api_keys_rotate_policy_test.go template almost line-for-line, with
+    only four axes swapped: the action constant (ActionLimitsWrite),
+    the resource Kind (KindOrganization vs KindAPIKey), the request
+    helper (patchLimits/POST body vs rotateAPIKey/no body), and the
+    leak probe (seeded post-write limit value vs seeded api-key id/
+    prefix). The role matrix table itself (six rows: Owner+Admin allow
+    via ReasonAllowedByRole, Dev/Viewer/CI/Support deny via
+    ReasonDeniedNoCapability) is identical for any CapAdmin action
+    against an org-root resource — copying the keys.manage matrix
+    rather than re-deriving it from the catalog is the right move and
+    is invariant under future engine refactors.
+  - The wire-leak probe is sensitive to the request body and the seed
+    value colliding (the request body in a denied response can plausibly
+    be echoed by some error envelopes). Picking distinct numeric values
+    for the request (42) and the seed (99 / 77) is what makes the leak
+    check actually load-bearing — if a regression caused the deny
+    envelope to start echoing the seeded post-write limit, the body-
+    contains-":99," / ":77," assertion would fail; if the request body
+    is also "limit_value":42, a contains(":42,") check would have
+    false-passed.
+  - The "support cross-tenant exception" is the load-bearing property
+    that distinguishes the CapRead matrix (limits.read, BE-0096) from
+    the CapAdmin matrix (limits.write, this story). Pinning support's
+    deny against both a foreign org (ReasonDeniedCrossTenant) AND its
+    own home org (ReasonDeniedNoCapability) locks the support role at
+    the engine level so a future catalog change cannot silently grant
+    it limit-mutation authority either by widening the cross-tenant
+    exception or by giving RoleSupport CapAdmin.
+  - A wire-level deny test for a Viewer GRANT (not Viewer role) requires
+    constructing a principal with no organization Role and only a
+    Grants slice — orgPrincipal() helper sets Role, so for grant tests
+    a literal policy.Principal{} struct with Grants is the right
+    shape, matching the pattern in api_keys_rotate_policy_test.go and
+    limits_policy_test.go.
+---
