@@ -2652,7 +2652,7 @@
       ],
       "type": "policy-api-key",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Authorization coverage for POST /v1/organizations/{org_id}/api-keys/{key_id}/rotate."
     },
     {

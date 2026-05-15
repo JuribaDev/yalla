@@ -5924,3 +5924,79 @@
     match the "fakeAPIKeyRevoker{}, nil)" pattern — a follow-up grep
     pass for "newRouteTable\\(" catches them.
 ---
+
+
+## 2026-05-15 - BE-0093
+- What was implemented: BE-0093 (policy matrix coverage for POST
+  /v1/organizations/{org_id}/api-keys/{key_id}/rotate) was already landed
+  alongside BE-0091 in commit 6aae878 as
+  internal/controlplane/httpapi/api_keys_rotate_policy_test.go. This pass
+  verifies the file fully satisfies the acceptance criteria and flips the
+  PRD flag to passes: true; no source code changes were needed.
+- Acceptance audit (file: internal/controlplane/httpapi/api_keys_rotate_policy_test.go):
+  - TestRotateAPIKeyPolicyMatrixRoles drives every built-in role (owner,
+    admin, developer, viewer, ci, support) through the production
+    NewHandler + real policy.NewEngine() path. Owner/Admin allow via
+    ReasonAllowedByRole; Developer/Viewer/CI/Support deny with
+    ReasonDeniedNoCapability (keys.manage is a CapAdmin action, OUTSIDE
+    the support cross-tenant exception). Denied responses are checked for
+    leakage of the seeded key id / prefix.
+  - TestRotateAPIKeyPolicyRevokedAndExpiredKeys covers Disabled principals
+    surfacing as the "revoked key" / "expired key" auth states — both
+    return 403 with ReasonDeniedPrincipalDisabled and never reach the
+    rotator; the body is asserted not to leak principal id, org id, or
+    seeded key id/prefix.
+  - TestRotateAPIKeyPolicyWrongOrganizationPrincipal pins the cross-tenant
+    boundary: a non-support owner of org_attacker rotating a key in
+    org_victim is a deterministic 403 (ReasonDeniedCrossTenant); the
+    rotator is never reached and the body never echoes the victim org or
+    its seeded key data. Support is also pinned — both the engine verdict
+    and the handler outcome — to confirm CapAdmin is excluded from the
+    support cross-tenant exception (cross-tenant denial), and support in
+    its OWN org is denied via ReasonDeniedNoCapability so a future catalog
+    change cannot silently grant support key-rotation authority.
+  - TestRotateAPIKeyPolicyGrantContainment proves grant containment
+    (sibling project, production environment, parent-level secrets,
+    sibling service) via project/env/service-scoped Admin grants — none
+    of those scoped grants covers the api-key resource scope, so each is
+    denied keys.manage with ReasonDeniedOutOfScope. The project-scoped
+    grantee is then tied back to the wire: 403 with the stable
+    out-of-scope reason, rotator never invoked, denied body never echoes
+    the seeded key. The complementary positive lock — an
+    organization-level Admin grant allows via ReasonAllowedByGrant while
+    an organization-level Viewer grant denies — pins the CapAdmin
+    requirement against the grant path. A final cross-tenant {org_id}
+    case on the same scoped key confirms the cross-tenant guard fires
+    over the out-of-scope guard.
+- Files changed:
+  - ralph/prd.json (BE-0093 passes: false -> true).
+  - ralph/progress.txt (this entry).
+- Verification run from repository root:
+  - gofmt -l . -> clean
+  - go mod tidy -> clean
+  - go vet ./... -> clean
+  - go build ./... -> clean
+  - go test ./internal/controlplane/httpapi/ -run TestRotateAPIKeyPolicy
+    -count=1 -> ok (0.4s)
+  - go test -race ./internal/controlplane/httpapi/ -run
+    TestRotateAPIKeyPolicy -count=1 -> ok (1.5s)
+  - go test ./... -> ok
+  - go test -race ./... -> ok
+- Remaining risks or follow-ups: none for BE-0093. The full role + grant +
+  cross-tenant + disabled-principal matrix is now locked behind the
+  production request path for the rotate endpoint, mirroring the sibling
+  BE-0090 (DELETE) matrix.
+- Learnings for future iterations:
+  - Policy-matrix-coverage stories for endpoints that ship paired with
+    their authorization tests (e.g. BE-0091 landed both files in one
+    commit) may already be implemented before their own iteration runs;
+    before opening a new editor, grep for an existing
+    <endpoint>_policy_test.go and verify it covers each acceptance
+    criterion. If it does, the work is to flip the PRD flag, document the
+    verification, and commit, not to rewrite the suite.
+  - The keys.manage CapAdmin requirement is the lock that prevents support
+    cross-tenant key mutation. Mirror it in any future CapManage action's
+    policy matrix: assert support is denied cross-tenant AND in its own
+    home org, since CapAdmin is excluded by construction from the engine's
+    `required == CapRead || required == CapSupport` cross-tenant clause.
+---
