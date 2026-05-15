@@ -2582,3 +2582,26 @@
     OpenAPI doc and the route-coverage/auth-mapping CI guards are all
     data-driven from newRouteTable.
 ---
+
+## 2026-05-15 - BE-0045
+- Committed leftover work from the previous iteration: policy-matrix coverage
+  for GET /v1/me/organizations. The endpoint and test file existed and passed
+  but were never committed (prd.json passes flag flipped, test file untracked).
+- Files changed: internal/controlplane/httpapi/me_organizations_policy_test.go
+  (new), ralph/prd.json, ralph/progress.txt.
+- me_organizations_policy_test.go drives the real NewHandler + policy.NewEngine()
+  and covers: every built-in role + grant-only principal allowed auth.orgs and
+  receiving exactly its own home org; revoked/expired (Disabled) keys denied 403
+  E_FORBIDDEN with no id/org leak; wrong-organization principal only ever sees
+  its own org; grant containment (project/env/service grants do not reach
+  siblings or production); foreign-org grant dropped, never a second tenant.
+- Verification run: gofmt -l .; go build ./...; go vet ./internal/controlplane/httpapi/;
+  go test ./internal/controlplane/httpapi/. Results: all passed.
+- Remaining risks / follow-ups: none — auth.orgs is a CapSelf action; N/A
+  acceptance criteria (Postgres migrations, fake Dokploy, audit) same as BE-0043.
+- Learnings for future iterations:
+  - Iterations can crash after flipping prd.json passes:true but before
+    committing. Always check `git status` for an untracked *_test.go + a
+    one-line prd.json diff at the start of an iteration and commit that leftover
+    work first, as its own story commit, before starting the next story.
+---
