@@ -3393,8 +3393,8 @@
       ],
       "type": "policy-project",
       "priority": 1,
-      "passes": false,
-      "notes": "Authorization coverage for DELETE /v1/projects/{project_id}."
+      "passes": true,
+      "notes": "Added internal/controlplane/httpapi/projects_delete_policy_test.go: four tests driving real NewHandler + real policy.NewEngine() against the production request path. Roles matrix (Owner/Admin/Developer allow via ReasonAllowedByRole at 202 Accepted with the canonical scheduled-deletion row; Viewer/CI/Support deny via ReasonDeniedNoCapability at 403 — CapWrite is OUTSIDE the support cross-tenant exception). Revoked/expired Disabled keys deny via ReasonDeniedPrincipalDisabled. Wrong-organization principal surfaces as 404 NotFound at the persistence boundary (deleter called with attacker home org, never the victim's) AND every role denies cross-tenant via ReasonDeniedCrossTenant at the engine. Grant containment: project-target Admin allowed, project-sibling Admin denied OutOfScope, project-VIEWER denied NoCapability, env-scope denied OutOfScope (with explicit staging→production denial proof), service-scope denied OutOfScope (with sibling-service and parent-env denial), org-Admin allowed, org-Viewer denied NoCapability, and a foreign-home grantee denied. Every deny path proves the deleter was never reached and the body never echoes the canonical project's id/slug/display name. gofmt, go vet, go build, go test ./..., go test -race ./... all pass."
     },
     {
       "id": "BE-0133",

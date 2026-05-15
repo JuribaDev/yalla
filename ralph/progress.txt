@@ -9573,3 +9573,145 @@
     Route-discovery tests using the 27-nil-arg newRouteTable shape need
     exactly one extra nil.
 ---
+
+## 2026-05-15 - BE-0132
+- What was implemented: policy-matrix coverage for DELETE
+  /v1/projects/{project_id} — the authorization contract of the
+  endpoint BE-0130 wires, parallel to BE-0123 for POST, BE-0126 for
+  GET, and BE-0129 for PATCH /v1/projects/{project_id}.
+  - internal/controlplane/httpapi/projects_delete_policy_test.go (new):
+    one canonical fixture (canonicalDeleteProject — a project row with
+    its deletion_scheduled_at stamp already set, so the wire body on the
+    allow path carries the authoritative lifecycle state) + a single
+    leak guard (deleteProjectDenyBodyLeak) used by every deny branch,
+    then four tests that drive the REAL NewHandler + real
+    policy.NewEngine() against fake Authenticator + fake ProjectDeleter
+    (the production request path minus the database):
+    - TestDeleteProjectPolicyMatrixRoles tables all six built-in roles
+      against project.delete at a same-tenant project resource.
+      CapWrite splits the matrix: Owner / Admin / Developer allow via
+      ReasonAllowedByRole (202 Accepted + deleter reached with home_org
+      + path project_id + actor id + actor_org_id + the canonical
+      scheduled-deletion row rendered on the wire); Viewer / CI /
+      Support deny via ReasonDeniedNoCapability (403 + deleter never
+      reached + body never echoes the canonical row). CI denies despite
+      holding CapDeploy — CapDeploy is service lifecycle, not
+      desired-state mutation. Support denies despite holding the engine
+      cross-tenant exception — that exception is gated on (CapRead ||
+      CapSupport), so CapWrite is OUTSIDE it even within the home
+      tenant.
+    - TestDeleteProjectPolicyRevokedAndExpiredKeys proves a Disabled
+      Owner principal (revoked OR expired credential) is denied via
+      ReasonDeniedPrincipalDisabled, the deleter never runs, and the
+      body never echoes the principal id, the home org id, or any
+      seeded project data. Underlying role is Owner so a working
+      credential WOULD allow — Disabled is the only thing in the way.
+    - TestDeleteProjectPolicyWrongOrganizationPrincipal pins the
+      cross-tenant boundary at both the wire and the engine. Wire-level:
+      an attacker in org_attacker hitting DELETE /v1/projects/{prj_victim}
+      surfaces as 404 NotFound at the persistence boundary because
+      projectIDResolver builds the resource from the principal's HOME
+      org (never the path), so the tenant-scoped repository query runs
+      against (org_attacker, prj_victim_alpha) and matches no row; the
+      assertions are structural: the deleter is ALWAYS called with the
+      attacker's home org id — never with a caller-controlled value —
+      and the body never echoes the victim's org id. Engine-level:
+      every role (including Support) denies cross-tenant via
+      ReasonDeniedCrossTenant, since project.delete is CapWrite and the
+      engine clause "CapSupport AND (CapRead OR CapSupport)" does NOT
+      admit CapWrite. This is the load-bearing distinction from the
+      project.read cross-tenant property: read admits Support
+      cross-tenant via ReasonAllowedBySupport, but delete DOES NOT.
+    - TestDeleteProjectPolicyGrantContainment is the long containment
+      test, parallel to projects_update_policy_test.go: a project-scoped
+      Admin grant naming THIS project is allowed at the engine
+      (ReasonAllowedByGrant) AND end-to-end at the wire (202 + the
+      deleter reached with home_org + path project_id + actor id +
+      actor_org_id), then five deny wire tie-ins — a sibling project
+      hitting the SAME project-scoped Admin grant, a project-VIEWER
+      grant on the target project (covers the resource but holds no
+      CapWrite — denied via ReasonDeniedNoCapability, the property a
+      "grant role enum re-mapping" regression would catch), an
+      environment-scoped grant on the parent project (covers() is
+      one-way, denied via ReasonDeniedOutOfScope), a service-scoped
+      grant on the parent project, and an organization-level Admin
+      grant (allowed via ReasonAllowedByGrant at the engine + 202 at
+      the wire). The acceptance criterion "environment-level grants do
+      not imply access to production unless production is explicitly
+      granted" is doubly enforced: the env-scope grantee can't escalate
+      from staging-env to production-env (sibling-env property pinned
+      with ActionEnvironmentDelete), and can't escalate from any env to
+      the parent project (the shallow-resource property). The
+      "service-level grants do not expose parent-level secrets or
+      unrelated services" criterion is pinned with three engine
+      decisions (sibling-service ServiceUpdate, parent-env EnvWrite,
+      parent-project ProjectDelete). An org-level Viewer is the
+      load-bearing distinction from the project.read grant matrix —
+      allowed for read, denied for delete. The final assertion pins
+      the foreign-home-grantee deny: a stolen project-scoped key cannot
+      smuggle the grant across tenants because the engine refuses to
+      consider the grant when the principal's home org no longer
+      matches the grant's scope.
+- Files changed:
+  - internal/controlplane/httpapi/projects_delete_policy_test.go (new)
+  - ralph/prd.json (BE-0132 passes:true + notes)
+  - ralph/progress.txt (this entry)
+- Verification run: gofmt -w .; go mod tidy; go build ./...; go vet ./...;
+  go test ./... (full suite); go test -race ./... (full suite); plus the
+  focused TestDeleteProjectPolicy* run for fast feedback. All green.
+  goimports/golangci-lint/staticcheck/govulncheck still not installed locally
+  (documented in earlier iterations).
+- Results: all my changes pass (-race included). No flaky cross-test fakes —
+  this story added a single new test file using only existing fakes
+  (fakeProjectDeleter, fakeAuthenticator, orgPrincipal, seedProject,
+  deleteProjectHandlerFor, deleteProject, decodeDeleteProject, decodeError).
+  No NewHandler/newRouteTable signature change — no call-site churn.
+- Remaining risks / follow-ups:
+  - The next p=1 pending story is BE-0135 (policy matrix for
+    POST /v1/projects/{project_id}/restore). That endpoint is BE-0133
+    (still passes:false) — restore depends on a soft-deleted project,
+    and the policy boundary requires careful thinking about whether a
+    restore can race with a teardown worker (it can't today: teardown
+    is not wired). BE-0135 cannot land before BE-0133 because the
+    fakeProjectRestorer port doesn't exist yet.
+  - The acceptance criterion "Integration tests run against isolated
+    Postgres migrations" is N/A for a pure policy-matrix story (no
+    persistence path is added here). store/projectservice_test.go
+    already covers ScheduleDeletion with Postgres.
+  - The acceptance criterion "Secrets, tokens, API keys, cookies, and
+    rendered environment variable values are redacted" is N/A for a
+    projects row, which stores no secrets. The leak guard covers the
+    tenant-identity property (id/slug/display name) instead — the
+    relevant invariant for this resource.
+- Learnings for future iterations:
+  - The DELETE policy matrix mirrors PATCH (BE-0129) almost exactly,
+    but two assertions changed: (a) the allow-path status is
+    http.StatusAccepted (202), not 200, because the destructive teardown
+    is scheduled rather than immediate; and (b) the wire body carries
+    the canonical project's DeletionScheduledAt stamp, so the allow path
+    must also assert env.Data.Project.DeletionScheduledAt != nil. There
+    is no request body for DELETE, so the leak guard is one needle
+    shorter (no canonical-patch-body field to protect) but the
+    canonical-row needles (id, "slug", "display name") still apply.
+  - The DeleteProjectInput's ActorOrgID field is part of the audit
+    record, NOT just a debug attribute — every allow path must assert
+    captured.ActorOrgID == principal home org. This is the same
+    contract the BE-0130 contract test pins; carrying it into the
+    policy matrix means a future PR that wires a real
+    ProjectService.ScheduleDeletion can't accidentally drop the
+    actor_org_id without failing here.
+  - The "env grant on staging does not imply production access"
+    acceptance criterion is best pinned with a SECOND engine decision
+    (ActionEnvironmentDelete against the production env scope) inside
+    the env-grantee block. Just denying project.delete on the parent
+    project would miss the sibling-env property. The pattern: when an
+    acceptance criterion has a SIBLING property at the same level as
+    the targeted resource, add the sibling deny alongside the parent
+    deny in the same block; future grant-engine changes that subtly
+    widen one without the other fail here.
+  - PATCH's wire tie-ins use only a 200 ok assertion; DELETE's allow
+    tie-ins must additionally assert the 202 Accepted status and the
+    deletion_scheduled_at field. Forgetting the latter would let a
+    handler that silently dropped the scheduled stamp pass the test.
+
+---
