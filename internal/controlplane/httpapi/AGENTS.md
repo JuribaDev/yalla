@@ -40,6 +40,21 @@ projection instead of re-inlining the `Scope` flattening loop. The
 "isolated Postgres migrations" / "fake Dokploy" / "audit event" acceptance
 criteria are N/A for these reads.
 
+## Store-backed endpoints
+
+Endpoints that read source-of-truth state (e.g. `GET /v1/organizations`) depend
+on a **narrow reader port** declared in `httpapi` — an interface, not the
+concrete `store` — exactly like the auth middleware depends on `Authenticator`.
+`*store.OrganizationReader` (a `Store.Read`-backed adapter that composes the
+tenant-scoped repository, mirroring `store.CredentialReader`) satisfies it in
+production; tests pass a fake. The port is threaded through
+`NewHandler` → `newRouteTable` → the handler closure. A nil reader still
+registers the route; the handler reports a typed internal error rather than a
+misleading empty result. Keep the handler thin: read the principal, call the
+port, render. When the endpoint has no path/query parameter, the tenant
+boundary is **structural** — the handler only ever passes `principal.OrganizationID`,
+so there is no caller input that could point the read at another tenant.
+
 ## Tests
 
 - httpapi tests build the handler through the `newTestHandler` helper, which
@@ -55,8 +70,9 @@ criteria are N/A for these reads.
 
 ## Binary wiring
 
-`NewHandler(build, readiness, meta, authenticator, engine, logger)`.
+`NewHandler(build, readiness, meta, authenticator, engine, orgs, logger)`.
 `cmd/yalla-api` builds the real `authenticator` at startup from the pgxpool
-(`store.New` → `store.NewCredentialReader` → `auth.NewAuthenticator`) and a
-`policy.NewEngine()`. Registering a `RequiresAuth` route with a nil
-authenticator/engine panics at startup — a wiring error, never a runtime 500.
+(`store.New` → `store.NewCredentialReader` → `auth.NewAuthenticator`), the
+`orgs` reader (`store.NewOrganizationReader`), and a `policy.NewEngine()`.
+Registering a `RequiresAuth` route with a nil authenticator/engine panics at
+startup — a wiring error, never a runtime 500.

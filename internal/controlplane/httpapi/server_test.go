@@ -18,10 +18,12 @@ import (
 // newTestHandler builds a NewHandler with canned authorization dependencies
 // for tests that exercise the public surface (the bootstrap and discovery
 // routes). The fake authenticator never authenticates a request, which is all
-// the public routes need; the authenticated /v1/me route has its own
-// auth-aware coverage in me_test.go.
+// the public routes need; the authenticated /v1/me and /v1/organizations
+// routes have their own auth-aware coverage in me_test.go and
+// organizations_test.go. The fake organization reader is supplied so the
+// handler is fully wired even though the public-surface tests never reach it.
 func newTestHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, logger *slog.Logger) http.Handler {
-	return NewHandler(build, readiness, meta, fakeAuthenticator{}, policy.NewEngine(), logger)
+	return NewHandler(build, readiness, meta, fakeAuthenticator{}, policy.NewEngine(), fakeOrganizationReader{}, logger)
 }
 
 func TestHandlerServesBootstrapEndpoints(t *testing.T) {
@@ -585,7 +587,7 @@ func TestEveryRegisteredRouteIsDocumented(t *testing.T) {
 	t.Parallel()
 
 	build := runtime.BuildInfo{}
-	table := newRouteTable(build, nil, nil)
+	table := newRouteTable(build, nil, nil, nil)
 	doc := openAPIDocument(build, table)
 
 	want := append(endpointsOf(table), openAPIEndpoint())
@@ -608,7 +610,7 @@ func TestRegisteredRoutesAreServable(t *testing.T) {
 	t.Parallel()
 
 	handler := newTestHandler(runtime.BuildInfo{}, nil, nil, nil)
-	table := newRouteTable(runtime.BuildInfo{}, nil, nil)
+	table := newRouteTable(runtime.BuildInfo{}, nil, nil, nil)
 
 	for _, ep := range append(endpointsOf(table), openAPIEndpoint()) {
 		req := httptest.NewRequest(ep.Method, ep.Path, nil)

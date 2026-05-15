@@ -16,6 +16,7 @@
 - Backend errors are built through internal/controlplane/apierr, the catalogued error taxonomy — never yerr.New directly in handlers/services. apierr constructors return *yerr.Error (so they flow into apienvelope.WriteError); apierr.Catalog/Lookup pair every code with HTTP status (derived from apienvelope.StatusForCode — single source of truth), retry semantics, and a MessagePolicy. MessageGeneric codes (internal + all dependency failures) keep the cause out of Message/Hint and only Wrap it for logging. InvalidInput carries FieldViolation{Field,Reason} (path + reason, never the submitted value), recoverable via apierr.ViolationsOf; dependency failures are recoverable via apierr.DependencyOf even when they share a code. Adding a code = define the yerr.Code constant in internal/errors (and its codeDescriptions, AllCodes, ExitCode entries — the code is shared with the CLI manifest) + add to apierr.taxonomy + add an apierr constructor + (if non-500) a apienvelope.StatusForCode case; update the TestStatusForCode / TestConstructorsEmitCataloguedCodes / TestCode_ExitCodeMappingIsStable tables.
 - Schema changes are versioned SQL files under internal/controlplane/store/migrate/migrations/ named NNNN_name.up.sql (required) + NNNN_name.down.sql (optional, reversible-only), embedded via //go:embed. The migrate.Migrator runner owns a checksummed schema_migrations ledger, serialises with a pg advisory lock, and runs each migration in its own transaction. Migrator.Up is idempotent and refuses dirty / unknown-version / checksum-mismatch databases (errors.Is sentinels ErrDirtyDatabase/ErrUnknownVersion/ErrChecksumMismatch). NEVER edit an applied migration file (trips ErrChecksumMismatch by design) — add a new higher-versioned migration. Persistence tests are integration tests: they connect via YALLA_TEST_DATABASE_URL, create an isolated throwaway database per test, and t.Skip when the env var is unset so go test ./... stays green without Postgres. docker-compose.yml at repo root provisions local Postgres. pgx (github.com/jackc/pgx/v5 + pgxpool) is the Postgres driver.
 - Persistence tests use the shared harness internal/controlplane/testutil: RequireDB(t) gives an empty isolated throwaway Postgres database per test, RequireMigratedDB(t) also applies migrations; both t.Skip with testutil.SkipReason when YALLA_TEST_DATABASE_URL is unset and drop the DB on cleanup (parallel-safe — unique DB name per call). testutil.NewFactory(t) builds deterministic, globally-unique in-memory fixtures for the Organization->Project->Environment->Service hierarchy + User/APIKey (two factories never collide). testutil.AssertRedacted/AssertRedactedValue guard "must not leak a secret" assertions. store/migrate keeps its own local testPool — it cannot import testutil (import cycle: testutil imports migrate). Keep pure decision logic (lookupAdminDSN, scanLeaks) unexported + white-box tested, since testing.TB is sealed and cannot be faked.
+- Store-backed httpapi endpoints use a narrow reader-port pattern: httpapi declares the port interface (e.g. OrganizationReader), a Store.Read-backed adapter in the store package satisfies it by composing the tenant-scoped repository (mirror store.CredentialReader — never issue fresh SQL), and the port is threaded NewHandler -> newRouteTable -> the handler closure. httpapi imports store (acyclic — store never imports httpapi). For an endpoint with no path/query parameter, tenant isolation is structural: the handler only ever passes principal.OrganizationID. NewHandler signature: NewHandler(build, readiness, meta, authenticator, engine, orgs, logger).
 - HTTP routes are data-driven from internal/controlplane/httpapi/routes.go newRouteTable — the single source of truth. Each apiRoute pairs a served http.HandlerFunc with its openapi.Endpoint metadata; httpapi.NewHandler registers every entry on the mux AND generates the OpenAPI document from the same table, so a served route is always a documented route (TestEveryRegisteredRouteIsDocumented enforces it in CI). Never call mux.HandleFunc directly in NewHandler — add to newRouteTable. The OpenAPI 3.1 document is built by internal/controlplane/openapi.Build from a neutral []openapi.Endpoint, references the two stable envelope schemas, is served raw (not enveloped) at GET /openapi.json without auth, and marshals maps with sorted keys for a byte-stable artifact. Secret-shaped sample values use output.Sentinel.
 - Domain tables live in versioned migrations under store/migrate/migrations/. Every customer-data table carries organization_id (directly or via a verified parent chain) and is tenant-isolated at the database level by COMPOSITE foreign keys: a child FK (organization_id, parent_id) references the parent's UNIQUE (organization_id, id), making a cross-tenant child unrepresentable. Slugs are citext, unique within parent scope, never global. users is a global identity table; org membership is the memberships join table. Schema-level integration tests live in package store_test (NOT package migrate — it can't import testutil) and match constraint violations via *pgconn.PgError SQLSTATE class 23.
 - Persistence access goes through internal/controlplane/store: Store.Read (read-only tx -> Querier) and Store.Write (read/write tx -> *Tx; commit on nil, rollback on ANY error or panic). A *Tx is obtainable ONLY inside Store.Write; repository mutation methods take *Tx, read methods take Querier — so a mutation structurally cannot run outside the transaction that also carries its authorization and quota checks. A unit of work validates input first, then composes authorize -> reserve quota -> write desired state -> enqueue durable job inside one Store.Write. The policy/quota/jobs dependencies are narrow port interfaces defined IN store (Authorizer, QuotaReserver, JobEnqueuer); store never imports those packages. Error mapping is uniform: pgx.ErrNoRows -> apierr.NotFound, SQLSTATE class 23 -> apierr.Conflict, other driver errors -> apierr.StoreUnavailable; the raw cause is wrapped for logging only. ProjectRepository/ProjectService are the reference implementation.
@@ -2604,4 +2605,69 @@
     committing. Always check `git status` for an untracked *_test.go + a
     one-line prd.json diff at the start of an iteration and commit that leftover
     work first, as its own story commit, before starting the next story.
+---
+
+## 2026-05-15 - BE-0046
+- Implemented GET /v1/organizations: the first store-backed httpapi endpoint.
+  Lists the organizations visible to the authenticated principal — as the
+  source-of-truth database stores them (id, slug, display_name, created_at,
+  updated_at) — in a yalla.output.v1 envelope. A principal is bound to one home
+  organization, so the list has one entry; the array shape is forward-compatible.
+- Files changed:
+  - store/organization.go (new): Organization struct, OrganizationRepository
+    with Get(ctx,q,organizationID) (id-scoped, typed NotFound), and
+    OrganizationReader — a Store.Read-backed adapter mirroring CredentialReader.
+  - store/organization_test.go (new): isolated-Postgres integration coverage —
+    Get success/not-found/tenant-scoped, OrganizationReader success/not-found,
+    NewOrganizationReader(nil) rejection.
+  - httpapi/organizations.go (new): OrganizationReader narrow port,
+    organizationsPayload/organizationResource DTOs, organizationResourceOf
+    (UTC RFC3339Nano timestamps), organizationsHandler.
+  - httpapi/routes.go: tagOrganizations + GET /v1/organizations route entry
+    (operationId listOrganizations, RequiresAuth, RequiredAction
+    organization.read, nil resolver); newRouteTable gained an orgs param.
+  - httpapi/server.go: NewHandler gained an OrganizationReader param.
+  - httpapi/organizations_test.go (new): success, tenant isolation (reader is
+    only ever asked for the principal's own org), unauthenticated, invalid
+    credentials, disabled-principal 403, home-org-not-found 404, dependency
+    failure stays a typed 5xx, request_id propagation, OpenAPI registration +
+    x-required-action, no-principal/nil-reader internal paths, payload mapping.
+  - cmd/yalla-api/main.go: builds store.NewOrganizationReader and passes it to
+    NewHandler. server_test.go/me_test.go/routes_test.go: updated call sites,
+    added the shared fakeOrganizationReader.
+  - httpapi/AGENTS.md: documented the store-backed-endpoint reader-port pattern
+    and the new NewHandler signature.
+- Verification run (pre-commit hook runs scripts/verify.sh --strict --release):
+  gofmt, go mod tidy, go vet ./..., go test ./..., go test -race ./...,
+  govulncheck, staticcheck, golangci-lint, goreleaser. All passed.
+- Remaining risks / follow-ups:
+  - BE-0047 ("contract tests for GET /v1/organizations") is largely satisfied by
+    organizations_test.go; a future iteration may extend it.
+  - BE-0048 ("policy matrix coverage for GET /v1/organizations", p1) is now
+    unblocked: the endpoint and its organization.read action exist, so a
+    sibling organizations_policy_test.go can drive NewHandler + policy.NewEngine.
+  - The "audit event for every denied authorization decision" acceptance
+    criterion is NOT yet wired: RequireAuth denies before the handler runs and
+    no endpoint story so far audits denials — this is a cross-cutting middleware
+    concern that needs its own story. GET /v1/organizations is non-mutating, so
+    the "audit mutating requests" half is N/A.
+- Learnings for future iterations:
+  - Store-backed httpapi endpoints follow a narrow-port pattern: httpapi
+    declares an interface (e.g. OrganizationReader), a Store.Read-backed adapter
+    in the store package satisfies it (mirror store.CredentialReader — compose
+    the tenant-scoped repository, do not issue fresh SQL), and the port is
+    threaded NewHandler -> newRouteTable -> handler closure. httpapi importing
+    store is fine and acyclic (store does not import httpapi).
+  - NewHandler is now NewHandler(build, readiness, meta, authenticator, engine,
+    orgs, logger). It has exactly 3 call sites: cmd/yalla-api/main.go and the
+    test helpers newTestHandler (server_test.go) + meHandlerFor (me_test.go).
+    newRouteTable also gained the orgs param — routes_test.go and two
+    server_test.go tests call it directly.
+  - For an endpoint with no path/query parameter, tenant isolation is
+    structural: the handler passes principal.OrganizationID and nothing else, so
+    the isolation test asserts the reader was asked for exactly that id (capture
+    it via a *string field on the fake).
+  - The organizations table (migration 0002) is keyed by its own id, so its
+    repository Get is scoped by id directly — there is no parent organization_id
+    to filter by first, unlike projects/environments/services.
 ---

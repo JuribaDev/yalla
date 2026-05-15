@@ -14,9 +14,10 @@ import (
 
 // OpenAPI operation tags. They group endpoints in the published document.
 const (
-	tagOperations = "operations"
-	tagMeta       = "meta"
-	tagIdentity   = "identity"
+	tagOperations    = "operations"
+	tagMeta          = "meta"
+	tagIdentity      = "identity"
+	tagOrganizations = "organizations"
 )
 
 // apiRoute couples a served HTTP route with the OpenAPI metadata that
@@ -73,7 +74,12 @@ type versionPayload struct {
 // may be nil: a nil readiness is treated as always-ready and a nil meta
 // reports an unknown migration version, which suits tests and processes with
 // no startup dependencies wired yet.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter) []apiRoute {
+//
+// orgs backs GET /v1/organizations. It may be nil for tests and tooling that
+// only inspect the route table's metadata; a request that actually reaches the
+// organizations handler with a nil reader is reported as a typed internal
+// error rather than a misleading empty list.
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -164,6 +170,25 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// reports the principal's own organization, so it has no deeper
 			// resource target.
 			handler: meOrganizationsHandler(),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodGet,
+				Path:               "/v1/organizations",
+				OperationID:        "listOrganizations",
+				Summary:            "Organizations visible to the caller",
+				Description:        "Lists the organizations the authenticated principal can see through the control plane, as the source-of-truth database stores them — each with its id, slug, display name, and lifecycle timestamps. A principal is bound to a single home organization, so the list has one entry today; the array shape is forward-compatible with credentials that may span organizations later. The response carries no credential material and never reveals another tenant's data: the read is scoped to the principal's own home organization with no caller-supplied parameter that could point it elsewhere.",
+				Tags:               []string{tagOrganizations},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionOrganizationRead),
+				SuccessDescription: "The organizations visible to the authenticated principal.",
+			},
+			// A nil resolver authorizes action organization.read against the
+			// principal's own organization scope. The endpoint carries no path
+			// parameter and the handler only ever reads the principal's home
+			// organization, so there is no deeper or cross-tenant resource
+			// target to resolve.
+			handler: organizationsHandler(orgs),
 		},
 	}
 }
