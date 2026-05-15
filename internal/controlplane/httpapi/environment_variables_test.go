@@ -74,6 +74,40 @@ type listEnvironmentVariablesSuccessEnvelope struct {
 	Data          listEnvironmentVariablesPayload `json:"data"`
 }
 
+// fakeEnvironmentVariableReplacer is a canned EnvironmentVariableReplacer
+// for httpapi tests. The zero value returns nil/nil from Replace, which
+// is all the tests that never reach the handler (the public-surface,
+// /v1/me, and other-route suites) need. Tests that drive this endpoint
+// set vars/err and read got back to prove the
+// ReplaceEnvironmentVariablesInput forwarded to the store carries the
+// principal's home org plus the path environment_id — never a caller-
+// controlled organization id — and the caller-supplied variable set.
+type fakeEnvironmentVariableReplacer struct {
+	vars      []store.EnvironmentVariable
+	err       error
+	got       *store.ReplaceEnvironmentVariablesInput
+	callCount *int
+}
+
+func (f fakeEnvironmentVariableReplacer) Replace(_ context.Context, in store.ReplaceEnvironmentVariablesInput) ([]store.EnvironmentVariable, error) {
+	if f.got != nil {
+		*f.got = in
+	}
+	if f.callCount != nil {
+		*f.callCount++
+	}
+	return f.vars, f.err
+}
+
+// replaceEnvironmentVariablesSuccessEnvelope is the decoded shape of the
+// PUT /v1/environments/{environment_id}/variables success envelope.
+type replaceEnvironmentVariablesSuccessEnvelope struct {
+	SchemaVersion string                             `json:"schema_version"`
+	OK            bool                               `json:"ok"`
+	RequestID     string                             `json:"request_id"`
+	Data          replaceEnvironmentVariablesPayload `json:"data"`
+}
+
 // listEnvironmentVariablesHandlerFor builds the full NewHandler
 // surface with an Authenticator that resolves every credential to id
 // and the given EnvironmentVariableReader. It is the production
@@ -88,7 +122,7 @@ func listEnvironmentVariablesHandlerFor(id auth.Identity, authErr error, reader 
 		fakeOrgVariableReader{}, fakeOrgVariableReplacer{}, fakeOrgVariablePatcher{}, fakeOrgVariableDeleter{},
 		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
 		fakeProjectReader{}, fakeProjectCreator{}, fakeProjectUpdater{}, fakeProjectDeleter{}, fakeProjectRestorer{},
-		fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, fakeProjectVariableReader{}, fakeProjectVariableReplacer{}, fakeProjectEnvironmentReader{}, fakeEnvironmentCreator{}, fakeEnvironmentReader{}, fakeEnvironmentUpdater{}, fakeEnvironmentDeleter{}, fakeEnvironmentCloner{}, fakeEnvironmentGrantReader{}, fakeEnvironmentGrantReplacer{}, reader, nil)
+		fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, fakeProjectVariableReader{}, fakeProjectVariableReplacer{}, fakeProjectEnvironmentReader{}, fakeEnvironmentCreator{}, fakeEnvironmentReader{}, fakeEnvironmentUpdater{}, fakeEnvironmentDeleter{}, fakeEnvironmentCloner{}, fakeEnvironmentGrantReader{}, fakeEnvironmentGrantReplacer{}, reader, fakeEnvironmentVariableReplacer{}, nil)
 }
 
 // getEnvironmentVariables issues GET
@@ -392,7 +426,7 @@ func TestListEnvironmentVariablesOpenAPIRouteIsRegistered(t *testing.T) {
 		fakeOrgVariableReader{}, fakeOrgVariableReplacer{}, fakeOrgVariablePatcher{}, fakeOrgVariableDeleter{},
 		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
 		fakeProjectReader{}, fakeProjectCreator{}, fakeProjectUpdater{}, fakeProjectDeleter{}, fakeProjectRestorer{},
-		fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, fakeProjectVariableReader{}, fakeProjectVariableReplacer{}, fakeProjectEnvironmentReader{}, fakeEnvironmentCreator{}, fakeEnvironmentReader{}, fakeEnvironmentUpdater{}, fakeEnvironmentDeleter{}, fakeEnvironmentCloner{}, fakeEnvironmentGrantReader{}, fakeEnvironmentGrantReplacer{}, fakeEnvironmentVariableReader{})
+		fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, fakeProjectVariableReader{}, fakeProjectVariableReplacer{}, fakeProjectEnvironmentReader{}, fakeEnvironmentCreator{}, fakeEnvironmentReader{}, fakeEnvironmentUpdater{}, fakeEnvironmentDeleter{}, fakeEnvironmentCloner{}, fakeEnvironmentGrantReader{}, fakeEnvironmentGrantReplacer{}, fakeEnvironmentVariableReader{}, fakeEnvironmentVariableReplacer{})
 
 	var found bool
 	for _, rt := range table {

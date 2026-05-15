@@ -119,14 +119,16 @@ type versionPayload struct {
 // environmentUpdater backs PATCH /v1/environments/{environment_id},
 // environmentDeleter backs DELETE /v1/environments/{environment_id},
 // environmentCloner backs
-// POST /v1/environments/{environment_id}/clone, and
+// POST /v1/environments/{environment_id}/clone,
 // environmentVariables backs GET
+// /v1/environments/{environment_id}/variables, and
+// environmentVariableReplacer backs PUT
 // /v1/environments/{environment_id}/variables.
 // Any may be nil for tests and tooling that only inspect the route
 // table's metadata; a request that actually reaches a handler with a
 // nil dependency is reported as a typed internal error rather than a
 // misleading empty list or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter, environmentCloner EnvironmentCloner, environmentGrants EnvironmentGrantReader, environmentGrantReplacer EnvironmentGrantReplacer, environmentVariables EnvironmentVariableReader) []apiRoute {
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter, environmentCloner EnvironmentCloner, environmentGrants EnvironmentGrantReader, environmentGrantReplacer EnvironmentGrantReplacer, environmentVariables EnvironmentVariableReader, environmentVariableReplacer EnvironmentVariableReplacer) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -801,6 +803,40 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// persistence boundary.
 			resolver: environmentIDResolver,
 			handler:  listEnvironmentVariablesHandler(environmentVariables),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodPut,
+				Path:           "/v1/environments/{environment_id}/variables",
+				OperationID:    "replaceEnvironmentVariables",
+				Summary:        "Replace environment variables",
+				Description:    "Replaces the environment-scoped variables attached to the environment named by the {environment_id} path parameter in one transaction. The request body supplies the complete replacement set — every variable absent from the body is removed, every variable present is upserted on (organization_id, environment_id, key), so a re-submission with the same set is structurally idempotent. An explicit empty array means \"clear every environment-scoped variable\" — a meaningful (extreme) operation, never a silent no-op. Every field is validated before any database work; an invalid request (missing variables field, non-POSIX key, duplicate key, oversize value, invalid UTF-8, NUL byte in value) never opens a transaction. Action env.write is authorized against the (principal home organization, {environment_id}) resource the path names before the handler runs: env.write is a CapWrite action, so the gate admits the principal's organization-wide write roles (owner, admin, developer, ci) while denying viewer and support (the latter is a deliberate cross-tenant READ exception, never a write one). The path carries no parent project_id, so the policy engine cannot pin the ProjectID leg of the resource scope at authorization time — project-, environment-, and service-scoped grants are denied at the boundary because the engine asks whether the grant scope (which pins ProjectID) covers the resource scope (which does not), never the reverse; principals whose only access is a scoped grant must use a parent-scoped route to address an environment-scoped variable replace. env.write is a CapWrite action, so there is no cross-tenant support exception — a support principal cannot replace another tenant's variables. A cross-tenant or unknown environment_id reaches the persistence layer with the principal's home organization id and is rejected as a deterministic 404 by the environment existence check, never disguised as an empty success. The replace, the audit record, and the post-write re-read are committed in one transaction so a partial replace and an orphaned audit row are both impossible. The response carries the persisted variables in the same stable wire shape GET /v1/environments/{environment_id}/variables returns — every column projected onto the deterministic (key, id) order. Secret values are still redacted on the wire to the sentinel, so PUT cannot leak a secret value the customer just submitted; non-secret values project verbatim.",
+				Tags:           []string{tagEnvironments, tagVariables},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionEnvWrite),
+				PathParams: []openapi.PathParam{{
+					Name:        "environment_id",
+					Description: "The id of the environment whose variables to replace.",
+				}},
+				SuccessDescription: "The variables of the environment after the replace.",
+			},
+			// environmentIDResolver authorizes action env.write against the
+			// (principal home organization, {environment_id}) resource the
+			// path names. The path carries no parent project_id, so the
+			// resource scope pins only OrganizationID and EnvironmentID —
+			// project-, environment-, and service-scoped grants are denied
+			// at the policy boundary by design (the engine's covers()
+			// rule), forcing scoped-grant-only principals onto
+			// parent-scoped routes. env.write is a CapWrite action and has
+			// no cross-tenant support exception — unlike CapRead actions,
+			// the support principal cannot replace variables in another
+			// tenant. The organization id is taken from the principal's
+			// home org (never the caller — there is no organization id in
+			// the request body), so a cross-tenant environment_id still
+			// hits the tenant-scoped repository query and surfaces as a
+			// 404 at the persistence boundary.
+			resolver: environmentIDResolver,
+			handler:  replaceEnvironmentVariablesHandler(environmentVariableReplacer),
 		},
 		{
 			endpoint: openapi.Endpoint{

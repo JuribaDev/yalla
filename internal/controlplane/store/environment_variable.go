@@ -10,6 +10,14 @@ import (
 	"github.com/JuribaDev/yalla/internal/output"
 )
 
+// environmentVariablesWriteAction is the action recorded on the audit event
+// for PUT /v1/environments/{environment_id}/variables. It is kept as a plain
+// string so the store layer takes no build dependency on
+// internal/controlplane/policy; the HTTP authorization middleware authorizes
+// the same action before the handler is reached, and the policy matrix tests
+// keep the two values in sync.
+const environmentVariablesWriteAction = "env.write"
+
 // EnvironmentVariable is a single environment-scoped environment variable —
 // the third-from-lowest precedence layer of the
 // Organization -> Project -> Environment -> Service variable hierarchy the
@@ -118,6 +126,87 @@ func (r *EnvironmentVariableRepository) ListByEnvironment(ctx context.Context, q
 		return nil, apierr.StoreUnavailable(err)
 	}
 	return out, nil
+}
+
+// Upsert inserts or updates the (organization_id, environment_id, key) row
+// carrying value / is_secret. The (organization_id, environment_id, key)
+// UNIQUE constraint from migration 0018 is the conflict target, so an
+// existing row keeps its id and bumps version through the bump_version
+// trigger; a new row uses the caller-supplied id (already minted by the
+// service layer through domain.NewID(KindEnvironmentVariable) so the id is
+// non-guessable and tenant-anonymous). The returned EnvironmentVariable
+// reflects the committed state — its id is the row's stable id (the
+// existing id for an update, the freshly minted one for an insert), its
+// version is the post-trigger version, and its updated_at is the moment
+// the row persisted.
+//
+// The tenant predicate is non-optional: organization_id AND environment_id
+// are part of the upsert key, so a cross-tenant smuggling attempt at this
+// seam either matches an existing (organization_id, environment_id, key)
+// tuple owned by the supplied tenant (the intended idempotent overwrite)
+// or inserts a fresh row scoped to that tenant — never another tenant's
+// data. Validation of organizationID, environmentID, key, and value
+// happens in the service layer before a transaction is opened; this
+// method assumes its inputs already cleared the same shape checks the PUT
+// endpoint enforces.
+//
+// A foreign-key violation (organizationID/environmentID does not exist)
+// and the table's CHECK constraints both surface as apierr.Conflict
+// through mapWriteError; any other driver error surfaces as
+// apierr.StoreUnavailable. The raw driver error is wrapped as the cause
+// for server-side logging only and never reaches the user-facing message
+// — so a customer-facing 409 here never echoes value content.
+func (r *EnvironmentVariableRepository) Upsert(ctx context.Context, tx *Tx, id, organizationID, environmentID, key, value string, isSecret bool) (EnvironmentVariable, error) {
+	if tx == nil {
+		return EnvironmentVariable{}, apierr.Internal(errors.New("store: EnvironmentVariableRepository.Upsert called with a nil transaction"))
+	}
+	row := tx.QueryRow(ctx,
+		`INSERT INTO environment_variables (id, organization_id, environment_id, key, value, is_secret)
+		     VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (organization_id, environment_id, key) DO UPDATE
+		    SET value     = EXCLUDED.value,
+		        is_secret = EXCLUDED.is_secret
+		RETURNING `+environmentVariableColumns,
+		id, organizationID, environmentID, key, value, isSecret)
+	v, err := scanEnvironmentVariable(row)
+	if err != nil {
+		return EnvironmentVariable{}, mapWriteError(err, "the environment variable could not be saved")
+	}
+	return v, nil
+}
+
+// DeleteByEnvironmentExceptKeys removes every environment_variables row
+// owned by (organizationID, environmentID) whose key is not in keepKeys.
+// It is the counterpart of Upsert in the bulk-replace unit of work:
+// Upsert applies every variable the caller wants to keep, and this method
+// drops the rest — so the post-condition is "the environment's variables
+// == exactly the caller-supplied set". keepKeys MAY be empty (the caller
+// asked to clear every environment-scoped variable); the SQL predicate is
+// written so `key <> ALL($3)` is true for every row when the array is
+// empty, producing a deterministic full clear.
+//
+// The tenant predicate is non-optional: organization_id AND
+// environment_id are part of the WHERE clause, so a cross-tenant tuple
+// matches no rows and deletes nothing — never another tenant's data.
+// Validation of organizationID, environmentID, and the keep list happens
+// in the service layer; this method assumes the caller already produced a
+// deduplicated, validated list of POSIX env-var names.
+func (r *EnvironmentVariableRepository) DeleteByEnvironmentExceptKeys(ctx context.Context, tx *Tx, organizationID, environmentID string, keepKeys []string) error {
+	if tx == nil {
+		return apierr.Internal(errors.New("store: EnvironmentVariableRepository.DeleteByEnvironmentExceptKeys called with a nil transaction"))
+	}
+	if keepKeys == nil {
+		keepKeys = []string{}
+	}
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM environment_variables
+		  WHERE organization_id = $1
+		    AND environment_id  = $2
+		    AND key <> ALL($3)`,
+		organizationID, environmentID, keepKeys); err != nil {
+		return mapWriteError(err, "the environment variables could not be reconciled")
+	}
+	return nil
 }
 
 // scanEnvironmentVariable scans one environment_variables row in
