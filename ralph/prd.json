@@ -3982,7 +3982,7 @@
       ],
       "type": "endpoint-environment",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Endpoint belongs to the environment backend surface."
     },
     {

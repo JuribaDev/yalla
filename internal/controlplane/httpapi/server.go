@@ -92,8 +92,9 @@ import (
 // orgVariablePatcher, orgVariableDeleter, apiKeys, apiKeyCreator,
 // apiKeyUpdater, apiKeyRevoker, projectGrants, projectGrantReplacer,
 // projectVariables, projectVariableReplacer, projectEnvironments,
-// environmentCreator, environmentReader, environmentUpdater, or
-// environmentDeleter still registers its route — the handler reports a
+// environmentCreator, environmentReader, environmentUpdater,
+// environmentDeleter, or environmentCloner still registers its route —
+// the handler reports a
 // typed internal error rather than a misleading empty list or a silently
 // dropped write — which suits tests and tooling that only exercise the
 // public surface.
@@ -102,11 +103,11 @@ import (
 // registers every entry on the mux and generates the OpenAPI document
 // (GET /openapi.json) from the same table, so a served route is always a
 // documented route.
-func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, authenticator Authenticator, engine *policy.Engine, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter, logger *slog.Logger) http.Handler {
+func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, authenticator Authenticator, engine *policy.Engine, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter, environmentCloner EnvironmentCloner, logger *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 	build = build.Normalized()
 
-	table := newRouteTable(build, readiness, meta, orgs, creator, updater, deleter, members, memberCreator, memberUpdater, memberRemover, limits, limitsUpdater, usage, auditEvents, orgVariables, orgVariableReplacer, orgVariablePatcher, orgVariableDeleter, apiKeys, apiKeyCreator, apiKeyUpdater, apiKeyRevoker, apiKeyRotator, projects, projectCreator, projectUpdater, projectDeleter, projectRestorer, projectGrants, projectGrantReplacer, projectVariables, projectVariableReplacer, projectEnvironments, environmentCreator, environmentReader, environmentUpdater, environmentDeleter)
+	table := newRouteTable(build, readiness, meta, orgs, creator, updater, deleter, members, memberCreator, memberUpdater, memberRemover, limits, limitsUpdater, usage, auditEvents, orgVariables, orgVariableReplacer, orgVariablePatcher, orgVariableDeleter, apiKeys, apiKeyCreator, apiKeyUpdater, apiKeyRevoker, apiKeyRotator, projects, projectCreator, projectUpdater, projectDeleter, projectRestorer, projectGrants, projectGrantReplacer, projectVariables, projectVariableReplacer, projectEnvironments, environmentCreator, environmentReader, environmentUpdater, environmentDeleter, environmentCloner)
 
 	// Generate the OpenAPI document once, from the route table, at startup.
 	doc := openAPIDocument(build, table)

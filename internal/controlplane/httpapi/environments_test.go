@@ -104,6 +104,40 @@ func (f fakeEnvironmentDeleter) ScheduleDeletion(_ context.Context, in store.Del
 	return f.env, f.err
 }
 
+// fakeEnvironmentCloner is a canned EnvironmentCloner for httpapi
+// tests. The zero value returns a zero Environment and a nil error from
+// Clone, which is all the tests that never reach the POST clone
+// endpoint (the public-surface, /v1/me, and other-route suites) need.
+// Tests that drive POST /v1/environments/{environment_id}/clone set
+// env/err and read gotInput + callCount back to prove the handler
+// forwarded the resolved (principal home org id, path source env_id,
+// decoded body fields, principal id+kind, actor home org id, request
+// id, correlation id) tuple verbatim — the boundary the policy engine
+// and the audit record share.
+//
+// The fake intentionally does not enforce tenant scoping or
+// validation itself — that is the production
+// *store.EnvironmentService's job, proven by its integration tests.
+// The HTTP-layer contract under test is "the handler asks the port
+// using the principal's home org and the path source env_id",
+// regardless of how the port answers.
+type fakeEnvironmentCloner struct {
+	env       store.Environment
+	err       error
+	gotInput  *store.CloneEnvironmentInput
+	callCount *int
+}
+
+func (f fakeEnvironmentCloner) Clone(_ context.Context, in store.CloneEnvironmentInput) (store.Environment, error) {
+	if f.gotInput != nil {
+		*f.gotInput = in
+	}
+	if f.callCount != nil {
+		*f.callCount++
+	}
+	return f.env, f.err
+}
+
 func (f fakeEnvironmentReader) GetEnvironment(_ context.Context, organizationID, environmentID string) (store.Environment, error) {
 	if f.gotOrgID != nil {
 		*f.gotOrgID = organizationID
@@ -169,7 +203,7 @@ func getEnvironmentHandlerFor(t *testing.T, reader EnvironmentReader) http.Handl
 		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
 		fakeProjectReader{}, fakeProjectCreator{}, fakeProjectUpdater{}, fakeProjectDeleter{}, fakeProjectRestorer{},
 		fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, fakeProjectVariableReader{}, fakeProjectVariableReplacer{},
-		fakeProjectEnvironmentReader{}, fakeEnvironmentCreator{}, reader, fakeEnvironmentUpdater{}, fakeEnvironmentDeleter{}, nil)
+		fakeProjectEnvironmentReader{}, fakeEnvironmentCreator{}, reader, fakeEnvironmentUpdater{}, fakeEnvironmentDeleter{}, fakeEnvironmentCloner{}, nil)
 }
 
 // getEnvironment fires GET /v1/environments/{environment_id} with the
@@ -449,7 +483,7 @@ func TestGetEnvironmentDoesNotLogBearerToken(t *testing.T) {
 		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
 		fakeProjectReader{}, fakeProjectCreator{}, fakeProjectUpdater{}, fakeProjectDeleter{}, fakeProjectRestorer{},
 		fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, fakeProjectVariableReader{}, fakeProjectVariableReplacer{},
-		fakeProjectEnvironmentReader{}, fakeEnvironmentCreator{}, reader, fakeEnvironmentUpdater{}, fakeEnvironmentDeleter{}, logger)
+		fakeProjectEnvironmentReader{}, fakeEnvironmentCreator{}, reader, fakeEnvironmentUpdater{}, fakeEnvironmentDeleter{}, fakeEnvironmentCloner{}, logger)
 
 	rec := getEnvironment(handler, canonicalEnvForGet.ID, "a-valid-token")
 	if rec.Code != http.StatusOK {
@@ -481,7 +515,7 @@ func TestGetEnvironmentOpenAPIRouteIsRegistered(t *testing.T) {
 		fakeOrgVariableReader{}, fakeOrgVariableReplacer{}, fakeOrgVariablePatcher{}, fakeOrgVariableDeleter{},
 		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
 		fakeProjectReader{}, fakeProjectCreator{}, fakeProjectUpdater{}, fakeProjectDeleter{}, fakeProjectRestorer{},
-		fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, fakeProjectVariableReader{}, fakeProjectVariableReplacer{}, fakeProjectEnvironmentReader{}, fakeEnvironmentCreator{}, fakeEnvironmentReader{}, fakeEnvironmentUpdater{}, fakeEnvironmentDeleter{})
+		fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, fakeProjectVariableReader{}, fakeProjectVariableReplacer{}, fakeProjectEnvironmentReader{}, fakeEnvironmentCreator{}, fakeEnvironmentReader{}, fakeEnvironmentUpdater{}, fakeEnvironmentDeleter{}, fakeEnvironmentCloner{})
 
 	var found bool
 	for _, rt := range table {

@@ -147,6 +147,43 @@ type DeleteEnvironmentInput struct {
 	CorrelationID  string
 }
 
+// CloneEnvironmentInput is the unvalidated input to
+// EnvironmentService.Clone. OrganizationID identifies the tenant the
+// source environment belongs to; SourceEnvironmentID names the
+// environment to clone from; NewEnvironmentID, NewSlug, and
+// NewDisplayName are the caller-supplied resource fields for the new
+// environment. The new environment inherits the parent project_id of
+// the source environment — clone is structurally a create whose
+// project leg is derived from the source rather than supplied by the
+// caller, so a clone can never accidentally land a child in another
+// project. The Actor* and correlation fields describe the authenticated
+// principal performing the clone and are recorded verbatim on the
+// audit event. They are plain strings so the store layer takes no
+// build dependency on the policy or telemetry packages — the httpapi
+// handler, which already holds the resolved principal and the request
+// correlation, fills them in.
+//
+// OrganizationID is sourced from the principal's home organization at
+// the HTTP boundary (never from the request body or path), so a
+// cross-tenant id cannot point the write at another tenant by
+// construction. SourceEnvironmentID is sourced from the
+// {environment_id} PATH parameter; the clone unit of work reads the
+// source row under (OrganizationID, SourceEnvironmentID) before any
+// mutation, so a cross-tenant or unknown source surfaces as a
+// deterministic apierr.NotFound rather than a 500 or a silent success.
+type CloneEnvironmentInput struct {
+	OrganizationID      string
+	SourceEnvironmentID string
+	NewEnvironmentID    string
+	NewSlug             string
+	NewDisplayName      string
+	ActorID             string
+	ActorKind           string
+	ActorOrgID          string
+	RequestID           string
+	CorrelationID       string
+}
+
 // EnvironmentService is the reference unit-of-work orchestrator for the
 // environment-create transaction pattern. Create composes — in this
 // fixed order, inside one transaction — a project-existence check, an
@@ -526,6 +563,219 @@ func (svc *EnvironmentService) ScheduleDeletion(ctx context.Context, in DeleteEn
 		return Environment{}, txErr
 	}
 	return scheduled, nil
+}
+
+// Clone validates in, then runs the clone-environment unit of work
+// inside one transaction: read the source environment row under the
+// principal's home organization, reject a source whose deletion is
+// already scheduled (a lifecycle-dead row is not a valid clone source),
+// authorize, reserve quota, insert the new environment row inheriting
+// the source's project_id, enqueue the provisioning job, append the
+// immutable audit record. Validation of every supplied field runs
+// before the transaction is opened, so an invalid request never
+// touches the database. Every failure after that point — a missing
+// source environment, a source already scheduled for deletion, a
+// denied authorization decision, an exhausted quota, a new-slug
+// conflict in the target project, a failed provisioning-job enqueue,
+// or a failed audit append — rolls the whole transaction back, so the
+// new environment row is never persisted without its job and audit
+// trail and the checks can never be skipped.
+//
+// The source environment Get is tenant-scoped — it filters by
+// organization_id first — so a cross-tenant or unknown source surfaces
+// as a deterministic apierr.NotFound. The new environment inherits the
+// source's ProjectID; the caller has no way to redirect the clone to
+// another project even by trying to supply one, because the input
+// carries no parent project_id field.
+//
+// Authorization for the underlying environment.create action is
+// enforced at the HTTP boundary by RequireAuth against the (home
+// organization, source_environment_id) resource the path names. The
+// in-transaction Authorize is defense-in-depth against a grant change
+// that landed between the HTTP authorize and the quota reservation —
+// it runs on the same *Tx as the desired-state write so the
+// in-transaction policy view sees exactly the state the row commits
+// against.
+func (svc *EnvironmentService) Clone(ctx context.Context, in CloneEnvironmentInput) (Environment, error) {
+	validated, err := validateCloneEnvironmentInput(in)
+	if err != nil {
+		return Environment{}, err
+	}
+
+	// The audit record is filed under the actor's home organization —
+	// the tenant the principal authenticated into — while its resource
+	// id names the new environment that was created. A missing actor
+	// organization is a wiring error (an authenticated request always
+	// carries one), not client input, so it is reported as Internal
+	// rather than a validation failure.
+	actorOrgID := strings.TrimSpace(in.ActorOrgID)
+	if actorOrgID == "" {
+		return Environment{}, apierr.Internal(errors.New("store: EnvironmentService.Clone requires an actor organization for the audit record"))
+	}
+
+	var created Environment
+	txErr := svc.store.Write(ctx, func(ctx context.Context, tx *Tx) error {
+		// Source environment Get is tenant-scoped: a cross-tenant or
+		// unknown source surfaces as a deterministic apierr.NotFound,
+		// never a 500 or a silent success. The check runs first so the
+		// quota reservation and the in-tx authorize do not have to
+		// guess whether the source exists.
+		source, getErr := svc.environments.GetByID(ctx, tx, validated.OrganizationID, validated.SourceEnvironmentID)
+		if getErr != nil {
+			return getErr
+		}
+		// A source scheduled for teardown is lifecycle-dead: cloning
+		// from it would persist a new environment whose audit trail
+		// names a source already destined for cascade deletion, which
+		// is a stable Conflict rather than a silent success.
+		if source.DeletionScheduledAt != nil {
+			return apierr.Conflict("source environment is scheduled for deletion")
+		}
+		// Defense-in-depth: the HTTP RequireAuth middleware already
+		// authorized action environment.create against the (home org,
+		// source_env_id) resource the path names. The in-transaction
+		// Authorize is a redundant check whose real adapter reads
+		// grant rows from the same *Tx as the desired-state write —
+		// so a grant change that landed between the HTTP authorize
+		// and this point still cannot let the write through.
+		if err := svc.authz.Authorize(ctx, tx, environmentCreateAction, validated.OrganizationID); err != nil {
+			return err
+		}
+		if err := svc.quota.Reserve(ctx, tx, validated.OrganizationID, string(QuotaResourceEnvironments)); err != nil {
+			return err
+		}
+		// The new environment inherits the source's project_id by
+		// construction — the caller cannot reparent through this
+		// endpoint because the input carries no project_id field.
+		newRow := Environment{
+			ID:             validated.NewEnvironmentID,
+			OrganizationID: validated.OrganizationID,
+			ProjectID:      source.ProjectID,
+			Slug:           validated.NewSlug,
+			DisplayName:    validated.NewDisplayName,
+		}
+		row, insErr := svc.environments.Insert(ctx, tx, newRow)
+		if insErr != nil {
+			return insErr
+		}
+		if err := svc.jobs.Enqueue(ctx, tx, validated.OrganizationID, environmentProvisionJob, row.ID); err != nil {
+			return err
+		}
+		event := AuditEvent{
+			OrganizationID: actorOrgID,
+			ActorID:        strings.TrimSpace(in.ActorID),
+			ActorKind:      strings.TrimSpace(in.ActorKind),
+			Action:         environmentCreateAction,
+			ResourceKind:   string(domain.KindEnvironment),
+			ResourceID:     row.ID,
+			Decision:       AuditDecisionAllowed,
+			Reason:         "authorization granted for environment.create",
+			RequestID:      strings.TrimSpace(in.RequestID),
+			CorrelationID:  strings.TrimSpace(in.CorrelationID),
+			// The slug, project_id, and source environment id are
+			// structural identifiers — none carries secret material —
+			// so they are safe to record verbatim as audit context.
+			// cloned_from names the source environment so the trail
+			// captures the provenance of the new row without leaking
+			// any source secret.
+			Metadata: map[string]string{
+				"slug":        row.Slug,
+				"project_id":  row.ProjectID,
+				"cloned_from": source.ID,
+			},
+		}
+		if _, audErr := svc.audit.Append(ctx, tx, event); audErr != nil {
+			return audErr
+		}
+		created = row
+		return nil
+	})
+	if txErr != nil {
+		return Environment{}, txErr
+	}
+	return created, nil
+}
+
+// cloneEnvironmentValidated is the validated, normalised form of a
+// CloneEnvironmentInput: the fields the caller supplied, already
+// parsed and trimmed. It is the return value of
+// validateCloneEnvironmentInput and the only thing Clone reads after
+// the validation pass.
+type cloneEnvironmentValidated struct {
+	OrganizationID      string
+	SourceEnvironmentID string
+	NewEnvironmentID    string
+	NewSlug             string
+	NewDisplayName      string
+}
+
+// validateCloneEnvironmentInput checks in and returns the normalised
+// fields the clone unit of work needs. It is split out from Clone so
+// the validation rules are unit testable without a database, and so
+// an invalid request is rejected before a transaction is ever opened.
+// On failure it returns a typed apierr.InvalidInput carrying stable
+// field paths — never the submitted values — so the rejection can
+// name the offending field without leaking input. The new environment
+// id must differ from the source environment id; cloning onto the
+// same id would either collide on the primary key or — worse — write
+// over the source row, so it is a stable 400.
+func validateCloneEnvironmentInput(in CloneEnvironmentInput) (cloneEnvironmentValidated, error) {
+	var violations []apierr.FieldViolation
+
+	orgID := strings.TrimSpace(in.OrganizationID)
+	if id, err := domain.ParseID(orgID); err != nil || id.Kind() != domain.KindOrganization {
+		violations = append(violations, apierr.FieldViolation{
+			Field:  "organization_id",
+			Reason: "must be a valid organization id",
+		})
+	}
+
+	sourceID := strings.TrimSpace(in.SourceEnvironmentID)
+	if id, err := domain.ParseID(sourceID); err != nil || id.Kind() != domain.KindEnvironment {
+		violations = append(violations, apierr.FieldViolation{
+			Field:  "source_environment_id",
+			Reason: "must be a valid environment id",
+		})
+	}
+
+	newID := strings.TrimSpace(in.NewEnvironmentID)
+	if id, err := domain.ParseID(newID); err != nil || id.Kind() != domain.KindEnvironment {
+		violations = append(violations, apierr.FieldViolation{
+			Field:  "environment_id",
+			Reason: "must be a valid environment id",
+		})
+	}
+
+	if sourceID != "" && newID != "" && sourceID == newID {
+		violations = append(violations, apierr.FieldViolation{
+			Field:  "environment_id",
+			Reason: "must differ from the source environment id",
+		})
+	}
+
+	slug, slugErr := domain.ParseSlug(in.NewSlug)
+	if slugErr != nil {
+		violations = append(violations, apierr.FieldViolation{
+			Field:  "slug",
+			Reason: "must be a canonical slug",
+		})
+	}
+
+	displayName, dnViolation := validateEnvironmentDisplayName(in.NewDisplayName)
+	if dnViolation != nil {
+		violations = append(violations, *dnViolation)
+	}
+
+	if len(violations) > 0 {
+		return cloneEnvironmentValidated{}, apierr.InvalidInput(violations...)
+	}
+	return cloneEnvironmentValidated{
+		OrganizationID:      orgID,
+		SourceEnvironmentID: sourceID,
+		NewEnvironmentID:    newID,
+		NewSlug:             slug.String(),
+		NewDisplayName:      displayName,
+	}, nil
 }
 
 // environmentUpdate is the validated, normalised form of an

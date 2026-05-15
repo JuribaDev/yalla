@@ -406,3 +406,151 @@ func deleteEnvironmentHandler(deleter EnvironmentDeleter) http.HandlerFunc {
 		})
 	}
 }
+
+// errNoEnvironmentCloner is returned when POST
+// /v1/environments/{environment_id}/clone is reached without an
+// environment cloner wired into NewHandler. Like errNoEnvironmentDeleter
+// it can only happen through a wiring error — a programming mistake,
+// not a client error — so the handler reports it as a typed internal
+// failure rather than silently failing to persist the clone.
+var errNoEnvironmentCloner = errors.New("httpapi: no environment cloner configured")
+
+// EnvironmentCloner is the narrow persistence port POST
+// /v1/environments/{environment_id}/clone depends on.
+// *store.EnvironmentService satisfies it in production; tests supply
+// a fake. Like EnvironmentCreator it is an interface declared here so
+// the handler stays unit-testable without a real database — the
+// concrete orchestrator (the source read, in-tx authorize, quota
+// reservation, desired-state write, provisioning-job enqueue, and
+// immutable audit record committed in one transaction) lives in the
+// store layer.
+//
+// The HTTP boundary is the authoritative authorization gate: RequireAuth
+// authorizes action environment.create against the (principal home
+// organization, {environment_id}) resource the path names through
+// environmentIDResolver, so a request that reaches the cloner has
+// already cleared the policy boundary. The store layer still
+// re-authorizes inside the same *Tx as the desired-state write —
+// defense-in-depth against a grant change that landed between the HTTP
+// authorize and the quota reservation.
+type EnvironmentCloner interface {
+	Clone(ctx context.Context, in store.CloneEnvironmentInput) (store.Environment, error)
+}
+
+// cloneEnvironmentRequest is the decoded POST
+// /v1/environments/{environment_id}/clone request body.
+// EnvironmentID is the caller-supplied canonical id for the NEW
+// environment — the agent contract mints ids client-side so an
+// idempotent retry is structural rather than header-encoded; Slug is
+// the canonical [a-z0-9-] identifier the new environment is addressed
+// by within its (inherited) project; DisplayName is its human-authored
+// label. The request body intentionally exposes no organization_id,
+// project_id, or source_environment_id field: the organization is
+// derived from the authenticated principal's home organization, the
+// source environment_id comes from the {environment_id} PATH parameter,
+// and the new environment inherits the source's project_id, never from
+// the body or path. The store layer validates every field before any
+// database work, so an invalid request never opens a transaction —
+// and the request body never carries credential material.
+type cloneEnvironmentRequest struct {
+	EnvironmentID string `json:"environment_id"`
+	Slug          string `json:"slug"`
+	DisplayName   string `json:"display_name"`
+}
+
+// cloneEnvironmentPayload is the data block of the POST
+// /v1/environments/{environment_id}/clone success envelope: the
+// newly-cloned environment, in the same stable wire shape every other
+// environment endpoint returns. It carries no credential material —
+// the environments table itself stores no secrets; environment-scoped
+// variables and other secrets live behind their own endpoints where
+// the redaction policy applies. (The variable surface for cloned
+// environments is provisioned by a later worker story; the clone
+// operation here writes only the structural row.)
+type cloneEnvironmentPayload struct {
+	Environment projectEnvironment `json:"environment"`
+}
+
+// cloneEnvironmentHandler builds the POST
+// /v1/environments/{environment_id}/clone handler. It decodes and
+// delegates: the request body is strictly decoded (oversized,
+// malformed, or unknown-field bodies become a typed 400 that never
+// echoes the input), then the clone-environment unit of work — read
+// the source row, re-authorize, reserve quota, write the new
+// environment row inheriting the source's project_id, enqueue the
+// provisioning job, append the audit record, all in one transaction —
+// runs in the store layer through the EnvironmentCloner port.
+//
+// RequireAuth gates the route on action environment.create before the
+// handler runs — authorized through environmentIDResolver against the
+// (principal home organization, {environment_id}) resource the path
+// names — and attaches the resolved principal, so a request that
+// reaches the handler with no principal is a wiring error reported as
+// a typed internal error. environment.create is a CapWrite action, so
+// the gate admits the principal's organization-wide write roles (owner,
+// admin, developer, ci) and denies viewer, denies support (CapRead-only
+// — a support principal cannot mutate even within its home tenant).
+// The path carries no parent project_id, so the policy engine cannot
+// pin the ProjectID leg of the resource scope at authorization time —
+// project-, environment-, and service-scoped grants are denied at the
+// boundary by the engine's covers() rule (a grant with a pinned
+// ProjectID cannot cover a resource with no ProjectID); principals
+// whose only access is a scoped grant must use a parent-scoped route
+// to address an environment by its (project, environment) tuple.
+//
+// The handler never trusts a caller-supplied organization id: the
+// store call is built from principal.OrganizationID and
+// r.PathValue("environment_id"), so a cross-tenant source environment_id
+// reaches the tenant-scoped repository query with the principal's home
+// organization id and is reported as a deterministic NotFound by the
+// persistence layer, never another tenant's row. A source environment
+// already scheduled for teardown is rejected as a typed Conflict — a
+// lifecycle-dead row is not a valid clone source. A validation
+// failure, a slug conflict in the target project, an exhausted quota,
+// a denied in-tx authorize, and a datastore outage each surface as
+// their own typed status, never disguised as one another. On success,
+// the handler returns 201 Created with the new environment's row in
+// the standard wire shape and mirrors the row's authoritative version
+// into the ETag response header.
+func cloneEnvironmentHandler(cloner EnvironmentCloner) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if cloner == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoEnvironmentCloner))
+			return
+		}
+
+		var req cloneEnvironmentRequest
+		if err := validate.DecodeJSON(r.Body, &req, 0); err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		environment, err := cloner.Clone(r.Context(), store.CloneEnvironmentInput{
+			OrganizationID:      p.OrganizationID,
+			SourceEnvironmentID: r.PathValue("environment_id"),
+			NewEnvironmentID:    req.EnvironmentID,
+			NewSlug:             req.Slug,
+			NewDisplayName:      req.DisplayName,
+			ActorID:             p.ID,
+			ActorKind:           string(p.Kind),
+			ActorOrgID:          p.OrganizationID,
+			RequestID:           correlation.RequestID,
+			CorrelationID:       correlation.CorrelationID,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		writeOrganizationETag(w, environment.Version)
+		apienvelope.WriteData(w, http.StatusCreated, requestID(r), cloneEnvironmentPayload{
+			Environment: projectEnvironmentOf(environment),
+		})
+	}
+}

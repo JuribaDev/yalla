@@ -116,12 +116,14 @@ type versionPayload struct {
 // backs POST /v1/projects/{project_id}/environments,
 // environmentReader backs GET /v1/environments/{environment_id},
 // environmentUpdater backs PATCH /v1/environments/{environment_id},
-// and environmentDeleter backs DELETE /v1/environments/{environment_id}.
+// environmentDeleter backs DELETE /v1/environments/{environment_id},
+// and environmentCloner backs
+// POST /v1/environments/{environment_id}/clone.
 // Any may be nil for tests and tooling that only inspect the route
 // table's metadata; a request that actually reaches a handler with a
 // nil dependency is reported as a typed internal error rather than a
 // misleading empty list or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter) []apiRoute {
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter, environmentCloner EnvironmentCloner) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -667,6 +669,43 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// environments in another tenant.
 			resolver: environmentIDResolver,
 			handler:  deleteEnvironmentHandler(environmentDeleter),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodPost,
+				Path:           "/v1/environments/{environment_id}/clone",
+				OperationID:    "cloneEnvironment",
+				Summary:        "Clone an environment",
+				Description:    "Clones the environment named by the {environment_id} path parameter into a new environment that inherits the source environment's parent project — the new environment lives in the same Organization -> Project -> Environment -> Service hierarchy as its source, never crossing a tenant or project boundary. The request body supplies the caller-minted canonical id for the new environment (an idempotent retry is structural, not header-encoded), the canonical [a-z0-9-] slug it is addressed by within the inherited project, and its human-authored display name. The request body intentionally exposes no organization_id, project_id, or source_environment_id field: the organization is derived from the authenticated principal's home organization, the source environment_id comes from the {environment_id} path parameter, and the new environment inherits the source's project_id — there is no caller-supplied parameter that could redirect the clone at another tenant or another project. Every supplied field is validated before any database work; an invalid request never opens a transaction. The new environment row, the provisioning job that mirrors it into Dokploy, and an immutable audit record naming the authenticated principal and the source environment are committed in one transaction — a cloned environment can never exist without its provisioning job or its audit trail, and a duplicate slug within the inherited project rolls the whole transaction back as a deterministic 409. Action environment.create is authorized against the (principal home organization, {environment_id}) resource the path names before the handler runs: environment.create is a CapWrite action, so the gate admits the principal's organization-wide write roles (owner, admin, developer, ci) and denies viewer, denies support (CapRead-only — a support principal cannot mutate even within its home tenant). The path carries no parent project_id, so the policy engine cannot pin the ProjectID leg of the resource scope at authorization time — project-, environment-, and service-scoped grants are denied at the boundary by the engine's covers() rule (a grant with a pinned ProjectID cannot cover a resource with no ProjectID); principals whose only access is a scoped grant must use a parent-scoped route to address an environment by its (project, environment) tuple. A cross-tenant or unknown source {environment_id} reaches the persistence layer with the principal's home organization id and is rejected as a deterministic 404 by the tenant-scoped repository query, never revealing another tenant's environment. A source environment already scheduled for teardown is rejected as a deterministic 409 — a lifecycle-dead row is not a valid clone source. The new environment's id must differ from the source environment's id; cloning onto the same id is a stable 400. The response carries no credential material — the environments table itself stores no secrets; environment-scoped variables and other secrets live behind their own endpoints where the redaction policy applies. (Variables and secrets are not yet copied across by this endpoint; a later worker story owns that propagation, so the clone here writes only the structural row.) The response mirrors the new row's authoritative version into the ETag response header so the caller can echo it back as the next If-Match precondition without re-reading the row.",
+				Tags:           []string{tagEnvironments},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionEnvironmentCreate),
+				SuccessStatus:  http.StatusCreated,
+				PathParams: []openapi.PathParam{{
+					Name:        "environment_id",
+					Description: "The id of the source environment to clone from.",
+				}},
+				SuccessDescription: "The environment was cloned.",
+			},
+			// environmentIDResolver authorizes action environment.create
+			// against the (principal home organization, {environment_id})
+			// resource the path names, not merely the principal's home
+			// organization. The organization id is taken from the
+			// principal's home org (never the caller — there is no
+			// organization id in the request body), so a cross-tenant
+			// source environment_id still hits the tenant-scoped
+			// repository query and surfaces as a 404 at the persistence
+			// boundary. The path carries no parent project_id, so the
+			// resource scope pins only OrganizationID and EnvironmentID —
+			// project-, environment-, and service-scoped grants are
+			// denied at the policy boundary by design (the engine's
+			// covers() rule), forcing scoped-grant-only principals onto
+			// parent-scoped routes. environment.create is a CapWrite
+			// action and has no cross-tenant support exception — unlike
+			// CapRead actions, a support principal cannot clone
+			// environments in another tenant.
+			resolver: environmentIDResolver,
+			handler:  cloneEnvironmentHandler(environmentCloner),
 		},
 		{
 			endpoint: openapi.Endpoint{
