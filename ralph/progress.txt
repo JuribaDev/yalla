@@ -38,6 +38,7 @@
 - Typed Dokploy client (internal/controlplane/dokploy.Client): customer/handler code NEVER calls Dokploy — only worker/provisioner code, through this typed wrapper. The client exposes Yalla intents (EnsureProject/EnsureService/DeployService/ReadDeploymentLogs/RemoveService/...), not raw Dokploy ops. The Dokploy token is injected via Config.Token, held unexported, exposed by no method, and redacted by Client.LogValue. "Ensure" intents are idempotent against Yalla's source of truth: an optional ExistingID does GET+verify, an empty one does POST+create (the worker records the returned Dokploy ID in Postgres). Only idempotent methods (GET, DELETE) are retried — never POST — and only on apierr.Retryable errors, with bounded exponential backoff; each attempt gets a per-request context timeout and forwards X-Request-Id/X-Correlation-Id from telemetry.FromContext. Every failure maps onto the apierr taxonomy (400->Invalid, 401/403->Internal as a non-retryable Yalla misconfig, 404->NotFound, 409->Conflict, 429/5xx/transport->DokployUnavailable, deadline->Timeout(DependencyDokploy)); the redacted upstream body is wrapped only as the log-only cause, never a client-facing Message. Normal tests run against dokployfake; the client touches no Postgres.
 - Dokploy provisioning has two pure, no-I/O layers under internal/controlplane/dokploy that the worker composes: the Mapper (mapping.go) is the ID-resolution layer — top-down translation of the Yalla* hierarchy into Ensure*Input intents, each child method taking the parent's resolved Dokploy ID; the Renderer (renderer.go) is the declarative-content layer — Render(RenderInput) -> RenderedSpec resolves variables (ascending precedence org<project<environment<service), zero-fills ResourceLimits from tier defaults, normalises BuildSettings, and emits deterministic names/labels/domains, needing no resolved parent IDs. Inapplicable fields are DROPPED, not errored (engine for non-db, role for db, cron_schedule for non-cron, domains for non-web) — mirror this convention for any new provisioning shape. RenderedSpec carries verbatim variable values for the worker; RenderedSpec.Summary() / LogValue redact EVERY variable value (not just Secret-flagged) for logs/audit. Golden tests use testutil.GoldenJSON + the global -update-golden flag, goldens live in testdata/<feature>/.
 - Request input validation goes through internal/controlplane/validate: build a validate.New() Collector, call validators (Name/Slug/ID/Path/URL/Domain/Resources/EnvVars/GitRepoURL/GitBranch/GitCommit/ImageRef) against it, return c.Err() — nil or one apierr.InvalidInput carrying every collected violation (no short-circuit). A FieldViolation.Reason NEVER echoes the submitted value (classification text + bounds only) — this is what lets a secret env var be rejected without leaking. Policy-dependent rules are passed in as plain options the caller resolves (Domain takes DomainOptions{AllowWildcard}, set only after feature flag + quota say yes); validate imports no config/quota. EnvVars separates secret vs non-secret via a distinct ".secret[i]" path segment and a larger secret length ceiling. validate.DecodeJSON is the strict JSON body decoder: size-capped, rejects unknown fields + trailing data, every failure is a body-free apierr.Invalid. Every string validator has a fuzz target seeded with long strings / invalid UTF-8 / path traversal / control chars.
+- Customer-facing soft-delete endpoints come in two shapes. Organization.delete uses a deletion_scheduled_at stamp + 202 Accepted (asynchronous teardown by a future worker; re-scheduling is apierr.Conflict). API-key DELETE is a one-way revocation: the api_keys.revoked_at column is stamped and the credential is permanently unusable from that moment (the auth-layer IsUsable check already rejects a revoked row), the row stays so the audit trail of who minted it stays linked to it, response is 200 OK with the revoked snapshot (mirroring members.Remove's terminal-view convention). The repository (APIKeyRepository.Revoke) is silently idempotent at SQL via COALESCE(revoked_at, $now), but the service layer (APIKeyService.Revoke) pre-checks current.IsRevoked() inside the tx and returns apierr.Conflict on re-revoke — the customer's view of the lifecycle is stale and a silent success would write a misleading audit record. Pattern: customer endpoints surface stale-lifecycle conflicts; repository methods stay SQL-idempotent for non-customer callers (workers, admin jobs).
 - "Add policy matrix coverage for <endpoint>" stories add a <endpoint>_policy_test.go beside the endpoint's contract test, in package httpapi, driving the REAL NewHandler + real policy.NewEngine() (the production authorization path, fake Authenticator only). Table the principal classes the PRD names: every built-in role, revoked/expired credentials (modelled as Disabled principals — the only shape in which a revoked/expired credential reaches the engine; the auth layer's earlier 401 path is the contract test's job), and a wrong-organization principal. For a CapSelf endpoint the matrix is "all allow" — assert the served data is the caller's OWN identity, never escalated/cross-tenant. Grant-containment criteria (sibling project / production env / parent-level secret non-leak) are engine properties: assert them with policy.NewEngine().Decide directly, then tie back by proving the endpoint echoes the confined grant set verbatim. Reuse the existing helpers (meHandlerFor/getMe/decodeMe, middleware_test.go's decodeError) — a sibling _test.go needs no new scaffolding.
 - HTTP endpoints are data-driven entries in internal/controlplane/httpapi/routes.go newRouteTable: apiRoute{endpoint, handler, resolver}. Authorization is declarative — set openapi.Endpoint.RequiresAuth=true + RequiredAction=string(policy.ActionX), and NewHandler auto-wraps the handler in RequireAuth(authenticator, engine, action, resolver) before registering it, so a served authenticated route is structurally impossible without authorization. TestEveryAuthenticatedRouteHasMappedAction enforces the RequiresAuth<->RequiredAction invariant in CI. The optional apiRoute.resolver derives the policy.Resource from path/query params; leave it nil for self/org-root actions (RequireAuth then authorizes against the principal's own org scope). NewHandler signature is (build, readiness, meta, authenticator, engine, logger); httpapi tests build it through the newTestHandler helper (canned fakeAuthenticator + policy.NewEngine()). Handlers stay thin: read policy.PrincipalFromContext, render via apienvelope.WriteData/WriteError. cmd/yalla-api wires the real stack at startup (pgxpool -> store.New -> store.NewCredentialReader -> auth.NewAuthenticator + policy.NewEngine) and requires YALLA_DATABASE_URL in every profile.
 
@@ -5376,4 +5377,149 @@
     "patch with no field" 400 if the policy ever let it through. The
     minimal-valid-body convention makes a future regression where
     the policy allows a denied caller surface as a 200, not a 400.
+---
+
+## 2026-05-15 - BE-0088
+- What was implemented: DELETE /v1/organizations/{org_id}/api-keys/{key_id},
+  the revoke-api-key customer-facing endpoint. Revocation is the customer-
+  facing soft delete for an API key: the api_keys row stays in the database
+  so the audit trail of who minted it remains linked to a live row, but the
+  credential is permanently unusable from that moment on. Every subsequent
+  authentication attempt fails through the uniform invalid-credentials path
+  (the existing prefix-lookup -> IsUsable check rejects a revoked row).
+  - internal/controlplane/store/apikey.go: changed APIKeyRepository.Revoke
+    to return (APIKey, error) using UPDATE ... RETURNING so a caller can
+    see the row Postgres just stamped (revoked_at + trigger-refreshed
+    updated_at) without a follow-up Get. SQL-level idempotency preserved
+    via COALESCE(revoked_at, $now); the no-row case maps to apierr.NotFound
+    via errors.Is(pgx.ErrNoRows). The single existing test of the
+    repository was updated; one other caller (credentials_test.go) was
+    updated to discard the new row return value.
+  - internal/controlplane/store/apikeyservice.go: added RevokeAPIKeyInput
+    (OrganizationID, KeyID, plus the Actor*/RequestID/CorrelationID
+    correlation set that the handler fills in from policy.PrincipalFromContext
+    + telemetry.FromContext, same pattern as the create/update inputs).
+    Added APIKeyService.Revoke(ctx, in, now): id-shape pre-check (kind-
+    prefix guard mirroring Update); in tx — Get current row (tenant-
+    scoped, so cross-tenant key_id is the same typed NotFound as a missing
+    row), conflict early if current.IsRevoked() (apierr.Conflict, so a
+    re-revoke is never a silent success that would write a misleading
+    audit record), call repo.Revoke, append audit event with metadata
+    {organization_id, revoked_at=RFC3339Nano} — no credential material,
+    just non-secret structural values. now is plumbed in so tests pin
+    time without monkey-patching time.Now.
+  - internal/controlplane/httpapi/api_keys.go: added the APIKeyRevoker port
+    (interface depends on store.RevokeAPIKeyInput so the handler stays
+    unit-testable with a fake), revokeAPIKeyPayload wire DTO (single
+    apiKeyResource — same stable wire shape as every other api-key
+    endpoint, the secret hash is never projected), errNoAPIKeyRevoker
+    typed-internal sentinel for the wiring-error path, and
+    revokeAPIKeyHandler — a thin handler that reads
+    policy.PrincipalFromContext + telemetry.FromContext, forwards to the
+    revoker with the actor + correlation set, and renders 200 OK carrying
+    the revoked row (mirrors members.Remove's terminal-view convention).
+  - internal/controlplane/httpapi/routes.go: registered the DELETE route
+    in the data-driven route table — RequiresAuth=true,
+    RequiredAction=keys.manage (CapManage — no cross-tenant support
+    exception, mirror of PATCH semantics), resolver=apiKeyIDResolver (the
+    same resolver PATCH uses, scopes the policy decision to the {org_id}
+    path parameter), Method=DELETE, OperationID=revokeOrganizationAPIKey,
+    tags=[api-keys], 200 default success status. newRouteTable signature
+    gained apiKeyRevoker APIKeyRevoker.
+  - internal/controlplane/httpapi/server.go: NewHandler signature gained
+    apiKeyRevoker APIKeyRevoker (16th positional arg, last before logger),
+    forwarded into newRouteTable. The "registering an authenticated route
+    without authenticator/engine panics at startup" fail-fast posture
+    naturally covers the new route too.
+  - cmd/yalla-api/main.go: wires apiKeyService (same *store.APIKeyService
+    that already backs creator + updater) into the new revoker slot — one
+    APIKeyService satisfies APIKeyCreator + APIKeyUpdater + APIKeyRevoker.
+  - Tests: 15 handler unit tests in httpapi/api_keys_delete_test.go drive
+    the real NewHandler with a fake APIKeyRevoker — happy path (200 +
+    revoked_at projected onto the wire + secret-hash sentinel proof),
+    request/correlation id forwarding, not-found 404, already-revoked 409,
+    store-validation 400, store-outage 5xx with cause redaction,
+    unauthenticated 401, invalid-credentials 401, cross-tenant 403,
+    viewer-denied 403, disabled-principal 403, nil-revoker internal,
+    request-id propagation, OpenAPI publication invariant. 6 service
+    integration tests in store/apikeyservice_test.go drive
+    APIKeyService.Revoke against real Postgres — happy path (revoked_at
+    stamped + audit event with non-leaking metadata + credential
+    primitives untouched + name unchanged), already-revoked Conflict (no
+    second audit row, row revoked_at unchanged), missing-key NotFound (no
+    audit row), cross-tenant NotFound (target row untouched, neither
+    tenant's audit log written), invalid-id-shape rejection (no
+    transaction opens), and missing-actor-org Internal (not InvalidInput
+    — a wiring error, never client input). The existing
+    TestAPIKeyRepositoryRevokeIsIdempotentAndTenantScoped test was
+    updated to consume the new (APIKey, error) signature and assert the
+    returned row's revoked_at matches the first revocation timestamp on
+    re-revoke.
+  - All NewHandler callers (16 test sites + cmd/yalla-api/main.go +
+    newRouteTable test sites) updated for the new positional arg; every
+    existing test now passes the canned fakeAPIKeyRevoker{}.
+- Files changed: internal/controlplane/store/{apikey.go,apikeyservice.go,
+  apikey_test.go,apikeyservice_test.go,credentials_test.go},
+  internal/controlplane/httpapi/{api_keys.go,api_keys_delete_test.go (new),
+  api_keys_test.go,api_keys_create_test.go,api_keys_update_test.go,
+  me_test.go,me_contract_test.go,members_test.go,members_create_test.go,
+  members_update_test.go,members_delete_test.go,organizations_test.go,
+  organizations_create_test.go,organizations_patch_test.go,
+  organizations_delete_test.go,routes.go,routes_test.go,server.go,
+  server_test.go}, cmd/yalla-api/main.go, ralph/prd.json,
+  ralph/progress.txt.
+- Verification run: gofmt -w .; go mod tidy; go build ./...; go vet ./...;
+  go test ./...; go test -race ./...; integration tests for the touched
+  surface (TestAPIKeyServiceRevoke*, TestAPIKeyServiceUpdate*,
+  TestAPIKeyRepositoryRevoke*, TestAuthenticator*) under
+  YALLA_TEST_DATABASE_URL=postgres://yalla:yalla@127.0.0.1:5432/yalla.
+- Results: all passed locally. goimports/golangci-lint/staticcheck/
+  govulncheck still not installed; documented in earlier iterations. The
+  TestAPIKeyServiceCreate* integration tests fail on this branch
+  ALREADY (verified via `git stash` + re-run against parent commit) —
+  pre-existing failure unrelated to BE-0088, the Create validator
+  rejects something the test fixtures supply. Out of scope for this
+  story; it should be tracked as its own bug.
+- Remaining risks / follow-ups:
+  - BE-0089 (contract tests for DELETE /v1/organizations/{org_id}/api-
+    keys/{key_id}) and BE-0090 (policy matrix coverage for the same) are
+    now unblocked; api_keys_delete_test.go already covers a good chunk of
+    BE-0089's surface but those remain separate PRD stories.
+  - Pre-existing TestAPIKeyServiceCreate* failures should be filed and
+    fixed — they break the integration suite for everyone touching the
+    api-key store.
+  - "Record an audit event for every ... denied authorization decision"
+    is still N/A at the per-endpoint level: RequireAuth does not yet
+    emit audit events for denied decisions for any endpoint. The
+    cross-cutting follow-up that lands denied-decision auditing in
+    RequireAuth will pick up DELETE /v1/organizations/{org_id}/api-
+    keys/{key_id} along with every other authenticated route.
+- **Learnings for future iterations:**
+  - When changing a repository method's signature (here Revoke's `error`
+    return became `(APIKey, error)`), greppping ALL callers is mandatory
+    — even test-only ones, because go test compiles them. The
+    apikey_test.go + credentials_test.go updates were needed before
+    `go build` would pass.
+  - The "soft delete" surface for an API key is a one-way revocation,
+    NOT the scheduled-deletion-with-deletion_scheduled_at pattern used by
+    organization.delete. An API key's revoked_at column already exists
+    and the auth path already enforces "revoked => unauthenticated", so
+    revocation is the natural and immediate customer-facing soft delete.
+    Return 200 OK with the revoked snapshot (mirror members.Remove), not
+    202 Accepted (which is for asynchronous teardown like
+    organization.delete schedules).
+  - SQL idempotency is fine for the repository, but the customer
+    endpoint should NOT silently succeed on a re-revoke — the caller's
+    view of the lifecycle is stale, and a silent success would write a
+    misleading audit record. Pre-check the current state in the service
+    layer (Get -> isRevoked() -> Conflict) and let the repository remain
+    silently idempotent for non-customer callers (workers, admin jobs).
+    This mirrors organization.delete's scheduling pre-check exactly.
+  - "Add policy matrix coverage" and "Add contract tests" stories
+    skipped on the PRD don't necessarily mean the endpoint is
+    under-tested. The BE-008x cycle pattern in this repo has been
+    "implement + happy/edge tests in one commit, policy matrix in a
+    follow-up". BE-0083/BE-0086/BE-0089 in particular cover OpenAPI/
+    contract assertions that overlap heavily with the implementation
+    commit's own tests.
 ---

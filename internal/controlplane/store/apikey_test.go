@@ -257,17 +257,35 @@ func TestAPIKeyRepositoryRevokeIsIdempotentAndTenantScoped(t *testing.T) {
 	insertAPIKey(ctx, t, s, repo, key)
 
 	firstRevoke := time.Now().UTC().Truncate(time.Microsecond)
+	var firstRow store.APIKey
 	if err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
-		return repo.Revoke(ctx, tx, org.ID, key.ID, firstRevoke)
+		row, err := repo.Revoke(ctx, tx, org.ID, key.ID, firstRevoke)
+		if err != nil {
+			return err
+		}
+		firstRow = row
+		return nil
 	}); err != nil {
 		t.Fatalf("Revoke: %v", err)
 	}
+	if firstRow.RevokedAt == nil || !firstRow.RevokedAt.Equal(firstRevoke) {
+		t.Errorf("first Revoke returned revoked_at = %v, want %v", firstRow.RevokedAt, firstRevoke)
+	}
 
 	// Revoking again is a no-op success and preserves the first timestamp.
+	var secondRow store.APIKey
 	if err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
-		return repo.Revoke(ctx, tx, org.ID, key.ID, firstRevoke.Add(time.Hour))
+		row, err := repo.Revoke(ctx, tx, org.ID, key.ID, firstRevoke.Add(time.Hour))
+		if err != nil {
+			return err
+		}
+		secondRow = row
+		return nil
 	}); err != nil {
 		t.Fatalf("second Revoke: %v", err)
+	}
+	if secondRow.RevokedAt == nil || !secondRow.RevokedAt.Equal(firstRevoke) {
+		t.Errorf("second Revoke returned revoked_at = %v, want %v (first timestamp preserved)", secondRow.RevokedAt, firstRevoke)
 	}
 
 	var got store.APIKey
@@ -291,7 +309,8 @@ func TestAPIKeyRepositoryRevokeIsIdempotentAndTenantScoped(t *testing.T) {
 	// A cross-tenant revoke must not match the row.
 	otherOrg := seedOrg(t, db, f, "intruder")
 	err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
-		return repo.Revoke(ctx, tx, otherOrg.ID, key.ID, firstRevoke)
+		_, revErr := repo.Revoke(ctx, tx, otherOrg.ID, key.ID, firstRevoke)
+		return revErr
 	})
 	if ye := yerr.From(err); ye.Code != yerr.CodeNotFound {
 		t.Fatalf("cross-tenant Revoke error code = %v, want %s", err, yerr.CodeNotFound)

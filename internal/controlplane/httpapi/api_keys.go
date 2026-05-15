@@ -38,6 +38,14 @@ var errNoAPIKeyCreator = errors.New("httpapi: no api key creator configured")
 // silently dropping a write.
 var errNoAPIKeyUpdater = errors.New("httpapi: no api key updater configured")
 
+// errNoAPIKeyRevoker is returned when DELETE
+// /v1/organizations/{org_id}/api-keys/{key_id} is reached without an
+// api-key revoker wired into NewHandler. Like errNoAPIKeyUpdater it can only
+// happen through a wiring error — a programming mistake, not a client error —
+// so the handler reports it as a typed internal failure rather than
+// silently dropping the revocation.
+var errNoAPIKeyRevoker = errors.New("httpapi: no api key revoker configured")
+
 // APIKeyReader is the narrow persistence port GET
 // /v1/organizations/{org_id}/api-keys and GET
 // /v1/organizations/{org_id}/api-keys/{key_id} depend on. *store.APIKeyReader
@@ -546,6 +554,102 @@ func updateAPIKeyHandler(updater APIKeyUpdater) http.HandlerFunc {
 		}
 
 		apienvelope.WriteData(w, http.StatusOK, requestID(r), updateAPIKeyPayload{
+			APIKey: apiKeyResourceOf(key),
+		})
+	}
+}
+
+// APIKeyRevoker is the narrow persistence port DELETE
+// /v1/organizations/{org_id}/api-keys/{key_id} depends on.
+// *store.APIKeyService satisfies it in production; tests supply a fake. Like
+// APIKeyUpdater it is an interface declared here so the handler stays
+// unit-testable without a real database — the concrete orchestrator (the
+// tenant-scoped existence read, the conflict check for an already-revoked
+// key, the api_keys row revocation, and the immutable audit record committed
+// in one transaction) lives in the store layer.
+type APIKeyRevoker interface {
+	Revoke(ctx context.Context, in store.RevokeAPIKeyInput, now time.Time) (store.APIKey, error)
+}
+
+// revokeAPIKeyPayload is the data block of the DELETE
+// /v1/organizations/{org_id}/api-keys/{key_id} success envelope: the api key
+// exactly as it stood at the moment of revocation, in the same stable wire
+// shape every other api-key endpoint returns. Returning the terminal view
+// (rather than 204 No Content) mirrors the members removal contract and lets
+// agents and CI see the resolved revoked_at without a second request. The row
+// still exists by the time the response is rendered — revocation is the
+// customer-facing soft delete for an api key, not a hard delete — but the
+// credential is permanently unusable from that moment on. It carries no
+// credential material: the secret hash is never projected onto the wire and
+// the plaintext token (the only usable credential) is shown to its owner
+// once at creation and never reaches this endpoint, so a revocation endpoint
+// can never reveal a credential.
+type revokeAPIKeyPayload struct {
+	APIKey apiKeyResource `json:"api_key"`
+}
+
+// revokeAPIKeyHandler builds the DELETE
+// /v1/organizations/{org_id}/api-keys/{key_id} handler. It delegates to the
+// revoke-api-key unit of work — read the current row, reject the call as a
+// typed Conflict when the key is already revoked, mark it revoked, append
+// the audit record, all in one transaction — which runs in the store layer
+// through the APIKeyRevoker port.
+//
+// RequireAuth gates the route on action keys.manage before the handler runs
+// — authorized through apiKeyIDResolver against the organization the path
+// names — and attaches the resolved principal, so a request that reaches
+// the handler has already cleared the tenant boundary: a cross-tenant
+// {org_id} was rejected as a 403 by the policy engine, never reaching this
+// code. A request that arrives here with no principal is therefore a wiring
+// error and is reported as a typed internal error. The principal and the
+// request correlation identifiers are passed to the revoker so the audit
+// record names the actor; a not-found key (cross-tenant or missing row), an
+// already-revoked key (typed 409), and a datastore outage each surface as
+// their own typed status, never disguised as one another.
+//
+// keys.manage is a CapManage action: a viewer or developer in the tenant
+// cannot revoke an api key, only an owner or admin in the tenant can —
+// unlike CapRead actions there is no cross-tenant support exception. The
+// handler relies on the policy engine for that decision; it never re-checks
+// the role itself.
+//
+// The response is 200 OK carrying the api key exactly as it stood at the
+// moment of revocation — the same wire shape every other api-key endpoint
+// returns, projected from the row Postgres just stamped. revoked_at is the
+// resolved revocation timestamp; updated_at reflects the trigger refresh.
+// The row still exists when this returns; the body is the audit-grade record
+// of which credential was retired and when, while the credential itself is
+// permanently unusable from that moment on (every subsequent authentication
+// attempt fails through the same uniform invalid-credentials path).
+func revokeAPIKeyHandler(revoker APIKeyRevoker) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if revoker == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoAPIKeyRevoker))
+			return
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		now := time.Now().UTC()
+		key, err := revoker.Revoke(r.Context(), store.RevokeAPIKeyInput{
+			OrganizationID: r.PathValue("org_id"),
+			KeyID:          r.PathValue("key_id"),
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+		}, now)
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), revokeAPIKeyPayload{
 			APIKey: apiKeyResourceOf(key),
 		})
 	}

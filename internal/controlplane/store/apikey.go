@@ -302,26 +302,36 @@ func (r *APIKeyRepository) UpdateMutable(ctx context.Context, tx *Tx, organizati
 }
 
 // Revoke marks the key identified by (organizationID, keyID) as revoked at
-// revokedAt. It requires a *Tx and is tenant scoped. Revocation is idempotent:
-// COALESCE keeps the first revocation timestamp, so revoking an already-revoked
-// key is a no-op success rather than an error. A key id that belongs to another
-// organization does not match and is reported as NotFound.
-func (r *APIKeyRepository) Revoke(ctx context.Context, tx *Tx, organizationID, keyID string, revokedAt time.Time) error {
+// revokedAt and returns the persisted row, including the trigger-refreshed
+// updated_at timestamp and the resolved revoked_at. It requires a *Tx and is
+// tenant scoped. Revocation is idempotent at the SQL layer: COALESCE keeps
+// the first revocation timestamp, so revoking an already-revoked key is a
+// no-op success that returns the row with its original revoked_at preserved
+// — callers that need to distinguish "freshly revoked" from "already revoked"
+// must read the row first inside the same transaction (which APIKeyService.Revoke
+// does to surface a typed Conflict to the customer endpoint while preserving
+// the repository's idempotent contract). A key id that belongs to another
+// organization does not match and is reported as the typed apierr.NotFound the
+// GET endpoint uses, never disguised as a 5xx and never revealing whether
+// another tenant owns that key.
+func (r *APIKeyRepository) Revoke(ctx context.Context, tx *Tx, organizationID, keyID string, revokedAt time.Time) (APIKey, error) {
 	if tx == nil {
-		return apierr.Internal(errors.New("store: APIKeyRepository.Revoke called with a nil transaction"))
+		return APIKey{}, apierr.Internal(errors.New("store: APIKeyRepository.Revoke called with a nil transaction"))
 	}
-	tag, err := tx.Exec(ctx,
+	row := tx.QueryRow(ctx,
 		`UPDATE api_keys
-		 SET revoked_at = COALESCE(revoked_at, $3)
-		 WHERE organization_id = $1 AND id = $2`,
+		    SET revoked_at = COALESCE(revoked_at, $3)
+		  WHERE organization_id = $1 AND id = $2
+		 RETURNING `+apiKeyColumns,
 		organizationID, keyID, revokedAt)
+	revoked, err := scanAPIKey(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return APIKey{}, apierr.NotFound("api_key", keyID)
+	}
 	if err != nil {
-		return mapWriteError(err, "the api key could not be revoked")
+		return APIKey{}, mapWriteError(err, "the api key could not be revoked")
 	}
-	if tag.RowsAffected() == 0 {
-		return apierr.NotFound("api_key", keyID)
-	}
-	return nil
+	return revoked, nil
 }
 
 // APIKeyReader is the store-backed read adapter the httpapi layer depends on

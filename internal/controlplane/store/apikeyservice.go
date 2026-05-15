@@ -74,6 +74,39 @@ type CreateAPIKeyInput struct {
 	CorrelationID string
 }
 
+// RevokeAPIKeyInput is the unvalidated input to APIKeyService.Revoke.
+// OrganizationID and KeyID name the api_keys row to revoke. Revocation is the
+// customer-facing soft delete for an API key: the row stays in the database
+// (so authentication continues to reject the key with the same uniform
+// invalid-credentials result, and so the audit trail of who minted it stays
+// linked to a live row) but its revoked_at column is stamped and the
+// credential is permanently unusable from that moment on. There is no
+// "un-revoke" — a revoked key cannot be re-activated, only replaced by a fresh
+// mint.
+//
+// The credential primitives (prefix and secret_hash) and the immutable
+// identity fields are deliberately not on this struct: revocation does not
+// rotate, rename, or rescope a key — it only flips it to revoked. Re-revoking
+// an already-revoked key is rejected by the service as a typed Conflict
+// (the caller's view of the resource lifecycle is stale), even though the
+// underlying repository remains silently idempotent at the SQL layer.
+//
+// The Actor* and correlation fields describe the authenticated principal
+// performing the revocation and are recorded verbatim on the audit event.
+// They are plain strings so the store layer takes no build dependency on
+// the policy or telemetry packages — the httpapi handler, which already
+// holds the resolved principal and the request correlation, fills them in.
+type RevokeAPIKeyInput struct {
+	OrganizationID string
+	KeyID          string
+
+	ActorID       string
+	ActorKind     string
+	ActorOrgID    string
+	RequestID     string
+	CorrelationID string
+}
+
 // UpdateAPIKeyInput is the unvalidated input to APIKeyService.Update.
 // OrganizationID and KeyID name the api_keys row to update. Name and Scopes
 // are optional: a nil pointer means the caller did not include the field and
@@ -352,6 +385,128 @@ func (svc *APIKeyService) Update(ctx context.Context, in UpdateAPIKeyInput) (API
 		return APIKey{}, txErr
 	}
 	return updated, nil
+}
+
+// Revoke validates in, then runs the revoke-api-key unit of work inside one
+// transaction: read the current row, reject the call as a typed Conflict when
+// the key is already revoked, mark it revoked at now, append the audit event.
+// Validation runs before the transaction is opened, so an invalid request
+// never touches the database. A {key_id} with no row in the target tenant is
+// the typed NotFound the repository produces (the tenant-scoped read filters
+// by organization_id first, so a cross-tenant key_id is indistinguishable
+// from a missing row), and the audit record is rolled back with it, so an
+// audit trail can never name a revocation that did not happen.
+//
+// Revocation is the customer-facing soft delete: the api_keys row stays in
+// the database — the prefix-lookup authentication path keeps surfacing the
+// row, the IsUsable check rejects it as revoked, and the audit trail of who
+// minted it stays linked to a live row — but the credential is permanently
+// unusable. Re-revoking an already-revoked key is rejected as a typed
+// Conflict at the service layer (the caller's view of the resource lifecycle
+// is stale, so it is a typed Conflict, not a silent success that would write
+// a misleading audit record), mirroring the organization scheduled-deletion
+// contract. The underlying repository remains silently idempotent at the SQL
+// layer, so a non-customer caller (a worker or admin job) that does not need
+// the conflict signal can call APIKeyRepository.Revoke directly.
+//
+// The audit record is filed under the actor's home organization — the tenant
+// the principal authenticated into — while its resource id names the api key
+// that was revoked. metadata captures the target tenant and the resolved
+// revocation timestamp (a non-secret value), so the trail records exactly
+// when the key was retired without carrying any input verbatim.
+//
+// now is the wall-clock the unit of work stamps the api_keys.revoked_at
+// column with. It is plumbed in so a unit test can pin time without
+// monkey-patching time.Now.
+func (svc *APIKeyService) Revoke(ctx context.Context, in RevokeAPIKeyInput, now time.Time) (APIKey, error) {
+	organizationID := strings.TrimSpace(in.OrganizationID)
+	keyID := strings.TrimSpace(in.KeyID)
+
+	// Path-parameter ids are treated as opaque identifiers the caller already
+	// has, so the rules mirror Update: require the kind-prefix as a defensive
+	// guard and let the in-transaction tenant-scoped read enforce the rest.
+	// Format strictness is the job of internal/controlplane/domain when an id
+	// is minted; the auth/HTTP layer's earlier 403/404 also shields this
+	// layer from arbitrary cross-tenant probes.
+	var idViolations []apierr.FieldViolation
+	if organizationID == "" || !strings.HasPrefix(organizationID, string(domain.KindOrganization)+"_") {
+		idViolations = append(idViolations, apierr.FieldViolation{
+			Field:  "organization_id",
+			Reason: "must be a valid organization identifier",
+		})
+	}
+	if keyID == "" || !strings.HasPrefix(keyID, string(domain.KindAPIKey)+"_") {
+		idViolations = append(idViolations, apierr.FieldViolation{
+			Field:  "key_id",
+			Reason: "must be a valid api key identifier",
+		})
+	}
+	if len(idViolations) > 0 {
+		return APIKey{}, apierr.InvalidInput(idViolations...)
+	}
+
+	actorOrgID := strings.TrimSpace(in.ActorOrgID)
+	if actorOrgID == "" {
+		return APIKey{}, apierr.Internal(errors.New("store: APIKeyService.Revoke requires an actor organization for the audit record"))
+	}
+
+	revokedAt := now.UTC()
+
+	var revoked APIKey
+	txErr := svc.store.Write(ctx, func(ctx context.Context, tx *Tx) error {
+		// Read the current row inside the same transaction so a missing key
+		// in this tenant is reported as NotFound without relying on the
+		// UPDATE's no-rows path, and so the "already revoked" decision sees
+		// the same row the UPDATE would lock. A cross-tenant key_id is
+		// indistinguishable from a missing row — exactly what every other
+		// read endpoint of this resource guarantees.
+		current, getErr := svc.apiKeys.Get(ctx, tx, organizationID, keyID)
+		if getErr != nil {
+			return getErr
+		}
+		if current.IsRevoked() {
+			// Re-revoking changes nothing: the caller's view of the resource
+			// lifecycle is stale, so it is a typed Conflict, not a silent
+			// success that would write a misleading audit record.
+			return apierr.Conflict("api key is already revoked")
+		}
+
+		row, revErr := svc.apiKeys.Revoke(ctx, tx, organizationID, keyID, revokedAt)
+		if revErr != nil {
+			return revErr
+		}
+
+		event := AuditEvent{
+			OrganizationID: actorOrgID,
+			ActorID:        strings.TrimSpace(in.ActorID),
+			ActorKind:      strings.TrimSpace(in.ActorKind),
+			Action:         keysManageAction,
+			ResourceKind:   string(domain.KindAPIKey),
+			ResourceID:     keyID,
+			Decision:       AuditDecisionAllowed,
+			Reason:         "authorization granted for keys.manage",
+			RequestID:      strings.TrimSpace(in.RequestID),
+			CorrelationID:  strings.TrimSpace(in.CorrelationID),
+			// organization_id is the target tenant of the revocation; the
+			// revoked_at stamp is the resolved revocation timestamp (a
+			// non-secret value) — both are safe to record verbatim. The
+			// captured timestamp is the audit-grade record of when the key
+			// became unusable.
+			Metadata: map[string]string{
+				"organization_id": organizationID,
+				"revoked_at":      revokedAt.Format(time.RFC3339Nano),
+			},
+		}
+		if _, audErr := svc.audit.Append(ctx, tx, event); audErr != nil {
+			return audErr
+		}
+		revoked = row
+		return nil
+	})
+	if txErr != nil {
+		return APIKey{}, txErr
+	}
+	return revoked, nil
 }
 
 // apiKeyUpdate is the validated, normalised result of buildAPIKeyUpdate: a

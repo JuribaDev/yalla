@@ -175,7 +175,8 @@ func TestAuthenticatorEndToEndAPIKey(t *testing.T) {
 	// A revoked key no longer authenticates — and the failure is the uniform
 	// invalid-credentials result, not a leak of why.
 	if err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
-		return repo.Revoke(ctx, tx, org.ID, key.ID, time.Now())
+		_, revErr := repo.Revoke(ctx, tx, org.ID, key.ID, time.Now())
+		return revErr
 	}); err != nil {
 		t.Fatalf("revoke key: %v", err)
 	}

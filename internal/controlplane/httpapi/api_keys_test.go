@@ -123,6 +123,26 @@ func (f fakeAPIKeyUpdater) Update(_ context.Context, in store.UpdateAPIKeyInput)
 	return f.key, f.err
 }
 
+// fakeAPIKeyRevoker is a canned APIKeyRevoker for httpapi tests. The zero
+// value returns the zero store.APIKey and no error from Revoke, which is
+// all the tests that never reach the handler (the public-surface, GET-only,
+// POST-only, PATCH-only, other-org-route, /v1/me, and members suites) need.
+// DELETE-api-keys-specific tests set key/err and read got back to prove the
+// handler forwards the path identifiers and the authenticated actor to the
+// store layer unchanged.
+type fakeAPIKeyRevoker struct {
+	key store.APIKey
+	err error
+	got *store.RevokeAPIKeyInput
+}
+
+func (f fakeAPIKeyRevoker) Revoke(_ context.Context, in store.RevokeAPIKeyInput, _ time.Time) (store.APIKey, error) {
+	if f.got != nil {
+		*f.got = in
+	}
+	return f.key, f.err
+}
+
 // listAPIKeysSuccessEnvelope is the decoded shape of the GET
 // /v1/organizations/{org_id}/api-keys success envelope.
 type listAPIKeysSuccessEnvelope struct {
@@ -141,7 +161,7 @@ func listAPIKeysHandlerFor(id auth.Identity, authErr error, reader APIKeyReader)
 	a := fakeAuthenticator{identity: id, err: authErr}
 	return NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, a, policy.NewEngine(),
 		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
-		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{}, reader, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, nil)
+		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{}, reader, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, nil)
 }
 
 // getAPIKeys issues GET /v1/organizations/{orgID}/api-keys against handler,

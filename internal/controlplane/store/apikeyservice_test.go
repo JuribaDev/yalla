@@ -918,3 +918,335 @@ func TestAPIKeyServiceUpdateCrossTenantIsNotFound(t *testing.T) {
 		t.Errorf("api key was mutated by a cross-tenant request; name = %q, want %q", stillThere.Name, key.Name)
 	}
 }
+
+// TestAPIKeyServiceRevokeMarksKeyAndAudits is the happy path for the
+// revoke-api-key unit of work: an api key transitions to revoked inside the
+// same transaction as its audit event. The api_keys row gains a revoked_at
+// stamp (and a refreshed updated_at), the credential primitives stay
+// untouched (rotation is a separate endpoint), and the audit log records the
+// transition exactly once with non-leaking metadata.
+func TestAPIKeyServiceRevokeMarksKeyAndAudits(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	target := seedOrg(t, db, f, "acme")
+	actor := seedUser(t, db, f, target, "ada")
+	svc := newAPIKeyService(t, s)
+	key := seedAPIKeyForUpdate(t, ctx, s, target, actor, "Ada CLI", []string{"projects:read"})
+
+	if got := listAuditEvents(t, s, target.ID); len(got) != 0 {
+		t.Fatalf("pre-revoke audit events = %d, want 0", len(got))
+	}
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	revoked, err := svc.Revoke(ctx, store.RevokeAPIKeyInput{
+		OrganizationID: target.ID,
+		KeyID:          key.ID,
+		ActorID:        actor,
+		ActorKind:      string(domain.KindUser),
+		ActorOrgID:     target.ID,
+		RequestID:      "req_revoke",
+		CorrelationID:  "corr_revoke",
+	}, now)
+	if err != nil {
+		t.Fatalf("Revoke returned %v, want nil", err)
+	}
+	if !revoked.IsRevoked() {
+		t.Fatal("Revoke returned a row that is not marked revoked")
+	}
+	if revoked.RevokedAt == nil || !revoked.RevokedAt.Equal(now) {
+		t.Errorf("revoked_at = %v, want %v", revoked.RevokedAt, now)
+	}
+	if revoked.IsUsable(time.Now()) {
+		t.Error("a revoked key reports IsUsable = true")
+	}
+	if !revoked.UpdatedAt.After(key.UpdatedAt) {
+		t.Errorf("Revoke updated_at = %v, want strictly after the original %v",
+			revoked.UpdatedAt, key.UpdatedAt)
+	}
+	if revoked.Prefix != key.Prefix || revoked.SecretHash != key.SecretHash {
+		t.Error("Revoke mutated the credential primitives; prefix and secret_hash must be immutable")
+	}
+	if revoked.Name != key.Name {
+		t.Errorf("Revoke renamed the key; name = %q, want %q (revocation must not edit other fields)",
+			revoked.Name, key.Name)
+	}
+
+	events := listAuditEvents(t, s, target.ID)
+	if len(events) != 1 {
+		t.Fatalf("audit events = %d, want exactly the revoke record", len(events))
+	}
+	revokeEv := events[0]
+	if revokeEv.Action != "keys.manage" {
+		t.Errorf("revoke audit action = %q, want keys.manage", revokeEv.Action)
+	}
+	if revokeEv.Decision != store.AuditDecisionAllowed {
+		t.Errorf("revoke audit decision = %q, want allowed", revokeEv.Decision)
+	}
+	if revokeEv.ResourceID != key.ID {
+		t.Errorf("revoke audit resource_id = %q, want %q", revokeEv.ResourceID, key.ID)
+	}
+	if revokeEv.ResourceKind != string(domain.KindAPIKey) {
+		t.Errorf("revoke audit resource_kind = %q, want %q", revokeEv.ResourceKind, domain.KindAPIKey)
+	}
+	if revokeEv.Metadata["organization_id"] != target.ID {
+		t.Errorf("revoke audit metadata organization_id = %q, want %q",
+			revokeEv.Metadata["organization_id"], target.ID)
+	}
+	if revokeEv.Metadata["revoked_at"] != now.Format(time.RFC3339Nano) {
+		t.Errorf("revoke audit metadata revoked_at = %q, want %q",
+			revokeEv.Metadata["revoked_at"], now.Format(time.RFC3339Nano))
+	}
+}
+
+// TestAPIKeyServiceRevokeAlreadyRevokedIsConflict proves that re-revoking an
+// already-revoked key is a typed Conflict, not a silent success — the
+// caller's view of the resource lifecycle is stale, and the audit log
+// records the first revocation only.
+func TestAPIKeyServiceRevokeAlreadyRevokedIsConflict(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	target := seedOrg(t, db, f, "acme")
+	actor := seedUser(t, db, f, target, "ada")
+	svc := newAPIKeyService(t, s)
+	key := seedAPIKeyForUpdate(t, ctx, s, target, actor, "Ada CLI", nil)
+
+	first := time.Now().UTC().Truncate(time.Microsecond)
+	if _, err := svc.Revoke(ctx, store.RevokeAPIKeyInput{
+		OrganizationID: target.ID,
+		KeyID:          key.ID,
+		ActorID:        actor,
+		ActorKind:      string(domain.KindUser),
+		ActorOrgID:     target.ID,
+		RequestID:      "req_revoke",
+		CorrelationID:  "corr_revoke",
+	}, first); err != nil {
+		t.Fatalf("first Revoke returned %v, want nil", err)
+	}
+
+	second := first.Add(time.Hour)
+	_, err := svc.Revoke(ctx, store.RevokeAPIKeyInput{
+		OrganizationID: target.ID,
+		KeyID:          key.ID,
+		ActorID:        actor,
+		ActorKind:      string(domain.KindUser),
+		ActorOrgID:     target.ID,
+		RequestID:      "req_revoke_2",
+		CorrelationID:  "corr_revoke_2",
+	}, second)
+	if err == nil {
+		t.Fatal("second Revoke returned nil, want Conflict")
+	}
+	if ye := yerr.From(err); ye.Code != yerr.CodeConflict {
+		t.Errorf("second Revoke code = %s, want %s", ye.Code, yerr.CodeConflict)
+	}
+
+	// The audit log must record only the first revocation — the rejected
+	// re-revoke must leave no trail.
+	events := listAuditEvents(t, s, target.ID)
+	if len(events) != 1 {
+		t.Errorf("audit events = %d, want exactly one (the first revoke)", len(events))
+	}
+	if events[0].Metadata["revoked_at"] != first.Format(time.RFC3339Nano) {
+		t.Errorf("recorded revoked_at = %q, want the first revocation timestamp %q",
+			events[0].Metadata["revoked_at"], first.Format(time.RFC3339Nano))
+	}
+
+	// The row's revoked_at must still be the first revocation: the second
+	// call must not have advanced it.
+	reader, err := store.NewAPIKeyReader(s)
+	if err != nil {
+		t.Fatalf("NewAPIKeyReader: %v", err)
+	}
+	current, err := reader.GetAPIKey(ctx, target.ID, key.ID)
+	if err != nil {
+		t.Fatalf("GetAPIKey after rejected re-revoke: %v", err)
+	}
+	if current.RevokedAt == nil || !current.RevokedAt.Equal(first) {
+		t.Errorf("row revoked_at = %v, want %v (first timestamp preserved)", current.RevokedAt, first)
+	}
+}
+
+// TestAPIKeyServiceRevokeMissingKeyIsNotFound proves a well-formed but
+// unknown key id is the typed NotFound the HTTP layer renders as 404. The
+// audit log records nothing for the failed revocation.
+func TestAPIKeyServiceRevokeMissingKeyIsNotFound(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	target := seedOrg(t, db, f, "acme")
+	actor := seedUser(t, db, f, target, "ada")
+	svc := newAPIKeyService(t, s)
+
+	ghost := domain.MustNewID(domain.KindAPIKey).String()
+	_, err := svc.Revoke(ctx, store.RevokeAPIKeyInput{
+		OrganizationID: target.ID,
+		KeyID:          ghost,
+		ActorID:        actor,
+		ActorKind:      string(domain.KindUser),
+		ActorOrgID:     target.ID,
+		RequestID:      "req_revoke",
+		CorrelationID:  "corr_revoke",
+	}, time.Now().UTC())
+	if err == nil {
+		t.Fatal("Revoke(missing key) error = nil, want NotFound")
+	}
+	if ye := yerr.From(err); ye.Code != yerr.CodeNotFound {
+		t.Errorf("Revoke code = %s, want %s", ye.Code, yerr.CodeNotFound)
+	}
+	if events := listAuditEvents(t, s, target.ID); len(events) != 0 {
+		t.Errorf("audit events = %d, want 0 — a failed revoke must leave no trail", len(events))
+	}
+}
+
+// TestAPIKeyServiceRevokeCrossTenantIsNotFound proves a key id from another
+// organization is the same typed NotFound — never a 5xx, never a 403, never
+// a Conflict — so the endpoint cannot be used as a presence oracle for keys
+// in other tenants. The store layer is the defence-in-depth backstop for
+// the policy engine's cross-tenant rejection at the request edge.
+func TestAPIKeyServiceRevokeCrossTenantIsNotFound(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	target := seedOrg(t, db, f, "acme")
+	other := seedOrg(t, db, f, "other")
+	actor := seedUser(t, db, f, target, "ada")
+	otherActor := seedUser(t, db, f, other, "mallory")
+	svc := newAPIKeyService(t, s)
+
+	key := seedAPIKeyForUpdate(t, ctx, s, target, actor, "Ada CLI", nil)
+
+	_, err := svc.Revoke(ctx, store.RevokeAPIKeyInput{
+		OrganizationID: other.ID,
+		KeyID:          key.ID,
+		ActorID:        otherActor,
+		ActorKind:      string(domain.KindUser),
+		ActorOrgID:     other.ID,
+		RequestID:      "req_revoke",
+		CorrelationID:  "corr_revoke",
+	}, time.Now().UTC())
+	if err == nil {
+		t.Fatal("Revoke(cross-tenant) error = nil, want NotFound")
+	}
+	if ye := yerr.From(err); ye.Code != yerr.CodeNotFound {
+		t.Errorf("Revoke cross-tenant code = %s, want %s", ye.Code, yerr.CodeNotFound)
+	}
+
+	if events := listAuditEvents(t, s, target.ID); len(events) != 0 {
+		t.Errorf("target audit events = %d, want 0 — the failed cross-tenant revoke must leave no trail", len(events))
+	}
+	if otherEvents := listAuditEvents(t, s, other.ID); len(otherEvents) != 0 {
+		t.Errorf("other audit events = %d, want 0 — the failed revoke must leave no trail", len(otherEvents))
+	}
+
+	reader, err := store.NewAPIKeyReader(s)
+	if err != nil {
+		t.Fatalf("NewAPIKeyReader: %v", err)
+	}
+	stillThere, err := reader.GetAPIKey(ctx, target.ID, key.ID)
+	if err != nil {
+		t.Fatalf("GetAPIKey after cross-tenant attempt: %v", err)
+	}
+	if stillThere.IsRevoked() {
+		t.Error("api key was revoked by a cross-tenant request; the row must be untouched")
+	}
+}
+
+// TestAPIKeyServiceRevokeInvalidIDsAreRejected proves the id-shape pre-check
+// rejects a blank or non-prefixed identifier as a typed InvalidInput before
+// any transaction is opened. The audit log records nothing for a rejected
+// request.
+func TestAPIKeyServiceRevokeInvalidIDsAreRejected(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	target := seedOrg(t, db, f, "acme")
+	actor := seedUser(t, db, f, target, "ada")
+	svc := newAPIKeyService(t, s)
+
+	for name, in := range map[string]store.RevokeAPIKeyInput{
+		"blank org": {
+			OrganizationID: "",
+			KeyID:          domain.MustNewID(domain.KindAPIKey).String(),
+			ActorID:        actor,
+			ActorKind:      string(domain.KindUser),
+			ActorOrgID:     target.ID,
+		},
+		"blank key": {
+			OrganizationID: target.ID,
+			KeyID:          "",
+			ActorID:        actor,
+			ActorKind:      string(domain.KindUser),
+			ActorOrgID:     target.ID,
+		},
+		"non-prefixed key": {
+			OrganizationID: target.ID,
+			KeyID:          "not-an-api-key-id",
+			ActorID:        actor,
+			ActorKind:      string(domain.KindUser),
+			ActorOrgID:     target.ID,
+		},
+	} {
+		in := in
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, err := svc.Revoke(ctx, in, time.Now().UTC())
+			if err == nil {
+				t.Fatalf("Revoke(%s) error = nil, want InvalidInput", name)
+			}
+			if ye := yerr.From(err); ye.Code != yerr.CodeInvalidInput {
+				t.Errorf("Revoke(%s) code = %s, want %s", name, ye.Code, yerr.CodeInvalidInput)
+			}
+		})
+	}
+}
+
+// TestAPIKeyServiceRevokeRequiresActorOrgID proves a missing actor
+// organization is rejected as a typed Internal — it can only happen through
+// a wiring error in the calling handler, never client input, so it must
+// never be disguised as an InvalidInput that a client could believe it
+// caused.
+func TestAPIKeyServiceRevokeRequiresActorOrgID(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	target := seedOrg(t, db, f, "acme")
+	actor := seedUser(t, db, f, target, "ada")
+	svc := newAPIKeyService(t, s)
+	key := seedAPIKeyForUpdate(t, ctx, s, target, actor, "Ada CLI", nil)
+
+	_, err := svc.Revoke(ctx, store.RevokeAPIKeyInput{
+		OrganizationID: target.ID,
+		KeyID:          key.ID,
+		ActorID:        actor,
+		ActorKind:      string(domain.KindUser),
+		// ActorOrgID intentionally omitted to simulate a wiring error.
+		RequestID:     "req_revoke",
+		CorrelationID: "corr_revoke",
+	}, time.Now().UTC())
+	if err == nil {
+		t.Fatal("Revoke with no actor org error = nil, want Internal")
+	}
+	if ye := yerr.From(err); ye.Code != yerr.CodeInternal {
+		t.Errorf("Revoke code = %s, want %s", ye.Code, yerr.CodeInternal)
+	}
+}

@@ -46,7 +46,7 @@ func updateMemberHandlerFor(id auth.Identity, authErr error, updater MembershipU
 	a := fakeAuthenticator{identity: id, err: authErr}
 	return NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, a, policy.NewEngine(),
 		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
-		fakeMembershipReader{}, fakeMembershipCreator{}, updater, fakeMembershipRemover{}, fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, nil)
+		fakeMembershipReader{}, fakeMembershipCreator{}, updater, fakeMembershipRemover{}, fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, nil)
 }
 
 // patchMember issues PATCH /v1/organizations/{orgID}/members/{memberID}

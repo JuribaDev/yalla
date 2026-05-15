@@ -86,13 +86,14 @@ type versionPayload struct {
 // DELETE /v1/organizations/{org_id}/members/{member_id}, apiKeys backs
 // GET /v1/organizations/{org_id}/api-keys and GET
 // /v1/organizations/{org_id}/api-keys/{key_id}, apiKeyCreator backs POST
-// /v1/organizations/{org_id}/api-keys, and apiKeyUpdater backs PATCH
-// /v1/organizations/{org_id}/api-keys/{key_id}. Any may be nil for tests
-// and tooling that only inspect the route table's metadata; a request that
-// actually reaches a handler with a nil dependency is reported as a typed
-// internal error rather than a misleading empty list or a silently dropped
-// write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater) []apiRoute {
+// /v1/organizations/{org_id}/api-keys, apiKeyUpdater backs PATCH
+// /v1/organizations/{org_id}/api-keys/{key_id}, and apiKeyRevoker backs
+// DELETE /v1/organizations/{org_id}/api-keys/{key_id}. Any may be nil for
+// tests and tooling that only inspect the route table's metadata; a request
+// that actually reaches a handler with a nil dependency is reported as a
+// typed internal error rather than a misleading empty list or a silently
+// dropped write.
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -525,6 +526,32 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// principal cannot update keys in another tenant.
 			resolver: apiKeyIDResolver,
 			handler:  updateAPIKeyHandler(apiKeyUpdater),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodDelete,
+				Path:           "/v1/organizations/{org_id}/api-keys/{key_id}",
+				OperationID:    "revokeOrganizationAPIKey",
+				Summary:        "Revoke an API key of an organization",
+				Description:    "Revokes the API key named by ({org_id}, {key_id}) in the source-of-truth database. Revocation is the customer-facing soft delete for an API key: the api_keys row stays in the database so the audit trail of who minted it remains linked to a live row, but the credential is permanently unusable from that moment on — every subsequent authentication attempt fails through the same uniform invalid-credentials path. There is no un-revoke; a retired key can only be replaced by a fresh mint. Action keys.manage is authorized against the organization the path names before the handler runs: a principal revoking a key outside its own tenant is rejected with a deterministic 403, so a cross-tenant id can never retire another tenant's credential. A key id paired with the wrong organization is the same deterministic 404 as a missing row, so the endpoint can never reveal whether another tenant owns that key. Revoking a key that is already revoked is a stable 409 — the caller's view of the resource lifecycle is stale, not a silent success that would write a misleading audit record. The revocation stamp and an immutable audit record naming the authenticated principal are committed in one transaction: a revocation can never be persisted without its audit trail. The response carries the api key exactly as it stood at the moment of revocation, in the same wire shape every other api-key endpoint returns; it carries no credential material — the secret hash is never projected onto the wire and the plaintext token is shown to its owner once at creation and never reaches this endpoint, so a revocation endpoint can never reveal a credential. keys.manage is a CapManage action: a viewer or developer cannot revoke keys, only an owner or admin in the tenant can; unlike CapRead actions there is no cross-tenant support exception.",
+				Tags:           []string{tagAPIKeys},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionKeysManage),
+				PathParams: []openapi.PathParam{
+					{Name: "org_id", Description: "The id of the organization the API key belongs to."},
+					{Name: "key_id", Description: "The id of the API key to revoke."},
+				},
+				SuccessDescription: "The API key was revoked.",
+			},
+			// apiKeyIDResolver authorizes action keys.manage against the
+			// organization the {org_id} path parameter names, not merely the
+			// principal's home organization, so a cross-tenant id is denied
+			// at the policy boundary before the handler mutates any data.
+			// keys.manage is a CapManage action and has no cross-tenant
+			// support exception — unlike CapRead actions, the support
+			// principal cannot revoke keys in another tenant.
+			resolver: apiKeyIDResolver,
+			handler:  revokeAPIKeyHandler(apiKeyRevoker),
 		},
 	}
 }
