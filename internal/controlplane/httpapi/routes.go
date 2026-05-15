@@ -94,7 +94,8 @@ type versionPayload struct {
 // /v1/organizations/{org_id}/audit-events, orgVariables backs GET
 // /v1/organizations/{org_id}/variables, orgVariableReplacer backs PUT
 // /v1/organizations/{org_id}/variables, orgVariablePatcher backs PATCH
-// /v1/organizations/{org_id}/variables/{key}, apiKeys backs GET
+// /v1/organizations/{org_id}/variables/{key}, orgVariableDeleter backs
+// DELETE /v1/organizations/{org_id}/variables/{key}, apiKeys backs GET
 // /v1/organizations/{org_id}/api-keys and GET
 // /v1/organizations/{org_id}/api-keys/{key_id}, apiKeyCreator backs POST
 // /v1/organizations/{org_id}/api-keys, apiKeyUpdater backs PATCH
@@ -105,7 +106,7 @@ type versionPayload struct {
 // metadata; a request that actually reaches a handler with a nil dependency
 // is reported as a typed internal error rather than a misleading empty list
 // or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator) []apiRoute {
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -615,6 +616,35 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// boundary is the organization the path names.
 			resolver: organizationIDResolver,
 			handler:  patchOrganizationVariableHandler(orgVariablePatcher),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodDelete,
+				Path:           "/v1/organizations/{org_id}/variables/{key}",
+				OperationID:    "deleteOrganizationVariable",
+				Summary:        "Delete an organization-scoped variable",
+				Description:    "Removes the organization-scoped variable named by the {key} path parameter from the organization named by the {org_id} path parameter. Action env.write is authorized against the organization the path names before the handler runs: a principal deleting a variable outside its own tenant is rejected with a deterministic 403, so a cross-tenant id can never mutate another tenant's configuration, and unlike env.read (a CapRead action) env.write has NO cross-tenant support exception — only an owner, admin, developer, or CI principal in the tenant can delete a variable. An {org_id} with no organizations row, or a {key} that does not exist in this tenant (the persistence delete filters by organization_id first, so a cross-tenant key is indistinguishable from a missing row), is the typed 404 the repository produces. The single-row delete and an immutable audit record naming the authenticated principal (with metadata that records only the variable's stable id — never the customer-supplied key or value) are committed in one transaction, so a deletion can never be persisted without its audit trail. The response carries the variable exactly as it stood at the moment of removal, in the same stable wire shape every other variable endpoint returns; secret values are still redacted to the sentinel on the wire, so a DELETE cannot leak a secret value the customer had previously stored. The row is gone from the database by the time the response reaches the wire; an audit trail of the deletion lives independently of the row.",
+				Tags:           []string{tagVariables},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionEnvWrite),
+				PathParams: []openapi.PathParam{
+					{Name: "org_id", Description: "The id of the organization whose variable is deleted."},
+					{Name: "key", Description: "The POSIX environment variable name of the organization-scoped variable to delete."},
+				},
+				SuccessDescription: "The organization-scoped variable as it stood at the moment of removal.",
+			},
+			// organizationIDResolver authorizes action env.write against the
+			// organization the {org_id} path parameter names, not merely the
+			// principal's home organization, so a cross-tenant id is denied
+			// at the policy boundary before the handler mutates any data.
+			// env.write is a CapWrite action and has no cross-tenant support
+			// exception — unlike CapRead actions, the support principal
+			// cannot delete a variable in another tenant. The {key} path
+			// parameter does not change the policy scope: variables live
+			// inside the organization and are addressed by name; the policy
+			// boundary is the organization the path names.
+			resolver: organizationIDResolver,
+			handler:  deleteOrganizationVariableHandler(orgVariableDeleter),
 		},
 		{
 			endpoint: openapi.Endpoint{

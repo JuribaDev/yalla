@@ -215,6 +215,48 @@ func (r *OrganizationVariableRepository) GetByKey(ctx context.Context, q Querier
 	return v, nil
 }
 
+// DeleteByKey removes the organization-scoped variable identified by
+// (organizationID, key) inside tx and returns the deleted row exactly as
+// it stood at the moment of removal — including value and is_secret —
+// so the unit-of-work orchestrator can project the snapshot onto the
+// HTTP response and the audit metadata without a separate read-then-
+// delete race. It requires a *Tx — not a bare Querier — so a delete can
+// never be persisted outside the transaction that also carries its
+// audit record. The query is tenant scoped: a key that belongs to
+// another organization simply does not match and is reported as the
+// typed apierr.NotFound the GET endpoint uses, never disguised as a
+// 5xx and never revealing whether another tenant owns that key.
+//
+// organization_variables has no soft-delete column (unlike organizations
+// or api_keys) — a customer's organization-scoped variable carries no
+// continuing audit-trail tie that must outlive the resource, so the
+// row is removed outright. The audit log already records the deletion
+// independently of the row's lifetime, so removing the row does not
+// erase the operator-facing history of the change.
+//
+// Returns apierr.NotFound when no row matches and apierr.StoreUnavailable
+// for any other driver error. The raw driver error is wrapped as the
+// cause for server-side logging only and never reaches the user-facing
+// message.
+func (r *OrganizationVariableRepository) DeleteByKey(ctx context.Context, tx *Tx, organizationID, key string) (OrganizationVariable, error) {
+	if tx == nil {
+		return OrganizationVariable{}, apierr.Internal(errors.New("store: OrganizationVariableRepository.DeleteByKey called with a nil transaction"))
+	}
+	row := tx.QueryRow(ctx,
+		`DELETE FROM organization_variables
+		  WHERE organization_id = $1 AND key = $2
+		 RETURNING `+organizationVariableColumns,
+		organizationID, key)
+	deleted, err := scanOrganizationVariable(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return OrganizationVariable{}, apierr.NotFound("organization_variable", key)
+	}
+	if err != nil {
+		return OrganizationVariable{}, apierr.StoreUnavailable(err)
+	}
+	return deleted, nil
+}
+
 // UpdateMutable writes the caller-supplied value and is_secret onto the
 // organization_variables row identified by (organizationID, key) inside
 // tx and returns the persisted row, including the trigger-refreshed

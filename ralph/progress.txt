@@ -52,6 +52,8 @@
 - audit.read is the load-bearing example of a "read action that is NOT CapRead" in the policy catalog (catalog.go: ActionAuditRead -> CapAdmin). The audit log cannot be listed by a viewer or a developer — only by an owner, admin, or a support principal performing a cross-tenant read. A boilerplate "every in-tenant role allowed" assumption is wrong for audit.read; the policy matrix and a contract-test "viewer denied in own tenant" assertion together pin the property (the contract test makes a future accidental drop to CapRead a contract failure, not only a matrix failure).
 - Organization-scoped variables (0012_organization_variables, store/organization_variable.go, httpapi/variables.go): the lowest-precedence layer of the Organization -> Project -> Environment -> Service variable hierarchy. The table mirrors the established conventions — composite UNIQUE (organization_id, id) as the FK target for future scope-narrowing override tables; UNIQUE (organization_id, key) for per-tenant key uniqueness (an env var named DATABASE_URL in two orgs is two rows); ON DELETE CASCADE from organizations; bigint version + bump_version() trigger for optimistic concurrency. The repository follows the AuditRepository read pattern: ListByOrganization is tenant-scoped at the SQL predicate (cross-tenant id matches no rows, empty list, never another tenant's data), ordered deterministically by (key ASC, id ASC). The wire redaction contract is wire-side at the projection chokepoint, NOT store-side: store.OrganizationVariable.Value carries the literal verbatim (a future write path needs lossless round-trip), but httpapi/variables.go's organizationVariableOf replaces is_secret=true values with output.Sentinel on every projection — agents can never read a secret value back through this endpoint. Defence-in-depth: OrganizationVariable.LogValue redacts every value (regardless of is_secret) at the slog boundary, so a stray log record that captures the struct cannot leak the literal. Non-secret values pass through verbatim so customers can audit their own organization-wide defaults.
 - The env.write policy matrix (BE-0111, internal/controlplane/httpapi/variables_put_policy_test.go) is the structural twin of the CapWrite/no-cross-tenant-support family (project/environment/service create/update/delete) and the load-bearing distinction from the env.read matrix (BE-0108): same {org_id} resolver, same organizationIDResolver, but Developer JOINS the allow row (RoleDeveloper holds CapWrite), Viewer/CI/Support all deny via ReasonDeniedNoCapability, and the engine's cross-tenant clause (`required == CapRead || required == CapSupport`) excludes CapWrite — so a Support principal cannot cross tenants and cannot mutate its OWN home tenant either. The grant-containment row mirrors the env.read suite verbatim except that the org-level allow row tests a Developer grant (CapWrite) instead of a Viewer grant (CapRead); the Viewer grant at the same org scope is asserted to DENY, locking the CapWrite requirement against the grant path so a future catalog drift in either direction fails here. Wire-level redaction (organizationVariableOf -> output.Sentinel) is pinned on the allow-by-role AND allow-by-grant branches, and deny-path leak checks use a distinct seededPostWriteOrgVariables fixture (POST_WRITE_REGION/POST_WRITE_SECRET with the recognisable "post-write-plaintext-correcthorsebatterystaple" needle) so the matrix's request body (MATRIX_KEY/matrix_value) and the env.read suite's seededOrgVariables (REGION/DATABASE_URL) cannot false-positive a leak check. Cross-tenant assertions on the wire pin BOTH the submitted-payload non-echo (MATRIX_KEY, matrix_value) and the post-write-data non-echo — the policy boundary is the only place an env mutation is gated, so a denied caller seeing either would itself be a contract violation.
+- Hard-delete vs soft-delete decision rule: a customer-facing resource takes a SOFT delete (deletion_scheduled_at on organizations + 202 Accepted, revoked_at on api_keys + 200 OK with revocation snapshot) ONLY when the row carries a continuing tie that must outlive the resource — an audit-log FK that must keep the row reachable, a child cascade that must be ordered carefully, or a "lifecycle stale" property the customer's audit trail depends on. A resource with no continuing tie (the audit log records the deletion independently, no child tables, no FK ties) takes a HARD delete with a 200 OK response carrying the row's snapshot exactly as it stood at the moment of removal (DELETE /v1/organizations/{org_id}/variables/{key}, BE-0115). The store repository method uses `DELETE FROM ... WHERE org=$1 AND key=$2 RETURNING ...` so one round trip removes the row AND yields the snapshot the orchestrator returns to the wire; pgx.ErrNoRows -> apierr.NotFound (a cross-tenant key is indistinguishable from a missing row). The service files an audit event in the SAME tx as the delete, with Metadata={variable_id: row.ID} — customer-supplied key + the deleted value are never recorded, so the audit row is auditable without ever observing the variable name or its value. An agent can confirm what was deleted (id, key, version, timestamps) without a separate read; 204 No Content would have been less useful here.
+- Audit-event listing in tests: store.AuditRepository.ListByOrganization is ORDER BY occurred_at DESC, id DESC — events[0] is the NEWEST event. A test that reads events[len-1] gets the OLDEST event, which in a "seed then mutate" fixture is the seed event (with seed metadata), NOT the mutation under test. A test that probes the post-mutation state through ANOTHER mutation (e.g. a second Replace to verify the deleted row is gone) files yet another audit event and pushes the mutation-under-test to events[1] — so audit assertions must run BEFORE any further state-changing call, and post-state probes must read directly through the repository (NewOrganizationVariableRepository().ListByOrganization), NOT through another service-level mutation.
 
 ## 2026-05-15 - BE-0103
 - What was implemented: GET /v1/organizations/{org_id}/audit-events, the
@@ -8025,4 +8027,191 @@
     allow-path redaction-to-sentinel check and the deny-path no-leak
     check are both pinned by the same seed — one fixture, two
     properties.
+---
+
+## 2026-05-15 - BE-0115
+- What was implemented: DELETE /v1/organizations/{org_id}/variables/{key},
+  the organization-scoped variable deletion endpoint — the customer-
+  facing way to remove a single organization-wide environment variable
+  from the lowest-precedence layer of the renderer's variable
+  hierarchy.
+  - internal/controlplane/store/organization_variable.go: added
+    OrganizationVariableRepository.DeleteByKey — DELETE FROM
+    organization_variables WHERE organization_id=$1 AND key=$2
+    RETURNING ... — so a single round trip removes the row AND yields
+    the snapshot the orchestrator returns to the wire. The predicate
+    leads with organization_id so a cross-tenant key matches no row
+    (typed apierr.NotFound, never another tenant's data). pgx.ErrNoRows
+    -> apierr.NotFound; any other driver error wraps as
+    apierr.StoreUnavailable with the cause kept only for server-side
+    logging. Repository requires *Tx so a delete cannot happen outside
+    the unit of work that also files the audit record. Hard delete is
+    correct here — organization_variables carries no continuing audit-
+    trail tie that must outlive the resource (the audit log records
+    the deletion independently of the row's lifetime), unlike
+    organizations (soft delete with deletion_scheduled_at) or api_keys
+    (revoke stamp that keeps the row for FK integrity to the audit
+    log).
+  - internal/controlplane/store/organization_variable_service.go: added
+    DeleteOrganizationVariableInput + OrganizationVariableService.Delete.
+    Same pre-tx validation shape as Patch — blank organization_id is
+    InvalidInput, non-POSIX key is InvalidInput, key over
+    MaxEnvVarNameLen is InvalidInput, blank actor org id is Internal
+    (the audit-record-wiring guard). Inside one Store.Write tx:
+    DeleteByKey + AuditAppender.Append. The audit event mirrors the
+    PATCH endpoint's convention — Action=env.write, ResourceKind=org,
+    ResourceID=organization_id, filed under the actor's home org —
+    with Metadata={variable_id: row.ID} only. Customer-supplied key
+    and value are NEVER recorded, so the audit row is auditable
+    without ever observing the variable name or its value.
+  - internal/controlplane/store/organization_variable_delete_test.go
+    (new): 6 integration tests against an isolated migrated Postgres
+    database — happy-path snapshot return + post-delete row removal +
+    audit metadata pinning (variable_id present, no key/value leaked
+    into metadata), NotFound for a missing key (no audit event filed
+    when the deletion did not happen), cross-tenant isolation (acme
+    deleting through rival's REGION reports NotFound and rival's row
+    is untouched), blank-org and non-POSIX-key validation guards,
+    blank-actor-org-id Internal guard.
+  - internal/controlplane/store/organization_variable_test.go: added
+    3 repository-level tests for DeleteByKey — happy-path snapshot
+    return and physical-removal proof, NotFound for a missing row,
+    tenant-scoped predicate (acme-side DELETE on REGION leaves
+    rival's REGION row intact, and a follow-up DELETE on the same
+    key in acme reports NotFound).
+  - internal/controlplane/httpapi/variables.go: added
+    OrganizationVariableDeleter port (Delete(ctx, in
+    store.DeleteOrganizationVariableInput) (store.OrganizationVariable,
+    error)), errNoOrgVariableDeleter sentinel, the
+    deleteOrganizationVariablePayload wire shape (carrying the
+    deleted variable in the same stable wire shape every other
+    variable endpoint returns — secret values redacted to sentinel,
+    non-secret values verbatim), and the
+    deleteOrganizationVariableHandler. The handler is thin: read
+    principal, read correlation, call Delete, project through
+    organizationVariableOf, render 200 with the snapshot. The wire
+    redaction chokepoint is the same projection function PATCH/PUT/
+    GET use — a customer cannot read back a secret value through
+    DELETE either, including the value they had previously stored.
+  - internal/controlplane/httpapi/routes.go: registered the new
+    apiRoute with RequiresAuth=true, RequiredAction=string(
+    policy.ActionEnvWrite), resolver=organizationIDResolver. env.write
+    is a CapWrite action with no cross-tenant support exception — a
+    support principal cannot delete variables in another tenant, the
+    same property the PUT and PATCH endpoints assert. The {key} path
+    parameter does not narrow the policy scope: variables live inside
+    the organization and are addressed by name.
+  - internal/controlplane/httpapi/server.go: NewHandler signature
+    gained OrganizationVariableDeleter (one new positional arg)
+    threaded into newRouteTable. The doc-comment route map updated.
+  - internal/controlplane/httpapi/variables_test.go: added
+    fakeOrgVariableDeleter — the httpapi-test fake mirroring
+    fakeOrgVariablePatcher in shape (v + err + got pointer).
+    listOrgVariablesHandlerFor wires the new fake into its NewHandler
+    call.
+  - internal/controlplane/httpapi/variables_delete_test.go (new): 9
+    contract tests in package httpapi exercising the real NewHandler +
+    real policy engine (fake Authenticator + fake
+    OrganizationVariableDeleter only) — happy-path snapshot return +
+    redaction (secret value never leaves the wire), non-secret value
+    verbatim projection, NotFound forwarding, store outage 503 with
+    no raw-cause leak, missing-auth 401, cross-tenant 403 (deleter
+    never runs), missing-deleter 500, OpenAPI route-table contract
+    proving deleteOrganizationVariable is registered with the
+    env.write required action and the variables tag.
+  - cmd/yalla-api/main.go: wired the existing orgVariableService at
+    the new positional arg — one store.OrganizationVariableService
+    instance now satisfies the Replacer, Patcher, AND Deleter ports.
+  - Mechanical churn: 22 NewHandler call sites in *_test.go files
+    received a positional fakeOrgVariableDeleter{} (or one more nil
+    for the missing-deleter test). 5 newRouteTable call sites
+    received one more nil argument. A python script applied two
+    multi-pattern substitutions: `fakeOrgVariablePatcher{},\n\t+
+    fakeAPIKey...` -> the same with `fakeOrgVariableDeleter{},`
+    inserted; `patcher,\n\t+fakeAPIKey...` -> the same with the
+    deleter inserted; `fakeOrgVariableReplacer{}, nil,\n` (the
+    variables_patch_test.go nil-patcher wiring guard) similarly
+    extended; `, fakeOrgVariablePatcher{}, reader, fakeAPIKeyCreator`
+    (api_keys_test.go) similarly extended. All 22 call sites
+    compiled cleanly after the substitution.
+- Files changed: internal/controlplane/store/{organization_variable.go,
+  organization_variable_service.go, organization_variable_test.go,
+  organization_variable_delete_test.go (new)},
+  internal/controlplane/httpapi/{variables.go, routes.go, server.go,
+  variables_test.go, variables_delete_test.go (new),
+  + 22 *_test.go files updated by substitution},
+  cmd/yalla-api/main.go, ralph/prd.json, ralph/progress.txt.
+- Verification run: gofmt -w .; go mod tidy; go build ./...; go vet
+  ./...; go test ./... (full suite, no DB); go test -race ./... (full
+  suite, no DB); YALLA_TEST_DATABASE_URL=postgres://yalla:yalla@127.0.0.1:5432/yalla
+  go test -race -count=1 -run 'TestOrganizationVariableServiceDelete|
+  TestOrganizationVariableRepoDelete|TestDeleteOrgVariable'
+  ./internal/controlplane/store/... ./internal/controlplane/httpapi/...
+  (integration with Postgres).
+- Results: all my changes pass (-race included). Some pre-existing
+  integration tests in this repo (TestAPIKeyServiceCreate*,
+  TestOrganizationVariableServicePatch*) fail at this commit BEFORE
+  my changes too — they assert events[len-1] for a newest-first
+  ListByOrganization, which yields the seed Replace event rather
+  than the mutation under test; that's a separate test bug. My
+  delete test learned from it and reads events[0] (newest) instead.
+  goimports / golangci-lint / staticcheck / govulncheck still not
+  installed locally (documented in earlier iterations).
+- Remaining risks / follow-ups:
+  - BE-0116 (contract tests for DELETE /v1/organizations/{org_id}/
+    variables/{key}) and BE-0117 (policy matrix coverage, the
+    unblocked p=1) are now ready to land. variables_delete_test.go
+    already covers BE-0116's surface closely — happy path, NotFound,
+    store outage, auth and cross-tenant denial, missing-deleter
+    wiring guard, and the OpenAPI contract — but the two remain
+    separate PRD stories. BE-0117 should table every built-in role
+    x env.write, revoked/expired Disabled principals, and a wrong-
+    organization principal, mirroring variables_patch_policy_test.go
+    (BE-0114) and variables_put_policy_test.go (BE-0111) verbatim
+    since env.write is the same action.
+  - The Patch tests at this commit are wedged on the events[len-1]
+    indexing bug. A future story should fix that pattern across
+    organization_variable_patch_test.go; it is not on the BE-0115
+    path.
+- Learnings for future iterations:
+  - Hard-delete vs soft-delete: organization_variables is the first
+    customer-facing resource in this codebase to take a HARD delete
+    posture. The rule: a resource takes a soft delete (deletion_
+    scheduled_at on organizations, revoked_at on api_keys) only when
+    the row carries a continuing tie that must outlive the resource
+    — typically an audit-log FK that must keep the row reachable, or
+    a child cascade that must be ordered carefully. organization_
+    variables has neither (the audit log records the deletion
+    independently and there are no child tables), so the row is
+    removed outright and the response carries the snapshot exactly
+    as it stood at the moment of removal. A future resource that
+    similarly has no continuing tie can follow this pattern — it is
+    simpler than soft delete and gives the customer the same
+    auditable record.
+  - DELETE-on-a-named-resource response shape: a 200 OK carrying the
+    pre-delete snapshot (mirroring api-key revoke and now this
+    endpoint) is the right convention for a named-resource hard
+    delete. An agent can confirm what was removed (id, key, version,
+    timestamps) without a separate read. 204 No Content would have
+    been less useful for an agent-friendly surface — there would be
+    no way to confirm the resource id without re-listing.
+  - Listing audit events in a test: ListByOrganization is ORDER BY
+    occurred_at DESC, id DESC, so events[0] is NEWEST. A test that
+    reads events[len-1] gets the OLDEST event, which in a fixture
+    that issues seed-then-mutation is the seed event (with seed
+    metadata), not the mutation under test. A test that probes the
+    post-mutation state through ANOTHER mutation (e.g. a second
+    Replace) files yet another audit event and pushes the mutation-
+    under-test to events[1] — so the audit assertions must run
+    BEFORE any further state-changing call, and post-state probes
+    must read directly through the repository (not through another
+    Replace).
+  - Wire-side redaction chokepoint reuse: organizationVariableOf is
+    the single projection function for GET, PUT (post-replace),
+    PATCH, AND now DELETE — every variable endpoint that returns a
+    variable on the wire flows through it, so the secret-to-sentinel
+    contract holds uniformly. A future variable endpoint that needs
+    a different projection (e.g. listing the audit history of a
+    single variable) must NOT shadow this function; it should
+    compose it or be obviously different in shape.
 ---

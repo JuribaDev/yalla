@@ -95,6 +95,28 @@ func (f fakeOrgVariablePatcher) Patch(_ context.Context, in store.PatchOrganizat
 	return f.v, nil
 }
 
+// fakeOrgVariableDeleter is a canned OrganizationVariableDeleter for
+// httpapi tests. The zero value returns a zero variable and no error,
+// which is all the unrelated-endpoint suites need; the variables delete
+// tests set v/err and read got back to prove the handler forwards the
+// path parameters and the principal/correlation fields to the store
+// layer unchanged. The deleter mirrors fakeOrgVariablePatcher in shape.
+type fakeOrgVariableDeleter struct {
+	v   store.OrganizationVariable
+	err error
+	got *store.DeleteOrganizationVariableInput
+}
+
+func (f fakeOrgVariableDeleter) Delete(_ context.Context, in store.DeleteOrganizationVariableInput) (store.OrganizationVariable, error) {
+	if f.got != nil {
+		*f.got = in
+	}
+	if f.err != nil {
+		return store.OrganizationVariable{}, f.err
+	}
+	return f.v, nil
+}
+
 // listOrgVariablesHandlerFor builds an http.Handler that points at the GET
 // /v1/organizations/{org_id}/variables route, wired through the same
 // NewHandler the production binary uses. id and authErr drive the fake
@@ -105,7 +127,7 @@ func listOrgVariablesHandlerFor(id auth.Identity, authErr error, reader Organiza
 	return NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, a, policy.NewEngine(),
 		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
 		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
-		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{}, reader, fakeOrgVariableReplacer{}, fakeOrgVariablePatcher{},
+		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{}, reader, fakeOrgVariableReplacer{}, fakeOrgVariablePatcher{}, fakeOrgVariableDeleter{},
 		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
 		nil)
 }
@@ -408,7 +430,7 @@ func TestListOrgVariablesMissingReaderIsTypedInternalError(t *testing.T) {
 	handler := NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, a, policy.NewEngine(),
 		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
 		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
-		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{}, nil, fakeOrgVariableReplacer{}, fakeOrgVariablePatcher{},
+		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{}, nil, fakeOrgVariableReplacer{}, fakeOrgVariablePatcher{}, fakeOrgVariableDeleter{},
 		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
 		nil)
 	rec := getOrgVariables(handler, orgID, "a-valid-session-token")
@@ -427,7 +449,7 @@ func TestListOrgVariablesRouteIsRegistered(t *testing.T) {
 	handler := NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, a, policy.NewEngine(),
 		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
 		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
-		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{}, fakeOrgVariableReader{}, fakeOrgVariableReplacer{}, fakeOrgVariablePatcher{},
+		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{}, fakeOrgVariableReader{}, fakeOrgVariableReplacer{}, fakeOrgVariablePatcher{}, fakeOrgVariableDeleter{},
 		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
 		nil)
 

@@ -69,6 +69,125 @@ func TestOrganizationVariableRepoListByOrganizationReturnsRowsInDeterministicOrd
 	}
 }
 
+// TestOrganizationVariableRepoDeleteByKeyReturnsRemovedSnapshot proves
+// the persistence half of DELETE /v1/organizations/{org_id}/variables/
+// {key}: a DELETE inside Store.Write returns the row exactly as it
+// stood at the moment of removal — including id, value, is_secret,
+// version — and the row is physically gone afterwards (a subsequent
+// ListByOrganization no longer observes it).
+func TestOrganizationVariableRepoDeleteByKeyReturnsRemovedSnapshot(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	org := seedOrg(t, db, f, "DelAcme")
+	seedOrganizationVariable(t, db, "ovar_alpha", org.ID, "ALPHA", "a-value", false)
+	seedOrganizationVariable(t, db, "ovar_beta", org.ID, "BETA", "secret-b", true)
+
+	repo := store.NewOrganizationVariableRepository()
+	var removed store.OrganizationVariable
+	if err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		v, delErr := repo.DeleteByKey(ctx, tx, org.ID, "BETA")
+		removed = v
+		return delErr
+	}); err != nil {
+		t.Fatalf("DeleteByKey: %v", err)
+	}
+	if removed.ID != "ovar_beta" {
+		t.Errorf("removed.id = %q, want ovar_beta", removed.ID)
+	}
+	if removed.Key != "BETA" || removed.Value != "secret-b" || !removed.IsSecret {
+		t.Errorf("removed = %+v, want BETA/secret-b/is_secret=true", removed)
+	}
+
+	// After the delete, only ALPHA remains.
+	var remaining []store.OrganizationVariable
+	if err := s.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		var lerr error
+		remaining, lerr = repo.ListByOrganization(ctx, q, org.ID)
+		return lerr
+	}); err != nil {
+		t.Fatalf("post-delete ListByOrganization: %v", err)
+	}
+	if len(remaining) != 1 || remaining[0].Key != "ALPHA" {
+		t.Errorf("remaining = %+v, want only ALPHA", remaining)
+	}
+}
+
+// TestOrganizationVariableRepoDeleteByKeyNotFoundForMissingRow proves
+// a DELETE against a key that does not exist in this tenant surfaces
+// as the typed NotFound the GET endpoint uses — never a 5xx, never a
+// "deleted nothing silently".
+func TestOrganizationVariableRepoDeleteByKeyNotFoundForMissingRow(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	org := seedOrg(t, db, f, "DelAcme")
+	repo := store.NewOrganizationVariableRepository()
+
+	err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		_, delErr := repo.DeleteByKey(ctx, tx, org.ID, "NEVER_SET")
+		return delErr
+	})
+	if err == nil {
+		t.Fatalf("DeleteByKey returned no error for a missing row, want NotFound")
+	}
+}
+
+// TestOrganizationVariableRepoDeleteByKeyIsTenantScoped proves the SQL
+// predicate is the tenant boundary: a DELETE against (organization,
+// key) never reaches another tenant's row — the foreign tenant's row
+// is left intact and the cross-tenant call reports NotFound.
+func TestOrganizationVariableRepoDeleteByKeyIsTenantScoped(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	acme := seedOrg(t, db, f, "Acme")
+	rival := seedOrg(t, db, f, "Rival")
+	seedOrganizationVariable(t, db, "ovar_acme_region", acme.ID, "REGION", "us-east-1", false)
+	seedOrganizationVariable(t, db, "ovar_rival_region", rival.ID, "REGION", "rival-eu-west-1", false)
+
+	repo := store.NewOrganizationVariableRepository()
+	if err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		_, delErr := repo.DeleteByKey(ctx, tx, acme.ID, "REGION")
+		return delErr
+	}); err != nil {
+		t.Fatalf("DeleteByKey on acme: %v", err)
+	}
+
+	// Verify rival's row is still present.
+	var rivalRows []store.OrganizationVariable
+	if err := s.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		var lerr error
+		rivalRows, lerr = repo.ListByOrganization(ctx, q, rival.ID)
+		return lerr
+	}); err != nil {
+		t.Fatalf("rival ListByOrganization: %v", err)
+	}
+	if len(rivalRows) != 1 || rivalRows[0].Key != "REGION" || rivalRows[0].Value != "rival-eu-west-1" {
+		t.Errorf("rival rows = %+v, want REGION intact after acme-side DELETE", rivalRows)
+	}
+
+	// A second acme-side delete of the same key now reports NotFound
+	// (the previous delete removed it). A cross-tenant attempt where
+	// acme tries to delete the rival's RIVAL_ONLY key would similarly
+	// report NotFound — the predicate uses both org and key.
+	if err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		_, delErr := repo.DeleteByKey(ctx, tx, acme.ID, "REGION")
+		return delErr
+	}); err == nil {
+		t.Errorf("second acme-side DeleteByKey returned no error; want NotFound after the row was removed")
+	}
+}
+
 // TestOrganizationVariableRepoListByOrganizationIsTenantScoped proves the
 // SQL predicate is the tenant boundary: a cross-tenant id matches no
 // rows, never another organization's variables.

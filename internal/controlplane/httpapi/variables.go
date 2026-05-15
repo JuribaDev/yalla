@@ -39,6 +39,14 @@ var errNoOrgVariableReplacer = errors.New("httpapi: no organization variable rep
 // failure rather than silently failing to persist the change.
 var errNoOrgVariablePatcher = errors.New("httpapi: no organization variable patcher configured")
 
+// errNoOrgVariableDeleter is returned when DELETE
+// /v1/organizations/{org_id}/variables/{key} is reached without a
+// variable deleter wired into NewHandler. Like errNoOrgVariablePatcher
+// it can only happen through a wiring error — a programming mistake,
+// not a client error — so the handler reports it as a typed internal
+// failure rather than silently failing to persist the change.
+var errNoOrgVariableDeleter = errors.New("httpapi: no organization variable deleter configured")
+
 // errOrgVariablePatchEmpty is returned when PATCH
 // /v1/organizations/{org_id}/variables/{key} decodes a body that names
 // neither value nor is_secret. A PATCH that changes nothing is a client
@@ -441,6 +449,96 @@ func patchOrganizationVariableHandler(patcher OrganizationVariablePatcher) http.
 		}
 
 		apienvelope.WriteData(w, http.StatusOK, requestID(r), patchOrganizationVariablePayload{
+			Variable: organizationVariableOf(v),
+		})
+	}
+}
+
+// OrganizationVariableDeleter is the narrow persistence port DELETE
+// /v1/organizations/{org_id}/variables/{key} depends on.
+// *store.OrganizationVariableService satisfies it in production; tests
+// supply a fake. Like OrganizationVariablePatcher it is an interface
+// declared here so the handler stays unit-testable without a real
+// database — the concrete orchestrator (the tenant-scoped delete and
+// the immutable audit record committed in one transaction) lives in
+// the store layer.
+type OrganizationVariableDeleter interface {
+	Delete(ctx context.Context, in store.DeleteOrganizationVariableInput) (store.OrganizationVariable, error)
+}
+
+// deleteOrganizationVariablePayload is the data block of the DELETE
+// /v1/organizations/{org_id}/variables/{key} success envelope: the
+// variable exactly as it stood at the moment of removal, in the same
+// stable wire shape every other variable endpoint returns. Secret
+// values are still redacted to the sentinel on the wire — a DELETE
+// cannot leak a secret value the customer had previously stored; a
+// customer can never read a secret value back through this endpoint
+// by design. The body is the audit-grade record of which variable was
+// removed: id, key, version at deletion time, and lifecycle stamps —
+// enough for the caller to confirm what was deleted without
+// requiring a separate read.
+type deleteOrganizationVariablePayload struct {
+	Variable organizationVariable `json:"variable"`
+}
+
+// deleteOrganizationVariableHandler builds the DELETE
+// /v1/organizations/{org_id}/variables/{key} handler. It delegates to
+// the OrganizationVariableDeleter port the tenant-scoped delete + audit
+// unit of work, then projects the deleted snapshot onto the wire.
+//
+// RequireAuth gates the route on action env.write before the handler
+// runs — authorized through organizationIDResolver against the
+// organization the path names — and attaches the resolved principal,
+// so a request that reaches the handler has already cleared the
+// tenant boundary: a cross-tenant {org_id} was rejected as a 403 by
+// the policy engine, never reaching this code. A request that arrives
+// here with no principal is therefore a wiring error and is reported
+// as a typed internal error. The principal and the request correlation
+// identifiers are passed to the deleter so the audit record names the
+// actor; a not-found variable (cross-tenant or missing row) and a
+// datastore outage each surface as their own typed status, never
+// disguised as one another.
+//
+// env.write is a CapWrite action: a viewer or support principal in
+// the tenant cannot delete a variable, only an owner, admin,
+// developer, or CI principal can — and unlike CapRead actions there
+// is no cross-tenant support exception. The handler relies on the
+// policy engine for that decision; it never re-checks the role
+// itself.
+//
+// The response is 200 OK carrying the deleted variable as a snapshot
+// — the same wire shape every other variable endpoint returns, with
+// secret values redacted to the sentinel. The row is gone from the
+// database by the time this body reaches the wire; an audit trail of
+// the deletion lives independently of the row.
+func deleteOrganizationVariableHandler(deleter OrganizationVariableDeleter) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if deleter == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoOrgVariableDeleter))
+			return
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		v, err := deleter.Delete(r.Context(), store.DeleteOrganizationVariableInput{
+			OrganizationID: r.PathValue("org_id"),
+			Key:            r.PathValue("key"),
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), deleteOrganizationVariablePayload{
 			Variable: organizationVariableOf(v),
 		})
 	}

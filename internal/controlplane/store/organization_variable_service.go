@@ -434,6 +434,124 @@ func (svc *OrganizationVariableService) Patch(ctx context.Context, in PatchOrgan
 	return updated, nil
 }
 
+// DeleteOrganizationVariableInput is the typed input to
+// OrganizationVariableService.Delete. OrganizationID and Key name the
+// organization_variables row to remove. A DELETE has no body, so no
+// mutable-field shape lives on this struct — the only path-parameter
+// validation the service performs is the same POSIX-shape and length
+// checks the PATCH input enforces. The Actor* and correlation fields
+// describe the authenticated principal performing the deletion and are
+// recorded verbatim on the audit event; they are plain strings so the
+// store layer takes no build dependency on the policy or telemetry
+// packages — the httpapi handler, which already holds the resolved
+// principal and the request correlation, fills them in.
+type DeleteOrganizationVariableInput struct {
+	OrganizationID string
+	Key            string
+
+	ActorID       string
+	ActorKind     string
+	ActorOrgID    string
+	RequestID     string
+	CorrelationID string
+}
+
+// Delete runs the delete-variable unit of work inside one transaction:
+// remove the variables row identified by (OrganizationID, Key), and
+// append the immutable audit record. Validation of the input shape
+// (path identifiers) runs before the transaction is opened, so an
+// obviously invalid request never touches the database.
+//
+// organization_variables has no soft-delete column — a customer's
+// organization-scoped variable carries no continuing audit-trail tie
+// that must outlive the resource, so the row is removed outright. The
+// returned snapshot is the row exactly as it stood at the moment of
+// removal — id, key, value, is_secret, version, timestamps — so the
+// caller can confirm what was deleted. The HTTP layer projects the
+// snapshot through the same redaction chokepoint every other variable
+// endpoint uses; a customer cannot read a secret value back through
+// the deletion response.
+//
+// A {key} that has no matching row in this tenant is the typed
+// NotFound the repository produces (the tenant-scoped delete filters
+// by organization_id first, so a cross-tenant key is indistinguishable
+// from a missing row), and the audit record is rolled back with it,
+// so an audit trail can never name a deletion that did not happen. Any
+// database constraint violation rolls the whole transaction back as a
+// typed apierr.Conflict.
+//
+// The audit event mirrors the PATCH endpoint's filing convention: it
+// is recorded under the actor's home organization (the tenant the
+// principal authenticated into) with resource_kind=org and
+// resource_id={org_id}, so the audit reader exposes the parent
+// organization's full mutation history in one place. Metadata records
+// only the variable's stable id (system-minted, non-secret) — the
+// customer-supplied key and the deleted value are never recorded, so
+// a customer-supplied variable name cannot leak into the audit row.
+func (svc *OrganizationVariableService) Delete(ctx context.Context, in DeleteOrganizationVariableInput) (OrganizationVariable, error) {
+	organizationID := strings.TrimSpace(in.OrganizationID)
+	if organizationID == "" {
+		return OrganizationVariable{}, apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "organization_id",
+			Reason: "must not be blank",
+		})
+	}
+	key := strings.TrimSpace(in.Key)
+	if !posixEnvVarName(key) {
+		return OrganizationVariable{}, apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "key",
+			Reason: "must be a POSIX environment variable name ([A-Za-z_][A-Za-z0-9_]*)",
+		})
+	}
+	if len(key) > validate.MaxEnvVarNameLen {
+		return OrganizationVariable{}, apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "key",
+			Reason: "must be at most " + strconv.Itoa(validate.MaxEnvVarNameLen) + " characters",
+		})
+	}
+
+	actorOrgID := strings.TrimSpace(in.ActorOrgID)
+	if actorOrgID == "" {
+		return OrganizationVariable{}, apierr.Internal(errors.New("store: OrganizationVariableService.Delete requires an actor organization for the audit record"))
+	}
+
+	var deleted OrganizationVariable
+	if txErr := svc.store.Write(ctx, func(ctx context.Context, tx *Tx) error {
+		row, delErr := svc.vars.DeleteByKey(ctx, tx, organizationID, key)
+		if delErr != nil {
+			return delErr
+		}
+
+		event := AuditEvent{
+			OrganizationID: actorOrgID,
+			ActorID:        strings.TrimSpace(in.ActorID),
+			ActorKind:      strings.TrimSpace(in.ActorKind),
+			Action:         envWriteAction,
+			ResourceKind:   string(domain.KindOrganization),
+			ResourceID:     organizationID,
+			Decision:       AuditDecisionAllowed,
+			Reason:         "authorization granted for env.write",
+			RequestID:      strings.TrimSpace(in.RequestID),
+			CorrelationID:  strings.TrimSpace(in.CorrelationID),
+			// variable_id is the system-minted, non-guessable id of the
+			// removed row. The customer-supplied key and value are
+			// deliberately not recorded — the audit row is auditable
+			// without ever observing the variable name or its value.
+			Metadata: map[string]string{
+				"variable_id": row.ID,
+			},
+		}
+		if _, audErr := svc.audit.Append(ctx, tx, event); audErr != nil {
+			return audErr
+		}
+		deleted = row
+		return nil
+	}); txErr != nil {
+		return OrganizationVariable{}, txErr
+	}
+	return deleted, nil
+}
+
 // patchedFieldNames lists the closed-set names of the fields a
 // PatchOrganizationVariableInput names. Order is stable (value before
 // is_secret) so the audit metadata is byte-deterministic across runs;
