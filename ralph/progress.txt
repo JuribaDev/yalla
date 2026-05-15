@@ -7930,3 +7930,99 @@
     call site was missed.
 ---
 
+
+## 2026-05-15 - BE-0114
+- Added policy-matrix coverage for PATCH
+  /v1/organizations/{org_id}/variables/{key} — every built-in role,
+  revoked/expired credentials, wrong-organization principals, and
+  scoped-grant containment are pinned against the production request
+  path (real NewHandler + real policy.NewEngine + a fake
+  OrganizationVariablePatcher). The matrix mirrors BE-0111 (PUT) and
+  proves the {key} sub-resource path does NOT widen the engine's
+  required scope.
+- Files changed:
+  - internal/controlplane/httpapi/variables_patch_policy_test.go: new
+    file. Four tests (TestPatchOrgVariablePolicyMatrixRoles,
+    TestPatchOrgVariablePolicyRevokedAndExpiredKeys,
+    TestPatchOrgVariablePolicyWrongOrganizationPrincipal,
+    TestPatchOrgVariablePolicyGrantContainment) plus two
+    file-private fixtures (envWritePatchKey/envWritePatchBody for
+    caller-submitted needles, seededPostPatchOrgVariable +
+    postPatchOrgVariableBodyLeak for "data the patcher would
+    return" needles). All shared helpers
+    (patchOrgVariableHandlerFor, patchOrgVariable,
+    decodePatchOrgVariable, fakeOrgVariablePatcher,
+    orgVariableActorIdentity, orgPrincipal, decodeError) are reused
+    from the existing PATCH contract suite and the env.read /
+    organizations test files — no new helpers, no signature churn.
+  - ralph/prd.json: BE-0114.passes flipped to true.
+- Verification run: gofmt -w on the new file; go mod tidy;
+  go build ./...; go vet ./...; go test ./...; go test -race ./....
+  All green.
+- Results: every PATCH role row matches PUT (Owner/Admin/Developer
+  allow via ReasonAllowedByRole; Viewer/CI/Support deny via
+  ReasonDeniedNoCapability), revoked/expired keys deny via
+  ReasonDeniedPrincipalDisabled, cross-tenant principals deny via
+  ReasonDeniedCrossTenant (with Support explicitly NOT a CapWrite
+  cross-tenant exception), and project/environment/service grants
+  deny via ReasonDeniedOutOfScope while an organization-scoped
+  Developer grant allows via ReasonAllowedByGrant — and a Viewer
+  grant at the same organization scope is denied (the CapWrite-not-
+  CapRead pin). Allow-by-role AND allow-by-grant paths still redact
+  the secret value to output.Sentinel; deny-paths never echo the
+  seeded post-patch data, the URL {key}, or the submitted value.
+- Remaining risks or follow-ups:
+  - BE-0117 (policy matrix coverage for DELETE
+    /v1/organizations/{org_id}/variables/{key}) is the next
+    variables-policy story. It will be structurally identical to this
+    one — the resolver is still organizationIDResolver (the {key} is a
+    sub-resource within the organization-root scope), env.write is
+    still CapWrite, and the matrix shape (Owner/Admin/Developer allow,
+    Viewer/CI/Support deny, no support cross-tenant exception, the
+    same grant-containment story) applies verbatim. The only swap is
+    the request shape (no body) and the seed-fixture needles — pick
+    DELETE-distinctive id/key/value tokens so a body-leak check cannot
+    false-positive against PUT/PATCH/GET fixtures.
+- Learnings for future iterations:
+  - The structural-twin authorization-matrix pattern (one .go file per
+    HTTP verb on the same resource) is the right shape: each verb has
+    its own request body, its own redaction chokepoint, its own
+    failure modes, and its own seed-fixture needles, but the matrix
+    shape (roles, revoked/expired, cross-tenant, grant containment)
+    is shared. The cost of one new file per verb is small; the
+    benefit is that a regression in one verb's policy wiring can
+    never silently hide behind another verb's coverage. Don't
+    consolidate across verbs — keep the suites parallel.
+  - For a sub-resource path on an organization-scoped action (PATCH
+    /.../{org_id}/variables/{key}), the authorization seam is still
+    the organization-root scope of the {org_id} parameter — the
+    {key} is NOT a deeper-scoped resource. Pin this property in the
+    grant-containment test by asserting that a project/environment/
+    service Admin grant denies env.write at the org-root with
+    ReasonDeniedOutOfScope (NOT at any {key}-shaped resource), and
+    that an org-scoped Developer grant allows it via
+    ReasonAllowedByGrant. A future change that introduced a
+    {key}-derived scope override would silently widen scoped grants
+    to a single-variable mutation; this assertion would fail.
+  - For seeded-data leak detectors, write multiple distinctive
+    needles split across the long secret value, not just the full
+    string. A partial leak that drops only one piece (e.g. truncated
+    log line, partial render) still trips the guard. The PATCH file
+    used three: the full plaintext, "tokenrotated" (mid-string), and
+    "supercalifragilistic" (end-string). Mirror this for any new
+    secret-leak fixture — single-needle leak detectors miss partial
+    failures.
+  - Pointer-fidelity forwarding (Value *string, IsSecret *bool) is a
+    PATCH-specific assertion the matrix MUST include in the allow
+    branch: the patcher must receive the exact pointer-shape the
+    request body decoded into, so a regression that materialised a
+    zero-value for a missing field (silently turning "not supplied"
+    into "set to false") would fail. Deny paths can't catch this
+    because they never reach the patcher.
+  - The wire-shape for PATCH (single Variable in the success payload)
+    means the seeded fixture is one OrganizationVariable, not a
+    slice. Pick a SECRET variable as the canonical fixture so the
+    allow-path redaction-to-sentinel check and the deny-path no-leak
+    check are both pinned by the same seed — one fixture, two
+    properties.
+---
