@@ -41,6 +41,8 @@
 - Customer-facing soft-delete endpoints come in two shapes. Organization.delete uses a deletion_scheduled_at stamp + 202 Accepted (asynchronous teardown by a future worker; re-scheduling is apierr.Conflict). API-key DELETE is a one-way revocation: the api_keys.revoked_at column is stamped and the credential is permanently unusable from that moment (the auth-layer IsUsable check already rejects a revoked row), the row stays so the audit trail of who minted it stays linked to it, response is 200 OK with the revoked snapshot (mirroring members.Remove's terminal-view convention). The repository (APIKeyRepository.Revoke) is silently idempotent at SQL via COALESCE(revoked_at, $now), but the service layer (APIKeyService.Revoke) pre-checks current.IsRevoked() inside the tx and returns apierr.Conflict on re-revoke — the customer's view of the lifecycle is stale and a silent success would write a misleading audit record. Pattern: customer endpoints surface stale-lifecycle conflicts; repository methods stay SQL-idempotent for non-customer callers (workers, admin jobs).
 - "Add policy matrix coverage for <endpoint>" stories add a <endpoint>_policy_test.go beside the endpoint's contract test, in package httpapi, driving the REAL NewHandler + real policy.NewEngine() (the production authorization path, fake Authenticator only). Table the principal classes the PRD names: every built-in role, revoked/expired credentials (modelled as Disabled principals — the only shape in which a revoked/expired credential reaches the engine; the auth layer's earlier 401 path is the contract test's job), and a wrong-organization principal. For a CapSelf endpoint the matrix is "all allow" — assert the served data is the caller's OWN identity, never escalated/cross-tenant. Grant-containment criteria (sibling project / production env / parent-level secret non-leak) are engine properties: assert them with policy.NewEngine().Decide directly, then tie back by proving the endpoint echoes the confined grant set verbatim. Reuse the existing helpers (meHandlerFor/getMe/decodeMe, middleware_test.go's decodeError) — a sibling _test.go needs no new scaffolding.
 - HTTP endpoints are data-driven entries in internal/controlplane/httpapi/routes.go newRouteTable: apiRoute{endpoint, handler, resolver}. Authorization is declarative — set openapi.Endpoint.RequiresAuth=true + RequiredAction=string(policy.ActionX), and NewHandler auto-wraps the handler in RequireAuth(authenticator, engine, action, resolver) before registering it, so a served authenticated route is structurally impossible without authorization. TestEveryAuthenticatedRouteHasMappedAction enforces the RequiresAuth<->RequiredAction invariant in CI. The optional apiRoute.resolver derives the policy.Resource from path/query params; leave it nil for self/org-root actions (RequireAuth then authorizes against the principal's own org scope). NewHandler signature is (build, readiness, meta, authenticator, engine, logger); httpapi tests build it through the newTestHandler helper (canned fakeAuthenticator + policy.NewEngine()). Handlers stay thin: read policy.PrincipalFromContext, render via apienvelope.WriteData/WriteError. cmd/yalla-api wires the real stack at startup (pgxpool -> store.New -> store.NewCredentialReader -> auth.NewAuthenticator + policy.NewEngine) and requires YALLA_DATABASE_URL in every profile.
+- Drift reconciliation is internal/controlplane/reconcile: a pure engine that classifies every Yalla<->Dokploy divergence into exactly one of three buckets — DriftSafe (auto-repaired through the Repairer port: env var ensures/updates/removals, re-bound managed domains), DriftDangerous (recorded through the ReviewRecorder port: missing managed service, missing managed database, renamed domain on a known Dokploy ID, service type changed), or DriftUnmanaged (a Dokploy resource without a Yalla counterpart, recorded through the UnmanagedRecorder port — never auto-deleted and never exposed to customers by default). Diff(desired, actual) is a pure function; the Reconciler depends only on the four port interfaces (DesiredStateReader, ActualStateReader, Repairer, ReviewRecorder, UnmanagedRecorder) so adapters land in store/worker/dokploy without reaching back into reconcile. Every classification field carries a stable, value-free DriftReason (env_var_changed, domain_renamed, service_missing, database_missing, resource_unmanaged, ...) — an env var value reaches Action only via DesiredValue, consumed by the Repairer adapter and nowhere else. Apply is best-effort: per-action failures land in Result.Failures with their error string scrubbed through output.Redactor; the loop only stops on ctx cancellation. Untyped adapter errors are upgraded to apierr.StoreUnavailable (desired) or apierr.DokployUnavailable (actual); typed apierr.* from adapters (NotFound, Forbidden) flow through unchanged so callers keep the real taxonomy.
+- Crockford Base32 (lowercase) excludes i / l / o / u — hand-rolled test IDs containing those letters (e.g. "demo", "kvl", "old", "ufo") fail domain.ParseID with E_INVALID_INPUT. Use domain.MustNewID(domain.KindX) for fixtures (the convention in dokploy/mapping_test.go and reconcile_test.go); a test failure where every port-level case fails with the same E_INVALID_INPUT is almost always the ID validator rejecting the fixture before any port runs.
 
 ## 2026-05-15 - BE-0040
 - What was implemented: GET /v1/me, the first authenticated customer-facing
@@ -5605,4 +5607,141 @@
     revokedAt and assigns persisted.RevokedAt = &revokedAt before handing
     it to the fake. The PATCH equivalent did not need this because the
     success snapshot it returns is just the renamed row.
+---
+
+## 2026-05-15 - BE-0032
+- What was implemented: internal/controlplane/reconcile, the pure
+  reconciliation engine that classifies drift between Yalla's source-of-truth
+  hierarchy and Dokploy's actual state into safe, dangerous, or unmanaged
+  buckets and routes each through the matching port (Repairer / ReviewRecorder
+  / UnmanagedRecorder).
+  - doc.go: package overview that names the three drift kinds, the stable
+    DriftReason vocabulary, and the Plan/Apply lifecycle the worker drives.
+  - types.go: the DriftKind / ActionType / DriftReason / ResourceLevel
+    enums; the Desired*/Actual* in-memory snapshot shapes (Organization ->
+    Project -> Environment -> Service, with EnvVars and Domains on services);
+    ServiceRef and DomainRef (resolved Yalla+Dokploy locators); UnmanagedResource
+    and ReviewEvent payload structs. Closed-set Valid() guards on DriftKind
+    so a future bug can't smuggle in a new kind silently. Value-free design:
+    Reason/Level/Kind never carry env-var values or hostnames a customer
+    submitted.
+  - diff.go: the pure Diff(desired, actual) Plan function. Walks every level
+    top-down with Dokploy-ID-keyed lookup tables, classifies divergence, and
+    emits a stable sorted Plan. Safe drift (env_var_changed, env_var_missing,
+    env_var_extra, domain_missing) -> Repairer; dangerous drift
+    (service_missing / database_missing on a recorded Dokploy ID,
+    domain_renamed, service_type_changed) -> Reviewer; everything in actual
+    without a desired counterpart (project / environment / service / domain
+    level) -> Unmanaged. The DesiredValue field is the only path an env-var
+    value reaches an Action, and only ActionUpdateEnvVar consumes it.
+  - reconcile.go: the Reconciler engine and its ports
+    (DesiredStateReader, ActualStateReader, Repairer, ReviewRecorder,
+    UnmanagedRecorder). New() fails fast with apierr.Internal on any missing
+    port. Plan() validates the org ID (apierr.InvalidInput on blank /
+    malformed / wrong-kind), preserves typed apierr from adapters, and
+    upgrades untyped errors to apierr.StoreUnavailable (desired reader) or
+    apierr.DokployUnavailable (actual reader). An organization whose
+    DokployID is empty short-circuits to an empty plan — pre-provisioned
+    state is not drift. Apply() is best-effort: every per-action failure is
+    captured in Result.Failures with the error string scrubbed through
+    output.Redactor; the loop only stops when ctx is cancelled. Reconcile()
+    is the Plan+Apply convenience wrapper that emits one structured tick log.
+  - AGENTS.md: documents the "value-free classification", safe-vs-dangerous
+    boundary, deterministic-order, best-effort Apply, and "quarantine never
+    delete" conventions for future adapters and follow-up reviewers.
+  - Tests: 21 unit tests across diff_test.go and reconcile_test.go covering
+    every acceptance test case explicitly — TestDiff_DeletedApp (dangerous,
+    service_missing), TestDiff_RenamedDomain (dangerous, domain_renamed),
+    TestDiff_ChangedEnvVar (safe, env_var_changed, with a "no value leaks
+    into the classification fields" assertion), TestDiff_MissingDatabase
+    (dangerous, database_missing — separate code from missing application),
+    TestDiff_UnmanagedResource (unmanaged at service level). Plus
+    no-drift baseline, missing-env-var safe ensure, extra-env-var safe
+    removal, service-type change, unprovisioned-desired ignored, and
+    deterministic ordering. Engine-level: TestNew_RequiresPorts (each missing
+    port yields apierr.Internal), TestPlan_ValidationFailure (blank,
+    malformed, wrong-kind org IDs return apierr.InvalidInput with typed
+    FieldViolations, no port is called), TestPlan_NotFoundFromDesired
+    (typed apierr.NotFound preserved, actual reader not called),
+    TestPlan_AuthorizationFailureFromDesired (apierr.Forbidden preserved),
+    TestPlan_UntypedDesiredErrorBecomesStoreUnavailable +
+    TestPlan_UntypedActualErrorBecomesDokployUnavailable (untyped errors
+    upgraded, token strings scrubbed), TestPlan_UnprovisionedOrganizationReturnsEmptyPlan,
+    TestApply_RepairsSafeDrift (env-var Repairer call carries Secret=true,
+    Reviewer not called, secret never reaches captured log buffer),
+    TestApply_RecordsDangerousDrift (deleted app -> Reviewer, Repairer
+    untouched), TestApply_MarksUnmanagedResource (rogue service -> Unmanaged
+    only, locates parent without exposing it), TestApply_BestEffortContinuesPastFailure
+    (one Repairer error doesn't stop the rest of the plan, Failure.Err is
+    scrubbed through Redactor with no upstream token leak),
+    TestApply_CancelledContextStopsLoop (ctx.Err() returned mid-loop),
+    TestApply_UnmanagedActionWithoutPayloadIsCaptured (malformed-internal
+    plan captured as Failure, not panic), TestApply_RedactsSensitiveErrorsInResult
+    (Reviewer's upstream "Authorization: Bearer ..." string scrubbed in
+    Failure.Err and in the captured log).
+- Files changed: internal/controlplane/reconcile/{doc.go,types.go,diff.go,
+  reconcile.go,diff_test.go,reconcile_test.go,AGENTS.md} (all new),
+  ralph/prd.json, ralph/progress.txt.
+- Verification run: gofmt -w .; go mod tidy; go build ./...; go vet ./...;
+  go test ./...; go test -race ./....
+- Results: all passed. goimports binary not installed locally (documented in
+  earlier iterations); golangci-lint, staticcheck, govulncheck still not
+  installed locally.
+- Remaining risks / follow-ups:
+  - The acceptance criterion "stable yalla.output.v1 / yalla.error.v1
+    envelopes" is N/A: reconcile is a pure service package with no HTTP
+    surface. The taxonomy is enforced at the apierr boundary instead —
+    every error the engine returns is either a typed apierr.* preserved
+    from an adapter or a typed apierr.* produced by the engine
+    (Invalid / Internal / StoreUnavailable / DokployUnavailable).
+  - "Integration tests run against isolated Postgres migrations" is N/A
+    here for the same reason: reconcile depends on no database. The
+    store-backed DesiredStateReader and the store-backed Review/Unmanaged
+    recorders will land as their own follow-up adapter stories once the
+    service/application/domain persistence schema (currently
+    not on disk past migration 0011) ships.
+  - The Dokploy-backed ActualStateReader adapter is also a follow-up: the
+    typed dokploy.Client today only exposes Ensure*/Get*/Remove operations,
+    not bulk List operations needed to enumerate actual state. When that
+    adapter lands it will add the List intents (or paginated reads) to
+    dokploy/intents.go alongside the engine adapter.
+  - The five "test cases" enumerated in the PRD acceptance criteria are all
+    covered by named tests (deleted app, renamed domain, changed env var,
+    missing database, unmanaged resource). Each test asserts both the
+    classification (Kind/Reason) and the no-value-leak property, so a
+    regression that started routing values into Reason or EnvVarKey would
+    fail loudly.
+- Learnings for future iterations:
+  - Crockford Base32 (lowercase) excludes i / l / o / u — hand-rolled test
+    IDs that contain "kvl" / "demo" / "old" / "ufo" fail domain.ParseID().
+    Use domain.MustNewID(domain.KindX) in tests (the existing convention in
+    internal/controlplane/dokploy/mapping_test.go and others) rather than
+    string-literal IDs; this also future-proofs tests against ID-format
+    changes. A test failure like
+    "error code = E_INVALID_INPUT; want E_NOT_FOUND" where every port-side
+    test fails with the same code is almost always the org ID validator
+    rejecting the fixture before the port is reached.
+  - apierr.Internal(cause).Error() returns the fixed Message string
+    "an internal error occurred" only — the wrapped cause is reachable via
+    errors.Unwrap, not via Error(). When a test wants to assert a redacted
+    upstream string is captured, walk the chain with errors.Unwrap (see
+    errChainString in reconcile_test.go) instead of inspecting
+    err.Error() directly.
+  - apierr.Forbidden/NotFound from an adapter must be PRESERVED, not
+    re-wrapped — the engine's wrapDesiredErr / wrapActualErr only upgrade
+    untyped errors and short-circuit on a *yerr.Error via errors.As.
+    Otherwise the typed taxonomy collapses to "E_UNAVAILABLE" everywhere
+    and callers lose the ability to act on the real reason.
+  - For a Reviewer port, the action's Reason carries the classification
+    code but the engine still needs to choose a Level for the ReviewEvent:
+    LevelDomain for ActionReviewRenamedDomain, LevelService for everything
+    else dangerous. Hard-code that mapping inside reviewEventFor; if it
+    drifts, the review queue UX (not yet built) will route to the wrong
+    triage view.
+  - When the planner inserts a "service type changed" review action it
+    still scans the service's env-var and domain children. Suppressing the
+    children would lose drift signal the operator may want to see before
+    deciding whether to adopt or destroy the type-changed service; emitting
+    review-only actions for the service body keeps the deeper diff
+    available without auto-repairing through a wrong-typed service.
 ---
