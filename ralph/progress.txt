@@ -6935,3 +6935,104 @@
     _test.go that only routes through those helpers should NOT
     re-import it, or go vet flags it as unused.
 ---
+
+## 2026-05-15 - BE-0105
+- Added policy-matrix coverage for GET /v1/organizations/{org_id}/audit-events
+  in internal/controlplane/httpapi/audit_events_policy_test.go. Sibling of
+  audit_events_test.go (contract tests); no new scaffolding (reuses
+  listAuditEventsHandlerFor / auditEventActorIdentity / getAuditEvents /
+  decodeAuditEventList / fakeAuditEventReader / orgPrincipal / decodeError).
+- Coverage:
+  - TestListAuditEventsPolicyMatrixRoles: split-verdict role matrix —
+    owner+admin allow (ReasonAllowedByRole, 200 with seeded events,
+    reader called with the path parameter), developer/viewer/ci/support
+    in their own tenant deny (ReasonDeniedNoCapability, 403, reader
+    never invoked, body never leaks seeded events). Pins the engine
+    verdict alongside the wire verdict for each role.
+  - TestListAuditEventsPolicyDisabledPrincipal: revoked + expired API
+    keys (modelled as Disabled service accounts under role Owner) are
+    denied with ReasonDeniedPrincipalDisabled before role evaluation;
+    reader never runs; principal id / org / seeded data never appear
+    in the error body.
+  - TestListAuditEventsPolicyWrongOrganizationPrincipal: cross-tenant
+    non-support owner denied with ReasonDeniedCrossTenant (engine +
+    wire). Crucially: cross-tenant Support principal is ALSO denied
+    with ReasonDeniedCrossTenant — load-bearing distinction from
+    limits.read / usage where the Support exception fires. Pinned at
+    engine level (Decide returns ReasonDeniedCrossTenant for Support
+    on audit.read) AND wire level (403 E_FORBIDDEN, reader never
+    invoked) so a future drop of audit.read to CapRead fails both
+    layers.
+  - TestListAuditEventsPolicyGrantContainment: project / environment /
+    service-scoped Admin grants are confined at the engine layer
+    (sibling project / production env / parent-env secrets are NOT
+    reachable from a deeper-scoped grant). All three scoped grantees
+    are denied audit.read at the org root with ReasonDeniedOutOfScope.
+    Capability containment unique to audit.read: an org-level Viewer
+    grant is denied with ReasonDeniedNoCapability (Viewer lacks
+    CapAdmin) — the load-bearing distinction from CapRead-gated
+    endpoints. An org-level Admin grant IS allowed via
+    ReasonAllowedByGrant. Project grantee tied back to the wire (403,
+    out-of-scope reason, reader never reached, no leak); org-Admin
+    grantee tied back to the wire (200, two seeded events returned,
+    reader called with the path parameter).
+- Files changed:
+  - internal/controlplane/httpapi/audit_events_policy_test.go (new)
+  - ralph/prd.json (BE-0105 passes -> true)
+  - ralph/progress.txt (this entry)
+- Verification run:
+  - gofmt -w . (clean)
+  - go mod tidy (no diff)
+  - go vet ./... (clean)
+  - go build ./... (clean)
+  - go test ./... -count=1 (all packages pass)
+  - go test -race ./... -count=1 (all packages pass)
+- Results: green across the repo; the new file adds four test
+  functions, all pass under the race detector. No regressions in any
+  existing httpapi test.
+- Remaining risks / follow-ups:
+  - The Support cross-tenant deny is the load-bearing property under
+    test. If a future story SPLITS audit.read into a separate
+    audit.support_read CapSupport action so support staff can audit
+    foreign tenants through a deliberate break-glass path, this test
+    would need to fork (the existing assertion stays for audit.read,
+    a sibling matrix file would land for audit.support_read). Today
+    that action does not exist; the engine clause and the catalog
+    agree.
+  - auditEventsBodyLeak() deliberately omits "allowed" / "denied" /
+    "role_capability" / "no_principal" / "no_capability" from its
+    needle list because those are stable, non-secret policy verdict
+    strings that DO legitimately appear in a forbidden response
+    (denied_no_capability et al). The helper still catches every
+    high-signal leak — event id, actor id, action name, IP, UA,
+    metadata key+value, request_id / correlation_id.
+  - goimports / golangci-lint / staticcheck / govulncheck still not
+    installed locally (documented in earlier iterations).
+- Learnings for future iterations:
+  - audit.read is a CapAdmin action; the Support cross-tenant
+    exception (engine clause `roleCaps.has(CapSupport) && (required ==
+    CapRead || required == CapSupport)`) does NOT fire for it. This
+    is THE distinguishing property of an audit-log policy matrix
+    versus a limits / usage matrix — three of the four tests
+    explicitly pin this asymmetry (the role matrix, the cross-tenant
+    Support test, and the org-Viewer-grant deny in the grant
+    containment test). Any new CapAdmin endpoint that requires a
+    sibling matrix can borrow audit_events_policy_test.go directly;
+    a future CapRead endpoint would borrow usage_policy_test.go.
+  - "Body leak" helpers should never assert against the stable policy
+    Reason / Decision enum strings — they ARE the legitimate response
+    payload of a denied request. The reusable assertion is "the
+    response does not echo any seeded resource identifier"; if a
+    future audit-event field needs a redaction test, add a needle to
+    auditEventsBodyLeak rather than scattering string contains checks
+    across cases.
+  - The role matrix here is the canonical 6-row matrix the PRD
+    acceptance criteria require ("owner, admin, developer, viewer, ci,
+    support") but the verdict split (2 allow, 4 deny) is different
+    from every prior matrix file. Each case carries an explicit
+    wantAllow + wantCode + expected Reason so the matrix is readable
+    as a table — the boilerplate "every role allowed" assumption that
+    works for limits.read / usage.read silently produces a wrong
+    matrix for audit.read; future CapAdmin endpoints should mirror
+    THIS test's structure (per-case wantAllow + wantReason).
+---
