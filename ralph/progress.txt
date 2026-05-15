@@ -5023,3 +5023,130 @@
     dependency backs which route. A drift here is invisible to vet but
     misleads future contributors.
 ---
+
+## 2026-05-15 - BE-0084
+- What was implemented: Policy-matrix coverage for GET
+  /v1/organizations/{org_id}/api-keys/{key_id} — the BE-0082
+  implementation sibling. Same authorization contract as BE-0078
+  (list policy matrix) since both LIST and GET-by-id carry the same
+  keys.read action (CapAdmin) and the same organizationIDResolver. The
+  matrix file is a near-mechanical adaptation of api_keys_list_policy_test.go
+  to the GET-by-id wire shape (the {key_id} path parameter, the
+  fakeAPIKeyReader.key/gotKeyOrgID/gotKeyID/getErr fields, the
+  decodeGetAPIKey envelope), reusing every helper already in
+  api_keys_test.go and api_keys_get_test.go — no new scaffolding.
+  - internal/controlplane/httpapi/api_keys_get_policy_test.go (new):
+    four tests against the real NewHandler + real policy.NewEngine().
+    - TestGetAPIKeyPolicyMatrixRoles: all six built-in roles
+      (owner/admin/developer/viewer/ci/support) against an ({org_id},
+      {key_id}) naming a key inside the principal's own home
+      organization. Owner and Admin hold CapAdmin and allow keys.read
+      via ReasonAllowedByRole — the reader is reached on BOTH the
+      {org_id} and {key_id} path parameters and the response carries
+      the named key. Developer, Viewer, CI, and Support all lack
+      CapAdmin and are denied with 403 E_FORBIDDEN carrying
+      ReasonDeniedNoCapability — the reader's gotKeyOrgID + gotKeyID
+      both stay empty, and the denied body never echoes the seeded
+      keyID or prefix. The {key_id} path is NOT consulted by the
+      engine: the engine assertion uses orgRoot only, and the wire
+      assertion proves the denied path's reader-never-reached property.
+    - TestGetAPIKeyPolicyRevokedAndExpiredKeys: a revoked- or
+      expired-key principal (surfaced to policy as Disabled, with the
+      underlying role kept as Owner so the disabled flag is the only
+      thing in the way) is denied even when the underlying role would
+      have allowed. Stable 403 E_FORBIDDEN carrying
+      ReasonDeniedPrincipalDisabled, the reader is never reached
+      (gotKeyOrgID + gotKeyID both stay empty), and the error body
+      never echoes the principal id, the organization id, the key id,
+      or the prefix — no oracle through the failure path.
+    - TestGetAPIKeyPolicyWrongOrganizationPrincipal: a non-support
+      owner of org_attacker reading a key of org_victim is a
+      deterministic 403 ReasonDeniedCrossTenant, the reader is never
+      reached, and the body carries no cross-tenant id. A support
+      principal of org_yalla — the one that COULD have read a member
+      or organization cross-tenant — is ALSO denied cross-tenant for
+      keys.read with the same ReasonDeniedCrossTenant: the engine
+      verdict and the handler outcome are BOTH pinned, since support
+      IS the cross-tenant exception for members.read. The engine-level
+      cross-tenant boundary is asserted directly via policy.Decide. A
+      bonus assertion proves support cannot read keys of its OWN home
+      tenant either: RoleSupport lacks CapAdmin entirely, so within
+      the home tenant the verdict is ReasonDeniedNoCapability — not
+      the cross-tenant denial — locking the support role's
+      read-only-for-non-key-data posture at the engine level so a
+      future catalog change cannot silently grant it key-read authority.
+    - TestGetAPIKeyPolicyGrantContainment: a scoped key (no role,
+      grants only) holding an Admin grant at the project, environment,
+      or service scope is denied at the organization-root resource the
+      resolver emits, with ReasonDeniedOutOfScope. The three
+      containment properties — sibling-project, production
+      environment, parent-level secrets — are pinned against the
+      engine via the project/env/service grants (ActionProjectUpdate
+      for sibling-project; ActionEnvironmentUpdate for production;
+      ActionEnvWrite on the parent env for parent-level secrets), then
+      tied back at the wire by proving the project grantee is denied
+      its OWN ({org_id},{key_id}) with the stable out-of-scope reason,
+      the reader never reached, the body never echoing the seeded
+      keyID or prefix. An organization-level Admin grant DOES cover
+      the org-root scope and is allowed via ReasonAllowedByGrant, with
+      the reader reached on BOTH the {org_id} AND {key_id} path
+      parameters — and a Viewer grant at the same scope is denied
+      (CapAdmin not CapRead), locking the CapAdmin requirement against
+      the grant path so a future catalog change cannot silently
+      downgrade keys.read to a read-level capability. The cross-tenant
+      smuggling guard fires for the same project-scoped grantee
+      against a foreign {org_id} — the scoped key cannot be widened
+      across tenants by fabricating a path parameter.
+- Files changed: internal/controlplane/httpapi/api_keys_get_policy_test.go
+  (new), ralph/prd.json (BE-0084 passes -> true), ralph/progress.txt.
+- Verification run: gofmt -w .; go mod tidy; go vet ./...;
+  go build ./...; go test -count=1 ./...; go test -race -count=1 ./....
+- Results: all green. goimports/golangci-lint/staticcheck/govulncheck
+  still not installed locally (documented in earlier entries).
+- Remaining risks or follow-ups: none specific to BE-0084. The
+  remaining api-keys triplets (BE-0085/BE-0086/BE-0087 PATCH,
+  BE-0088/BE-0089/BE-0090 DELETE, BE-0091/BE-0092/BE-0093 rotate)
+  still need their implementation + matrix pairs — each will reuse
+  the same shared scaffolding and follow the same four-test structure
+  (role matrix, disabled, cross-tenant w/ support pin, grant
+  containment). The natural next iteration is BE-0085 (PATCH
+  implementation), which unblocks BE-0086 contract tests + BE-0087
+  policy matrix.
+- Learnings for future iterations:
+  - The pattern "GET-by-id policy matrix clones LIST policy matrix"
+    holds when (a) both endpoints share the same action constant in
+    the catalog and (b) both routes use the same Resolver (here:
+    organizationIDResolver -> organization-root scope). The only
+    delta is wire-shape: LIST uses (orgID) + ListAPIKeys + Data.APIKeys
+    + gotOrgID; GET-by-id uses (orgID, keyID) + GetAPIKey + Data.APIKey
+    + gotKeyOrgID/gotKeyID/getErr. The structural authorization
+    assertions — role allow/deny set, ReasonDeniedNoCapability vs
+    ReasonAllowedByRole, ReasonDeniedCrossTenant for non-support AND
+    support, ReasonDeniedOutOfScope for scoped grants — are identical.
+    This is by design: organizationIDResolver projects the resource to
+    organization-root regardless of how many path parameters the
+    endpoint exposes, so the engine sees the same input and the matrix
+    must therefore be the same.
+  - When a GET-by-id endpoint's authorization decision is independent
+    of its second path parameter (as here: keys.read is decided on
+    {org_id} only — {key_id} only selects the row once authorized),
+    the matrix tests should still assert BOTH path parameters propagate
+    to the reader on the allowed path (gotOrgID == org AND gotKeyID ==
+    keyID). The reader's "never reached" property on the denied path
+    then has the strongest possible meaning: not just "no row
+    returned" but "the {key_id} we sent was never used to look up
+    anything", which structurally prevents a cross-tenant {key_id}
+    from acting as an oracle through any read side-effect.
+  - The fakeAPIKeyReader.key / gotKeyOrgID / gotKeyID / getErr fields
+    already exist for the GET-by-id contract suite (api_keys_get_test.go,
+    BE-0082) — the matrix file reuses them without extending the fake.
+    Note the zero-value getErr path: when fakeAPIKeyReader.key is the
+    zero value, GetAPIKey returns apierr.NotFound (see api_keys_test.go
+    line 80). The policy-matrix tests always set f.key to a fully
+    populated seedAPIKey on the ALLOWED path so the allowed assertions
+    can prove field-level projection; on the DENIED path, the engine
+    short-circuits before GetAPIKey runs, so the f.key value doesn't
+    matter — but we still set it to non-zero so a regression that
+    accidentally lets the reader run would surface as a 200 with the
+    seeded data, not as a confusing 404.
+---
