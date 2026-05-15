@@ -3330,3 +3330,95 @@
   - Adding a NewHandler parameter is a fan-out edit across ~9 test wrappers + cmd/yalla-api/main.go + the routes_test.go newRouteTable call + two newRouteTable call sites in server_test.go. Doing them all in one pass before running tests is faster than chasing compile errors one wrapper at a time. The AGENTS.md already documents the "grep for NewHandler( and newRouteTable( across *_test.go" recipe; following it verbatim worked.
   - Local Postgres via docker-compose worked seamlessly for the integration tests; the docker-compose.yml at repo root exposes a yalla:yalla superuser on 127.0.0.1:5432 which RequireMigratedDB picks up from YALLA_TEST_DATABASE_URL. CI without it correctly skips, which keeps the "passes without Postgres" promise intact.
 ---
+
+## 2026-05-15 - BE-0063
+- What was implemented: Policy-matrix coverage for GET
+  /v1/organizations/{org_id}/members. New
+  internal/controlplane/httpapi/members_policy_test.go drives the real
+  NewHandler + real policy.NewEngine() (no policy doubles) and proves the
+  authorization contract for action members.read end-to-end:
+  - TestListMembersPolicyMatrixRoles: all six built-in roles
+    (owner/admin/developer/viewer/ci/support) hold CapRead and are allowed
+    for an {org_id} naming their own home organization, verdict reaches via
+    ReasonAllowedByRole, the membership reader is invoked with that exact
+    path id, and the response carries the seeded member — no fabricated /
+    escalated / sibling-tenant member can be returned.
+  - TestListMembersPolicyRevokedAndExpiredKeys: a revoked- or expired-key
+    principal (surfaced to policy as Disabled) is denied even when its role
+    is owner. Stable 403 E_FORBIDDEN carrying ReasonDeniedPrincipalDisabled,
+    the reader is never reached, and the error body never echoes the
+    principal id or the organization id (no oracle through the failure
+    path).
+  - TestListMembersPolicyWrongOrganizationPrincipal: a non-support owner of
+    org_intruder listing org_victim's members is a deterministic 403
+    ReasonDeniedCrossTenant, reader never reached, error body never
+    contains "org_victim". The documented cross-tenant read exception is
+    pinned: a support principal listing another tenant's members IS
+    allowed (ReasonAllowedBySupport) and receives the named org's members
+    through the same handler — the carve-out only opens for CapRead/
+    CapSupport actions, which members.read is.
+  - TestListMembersPolicyGrantContainment: a project-scoped grant is
+    confined at the engine level (no sibling-project write, no production-
+    env write from a staging grant, no parent-env write from a service
+    grant, no sibling-service update from a service grant). It is then
+    confined for THIS endpoint: a project-scoped key — even when widened
+    in a thought experiment to RoleOwner at project scope — is denied
+    members.read at the organization root with ReasonDeniedOutOfScope, and
+    a foreign-org {org_id} for the same key is still denied. The positive
+    half is also pinned: an organization-scoped Viewer grant is allowed
+    members.read via ReasonAllowedByGrant and receives the seeded member.
+- Files changed: internal/controlplane/httpapi/members_policy_test.go
+  (new), ralph/prd.json (BE-0063.passes=true), ralph/progress.txt.
+- Verification run: gofmt -w .; go mod tidy; go build ./...;
+  go vet ./...; go test ./...; go test -race ./...; plus a focused
+  go test -run 'TestListMembersPolicy' ./internal/controlplane/httpapi/...
+  smoke before the full sweep.
+- Results: all passed. goimports not installed locally (the binary is not
+  on PATH; documented in earlier iterations) so the goimports pass was a
+  no-op, but the new file's imports are already in canonical groups. The
+  policy tests are pure in-process: they need neither Postgres nor a
+  Dokploy server.
+- Remaining risks / follow-ups:
+  - BE-0062 ("contract tests for GET /v1/organizations/{org_id}/members")
+    remains pending — but the codebase pattern documented in prior
+    iterations is to treat the contract-test stories as covered by the
+    sibling implement story's _test.go (members_test.go already covers
+    happy path, scope-to-path, empty list, cross-tenant 403, support
+    cross-tenant allow, unauthenticated / invalid-credentials /
+    disabled-principal, reader unavailable, request_id propagation,
+    OpenAPI documentation, and resource mapping). Closing BE-0062 is a
+    bookkeeping step, not a missing-coverage story.
+  - "Audit event for every mutating request and every denied authorization
+    decision" — members.read is a non-mutating read, and RequireAuth still
+    does not emit an audit event on denial. That cross-cutting wiring
+    remains the same follow-up flagged by BE-0040/BE-0058/BE-0060.
+- Learnings for future iterations:
+  - The read-action policy matrix (members.read mirrors organization.read)
+    is "all six roles allow + support cross-tenant exception". The
+    write-action matrix (organization.delete needs CapOwner) is "owner
+    only + no cross-tenant support". When mirroring an existing policy
+    test, FIRST check the action's capability in
+    internal/controlplane/policy/catalog.go: if it's CapRead, use
+    organizations_get_policy_test.go as the template; if it's anything
+    stricter, use organizations_delete_policy_test.go. Picking the wrong
+    template means rewriting the role + cross-tenant cases.
+  - The route-resolver pin matters: members.read's route carries the
+    organizationIDResolver (registered in routes.go for
+    GET /v1/organizations/{org_id}/members), so a cross-tenant {org_id}
+    is rejected against the path parameter — NOT the principal's home
+    org. That is why support's CapRead carve-out IS reachable here, but
+    would NOT be reachable on a route that resolves the resource from
+    principal.OrganizationID. Always verify which resolver the route uses
+    before deciding whether to include the support-cross-tenant case.
+  - The reader-port pattern lets the policy test rely on the same
+    fakeMembershipReader / listMembersHandlerFor / getMembers /
+    decodeListMembers helpers already shared with members_test.go — no
+    new fixtures needed. Reusing them means a future change to the
+    contract (e.g. envelope schema_version, response header set) only
+    has to be made in one place to keep both the wire-contract suite and
+    the policy-matrix suite in sync.
+  - The "gotOrgID *string" pointer on fakeMembershipReader doubles as a
+    "reader was reached" probe — leaving it unset and asserting it stayed
+    "" is the cleanest way to prove a denial fired before the persistence
+    call. Mirror this on every future reader fake.
+---
