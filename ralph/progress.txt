@@ -9059,3 +9059,137 @@
     propagate to every new endpoint test suite. It complements the
     typed-status check rather than replacing it.
 ---
+
+## 2026-05-15 - BE-0126 - Add policy matrix coverage for GET /v1/projects/{project_id}
+- What was implemented: policy-matrix coverage for the deep-resource read
+  endpoint GET /v1/projects/{project_id}. Where projects_get_test.go pins
+  the wire contract (BE-0124), the new file
+  internal/controlplane/httpapi/projects_get_policy_test.go pins the
+  authorization contract: that action project.read cannot be bypassed by —
+  or leak data because of — the principal's role, revoked credentials,
+  home organization, or scoped grants. Four tests, all running through
+  the real NewHandler + real policy.NewEngine() (production request
+  path):
+    * TestGetProjectPolicyMatrixRoles — every built-in role drives the
+      route in its own org. All six roles hold CapRead, so the matrix is
+      "all allow"; each subtest pins the engine reason
+      (ReasonAllowedByRole), proves the reader is called with the
+      principal's home org id AND the {project_id} path parameter, and
+      asserts the response carries the canonical project's full
+      projectResource.
+    * TestGetProjectPolicyRevokedAndExpiredKeys — Disabled principal
+      whose underlying role would have allowed it: 403 carries
+      ReasonDeniedPrincipalDisabled, the reader never runs, and the
+      denied body never echoes the principal id, the organization id,
+      or the canonical project's identifiers.
+    * TestGetProjectPolicyWrongOrganizationPrincipal — wire-level AND
+      engine-level cross-tenant. Wire: a foreign project_id reaches the
+      reader with the attacker's home org id (the resolver pins
+      Scope.OrganizationID to principal.OrganizationID, never the
+      caller) and the tenant-scoped store returns NotFound — surfacing
+      as a deterministic 404, never 200 with foreign data and never 403
+      that would confirm existence. Body must not echo the foreign org
+      id. Engine: pins ReasonDeniedCrossTenant for every non-support
+      role and ReasonAllowedBySupport for Support (CapRead is INSIDE
+      the engine's cross-tenant exception), as defence-in-depth for a
+      future endpoint that constructs a resource with a foreign-org
+      scope.
+    * TestGetProjectPolicyGrantContainment — scoped grants. Engine: a
+      project-level Admin grant naming THIS project allows project.read
+      (ReasonAllowedByGrant), but a SIBLING project denies via
+      ReasonDeniedOutOfScope; an env-level grant denies project.read on
+      the parent project (covers() is one-way); a service-level grant
+      denies project.read on the parent project AND env.write on the
+      parent environment AND service.update on a sibling service; an
+      org-level Viewer grant allows project.read on any project
+      (Viewer holds CapRead, ReasonAllowedByGrant). Wire ties: the
+      project grantee on the target project receives the project; the
+      same grantee on a sibling project, an env-scoped grantee on the
+      parent project, and a service-scoped grantee on the parent
+      project all 403 with the stable out-of-scope reason, the reader
+      never runs, and the canonical project's id/slug/display name
+      never appear in the body. The org-level Viewer grantee is
+      end-to-end allowed at the wire.
+- Files changed:
+    * internal/controlplane/httpapi/projects_get_policy_test.go (new,
+      pure test file, no production code).
+    * ralph/prd.json — flipped BE-0126.passes from false to true.
+    * ralph/progress.txt — this entry.
+- Verification run: gofmt -w ., go mod tidy (no diff), go vet ./...,
+  go test ./..., go test -race ./.... All passed. goimports not
+  installed (documented as a no-op).
+- Results: 0 failures, every existing test still passes. The new file
+  drives the real NewHandler + real policy.NewEngine() so a regression
+  in the action catalog, the projectIDResolver, builtinRoleCaps, the
+  engine's cross-tenant or grant clauses, or the wire-renderer fails
+  here.
+- Remaining risks or follow-ups: none for this story. BE-0127 (PATCH
+  /v1/projects/{project_id}), BE-0128 (DELETE /v1/projects/{project_id}),
+  and similar deep-resource policy matrices are next; they can copy
+  this file's shape verbatim because the resolver scope is identical —
+  swap project.read for the relevant CapWrite/CapAdmin action and
+  re-derive the role allow/deny split from defaultActionCatalog (a
+  CapWrite policy matrix on a project-level resource would look like
+  this file with Viewer/CI/Support denying via ReasonDeniedNoCapability
+  and Support's cross-tenant exception withdrawn, mirroring the
+  CapWrite-on-nil-resolver shape in projects_create_policy_test.go but
+  on a deeper resource).
+- Learnings for future iterations:
+  - The "deep-resource resolver" policy matrix (project_id, future
+    environment_id, service_id) is the third distinct shape after
+    nil-resolver (POST /v1/projects, projects_create_policy_test.go)
+    and organizationIDResolver (env.write/env.read on {org_id}). The
+    key load-bearing distinction is that the resource scope is built
+    from BOTH the principal's home org AND the path id — so the
+    cross-tenant clause CANNOT fire on the wire (same-tenant by
+    construction), and tenant-isolation for a foreign path id is
+    enforced at the PERSISTENCE layer as a 404, not at the policy
+    boundary as a 403. The test must pin both: the wire 404 with no
+    foreign-tenant body echo, and the engine 403/allow defence-in-depth
+    for a hypothetical foreign-scope resource. Both are necessary
+    because the wire surface can never reach the engine's cross-tenant
+    clause through this endpoint, but a future admin-tool variant
+    might.
+  - A project-level resource is "reachable" from an org-level grant
+    (org scope covers everything in it) AND from a project-level grant
+    naming THIS project. It is NOT reachable from env- or
+    service-level grants (covers() is one-way). The grant matrix at
+    this depth therefore has a richer allow-by-grant row than the
+    nil-resolver matrix (where ONLY an org-level grant could ever
+    cover the org root): a project-level Admin grant allows, an
+    org-level Viewer grant allows (both via ReasonAllowedByGrant),
+    while env-/service-/sibling-project grants all deny via
+    ReasonDeniedOutOfScope. The wire suite must exercise the
+    target-project allow row alongside the sibling-project deny —
+    they're different engine paths even though the principal and the
+    handler look identical.
+  - The fakeProjectReader was already extended for GET by BE-0124
+    (project / getErr / gotGetOrgID / gotGetProjectID). No fake-fixture
+    extension was needed for this story — the existing leak-guard
+    pattern (canonical canonical*Project + *DenyBodyLeak) carries
+    cleanly. Future deep-resource matrices that reuse a multi-route
+    fake should adopt the same convention: keep capture pointers
+    distinct per route (got*OrgID, got*ProjectID, got*EnvID,
+    got*ServiceID) so a single fake satisfies multiple route ports
+    without leaking state between them.
+  - listProjectsHandlerFor wires both the list AND get routes (it
+    builds the full NewHandler stack with the same ProjectReader). The
+    helper name has historic baggage from when only the list route
+    existed; the get-route policy tests reuse it as-is rather than
+    introducing a "projectsHandlerFor" sibling, matching the pattern
+    BE-0124 established. A future cosmetic rename should sweep both
+    suites at once.
+  - Variable named projectResource shadows the unexported
+    projectResource struct from projects.go inside the test function
+    scope. This is legal Go and harmless here (the test never refers
+    to the type by name in that function — it accesses fields through
+    env.Data.Project), but it's a smell worth avoiding in future
+    suites. Prefer a non-colliding local name like
+    `projectScopeResource` or `targetResource` in new files.
+  - apierr.NotFound(kind, id) is the canonical way to make a fake
+    persistence port return a typed 404. It maps to E_NOT_FOUND
+    through the apierr -> apienvelope plumbing; tests should decode
+    against that code, and assert the foreign tenant's org id does
+    not appear in env.Error.Message (the persistence layer must
+    redact foreign identity even when the request body is empty).
+---
