@@ -60,6 +60,26 @@ func (f fakeAPIKeyReader) ListAPIKeys(_ context.Context, organizationID string) 
 	return f.keys, f.err
 }
 
+// fakeAPIKeyCreator is a canned APIKeyCreator for httpapi tests. The zero
+// value returns the zero store.APIKey and no error from Create, which is
+// all the tests that never reach the handler (the public-surface, GET-only,
+// other-org-route, /v1/me, and members suites) need. POST-api-keys-specific
+// tests set key/err and read got back to prove the handler forwards the
+// validated request and the authenticated actor — including the
+// server-minted (Prefix, SecretHash) pair — to the store layer unchanged.
+type fakeAPIKeyCreator struct {
+	key store.APIKey
+	err error
+	got *store.CreateAPIKeyInput
+}
+
+func (f fakeAPIKeyCreator) Create(_ context.Context, in store.CreateAPIKeyInput, _ time.Time) (store.APIKey, error) {
+	if f.got != nil {
+		*f.got = in
+	}
+	return f.key, f.err
+}
+
 // listAPIKeysSuccessEnvelope is the decoded shape of the GET
 // /v1/organizations/{org_id}/api-keys success envelope.
 type listAPIKeysSuccessEnvelope struct {
@@ -78,7 +98,7 @@ func listAPIKeysHandlerFor(id auth.Identity, authErr error, reader APIKeyReader)
 	a := fakeAuthenticator{identity: id, err: authErr}
 	return NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, a, policy.NewEngine(),
 		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
-		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{}, reader, nil)
+		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{}, reader, fakeAPIKeyCreator{}, nil)
 }
 
 // getAPIKeys issues GET /v1/organizations/{orgID}/api-keys against handler,

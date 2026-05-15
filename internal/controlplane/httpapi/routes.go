@@ -83,13 +83,13 @@ type versionPayload struct {
 // /v1/organizations/{org_id}/members, memberCreator backs POST
 // /v1/organizations/{org_id}/members, memberUpdater backs PATCH
 // /v1/organizations/{org_id}/members/{member_id}, memberRemover backs
-// DELETE /v1/organizations/{org_id}/members/{member_id}, and apiKeys backs
-// GET /v1/organizations/{org_id}/api-keys. Any may be nil for tests and
-// tooling that only inspect the route table's metadata; a request that
-// actually reaches a handler with a nil dependency is reported as a typed
-// internal error rather than a misleading empty list or a silently dropped
-// write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, apiKeys APIKeyReader) []apiRoute {
+// DELETE /v1/organizations/{org_id}/members/{member_id}, apiKeys backs
+// GET /v1/organizations/{org_id}/api-keys, and apiKeyCreator backs POST
+// /v1/organizations/{org_id}/api-keys. Any may be nil for tests and tooling
+// that only inspect the route table's metadata; a request that actually
+// reaches a handler with a nil dependency is reported as a typed internal
+// error rather than a misleading empty list or a silently dropped write.
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -443,6 +443,33 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// read, exactly as the policy matrix specifies for CapRead actions.
 			resolver: organizationIDResolver,
 			handler:  listAPIKeysHandler(apiKeys),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodPost,
+				Path:           "/v1/organizations/{org_id}/api-keys",
+				OperationID:    "createOrganizationAPIKey",
+				Summary:        "Create an API key for an organization",
+				Description:    "Mints a fresh API key for the organization named by the {org_id} path parameter and persists it through the store-layer unit of work. The request body supplies the human-authored name, the machine-readable scopes (may be empty), an optional RFC 3339 expires_at, and an optional service_account_id that transfers ownership of the key from the authenticated user to a non-human principal; every field is validated before any database work, so an invalid request never opens a transaction. Action keys.manage is authorized against the organization the path names before the handler runs: a principal minting a key outside its own tenant is rejected with a deterministic 403, so a cross-tenant id can never plant a credential in another tenant. The credential primitive is generated server-side (a client cannot supply its own prefix or hash), the api_keys row and an immutable audit record naming the authenticated principal are committed in one transaction, and a service_account_id that does not exist in the target tenant rolls the whole transaction back as a stable 404. The response carries the persisted key projection and — exactly once — the plaintext token; the secret never reaches a log line, an audit record, or any subsequent read endpoint, so a key not captured at creation time is unrecoverable by design. keys.manage is a CapManage action: a viewer or developer cannot mint keys, only an owner or admin in the tenant can; unlike CapRead actions there is no cross-tenant support exception.",
+				Tags:           []string{tagAPIKeys},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionKeysManage),
+				PathParams: []openapi.PathParam{{
+					Name:        "org_id",
+					Description: "The id of the organization the API key is minted in.",
+				}},
+				SuccessStatus:      http.StatusCreated,
+				SuccessDescription: "The API key was minted; the plaintext token is shown exactly once.",
+			},
+			// organizationIDResolver authorizes action keys.manage against the
+			// organization the {org_id} path parameter names, not merely the
+			// principal's home organization, so a cross-tenant id is denied at
+			// the policy boundary before the handler mints any credential.
+			// keys.manage is a CapManage action and has no cross-tenant support
+			// exception — unlike CapRead actions, the support principal cannot
+			// mint keys in another tenant.
+			resolver: organizationIDResolver,
+			handler:  createAPIKeyHandler(apiKeyCreator),
 		},
 	}
 }

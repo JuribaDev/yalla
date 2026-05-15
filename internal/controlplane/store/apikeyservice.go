@@ -1,0 +1,406 @@
+package store
+
+import (
+	"context"
+	"errors"
+	"strconv"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
+	"github.com/JuribaDev/yalla/internal/controlplane/domain"
+)
+
+// The policy action a key mint records on its audit event. It is duplicated
+// as a plain string here on purpose: the policy action catalog is owned by
+// internal/controlplane/policy and the store layer must not take a build
+// dependency on it. When a key.create story refines the action it lives in
+// one place — the policy package; the store layer keeps the audited verb.
+const keysManageAction = "keys.manage"
+
+// apiKeyNameMaxLen bounds the human-authored name on an api_keys row. It
+// mirrors validate.MaxNameLen but is repeated here so the store-layer
+// validator stays a unit-testable, dependency-free contract — the database
+// also enforces length(name) > 0 as defence-in-depth.
+const apiKeyNameMaxLen = 100
+
+// apiKeyScopeMaxLen bounds one scope string. Scopes are non-secret machine
+// tokens (for example "projects:read"), so a 64-byte cap is loose enough for
+// every catalogued action and tight enough to bound an audit/log line.
+const apiKeyScopeMaxLen = 64
+
+// apiKeyMaxScopes bounds the size of the scopes array on a single key. A key
+// that grants a very large number of capabilities is almost always either a
+// configuration mistake or a privilege-escalation attempt; the bound keeps
+// either from reaching the database.
+const apiKeyMaxScopes = 64
+
+// CreateAPIKeyInput is the unvalidated input to APIKeyService.Create.
+// OrganizationID names the tenant the new key belongs to. Name is a
+// human-authored label. Scopes is the machine-readable capability list (may
+// be empty). ExpiresAt is optional; a nil pointer means the key does not
+// expire. ServiceAccountID is optional; an empty string means the key is
+// owned by the principal named in CreatedBy rather than by a non-human
+// service account. CreatedBy is the id of the user who minted the key; it
+// is empty when the actor is itself a service account so the api_keys row
+// stores SQL NULL.
+//
+// Prefix and SecretHash are the credential primitives produced by
+// internal/controlplane/auth.Generate. They are passed in by the handler so
+// the store layer never touches the plaintext Token and never imports the
+// auth package. A blank Prefix or SecretHash is a wiring error and is
+// reported as Internal.
+//
+// The Actor* and correlation fields describe the authenticated principal
+// performing the mint and are recorded verbatim on the audit event. They are
+// plain strings so the store layer takes no build dependency on the policy
+// or telemetry packages — the httpapi handler, which already holds the
+// resolved principal and the request correlation, fills them in.
+type CreateAPIKeyInput struct {
+	OrganizationID   string
+	Name             string
+	Scopes           []string
+	ExpiresAt        *time.Time
+	ServiceAccountID string
+	CreatedBy        string
+	Prefix           string
+	SecretHash       string
+
+	ActorID       string
+	ActorKind     string
+	ActorOrgID    string
+	RequestID     string
+	CorrelationID string
+}
+
+// APIKeyService is the unit-of-work orchestrator for minting API keys. Create
+// composes — in a fixed order, inside one transaction — the existence checks
+// for the target organization and (when supplied) the service account, the
+// insert of the api_keys row, and the immutable audit record. Because every
+// step shares the *Tx opened by Store.Write, a failure in any rolls the
+// others back: a key is never persisted without its audit event, and an
+// audit event is never written for a mint that did not happen.
+//
+// The plaintext credential is never visible to this layer. The handler calls
+// auth.Generate to mint the credential, then passes the (Prefix, SecretHash)
+// pair into CreateAPIKeyInput; the persisted row only ever carries the
+// public Prefix and the one-way SecretHash, so a database read can never
+// recover a usable token.
+//
+// It enqueues no provisioning job: an API key is pure Yalla identity with
+// no Dokploy object to mirror.
+type APIKeyService struct {
+	store           *Store
+	orgs            *OrganizationRepository
+	serviceAccounts *ServiceAccountRepository
+	apiKeys         *APIKeyRepository
+	audit           AuditAppender
+}
+
+// NewAPIKeyService wires an APIKeyService from its dependencies. It returns
+// a typed error if any dependency is nil, so a misconfigured service fails
+// at construction rather than on its first request.
+func NewAPIKeyService(s *Store, orgs *OrganizationRepository, serviceAccounts *ServiceAccountRepository, apiKeys *APIKeyRepository, audit AuditAppender) (*APIKeyService, error) {
+	switch {
+	case s == nil:
+		return nil, errors.New("store: nil store")
+	case orgs == nil:
+		return nil, errors.New("store: nil organization repository")
+	case serviceAccounts == nil:
+		return nil, errors.New("store: nil service account repository")
+	case apiKeys == nil:
+		return nil, errors.New("store: nil api key repository")
+	case audit == nil:
+		return nil, errors.New("store: nil audit appender")
+	}
+	return &APIKeyService{
+		store:           s,
+		orgs:            orgs,
+		serviceAccounts: serviceAccounts,
+		apiKeys:         apiKeys,
+		audit:           audit,
+	}, nil
+}
+
+// Create validates in, then runs the mint-api-key unit of work inside one
+// transaction: confirm the organization exists; if a service account is
+// named, confirm it exists in that organization; insert the api_keys row
+// with the caller-supplied Prefix and SecretHash; append the audit event.
+// Validation runs before the transaction is opened, so an invalid request
+// never touches the database. A missing organization or service account is
+// the typed NotFound the existence checks produce. A prefix collision —
+// which is astronomically unlikely with the auth-layer entropy budget — is
+// reported as a typed Conflict; everything rolls back together.
+//
+// now is the wall-clock the validator uses to reject an expires_at that is
+// not strictly in the future. It is plumbed in so a unit test can pin time
+// without monkey-patching time.Now.
+func (svc *APIKeyService) Create(ctx context.Context, in CreateAPIKeyInput, now time.Time) (APIKey, error) {
+	key, err := buildAPIKeyToCreate(in, now)
+	if err != nil {
+		return APIKey{}, err
+	}
+
+	// The audit record is filed under the actor's home organization — the
+	// tenant the principal authenticated into — while its resource id names
+	// the api key that was minted. A missing actor organization is a wiring
+	// error (an authenticated request always carries one), not client input,
+	// so it is reported as Internal rather than a validation failure.
+	actorOrgID := strings.TrimSpace(in.ActorOrgID)
+	if actorOrgID == "" {
+		return APIKey{}, apierr.Internal(errors.New("store: APIKeyService.Create requires an actor organization for the audit record"))
+	}
+
+	metadata := map[string]string{
+		"organization_id": key.OrganizationID,
+		"scope_count":     strconv.Itoa(len(key.Scopes)),
+		"has_expiry":      strconv.FormatBool(key.ExpiresAt != nil),
+	}
+	if key.ServiceAccountID != "" {
+		metadata["service_account_id"] = key.ServiceAccountID
+	}
+
+	var created APIKey
+	txErr := svc.store.Write(ctx, func(ctx context.Context, tx *Tx) error {
+		// Confirm the organization exists inside the transaction. The
+		// repository returns a typed NotFound that the HTTP layer maps to a
+		// deterministic 404; the tenant boundary itself is enforced by the
+		// policy engine at the request edge.
+		if _, getErr := svc.orgs.Get(ctx, tx, key.OrganizationID); getErr != nil {
+			return getErr
+		}
+		// If the key is being minted for a service account, confirm the
+		// service account exists in the same organization. The repository
+		// read is tenant scoped, so a cross-tenant service-account id can
+		// never match.
+		if key.ServiceAccountID != "" {
+			if _, getErr := svc.serviceAccounts.Get(ctx, tx, key.OrganizationID, key.ServiceAccountID); getErr != nil {
+				return getErr
+			}
+		}
+		row, insErr := svc.apiKeys.Insert(ctx, tx, key)
+		if insErr != nil {
+			return insErr
+		}
+		event := AuditEvent{
+			OrganizationID: actorOrgID,
+			ActorID:        strings.TrimSpace(in.ActorID),
+			ActorKind:      strings.TrimSpace(in.ActorKind),
+			Action:         keysManageAction,
+			ResourceKind:   string(domain.KindAPIKey),
+			ResourceID:     row.ID,
+			Decision:       AuditDecisionAllowed,
+			Reason:         "authorization granted for keys.manage",
+			RequestID:      strings.TrimSpace(in.RequestID),
+			CorrelationID:  strings.TrimSpace(in.CorrelationID),
+			Metadata:       metadata,
+		}
+		if _, audErr := svc.audit.Append(ctx, tx, event); audErr != nil {
+			return audErr
+		}
+		created = row
+		return nil
+	})
+	if txErr != nil {
+		return APIKey{}, txErr
+	}
+	return created, nil
+}
+
+// buildAPIKeyToCreate validates in and returns the APIKey row it would
+// persist, with a freshly minted, non-guessable id. It is split out from
+// Create so the validation rules are unit testable without a database, and
+// so an invalid request is rejected before a transaction is ever opened. On
+// failure it returns a typed apierr.InvalidInput carrying stable field
+// paths — never the submitted values — so the rejection can name the
+// offending field without leaking input (in particular it never echoes
+// the rejected name or scope string into the response body).
+func buildAPIKeyToCreate(in CreateAPIKeyInput, now time.Time) (APIKey, error) {
+	var violations []apierr.FieldViolation
+
+	orgID := strings.TrimSpace(in.OrganizationID)
+	if id, err := domain.ParseID(orgID); err != nil || id.Kind() != domain.KindOrganization {
+		violations = append(violations, apierr.FieldViolation{
+			Field:  "organization_id",
+			Reason: "must be a valid organization id",
+		})
+	}
+
+	name := strings.TrimSpace(in.Name)
+	switch {
+	case name == "":
+		violations = append(violations, apierr.FieldViolation{
+			Field:  "name",
+			Reason: "must not be blank",
+		})
+	case !utf8.ValidString(name):
+		violations = append(violations, apierr.FieldViolation{
+			Field:  "name",
+			Reason: "must be valid UTF-8",
+		})
+	case utf8.RuneCountInString(name) > apiKeyNameMaxLen:
+		violations = append(violations, apierr.FieldViolation{
+			Field:  "name",
+			Reason: "must be at most 100 characters",
+		})
+	case apiKeyHasControlRune(name):
+		violations = append(violations, apierr.FieldViolation{
+			Field:  "name",
+			Reason: "must not contain control characters",
+		})
+	}
+
+	scopes, scopeViolations := validateAPIKeyScopes(in.Scopes)
+	violations = append(violations, scopeViolations...)
+
+	if in.ExpiresAt != nil && !in.ExpiresAt.After(now) {
+		violations = append(violations, apierr.FieldViolation{
+			Field:  "expires_at",
+			Reason: "must be strictly in the future",
+		})
+	}
+
+	serviceAccountID := strings.TrimSpace(in.ServiceAccountID)
+	if serviceAccountID != "" {
+		if id, err := domain.ParseID(serviceAccountID); err != nil || id.Kind() != domain.KindServiceAccount {
+			violations = append(violations, apierr.FieldViolation{
+				Field:  "service_account_id",
+				Reason: "must be a valid service account id",
+			})
+		}
+	}
+
+	createdBy := strings.TrimSpace(in.CreatedBy)
+	if createdBy != "" {
+		if id, err := domain.ParseID(createdBy); err != nil || id.Kind() != domain.KindUser {
+			violations = append(violations, apierr.FieldViolation{
+				Field:  "created_by",
+				Reason: "must be a valid user id",
+			})
+		}
+	}
+
+	// Prefix/SecretHash are not client input: they come from the auth-layer
+	// credential mint. A blank pair is a wiring error in the calling handler,
+	// not a validation failure, so it is reported as Internal — and never as
+	// an InvalidInput that could let a buggy client believe the request was
+	// rejected on a field they control.
+	prefix := strings.TrimSpace(in.Prefix)
+	secretHash := strings.TrimSpace(in.SecretHash)
+	if prefix == "" || secretHash == "" {
+		return APIKey{}, apierr.Internal(errors.New("store: APIKeyService.Create requires a non-empty prefix and secret hash from the auth layer"))
+	}
+
+	if len(violations) > 0 {
+		return APIKey{}, apierr.InvalidInput(violations...)
+	}
+
+	id, err := domain.NewID(domain.KindAPIKey)
+	if err != nil {
+		// A crypto/rand failure is an environment fault, not client input.
+		return APIKey{}, apierr.Internal(err)
+	}
+
+	row := APIKey{
+		ID:               id.String(),
+		OrganizationID:   orgID,
+		Prefix:           prefix,
+		SecretHash:       secretHash,
+		Name:             name,
+		Scopes:           scopes,
+		CreatedBy:        createdBy,
+		ServiceAccountID: serviceAccountID,
+	}
+	if in.ExpiresAt != nil {
+		expires := in.ExpiresAt.UTC()
+		row.ExpiresAt = &expires
+	}
+	return row, nil
+}
+
+// validateAPIKeyScopes checks every scope string and returns the trimmed
+// list ready to persist. Per-scope rejections name the indexed field path
+// (for example "scopes[2]") so a caller can fix the right element; the
+// rejected value itself is never echoed. A nil or empty input is allowed —
+// a key may be minted with no scopes — and is normalised to an empty
+// (non-nil) slice so the api_keys.scopes column receives '{}' instead of
+// SQL NULL.
+func validateAPIKeyScopes(in []string) ([]string, []apierr.FieldViolation) {
+	if len(in) == 0 {
+		return []string{}, nil
+	}
+	if len(in) > apiKeyMaxScopes {
+		return nil, []apierr.FieldViolation{{
+			Field:  "scopes",
+			Reason: "must contain at most 64 entries",
+		}}
+	}
+
+	var violations []apierr.FieldViolation
+	seen := make(map[string]struct{}, len(in))
+	normalised := make([]string, 0, len(in))
+	for i, raw := range in {
+		field := "scopes[" + strconv.Itoa(i) + "]"
+		s := strings.TrimSpace(raw)
+		switch {
+		case s == "":
+			violations = append(violations, apierr.FieldViolation{Field: field, Reason: "must not be blank"})
+			continue
+		case !utf8.ValidString(s):
+			violations = append(violations, apierr.FieldViolation{Field: field, Reason: "must be valid UTF-8"})
+			continue
+		case len(s) > apiKeyScopeMaxLen:
+			violations = append(violations, apierr.FieldViolation{Field: field, Reason: "must be at most 64 bytes"})
+			continue
+		case !isAPIKeyScope(s):
+			violations = append(violations, apierr.FieldViolation{Field: field, Reason: "must contain only lowercase letters, digits, '_', ':', '.', or '-'"})
+			continue
+		}
+		if _, dup := seen[s]; dup {
+			violations = append(violations, apierr.FieldViolation{Field: field, Reason: "must be unique within scopes"})
+			continue
+		}
+		seen[s] = struct{}{}
+		normalised = append(normalised, s)
+	}
+	if len(violations) > 0 {
+		return nil, violations
+	}
+	return normalised, nil
+}
+
+// isAPIKeyScope reports whether s is composed of the conservative scope
+// alphabet: lowercase letters, digits, and the punctuation characters used
+// by every catalogued capability ("_", ":", ".", "-"). It bounds the
+// scope-string surface to a printable, non-control, log-safe set so an
+// attacker cannot inject a control character into a scope name and have it
+// surface in metadata or a log line.
+func isAPIKeyScope(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z':
+		case c >= '0' && c <= '9':
+		case c == '_' || c == ':' || c == '.' || c == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// apiKeyHasControlRune reports whether s contains any Unicode control rune.
+// It is the same predicate validate.Name uses, repeated here so the store
+// layer does not import the http-flavoured validate package.
+func apiKeyHasControlRune(s string) bool {
+	for _, r := range s {
+		if r == utf8.RuneError {
+			return true
+		}
+		if r < 0x20 || r == 0x7f {
+			return true
+		}
+	}
+	return false
+}

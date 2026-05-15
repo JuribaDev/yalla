@@ -4643,3 +4643,164 @@
     naturally reach. Don't duplicate the contract tests; ADD these
     three things.
 ---
+
+## 2026-05-15 - BE-0079
+- Implemented POST /v1/organizations/{org_id}/api-keys end-to-end. The
+  endpoint mints a fresh credential server-side, persists the api_keys row
+  through the new store.APIKeyService unit of work, and returns the
+  persisted projection together with the one-time plaintext token. The
+  triplet is now: the GET sibling (BE-0076, BE-0078) covers list/policy
+  for keys.read; this story is the create half for keys.manage, with its
+  policy-matrix sibling (BE-0081) unblocked.
+- Files changed:
+  - internal/controlplane/store/apikeyservice.go (new):
+    NewAPIKeyService(Store, orgs, serviceAccounts, apiKeys, audit) wires
+    the orchestrator. Create(ctx, in, now) runs the mint-api-key unit of
+    work inside Store.Write — org existence check, optional service-
+    account existence check (composite-FK target in the same tenant),
+    INSERT api_keys with caller-supplied (Prefix, SecretHash), append the
+    immutable audit event — so a key is never persisted without its audit
+    trail and the audit row is never written for a mint that did not
+    happen. buildAPIKeyToCreate is the pre-transaction validator: it
+    mints the api-key id via domain.NewID(KindAPIKey), reuses the
+    Membership/Org pattern (Add..Update..Remove → typed apierr.InvalidInput
+    with stable field paths that NEVER echo submitted values), and treats
+    a blank Prefix/SecretHash as a wiring-error apierr.Internal (a client
+    cannot supply credentials, so a buggy server must not pretend the
+    request is bad). validateAPIKeyScopes caps at 64 scopes/64 bytes each,
+    enforces a conservative [a-z0-9_:.-] alphabet, and rejects duplicates;
+    a nil/empty input is allowed and normalised to []string{} so the
+    api_keys.scopes column receives '{}' instead of SQL NULL.
+  - internal/controlplane/store/apikeyservice_internal_test.go (new):
+    white-box coverage of buildAPIKeyToCreate — happy path, every
+    classifiable rejection (org_id wrong-kind, name blank/long/control-
+    char/invalid-UTF-8, scope blank/long/non-alphabet/duplicate, >64
+    scopes, expires_at past/now, service_account_id wrong-kind,
+    created_by wrong-kind), plus the missing-credential = Internal
+    contract. Also a constructor-guard table that asserts every nil
+    dependency is rejected. Renamed the local validInput→validAPIKeyInput
+    helper to avoid a package-level name collision with projectservice.
+  - internal/controlplane/store/apikeyservice_test.go (new): integration
+    coverage against an isolated, freshly migrated Postgres database.
+    Happy path proves the api_keys row + audit event commit atomically,
+    that ListAPIKeys reads the new row back, that audit metadata captures
+    organization_id/scope_count/has_expiry (and service_account_id when
+    present) and NEVER contains the prefix, the secret hash, or the
+    plaintext token; service-account+expiry path; missing-org and
+    cross-tenant SA paths both surface as typed NotFound with the
+    transaction rolled back; invalid-input never opens a transaction; and
+    the central "plaintext never reaches the database" guarantee is
+    asserted by scanning every text column of the persisted row.
+  - internal/controlplane/httpapi/api_keys.go: added APIKeyCreator port
+    (the narrow interface store.APIKeyService satisfies), createAPIKeyRequest
+    (name/scopes/expires_at(*string RFC3339)/service_account_id(*string)),
+    createAPIKeyPayload (apiKeyResource + Token plaintext), and
+    createAPIKeyHandler. The handler decodes strictly, parses expires_at
+    at the boundary (malformed timestamp = deterministic 400 naming the
+    field), mints the credential via auth.Generate (server-side, so a
+    client cannot supply Prefix/SecretHash), sets CreatedBy to the
+    principal id only when p.Kind == domain.KindUser (the api_keys.
+    created_by FK references users(id), so an SA-actor mint yields NULL),
+    and renders the response with auth.Token.Reveal() — the only
+    deliberately greppable escape hatch for the plaintext, called exactly
+    once at the wire boundary so the secret never reaches a log line, an
+    audit record, or the database.
+  - internal/controlplane/httpapi/api_keys_test.go: added fakeAPIKeyCreator
+    (mirrors the fakeMembershipCreator shape: canned key/err + got pointer
+    for input capture) so the other test files can pass it to NewHandler.
+  - internal/controlplane/httpapi/api_keys_create_test.go (new): full
+    contract suite — happy path (asserts the token has the yk_ namespace,
+    is NOT the redaction sentinel, the body never carries the secret_hash
+    sentinel, and the server-minted Prefix/SecretHash are forwarded
+    distinct); expires_at + service_account_id forwarding; malformed
+    expires_at = 400 naming the field without echoing the value;
+    malformed body (unparseable JSON, unknown field, trailing data) = 400;
+    store-layer InvalidInput = 400; store-layer NotFound (org and SA) =
+    404; unauthenticated/invalid-credential = 401; cross-tenant = 403
+    with the stable ReasonDeniedCrossTenant and no echo of the target
+    org_id; disabled-principal = 403 with ReasonDeniedPrincipalDisabled;
+    StoreUnavailable = 503 with no driver-cause leak; request_id
+    propagation; defensive "no principal on context" = 500 E_INTERNAL;
+    "nil creator wired" = 500 E_INTERNAL; OpenAPI document carries the
+    POST operation with security, x-required-action=keys.manage, and
+    documented 201; token-not-persisted guard (token appears exactly
+    once in the body, not in any header); two consecutive mints produce
+    distinct (Prefix, SecretHash) — a guard on the auth-layer wiring;
+    SA-actor mint leaves CreatedBy empty (NULL for the FK).
+  - internal/controlplane/httpapi/routes.go: registered POST
+    /v1/organizations/{org_id}/api-keys (operationId createOrganizationAPIKey,
+    RequiredAction=policy.ActionKeysManage, SuccessStatus=201, tagged
+    api-keys, resolver=organizationIDResolver). Threaded the new
+    apiKeyCreator argument through newRouteTable and refreshed the
+    doc-comment naming every wired port.
+  - internal/controlplane/httpapi/server.go: extended NewHandler with the
+    apiKeyCreator parameter and updated the doc-comment for the new
+    backing port.
+  - cmd/yalla-api/main.go: constructed serviceAccountRepo + apiKeyRepo
+    once at startup, wired store.NewAPIKeyService(dataStore, orgRepo,
+    serviceAccountRepo, apiKeyRepo, auditRepo), and passed it as the new
+    NewHandler argument.
+  - internal/controlplane/httpapi/{me,me_contract,members,members_create,
+    members_delete,members_update,organizations,organizations_create,
+    organizations_delete,organizations_patch,server,routes}_test.go: every
+    NewHandler / newRouteTable call site updated with the new
+    fakeAPIKeyCreator{} / extra nil argument.
+- Verification run: gofmt -w .; goimports -w .; go mod tidy; go build ./...;
+  go vet ./...; go test ./...; go test -race ./...
+- Results: all passed. golangci-lint, staticcheck, govulncheck still not
+  installed locally (documented in earlier iterations).
+- Remaining risks or follow-ups:
+  - BE-0080 (contract tests for POST /v1/organizations/{org_id}/api-keys)
+    is almost fully satisfied by the new api_keys_create_test.go suite —
+    that ticket can be marked passing the next iteration once the new
+    suite is reviewed against the AC.
+  - BE-0081 (policy matrix coverage for POST /v1/organizations/{org_id}/
+    api-keys) is now unblocked and is the highest-priority pending story.
+  - The policy matrix proves cross-tenant + disabled + role coverage at
+    the engine level (siblings of api_keys_list_policy_test.go); the
+    contract suite already exercises owner/cross-tenant/disabled, so
+    BE-0081 adds the engine-only role-table + grant-containment proofs.
+- Learnings for future iterations:
+  - Mutating-endpoint pattern reuse: the writer-port + store-unit-of-work
+    pattern transfers verbatim from Membership/Organization to API keys.
+    For each new mutating endpoint, declare a narrow Creator/Updater/
+    Remover interface in httpapi (the handler depends only on it; tests
+    supply a fake), and have store.<Service>{Create,Update,...} run the
+    validator BEFORE Store.Write, then compose existence checks + INSERT
+    + audit inside one tx so audit is impossible to bypass.
+  - Credential primitives stay at the boundary: the handler calls
+    auth.Generate(), passes only (Prefix, SecretHash) to the store layer,
+    and surfaces the plaintext exactly once via Token.Reveal() at the
+    wire boundary. Store never imports auth and never sees the plaintext;
+    the redaction-by-default behaviour of auth.Token guards every other
+    code path (slog, fmt, JSON), so the explicit Reveal() is the only
+    greppable escape hatch.
+  - CreatedBy must be empty for SA actors: api_keys.created_by REFERENCES
+    users(id), so the column stores SQL NULL when an SA mints a key. The
+    handler explicitly gates the assignment with p.Kind ==
+    domain.KindUser; any other shape (writing the SA id into a users-FK
+    column) would fail at the database with a confusing FK violation.
+  - Service-account composite FK: the api_keys.service_account_id FK is
+    composite on (organization_id, service_account_id), so the database
+    rejects a cross-tenant SA reference even without the existence check.
+    The service-layer Get is still required to surface the rejection as a
+    typed NotFound (the FK would surface as a Conflict otherwise).
+  - Scope vocabulary is conservative-by-default: a scope is bounded to
+    [a-z0-9_:.-] up to 64 bytes with no duplicates and a 64-entry cap.
+    The PRD has no enumerated catalog yet, so the validator enforces the
+    SHAPE of a scope (printable, log-safe, machine-readable) without
+    pinning specific verbs — leaving the action catalog to the policy
+    package. When the catalog lands, this validator stays the boundary
+    against control-character injection in audit metadata.
+  - Test name collision: a top-level validInput() helper in the store
+    package's _internal_test files collides with projectservice's existing
+    fixture. Future store-layer service tests should namespace the helper
+    (e.g. validAPIKeyInput()) — the gofmt-clean replace_all was a foot-
+    gun and accidentally rewrote CodeInvalidInput → CodeInvalidAPIKeyInput
+    before I caught it.
+  - When the store.APIKeyService.Create signature took a `now time.Time`
+    third argument for testable expires_at, both the http handler and the
+    integration tests had to pass `time.Now()` (or a fixed time) — keep
+    the orchestrator pure of time.Now() so a unit test can pin the wall
+    clock.
+---

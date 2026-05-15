@@ -90,6 +90,8 @@ func main() {
 	orgRepo := store.NewOrganizationRepository()
 	membershipRepo := store.NewMembershipRepository()
 	auditRepo := store.NewAuditRepository()
+	serviceAccountRepo := store.NewServiceAccountRepository()
+	apiKeyRepo := store.NewAPIKeyRepository()
 	organizationService, err := store.NewOrganizationService(dataStore, orgRepo, auditRepo)
 	if err != nil {
 		logger.Error("failed to initialize the organization service", "error", err.Error())
@@ -108,6 +110,11 @@ func main() {
 	apiKeys, err := store.NewAPIKeyReader(dataStore)
 	if err != nil {
 		logger.Error("failed to initialize the api key reader", "error", err.Error())
+		os.Exit(1)
+	}
+	apiKeyService, err := store.NewAPIKeyService(dataStore, orgRepo, serviceAccountRepo, apiKeyRepo, auditRepo)
+	if err != nil {
+		logger.Error("failed to initialize the api key service", "error", err.Error())
 		os.Exit(1)
 	}
 	authenticator, err := auth.NewAuthenticator(auth.AuthenticatorConfig{
@@ -142,7 +149,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              cfg.APIAddr,
-		Handler:           httpapi.NewHandler(build, readiness, meta, authenticator, engine, organizations, organizationService, organizationService, organizationService, members, membershipService, membershipService, membershipService, apiKeys, logger),
+		Handler:           httpapi.NewHandler(build, readiness, meta, authenticator, engine, organizations, organizationService, organizationService, organizationService, members, membershipService, membershipService, membershipService, apiKeys, apiKeyService, logger),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

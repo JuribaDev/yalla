@@ -8,8 +8,12 @@ import (
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apienvelope"
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
+	"github.com/JuribaDev/yalla/internal/controlplane/auth"
+	"github.com/JuribaDev/yalla/internal/controlplane/domain"
 	"github.com/JuribaDev/yalla/internal/controlplane/policy"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
+	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
+	"github.com/JuribaDev/yalla/internal/controlplane/validate"
 )
 
 // errNoAPIKeyReader is returned when GET /v1/organizations/{org_id}/api-keys
@@ -18,6 +22,13 @@ import (
 // programming mistake, not a client error — so the handler reports it as a
 // typed internal failure rather than serving an empty or misleading list.
 var errNoAPIKeyReader = errors.New("httpapi: no api key reader configured")
+
+// errNoAPIKeyCreator is returned when POST /v1/organizations/{org_id}/api-keys
+// is reached without an api-key creator wired into NewHandler. Like
+// errNoAPIKeyReader it can only happen through a wiring error — a programming
+// mistake, not a client error — so the handler reports it as a typed
+// internal failure rather than silently failing to mint a credential.
+var errNoAPIKeyCreator = errors.New("httpapi: no api key creator configured")
 
 // APIKeyReader is the narrow persistence port GET
 // /v1/organizations/{org_id}/api-keys depends on. *store.APIKeyReader satisfies
@@ -110,6 +121,56 @@ func apiKeyResourceOf(k store.APIKey) apiKeyResource {
 	return res
 }
 
+// APIKeyCreator is the narrow persistence port POST
+// /v1/organizations/{org_id}/api-keys depends on. *store.APIKeyService
+// satisfies it in production; tests supply a fake. Like APIKeyReader it is
+// an interface declared here so the handler stays unit-testable without a
+// real database — the concrete orchestrator (the existence checks, the
+// api_keys row, and the audit record committed in one transaction) lives in
+// the store layer.
+//
+// The plaintext credential never crosses this boundary. The handler mints
+// it through internal/controlplane/auth.Generate, passes the (Prefix,
+// SecretHash) pair into store.CreateAPIKeyInput, and surfaces the one-time
+// plaintext token in the response — it never enters the store layer or the
+// database.
+type APIKeyCreator interface {
+	Create(ctx context.Context, in store.CreateAPIKeyInput, now time.Time) (store.APIKey, error)
+}
+
+// createAPIKeyRequest is the decoded POST /v1/organizations/{org_id}/api-keys
+// request body. Name is the human-authored label for the key; Scopes is the
+// machine-readable capability list (may be empty). ExpiresAt is optional
+// (an absent or null value means the key does not expire) and is supplied
+// as an RFC 3339 timestamp string; the handler parses it before delegating
+// so a malformed timestamp is a deterministic 400 naming the field.
+// ServiceAccountID is optional and, when supplied, transfers ownership of
+// the key from the authenticated user to that non-human principal — the
+// store layer verifies the service account exists inside the same tenant.
+//
+// No field on this struct carries credential material: the secret half of
+// the API key token is minted on the server, never accepted from the
+// client, so an attacker cannot supply their own prefix or hash.
+type createAPIKeyRequest struct {
+	Name             string   `json:"name"`
+	Scopes           []string `json:"scopes,omitempty"`
+	ExpiresAt        *string  `json:"expires_at,omitempty"`
+	ServiceAccountID *string  `json:"service_account_id,omitempty"`
+}
+
+// createAPIKeyPayload is the data block of the POST
+// /v1/organizations/{org_id}/api-keys success envelope: the persisted key
+// (in the same stable wire shape every other api-key endpoint returns) plus
+// the one-time plaintext Token. The token field is the ONLY place the
+// secret half of the credential is ever exposed — every read endpoint and
+// every audit record renders only the public Prefix and the one-way
+// SecretHash, so a key that is not captured at creation time is, by
+// design, unrecoverable.
+type createAPIKeyPayload struct {
+	APIKey apiKeyResource `json:"api_key"`
+	Token  string         `json:"token"`
+}
+
 // listAPIKeysHandler builds the GET /v1/organizations/{org_id}/api-keys
 // handler. It lists the API keys owned by the organization named by the
 // {org_id} path parameter, by reading them from the source-of-truth database
@@ -151,5 +212,124 @@ func listAPIKeysHandler(reader APIKeyReader) http.HandlerFunc {
 			out = append(out, apiKeyResourceOf(k))
 		}
 		apienvelope.WriteData(w, http.StatusOK, requestID(r), listAPIKeysPayload{APIKeys: out})
+	}
+}
+
+// createAPIKeyHandler builds the POST /v1/organizations/{org_id}/api-keys
+// handler. It mints a fresh credential, then delegates to the store layer
+// for the persistence unit of work: the request body is strictly decoded
+// (oversized, malformed, or unknown-field bodies become a typed 400 that
+// never echoes the input), the auth-layer credential primitive is minted
+// once on the server (so a client cannot supply its own prefix or hash),
+// and the create-api-key unit of work — confirm the organization exists,
+// confirm the optional service account exists in the same tenant, insert
+// the api_keys row, append the audit record, all in one transaction —
+// runs in the store layer through the APIKeyCreator port.
+//
+// RequireAuth gates the route on action keys.manage before the handler
+// runs — authorized through organizationIDResolver against the
+// organization the path names — and attaches the resolved principal, so a
+// request that reaches the handler has already cleared the tenant
+// boundary: a cross-tenant {org_id} was rejected as a 403 by the policy
+// engine, never reaching this code. A request that arrives here with no
+// principal is a wiring error and is reported as a typed internal error.
+//
+// The response is 201 Created carrying the persisted api-key projection
+// and — exactly once — the plaintext token. Every subsequent read of the
+// key (GET list and GET single) returns the same projection without the
+// token, so a key not captured at creation time is unrecoverable. The
+// plaintext is materialised through auth.Token.Reveal(), the only
+// deliberately greppable escape hatch for the credential, immediately
+// before the response is written; it never reaches a log line, an audit
+// record, or the database.
+func createAPIKeyHandler(creator APIKeyCreator) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if creator == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoAPIKeyCreator))
+			return
+		}
+
+		var req createAPIKeyRequest
+		if err := validate.DecodeJSON(r.Body, &req, 0); err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		// Parse the optional expires_at at the HTTP boundary so a malformed
+		// timestamp is a deterministic 400 naming the field. The store-layer
+		// validator then enforces the semantic rule (must be strictly in the
+		// future) against the same wall clock the audit record carries — a
+		// single now value flows through both checks.
+		var expiresAt *time.Time
+		if req.ExpiresAt != nil {
+			parsed, err := time.Parse(time.RFC3339Nano, *req.ExpiresAt)
+			if err != nil {
+				apienvelope.WriteError(w, requestID(r), apierr.InvalidInput(apierr.FieldViolation{
+					Field:  "expires_at",
+					Reason: "must be an RFC 3339 timestamp",
+				}))
+				return
+			}
+			parsed = parsed.UTC()
+			expiresAt = &parsed
+		}
+
+		// Mint the credential on the server. auth.Generate produces 192 bits
+		// of cryptographic entropy split into a public prefix and a secret
+		// body; only the prefix and the secret hash are passed to the store
+		// layer, so the plaintext never reaches persistence. A crypto/rand
+		// failure is an environment fault, not client input, and surfaces
+		// as a typed 5xx.
+		generated, err := auth.Generate()
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(err))
+			return
+		}
+
+		// created_by is the user who minted the key. The api_keys.created_by
+		// column references users(id), so it must be either a real user id
+		// or empty. A service-account principal mints keys with no human
+		// creator — the column is nullable for exactly this case.
+		createdBy := ""
+		if p.Kind == domain.KindUser {
+			createdBy = p.ID
+		}
+
+		serviceAccountID := ""
+		if req.ServiceAccountID != nil {
+			serviceAccountID = *req.ServiceAccountID
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		now := time.Now().UTC()
+		key, err := creator.Create(r.Context(), store.CreateAPIKeyInput{
+			OrganizationID:   r.PathValue("org_id"),
+			Name:             req.Name,
+			Scopes:           req.Scopes,
+			ExpiresAt:        expiresAt,
+			ServiceAccountID: serviceAccountID,
+			CreatedBy:        createdBy,
+			Prefix:           generated.Prefix,
+			SecretHash:       generated.SecretHash,
+			ActorID:          p.ID,
+			ActorKind:        string(p.Kind),
+			ActorOrgID:       p.OrganizationID,
+			RequestID:        correlation.RequestID,
+			CorrelationID:    correlation.CorrelationID,
+		}, now)
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		apienvelope.WriteData(w, http.StatusCreated, requestID(r), createAPIKeyPayload{
+			APIKey: apiKeyResourceOf(key),
+			Token:  generated.Token.Reveal(),
+		})
 	}
 }
