@@ -33,15 +33,24 @@ import (
 // principal whose organization owns no projects receives.
 
 // fakeProjectReader is a canned ProjectReader for httpapi tests. The zero
-// value returns an empty slice and no error, which is all the tests that
+// value returns an empty slice and no error from ListProjects and a
+// zero-value store.Project from GetProject, which is all the tests that
 // never reach the handler (the public-surface, /v1/me, and other-route
-// suites) need. Project tests set projects/err and read gotOrgID back to
+// suites) need. List tests set projects/err and read gotOrgID back to
 // prove the read is scoped to the principal's own home organization id and
-// never to a caller-controlled value.
+// never to a caller-controlled value; by-id tests set project/getErr to
+// drive the happy / not-found / dependency-failure branches and read
+// gotGetOrgID + gotGetProjectID back to prove the (org, project) pair
+// forwarded to the store is the principal's home org plus the path
+// project_id — never a caller-controlled organization id.
 type fakeProjectReader struct {
-	projects []store.Project
-	err      error
-	gotOrgID *string
+	projects        []store.Project
+	err             error
+	gotOrgID        *string
+	project         store.Project
+	getErr          error
+	gotGetOrgID     *string
+	gotGetProjectID *string
 }
 
 func (f fakeProjectReader) ListProjects(_ context.Context, organizationID string) ([]store.Project, error) {
@@ -49,6 +58,16 @@ func (f fakeProjectReader) ListProjects(_ context.Context, organizationID string
 		*f.gotOrgID = organizationID
 	}
 	return f.projects, f.err
+}
+
+func (f fakeProjectReader) GetProject(_ context.Context, organizationID, projectID string) (store.Project, error) {
+	if f.gotGetOrgID != nil {
+		*f.gotGetOrgID = organizationID
+	}
+	if f.gotGetProjectID != nil {
+		*f.gotGetProjectID = projectID
+	}
+	return f.project, f.getErr
 }
 
 // listProjectsSuccessEnvelope is the decoded shape of the GET /v1/projects

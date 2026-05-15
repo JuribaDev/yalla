@@ -190,6 +190,27 @@ func (r *ProjectReader) ListProjects(ctx context.Context, organizationID string)
 	return projects, nil
 }
 
+// GetProject returns the project identified by (organizationID, projectID),
+// reading it inside a short-lived read-only transaction. The read is tenant
+// scoped at the persistence layer: the repository filters by
+// organization_id first, so a projectID that belongs to another organization
+// simply does not match and is reported as a typed apierr.NotFound — a
+// cross-tenant id can never reveal another organization's data. A datastore
+// failure is propagated as its own typed error and never disguised as a
+// not-found.
+func (r *ProjectReader) GetProject(ctx context.Context, organizationID, projectID string) (Project, error) {
+	var project Project
+	err := r.store.Read(ctx, func(ctx context.Context, q Querier) error {
+		var getErr error
+		project, getErr = r.projects.Get(ctx, q, organizationID, projectID)
+		return getErr
+	})
+	if err != nil {
+		return Project{}, err
+	}
+	return project, nil
+}
+
 // UpdateDisplayName writes a new display_name for the project identified by
 // (organizationID, projectID) inside tx and returns the persisted row,
 // including the trigger-refreshed updated_at timestamp and bumped version.

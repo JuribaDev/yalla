@@ -261,6 +261,34 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 		{
 			endpoint: openapi.Endpoint{
 				Method:         http.MethodGet,
+				Path:           "/v1/projects/{project_id}",
+				OperationID:    "getProject",
+				Summary:        "Get a project",
+				Description:    "Returns the project named by the {project_id} path parameter, as the source-of-truth database stores it — its id, the id of the organization that owns it, slug, display name, optimistic-concurrency version, and lifecycle timestamps. Action project.read is authorized against the (home organization, project_id) resource before the handler runs: project.read is a CapRead action, so the gate admits the principal's organization-wide roles (owner, admin, developer, viewer, ci) and a support principal performing a read; it also admits a scoped grant that covers the resource (for example, a project-scoped Admin grant for THAT project), but denies a grant that names only a SIBLING project, an unrelated environment, or an unrelated service because the policy engine asks whether the grant scope contains the resource scope, never the reverse. The handler reads from the principal's home organization id only — it never trusts a caller-supplied organization id — so a cross-tenant project_id reaches the persistence layer with the principal's home organization id and is rejected as a deterministic 404 by the tenant-scoped repository query, never revealing another tenant's data. The response carries no credential material — a projects row stores no secrets.",
+				Tags:           []string{tagProjects},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionProjectRead),
+				PathParams: []openapi.PathParam{{
+					Name:        "project_id",
+					Description: "The id of the project to retrieve.",
+				}},
+				SuccessDescription: "The requested project.",
+			},
+			// projectIDResolver authorizes action project.read against the
+			// (principal home organization, {project_id}) resource the
+			// path names, not merely the principal's home organization, so
+			// a scoped grant that names THIS project authorizes the read
+			// while a grant that names only a SIBLING project does not.
+			// The organization id is taken from the principal's home org
+			// (never the caller), so a cross-tenant project_id still hits
+			// the tenant-scoped repository query and surfaces as a 404 at
+			// the persistence boundary.
+			resolver: projectIDResolver,
+			handler:  getProjectHandler(projects),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodGet,
 				Path:           "/v1/organizations/{org_id}",
 				OperationID:    "getOrganization",
 				Summary:        "Get an organization",

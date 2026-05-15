@@ -8,6 +8,7 @@ import (
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apienvelope"
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
+	"github.com/JuribaDev/yalla/internal/controlplane/domain"
 	"github.com/JuribaDev/yalla/internal/controlplane/policy"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
 	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
@@ -28,20 +29,26 @@ var errNoProjectReader = errors.New("httpapi: no project reader configured")
 // silently failing to persist the resource.
 var errNoProjectCreator = errors.New("httpapi: no project creator configured")
 
-// ProjectReader is the narrow persistence port GET /v1/projects depends on.
-// *store.ProjectReader satisfies it in production; tests supply a fake.
-// Keeping the dependency an interface keeps the handler unit-testable
-// without a real database, the same way OrganizationReader keeps GET
-// /v1/organizations testable.
+// ProjectReader is the narrow persistence port GET /v1/projects and GET
+// /v1/projects/{project_id} depend on. *store.ProjectReader satisfies it in
+// production; tests supply a fake. Keeping the dependency an interface keeps
+// the handler unit-testable without a real database, the same way
+// OrganizationReader keeps GET /v1/organizations testable.
 //
-// The read is tenant scoped at the persistence layer: the repository
+// The list read is tenant scoped at the persistence layer: the repository
 // filters by organization_id, so a cross-tenant id simply matches no rows
 // and the handler renders an empty list, never another organization's
-// projects. The route uses a nil resolver, so the policy engine authorizes
-// action project.read against the principal's home organization before the
-// handler runs.
+// projects. The GET-by-id read is tenant scoped the same way: the
+// repository filters by (organization_id, id), so a cross-tenant
+// project_id does not match and is reported as a typed NotFound — a
+// cross-tenant id can never reveal another organization's project. The
+// list route uses a nil resolver and authorizes against the principal's
+// home organization; the by-id route uses projectIDResolver which
+// authorizes against the (home org, path project_id) scope so a
+// project-level grant for THAT project authorizes the read.
 type ProjectReader interface {
 	ListProjects(ctx context.Context, organizationID string) ([]store.Project, error)
+	GetProject(ctx context.Context, organizationID, projectID string) (store.Project, error)
 }
 
 // listProjectsPayload is the data block of the GET /v1/projects success
@@ -135,6 +142,98 @@ func listProjectsHandler(reader ProjectReader) http.HandlerFunc {
 			out = append(out, projectResourceOf(project))
 		}
 		apienvelope.WriteData(w, http.StatusOK, requestID(r), listProjectsPayload{Projects: out})
+	}
+}
+
+// getProjectPayload is the data block of the GET /v1/projects/{project_id}
+// success envelope: the single project addressed by the {project_id} path
+// parameter, in the same stable wire shape GET /v1/projects returns for
+// each list element. It carries no credential material — a projects row
+// stores no secrets.
+type getProjectPayload struct {
+	Project projectResource `json:"project"`
+}
+
+// projectIDResolver derives the policy.Resource a GET
+// /v1/projects/{project_id} request acts on from its {project_id} path
+// parameter and the authenticated principal's home organization id (read
+// from the context the RequireAuth middleware attached before invoking
+// the resolver). RequireAuth calls it after the principal is resolved and
+// before action project.read is authorized, so the decision is made
+// against the project the path actually names — not merely the
+// principal's home organization — which is what lets a project-scoped
+// Admin grant for THAT project authorize the read while still denying a
+// project-scoped Admin grant for a SIBLING project (the policy engine
+// asks whether the grant scope contains the resource scope, never the
+// reverse).
+//
+// The organization id on the resource is the principal's home
+// organization id, never a caller-supplied value. A cross-tenant
+// project_id therefore reaches the store layer with the principal's home
+// organization id and is reported as a deterministic NotFound by the
+// tenant-scoped repository query — a cross-tenant id can never reveal
+// another organization's project. (A support principal performing a
+// read is allowed cross-tenant by the policy engine, but the support
+// principal is still bound to its own home organization on the resource
+// scope here, so the persistence layer still refuses to surface another
+// tenant's row through this endpoint.)
+func projectIDResolver(r *http.Request) policy.Resource {
+	scope := policy.Scope{ProjectID: r.PathValue("project_id")}
+	if p, ok := policy.PrincipalFromContext(r.Context()); ok {
+		scope.OrganizationID = p.OrganizationID
+	}
+	return policy.Resource{
+		Kind:  domain.KindProject,
+		Scope: scope,
+	}
+}
+
+// getProjectHandler builds the GET /v1/projects/{project_id} handler. It
+// reads the project named by the {project_id} path parameter from the
+// source-of-truth database through the ProjectReader port and renders it
+// in a stable yalla.output.v1 envelope.
+//
+// RequireAuth gates the route on action project.read before the handler
+// runs — authorized through projectIDResolver against the principal's
+// home organization combined with the project_id path parameter — and
+// attaches the resolved principal to the context. project.read is a
+// CapRead action, so the gate admits the principal's organization-wide
+// roles (owner, admin, developer, viewer, ci) and a support principal
+// performing a read; it also admits a scoped grant that covers the
+// (home_org, project_id) resource (for example, a project-scoped Admin
+// grant for THAT project), but denies a grant that names a SIBLING
+// project because the engine asks whether the grant scope contains the
+// resource scope, not the reverse.
+//
+// The handler reads from the principal's home organization id only — it
+// never trusts a caller-supplied organization id — so the tenant
+// boundary is structural at the persistence layer too: a cross-tenant
+// project_id reaches the store with the principal's home organization
+// id and is rejected as a typed NotFound by the tenant-scoped
+// repository query. A request that arrives with no principal is a
+// wiring error reported as a typed internal error rather than reading
+// for a zero principal; a reader-store outage surfaces as its own
+// typed 5xx; an unknown or cross-tenant project_id is a typed 404,
+// never disguised as an empty success.
+func getProjectHandler(reader ProjectReader) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if reader == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoProjectReader))
+			return
+		}
+		project, err := reader.GetProject(r.Context(), p.OrganizationID, r.PathValue("project_id"))
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), getProjectPayload{
+			Project: projectResourceOf(project),
+		})
 	}
 }
 

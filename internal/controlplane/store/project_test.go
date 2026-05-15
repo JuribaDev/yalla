@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
@@ -317,6 +318,58 @@ func TestProjectReaderListProjects(t *testing.T) {
 	if got[0].Slug != alpha.Slug || got[1].Slug != beta.Slug {
 		t.Errorf("ListProjects ordering = [%s, %s], want [%s, %s]",
 			got[0].Slug, got[1].Slug, alpha.Slug, beta.Slug)
+	}
+}
+
+// TestProjectReaderGetProject proves the store-backed reader adapter runs
+// the single-project read inside a short-lived read transaction, returns
+// the repository row unchanged for a tenant-owned id, and reports a typed
+// NotFound for a cross-tenant id — the tenant-isolation invariant that
+// keeps a cross-tenant project_id from ever revealing another
+// organization's project through GET /v1/projects/{project_id}.
+func TestProjectReaderGetProject(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	repo := store.NewProjectRepository()
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	orgA := seedOrg(t, db, f, "tenant-reader-get-a")
+	orgB := seedOrg(t, db, f, "tenant-reader-get-b")
+	alpha := insertProject(ctx, t, s, repo, projectFixture(f.Project(orgA, "alpha")))
+	betaB := insertProject(ctx, t, s, repo, projectFixture(f.Project(orgB, "beta")))
+
+	reader, err := store.NewProjectReader(s)
+	if err != nil {
+		t.Fatalf("NewProjectReader: %v", err)
+	}
+
+	got, err := reader.GetProject(ctx, orgA.ID, alpha.ID)
+	if err != nil {
+		t.Fatalf("GetProject(orgA, alpha): %v", err)
+	}
+	if got.ID != alpha.ID || got.OrganizationID != orgA.ID || got.Slug != alpha.Slug {
+		t.Errorf("GetProject(orgA, alpha) = %+v, want id=%q org=%q slug=%q",
+			got, alpha.ID, orgA.ID, alpha.Slug)
+	}
+
+	if _, err := reader.GetProject(ctx, orgA.ID, betaB.ID); err == nil {
+		t.Fatalf("GetProject(orgA, betaB) error = nil, want NotFound")
+	} else {
+		var ye *yerr.Error
+		if !errors.As(err, &ye) || ye.Code != "E_NOT_FOUND" {
+			t.Fatalf("GetProject(orgA, betaB) error = %v, want apierr.NotFound (E_NOT_FOUND)", err)
+		}
+	}
+
+	if _, err := reader.GetProject(ctx, orgA.ID, "prj_ghost00000000000000000000000"); err == nil {
+		t.Fatalf("GetProject(orgA, missing) error = nil, want NotFound")
+	} else {
+		var ye *yerr.Error
+		if !errors.As(err, &ye) || ye.Code != "E_NOT_FOUND" {
+			t.Fatalf("GetProject(orgA, missing) error = %v, want apierr.NotFound (E_NOT_FOUND)", err)
+		}
 	}
 }
 

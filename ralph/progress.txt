@@ -57,6 +57,8 @@
 - The CapWrite-on-nil-resolver policy matrix (BE-0123, internal/controlplane/httpapi/projects_create_policy_test.go) is the structural sibling of the env.write matrix above (BE-0111) but for endpoints that use a NIL ResourceResolver instead of organizationIDResolver — POST /v1/projects is the reference. The wire surface offers NO path/body field that could name another tenant (the strict JSON decoder rejects organization_id in the body, the contract suite TestCreateProjectIgnoresOrganizationIDInBody pins that), so tenant isolation on the wire is STRUCTURAL: the creator is always invoked with principal.OrganizationID and there is no caller-controlled value the policy boundary could fail open on. The cross-tenant probe therefore moves OFF the wire and ONTO a sub-test loop (cross_tenant_owner/admin/developer/viewer/ci/support, each t.Parallel()) that authorizes the action against a foreign-org Resource directly through policy.NewEngine().Decide; EVERY role — including Support — must deny via ReasonDeniedCrossTenant, because CapWrite is outside the engine's `roleCaps.has(CapSupport) && (required == CapRead || required == CapSupport)` exception. The role matrix proper still allows Owner/Admin/Developer (ReasonAllowedByRole) and denies Viewer/CI/Support (ReasonDeniedNoCapability) at the principal's own home org root. Grant-containment for a nil-resolver write authorizes against the org root, so project/env/service-scoped admin grants all deny with ReasonDeniedOutOfScope (covers() one-way); an org-level VIEWER grant denies with ReasonDeniedNoCapability (the load-bearing distinction from a CapRead matrix where the same grant ALLOWS), an org-level DEVELOPER grant allows via ReasonAllowedByGrant. Deny-path leak needles cover BOTH the caller-supplied request-body fields AND the canned-creator-output fields (two recognisable values per field, e.g. prj_matrix_alpha vs the request projectID) — a denied response leaking either is a separate regression direction, kept in one guard. Future CapWrite-on-nil-resolver endpoints (none yet planned; this is currently the only one) can copy this shape verbatim.
 - Hard-delete vs soft-delete decision rule: a customer-facing resource takes a SOFT delete (deletion_scheduled_at on organizations + 202 Accepted, revoked_at on api_keys + 200 OK with revocation snapshot) ONLY when the row carries a continuing tie that must outlive the resource — an audit-log FK that must keep the row reachable, a child cascade that must be ordered carefully, or a "lifecycle stale" property the customer's audit trail depends on. A resource with no continuing tie (the audit log records the deletion independently, no child tables, no FK ties) takes a HARD delete with a 200 OK response carrying the row's snapshot exactly as it stood at the moment of removal (DELETE /v1/organizations/{org_id}/variables/{key}, BE-0115). The store repository method uses `DELETE FROM ... WHERE org=$1 AND key=$2 RETURNING ...` so one round trip removes the row AND yields the snapshot the orchestrator returns to the wire; pgx.ErrNoRows -> apierr.NotFound (a cross-tenant key is indistinguishable from a missing row). The service files an audit event in the SAME tx as the delete, with Metadata={variable_id: row.ID} — customer-supplied key + the deleted value are never recorded, so the audit row is auditable without ever observing the variable name or its value. An agent can confirm what was deleted (id, key, version, timestamps) without a separate read; 204 No Content would have been less useful here.
 - Audit-event listing in tests: store.AuditRepository.ListByOrganization is ORDER BY occurred_at DESC, id DESC — events[0] is the NEWEST event. A test that reads events[len-1] gets the OLDEST event, which in a "seed then mutate" fixture is the seed event (with seed metadata), NOT the mutation under test. A test that probes the post-mutation state through ANOTHER mutation (e.g. a second Replace to verify the deleted row is gone) files yet another audit event and pushes the mutation-under-test to events[1] — so audit assertions must run BEFORE any further state-changing call, and post-state probes must read directly through the repository (NewOrganizationVariableRepository().ListByOrganization), NOT through another service-level mutation.
+- Deep-resource resolver pattern (BE-0124, GET /v1/projects/{project_id}, internal/controlplane/httpapi/projects.go projectIDResolver): when an endpoint targets a resource named in the path but the path has NO org_id segment (sub-organization endpoints like /v1/projects/{project_id}, future /v1/.../environments/{environment_id}, /v1/.../services/{service_id}), the ResourceResolver pulls the principal's home OrganizationID from the request context with policy.PrincipalFromContext(r.Context()) — RequireAuth attaches the principal BEFORE invoking the resolver, so the context already carries it even though the ResourceResolver signature is func(r *http.Request) policy.Resource. The resolver returns Scope{OrganizationID: principal.HomeOrg, ProjectID: r.PathValue("project_id"), Kind: domain.KindProject}; do NOT look up the resource's real org from the database inside the resolver (keep the resolver pure path+context, no I/O). The policy engine then authorizes against the principal's own home org root combined with the path id, so a project/environment/service-scoped grant for THAT resource (containment match) authorizes via ReasonAllowedByGrant while a grant for a SIBLING resource fails the engine's covers() check; cross-tenant project_ids reach the tenant-scoped repository query with the principal's home org and surface as a deterministic 404 (E_NOT_FOUND) from the persistence layer, NOT a 403 from policy — which is acceptable per the acceptance criteria ("cross-tenant IDs must behave as not found or forbidden"). The Support principal's cross-tenant read capability does NOT apply through this endpoint because the resource scope is pinned to the principal's home org, not the path's tenant; support cross-tenant reads remain available through endpoints whose path DOES carry an {org_id} (organizationIDResolver). PATCH/DELETE on the same resource adopt the same resolver — handlers should call PathValue and use principal.OrganizationID for the store call, never trust a caller-supplied org id. The canonical regression check is TestGetProjectCrossTenantIDBehavesAsNotFound (the response body must not echo a foreign organization id either).
+- Reader-port extension pattern (BE-0124): when a new endpoint on the same resource family lands (e.g. GET /v1/projects/{project_id} alongside GET /v1/projects), extend the existing reader port in place rather than declaring a parallel sibling interface — ProjectReader now has BOTH ListProjects and GetProject; OrganizationReader has GetOrganization and is used by both list and by-id endpoints. The fakeFooReader in the *_test.go is similarly extended in place (added project/getErr/gotGetOrgID/gotGetProjectID fields on fakeProjectReader for the by-id tests); the zero value of the extended fake still works for every prior call site (the other test files / suites that never reach the handler) so no cross-test churn is needed. The store-backed adapter pattern stays the same: *Reader composes *Repository (never re-issues SQL), each new method opens its own short-lived Store.Read tx and delegates to an existing Querier-accepting repository method, inheriting that method's tenant-scoping guarantees for free. Auth-error sentinel naming gotcha: the auth package exports the PLURAL form (auth.ErrInvalidCredentials, auth.ErrNoCredentials) — singular forms do not exist; tests that exercise the invalid-credential path must use the plural names to match the writeAuthError errors.Is dispatch.
 
 ## 2026-05-15 - BE-0103
 - What was implemented: GET /v1/organizations/{org_id}/audit-events, the
@@ -8905,4 +8907,155 @@
     one wire setup with a per-role engine sub-test loop keeps the
     test name surface useful (cross_tenant_owner/cross_tenant_admin/
     ...) and lets a failing role show up by name in test output.
+---
+
+## 2026-05-15 - BE-0124 - Implement GET /v1/projects/{project_id}
+- Added the third project-family endpoint: GET /v1/projects/{project_id}.
+  Route is wired through the existing newRouteTable single source of truth,
+  registered after POST /v1/projects so OpenAPI lists list/create/get
+  contiguously. Action: project.read (CapRead). Resolver:
+  projectIDResolver — derives the policy.Resource from the principal's
+  home organization id (read from the request context the auth
+  middleware attached before the resolver runs) plus the {project_id}
+  path parameter. The resolver never trusts a caller-supplied org id;
+  cross-tenant project ids reach the tenant-scoped repository query
+  with the principal's home org id and are reported as a deterministic
+  404 by the persistence layer, never revealing another tenant's data.
+- Persistence layer: extended *store.ProjectReader with GetProject(ctx,
+  organizationID, projectID) (Project, error), opening a short-lived
+  read-only transaction and delegating to the existing
+  ProjectRepository.Get — which already does tenant-scoped filtering
+  by (organization_id, id) and maps pgx.ErrNoRows to apierr.NotFound.
+  Added a new integration test TestProjectReaderGetProject proving:
+  (a) the owner of a project gets the row, (b) a cross-tenant id is
+  reported as NotFound (E_NOT_FOUND), and (c) an unknown id is
+  reported as NotFound. Validated against an isolated migrated
+  Postgres via docker-compose postgres + YALLA_TEST_DATABASE_URL.
+- HTTP layer: extended the ProjectReader interface in httpapi with
+  GetProject (the list-and-get reader is now a single port, mirroring
+  the OrganizationReader pattern). Added getProjectHandler,
+  getProjectPayload, and projectIDResolver in projects.go. Extended
+  the fakeProjectReader in projects_test.go with project/getErr/
+  gotGetOrgID/gotGetProjectID fields so the new handler tests can
+  assert which (org, project) pair was forwarded to the store
+  without re-implementing the fake.
+- Unit tests (new file projects_get_test.go, 11 tests):
+  - TestGetProjectReturnsRequestedProject — happy path, full envelope
+    shape, every wire field projected from the store row.
+  - TestGetProjectForwardsHomeOrganizationAndPathID — proves the
+    reader is called with principal.OrganizationID + path
+    project_id, never with caller-controlled input.
+  - TestGetProjectReturnsNotFoundForUnknownProject — typed 404
+    E_NOT_FOUND.
+  - TestGetProjectCrossTenantIDBehavesAsNotFound — cross-tenant id
+    surfaces as 404 (not 403, not 200), and the response body does
+    not echo the foreign organization id.
+  - TestGetProjectRequiresBearerToken — 401 E_AUTH; reader sentinel
+    proves the handler never ran.
+  - TestGetProjectRejectsInvalidCredential — 401 E_AUTH on
+    auth.ErrInvalidCredentials.
+  - TestGetProjectRejectsDisabledPrincipal — 403 E_FORBIDDEN at the
+    policy engine; reader never ran.
+  - TestGetProjectAllowsOrganizationWideViewer — Viewer (the
+    lowest CapRead-bearing role) is sufficient.
+  - TestGetProjectRejectsGrantOnlyKeyForSiblingProject — a grant for
+    prj_alpha cannot read prj_beta (containment is one-way).
+  - TestGetProjectAllowsGrantOnlyKeyForTargetProject — a grant for
+    prj_alpha can read prj_alpha (covers itself).
+  - TestGetProjectPropagatesDependencyFailure — store outage is 5xx,
+    never collapsed to 404; raw driver text never leaks.
+- Files changed:
+  - internal/controlplane/store/project.go — added
+    *ProjectReader.GetProject (opens a read tx and delegates to the
+    existing repository Get).
+  - internal/controlplane/store/project_test.go — added
+    TestProjectReaderGetProject (integration; tenant-scoped owner /
+    cross-tenant 404 / unknown-id 404 paths).
+  - internal/controlplane/httpapi/projects.go — added domain import;
+    extended ProjectReader interface with GetProject; added
+    getProjectPayload, projectIDResolver, getProjectHandler.
+  - internal/controlplane/httpapi/projects_test.go — extended
+    fakeProjectReader with the by-id fields used by the new tests.
+  - internal/controlplane/httpapi/routes.go — registered GET
+    /v1/projects/{project_id} between POST /v1/projects and GET
+    /v1/organizations/{org_id}, with projectIDResolver and an
+    OpenAPI Endpoint that documents the path param, the required
+    action, and the cross-tenant 404 contract.
+  - internal/controlplane/httpapi/projects_get_test.go (new) —
+    11 handler tests covering success, validation/auth/authz
+    failure, not-found, dependency failure, sibling-project deny,
+    target-project allow.
+- Verification run (from repo root):
+  - gofmt -w . — clean.
+  - go vet ./... — clean.
+  - go mod tidy — no go.mod / go.sum changes.
+  - go test ./... (no DB) — all packages pass.
+  - go test -race ./... (no DB) — all packages pass.
+  - YALLA_TEST_DATABASE_URL=postgres://yalla:yalla@127.0.0.1:5432/yalla
+    go test -run 'TestGetProject|TestProjectReaderGetProject|TestListProjects|TestProjectRepositoryGet|TestCreateProject'
+    ./internal/controlplane/httpapi/ ./internal/controlplane/store/ — pass.
+  - go test -race for the same set under DB — pass.
+- Results: all green. goimports is not installed; gofmt formatted the
+  changes cleanly. The 9 pre-existing TestAPIKeyService* /
+  TestOrganizationVariableServicePatch* failures under
+  YALLA_TEST_DATABASE_URL are still present on this branch — they
+  reproduce on the parent commit (documented in the BE-0118
+  progress entry) and are not regressions introduced by BE-0124.
+- Remaining risks or follow-ups:
+  - BE-0125 (contract tests for GET /v1/projects/{project_id}) and
+    BE-0126 (policy matrix coverage for GET /v1/projects/{project_id})
+    are the next failing project-family stories. BE-0125 will
+    consolidate envelope-shape, request-id propagation, and the
+    OpenAPI operation-registration assertions into a contract suite;
+    much of what it requires already ships in projects_get_test.go.
+    BE-0126 will add the deeper policy matrix (owner/admin/developer/
+    viewer/ci/support, revoked key, expired key, wrong-org principal)
+    against the new projectIDResolver scope shape — the containment
+    inversion noted in the BE-0123 follow-up: a project-scoped Admin
+    grant for THAT project is the load-bearing happy path, where the
+    list endpoint's matrix required an organization-level grant.
+  - PATCH /v1/projects/{project_id} (BE-0127) can reuse projectIDResolver
+    as-is; the store layer already has ProjectRepository.UpdateDisplayName
+    with the If-Match optimistic-concurrency contract wired and
+    integration-tested.
+- **Learnings for future iterations:**
+  - Resolver pattern for project-id and deeper-scoped endpoints:
+    *do NOT* try to read the project's organization from the database
+    inside the resolver — keep the resolver pure path+context. The
+    correct trick is to pull the principal's home OrganizationID from
+    the request context the auth middleware attached BEFORE the
+    resolver runs (policy.PrincipalFromContext(r.Context()) — yes,
+    the ResourceResolver signature is func(r *http.Request)
+    policy.Resource but the context already carries the principal).
+    Then the resolver returns Scope{OrganizationID: principal.HomeOrg,
+    ProjectID: r.PathValue("project_id")}. Cross-tenant attempts are
+    absorbed by the tenant-scoped repository query (404), not by the
+    policy engine (which sees the principal's own org). This is the
+    same shape PATCH/DELETE /v1/projects/{project_id} should adopt;
+    keep the test "TestGetProjectCrossTenantIDBehavesAsNotFound" as
+    the canonical regression check that this stays true.
+  - The store reader-adapter pattern is now codified for project:
+    *Reader composes *Repository, never issues its own SQL, opens a
+    short-lived read tx per call via Store.Read. New methods on the
+    reader should be a thin transactional wrapper around an existing
+    Querier-accepting repository method so the tenant-scoping
+    guarantees proved in the repository's integration tests are
+    inherited for free. Mirrors OrganizationReader.GetOrganization
+    and ProjectReader.ListProjects exactly.
+  - When extending an httpapi port interface that fakes already
+    satisfy in test files, prefer extending the fake in-place over
+    duplicating it. The fakeProjectReader now carries both List and
+    Get state (projects/err/gotOrgID for list, project/getErr/
+    gotGetOrgID/gotGetProjectID for get); the zero value still works
+    everywhere the public-surface and unrelated route suites used
+    it, so no cross-test churn was needed.
+  - auth.ErrInvalidCredentials (plural; not ErrInvalidCredential).
+    The middleware writeAuthError matches by errors.Is on the
+    pluralised sentinel; tests for endpoints that exercise the
+    invalid-credential path should use the same name.
+  - For dependency-failure tests, the message-redaction assertion
+    (substring check on raw driver text like "connection refused")
+    catches accidental leakage cheaply and is a good pattern to
+    propagate to every new endpoint test suite. It complements the
+    typed-status check rather than replacing it.
 ---

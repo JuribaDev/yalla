@@ -30,6 +30,26 @@ service packages — handlers only decode, delegate, and render.
    principals before the handler runs; a support principal's cross-tenant
    `CapRead` is `ReasonAllowedBySupport` and is intended, not a leak. See
    `organizationIDResolver` + `getOrganizationHandler`.
+
+   **Deep-resource resolvers** (no `{org_id}` in the path, e.g.
+   `/v1/projects/{project_id}`) pull the principal's home `OrganizationID`
+   from the request context with `policy.PrincipalFromContext(r.Context())`
+   — `RequireAuth` attaches the principal before invoking the resolver, so
+   the context already carries it even though the resolver signature is
+   `func(r *http.Request) policy.Resource`. The resolver then returns
+   `Scope{OrganizationID: principal.HomeOrg, ProjectID: r.PathValue(...)}`
+   (do **not** look up the resource's real org from the database here —
+   keep the resolver pure path+context). The policy engine sees the
+   principal's own org and authorizes; a cross-tenant `project_id` reaches
+   the **tenant-scoped repository query** with the principal's home org
+   and surfaces as a deterministic 404 (`E_NOT_FOUND`), not a 403. That
+   is the canonical containment: a project/environment/service-scoped
+   grant for THAT resource authorizes the call (the engine asks whether
+   the grant scope contains the resource scope), while a grant for a
+   SIBLING resource does not. PATCH/DELETE on the same resource should
+   adopt the same resolver. See `projectIDResolver` +
+   `getProjectHandler`, and `TestGetProjectCrossTenantIDBehavesAsNotFound`
+   as the regression check that this stays true.
 4. Keep the handler thin: read `policy.PrincipalFromContext`, call a service,
    and render through `apienvelope.WriteData` / `WriteError`. Never marshal
    JSON directly; never hand-roll an error — return typed `apierr` errors.
