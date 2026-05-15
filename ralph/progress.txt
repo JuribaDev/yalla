@@ -6000,3 +6000,154 @@
     home org, since CapAdmin is excluded by construction from the engine's
     `required == CapRead || required == CapSupport` cross-tenant clause.
 ---
+
+## 2026-05-15 - BE-0094
+- What was implemented: GET /v1/organizations/{org_id}/limits, the quota
+  surface's first customer-facing read endpoint. Returns the effective quota
+  limits configured for the organization named by the {org_id} path
+  parameter, in deterministic resource order. Each entry on the wire carries
+  resource, limit_value, enforcement_mode, and source ('organization' for an
+  override or 'plan_default' for an inherited plan default). Resources with
+  no policy at either scope are unconstrained and omitted from the list.
+  - internal/controlplane/store/quota.go: added QuotaScope (string values
+    match quota_policies.scope_kind verbatim — QuotaScopePlanDefault,
+    QuotaScopeOrganization), EffectiveQuotaLimit (Resource, LimitValue,
+    EnforcementMode, Scope), and QuotaRepository.ListEffectiveLimits — a
+    single DISTINCT ON (resource) query that returns the resolved limit per
+    resource preferring the organization override over the plan default.
+    Tenant scoped: only organization-row overrides for organizationID and
+    plan-row defaults for the named plan are considered.
+  - internal/controlplane/store/limits.go: new file with DefaultPlan,
+    PlanLookup function type (same signature as quota.PlanResolver.Plan so
+    placeholders are interchangeable without a cross-package dep), and
+    LimitsReader — the store-backed adapter that composes QuotaRepository
+    through Store.Read. NewLimitsReader rejects a nil store; a nil
+    PlanLookup or an empty string from a configured lookup falls back to
+    DefaultPlan so a misconfigured resolver cannot erase the floor every
+    tenant is meant to inherit. ListEffectiveLimits resolves the plan and
+    the limits inside one read-only transaction.
+  - internal/controlplane/httpapi/limits.go: new file with errNoLimitsReader,
+    LimitsReader port, listLimitsPayload + limitResource wire types,
+    limitResourceOf projection, and listLimitsHandler. Wires action
+    limits.read through organizationIDResolver (the standard reader-port
+    pattern for organization-rooted GET endpoints).
+  - internal/controlplane/httpapi/routes.go: added tagLimits ("limits"),
+    threaded limits LimitsReader through newRouteTable's signature between
+    memberRemover and apiKeys, and registered the GET
+    /v1/organizations/{org_id}/limits route entry with full OpenAPI
+    metadata (operationId getOrganizationLimits, the deterministic-order
+    contract, the source-field semantics, the omitted-on-no-policy
+    contract, and the CapRead support-cross-tenant exception that policy
+    BE-0096 will pin down).
+  - internal/controlplane/httpapi/server.go: threaded limits LimitsReader
+    through NewHandler's signature between memberRemover and apiKeys, and
+    updated the package doc comment.
+  - cmd/yalla-api/main.go: wired store.NewLimitsReader(dataStore, nil) at
+    startup and passed the result to httpapi.NewHandler.
+  - internal/controlplane/store/limits_test.go: new integration tests
+    against an isolated, freshly migrated Postgres — precedence resolution
+    (org override beats plan default), empty result when no policy is
+    configured, tenant scoping (org A's override never leaks into org B),
+    LimitsReader composing the repository through Store.Read with the
+    DefaultPlan fallback, custom PlanLookup picking the right plan default,
+    and NewLimitsReader rejecting a nil store.
+  - internal/controlplane/httpapi/limits_test.go: new contract tests with a
+    fakeLimitsReader fake — stable yalla.output.v1 envelope (schema_version,
+    request_id, deterministic field order/names), empty-list-not-null
+    response, path-{org_id} forwarded to the reader verbatim, 401 from the
+    auth middleware before the reader is touched, 403 from
+    organizationIDResolver for a cross-tenant {org_id} before the reader is
+    touched, 503 mapped from store.StoreUnavailable without leaking the raw
+    cause, and 500 internal error when the handler reaches with a nil
+    reader without leaking internal detail.
+  - Every other test wrapper that calls NewHandler / newRouteTable was
+    updated to thread fakeLimitsReader{} (or one more nil for the route
+    table calls) between the membership remover and the api-key reader
+    slots: me_test.go, me_contract_test.go, organizations_test.go,
+    organizations_create_test.go, organizations_patch_test.go,
+    organizations_delete_test.go, members_test.go, members_create_test.go,
+    members_update_test.go, members_delete_test.go, api_keys_test.go,
+    api_keys_create_test.go, api_keys_update_test.go, api_keys_delete_test.go,
+    api_keys_rotate_test.go, server_test.go, routes_test.go.
+- Files changed:
+  - new: internal/controlplane/store/limits.go,
+         internal/controlplane/store/limits_test.go,
+         internal/controlplane/httpapi/limits.go,
+         internal/controlplane/httpapi/limits_test.go
+  - modified: internal/controlplane/store/quota.go,
+              internal/controlplane/httpapi/routes.go,
+              internal/controlplane/httpapi/server.go,
+              cmd/yalla-api/main.go,
+              17 httpapi test wrappers,
+              ralph/prd.json, ralph/progress.txt.
+- Verification run: gofmt -w .; go vet ./... (clean);
+  go build ./... (clean); go test ./... (clean without Postgres);
+  YALLA_TEST_DATABASE_URL=postgres://yalla:yalla@127.0.0.1:5432/yalla
+    go test -count=1 -race -timeout=300s ./... — every package green
+    except the pre-existing TestAPIKeyServiceCreate* / TestAPIKeyReaderGetAPIKey
+    failures (documented in BE-0085's progress as the testutil.Factory
+    20-char id vs domain.ParseID 26-char strict-check mismatch); verified by
+    stashing my changes and reproducing the same failures on the baseline
+    commit. The new BE-0094 tests pass against the same Postgres image.
+- Results: all targeted tests green. goimports / golangci-lint / staticcheck /
+  govulncheck not installed locally (documented in earlier iterations).
+- Remaining risks / follow-ups:
+  - BE-0095 (contract tests for GET /limits) and BE-0096 (policy matrix
+    for GET /limits) are still passes:false and are the natural next two
+    iterations. limits_test.go already covers a large chunk of BE-0095's
+    criteria; BE-0096 is the dedicated cross-tenant / role-matrix file
+    (the same pattern members_get_policy_test.go follows for members.read).
+  - PlanLookup is wired with nil at the API binary today, so every tenant
+    resolves to DefaultPlan = "default". When the plans table lands, the
+    cmd/yalla-api wiring should pass a real PlanLookup (e.g.
+    PlanRepository.GetPlanName) and the existing limits surface continues
+    to work without an API contract change — the response field names,
+    the source values, and the resource ordering are stable.
+  - The pre-existing TestAPIKeyService* failure is still open. It is
+    documented in BE-0085 as worth its own dedicated story; sidestepping
+    is the correct local choice for BE-0094.
+- Learnings for future iterations:
+  - quota_policies.scope_kind takes literal string values 'plan_default'
+    and 'organization' — I mirrored those values verbatim into the
+    QuotaScope type and the wire field 'source', so projecting database
+    -> wire is a single string cast. Using the same literal across layers
+    avoids a translation table and a divergence opportunity.
+  - DISTINCT ON (resource) ... ORDER BY resource, (scope_kind = 'organization') DESC
+    is the cleanest one-query resolver for "org override beats plan
+    default, one row per resource, in deterministic resource order". The
+    same shape generalises to any (scope, override) precedence resolution
+    where the two scopes share a discriminator column.
+  - The reader-port plumbing carries verbatim from BE-0061 (members.list):
+    declare a narrow interface in httpapi (LimitsReader), build a
+    *store.LimitsReader adapter that composes the repository through
+    Store.Read (never fresh SQL), thread the port through
+    NewHandler -> newRouteTable -> the handler closure. A new port adds ~13
+    NewHandler call-site edits across the httpapi test wrappers (each
+    test file that builds a handler), main.go, and server.go's package
+    doc. perl -i -pe substitution over the canonical
+    "fakeMembershipRemover{}, fakeAPIKeyReader{}" landmark is the
+    least-error-prone way to apply a uniform insertion across all 17
+    sites.
+  - When the next port lands, consider whether newTestHandler in
+    server_test.go could absorb its fake — the public-surface tests
+    (~13 sites) all rely on the canned-fake pattern but don't need
+    different fakes per file.
+  - Plans table is still placeholder. The PlanLookup function type
+    (signature mirroring quota.PlanResolver.Plan) lets a real plans
+    table land later without touching the limits API contract or the
+    LimitsReader adapter — the binary just wires a different lookup at
+    construction time. Same idea applies to any "this column has no
+    foreign key yet" placeholder.
+  - apierr.AuthRequired does not exist; the auth-required factory is
+    apierr.Unauthenticated and the resulting error code is "E_AUTH" (not
+    "E_AUTH_REQUIRED"). The full code catalogue is in
+    internal/errors/errors.go and the constructors are in
+    internal/controlplane/apierr/apierr.go.
+  - go test integration suites for store package are easy to verify
+    locally: docker compose up -d postgres and
+    export YALLA_TEST_DATABASE_URL=postgres://yalla:yalla@127.0.0.1:5432/yalla
+    runs the migrated-DB skip gate. The pre-existing TestAPIKeyService*
+    failure is reproducible on the baseline commit (git stash, run, pop)
+    — that is the right way to disambiguate "introduced by my story" from
+    "long-standing test infra mismatch".
+---

@@ -19,6 +19,7 @@ const (
 	tagIdentity      = "identity"
 	tagOrganizations = "organizations"
 	tagMembers       = "members"
+	tagLimits        = "limits"
 	tagAPIKeys       = "api-keys"
 )
 
@@ -83,8 +84,9 @@ type versionPayload struct {
 // /v1/organizations/{org_id}/members, memberCreator backs POST
 // /v1/organizations/{org_id}/members, memberUpdater backs PATCH
 // /v1/organizations/{org_id}/members/{member_id}, memberRemover backs
-// DELETE /v1/organizations/{org_id}/members/{member_id}, apiKeys backs
-// GET /v1/organizations/{org_id}/api-keys and GET
+// DELETE /v1/organizations/{org_id}/members/{member_id}, limits backs GET
+// /v1/organizations/{org_id}/limits, apiKeys backs GET
+// /v1/organizations/{org_id}/api-keys and GET
 // /v1/organizations/{org_id}/api-keys/{key_id}, apiKeyCreator backs POST
 // /v1/organizations/{org_id}/api-keys, apiKeyUpdater backs PATCH
 // /v1/organizations/{org_id}/api-keys/{key_id}, apiKeyRevoker backs
@@ -94,7 +96,7 @@ type versionPayload struct {
 // metadata; a request that actually reaches a handler with a nil dependency
 // is reported as a typed internal error rather than a misleading empty list
 // or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator) []apiRoute {
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -423,6 +425,31 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// principal cannot manage members of another tenant.
 			resolver: memberIDResolver,
 			handler:  removeMemberHandler(memberRemover),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodGet,
+				Path:           "/v1/organizations/{org_id}/limits",
+				OperationID:    "getOrganizationLimits",
+				Summary:        "Get effective limits of an organization",
+				Description:    "Returns the effective quota limits configured for the organization named by the {org_id} path parameter, in deterministic resource order. Each entry carries the resource dimension, the numeric ceiling, the enforcement mode (hard, soft, metered, or disabled), and the source scope that produced the value — \"organization\" when the limit is an organization-level override, \"plan_default\" when it is inherited from the tenant's plan. Organization overrides take precedence over plan defaults for the same resource, and the resolution is done in a single SQL statement so the wire shape can never disagree with what the quota checker evaluates at allocation time. Resources without any policy at either scope are unconstrained and omitted from the list, so the absence of a resource means \"no ceiling is configured for this dimension\" rather than \"the limit is zero\". Action limits.read is authorized against the organization the path names before the handler runs: a principal reading limits outside its own tenant is rejected with a deterministic 403, so a cross-tenant id can never reveal another tenant's limits. The response carries no credential material — quota dimensions and counts are not sensitive — and the read is tenant scoped at the persistence layer, so a cross-tenant {org_id} yields the same empty list a missing policy would, never another tenant's data.",
+				Tags:           []string{tagLimits},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionLimitsRead),
+				PathParams: []openapi.PathParam{{
+					Name:        "org_id",
+					Description: "The id of the organization whose effective limits are read.",
+				}},
+				SuccessDescription: "The effective limits of the organization.",
+			},
+			// organizationIDResolver authorizes action limits.read against the
+			// organization the {org_id} path parameter names, not merely the
+			// principal's home organization, so a cross-tenant id is denied at
+			// the policy boundary before the handler reads any data — the lone
+			// exception is the support principal's deliberate cross-tenant
+			// read, exactly as the policy matrix specifies for CapRead actions.
+			resolver: organizationIDResolver,
+			handler:  listLimitsHandler(limits),
 		},
 		{
 			endpoint: openapi.Endpoint{

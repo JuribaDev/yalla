@@ -2671,8 +2671,8 @@
       ],
       "type": "endpoint-quota",
       "priority": 2,
-      "passes": false,
-      "notes": "Endpoint belongs to the quota backend surface."
+      "passes": true,
+      "notes": "Implemented GET /v1/organizations/{org_id}/limits. Returns effective quota limits resolved as organization override beats plan default in one SQL statement; wire fields are resource, limit_value, enforcement_mode, source ('organization' or 'plan_default'). Resources with no policy at either scope are omitted. New store.LimitsReader composes QuotaRepository.ListEffectiveLimits through Store.Read with a pluggable PlanLookup (DefaultPlan fallback). Action limits.read authorized via organizationIDResolver against {org_id}; reader-port pattern threaded NewHandler -> newRouteTable -> handler closure. Contract tests cover success, empty list, path-org_id forwarding, 401 unauthenticated, 403 cross-tenant, 503 store outage, and nil-reader internal error. Store integration tests cover precedence resolution, empty result, tenant scoping, default vs custom PlanLookup, and nil-store rejection."
     },
     {
       "id": "BE-0095",

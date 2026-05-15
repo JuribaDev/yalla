@@ -96,6 +96,34 @@ type QuotaLimit struct {
 	EnforcementMode EnforcementMode
 }
 
+// QuotaScope is which scope produced an effective quota policy: a plan default
+// or an organization-level override. The string values match the
+// quota_policies.scope_kind column verbatim, so the wire shape of the limits
+// API can be projected from this type without a separate translation table.
+type QuotaScope string
+
+const (
+	// QuotaScopePlanDefault marks an effective limit inherited from the
+	// tenant's plan default.
+	QuotaScopePlanDefault QuotaScope = "plan_default"
+	// QuotaScopeOrganization marks an effective limit set as an organization
+	// override; it takes precedence over the plan default for the same
+	// resource.
+	QuotaScopeOrganization QuotaScope = "organization"
+)
+
+// EffectiveQuotaLimit is one resource's resolved limit, along with the scope
+// that produced it. It is what the customer-facing GET
+// /v1/organizations/{org_id}/limits endpoint projects onto the wire: the
+// resolution rule (organization override beats plan default) is applied in
+// SQL so the wire shape always matches what the quota checker would see.
+type EffectiveQuotaLimit struct {
+	Resource        QuotaResource
+	LimitValue      int64
+	EnforcementMode EnforcementMode
+	Scope           QuotaScope
+}
+
 // QuotaReservation is a short-lived claim on a resource dimension. An active
 // reservation counts against the tenant's limit until it is committed (the
 // resource was created) or released/expired (it was not). JobID is the
@@ -165,6 +193,57 @@ func (r *QuotaRepository) EffectiveLimit(ctx context.Context, q Querier, organiz
 		return QuotaLimit{}, false, apierr.StoreUnavailable(err)
 	}
 	return QuotaLimit{Resource: resource, LimitValue: limit, EnforcementMode: EnforcementMode(mode)}, true, nil
+}
+
+// ListEffectiveLimits resolves the effective limit for every resource that has
+// a policy configured for organizationID or its plan, in deterministic
+// resource order. Organization overrides win over plan defaults for the same
+// resource; resources with no policy at either scope are unconstrained and
+// omitted from the result.
+//
+// The resolution is done in a single SQL statement (a DISTINCT ON over the two
+// candidate rows per resource) so the wire shape can never disagree with the
+// per-resource EffectiveLimit lookup the quota checker uses, and a single
+// round trip is enough regardless of how many dimensions the plan covers.
+//
+// The query is tenant scoped: only plan defaults for the named plan and
+// organization overrides for organizationID are considered, so the result
+// never reveals another tenant's policies.
+func (r *QuotaRepository) ListEffectiveLimits(ctx context.Context, q Querier, organizationID, plan string) ([]EffectiveQuotaLimit, error) {
+	rows, err := q.Query(ctx,
+		`SELECT DISTINCT ON (resource) resource, limit_value, enforcement_mode, scope_kind
+		   FROM quota_policies
+		  WHERE (scope_kind = 'organization' AND organization_id = $1)
+		     OR (scope_kind = 'plan_default'  AND plan = $2)
+		  ORDER BY resource, (scope_kind = 'organization') DESC`,
+		organizationID, plan)
+	if err != nil {
+		return nil, apierr.StoreUnavailable(err)
+	}
+	defer rows.Close()
+
+	out := make([]EffectiveQuotaLimit, 0)
+	for rows.Next() {
+		var (
+			resource  string
+			limit     int64
+			mode      string
+			scopeKind string
+		)
+		if scanErr := rows.Scan(&resource, &limit, &mode, &scopeKind); scanErr != nil {
+			return nil, apierr.StoreUnavailable(scanErr)
+		}
+		out = append(out, EffectiveQuotaLimit{
+			Resource:        QuotaResource(resource),
+			LimitValue:      limit,
+			EnforcementMode: EnforcementMode(mode),
+			Scope:           QuotaScope(scopeKind),
+		})
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return nil, apierr.StoreUnavailable(rowsErr)
+	}
+	return out, nil
 }
 
 // LockUsage ensures the (organization, resource) counter row exists and locks
