@@ -5275,3 +5275,105 @@
     factory or relax buildAPIKeyToCreate the same way validateMembership*
     already does for member_id.
 ---
+
+## 2026-05-15 - BE-0087
+- What was implemented: api_keys_update_policy_test.go — the
+  authorization-matrix coverage for PATCH
+  /v1/organizations/{org_id}/api-keys/{key_id}, sibling to the contract
+  test in api_keys_update_test.go. Drives NewHandler + the real
+  policy.NewEngine() (production request path, fake Authenticator and
+  fake APIKeyUpdater only).
+  - TestUpdateAPIKeyPolicyMatrixRoles: every built-in role
+    (owner/admin/developer/viewer/ci/support) against the api-key scope
+    apiKeyIDResolver emits for the principal's own org. Owner+Admin
+    allow via ReasonAllowedByRole — proves the updater is reached with
+    BOTH the {org_id} AND {key_id} path params and the response carries
+    the mutated key. The other four deny with the stable
+    ReasonDeniedNoCapability (CapAdmin > CapRead/CapDeploy/CapSupport),
+    return 403 E_FORBIDDEN, the updater never runs, and the denied body
+    never echoes the seeded key_id or prefix. Support is the
+    load-bearing case shared with BE-0084: CapAdmin is excluded from
+    the support cross-tenant exception, so support cannot mutate keys
+    of its own home tenant either.
+  - TestUpdateAPIKeyPolicyRevokedAndExpiredKeys: a Disabled principal
+    (revoked or expired credential) whose underlying role would have
+    allowed keys.manage is denied with ReasonDeniedPrincipalDisabled —
+    the updater never runs and the body leaks neither the principal
+    id, the organization id, nor the seeded key data.
+  - TestUpdateAPIKeyPolicyWrongOrganizationPrincipal: a non-support
+    cross-tenant owner is denied with ReasonDeniedCrossTenant; a
+    Yalla-internal support principal is ALSO denied cross-tenant
+    (CapAdmin excludes the support exception); engine verdicts are
+    pinned directly against an api-key Resource so the resolver-shape
+    is exactly what the engine sees. Bonus assertion: a support
+    principal cannot mutate keys of its OWN home org either — the
+    home-tenant verdict is ReasonDeniedNoCapability, not the
+    cross-tenant denial. This locks the support role's posture so a
+    future catalog edit cannot silently grant it key-management
+    authority.
+  - TestUpdateAPIKeyPolicyGrantContainment: the three grant-containment
+    invariants the PRD names are pinned engine-level against
+    project/env/service-scoped admin grants (sibling project, staging
+    vs production, service vs parent-env-write), then tied back to the
+    wire by proving a project-scoped grantee is denied PATCH on its
+    own ({org_id},{key_id}) with ReasonDeniedOutOfScope, body free of
+    key_id/prefix. An organization-level Admin grant DOES allow
+    (ReasonAllowedByGrant) and the same patch end-to-end succeeds with
+    the updater reached on both path params; an organization-level
+    Viewer grant does NOT allow (locks CapAdmin against a downgrade to
+    CapRead). A foreign {org_id} on a scoped grantee still surfaces
+    ReasonDeniedCrossTenant — a scoped key cannot be smuggled across
+    tenants by fabricating a path parameter.
+- Files changed:
+  - internal/controlplane/httpapi/api_keys_update_policy_test.go (new).
+  - ralph/prd.json (BE-0087 passes=true).
+  - ralph/progress.txt (this entry).
+- Verification run: gofmt -w .; go mod tidy; go vet ./...;
+  go build ./...; go test -run 'TestUpdateAPIKeyPolicy' -race -v
+  ./internal/controlplane/httpapi/...; go test ./...;
+  go test -race ./....
+- Results: all passed. The four new tests pass under -race in ~1.5s
+  total. goimports/golangci-lint/staticcheck/govulncheck still not
+  installed locally (documented in earlier iterations).
+- Remaining risks / follow-ups:
+  - Acceptance criteria "stable yalla.output.v1/error.v1 envelopes",
+    "integration tests against isolated Postgres migrations", and
+    "secrets/tokens/keys/cookies/env values redacted" are N/A for a
+    policy-matrix test: no Postgres surface (the updater is faked) and
+    no secret material crosses the boundary. The contract sibling
+    (BE-0086) already pins envelope shape and the secret_hash sentinel
+    is asserted out of the wire; here the structural guard is "denied
+    response never echoes the seeded key_id or prefix", which it does.
+  - BE-0086 (contract tests for PATCH ... api-keys/{key_id}) is
+    already passes=true, so this story has no further blocker. Next
+    open p1 in the queue is BE-0090 (policy matrix for DELETE
+    /v1/organizations/{org_id}/api-keys/{key_id}), still gated on its
+    p2 implementation story BE-0088.
+- Learnings for future iterations:
+  - The keys.read (BE-0084) and keys.manage (BE-0087) matrices are
+    structurally identical because the catalog maps BOTH to CapAdmin
+    (catalog.go:120-121). The wire-contract differences are: GET reads
+    via APIKeyReader.GetAPIKey and asserts gotKeyOrgID/gotKeyID;
+    PATCH writes via APIKeyUpdater.Update and asserts
+    gotInput.OrganizationID/gotInput.KeyID. Use seedAPIKey for the
+    happy-path response value either way — it is the credential
+    helper, not the reader-vs-updater distinction.
+  - apiKeyIDResolver emits Kind=domain.KindAPIKey, NOT
+    KindOrganization like organizationIDResolver. The engine's
+    cross-tenant clause cares about Scope.OrganizationID, not Kind,
+    so the verdict shape is the same — but engine-level assertions in
+    policy_test files must use the matching Kind to pin the exact
+    resolver shape on the wire path.
+  - The handler-comment claim in api_keys.go that "keys.manage is a
+    CapManage action" is misleading commentary — there is no
+    CapManage in capabilities.go. catalog.go is authoritative:
+    ActionKeysManage requires CapAdmin. Trust catalog.go over
+    handler-comment when they disagree.
+  - For a denied-policy case driven through the wire, the request
+    body must still be at least a structurally-valid PATCH ({"name":
+    "renamed"}) so that the policy boundary is provably the only
+    thing rejecting it — an empty {} body would hit the handler's
+    "patch with no field" 400 if the policy ever let it through. The
+    minimal-valid-body convention makes a future regression where
+    the policy allows a denied caller surface as a 200, not a 400.
+---
