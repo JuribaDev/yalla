@@ -4804,3 +4804,114 @@
     the orchestrator pure of time.Now() so a unit test can pin the wall
     clock.
 ---
+
+## 2026-05-15 - BE-0081
+- What was implemented: policy matrix coverage for POST
+  /v1/organizations/{org_id}/api-keys (BE-0079's authorization sibling).
+  - internal/controlplane/httpapi/api_keys_create_policy_test.go (new):
+    drives the real NewHandler + real policy.NewEngine() — the production
+    request path, fake Authenticator only — through every principal class
+    the PRD names for action keys.manage. The structural twin of
+    api_keys_list_policy_test.go (BE-0078), adapted GET -> POST,
+    reader -> creator, keys.read -> keys.manage; reuses the shared
+    scaffolding from api_keys_test.go / api_keys_create_test.go
+    (createAPIKeyHandlerFor, postAPIKey, decodeCreateAPIKey, orgPrincipal,
+    fakeAPIKeyCreator, seedAPIKey, decodeError) so this file adds no
+    helpers.
+  - TestCreateAPIKeyPolicyMatrixRoles: every built-in role against an
+    {org_id} naming its own home org. Owner/Admin allow via
+    ReasonAllowedByRole (201, persisted projection + one-time token in
+    the success envelope); Developer/Viewer/CI/Support deny via
+    ReasonDeniedNoCapability (403 E_FORBIDDEN). keys.manage is CapAdmin
+    (catalog.go: ActionKeysManage->CapAdmin), so the role matrix matches
+    its keys.read sibling exactly — and the role matrix is independently
+    locked here, so a regression that downgraded keys.manage to a
+    non-Admin capability (a credential-minting escalation) would fire
+    here, not only in the read sibling. Every deny path proves the
+    creator was never reached via a captured store.CreateAPIKeyInput
+    (got.OrganizationID stays ""), and the denied body never echoes the
+    principal id, the supplied request name ("matrix"), the seeded key
+    id, or its prefix. The happy-path branch also asserts the seedAPIKey
+    secret_hash sentinel never reaches the wire.
+  - TestCreateAPIKeyPolicyRevokedAndExpiredKeys: a Disabled principal —
+    the shape the auth layer surfaces revoked/expired credentials in —
+    is denied with ReasonDeniedPrincipalDisabled even on an underlying
+    Owner role; the creator is never reached and the denied body never
+    echoes the principal id, the organization id, or the request name.
+    A revoked or expired credential must never be able to mint a fresh
+    credential, otherwise revocation is meaningless.
+  - TestCreateAPIKeyPolicyWrongOrganizationPrincipal: the load-bearing
+    cross-tenant case. A non-support owner of org_attacker minting in
+    org_victim is ReasonDeniedCrossTenant. THE distinguishing assertion
+    vs. members.read / org.read: a Support principal cannot mint a key
+    cross-tenant either — pinned at both the engine
+    (Decide(keys.manage, foreign org) for support = deny via
+    ReasonDeniedCrossTenant) and the wire (handler returns 403, creator
+    never reached, body never echoes victim org or request name). The
+    engine's cross-tenant exception is gated on `required == CapRead ||
+    required == CapSupport`, so CapAdmin is OUTSIDE it. Bonus: support
+    cannot mint in its OWN home org either — ReasonDeniedNoCapability —
+    locking the support role's read-only posture against a future catalog
+    change that might silently grant CapAdmin minting authority.
+  - TestCreateAPIKeyPolicyGrantContainment: scoped-grant containment
+    against keys.manage on the org-root scope. A project/env/service-
+    scoped Admin grant is denied via ReasonDeniedOutOfScope (covers()
+    is one-way: a more-specific scope cannot reach a broader resource),
+    not even for the key's own organization — the scoped key cannot be
+    widened to mint an organization-wide credential. The three PRD-named
+    containment properties (sibling project, production env, parent-
+    level secrets) are pinned via project-update on a sibling project,
+    environment-update on production, and env-write on the parent
+    environment — all denied at the engine. The wire tie-back: project
+    grantee POSTing against its own {org_id} = 403 ReasonDeniedOutOfScope
+    + creator never reached + body never leaks the request name or
+    fabricated key data. An org-level Admin grant is allowed via
+    ReasonAllowedByGrant and end-to-end at the wire (201 + token + creator
+    saw the path org_id). An org-level Viewer grant is denied — keys.manage
+    requires CapAdmin, not CapRead, locking the CapAdmin requirement
+    against the grant path. The same project-scoped grantee against a
+    foreign {org_id} is denied via ReasonDeniedCrossTenant (the cross-
+    tenant guard fires first since the scope's organization id no longer
+    matches the principal's own), proving a scoped key cannot be smuggled
+    across tenants by fabricating a path parameter.
+- Files changed: internal/controlplane/httpapi/api_keys_create_policy_test.go
+  (new), ralph/prd.json (BE-0081 passes -> true), ralph/progress.txt.
+- Verification run: gofmt -w .; go mod tidy; go vet ./...;
+  go test -count=1 ./...; go test -race -count=1 ./....
+- Results: all green. goimports/golangci-lint/staticcheck/govulncheck
+  still not installed locally (documented in earlier entries).
+- Remaining risks or follow-ups: none specific to BE-0081. The remaining
+  api-keys triplets (BE-0083/BE-0084 GET-by-id, BE-0086/BE-0087 PATCH,
+  BE-0089/BE-0090 DELETE, BE-0092/BE-0093 rotate) still need their
+  implementation + matrix pairs — each will reuse the same shared
+  scaffolding and follow the same four-test structure (role matrix,
+  disabled, cross-tenant w/ support pin, grant containment).
+- Learnings for future iterations:
+  - Both keys.read AND keys.manage are CapAdmin in catalog.go, so their
+    policy matrices are STRUCTURALLY IDENTICAL — same role allowances,
+    same denials, same cross-tenant behavior (no support exception),
+    same grant containment. Pinning both matrices independently isn't
+    redundant: it locks the catalog so a future change that downgraded
+    one but not the other would fire here.
+  - The "creator never reached" guarantee for a POST policy test is
+    structurally stronger via fakeAPIKeyCreator's captured got pointer
+    (`got *store.CreateAPIKeyInput`) than via a sentinel error: a 403
+    alone doesn't prove the creator wasn't called, but
+    got.OrganizationID == "" after the request does. The shared
+    fakeAPIKeyCreator already accepts a got pointer, so this is free —
+    future POST/mutation policy tests across the codebase should adopt
+    this pattern.
+  - The validCreateAPIKeyBody constant (`{"name":"matrix"}`) is the
+    minimal valid body the endpoint accepts. Keeping the request name a
+    short non-secret token like "matrix" lets the body-redaction
+    assertions check for a specific JSON value (`"matrix"`) and trust
+    that absence proves no field of the request reached the response —
+    a stronger guarantee than asserting any single secret is absent.
+  - This file landed BE-0081 (p1, policy matrix) directly atop BE-0079
+    (p2, implementation) following the BE-0076 -> BE-0078 pattern: the
+    p1 matrix story is always blocked on its p2 implementation, and the
+    matrix file is a near-mechanical adaptation of its sibling once the
+    p2 wire contract + shared scaffolding land. For the remaining api-key
+    triplets, the implementation story remains the real unblocker; the
+    matrix file is a tight clone.
+---
