@@ -4085,3 +4085,116 @@
     MembershipService rather than creating a new orchestrator, so
     the transaction boundaries and audit conventions stay uniform.
 ---
+
+## 2026-05-15 - BE-0072
+- What was implemented: policy-matrix coverage for PATCH
+  /v1/organizations/{org_id}/members/{member_id} — the priority-1 sibling
+  of the already-passing BE-0070 implementation. Drives the production
+  request path (real NewHandler + real policy.NewEngine() + memberIDResolver,
+  fake Authenticator + fake updater) so a regression in the middleware,
+  the action catalog, the resolver, or the engine fails here.
+  - internal/controlplane/httpapi/members_update_policy_test.go (NEW):
+    - TestUpdateMemberPolicyMatrixRoles: every built-in role against the
+      caller's own organization. Owner & Admin allow via
+      ReasonAllowedByRole — the updater is reached with both path
+      parameters (captured.OrganizationID, captured.UserID, captured.ActorID)
+      and the response carries the bumped role_version. Developer, Viewer,
+      CI, and Support all deny with 403 E_FORBIDDEN carrying
+      ReasonDeniedNoCapability — and in every deny path the updater stays
+      unreached (captured stays zero), so a probed {member_id} cannot
+      confirm whether that user belongs to the organization. Each case
+      also asserts the engine-level Decide verdict directly.
+    - TestUpdateMemberPolicyRevokedAndExpiredKeys: a Disabled principal
+      (revoked-key sa_revoked, expired-key sa_expired) over an OWNER role
+      that would otherwise allow members.manage is 403 E_FORBIDDEN
+      carrying ReasonDeniedPrincipalDisabled; the updater stays unreached
+      and the error body never echoes the principal id, organization id,
+      or member id.
+    - TestUpdateMemberPolicyWrongOrganizationPrincipal: the load-bearing
+      distinction from members.read. A non-support owner of org_attacker
+      patching org_victim is 403 ReasonDeniedCrossTenant — updater
+      unreached, no leakage. CRITICALLY: a Support principal (the one
+      that COULD have read cross-tenant) cannot manage cross-tenant —
+      both engine.Decide and the wire return 403 ReasonDeniedCrossTenant
+      because the engine's support exception is gated on
+      `required == CapRead || required == CapSupport` and CapAdmin is
+      excluded. A bonus assertion locks Support's read-only posture
+      against its own home tenant: Decide(members.manage, own org) for
+      Support = ReasonDeniedNoCapability, so a future catalog change
+      cannot silently grant Support members.manage.
+    - TestUpdateMemberPolicyGrantContainment: project-scoped Admin grant
+      writes are confined to proj_p (sibling project denied), env-scoped
+      Admin grants do not reach env_prod, service-scoped Admin grants do
+      not reach a sibling service or expose parent-level secrets via
+      env.write. For PATCH itself: project / environment / service-scoped
+      Admin grants are all denied members.manage on the org root with
+      stable ReasonDeniedOutOfScope (engine + handler — handler also
+      proves the updater never runs, the body never echoes the principal
+      id, the org id, or the member id). An organization-level ADMIN
+      grant IS allowed via ReasonAllowedByGrant and the wire returns 200
+      with the bumped role_version reaching the updater on both path
+      parameters; an organization-level VIEWER grant is NOT enough,
+      locking the CapAdmin requirement so a future catalog change cannot
+      silently downgrade members.manage to a read-level capability.
+      Finally a foreign {org_id} for the project-scoped key is still
+      denied with ReasonDeniedCrossTenant.
+- Files changed:
+  - internal/controlplane/httpapi/members_update_policy_test.go (NEW)
+  - ralph/prd.json (BE-0072 passes=true)
+  - ralph/progress.txt (this entry)
+- Verification run: gofmt -w .; go mod tidy; go vet ./...; go test ./...;
+  go test -race ./...; plus the Postgres-backed integration tests with
+  YALLA_TEST_DATABASE_URL=postgres://yalla:yalla@127.0.0.1:5432/yalla
+  for ./internal/controlplane/store/... and store/migrate/....
+- Results: all passed. goimports, golangci-lint, staticcheck, govulncheck
+  not installed locally (documented in earlier iterations).
+- Remaining risks / follow-ups:
+  - The endpoint triplet for the single-member PATCH route is now
+    complete: BE-0070 (impl), BE-0071 (contract — much of it already
+    covered inline by members_update_test.go but still its own PRD
+    story), BE-0072 (policy matrix — this iteration). Next priority-1
+    membership policy-matrix story is BE-0075 (DELETE).
+  - "Record an audit event for every mutating request and every denied
+    authorization decision": the mutating-request half is satisfied at
+    the store layer; denied-decision auditing at the RequireAuth layer
+    is still unwired across every endpoint (cross-cutting follow-up).
+  - "Integration tests run against isolated Postgres migrations": done
+    via testutil.RequireMigratedDB(t) on every Postgres-touching test;
+    tests t.Skip when YALLA_TEST_DATABASE_URL is unset, so the no-DB
+    go test ./... stays green.
+- Learnings for future iterations:
+  - The CapRead vs CapAdmin policy split is THE critical wedge between
+    a read endpoint's policy matrix and a manage endpoint's matrix on
+    the same resource. For CapRead actions the matrix is "all six
+    built-in roles allow within own org, support allows cross-tenant";
+    for CapAdmin actions the matrix is "only Owner and Admin allow,
+    Support is denied within its own org AND cross-tenant, no support
+    exception applies". Always pin BOTH the engine verdict and the
+    wire outcome for the support-cross-tenant case on a CapAdmin
+    matrix — that exact case is what differentiates the manage matrix
+    from the read matrix at a glance, and a regression that broadened
+    the engine's support exception (e.g. dropping the
+    `required == CapRead || required == CapSupport` guard) would
+    silently grant Support write authority.
+  - For grant-containment on a CapAdmin endpoint, the org-level grant
+    test should use the ADMIN role (capable) AND assert that a
+    VIEWER-level org grant is NOT enough. Without the negative
+    assertion, a regression that relaxed members.manage's required
+    capability from CapAdmin to CapRead would still pass the positive
+    org-grant assertion. The pair (admin allows, viewer denies)
+    locks the requirement against catalog drift.
+  - fakeMembershipUpdater's `got *store.UpdateMembershipInput` is the
+    right "was the updater reached" instrumentation: a deny path
+    asserts `captured.OrganizationID == "" && captured.UserID == ""`,
+    an allow path asserts the captured fields equal the path
+    parameters AND captured.ActorID equals the authenticated principal.
+    Reuse it; do not introduce a new fake.
+  - The memberIDResolver scopes policy.Resource to organization root
+    with Kind=KindUser. Its scope shape is identical to
+    organizationIDResolver (only OrganizationID set), so grant
+    containment for this route follows the same "project/env/svc grant
+    cannot widen to org root" rule. The Kind difference is irrelevant
+    to the engine — only Scope drives the verdict — but mirroring
+    KindUser in direct Decide assertions keeps the test honest about
+    what the production resolver emits.
+---
