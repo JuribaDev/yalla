@@ -225,11 +225,11 @@ func (r *ProjectReader) GetProject(ctx context.Context, organizationID, projectI
 // organization repository: a nil pointer disables the check (next-write-wins
 // behaviour), a non-nil pointer adds a WHERE clause on the row's current
 // version, and a stale view is reported as a typed apierr.ConflictStale
-// carrying the row's authoritative version. The HTTP layer that will
-// eventually expose PATCH /v1/.../projects/{project_id} fills it from the
-// request's If-Match header; until then, this method exists so the
-// optimistic-concurrency contract can be exercised against the projects
-// table at the persistence layer.
+// carrying the row's authoritative version. The HTTP layer that exposes
+// PATCH /v1/projects/{project_id} fills it from the request's If-Match
+// header; this method exists so the optimistic-concurrency contract can be
+// exercised against the projects table at the persistence layer in
+// isolation from the full Update path.
 func (r *ProjectRepository) UpdateDisplayName(ctx context.Context, tx *Tx, organizationID, projectID, displayName string, ifMatchVersion *int64) (Project, error) {
 	if tx == nil {
 		return Project{}, apierr.Internal(errors.New("store: ProjectRepository.UpdateDisplayName called with a nil transaction"))
@@ -255,14 +255,74 @@ func (r *ProjectRepository) UpdateDisplayName(ctx context.Context, tx *Tx, organ
 		if ifMatchVersion == nil {
 			return Project{}, apierr.NotFound("project", projectID)
 		}
-		current, getErr := r.Get(ctx, tx, organizationID, projectID)
-		if getErr != nil {
-			return Project{}, getErr
-		}
-		return Project{}, apierr.ConflictStale(current.Version)
+		return Project{}, classifyProjectConcurrencyMiss(ctx, r, tx, organizationID, projectID)
 	}
 	if err != nil {
 		return Project{}, mapWriteError(err, "a project with this slug already exists in the organization")
 	}
 	return updated, nil
+}
+
+// Update writes new slug and display_name values for the project identified
+// by (p.OrganizationID, p.ID) inside tx and returns the persisted row,
+// including the trigger-refreshed updated_at timestamp and bumped version.
+// It requires a *Tx — not a bare Querier — so a project can never be
+// mutated outside the transaction that also carries its authorization,
+// quota, audit, and provisioning checks. The query is tenant scoped by
+// organization_id first, so a projectID that belongs to another organization
+// simply does not match and is reported as NotFound — a cross-tenant id can
+// never reveal another organization's data.
+//
+// ifMatchVersion enforces optimistic concurrency identically to the
+// organization repository: a nil pointer disables the check (next-write-wins
+// behaviour), a non-nil pointer adds a WHERE clause on the row's current
+// version, and a stale view is reported as a typed apierr.ConflictStale
+// carrying the row's authoritative version. A slug that collides with
+// another project in the same organization is reported as a typed Conflict.
+func (r *ProjectRepository) Update(ctx context.Context, tx *Tx, p Project, ifMatchVersion *int64) (Project, error) {
+	if tx == nil {
+		return Project{}, apierr.Internal(errors.New("store: ProjectRepository.Update called with a nil transaction"))
+	}
+	var row pgx.Row
+	if ifMatchVersion == nil {
+		row = tx.QueryRow(ctx,
+			`UPDATE projects
+			    SET slug = $3, display_name = $4
+			  WHERE organization_id = $1 AND id = $2
+			 RETURNING `+projectColumns,
+			p.OrganizationID, p.ID, p.Slug, p.DisplayName)
+	} else {
+		row = tx.QueryRow(ctx,
+			`UPDATE projects
+			    SET slug = $3, display_name = $4
+			  WHERE organization_id = $1 AND id = $2 AND version = $5
+			 RETURNING `+projectColumns,
+			p.OrganizationID, p.ID, p.Slug, p.DisplayName, *ifMatchVersion)
+	}
+	updated, err := scanProject(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if ifMatchVersion == nil {
+			return Project{}, apierr.NotFound("project", p.ID)
+		}
+		return Project{}, classifyProjectConcurrencyMiss(ctx, r, tx, p.OrganizationID, p.ID)
+	}
+	if err != nil {
+		return Project{}, mapWriteError(err, "a project with this slug already exists in the organization")
+	}
+	return updated, nil
+}
+
+// classifyProjectConcurrencyMiss disambiguates the two reasons a
+// version-checked UPDATE matched no rows: the project was deleted (rare,
+// and reported as NotFound for parity with the unchecked path) or the
+// caller's view of the version is stale (reported as ConflictStale with the
+// row's current version). It runs inside the same transaction so the
+// disambiguation is consistent with the failed UPDATE. The query is tenant
+// scoped, so a cross-tenant id is still reported as NotFound.
+func classifyProjectConcurrencyMiss(ctx context.Context, r *ProjectRepository, tx *Tx, organizationID, projectID string) error {
+	current, getErr := r.Get(ctx, tx, organizationID, projectID)
+	if getErr != nil {
+		return getErr
+	}
+	return apierr.ConflictStale(current.Version)
 }

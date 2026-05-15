@@ -169,15 +169,54 @@ Adding a port parameter to `NewHandler` breaks every test call site — `grep`
 for `NewHandler(` and `newRouteTable(` across `*_test.go` and add the new fake
 (`fakeOrganization{Reader,Creator,Updater,Deleter}{}`,
 `fakeMembership{Reader,Creator,Updater,Remover}{}`, `fakeAPIKeyReader{}`,
-`fakeProjectReader{}`, `fakeProjectCreator{}`) in one pass. The
+`fakeProjectReader{}`, `fakeProjectCreator{}`, `fakeProjectUpdater{}`) in one
+pass. The
 `projects_test.go` `listProjectsHandlerFor` helper passes a named `reader`
 parameter rather than a literal `fakeProjectReader{}`, so a regex pass on the
-literal misses it — patch it by hand. Two call-site shapes coexist: single-line
-`..., fakeAPIKeyRotator{}, nil)` (most files) and multi-line where the last
-fake is on one line and `nil)` or `logger)` is on the next (audit_events,
-limits, usage, variables) — a single-line sed catches only the first; the
-second needs a multi-line pass (awk/python) or manual edits. The N-nil
+literal misses it — patch it by hand. Same gotcha for the
+`createXHandlerFor` / `updateXHandlerFor` helpers (named `creator`, `updater`,
+`deleter`, etc.) — grep for `fakeProjectReader{}` to find them. Two
+call-site shapes coexist: single-line `..., fakeAPIKeyRotator{}, nil)`
+(most files) and multi-line where the last fake is on one line and `nil)`
+or `logger)` is on the next (audit_events, limits, usage, variables,
+projects_create_test.go's createProjectHandlerFor) — a single-line sed
+catches only the first; the second needs a multi-line pass (awk/python) or
+manual edits. `Edit` with `replace_all=true` on the unique anchor
+`fakeProjectCreator{}, nil)` / `fakeProjectCreator{}, logger)` covers ~25
+files in one parallel batch; the named-param helpers need their own
+anchor. The N-nil
 `newRouteTable` test stubs in `routes_test.go`, `server_test.go`,
-`variables_*_test.go`, `limits_patch_test.go` need a parallel bump.
+`variables_*_test.go`, `limits_patch_test.go`, `projects_create_test.go`
+need a parallel bump (one more `nil` appended each time).
 Registering a `RequiresAuth` route with a nil authenticator/engine panics at
 startup — a wiring error, never a runtime 500.
+
+## Partial-update endpoints (PATCH /v1/<resource>/{resource_id})
+
+The handler stays thin: read principal, parse If-Match through the existing
+`parseIfMatchVersion(r)`, strict-decode the body through `validate.DecodeJSON`,
+call the writer port, mirror the returned version into `ETag` via
+`writeOrganizationETag(w, row.Version)` (the helper's body is generic — it
+just writes the int64 — despite the historical name), render through
+`apienvelope.WriteData` with `http.StatusOK`. The request DTO exposes only
+the partially-updatable fields as `*string` (nil = field omitted, leave
+unchanged); the strict JSON decoder rejects an unknown `organization_id`
+field as a stable 400 `E_INVALID_INPUT`, so tenant isolation is structural
+— the handler always builds the store input from `principal.OrganizationID`
+and the path id, never from the body. The store-layer orchestrator (e.g.
+`store.ProjectService.Update`) validates everything BEFORE opening the
+transaction (a split-out `buildXUpdate` + `validateXDisplayName` is
+unit-testable without a DB and rejects an empty patch with the canonical
+"at least one of X or Y must be provided" violation), then in one
+`Store.Write` tx Gets the current row, pre-checks `current.Version` against
+`*IfMatchVersion` (returns `apierr.ConflictStale(current.Version)` on
+mismatch — surfaces the right row even when the patch happens to not
+differ), applies the non-nil fields, calls the repository `Update` with the
+same `IfMatchVersion`, and appends the audit event with
+`Metadata={"updated_fields": "slug,display_name"}` — stable wire names
+only, never the submitted values. The repository `Update` is `*Tx`-only,
+tenant scoped, and on a version-checked UPDATE matching zero rows uses a
+tenant-scoped `Get` inside the same tx to disambiguate "row gone"
+(NotFound) from "row stale" (ConflictStale carrying the row's current
+version) — copy `classifyOrganizationConcurrencyMiss` /
+`classifyProjectConcurrencyMiss` verbatim for new resources.

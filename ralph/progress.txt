@@ -59,6 +59,7 @@
 - Audit-event listing in tests: store.AuditRepository.ListByOrganization is ORDER BY occurred_at DESC, id DESC — events[0] is the NEWEST event. A test that reads events[len-1] gets the OLDEST event, which in a "seed then mutate" fixture is the seed event (with seed metadata), NOT the mutation under test. A test that probes the post-mutation state through ANOTHER mutation (e.g. a second Replace to verify the deleted row is gone) files yet another audit event and pushes the mutation-under-test to events[1] — so audit assertions must run BEFORE any further state-changing call, and post-state probes must read directly through the repository (NewOrganizationVariableRepository().ListByOrganization), NOT through another service-level mutation.
 - Deep-resource resolver pattern (BE-0124, GET /v1/projects/{project_id}, internal/controlplane/httpapi/projects.go projectIDResolver): when an endpoint targets a resource named in the path but the path has NO org_id segment (sub-organization endpoints like /v1/projects/{project_id}, future /v1/.../environments/{environment_id}, /v1/.../services/{service_id}), the ResourceResolver pulls the principal's home OrganizationID from the request context with policy.PrincipalFromContext(r.Context()) — RequireAuth attaches the principal BEFORE invoking the resolver, so the context already carries it even though the ResourceResolver signature is func(r *http.Request) policy.Resource. The resolver returns Scope{OrganizationID: principal.HomeOrg, ProjectID: r.PathValue("project_id"), Kind: domain.KindProject}; do NOT look up the resource's real org from the database inside the resolver (keep the resolver pure path+context, no I/O). The policy engine then authorizes against the principal's own home org root combined with the path id, so a project/environment/service-scoped grant for THAT resource (containment match) authorizes via ReasonAllowedByGrant while a grant for a SIBLING resource fails the engine's covers() check; cross-tenant project_ids reach the tenant-scoped repository query with the principal's home org and surface as a deterministic 404 (E_NOT_FOUND) from the persistence layer, NOT a 403 from policy — which is acceptable per the acceptance criteria ("cross-tenant IDs must behave as not found or forbidden"). The Support principal's cross-tenant read capability does NOT apply through this endpoint because the resource scope is pinned to the principal's home org, not the path's tenant; support cross-tenant reads remain available through endpoints whose path DOES carry an {org_id} (organizationIDResolver). PATCH/DELETE on the same resource adopt the same resolver — handlers should call PathValue and use principal.OrganizationID for the store call, never trust a caller-supplied org id. The canonical regression check is TestGetProjectCrossTenantIDBehavesAsNotFound (the response body must not echo a foreign organization id either).
 - Reader-port extension pattern (BE-0124): when a new endpoint on the same resource family lands (e.g. GET /v1/projects/{project_id} alongside GET /v1/projects), extend the existing reader port in place rather than declaring a parallel sibling interface — ProjectReader now has BOTH ListProjects and GetProject; OrganizationReader has GetOrganization and is used by both list and by-id endpoints. The fakeFooReader in the *_test.go is similarly extended in place (added project/getErr/gotGetOrgID/gotGetProjectID fields on fakeProjectReader for the by-id tests); the zero value of the extended fake still works for every prior call site (the other test files / suites that never reach the handler) so no cross-test churn is needed. The store-backed adapter pattern stays the same: *Reader composes *Repository (never re-issues SQL), each new method opens its own short-lived Store.Read tx and delegates to an existing Querier-accepting repository method, inheriting that method's tenant-scoping guarantees for free. Auth-error sentinel naming gotcha: the auth package exports the PLURAL form (auth.ErrInvalidCredentials, auth.ErrNoCredentials) — singular forms do not exist; tests that exercise the invalid-credential path must use the plural names to match the writeAuthError errors.Is dispatch.
+- Deep-resource PATCH pattern (BE-0127, PATCH /v1/projects/{project_id}, internal/controlplane/httpapi/projects.go updateProjectHandler): sub-organization PATCH endpoints reuse the deep-resource resolver (projectIDResolver) to authorize against the (principal home organization, {project_id}) resource the path names — same resolver, same RequiredAction (policy.ActionProjectUpdate), and the store call is built from principal.OrganizationID and r.PathValue("project_id"), NEVER from the request body. The request DTO exposes ONLY the partially-updatable fields (Slug *string, DisplayName *string); the strict JSON decoder rejects an unknown organization_id field as a stable 400 E_INVALID_INPUT, so a body-injected org_id can never reach the store layer. Optimistic concurrency is bolted on by reading the optional If-Match header through the existing parseIfMatchVersion (the same parser organizations PATCH/DELETE already uses, accepting `"<n>"` strong ETag and the lenient unquoted form), forwarding the *int64 to the store as IfMatchVersion, and mirroring the returned row's authoritative version back into the ETag response header on success via writeOrganizationETag — the helper is generic in body despite the historical name, so the same call shape works for projects, future environments, services, etc. The handler stays thin: read principal, parse If-Match, validate.DecodeJSON, call port, render. The orchestrator (ProjectService.Update) follows the OrganizationService.Update shape exactly: validate input BEFORE opening the tx (buildProjectUpdate + validateProjectDisplayName are split out, unit-testable without a DB, and reject an empty patch as 400 InvalidInput), then in ONE Store.Write tx Get current, version pre-check (current.Version != *IfMatchVersion -> apierr.ConflictStale(current.Version)), apply non-nil fields, repo.Update(tx, desired, IfMatchVersion), audit.Append — a denial at any step rolls every other step back, so a row mutation and its audit record commit together or not at all. The store layer files the audit event under the actor's home organization with Metadata={"updated_fields": "slug,display_name"} — stable wire field names only, never the submitted values, so the audit trail records the SHAPE of the mutation without leaking input. classifyProjectConcurrencyMiss mirrors classifyOrganizationConcurrencyMiss: on the version-checked UPDATE matching zero rows, a tenant-scoped Get inside the same tx disambiguates "row gone" (NotFound) from "row stale" (ConflictStale carrying the row's current version) — the Get itself is tenant scoped, so a cross-tenant id still surfaces as NotFound and cannot reveal another tenant's data. Pre-existing test failures gotcha: TestAPIKeyServiceCreate* and TestOrganizationVariableServicePatch* fail on HEAD due to unrelated pre-existing issues with the testutil.Factory's id/slug formats vs the production-grade ParseSlug validator; verified by stashing the BE-0127 change and reproducing the failures on the base commit. These are NOT caused by BE-0127 and are out of scope.
 
 ## 2026-05-15 - BE-0103
 - What was implemented: GET /v1/organizations/{org_id}/audit-events, the
@@ -9192,4 +9193,121 @@
     against that code, and assert the foreign tenant's org id does
     not appear in env.Error.Message (the persistence layer must
     redact foreign identity even when the request body is empty).
+---
+
+## 2026-05-15 - BE-0127
+- What was implemented: PATCH /v1/projects/{project_id}, the partial-update
+  endpoint for projects through the Yalla control-plane API. The store-layer
+  orchestrator commits desired-state and the immutable audit record in one
+  transaction; the HTTP layer is thin and threads the principal's home
+  organization + path project_id into the store, never trusting a
+  caller-supplied org id.
+  - internal/controlplane/store/project.go: added ProjectRepository.Update
+    (slug + display_name, tenant scoped, *Tx-only mutation, optimistic
+    concurrency via ifMatchVersion *int64) and classifyProjectConcurrencyMiss
+    (disambiguate gone vs stale on the version-checked UPDATE returning zero
+    rows — runs inside the same tx so the disambiguation is consistent with
+    the failed UPDATE). Refactored existing UpdateDisplayName to share the
+    classifier so a future caller cannot regress the disambiguation path.
+  - internal/controlplane/store/projectservice.go: added UpdateProjectInput
+    (OrganizationID, ProjectID, *Slug, *DisplayName, *IfMatchVersion,
+    Actor*, RequestID, CorrelationID), ProjectService.Update orchestrator,
+    buildProjectUpdate validator (split out + unit-testable, rejects empty
+    patches as 400 InvalidInput), validateProjectDisplayName (mirrors
+    organization display-name rules: blank, UTF-8, control chars, max length).
+    Added project.update action constant and projectDisplayNameMaxLen.
+  - internal/controlplane/store/project_test.go: 4 new integration tests —
+    TestProjectRepositoryUpdateRejectsNilTx (nil-tx structural guard),
+    TestProjectRepositoryUpdateApplies (slug+display_name commit + trigger
+    version bump), TestProjectRepositoryUpdateNotFoundIsTenantScoped
+    (cross-tenant id surfaces as NotFound, never another tenant's row),
+    TestProjectRepositoryUpdateStaleVersion (ConflictStale carries
+    current_version under Details), and TestProjectRepositoryUpdateDuplicateSlugConflict
+    (UNIQUE (organization_id, slug) is authoritative on Update).
+  - internal/controlplane/store/projectservice_test.go: 5 new integration
+    tests covering the service orchestrator — TestProjectServiceUpdateSuccess
+    (the row mutates AND the audit event commits in one tx, metadata records
+    "updated_fields"=slug,display_name without leaking values),
+    TestProjectServiceUpdateRejectsEmptyPatch (validation runs before tx is
+    opened), TestProjectServiceUpdateNotFound, TestProjectServiceUpdateStaleIfMatch
+    (audit count is unchanged on stale rejection — no orphaned audit row),
+    TestProjectServiceUpdateInvalidSlug (validation rejects before tx).
+  - internal/controlplane/httpapi/projects.go: added ProjectUpdater port,
+    updateProjectRequest DTO (*string Slug/DisplayName, NO organization_id),
+    updateProjectPayload, updateProjectHandler — reuses parseIfMatchVersion +
+    writeOrganizationETag (the helper is body-generic; future endpoints can
+    use it as-is or rename the helper later). The handler stays thin: read
+    principal, parse If-Match, strict DecodeJSON, call port, write ETag,
+    render.
+  - internal/controlplane/httpapi/routes.go: added the PATCH /v1/projects/{project_id}
+    apiRoute with RequiredAction=policy.ActionProjectUpdate and
+    resolver=projectIDResolver (same deep-resource resolver the GET-by-id
+    endpoint uses). Extended newRouteTable signature with projectUpdater
+    ProjectUpdater parameter; updated the doc comment.
+  - internal/controlplane/httpapi/server.go: extended NewHandler signature
+    with projectUpdater ProjectUpdater (passed through to newRouteTable).
+  - cmd/yalla-api/main.go: wired projectService as the projectUpdater (the
+    same store.ProjectService that already backs the creator implements
+    Update too — one orchestrator, two ports).
+  - internal/controlplane/httpapi/projects_update_test.go (new): 8 contract
+    tests in package httpapi driving the real NewHandler + real policy.NewEngine()
+    (fake Authenticator + fake ProjectUpdater) — happy-path forwarding
+    (org_id from principal, project_id from path, both Slug and DisplayName
+    threaded as *string, ETag mirrors version), If-Match parsing (absent,
+    strong, unquoted-lenient, whitespace-stripped), stale-version 409 with
+    details.current_version, body-injected organization_id rejection,
+    malformed JSON, NotFound, missing-credentials 401, invalid If-Match
+    matrix (weak ETag, wildcard, multi-value, non-numeric, zero). Added a
+    decodedProjectErrorEnvelope alongside the package-level errorEnvelope
+    because the central decodeError doesn't expose the Hint/Details fields
+    a concurrency-aware test needs (same pattern as decodeOrganizationError
+    in organizations_concurrency_test.go).
+  - 27 test files across httpapi/: extended each NewHandler call site with
+    fakeProjectUpdater{} just after fakeProjectCreator{} (the new arg slot).
+    7 files with raw newRouteTable(BuildInfo{}, nil...) call sites had one
+    more nil appended. fakeProjectUpdater itself lives in the new
+    projects_update_test.go alongside its contract tests.
+- Verification run: gofmt -w ., goimports (not installed; documented),
+  go mod tidy, go vet ./... (clean), go build ./... (clean), go test
+  ./internal/controlplane/httpapi/... -count=1 (PASS), go test -race
+  -count=1 -run "TestUpdateProject|TestProjectRepository|TestProjectService"
+  ./internal/controlplane/httpapi/... ./internal/controlplane/store/... (PASS
+  with race), go test ./... (BE-0127 tests all PASS; pre-existing failures in
+  TestAPIKeyServiceCreate* and TestOrganizationVariableServicePatch* on HEAD
+  are confirmed unrelated — reproduced by stashing the BE-0127 change).
+- Remaining risks / follow-ups:
+  - writeOrganizationETag's name is misleading now that two resource families
+    use it; a future incidental refactor could rename to writeETag without
+    changing behaviour. Skipped here per "do not refactor beyond the task".
+  - The pre-existing TestAPIKeyServiceCreate* / TestOrganizationVariableServicePatch*
+    failures should be addressed by a future story; they appear to be
+    testutil.Factory slug/id format vs domain.ParseSlug/ParseID format drift.
+- Learnings for future iterations:
+  - When extending the NewHandler signature, batch the test-file updates as
+    a single message with many parallel Edit tool uses (replace_all=true).
+    The unique anchor `fakeProjectCreator{}, nil)` / `fakeProjectCreator{}, logger)`
+    works for most call sites; named-parameter helpers (`creator, nil)`,
+    `updater, nil)`, etc.) need their own anchor. Always grep for the
+    `fakeProjectReader{}` anchor too, because the named-param wrappers
+    follow it.
+  - The 25-nil `newRouteTable(BuildInfo{}, nil, ...)` raw-args pattern in 7
+    test files is a maintenance smell. A helper `newEmptyRouteTable(t)` would
+    let the signature evolve without churning every file. Out of scope here,
+    but worth a small future refactor.
+  - For partial-update endpoints, the buildXUpdate helper (organization,
+    project) is the same shape every time: detect nil fields, push field
+    names onto `fields` for the audit metadata, validate non-nil values
+    with apierr.FieldViolation, error on empty-patch with a stable "at
+    least one of X or Y must be provided" violation. Future endpoints
+    (environment.update, service.update) should copy this shape and the
+    `change.fields = append(change.fields, "...")` audit-metadata pattern
+    verbatim.
+  - testutil.Factory.Project's slug is `f.slug(label, "project", n)` —
+    NOT literally the label. A test that needs the existing slug to assert
+    a duplicate-slug conflict must capture the inserted row's Slug field,
+    not assume the label is the slug.
+  - parseIfMatchVersion + writeOrganizationETag in organizations.go are
+    already generic in body — they care only about a version int64, not
+    the resource kind. New endpoints can call them directly. A future
+    rename (writeETag) would clarify the contract.
 ---

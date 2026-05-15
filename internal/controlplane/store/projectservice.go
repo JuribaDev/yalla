@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
 	"github.com/JuribaDev/yalla/internal/controlplane/domain"
@@ -47,8 +48,13 @@ type JobEnqueuer interface {
 // the port interfaces above.
 const (
 	projectCreateAction  = "project.create"
+	projectUpdateAction  = "project.update"
 	projectProvisionJob  = "project.provision"
 	projectQuotaResource = "projects"
+	// projectDisplayNameMaxLen bounds a human-authored project display name,
+	// in runes. It mirrors the organization display-name bound and exists so
+	// an unbounded string can never reach the database.
+	projectDisplayNameMaxLen = 200
 )
 
 // CreateProjectInput is the unvalidated input to ProjectService.Create.
@@ -64,6 +70,39 @@ type CreateProjectInput struct {
 	ProjectID      string
 	Slug           string
 	DisplayName    string
+	ActorID        string
+	ActorKind      string
+	ActorOrgID     string
+	RequestID      string
+	CorrelationID  string
+}
+
+// UpdateProjectInput is the unvalidated input to ProjectService.Update.
+// OrganizationID identifies the tenant the project belongs to; ProjectID
+// names the project to update. Slug and DisplayName are optional: a nil
+// pointer means the caller did not include the field and it is left
+// unchanged, which is what makes the operation a partial update. The
+// Actor* and correlation fields describe the authenticated principal
+// performing the update and are recorded verbatim on the audit event. They
+// are plain strings so the store layer takes no build dependency on the
+// policy or telemetry packages — the httpapi handler, which already holds
+// the resolved principal and the request correlation, fills them in.
+//
+// IfMatchVersion is the optional optimistic-concurrency precondition: when
+// non-nil, the update succeeds only if the row's current version equals
+// *IfMatchVersion at write time, otherwise it returns a typed
+// apierr.ConflictStale carrying the row's authoritative version. The httpapi
+// layer fills it from the request's If-Match header. A nil pointer disables
+// the check (next-write-wins, the legacy behaviour). The pointer indirection
+// is deliberate: it distinguishes "caller did not supply a precondition"
+// from "caller supplied version 0", which is impossible by schema CHECK and
+// must not silently behave like the unchecked path.
+type UpdateProjectInput struct {
+	OrganizationID string
+	ProjectID      string
+	Slug           *string
+	DisplayName    *string
+	IfMatchVersion *int64
 	ActorID        string
 	ActorKind      string
 	ActorOrgID     string
@@ -177,6 +216,116 @@ func (svc *ProjectService) Create(ctx context.Context, in CreateProjectInput) (P
 	return created, nil
 }
 
+// Update validates in, then runs the update-project unit of work inside one
+// transaction: read the current row, optionally enforce the If-Match
+// precondition, apply the caller-supplied fields, write the row back,
+// append the immutable audit record. Validation of every supplied field
+// runs before the transaction is opened, so an invalid request never
+// touches the database. A patch that names no updatable field is itself a
+// validation failure — a mutation that changes nothing is a client error,
+// not a silent success. A blank OrganizationID/ProjectID is a typed
+// validation failure raised before the transaction is opened. The
+// repository is tenant scoped: a cross-tenant {project_id} reaches the
+// persistence layer with the principal's home organization id and is
+// reported as a typed apierr.NotFound, never another tenant's row. A slug
+// that collides with another project in the same organization rolls the
+// whole transaction back as a typed Conflict, so a duplicate project and
+// an orphaned audit record are both impossible.
+//
+// Authorization for project.update is enforced at the HTTP boundary by
+// RequireAuth against the (home organization, project_id) resource the
+// path names — the store layer never runs an in-transaction Authorize for
+// the update path because the HTTP gate is authoritative and the
+// in-transaction Authorizer is reserved for Create (the create-time race
+// against grant changes during a quota reservation).
+func (svc *ProjectService) Update(ctx context.Context, in UpdateProjectInput) (Project, error) {
+	organizationID := strings.TrimSpace(in.OrganizationID)
+	if organizationID == "" {
+		return Project{}, apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "organization_id",
+			Reason: "must not be blank",
+		})
+	}
+	projectID := strings.TrimSpace(in.ProjectID)
+	if projectID == "" {
+		return Project{}, apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "project_id",
+			Reason: "must not be blank",
+		})
+	}
+
+	change, err := buildProjectUpdate(in)
+	if err != nil {
+		return Project{}, err
+	}
+
+	// The audit record is filed under the actor's home organization — the
+	// tenant the principal authenticated into — while its resource id names
+	// the project that was updated. A missing actor organization is a
+	// wiring error (an authenticated request always carries one), not
+	// client input, so it is reported as Internal rather than a validation
+	// failure.
+	actorOrgID := strings.TrimSpace(in.ActorOrgID)
+	if actorOrgID == "" {
+		return Project{}, apierr.Internal(errors.New("store: ProjectService.Update requires an actor organization for the audit record"))
+	}
+
+	event := AuditEvent{
+		OrganizationID: actorOrgID,
+		ActorID:        strings.TrimSpace(in.ActorID),
+		ActorKind:      strings.TrimSpace(in.ActorKind),
+		Action:         projectUpdateAction,
+		ResourceKind:   string(domain.KindProject),
+		ResourceID:     projectID,
+		Decision:       AuditDecisionAllowed,
+		Reason:         "authorization granted for project.update",
+		RequestID:      strings.TrimSpace(in.RequestID),
+		CorrelationID:  strings.TrimSpace(in.CorrelationID),
+		// updated_fields names which fields the patch changed — stable wire
+		// names, never the submitted values — so the audit trail records
+		// the shape of the mutation without carrying any input verbatim.
+		Metadata: map[string]string{"updated_fields": strings.Join(change.fields, ",")},
+	}
+
+	var updated Project
+	txErr := svc.store.Write(ctx, func(ctx context.Context, tx *Tx) error {
+		current, getErr := svc.repo.Get(ctx, tx, organizationID, projectID)
+		if getErr != nil {
+			return getErr
+		}
+		// A pre-check before the write surfaces the stale-version conflict
+		// against the row the caller actually targets — even when no other
+		// field on the patch happens to differ from the current row, in
+		// which case the version-checked UPDATE would itself succeed
+		// trivially without the trigger needing to fire. The repository
+		// still re-checks the version under WHERE so a concurrent writer
+		// landing between the read and the write is also rejected.
+		if in.IfMatchVersion != nil && current.Version != *in.IfMatchVersion {
+			return apierr.ConflictStale(current.Version)
+		}
+		desired := current
+		if change.slug != nil {
+			desired.Slug = *change.slug
+		}
+		if change.displayName != nil {
+			desired.DisplayName = *change.displayName
+		}
+		row, updErr := svc.repo.Update(ctx, tx, desired, in.IfMatchVersion)
+		if updErr != nil {
+			return updErr
+		}
+		if _, audErr := svc.audit.Append(ctx, tx, event); audErr != nil {
+			return audErr
+		}
+		updated = row
+		return nil
+	})
+	if txErr != nil {
+		return Project{}, txErr
+	}
+	return updated, nil
+}
+
 // validateCreateProjectInput checks in and returns the Project row it would
 // persist. It is split out from Create so the validation rules are unit
 // testable without a database, and so an invalid request is rejected before a
@@ -227,4 +376,84 @@ func validateCreateProjectInput(in CreateProjectInput) (Project, error) {
 		Slug:           slug.String(),
 		DisplayName:    displayName,
 	}, nil
+}
+
+// projectUpdate is the validated, normalised form of an UpdateProjectInput:
+// the fields the caller asked to change, already parsed and trimmed. A nil
+// pointer means "leave this field unchanged". fields lists the stable wire
+// names of every field present in the patch, in declaration order, for the
+// audit record.
+type projectUpdate struct {
+	slug        *string
+	displayName *string
+	fields      []string
+}
+
+// buildProjectUpdate validates the caller-supplied fields of in and returns
+// the normalised patch. It is split out from Update so the validation rules
+// are unit testable without a database, and so an invalid request is
+// rejected before a transaction is ever opened. A patch that names no
+// updatable field is itself a validation failure. On failure it returns a
+// typed apierr.InvalidInput carrying stable field paths — never the
+// submitted values.
+func buildProjectUpdate(in UpdateProjectInput) (projectUpdate, error) {
+	var (
+		change     projectUpdate
+		violations []apierr.FieldViolation
+	)
+
+	if in.Slug != nil {
+		change.fields = append(change.fields, "slug")
+		slug, slugErr := domain.ParseSlug(*in.Slug)
+		if slugErr != nil {
+			violations = append(violations, apierr.FieldViolation{
+				Field:  "slug",
+				Reason: "must be a canonical slug",
+			})
+		} else {
+			normalized := slug.String()
+			change.slug = &normalized
+		}
+	}
+
+	if in.DisplayName != nil {
+		change.fields = append(change.fields, "display_name")
+		displayName, dnViolation := validateProjectDisplayName(*in.DisplayName)
+		if dnViolation != nil {
+			violations = append(violations, *dnViolation)
+		} else {
+			change.displayName = &displayName
+		}
+	}
+
+	if len(change.fields) == 0 {
+		violations = append(violations, apierr.FieldViolation{
+			Field:  "slug",
+			Reason: "at least one of slug or display_name must be provided",
+		})
+	}
+
+	if len(violations) > 0 {
+		return projectUpdate{}, apierr.InvalidInput(violations...)
+	}
+	return change, nil
+}
+
+// validateProjectDisplayName trims and validates a human-authored project
+// display name. It returns the trimmed value and a nil violation when the
+// name is acceptable, or the zero value and a typed FieldViolation naming
+// the display_name field — never the submitted value — otherwise.
+func validateProjectDisplayName(raw string) (string, *apierr.FieldViolation) {
+	displayName := strings.TrimSpace(raw)
+	switch {
+	case displayName == "":
+		return "", &apierr.FieldViolation{Field: "display_name", Reason: "must not be blank"}
+	case !utf8.ValidString(displayName):
+		return "", &apierr.FieldViolation{Field: "display_name", Reason: "must be valid UTF-8"}
+	case containsControlRune(displayName):
+		return "", &apierr.FieldViolation{Field: "display_name", Reason: "must not contain control characters"}
+	case utf8.RuneCountInString(displayName) > projectDisplayNameMaxLen:
+		return "", &apierr.FieldViolation{Field: "display_name", Reason: "exceeds the maximum length"}
+	}
+	return displayName, nil
 }

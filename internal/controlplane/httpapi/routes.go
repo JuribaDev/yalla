@@ -102,12 +102,13 @@ type versionPayload struct {
 // /v1/organizations/{org_id}/api-keys, apiKeyUpdater backs PATCH
 // /v1/organizations/{org_id}/api-keys/{key_id}, apiKeyRevoker backs
 // DELETE /v1/organizations/{org_id}/api-keys/{key_id}, and apiKeyRotator
-// backs POST /v1/organizations/{org_id}/api-keys/{key_id}/rotate. Any may
-// be nil for tests and tooling that only inspect the route table's
-// metadata; a request that actually reaches a handler with a nil dependency
-// is reported as a typed internal error rather than a misleading empty list
-// or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator) []apiRoute {
+// backs POST /v1/organizations/{org_id}/api-keys/{key_id}/rotate.
+// projectCreator backs POST /v1/projects and projectUpdater backs PATCH
+// /v1/projects/{project_id}. Any may be nil for tests and tooling that
+// only inspect the route table's metadata; a request that actually
+// reaches a handler with a nil dependency is reported as a typed internal
+// error rather than a misleading empty list or a silently dropped write.
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -285,6 +286,34 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// the persistence boundary.
 			resolver: projectIDResolver,
 			handler:  getProjectHandler(projects),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodPatch,
+				Path:           "/v1/projects/{project_id}",
+				OperationID:    "updateProject",
+				Summary:        "Update a project",
+				Description:    "Updates the project named by the {project_id} path parameter in the source-of-truth database. The request body is a partial update: it may carry a new canonical slug, a new human-authored display name, or both — every supplied field is validated before any database work, and a patch that names no field is rejected with a stable 400. The request body intentionally exposes no organization_id field: the tenant is derived from the authenticated principal's home organization, never from the body or path query. Action project.update is authorized against the (principal home organization, {project_id}) resource the path names before the handler runs: project.update is a CapWrite action, so the gate admits the principal's organization-wide write roles (owner, admin, developer, ci) and denies viewer, denies support (CapRead-only — a support principal cannot mutate even within its home tenant), and admits a scoped grant that covers the resource (for example, a project-scoped Admin grant for THAT project) while denying a grant that names only a SIBLING project, an unrelated environment, or an unrelated service because the policy engine asks whether the grant scope contains the resource scope, never the reverse. A cross-tenant project_id reaches the persistence layer with the principal's home organization id and is rejected as a deterministic 404 by the tenant-scoped repository query, never mutating another tenant's data. The optional If-Match request header carries the row's optimistic-concurrency version (a strong ETag of the form \"<n>\"); a stale version is rejected as a deterministic 409 carrying the row's authoritative version under details.current_version. The updated project row and an immutable audit record naming the authenticated principal are committed in one transaction: an update can never be persisted without its audit trail. The response carries no credential material and mirrors the row's new version into the ETag response header so the caller can echo it back as the next If-Match precondition.",
+				Tags:           []string{tagProjects},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionProjectUpdate),
+				PathParams: []openapi.PathParam{{
+					Name:        "project_id",
+					Description: "The id of the project to update.",
+				}},
+				SuccessDescription: "The updated project.",
+			},
+			// projectIDResolver authorizes action project.update against the
+			// (principal home organization, {project_id}) resource the
+			// path names, not merely the principal's home organization,
+			// so a scoped grant that names THIS project authorizes the
+			// write while a grant that names only a SIBLING project does
+			// not. The organization id is taken from the principal's home
+			// org (never the caller), so a cross-tenant project_id still
+			// hits the tenant-scoped repository query and surfaces as a
+			// 404 at the persistence boundary.
+			resolver: projectIDResolver,
+			handler:  updateProjectHandler(projectUpdater),
 		},
 		{
 			endpoint: openapi.Endpoint{

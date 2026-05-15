@@ -376,3 +376,202 @@ func TestProjectServiceCreateConflict(t *testing.T) {
 		t.Error("a conflicting Create still persisted the second project row")
 	}
 }
+
+// newUpdateInput builds a partial-update UpdateProjectInput for project
+// projectID inside orgID. Slug and DisplayName are nil by default; the
+// caller flips them on per test.
+func newUpdateInput(orgID, projectID string) store.UpdateProjectInput {
+	return store.UpdateProjectInput{
+		OrganizationID: orgID,
+		ProjectID:      projectID,
+		ActorID:        "usr_ada",
+		ActorKind:      "usr",
+		ActorOrgID:     orgID,
+		RequestID:      "req_test_update",
+		CorrelationID:  "corr_test_update",
+	}
+}
+
+// strPtr returns a pointer to s — used to populate the optional Slug and
+// DisplayName fields of UpdateProjectInput in test payloads.
+func strPtr(s string) *string { return &s }
+
+// TestProjectServiceUpdateSuccess proves the update-project unit of work
+// commits desired-state and the immutable audit record in one transaction:
+// the row is mutated, its version is bumped, and an audit event filed under
+// the actor's home organization names the new resource — all visible after
+// the Write tx commits.
+func TestProjectServiceUpdateSuccess(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	repo := store.NewProjectRepository()
+	svc, err := store.NewProjectService(s, repo, &recordingAuthorizer{}, &recordingQuota{}, &recordingJobs{}, store.NewAuditRepository())
+	if err != nil {
+		t.Fatalf("NewProjectService: %v", err)
+	}
+	ctx := context.Background()
+
+	orgID := seedDomainOrg(t, db)
+	create := newCreateInput(orgID)
+	created, err := svc.Create(ctx, create)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	in := newUpdateInput(orgID, created.ID)
+	in.Slug = strPtr("web-v2")
+	in.DisplayName = strPtr("Web v2")
+	updated, err := svc.Update(ctx, in)
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if updated.Slug != "web-v2" || updated.DisplayName != "Web v2" {
+		t.Errorf("updated = %+v, want slug=web-v2 display_name=Web v2", updated)
+	}
+	if updated.Version <= created.Version {
+		t.Errorf("version not bumped: %d <= %d", updated.Version, created.Version)
+	}
+
+	events := listProjectAuditEvents(t, s, orgID)
+	// Newest event is the update; the create event sits at index 1.
+	if len(events) < 2 {
+		t.Fatalf("audit events len = %d, want >= 2", len(events))
+	}
+	updateEvent := events[0]
+	if updateEvent.Action != "project.update" {
+		t.Errorf("audit action = %q, want project.update", updateEvent.Action)
+	}
+	if updateEvent.ResourceID != created.ID {
+		t.Errorf("audit resource_id = %q, want %q", updateEvent.ResourceID, created.ID)
+	}
+	if got := updateEvent.Metadata["updated_fields"]; got != "slug,display_name" {
+		t.Errorf("audit metadata updated_fields = %q, want slug,display_name", got)
+	}
+}
+
+// TestProjectServiceUpdateRejectsEmptyPatch proves an Update that names no
+// updatable field is a typed validation failure raised before any
+// transaction is opened — a mutation that changes nothing is a client
+// error, not a silent success that would write a misleading audit record.
+func TestProjectServiceUpdateRejectsEmptyPatch(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	repo := store.NewProjectRepository()
+	svc, err := store.NewProjectService(s, repo, &recordingAuthorizer{}, &recordingQuota{}, &recordingJobs{}, store.NewAuditRepository())
+	if err != nil {
+		t.Fatalf("NewProjectService: %v", err)
+	}
+	orgID := seedDomainOrg(t, db)
+	created, err := svc.Create(context.Background(), newCreateInput(orgID))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	in := newUpdateInput(orgID, created.ID)
+	_, updErr := svc.Update(context.Background(), in)
+	if updErr == nil {
+		t.Fatal("empty-patch Update error = nil, want InvalidInput")
+	}
+	if ye := yerr.From(updErr); ye.Code != yerr.CodeInvalidInput {
+		t.Fatalf("empty-patch Update error code = %v, want %s", updErr, yerr.CodeInvalidInput)
+	}
+}
+
+// TestProjectServiceUpdateNotFound proves an unknown {project_id} surfaces
+// as a deterministic NotFound — the tenant-scoped repository query never
+// reveals another tenant's row, even for the inner Get pre-check.
+func TestProjectServiceUpdateNotFound(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	repo := store.NewProjectRepository()
+	svc, err := store.NewProjectService(s, repo, &recordingAuthorizer{}, &recordingQuota{}, &recordingJobs{}, store.NewAuditRepository())
+	if err != nil {
+		t.Fatalf("NewProjectService: %v", err)
+	}
+	orgID := seedDomainOrg(t, db)
+	ghost := domain.MustNewID(domain.KindProject).String()
+
+	in := newUpdateInput(orgID, ghost)
+	in.DisplayName = strPtr("Ghost")
+	_, updErr := svc.Update(context.Background(), in)
+	if updErr == nil {
+		t.Fatal("Update(unknown id) error = nil, want NotFound")
+	}
+	if ye := yerr.From(updErr); ye.Code != yerr.CodeNotFound {
+		t.Fatalf("Update(unknown id) error code = %v, want %s", updErr, yerr.CodeNotFound)
+	}
+}
+
+// TestProjectServiceUpdateStaleIfMatch proves a stale If-Match precondition
+// rolls the transaction back as ConflictStale carrying the row's current
+// version — the audit record is never written and the row is unchanged.
+func TestProjectServiceUpdateStaleIfMatch(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	repo := store.NewProjectRepository()
+	svc, err := store.NewProjectService(s, repo, &recordingAuthorizer{}, &recordingQuota{}, &recordingJobs{}, store.NewAuditRepository())
+	if err != nil {
+		t.Fatalf("NewProjectService: %v", err)
+	}
+	ctx := context.Background()
+	orgID := seedDomainOrg(t, db)
+	created, err := svc.Create(ctx, newCreateInput(orgID))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	stale := int64(99)
+	in := newUpdateInput(orgID, created.ID)
+	in.DisplayName = strPtr("Stale Update")
+	in.IfMatchVersion = &stale
+	_, updErr := svc.Update(ctx, in)
+	if updErr == nil {
+		t.Fatal("stale-version Update error = nil, want ConflictStale")
+	}
+	ye := yerr.From(updErr)
+	if ye.Code != yerr.CodeConflict {
+		t.Fatalf("stale-version Update code = %v, want %s", updErr, yerr.CodeConflict)
+	}
+	if got := ye.Details["current_version"]; got != "1" {
+		t.Errorf("Details[current_version] = %q, want 1", got)
+	}
+
+	// The row was not touched: only the create audit event exists.
+	if events := listProjectAuditEvents(t, s, orgID); len(events) != 1 {
+		t.Errorf("audit events after stale update = %d, want 1 (only create)", len(events))
+	}
+}
+
+// TestProjectServiceUpdateInvalidSlug proves a syntactically invalid slug
+// in the patch is rejected as a typed validation failure before any
+// transaction is opened — the field path is "slug", never the submitted
+// value.
+func TestProjectServiceUpdateInvalidSlug(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	repo := store.NewProjectRepository()
+	svc, err := store.NewProjectService(s, repo, &recordingAuthorizer{}, &recordingQuota{}, &recordingJobs{}, store.NewAuditRepository())
+	if err != nil {
+		t.Fatalf("NewProjectService: %v", err)
+	}
+	orgID := seedDomainOrg(t, db)
+	created, err := svc.Create(context.Background(), newCreateInput(orgID))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	in := newUpdateInput(orgID, created.ID)
+	in.Slug = strPtr("Not A Slug")
+	_, updErr := svc.Update(context.Background(), in)
+	if updErr == nil {
+		t.Fatal("invalid-slug Update error = nil, want InvalidInput")
+	}
+	if ye := yerr.From(updErr); ye.Code != yerr.CodeInvalidInput {
+		t.Fatalf("invalid-slug Update code = %v, want %s", updErr, yerr.CodeInvalidInput)
+	}
+}

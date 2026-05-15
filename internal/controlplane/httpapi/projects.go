@@ -29,6 +29,14 @@ var errNoProjectReader = errors.New("httpapi: no project reader configured")
 // silently failing to persist the resource.
 var errNoProjectCreator = errors.New("httpapi: no project creator configured")
 
+// errNoProjectUpdater is returned when PATCH /v1/projects/{project_id} is
+// reached without a project updater wired into NewHandler. Like
+// errNoProjectCreator it can only happen through a wiring error — a
+// programming mistake, not a client error — so the handler reports it as a
+// typed internal failure rather than silently failing to persist the
+// mutation.
+var errNoProjectUpdater = errors.New("httpapi: no project updater configured")
+
 // ProjectReader is the narrow persistence port GET /v1/projects and GET
 // /v1/projects/{project_id} depend on. *store.ProjectReader satisfies it in
 // production; tests supply a fake. Keeping the dependency an interface keeps
@@ -332,6 +340,125 @@ func createProjectHandler(creator ProjectCreator) http.HandlerFunc {
 		}
 
 		apienvelope.WriteData(w, http.StatusCreated, requestID(r), createProjectPayload{
+			Project: projectResourceOf(project),
+		})
+	}
+}
+
+// ProjectUpdater is the narrow persistence port PATCH /v1/projects/{project_id}
+// depends on. *store.ProjectService satisfies it in production; tests supply
+// a fake. Like ProjectCreator it is an interface declared here so the handler
+// stays unit-testable without a real database — the concrete orchestrator
+// (the desired-state write and the immutable audit record committed in one
+// transaction) lives in the store layer.
+type ProjectUpdater interface {
+	Update(ctx context.Context, in store.UpdateProjectInput) (store.Project, error)
+}
+
+// updateProjectRequest is the decoded PATCH /v1/projects/{project_id} request
+// body. Both fields are optional pointers: a nil pointer means the caller did
+// not include the field and it is left unchanged, which is what makes the
+// endpoint a partial update. The store layer validates every supplied field
+// before any database work and rejects a patch that names no field at all —
+// a mutation that changes nothing is a client error, not a silent success.
+// Neither field carries credential material.
+//
+// The request body intentionally exposes no organization_id or project_id
+// field: both are derived from the path and the authenticated principal's
+// home organization, never from the body, so a caller cannot point the
+// mutation at another tenant's project even if the strict decoder were
+// bypassed.
+type updateProjectRequest struct {
+	Slug        *string `json:"slug"`
+	DisplayName *string `json:"display_name"`
+}
+
+// updateProjectPayload is the data block of the PATCH
+// /v1/projects/{project_id} success envelope: the project after the update,
+// in the same stable wire shape the other project endpoints return. It
+// carries no credential material — a projects row stores no secrets.
+type updateProjectPayload struct {
+	Project projectResource `json:"project"`
+}
+
+// updateProjectHandler builds the PATCH /v1/projects/{project_id} handler. It
+// decodes and delegates: the request body is strictly decoded (oversized,
+// malformed, or unknown-field bodies become a typed 400 that never echoes the
+// input), the If-Match header is parsed as an optional optimistic-concurrency
+// precondition, and then the update-project unit of work — validate, read the
+// current row, apply the patch, write the row back, append the audit record,
+// all in one transaction — runs in the store layer through the ProjectUpdater
+// port.
+//
+// RequireAuth gates the route on action project.update before the handler
+// runs — authorized through projectIDResolver against the (principal home
+// organization, {project_id}) resource the path names — and attaches the
+// resolved principal, so a request that reaches the handler has already
+// cleared the policy boundary. project.update is a CapWrite action, so the
+// gate admits the principal's organization-wide write roles (owner, admin,
+// developer, ci) and denies viewer, denies support (a support principal is
+// CapRead-only and cannot mutate even within its home tenant), and admits a
+// scoped grant that covers the (home_org, project_id) resource (for example,
+// a project-scoped Admin grant for THAT project) while denying a grant that
+// names only a SIBLING project because the engine asks whether the grant
+// scope contains the resource scope, never the reverse.
+//
+// The handler never trusts a caller-supplied organization id: the store
+// call is built from principal.OrganizationID and r.PathValue("project_id"),
+// so a cross-tenant project_id reaches the tenant-scoped repository query
+// with the principal's home organization id and is reported as a
+// deterministic NotFound by the persistence layer, never another tenant's
+// row. A request that arrives with no principal is a wiring error reported
+// as a typed internal error; a validation failure, a slug conflict, a
+// not-found {project_id}, a stale If-Match version, and a datastore outage
+// each surface as their own typed status, never disguised as one another.
+// On success, the handler mirrors the row's authoritative version into the
+// ETag response header so the caller can echo it back as the next
+// If-Match precondition without re-reading the row.
+func updateProjectHandler(updater ProjectUpdater) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if updater == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoProjectUpdater))
+			return
+		}
+
+		ifMatchVersion, ifMatchErr := parseIfMatchVersion(r)
+		if ifMatchErr != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(ifMatchErr))
+			return
+		}
+
+		var req updateProjectRequest
+		if err := validate.DecodeJSON(r.Body, &req, 0); err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		project, err := updater.Update(r.Context(), store.UpdateProjectInput{
+			OrganizationID: p.OrganizationID,
+			ProjectID:      r.PathValue("project_id"),
+			Slug:           req.Slug,
+			DisplayName:    req.DisplayName,
+			IfMatchVersion: ifMatchVersion,
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		writeOrganizationETag(w, project.Version)
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), updateProjectPayload{
 			Project: projectResourceOf(project),
 		})
 	}
