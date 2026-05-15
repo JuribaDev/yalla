@@ -122,14 +122,16 @@ type versionPayload struct {
 // environmentCloner backs
 // POST /v1/environments/{environment_id}/clone,
 // environmentVariables backs GET
-// /v1/environments/{environment_id}/variables, and
+// /v1/environments/{environment_id}/variables,
 // environmentVariableReplacer backs PUT
-// /v1/environments/{environment_id}/variables.
+// /v1/environments/{environment_id}/variables, and
+// environmentServices backs GET
+// /v1/environments/{environment_id}/services.
 // Any may be nil for tests and tooling that only inspect the route
 // table's metadata; a request that actually reaches a handler with a
 // nil dependency is reported as a typed internal error rather than a
 // misleading empty list or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter, environmentCloner EnvironmentCloner, environmentGrants EnvironmentGrantReader, environmentGrantReplacer EnvironmentGrantReplacer, environmentVariables EnvironmentVariableReader, environmentVariableReplacer EnvironmentVariableReplacer, breakGlass BreakGlassController) []apiRoute {
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter, environmentCloner EnvironmentCloner, environmentGrants EnvironmentGrantReader, environmentGrantReplacer EnvironmentGrantReplacer, environmentVariables EnvironmentVariableReader, environmentVariableReplacer EnvironmentVariableReplacer, environmentServices EnvironmentServiceReader, breakGlass BreakGlassController) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -838,6 +840,34 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// 404 at the persistence boundary.
 			resolver: environmentIDResolver,
 			handler:  replaceEnvironmentVariablesHandler(environmentVariableReplacer),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodGet,
+				Path:           "/v1/environments/{environment_id}/services",
+				OperationID:    "listEnvironmentServices",
+				Summary:        "List environment services",
+				Description:    "Lists the services configured under the environment named by the {environment_id} path parameter — the fourth and lowest level of Yalla's Organization -> Project -> Environment -> Service hierarchy — in deterministic (slug, id) order. Each entry carries the service's id, the id of the organization that owns it, the id of the project it belongs to, the id of the environment it targets, slug, display name, kind taxonomy ('application', 'database', or 'compose'), optimistic-concurrency version, and lifecycle timestamps. The wire shape carries no credential material — a services row stores no secrets; service-scoped variables, deployment artifacts, and other secret-bearing resources live behind their own endpoints (later stories) where the redaction policy applies. Action service.read is authorized against the (principal home organization, {environment_id}) resource the path names before the handler runs: service.read is a CapRead action, so the gate admits the principal's organization-wide read roles (owner, admin, developer, viewer, ci). The support principal's deliberate cross-tenant read exception does NOT apply through this endpoint because the resource scope is pinned to the principal's home organization, not the path env's tenant; support cross-tenant reads remain available through endpoints whose path carries an {org_id}. The path carries no parent project_id, so the policy engine cannot pin the ProjectID leg of the resource scope at authorization time — project-, environment-, and service-scoped grants are denied at the boundary because the engine asks whether the grant scope (which pins ProjectID) covers the resource scope (which does not), never the reverse; principals whose only access is a scoped grant must use a parent-scoped route to address an environment-scoped service list. A cross-tenant or unknown environment_id reaches the persistence layer with the principal's home organization id and is rejected as a deterministic 404 by the reader's environment existence check, never disguised as an empty success. An environment with no services is a deterministic empty list.",
+				Tags:           []string{tagEnvironments},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionServiceRead),
+				PathParams: []openapi.PathParam{{
+					Name:        "environment_id",
+					Description: "The id of the environment whose services to list.",
+				}},
+				SuccessDescription: "The services of the environment.",
+			},
+			// environmentIDResolver authorizes action service.read against
+			// the (principal home organization, {environment_id}) resource
+			// the path names, not merely the principal's home organization,
+			// so org-wide read roles authorize the read and scoped grants
+			// pinning a ProjectID do not (covers() is one-way). The
+			// organization id is taken from the principal's home org
+			// (never the caller), so a cross-tenant environment_id still
+			// hits the tenant-scoped reader and surfaces as a 404 at the
+			// persistence boundary.
+			resolver: environmentIDResolver,
+			handler:  listEnvironmentServicesHandler(environmentServices),
 		},
 		{
 			endpoint: openapi.Endpoint{

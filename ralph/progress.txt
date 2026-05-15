@@ -13739,3 +13739,162 @@
     for break-glass and should keep the same literal value across
     future stories so analytics queries stay stable.
 ---
+
+## 2026-05-16 — BE-0178: Implement GET /v1/environments/{environment_id}/services
+- What was implemented:
+  - New persistence layer for the services surface:
+    internal/controlplane/store/service.go — Service value type
+    (id/org/project/env/slug/display_name/kind/version/created/updated),
+    serviceColumns, serviceListMaxRows=500, ServiceRepository with
+    ListByEnvironment (tenant-scoped, deterministic slug-then-id
+    ordering, capped read), scanService, and ServiceReader composing
+    EnvironmentRepository.GetByID + ServiceRepository.ListByEnvironment
+    inside one short-lived Store.Read so a cross-tenant or unknown
+    environment_id is rejected as a typed apierr.NotFound at the
+    parent existence check before any service row is scanned.
+  - New HTTP handler internal/controlplane/httpapi/environment_services.go:
+    EnvironmentServiceReader port (narrow interface satisfied by
+    *store.ServiceReader in production), listEnvironmentServicesPayload +
+    environmentService wire shape (project_id/environment_id/kind
+    surfaced verbatim, optimistic-concurrency Version exposed for the
+    forthcoming PATCH/DELETE If-Match contract), environmentServiceOf
+    projection chokepoint, listEnvironmentServicesHandler that reads
+    only from the principal's home OrganizationID + path environment_id
+    (no caller-supplied tenant boundary), and the standard wiring-error
+    guards (errNoPrincipalOnContext / errNoEnvironmentServiceReader as
+    typed apierr.Internal).
+  - New OpenAPI route entry in internal/controlplane/httpapi/routes.go
+    for GET /v1/environments/{environment_id}/services with
+    RequiresAuth=true, RequiredAction=string(policy.ActionServiceRead),
+    Tags=[tagEnvironments], path-parameter description, environmentIDResolver,
+    and full long-form Description that pins the policy semantics
+    (CapRead admits owner/admin/developer/viewer/ci; support cross-
+    tenant exception does NOT apply because the resolver pins the
+    resource scope to the principal's home org; the bare path has no
+    parent project_id, so project-/environment-/service-scoped grants
+    are denied at the engine boundary by covers()'s one-way rule).
+  - NewHandler / newRouteTable signatures updated to accept the new
+    EnvironmentServiceReader port, slotted between
+    environmentVariableReplacer and breakGlass for natural read/write
+    grouping.
+  - Production wiring updated in cmd/yalla-api/main.go:
+    store.NewServiceReader(dataStore) constructed alongside the
+    environment readers, passed through to httpapi.NewHandler at the
+    same position the new port slots into.
+  - Test surface:
+    - Store integration tests
+      (internal/controlplane/store/service_test.go) cover deterministic
+      ordering, tenant scoping at the SQL predicate, an empty
+      environment yielding non-nil empty slice, the reader's
+      environment-existence check (cross-tenant + unknown both surface
+      as apierr.NotFound), the cross-tenant id NOT echoing
+      sibling identifiers (parent project id, env slug, service id,
+      service slug), an empty environment vs missing environment
+      disambiguation at the reader, and NewServiceReader(nil)
+      rejection. They skip cleanly when YALLA_TEST_DATABASE_URL is
+      unset; they pass against a local Postgres on the
+      `postgres://yalla:yalla@localhost:5432/yalla?sslmode=disable`
+      DSN.
+    - HTTP contract tests
+      (internal/controlplane/httpapi/environment_services_test.go)
+      cover the happy path with two services + tenancy field
+      assertions, the empty-environment empty-array contract, the
+      unknown environment 404 path, the reader-outage 503 with
+      driver-cause redaction, the unauthenticated 401 path with
+      reader-untouched callCount proof, the policy-gate 403 path with
+      the same reader-untouched proof, and the no-caller-supplied-org
+      property (the handler always forwards the principal's home org
+      to the store, not the path tenant).
+  - Sweep across all NewHandler / newRouteTable call sites to inject
+    the new port arg (44 test files, 62 NewHandler call sites + 16
+    test files, 17 newRouteTable call sites — paren-counted via a
+    throwaway Node.js script and re-formatted with gofmt).
+
+- Files changed (added | modified):
+  - added: internal/controlplane/store/service.go
+  - added: internal/controlplane/store/service_test.go
+  - added: internal/controlplane/httpapi/environment_services.go
+  - added: internal/controlplane/httpapi/environment_services_test.go
+  - modified: internal/controlplane/httpapi/routes.go
+  - modified: internal/controlplane/httpapi/server.go
+  - modified: cmd/yalla-api/main.go
+  - modified: 44 *_test.go files in internal/controlplane/httpapi/
+    (NewHandler signature sweep)
+  - modified: ralph/prd.json (BE-0178 passes=true)
+
+- Verification run from the repository root:
+  - gofmt -w .                                               -> ok
+  - goimports -w .                                           -> not installed
+  - go mod tidy                                              -> ok
+  - go vet ./...                                             -> clean
+  - go test ./...                                            -> all packages PASS
+  - go test -race ./...                                      -> all packages PASS
+  - go test -run 'TestServiceR|TestServiceReader|TestNewServiceReader' \
+        ./internal/controlplane/store/                       -> SKIP without DB,
+                                                                PASS with the local
+                                                                Postgres DSN
+  - go test -run 'TestListEnvironmentServices' \
+        ./internal/controlplane/httpapi/                     -> 7/7 PASS
+
+- Pre-existing local-DB-only failures observed (NOT introduced by this
+  story): TestEnvironmentRepoListByProjectReturnsDeterministicOrdering,
+  TestEnvironmentRepoGetByIDReturnsRow,
+  TestEnvironmentReaderRejectsCrossTenantProjectID,
+  TestAPIKeyServiceCreate*, TestEnvironmentServiceCreate*,
+  TestOrganizationVariableServicePatch*. They fail identically on the
+  parent commit (HEAD = b7d4a9d8) when the same DSN is supplied, so
+  they are factory/test-fixture mismatches against the local DB state,
+  not regressions from BE-0178. The canonical CI mode (no
+  YALLA_TEST_DATABASE_URL set) skips them cleanly.
+
+- Remaining risks / follow-ups:
+  - No PATCH / DELETE / GET-by-id story is shipped yet for the
+    services surface. The wire shape exposes Version so the When
+    those land, they can use it as an If-Match precondition without
+    a wire change.
+  - BE-0179 (contract tests for the same endpoint, P=2) is partially
+    pre-satisfied by the test surface this story shipped; a future
+    iteration can mark it passes=true once the policy-matrix story
+    BE-0180 (P=1) is also delivered.
+  - BE-0180 (policy matrix coverage, P=1) is now unblocked: the
+    handler/handler-builder/request-builder/route registration this
+    story added are exactly the artefacts the matrix test would
+    reference.
+
+- Learnings for future iterations:
+  - The picker rule "P=1 policy-matrix story sitting on a P=2 endpoint
+    story" rule (recorded by BE-0175) held again here: BE-0180 is
+    P=1 but blocked on BE-0178's handler artefacts. The pattern now
+    has a third instance (after BE-0172/BE-0174 and BE-0175/BE-0177).
+  - The services store package was a brand-new persistence module
+    rather than an extension of an existing one — but it follows the
+    exact ProjectVariableReader / EnvironmentReader template
+    (Repository for raw SQL + Reader composing parent existence check
+    + child list inside one Store.Read transaction). Future
+    deployment / log / metric / domain readers should follow the same
+    shape rather than minting new abstractions.
+  - The cross-tenant leak assertion in store integration tests must
+    NOT include the path parameter the test itself supplies — only
+    sibling/child identifiers count as leaks. A NotFound message
+    legitimately echoes the caller-supplied id back so the caller
+    knows which lookup failed; the contract is "do not reveal IDs
+    the caller did not already know". The corrected pattern matches
+    EnvironmentReader's TestEnvironmentReaderRejectsCrossTenantProjectID
+    leakable list ([envB.ID, projB.ID, envB.Slug] excludes the
+    path-supplied projB.ID).
+  - The penultimate-arg insertion sweep used by BE-0034 still works:
+    a paren-counting Node.js script that finds every NewHandler( and
+    newRouteTable( call site, splits the comma-separated args at the
+    top level (respecting nested {}, [], ()), and inserts the new
+    fake literal before the second-to-last arg (NewHandler — its last
+    arg is the logger / nil) or before the last arg (newRouteTable —
+    no logger). Total scope: 44 files / 62 NewHandler calls + 16
+    files / 17 newRouteTable calls. gofmt cleans up the spacing the
+    insert leaves behind.
+  - Pre-existing local-DB failures in the store package are a
+    smell: when a story-time `go test` against a local Postgres
+    surfaces failures that ALSO fail on HEAD, the picker should
+    still go ahead — but they are a worth-flagging signal that the
+    test fixture factory drifted from the assertions in another
+    story's tests. Not this story's scope to fix.
+---
