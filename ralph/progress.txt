@@ -13587,3 +13587,155 @@
   - **The "wire chokepoint must fire on EVERY allow path"** assertion in TestReplaceEnvironmentVariablesPolicyGrantContainment is load-bearing: BE-0175 pinned the chokepoint on the role-allow path (TestReplaceEnvironmentVariablesReturnsPersistedVariables), but a regression in environmentVariableOf that only re-projected secret plaintext on the grant-allow code path (or vice versa) would slip past role-only coverage. Asserting Value == output.Sentinel AND the canonical plaintext is absent AND the caller-supplied secret needle is absent on the grant-allow path here closes that gap. Generalizes to: when an endpoint has BOTH a role-allow path AND a grant-allow path (i.e., the policy engine has two distinct admit routes), the wire chokepoint must be pinned on BOTH paths, not just the one driven by the put-contract test.
   - **CapWrite-vs-CapAdmin cross-tenant deny is universal across roles** — the engine's exception clause `CapSupport && (CapRead || CapSupport)` admits Support cross-tenant ONLY for CapRead and CapSupport actions. CapWrite, CapAdmin, CapDeploy, CapOwner are all outside it, so EVERY role (including Support) is denied cross-tenant for any of those capabilities via ReasonDeniedCrossTenant. The engine-level cross-tenant subtest sweep at the bottom of TestReplaceEnvironmentVariablesPolicyWrongOrganizationPrincipal (and the matching one at the bottom of TestReplaceEnvironmentGrantsPolicyWrongOrganizationPrincipal) is the structural lock: any future catalog change that moved env.write into the support cross-tenant exception (or widened the exception) would fail those subtests before it could ship.
 ---
+
+
+## 2026-05-16 - BE-0034 - Implement break-glass admin access
+- What was implemented: the durable, audit-stamped internal-support
+  break-glass surface — the layer that records (and ends) a time-bounded
+  session in which a Yalla support principal reaches into another tenant.
+  - internal/controlplane/store/migrate/migrations/0019_break_glass_sessions.up.sql / .down.sql (new):
+    break_glass_sessions table (text PK with the bgs_ prefix minted in
+    Go, target organization FK, actor id/kind, actor_organization_id,
+    reason CHECK (length > 0), started_at, expires_at with
+    CHECK (expires_at > started_at), nullable revoked_at + revoked_by_id/
+    revoked_by_kind, request/correlation/ip/user_agent, version, created_at,
+    updated_at). Indexes: (organization_id, started_at DESC), (actor_id,
+    started_at DESC) and a partial active index (organization_id, expires_at)
+    WHERE revoked_at IS NULL. Triggers: set_updated_at + bump_version from
+    migration 0011, plus break_glass_sessions_reject_rewrite — an
+    application-level UPDATE may only set the revocation columns, so the
+    reason, target, actor, started/expires/request ids are immutable even
+    against a SQL console.
+  - internal/controlplane/store/break_glass.go (new): BreakGlassSession
+    value + Active(t) helper + BreakGlassRepository with Append (tx,
+    minting bgs_<hex> ids), Get (tenant-scoped, NotFound on a foreign
+    org's id), ListByOrganization (clamped at 200, ordered by
+    started_at DESC, id DESC), MarkRevoked (returns Conflict when the
+    session is already revoked, distinguishing it from NotFound via a
+    follow-up Get inside the same tx).
+  - internal/controlplane/store/break_glass_service.go (new):
+    BreakGlassService unit-of-work orchestrator. StartSession composes
+    in one transaction: organization-existence check, session-row
+    insert, audit append. The audit metadata always carries
+    elevated_access=true, target_organization_id, expires_at (RFC3339),
+    ttl_seconds, and break_glass_session_id, so a single grep against
+    audit_events identifies every break-glass action. Revoke composes
+    organization-existence check + MarkRevoked + audit append — also
+    with elevated_access=true plus action_kind=revoke. List/GetSession
+    open Store.Read sessions for consistent reads. The service-layer
+    validator rejects blank reason, oversized reason (>4096), missing
+    actor_id, bad actor_kind (closed to usr/sa), non-positive TTL, and
+    caps excessive TTL at 24h. The reason is run through
+    output.NewRedactor before persistence so a credential transport
+    pattern in a justification is scrubbed.
+  - internal/controlplane/store/break_glass_internal_test.go (new):
+    white-box unit tests for buildSessionToCreate — valid input shape,
+    blank/oversize reason rejection, missing organization/actor,
+    bad actor_kind, non-positive TTL rejected, excessive TTL capped to
+    24h, redactor scrubs Authorization header out of the reason value,
+    session.Active(t) flips on revocation and expiry, NewBreakGlassService
+    nil-dependency guards, and the audit metadata composition
+    confirms elevated_access=true.
+  - internal/controlplane/store/break_glass_test.go (new): Postgres
+    integration suite. StartSession persists row + audit
+    atomically with elevated_access=true / target_organization_id /
+    break_glass_session_id pinned on the event; blank-reason fails as
+    InvalidInput and writes nothing; unknown-tenant fails as NotFound;
+    Revoke flips revoked_at + revoked_by_id and is also audited; a
+    second Revoke is a typed Conflict; tenant-isolation proves a
+    session id in another org is NotFound and a list from another
+    org yields zero rows; the append-mostly trigger refuses an
+    UPDATE that would rewrite or blank the reason.
+  - internal/controlplane/httpapi/break_glass.go (new):
+    BreakGlassController port + four thin handlers behind
+    /v1/organizations/{org_id}/break-glass{,/{session_id}}:
+    POST (start, 201), GET (list, ?limit=1..200 default 50),
+    GET (single), DELETE (revoke). Body decoded with
+    validate.DecodeJSON; missing/negative/excessive ttl_seconds is a
+    stable E_INVALID_INPUT before any database work; the response
+    body carries the persisted session with a computed Active flag
+    and a fixed elevated_access:true. ttl_seconds is the wire
+    contract (JSON-native integers); the handler forwards it as a
+    time.Duration to the service.
+  - internal/controlplane/httpapi/routes.go: new tagAdmin constant
+    plus four apiRoute entries with RequiresAuth + RequiredAction
+    string(policy.ActionAdminBreakGlass) and organizationIDResolver,
+    so the engine resolves the (CapSupport) admin.break_glass action
+    against the {org_id} target — a support principal acting
+    cross-tenant lands on ReasonAllowedBySupport, and a non-support
+    role is rejected with ReasonDeniedNoCapability before any handler
+    runs. newRouteTable gained a final breakGlass BreakGlassController
+    parameter.
+  - internal/controlplane/httpapi/server.go: NewHandler gained the
+    breakGlass BreakGlassController port immediately before the
+    logger, and forwards it into newRouteTable.
+  - internal/controlplane/httpapi/break_glass_fakes_test.go (new):
+    fakeBreakGlassController satisfying the BreakGlassController port
+    with optional recording pointers so the public-surface and
+    unrelated-endpoint suites pass a zero value while the break-glass
+    suites set canned results and read inputs back.
+  - internal/controlplane/httpapi/break_glass_test.go (new): contract
+    + tenant-isolation coverage. POST success returns 201 with the
+    session and elevated_access=true; missing reason / missing TTL /
+    negative TTL / excessive TTL each surface as E_INVALID_INPUT
+    400; unauthenticated is E_AUTH 401; an owner principal acting
+    on its own tenant is E_FORBIDDEN 403 (CapSupport gate, no
+    CapAdmin shortcut); a store-side failure stays a typed 5xx.
+    LIST/GET/DELETE round-trip the canonical happy paths. The
+    "Break-glass cannot mint customer API keys" guarantee is pinned
+    by TestSupportPrincipalCannotMintAPIKeys: a support principal
+    posting to /v1/organizations/{org_id}/api-keys is denied for
+    both the home org and a cross-tenant org, never reaching the
+    api-key creator.
+  - cmd/yalla-api/main.go: wires *store.BreakGlassService into
+    NewHandler from the existing pool / audit repository.
+  - Every existing test that builds NewHandler or newRouteTable
+    (44 files, 78 call sites) was patched to pass
+    fakeBreakGlassController{} / nil at the new argument position.
+
+- Verification run from the repository root:
+  - gofmt -w .                         -> ok
+  - goimports -w .                     -> not installed, skipped
+  - go mod tidy                        -> ok
+  - go vet ./...                       -> ok
+  - go test ./...                      -> all packages PASS
+  - go test -race ./...                -> all packages PASS
+  - go test ./internal/controlplane/store/ -run BreakGlass -count=1     -> PASS
+  - go test ./internal/controlplane/httpapi/ -run BreakGlass -count=1   -> PASS
+
+- Remaining risks / follow-ups:
+  - admin.break_glass actions all share one action string today; a
+    future story can split start vs revoke if reporting wants a
+    finer-grained audit projection.
+  - A scheduled sweeper that flips active=false / surfaces expiry
+    metrics is not part of this story — Active(t) is computed by
+    the wire projection at read time, so an elapsed deadline is
+    correct without a sweeper, but operational dashboards may want
+    one.
+  - X-Forwarded-For / X-Real-IP are deliberately NOT honoured here;
+    the audit row records the immediate transport peer. A trusted-
+    proxy story can replace clientIP later without changing the
+    audit shape.
+
+- Learnings for future iterations:
+  - Adding a port to NewHandler/newRouteTable touches ~44 test files
+    and ~78 call sites. A scripted insertion ("inject the new arg as
+    the penultimate arg of NewHandler and as the last arg of
+    newRouteTable") was reliable and fast; a regex pass alone is
+    not, because the trailing arg varies (nil / logger / a real
+    *slog.Logger). See the throwaway Node.js script used here for
+    the paren-counting approach.
+  - Combine read+write methods on the same store-layer service when
+    a single HTTP port is the natural shape (BreakGlassService
+    carries StartSession/Revoke/ListSessions/GetSession instead of
+    splitting into BreakGlassReader). This keeps NewHandler from
+    accumulating two ports for one feature.
+  - The append-mostly trigger pattern (a PL/pgSQL BEFORE UPDATE that
+    refuses to rewrite any column except a whitelist) is a clean
+    way to give a row "structural immutability except for one state
+    transition" — useful for sessions, soft-deletes, leases, and
+    any other row where audit-trail integrity matters.
+  - elevated_access=true is now a load-bearing audit-metadata key
+    for break-glass and should keep the same literal value across
+    future stories so analytics queries stay stable.
+---

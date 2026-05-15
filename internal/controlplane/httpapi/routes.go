@@ -26,6 +26,7 @@ const (
 	tagVariables     = "variables"
 	tagProjects      = "projects"
 	tagEnvironments  = "environments"
+	tagAdmin         = "admin"
 )
 
 // apiRoute couples a served HTTP route with the OpenAPI metadata that
@@ -128,7 +129,7 @@ type versionPayload struct {
 // table's metadata; a request that actually reaches a handler with a
 // nil dependency is reported as a typed internal error rather than a
 // misleading empty list or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter, environmentCloner EnvironmentCloner, environmentGrants EnvironmentGrantReader, environmentGrantReplacer EnvironmentGrantReplacer, environmentVariables EnvironmentVariableReader, environmentVariableReplacer EnvironmentVariableReplacer) []apiRoute {
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter, environmentCloner EnvironmentCloner, environmentGrants EnvironmentGrantReader, environmentGrantReplacer EnvironmentGrantReplacer, environmentVariables EnvironmentVariableReader, environmentVariableReplacer EnvironmentVariableReplacer, breakGlass BreakGlassController) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -837,6 +838,88 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// 404 at the persistence boundary.
 			resolver: environmentIDResolver,
 			handler:  replaceEnvironmentVariablesHandler(environmentVariableReplacer),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodPost,
+				Path:           "/v1/organizations/{org_id}/break-glass",
+				OperationID:    "startBreakGlassSession",
+				Summary:        "Start a break-glass session",
+				Description:    "Starts a time-bounded internal-support break-glass session targeting the organization named by the {org_id} path parameter. The request body must carry a non-empty reason (operator-authored justification — an incident or ticket id) and a positive ttl_seconds. The session row and an immutable audit event stamped with elevated_access=true are committed in one transaction, so a session can never exist without its audit trail. The store layer caps ttl_seconds at the documented break-glass maximum. Action admin.break_glass is a CapSupport action authorized against the {org_id} path parameter before the handler runs; only a principal holding the support capability may start a session, and a non-support principal trying to start one is rejected with a deterministic 403. The break-glass mechanism is access-only and never mints customer credentials.",
+				Tags:           []string{tagAdmin},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionAdminBreakGlass),
+				PathParams: []openapi.PathParam{{
+					Name:        "org_id",
+					Description: "The id of the organization the support principal is reaching into.",
+				}},
+				SuccessStatus:      http.StatusCreated,
+				SuccessDescription: "The persisted break-glass session.",
+			},
+			// organizationIDResolver authorizes action admin.break_glass
+			// against the organization the {org_id} path parameter names. A
+			// support principal acting cross-tenant is the deliberate
+			// ReasonAllowedBySupport path; any non-support principal is
+			// rejected at the policy boundary before the handler runs.
+			resolver: organizationIDResolver,
+			handler:  startBreakGlassHandler(breakGlass, nil),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodGet,
+				Path:           "/v1/organizations/{org_id}/break-glass",
+				OperationID:    "listBreakGlassSessions",
+				Summary:        "List break-glass sessions",
+				Description:    "Lists the break-glass sessions targeting the organization named by the {org_id} path parameter, newest first, capped at ?limit= (default 50, max 200). Each entry carries the session id, target organization, actor principal, reason, started_at/expires_at, the optional revoked_at, and a computed active flag. The endpoint never returns credential material; reasons are persisted with known secret transport patterns scrubbed and projected verbatim. Action admin.break_glass is authorized against the {org_id} path parameter before the handler runs.",
+				Tags:           []string{tagAdmin},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionAdminBreakGlass),
+				PathParams: []openapi.PathParam{{
+					Name:        "org_id",
+					Description: "The id of the organization whose break-glass sessions are listed.",
+				}},
+				SuccessDescription: "The break-glass sessions targeting the organization.",
+			},
+			resolver: organizationIDResolver,
+			handler:  listBreakGlassHandler(breakGlass, nil),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodGet,
+				Path:           "/v1/organizations/{org_id}/break-glass/{session_id}",
+				OperationID:    "getBreakGlassSession",
+				Summary:        "Get a break-glass session",
+				Description:    "Returns a single break-glass session by id scoped to the organization named by the {org_id} path parameter, or a typed 404 if no such session exists within that tenant. Tenant scoping is enforced at both the policy boundary and the persistence layer, so a cross-tenant session id can never reveal another tenant's row.",
+				Tags:           []string{tagAdmin},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionAdminBreakGlass),
+				PathParams: []openapi.PathParam{
+					{Name: "org_id", Description: "The id of the organization the session targets."},
+					{Name: "session_id", Description: "The id of the break-glass session to retrieve."},
+				},
+				SuccessDescription: "The requested break-glass session.",
+			},
+			resolver: organizationIDResolver,
+			handler:  getBreakGlassHandler(breakGlass, nil),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodDelete,
+				Path:           "/v1/organizations/{org_id}/break-glass/{session_id}",
+				OperationID:    "revokeBreakGlassSession",
+				Summary:        "Revoke a break-glass session",
+				Description:    "Ends an active break-glass session early. The store-layer unit of work marks the row revoked and appends another immutable audit event stamped with elevated_access=true inside the same transaction. A session that is already revoked or has elapsed is a typed 409 Conflict; a session id that does not exist within the named organization is a typed 404 NotFound. The response carries the revoked session row so an agent has the authoritative timestamps without a follow-up GET.",
+				Tags:           []string{tagAdmin},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionAdminBreakGlass),
+				PathParams: []openapi.PathParam{
+					{Name: "org_id", Description: "The id of the organization the session targets."},
+					{Name: "session_id", Description: "The id of the break-glass session to revoke."},
+				},
+				SuccessDescription: "The revoked break-glass session.",
+			},
+			resolver: organizationIDResolver,
+			handler:  revokeBreakGlassHandler(breakGlass, nil),
 		},
 		{
 			endpoint: openapi.Endpoint{
