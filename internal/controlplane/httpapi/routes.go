@@ -21,6 +21,7 @@ const (
 	tagMembers       = "members"
 	tagLimits        = "limits"
 	tagUsage         = "usage"
+	tagAuditEvents   = "audit-events"
 	tagAPIKeys       = "api-keys"
 )
 
@@ -88,7 +89,8 @@ type versionPayload struct {
 // DELETE /v1/organizations/{org_id}/members/{member_id}, limits backs GET
 // /v1/organizations/{org_id}/limits, limitsUpdater backs PATCH
 // /v1/organizations/{org_id}/limits, usage backs GET
-// /v1/organizations/{org_id}/usage, apiKeys backs GET
+// /v1/organizations/{org_id}/usage, auditEvents backs GET
+// /v1/organizations/{org_id}/audit-events, apiKeys backs GET
 // /v1/organizations/{org_id}/api-keys and GET
 // /v1/organizations/{org_id}/api-keys/{key_id}, apiKeyCreator backs POST
 // /v1/organizations/{org_id}/api-keys, apiKeyUpdater backs PATCH
@@ -99,7 +101,7 @@ type versionPayload struct {
 // metadata; a request that actually reaches a handler with a nil dependency
 // is reported as a typed internal error rather than a misleading empty list
 // or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator) []apiRoute {
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -504,6 +506,31 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// read, exactly as the policy matrix specifies for CapRead actions.
 			resolver: organizationIDResolver,
 			handler:  listUsageHandler(usage),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodGet,
+				Path:           "/v1/organizations/{org_id}/audit-events",
+				OperationID:    "listOrganizationAuditEvents",
+				Summary:        "List audit events of an organization",
+				Description:    "Returns the most recent audit events recorded for the organization named by the {org_id} path parameter, newest first, capped at the effective page size. Every event is one immutable authorization decision the control plane recorded — both allowed and denied — and carries the action that was attempted, the verdict (allowed or denied), the stable policy reason for that verdict, the actor that triggered it (a user, an API key, an internal service account, or null for an unauthenticated denied request), the resource the action named (or null for an organization-root or self action), the request id and correlation id the request travelled under, the ip address and user agent the request arrived with, and a free-form metadata map of diff/context detail. Every value reaches this endpoint already redacted at the persistence boundary — secret-shaped metadata keys (token, secret, password, credential, ...) are replaced wholesale with the redaction sentinel, every other metadata value, ip address, and user agent is scrubbed through the structural redactor, all before AuditRepository.Append persists the row — so a secret can structurally never reach the wire. Action audit.read is authorized against the organization the path names before the handler runs: a principal reading audit events outside its own tenant is rejected with a deterministic 403, so a cross-tenant id can never reveal another tenant's decisions. audit.read is a CapAdmin action: a viewer, developer, or ci principal cannot list the organization's audit log; only an owner or admin in the tenant (and a support principal performing a cross-tenant read) can. The read is tenant scoped at the persistence layer, so a cross-tenant {org_id} yields the same empty list a tenant with no audit history would, never another tenant's events. The endpoint accepts an optional ?limit= query parameter in the range [1, 200]; an absent value defaults to 50, and a malformed or out-of-range value is rejected as a stable 400.",
+				Tags:           []string{tagAuditEvents},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionAuditRead),
+				PathParams: []openapi.PathParam{{
+					Name:        "org_id",
+					Description: "The id of the organization whose audit events are listed.",
+				}},
+				SuccessDescription: "The most recent audit events of the organization, newest first.",
+			},
+			// organizationIDResolver authorizes action audit.read against the
+			// organization the {org_id} path parameter names, not merely the
+			// principal's home organization, so a cross-tenant id is denied at
+			// the policy boundary before the handler reads any data — the lone
+			// exception is the support principal's deliberate cross-tenant
+			// read, exactly as the policy matrix specifies for read actions.
+			resolver: organizationIDResolver,
+			handler:  listAuditEventsHandler(auditEvents),
 		},
 		{
 			endpoint: openapi.Endpoint{

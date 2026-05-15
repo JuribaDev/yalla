@@ -47,6 +47,155 @@
 - List/upsert PATCH endpoints (e.g. PATCH .../limits): the request DTO carries a top-level array (not a partial-update of individual fields), each entry is an upsert, and the response is the post-write effective state re-read inside the SAME Store.Write tx — so the wire body and the committed state agree byte-for-byte. Validation rules: at least one entry (empty array = 400), every entry must be self-consistent (closed-set resource, range-checked limit, closed-set enforcement mode, no duplicate keys across entries), and a `*int64` for numeric fields whose zero is meaningful distinguishes "field omitted" (400) from "set to zero" (legitimate extreme). Field paths use `field[i].subfield` so an agent can pinpoint which entry was rejected.
 - Nullable scalar fields that always travel together project as a SINGLE nullable nested OBJECT on the wire, never as coupled-nullable scalars. GET /v1/organizations/{org_id}/usage is the canonical case: `{resource, used_value, limit: null}` for unconstrained vs `{resource, used_value, limit: {limit_value, enforcement_mode, source}}` when a policy is configured — three nullable scalar siblings would force every agent to handle each invalid (limit_value null but enforcement_mode set, etc) permutation. The store struct mirrors the wire: a single `*Limit` (or three pointers projected together with an all-or-nothing guard in the projector). Adding a new field to the nested object later (e.g. a billing period for metered limits) is then forward-compatible with existing readers, whereas adding a new top-level field next to coupled scalars is not.
 - Reads that union "configured" + "live" state for the same key set (a quota policy join with quota_usage, a desired-state join with reconciled actual state, ...) use ONE SQL statement with FULL OUTER JOIN + COALESCE(left.key, right.key) for the projection key, never two queries with a Go-side merge. The repository method takes (organizationID, plan) and stays tenant-scoped at every leg of the join — the CTE shape `WITH policies AS (... WHERE org=$1 OR plan=$2), usage AS (... WHERE org=$1) FULL OUTER JOIN ... ORDER BY resource` is the reference; two queries would force the handler to re-implement deterministic ordering AND would leak observability (the two queries can see different snapshots).
+- HTTP reads of an "already-redacted at persistence" surface (audit log, job error_summary, redacted reservation reasons, ...) project the persisted values onto the wire VERBATIM — the handler must not silently re-scrub or un-scrub sentinel values. The contract is "redaction is the writer's job, the reader trusts the chokepoint": audit.Auditor redacts metadata + IP + UA before AuditRepository.Append persists the row (the store treats them as clean), and the HTTP handler renders them as-is. Pin this structurally with a "feed the fake reader a row whose values are output.Sentinel, assert the wire renders Sentinel" test — a future regression that "cleans up" sentinels in the projection fails this test, not only review.
+- Endpoints that expose N coupled scalar fields that are EITHER all-present OR all-absent project as ONE nullable nested OBJECT on the wire, not N coupled-nullable scalars. Canonical cases: usage.limit ({limit_value, enforcement_mode, source} or null), audit_event.actor ({id, kind} or null for an unauthenticated denied event), audit_event.resource ({id, kind} or null for an organization-root action). An agent reads one boolean (`actor != null`) instead of validating N invalid combinations. The store struct mirrors the wire (a single `*Foo` pointer or N pointers projected together with an all-or-nothing guard). Adding a new field to the nested object later is forward-compatible.
+- audit.read is the load-bearing example of a "read action that is NOT CapRead" in the policy catalog (catalog.go: ActionAuditRead -> CapAdmin). The audit log cannot be listed by a viewer or a developer — only by an owner, admin, or a support principal performing a cross-tenant read. A boilerplate "every in-tenant role allowed" assumption is wrong for audit.read; the policy matrix and a contract-test "viewer denied in own tenant" assertion together pin the property (the contract test makes a future accidental drop to CapRead a contract failure, not only a matrix failure).
+
+## 2026-05-15 - BE-0103
+- What was implemented: GET /v1/organizations/{org_id}/audit-events, the
+  organization-scoped audit-trail read endpoint — the first endpoint to
+  expose the immutable audit log on the public API.
+  - internal/controlplane/store/auditreader.go (new): AuditEventReader is
+    the store-backed read adapter for the audit-events surface. It mirrors
+    UsageReader and LimitsReader — it composes
+    AuditRepository.ListByOrganization through a short-lived read-only
+    transaction (Store.Read), so the repository's tenant-scoping guarantees
+    are inherited for free and the adapter cannot smuggle a mutation past
+    Store.Write. The constructor rejects a nil store at construction
+    rather than on the first request (fail-fast posture).
+  - internal/controlplane/store/auditreader_test.go (new): four
+    integration tests against an isolated migrated Postgres database —
+    happy-path read with newest-first ordering, tenant isolation
+    (two-org seed proves a cross-tenant id never returns another tenant's
+    rows), empty list for an unknown/cross-tenant org id (no 404), and
+    NewAuditEventReader(nil) rejection.
+  - internal/controlplane/httpapi/audit_events.go (new): AuditEventReader
+    port + listAuditEventsHandler. Request shape: only the {org_id} path
+    parameter and an optional ?limit= query in [1, 200] (default 50,
+    handler-side parseAuditEventLimit clamps + validates before any
+    database work runs, so a malformed or out-of-range limit is the
+    stable 400 E_INVALID_INPUT). Response is yalla.output.v1 carrying
+    {events: [...]}: actor and resource are nullable nested OBJECTS
+    (mirroring the limit/null convention the usage endpoint pins) — an
+    unauthenticated denied event has Actor=null; an organization-root
+    action has Resource=null. The wire trusts the persistence-layer
+    redaction contract: metadata, IP address, and user agent reach this
+    handler already redacted by audit.Auditor, so the projection renders
+    them verbatim — a TestAuditEventProjectionDoesNotReintroduceRedaction
+    proves the handler must NOT silently un-redact a sentinel value. The
+    handler is thin: read principal, parse limit, call port, render.
+  - internal/controlplane/httpapi/audit_events_test.go (new): 11 contract
+    tests in package httpapi exercising the real NewHandler + real policy
+    engine (fake Authenticator + fake AuditEventReader only) — happy-path
+    forwarding (org_id + default limit reach the reader; nullable actor/
+    resource project correctly), empty-list for an org with no history,
+    ?limit= forwarding, malformed-limit 400 (no value-leak in the
+    rejection), out-of-range-limit 400 (table-driven over 0/-1/201/9999),
+    store outage 503 (no raw-cause leak), unauthenticated 401 (reader
+    never runs), cross-tenant 403 (reader never runs, no events leaked),
+    viewer-without-CapAdmin 403 (the load-bearing distinction from
+    CapRead actions: a viewer can list members but cannot list the audit
+    log), missing-reader 500, OpenAPI route-table contract, and the
+    redaction-trust proof above.
+  - internal/controlplane/httpapi/routes.go: registered the new apiRoute
+    with RequiresAuth=true, RequiredAction=policy.ActionAuditRead,
+    resolver=organizationIDResolver (so a cross-tenant {org_id} is a 403
+    BEFORE the handler runs). audit.read is CapAdmin in the policy
+    catalog (catalog.go:125: ActionAuditRead -> CapAdmin); the
+    cross-tenant support-read exception is preserved by the engine, the
+    same as the limits.read and usage.read endpoints. Added the
+    tagAuditEvents="audit-events" OpenAPI tag.
+  - internal/controlplane/httpapi/server.go: NewHandler signature gained
+    AuditEventReader (one new positional arg threaded into
+    newRouteTable).
+  - cmd/yalla-api/main.go: builds the AuditEventReader at startup
+    (composed over the existing dataStore) and threads it into
+    NewHandler.
+  - Mechanical churn: 19 NewHandler/newRouteTable call sites across
+    *_test.go files received a positional fakeAuditEventReader{} (or one
+    more nil for newRouteTable). A python script applied a multi-pattern
+    substitution: single-line `fakeUsageReader{}, fakeAPIKeyReader{}` ->
+    `fakeUsageReader{}, fakeAuditEventReader{}, fakeAPIKeyReader{}`,
+    multi-line `fakeUsageReader{},\n\t+fakeAPIKeyReader{}` -> the same
+    insertion, plus an edge case in usage_test.go where the
+    `listUsageHandlerFor` helper passes its named `reader` parameter at
+    the usage position (and a nil at the usage position for the
+    missing-reader test). All 19 call sites compiled cleanly after the
+    substitution; only the listUsageHandlerFor case (line 67) needed a
+    targeted follow-up edit.
+- Files changed: internal/controlplane/store/{auditreader.go (new),
+  auditreader_test.go (new)}, internal/controlplane/httpapi/{audit_events.go
+  (new),audit_events_test.go (new),routes.go,server.go,usage_test.go +
+  18 sibling test files updated by substitution},
+  cmd/yalla-api/main.go, ralph/prd.json, ralph/progress.txt.
+- Verification run: gofmt -w .; go mod tidy; go build ./...; go vet ./...;
+  go test ./... (full suite); go test -race ./... (full suite);
+  YALLA_TEST_DATABASE_URL=... go test -race -count=1 -run
+  'TestAudit|TestListAudit|TestAuditEvent' ./internal/controlplane/store/...
+  ./internal/controlplane/httpapi/... (integration with Postgres).
+- Results: all my changes pass (-race included). goimports / golangci-lint /
+  staticcheck / govulncheck still not installed locally (documented in
+  earlier iterations).
+- Remaining risks / follow-ups:
+  - BE-0104 (contract tests for GET /v1/organizations/{org_id}/audit-events)
+    and BE-0105 (policy matrix coverage, the unblocked p=1) are now ready
+    to land. audit_events_test.go already covers BE-0104's surface
+    closely — the explicit-redaction proof, all four CRUD-style failure
+    modes, and the viewer-denied property — but the two remain separate
+    PRD stories. BE-0105 should table every built-in role x audit.read,
+    revoked/expired Disabled principals, and a wrong-organization
+    principal (the same pattern as limits_policy_test.go and
+    usage_policy_test.go).
+  - Filtering (by action, by decision, by actor, by date range) and
+    cursor-based pagination are NOT in scope here — the endpoint serves
+    the newest N rows in [1, 200]. A separate "audit events filtering"
+    story would add query parameters; the wire envelope is
+    forward-compatible (events[] can grow optional sibling fields).
+  - The wire projection trusts the persistence-layer redaction contract.
+    If a future "raw audit event admin view" surface is needed for
+    Yalla operators, it must NOT go through this customer-facing
+    endpoint — it would be a separate /admin/... route with its own
+    policy action and its own redaction policy.
+- Learnings for future iterations:
+  - For a NewHandler signature change with ~19 call sites in *_test.go,
+    a single bulk substitution covers the bulk of the churn IF the
+    target substring is regular. The two regular forms in this codebase
+    are single-line `fakeUsageReader{}, fakeAPIKeyReader{}` and
+    multi-line `fakeUsageReader{},\n\t+fakeAPIKeyReader{}`. The
+    exceptions are (a) helpers that pass a named parameter at the new
+    port's position (e.g. `, reader,`) and (b) "missing-reader" tests
+    that pass nil at the new port's position. Both need targeted follow-up
+    edits — a perl/python pass over the common pattern + a manual `grep
+    -rn 'fakeOldReader,\n\t+fakeAPIKeyReader{}'` for the residue is the
+    reliable workflow.
+  - audit_events.go is the third endpoint to use the
+    "nullable-nested-object" wire convention (after usage.go and the
+    actor/resource pair here). The pattern: when N coupled scalar fields
+    are EITHER all-present OR all-absent, project them as a single
+    nullable nested object on the wire (`actor: {id, kind}` vs
+    `actor: null`), not N coupled-nullable scalars. The agent reads one
+    boolean (actor != null) instead of validating N invalid combinations.
+    Adding a new field to the nested object later is forward-compatible
+    with existing readers.
+  - The store contract for audit metadata is "already redacted at
+    persistence". A consumer (HTTP handler, future audit-event admin
+    surface) must NOT silently un-redact a sentinel value — the wire
+    mirrors persistence verbatim. The
+    TestAuditEventProjectionDoesNotReintroduceRedaction test pins this
+    structurally: feed a fake reader rows whose IP/UA/metadata-value
+    are output.Sentinel and assert the wire renders Sentinel, not the
+    empty string. A future regression that "cleans up" sentinel values
+    in the projection fails this test.
+  - audit.read is the load-bearing example of "a read action that is
+    NOT CapRead". A viewer (CapRead, CapDeploy in the catalog) cannot
+    list the audit log; only CapAdmin (owner, admin) and CapSupport
+    (cross-tenant) can. This means the boilerplate "list endpoint" tests
+    must NOT assume "every role allowed in the tenant" — the policy
+    matrix lands per-action. A viewer-denied contract test (not just a
+    matrix test) is good defence-in-depth because it makes a future
+    accidental drop to CapRead a contract-test failure, not only a
+    matrix-test failure.
+---
 
 ## 2026-05-15 - BE-0097
 - What was implemented: PATCH /v1/organizations/{org_id}/limits, the
