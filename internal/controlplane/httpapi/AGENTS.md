@@ -29,6 +29,17 @@ service packages — handlers only decode, delegate, and render.
    (`Summary`, `Description`, `Tags`, `SuccessDescription`, `SuccessStatus`,
    `SuccessSchema`). The document is generated from the route table.
 
+## Self endpoints (`/v1/me*`)
+
+The `/v1/me` family (`auth.me`, `auth.orgs`, …) is built **purely from the
+`policy.Principal`** that `RequireAuth` resolves — no `store`, no Dokploy. A
+principal is bound to exactly one home organization and every scoped grant
+narrows/widens authority within it, so e.g. "organizations visible to the
+principal" is just the home org. Reuse `meGrantsOf` for the principal→wire grant
+projection instead of re-inlining the `Scope` flattening loop. The
+"isolated Postgres migrations" / "fake Dokploy" / "audit event" acceptance
+criteria are N/A for these reads.
+
 ## Tests
 
 - httpapi tests build the handler through the `newTestHandler` helper, which

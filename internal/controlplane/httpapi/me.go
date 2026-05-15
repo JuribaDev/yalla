@@ -50,13 +50,14 @@ type meGrant struct {
 	ServiceID      string `json:"service_id,omitempty"`
 }
 
-// principalPayload projects an authenticated policy.Principal into the stable
-// GET /v1/me wire shape. Grants is always a non-nil slice so the rendered
-// JSON carries [] rather than null when the principal holds no grants.
-func principalPayload(p policy.Principal) mePayload {
-	grants := make([]meGrant, 0, len(p.Grants))
-	for _, g := range p.Grants {
-		grants = append(grants, meGrant{
+// meGrantsOf projects a principal's scoped grants into the stable wire shape
+// shared by GET /v1/me and GET /v1/me/organizations. The result is always a
+// non-nil slice so the rendered JSON carries [] rather than null when the
+// principal holds no grants, letting agents iterate it without a nil check.
+func meGrantsOf(grants []policy.Grant) []meGrant {
+	out := make([]meGrant, 0, len(grants))
+	for _, g := range grants {
+		out = append(out, meGrant{
 			Role:           string(g.Role),
 			OrganizationID: g.Scope.OrganizationID,
 			ProjectID:      g.Scope.ProjectID,
@@ -64,12 +65,19 @@ func principalPayload(p policy.Principal) mePayload {
 			ServiceID:      g.Scope.ServiceID,
 		})
 	}
+	return out
+}
+
+// principalPayload projects an authenticated policy.Principal into the stable
+// GET /v1/me wire shape. Grants is always a non-nil slice so the rendered
+// JSON carries [] rather than null when the principal holds no grants.
+func principalPayload(p policy.Principal) mePayload {
 	return mePayload{
 		PrincipalID:    p.ID,
 		Kind:           string(p.Kind),
 		OrganizationID: p.OrganizationID,
 		Role:           string(p.Role),
-		Grants:         grants,
+		Grants:         meGrantsOf(p.Grants),
 		Disabled:       p.Disabled,
 	}
 }

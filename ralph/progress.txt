@@ -2521,3 +2521,64 @@
     decodeMe) and middleware_test.go provides decodeError — a sibling
     _test.go file in package httpapi reuses them with no new scaffolding.
 ---
+
+## 2026-05-15 - BE-0043
+- Implemented GET /v1/me/organizations: lists the organizations the
+  authenticated principal can see through the control plane, with the
+  principal's organization-wide role and scoped grants in each. Like GET /v1/me
+  (BE-0040) it is a pure, no-database read — a principal's visible organizations
+  are fully determined by its home organization and scoped grants, both
+  established at authentication.
+  - me_organizations.go: meOrganizationsPayload{Organizations []meOrganization}
+    and meOrganization{OrganizationID, Role omitempty, Grants}. The builder
+    principalOrganizationsPayload emits exactly the principal's home
+    organization (a principal is bound to one org; all grants narrow/widen
+    authority within it) — a single-element list, with the array shape kept as
+    forward-compatibility. Grants are confined to the home org as
+    defence-in-depth: a grant that somehow references a foreign org is dropped,
+    never surfaced as a visible tenant. Handler mirrors meHandler's defensive
+    no-principal -> apierr.Internal path.
+  - me.go: extracted the shared principal-grants -> wire projection into
+    meGrantsOf(); principalPayload now calls it (behaviour unchanged).
+  - routes.go: registered GET /v1/me/organizations in newRouteTable
+    (operationId getMeOrganizations, RequiresAuth, RequiredAction auth.orgs,
+    tag identity, nil resolver — CapSelf, own-org scope). OpenAPI is generated
+    from the route table, so the document picks it up automatically.
+- Files changed: internal/controlplane/httpapi/me_organizations.go (new),
+  internal/controlplane/httpapi/me_organizations_test.go (new),
+  internal/controlplane/httpapi/me.go, internal/controlplane/httpapi/routes.go;
+  ralph/prd.json, ralph/progress.txt.
+- Verification run: gofmt -w .; go mod tidy; go build ./...; go vet ./...;
+  go test ./...; go test -race ./internal/controlplane/httpapi/....
+- Results: all passed. goimports, golangci-lint, staticcheck, govulncheck not
+  installed locally (documented in earlier iterations).
+- Remaining risks / follow-ups:
+  - BE-0044 ("Add contract tests for GET /v1/me/organizations") is effectively
+    satisfied: me_organizations_test.go already covers success, service-account
+    / empty-grants, unauthenticated, invalid credentials, disabled-principal
+    (403), dependency-failure-is-not-401, request-id propagation, tenant
+    isolation, OpenAPI documentation, no-principal internal path, and the
+    payload-mapping unit test — the same shape me_test.go gives /v1/me.
+  - BE-0045 ("Add policy matrix coverage for GET /v1/me/organizations", p1) is
+    now unblocked: the endpoint and its CapSelf action auth.orgs exist, so a
+    sibling me_organizations_policy_test.go can drive the real NewHandler +
+    policy.NewEngine() exactly like me_policy_test.go does for auth.me.
+  - "Isolated Postgres migrations" / "fake Dokploy" / "audit event for mutating
+    requests" acceptance criteria are N/A: GET /v1/me/organizations is a
+    non-mutating, no-database, no-Dokploy read derived purely from the
+    authenticated principal.
+- Learnings for future iterations:
+  - The /v1/me family of "self" endpoints (auth.me, auth.orgs) is built purely
+    from the policy.Principal that RequireAuth resolves — no store, no Dokploy.
+    A principal is bound to exactly ONE home organization and every scoped grant
+    narrows/widens authority WITHIN it, so "organizations visible to principal"
+    is the single home org. Build the org list from the principal; do not add a
+    store.OrganizationRepository for these self endpoints.
+  - When a new self endpoint reuses the principal->wire grant projection,
+    reuse httpapi.meGrantsOf rather than re-inlining the Scope flattening loop.
+  - A new endpoint that is RequiresAuth + a CapSelf action only needs: a route
+    table entry (nil resolver) + a thin handler + the action already catalogued
+    in policy. No new apierr code, no apienvelope change, no migration — the
+    OpenAPI doc and the route-coverage/auth-mapping CI guards are all
+    data-driven from newRouteTable.
+---

@@ -146,6 +146,25 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// enabled principal — so the endpoint has no deeper resource target.
 			handler: meHandler(),
 		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodGet,
+				Path:               "/v1/me/organizations",
+				OperationID:        "getMeOrganizations",
+				Summary:            "Organizations visible to the current principal",
+				Description:        "Lists the organizations the authenticated principal can see through the control plane, with the principal's organization-wide role and scoped grants in each. The response is derived from the authenticated principal alone — its home organization and scoped grants — and never reveals another tenant's data. It carries no credential material. A principal is bound to a single home organization, so the list has one entry today; the array shape is forward-compatible with credentials that may span organizations later.",
+				Tags:               []string{tagIdentity},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionAuthOrgs),
+				SuccessDescription: "The organizations visible to the authenticated principal.",
+			},
+			// A nil resolver authorizes against the principal's own organization
+			// scope. auth.orgs is a CapSelf action — allowed for any
+			// authenticated, enabled principal — and the endpoint only ever
+			// reports the principal's own organization, so it has no deeper
+			// resource target.
+			handler: meOrganizationsHandler(),
+		},
 	}
 }
 
