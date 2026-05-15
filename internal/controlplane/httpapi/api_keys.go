@@ -31,18 +31,22 @@ var errNoAPIKeyReader = errors.New("httpapi: no api key reader configured")
 var errNoAPIKeyCreator = errors.New("httpapi: no api key creator configured")
 
 // APIKeyReader is the narrow persistence port GET
-// /v1/organizations/{org_id}/api-keys depends on. *store.APIKeyReader satisfies
-// it in production; tests supply a fake. Keeping the dependency an interface
-// keeps the handler unit-testable without a real database, the same way
-// MembershipReader keeps GET /v1/organizations/{org_id}/members testable.
+// /v1/organizations/{org_id}/api-keys and GET
+// /v1/organizations/{org_id}/api-keys/{key_id} depend on. *store.APIKeyReader
+// satisfies it in production; tests supply a fake. Keeping the dependency an
+// interface keeps the handler unit-testable without a real database, the same
+// way MembershipReader keeps GET /v1/organizations/{org_id}/members testable.
 //
-// The read is tenant scoped at the persistence layer: the repository filters
-// by organization_id, so a cross-tenant id simply matches no rows and yields
-// an empty list. Cross-tenant rejection at the policy boundary (the deterministic
-// 403 organizationIDResolver produces) keeps an attacker from probing the
-// endpoint at all; the persistence-layer scoping is a defence-in-depth backstop.
+// Both reads are tenant scoped at the persistence layer: the repository filters
+// by organization_id, so a cross-tenant id simply matches no rows — ListAPIKeys
+// yields an empty list and GetAPIKey surfaces a typed not-found, never another
+// organization's keys. Cross-tenant rejection at the policy boundary (the
+// deterministic 403 organizationIDResolver produces) keeps an attacker from
+// probing the endpoint at all; the persistence-layer scoping is a
+// defence-in-depth backstop.
 type APIKeyReader interface {
 	ListAPIKeys(ctx context.Context, organizationID string) ([]store.APIKey, error)
+	GetAPIKey(ctx context.Context, organizationID, keyID string) (store.APIKey, error)
 }
 
 // apiKeyResource is the wire shape of a single API key in the GET
@@ -86,6 +90,16 @@ type apiKeyResource struct {
 // the payload is safe to log and audit verbatim.
 type listAPIKeysPayload struct {
 	APIKeys []apiKeyResource `json:"api_keys"`
+}
+
+// getAPIKeyPayload is the data block of the GET
+// /v1/organizations/{org_id}/api-keys/{key_id} success envelope: the single
+// API key named by ({org_id}, {key_id}), in the same stable wire shape every
+// other api-key endpoint returns. It carries no credential material — the
+// secret hash never crosses the HTTP boundary and the plaintext token is
+// shown to its owner exactly once at creation, never on a read.
+type getAPIKeyPayload struct {
+	APIKey apiKeyResource `json:"api_key"`
 }
 
 // apiKeyResourceOf projects a store.APIKey onto the wire shape. It normalises
@@ -212,6 +226,59 @@ func listAPIKeysHandler(reader APIKeyReader) http.HandlerFunc {
 			out = append(out, apiKeyResourceOf(k))
 		}
 		apienvelope.WriteData(w, http.StatusOK, requestID(r), listAPIKeysPayload{APIKeys: out})
+	}
+}
+
+// getAPIKeyHandler builds the GET /v1/organizations/{org_id}/api-keys/{key_id}
+// handler. It reads the single API key named by ({org_id}, {key_id}) from
+// the source-of-truth database through the APIKeyReader port, and renders it
+// in a stable yalla.output.v1 envelope.
+//
+// RequireAuth gates the route on action keys.read before the handler runs —
+// authorized through organizationIDResolver against the organization the path
+// names — and attaches the resolved principal, so a request that reaches the
+// handler has already cleared the tenant boundary: a cross-tenant {org_id}
+// was rejected as a 403 by the policy engine, never reaching this code. A
+// request that arrives here with no principal is therefore a wiring error and
+// is reported as a typed internal error rather than reading for a zero
+// principal. A reader-store outage surfaces as its own typed 5xx, never
+// disguised as a not-found.
+//
+// keys.read is a CapAdmin action: a viewer or developer in the tenant cannot
+// read an API key, only an owner or admin in the tenant (and a support
+// principal performing a read across tenants by the standard
+// CapRead-with-support allow) can — exactly as the policy catalog dictates.
+// keys.read sits at CapAdmin rather than CapRead, however, so the support
+// cross-tenant exception does NOT apply to this route: a support principal
+// cannot read another tenant's keys through this endpoint. The handler
+// relies on the policy engine for that decision; it never re-checks the
+// role itself.
+//
+// A {key_id} that does not exist in the tenant is reported as a typed
+// E_NOT_FOUND by the store layer (the repository's tenant-scoped Get
+// surfaces apierr.NotFound for both a missing row and a key id from another
+// organization), so a cross-tenant key_id is indistinguishable from a
+// missing row — the endpoint can never reveal whether another tenant owns
+// that key.
+func getAPIKeyHandler(reader APIKeyReader) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if reader == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoAPIKeyReader))
+			return
+		}
+		key, err := reader.GetAPIKey(r.Context(), r.PathValue("org_id"), r.PathValue("key_id"))
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), getAPIKeyPayload{
+			APIKey: apiKeyResourceOf(key),
+		})
 	}
 }
 

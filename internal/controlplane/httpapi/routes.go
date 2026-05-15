@@ -84,7 +84,8 @@ type versionPayload struct {
 // /v1/organizations/{org_id}/members, memberUpdater backs PATCH
 // /v1/organizations/{org_id}/members/{member_id}, memberRemover backs
 // DELETE /v1/organizations/{org_id}/members/{member_id}, apiKeys backs
-// GET /v1/organizations/{org_id}/api-keys, and apiKeyCreator backs POST
+// GET /v1/organizations/{org_id}/api-keys and GET
+// /v1/organizations/{org_id}/api-keys/{key_id}, and apiKeyCreator backs POST
 // /v1/organizations/{org_id}/api-keys. Any may be nil for tests and tooling
 // that only inspect the route table's metadata; a request that actually
 // reaches a handler with a nil dependency is reported as a typed internal
@@ -443,6 +444,32 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// read, exactly as the policy matrix specifies for CapRead actions.
 			resolver: organizationIDResolver,
 			handler:  listAPIKeysHandler(apiKeys),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodGet,
+				Path:           "/v1/organizations/{org_id}/api-keys/{key_id}",
+				OperationID:    "getOrganizationAPIKey",
+				Summary:        "Get an API key of an organization",
+				Description:    "Returns the single API key named by ({org_id}, {key_id}) from the source-of-truth database — its id, public prefix, name, scopes, ownership identifiers (the user who minted it and the optional owning service account), and lifecycle timestamps. Action keys.read is authorized against the organization the path names before the handler runs: a principal reading a key outside its own tenant is rejected with a deterministic 403, so a cross-tenant id can never reveal another tenant's keys. A key id paired with the wrong organization is the same deterministic 404 as a missing row, so the endpoint can never reveal whether another tenant owns that key. The response carries no credential material — the secret hash is never projected onto the wire and the plaintext token (the only usable credential) is shown to its owner once at creation and never reaches this endpoint. keys.read is a CapAdmin action: a viewer or developer cannot read the organization's keys; only an owner or admin in the tenant can — and unlike CapRead actions there is no cross-tenant support exception.",
+				Tags:           []string{tagAPIKeys},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionKeysRead),
+				PathParams: []openapi.PathParam{
+					{Name: "org_id", Description: "The id of the organization the API key belongs to."},
+					{Name: "key_id", Description: "The id of the API key to read."},
+				},
+				SuccessDescription: "The API key identified by ({org_id}, {key_id}).",
+			},
+			// organizationIDResolver authorizes action keys.read against the
+			// organization the {org_id} path parameter names, so a cross-tenant
+			// id is denied at the policy boundary before the handler reads any
+			// data. keys.read is a CapAdmin action, so the support cross-tenant
+			// exception (a CapRead-only allow) does not apply — privileged
+			// Yalla support that needs key visibility goes through the explicit
+			// break-glass admin tooling, not this customer-facing endpoint.
+			resolver: organizationIDResolver,
+			handler:  getAPIKeyHandler(apiKeys),
 		},
 		{
 			endpoint: openapi.Endpoint{

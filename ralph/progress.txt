@@ -4915,3 +4915,111 @@
     triplets, the implementation story remains the real unblocker; the
     matrix file is a tight clone.
 ---
+
+## 2026-05-15 - BE-0082
+- What was implemented: GET /v1/organizations/{org_id}/api-keys/{key_id} —
+  the per-key read endpoint, the natural pair to the existing list (BE-0076),
+  reusing the same APIKeyReader port and the same apiKeyResource projection.
+  - internal/controlplane/store/apikey.go: appended GetAPIKey to the
+    *APIKeyReader adapter so it composes APIKeyRepository.Get inside a
+    short-lived Store.Read transaction. Tenant scoping is inherited from
+    the repository (Get filters by organization_id first, so a cross-tenant
+    key_id is a typed apierr.NotFound, never another tenant's row).
+  - internal/controlplane/httpapi/api_keys.go: extended the APIKeyReader
+    port with GetAPIKey(ctx, orgID, keyID) — both the LIST and the new GET
+    routes share the same port, same as MembershipReader unifies ListMembers
+    + GetMember. Added the getAPIKeyPayload DTO (api_key: apiKeyResource) and
+    the getAPIKeyHandler. The handler mirrors getMemberHandler: principal
+    guard, nil-reader guard, single reader call with (org_id, key_id) path
+    params, error-to-envelope mapping via toAPIError, success render via
+    apienvelope.WriteData. No new credential primitives — the SecretHash
+    never crosses the HTTP boundary (apiKeyResourceOf drops it), and the
+    plaintext token only ever appears on the POST createAPIKeyPayload.
+  - internal/controlplane/httpapi/routes.go: registered the new apiRoute
+    between LIST and POST. operationId getOrganizationAPIKey, action
+    keys.read, organizationIDResolver (same as the list route), both
+    {org_id} and {key_id} declared as PathParams so OpenAPI documents the
+    full signature. The newRouteTable doc comment was updated to credit
+    apiKeys for backing both GET routes. keys.read remains CapAdmin, so
+    the support cross-tenant exception does NOT apply — the resolver
+    comment pins that.
+  - internal/controlplane/httpapi/api_keys_test.go: extended fakeAPIKeyReader
+    with key/getErr/gotKeyOrgID/gotKeyID fields (mirroring fakeMembershipReader's
+    list + get pair) and a GetAPIKey method that returns a typed NotFound
+    by default — so every existing test that uses the zero-value reader
+    keeps its meaning unchanged.
+  - internal/controlplane/httpapi/api_keys_get_test.go (new): contract,
+    authorization, and tenant-isolation coverage for the new endpoint —
+    happy path with full field projection (+ secret_hash absence), nullable
+    timestamps + service_account_id rendering, scopes-as-empty-array, path-
+    parameter scoping (both org_id and key_id reach the reader in order),
+    not-found stability, cross-tenant denial (forbidden, never not-found,
+    reader never reached), viewer/developer denial (CapAdmin gating),
+    support cross-tenant denial (no CapRead-with-support exception for
+    keys.read), unauthenticated + invalid-credentials + disabled-principal
+    paths, store unavailable surfacing as 503, nil-reader wiring error,
+    request_id propagation, and OpenAPI documentation (operationId,
+    x-required-action, security requirement, 200 response, both path
+    parameters).
+  - internal/controlplane/store/apikeyservice_test.go: appended
+    TestAPIKeyReaderGetAPIKey — the integration test for the new adapter
+    method. It mints a real key via APIKeyService.Create, then asserts the
+    happy-path round-trip (the persisted projection comes back unchanged
+    including scopes), the cross-tenant query (CodeNotFound, never another
+    tenant's data), and the fabricated-id query (same CodeNotFound). It
+    runs against an isolated migrated Postgres database and skips when
+    YALLA_TEST_DATABASE_URL is unset, matching the existing reader-test
+    style.
+- Files changed: internal/controlplane/store/apikey.go,
+  internal/controlplane/store/apikeyservice_test.go,
+  internal/controlplane/httpapi/api_keys.go,
+  internal/controlplane/httpapi/api_keys_test.go,
+  internal/controlplane/httpapi/api_keys_get_test.go (new),
+  internal/controlplane/httpapi/routes.go,
+  ralph/prd.json (BE-0082 passes -> true),
+  ralph/progress.txt.
+- Verification run: gofmt -w .; go mod tidy; go vet ./...;
+  go build ./...; go test -count=1 ./...; go test -race -count=1 ./....
+- Results: all green. goimports/golangci-lint/staticcheck/govulncheck
+  still not installed locally (documented in earlier entries).
+- Remaining risks or follow-ups: BE-0083 (contract tests) and BE-0084
+  (policy matrix coverage) are the natural sibling stories — the contract
+  coverage already in api_keys_get_test.go addresses much of BE-0083's
+  scope (success envelope, error envelope, request_id propagation, OpenAPI
+  operation registration, unauthenticated/unauthorized/invalid/not-found/
+  happy paths) but BE-0084's role-by-role matrix against NewHandler +
+  policy.NewEngine() is its own dedicated file, to land in the next
+  iteration. The remaining api-keys triplets (BE-0085/BE-0086/BE-0087
+  PATCH, BE-0088/BE-0089/BE-0090 DELETE, BE-0091/BE-0092/BE-0093 rotate)
+  still need their implementation + matrix pairs.
+- Learnings for future iterations:
+  - The "fakeXReader carries the union of list + get fields" pattern is
+    established by fakeMembershipReader and is the right shape when a
+    single port interface backs both a LIST and a GET-by-id endpoint:
+    keys/err/gotOrgID for the list, key/getErr/gotKeyOrgID/gotKeyID for
+    the get. The zero value must keep its existing meaning for every
+    callsite that only exercises the OTHER route — so GetAPIKey returns
+    apierr.NotFound on the zero-value key (not an empty struct success),
+    mirroring fakeMembershipReader.GetMember.
+  - The store-side *APIKeyReader is the adapter, NOT a SQL-issuing
+    duplicate: GetAPIKey opens its own Store.Read transaction and
+    delegates to APIKeyRepository.Get. Tenant scoping is inherited from
+    the repository — TestAPIKeyRepositoryGetIsTenantScoped already proves
+    it. The new TestAPIKeyReaderGetAPIKey pins the adapter wiring
+    (Store.Read + repo call + error mapping) end to end without
+    re-proving the repository's tenant filter.
+  - keys.read is CapAdmin, NOT CapRead: a viewer/developer cannot read a
+    single key (just as they cannot list them), and the support
+    cross-tenant exception (CapRead-only) does NOT apply. The
+    GetAPIKey-by-id route therefore uses organizationIDResolver and the
+    same denial semantics as the LIST route — the matrix is "owner +
+    admin allow; viewer + developer + ci + support deny; cross-tenant
+    deny for everyone, including support". The new contract tests pin
+    each of those, but the dedicated BE-0084 policy matrix file should
+    independently exercise every role against the real policy.NewEngine().
+  - Documentation comment maintenance: when a port grows from one
+    endpoint to two (LIST -> LIST + GET), update both the port's own
+    doc comment AND the newRouteTable doc comment that names which
+    dependency backs which route. A drift here is invisible to vet but
+    misleads future contributors.
+---

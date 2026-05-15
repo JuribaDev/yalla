@@ -43,14 +43,21 @@ import (
 // "authorization" coverage for this story.
 
 // fakeAPIKeyReader is a canned APIKeyReader for httpapi tests. The zero value
-// returns an empty list and no error from ListAPIKeys, which is all the tests
-// that never reach the handler (the public-surface, /v1/me, and other-org-route
-// suites) need. APIKey-specific tests set keys/err and read gotOrgID back to
-// prove the list read is scoped to the {org_id} path parameter.
+// returns an empty list and no error from ListAPIKeys and a typed not-found
+// from GetAPIKey, which is all the tests that never reach the handler (the
+// public-surface, /v1/me, and other-org-route suites) need. APIKey list
+// tests set keys/err and read gotOrgID back to prove the list read is scoped
+// to the {org_id} path parameter; getAPIKey tests set key/getErr and read
+// gotKeyOrgID/gotKeyID back to prove the read is scoped to both the
+// {org_id} and the {key_id} path parameters.
 type fakeAPIKeyReader struct {
-	keys     []store.APIKey
-	err      error
-	gotOrgID *string
+	keys        []store.APIKey
+	err         error
+	gotOrgID    *string
+	key         store.APIKey
+	getErr      error
+	gotKeyOrgID *string
+	gotKeyID    *string
 }
 
 func (f fakeAPIKeyReader) ListAPIKeys(_ context.Context, organizationID string) ([]store.APIKey, error) {
@@ -58,6 +65,22 @@ func (f fakeAPIKeyReader) ListAPIKeys(_ context.Context, organizationID string) 
 		*f.gotOrgID = organizationID
 	}
 	return f.keys, f.err
+}
+
+func (f fakeAPIKeyReader) GetAPIKey(_ context.Context, organizationID, keyID string) (store.APIKey, error) {
+	if f.gotKeyOrgID != nil {
+		*f.gotKeyOrgID = organizationID
+	}
+	if f.gotKeyID != nil {
+		*f.gotKeyID = keyID
+	}
+	if f.getErr != nil {
+		return store.APIKey{}, f.getErr
+	}
+	if f.key.ID == "" {
+		return store.APIKey{}, apierr.NotFound("api_key", keyID)
+	}
+	return f.key, nil
 }
 
 // fakeAPIKeyCreator is a canned APIKeyCreator for httpapi tests. The zero

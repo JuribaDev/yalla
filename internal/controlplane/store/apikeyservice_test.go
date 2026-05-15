@@ -441,3 +441,101 @@ func TestAPIKeyServiceCreateDoesNotPersistPlaintext(t *testing.T) {
 		t.Errorf("persisted secret_hash != generated hash")
 	}
 }
+
+// TestAPIKeyReaderGetAPIKey covers the GET /v1/organizations/{org_id}/api-keys/{key_id}
+// adapter behind the httpapi APIKeyReader port. It asserts the happy path
+// (the persisted key round-trips through the reader), the tenant-scoped
+// not-found path (a key id queried inside a different organization surfaces
+// as a typed apierr.NotFound, never another tenant's row), and the
+// missing-id path (a fabricated key id is the same typed not-found). The
+// reader composes APIKeyRepository.Get, whose tenant scoping is already
+// proven in TestAPIKeyRepositoryGetIsTenantScoped — this test pins the
+// adapter wiring (Store.Read open-tx + repository call + error mapping) end
+// to end.
+func TestAPIKeyReaderGetAPIKey(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	target := seedOrg(t, db, f, "acme")
+	other := seedOrg(t, db, f, "other-co")
+	actor := seedUser(t, db, f, target, "ada")
+	gen, err := auth.Generate()
+	if err != nil {
+		t.Fatalf("auth.Generate: %v", err)
+	}
+
+	svc := newAPIKeyService(t, s)
+	created, err := svc.Create(ctx, store.CreateAPIKeyInput{
+		OrganizationID: target.ID,
+		Name:           "Ada CLI",
+		Scopes:         []string{"projects:read"},
+		CreatedBy:      actor,
+		Prefix:         gen.Prefix,
+		SecretHash:     gen.SecretHash,
+		ActorID:        actor,
+		ActorKind:      string(domain.KindUser),
+		ActorOrgID:     target.ID,
+		RequestID:      "req_test",
+		CorrelationID:  "corr_test",
+	}, time.Now())
+	if err != nil {
+		t.Fatalf("Create returned %v, want nil", err)
+	}
+
+	reader, err := store.NewAPIKeyReader(s)
+	if err != nil {
+		t.Fatalf("NewAPIKeyReader: %v", err)
+	}
+
+	// Happy path: the owning tenant reads its own key by id and gets the
+	// persisted projection back unchanged.
+	got, err := reader.GetAPIKey(ctx, target.ID, created.ID)
+	if err != nil {
+		t.Fatalf("GetAPIKey returned %v, want nil", err)
+	}
+	if got.ID != created.ID {
+		t.Errorf("GetAPIKey id = %q, want %q", got.ID, created.ID)
+	}
+	if got.OrganizationID != target.ID {
+		t.Errorf("GetAPIKey organization_id = %q, want %q", got.OrganizationID, target.ID)
+	}
+	if got.Prefix != gen.Prefix {
+		t.Errorf("GetAPIKey prefix = %q, want %q", got.Prefix, gen.Prefix)
+	}
+	if got.SecretHash != gen.SecretHash {
+		t.Errorf("GetAPIKey secret_hash mismatch")
+	}
+	if got.Name != "Ada CLI" {
+		t.Errorf("GetAPIKey name = %q, want %q", got.Name, "Ada CLI")
+	}
+	if len(got.Scopes) != 1 || got.Scopes[0] != "projects:read" {
+		t.Errorf("GetAPIKey scopes = %v, want [projects:read]", got.Scopes)
+	}
+
+	// Cross-tenant: the other tenant queries by a valid key id that
+	// belongs to target — the repository filter scopes the read by
+	// organization_id first, so the row simply does not match and the
+	// adapter surfaces apierr.NotFound. This is the contract that lets
+	// the HTTP handler treat cross-tenant key_id as indistinguishable
+	// from a missing row.
+	_, err = reader.GetAPIKey(ctx, other.ID, created.ID)
+	if err == nil {
+		t.Fatal("cross-tenant GetAPIKey returned nil error, want NotFound")
+	}
+	if ye := yerr.From(err); ye.Code != yerr.CodeNotFound {
+		t.Errorf("cross-tenant GetAPIKey code = %s, want %s", ye.Code, yerr.CodeNotFound)
+	}
+
+	// Missing id: a fabricated key id in the owning tenant is the same
+	// typed not-found.
+	_, err = reader.GetAPIKey(ctx, target.ID, "key_nonexistent")
+	if err == nil {
+		t.Fatal("missing-id GetAPIKey returned nil error, want NotFound")
+	}
+	if ye := yerr.From(err); ye.Code != yerr.CodeNotFound {
+		t.Errorf("missing-id GetAPIKey code = %s, want %s", ye.Code, yerr.CodeNotFound)
+	}
+}

@@ -319,3 +319,22 @@ func (r *APIKeyReader) ListAPIKeys(ctx context.Context, organizationID string) (
 	}
 	return keys, nil
 }
+
+// GetAPIKey returns the API key identified by keyID within organizationID,
+// reading it inside a short-lived read-only transaction. The read is tenant
+// scoped: a key id that belongs to another organization simply matches no
+// rows and is reported as a typed NotFound, so a cross-tenant id can never
+// reveal another organization's data. A datastore failure is propagated as
+// its own typed error.
+func (r *APIKeyReader) GetAPIKey(ctx context.Context, organizationID, keyID string) (APIKey, error) {
+	var key APIKey
+	err := r.store.Read(ctx, func(ctx context.Context, q Querier) error {
+		var getErr error
+		key, getErr = r.apiKeys.Get(ctx, q, organizationID, keyID)
+		return getErr
+	})
+	if err != nil {
+		return APIKey{}, err
+	}
+	return key, nil
+}
