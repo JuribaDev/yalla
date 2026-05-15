@@ -2,6 +2,7 @@
 - env.read-on-{project_id}-resolver policy matrix (BE-0144, internal/controlplane/httpapi/projects_variables_get_policy_test.go) is the structural sibling of the project.grants.read-on-{project_id}-resolver matrix (BE-0138, projects_grants_policy_test.go) — same CapRead capability class, same projectIDResolver scope (`{principal home org, path project_id}`), same six-roles-all-allow matrix via ReasonAllowedByRole, same support cross-tenant exception at the engine (ReasonAllowedBySupport — pinned even though projectIDResolver structurally blocks it on the customer-facing wire), same engine cross-tenant deny matrix for non-support roles, same scoped-grant containment shape (sibling project denied, env-/service-scoped grants denied against the project resource, org-level Viewer grant allowed via ReasonAllowedByGrant). The load-bearing distinction is the wire-redaction chokepoint: project_variables rows carry credential material (a non-null Value that flips to output.Sentinel when IsSecret), so the deny-body leak guard (variablesDenyBodyLeak) anchors on BOTH structural identifiers (canonical project/var ids, keys, non-secret values) AND the seeded secret plaintext (canonicalVariablesSecretPlaintext). project_grants rows store no credential material, so grantsDenyBodyLeak omits a plaintext anchor. The allow-path test also asserts secret rows project as output.Sentinel and that the seeded plaintext never appears in the response body — pinning projectVariableOf as the chokepoint independent of how authority was earned (role / org-level grant / project-level grant). Forward-applicable to every future env.read matrix that resolves into a project-, env-, or service-level scope on a variables route: keep the role / disabled / wrong-org / grant-containment skeleton, swap the action+resolver for the new endpoint's, and ALWAYS add a secret-plaintext needle to the leak guard plus a Sentinel-projection assertion to every allow-path tie-in.
 - CapAdmin-on-{project_id}-resolver policy matrix (BE-0141, internal/controlplane/httpapi/projects_grants_put_policy_test.go) is the structural sibling of the CapWrite-on-{project_id}-resolver matrix (projects_delete_policy_test.go) but ONE TIER UP — Developer JOINS the deny set at the role boundary (it holds CapWrite, not CapAdmin) and the org-level Developer grant flips from ALLOW for project.delete to DENY for project.grants.write. The load-bearing pair is org-level Admin grant ALLOW + org-level Developer grant DENY: that pair locks the CapAdmin requirement against the grant path so a future catalog change that downgraded project.grants.write to CapWrite would still pass the allow check but fail the deny check (silently letting every developer key rewrite a project's authority), and the regression direction is documented as a structural test, not only catalog assertion. The cross-tenant engine matrix DENIES every role including Support (CapAdmin is OUTSIDE the engine clause `roleCaps.has(CapSupport) && (required == CapRead || required == CapSupport)`); the CapRead-on-{project_id}-resolver siblings (project.grants.read at BE-0138 etc) ALLOW Support cross-tenant via ReasonAllowedBySupport — pinning the same-shape distinction in both directions documents that read-vs-write is the load-bearing axis for the support exception. Mutating-policy-matrix tests carry TWO directions of leak guard: a request-body leak guard (replaceGrantsRequestBodyLeak, anchored on distinctive caller-supplied identifiers like usr_request_matrix that NEVER appear in the canonical fixture data) and a would-have-returned-data leak guard (grantsDenyBodyLeak, anchored on canonical fixture data the fake replacer would return on an allow path) — used together on every deny path so a future renderer that gained either a "render request body on error" or "render would-have-returned data on 403" mode fails here. A read endpoint needs only the second; a write endpoint needs both. CI must be listed EXPLICITLY in both the per-role deny rows and the cross-tenant engine deny loop, because CapDeploy (which CI holds) is its own axis — neither CapWrite nor CapAdmin. The "scoped key planted in a foreign home org" engine assertion (a principal whose home org is org_sibling but whose grant scope still names a project in org_acme, authorized against org_sibling's resource) is independent of CapAdmin/CapWrite/CapRead — the engine refuses to consider the grant at all because the principal's OrganizationID no longer matches the grant scope's OrganizationID. Pin this on every grant-containment test so a stolen scoped key documentedly cannot be smuggled across tenants by anyone who finds it.
 - Replace-grants writer vertical (BE-0139 pattern, internal/controlplane/store/project_grant.go + httpapi/project_grants.go): a PUT-replace endpoint on a (parent, scoped-children) resource family pairs the existing reader-port adapter with a unit-of-work writer (ProjectGrantService) modeled exactly on OrganizationVariableService. The repository grows two new methods: Upsert(tx, id, organizationID, projectID, principalID, principalKind, role, *envID, *svcID) (ProjectGrant, error) using `ON CONFLICT (organization_id, project_id, principal_id, COALESCE(environment_id, ''), COALESCE(service_id, ''))` so the customer-mutable `role` is the only column the UPDATE branch touches (the immutable scope tuple + the bump_version trigger handle the rest); DeleteByProjectExceptIDs(tx, organizationID, projectID, keepIDs) renders the empty-keepIDs case as an unconstrained DELETE (an explicit clear is a meaningful customer operation), the non-empty case as `NOT (id = ANY($3::text[]))` so the bulk delete-by-exclusion is one round trip — same shape as DeleteByOrganizationExceptKeys but anchored on the row id (which Upsert returns from RETURNING) rather than a customer-supplied key, so an upsert that mutates an existing row deterministically keeps the survivor's id. The service Replace runs inside one Store.Write tx: project existence Get (a missing parent is typed NotFound, never a generic FK conflict), per-grant Upsert collecting the persisted ids into keepIDs, DeleteByProjectExceptIDs(keepIDs), audit.Append, post-write ListByProject re-read — every step shares the *Tx so a partial replace and an orphaned audit row are both impossible. Validation lives in buildProjectGrantReplace (split out, unit-testable without a DB): closed-set checks on principal_kind / role mirror the table's CHECK constraints, structural checks reject blank/NUL ids and a service-scope-without-environment, in-memory dedup uses `principalID + "\x00" + COALESCE(envID,'') + "\x00" + COALESCE(svcID,'')` to match the SQL unique index byte-for-byte. Audit metadata records counts only — `grant_count`, `project_scope_count`, `environment_scope_count`, `service_scope_count` — never principal ids, role names, or environment/service identifiers; per-row mutation history is the GET /v1/projects/{project_id}/grants surface's job. The HTTP layer adds a ProjectGrantReplacer port mirroring OrganizationVariableReplacer, a strict-decoded replaceProjectGrantsRequest with Grants *[]projectGrantRequest (pointer-to-slice so missing field is structurally distinguishable from an explicit empty array — a missing field is a stable 400, an empty array reaches the store), and the handler clones caller-supplied *string EnvironmentID/ServiceID pointers before forwarding them so the store cannot observe the caller's backing memory. NewHandler and newRouteTable signatures each grow ONE positional port (projectGrantReplacer ProjectGrantReplacer just after projectGrants ProjectGrantReader); a Python regex sweep over 27 test files anchored on `fakeProjectGrantReader{}, nil)` -> `fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, nil)` handled the bulk of the NewHandler churn (43 call sites), with three follow-up patterns hand-fixed: `, logger)` in server_test.go and me_contract_test.go (NewHandler with non-nil logger), `, nil)` newRouteTable call (different return type), and the 29-nil all-nil newRouteTable pattern in six test files (added one trailing nil for the new port). The story implicitly delivers BE-0439's CRUD repository acceptance criteria (Upsert + DeleteByProjectExceptIDs are the missing half) and the writer side of BE-0440's tenant-isolation criteria.
+- Replace-variables writer vertical for a scoped-child resource (BE-0145 pattern, internal/controlplane/store/project_variable.go + project_variable_service.go + httpapi/project_variables.go): a PUT-replace endpoint on a (parent, scoped-children) variables family pairs the existing reader-port adapter with a unit-of-work writer (ProjectVariableService) modeled exactly on OrganizationVariableService — same Upsert + DeleteByProjectExceptKeys + Replace shape, same audit metadata convention (counts-only: `variable_count`, `secret_count`), same value-redaction chokepoints (LogValue + wire output.Sentinel + audit Auditor regex), but with two distinguishing axes worth pinning. (1) The repository's Upsert key is the (organization_id, project_id, key) triple from migration 0015's UNIQUE (not the (organization_id, key) pair from migration 0012), so the ON CONFLICT target carries an extra column — every other column position in the INSERT statement shifts by one. The DELETE-except-keys SQL similarly has two tenant predicate legs (organization_id AND project_id) before the `key <> ALL($3)` clause; the empty/nil keepKeys path is the deliberate full-clear (a customer asking to remove every project-scoped variable is meaningful, not a no-op). (2) The ProjectVariableService re-uses the org-level helpers verbatim — `itoaVariableIndex`, `posixEnvVarName`, validate.MaxEnvVarNameLen/MaxEnvVarValueLen/MaxSecretValueLen — and uses `projectVariablesWriteAction = "env.write"` (same string constant as the org-level path) so the audit Action is identical at both scopes; the resource_kind axis (domain.KindProject vs domain.KindOrganization) is what disambiguates the audit row. The Service runs inside one Store.Write tx: ProjectRepository.Get (a missing OR cross-tenant project surfaces as the typed NotFound the GET reader already proves, NEVER as a generic FK conflict from the upsert), per-variable Upsert minting a fresh `pvar_` id (the existing-row's id is preserved on conflict, NOT the caller-supplied id), DeleteByProjectExceptKeys(keepKeys), audit.Append, post-write ListByProject re-read so the response body byte-matches the committed state. The HTTP layer adds a ProjectVariableReplacer port mirroring OrganizationVariableReplacer, strict-decoded replaceProjectVariablesRequest with `Variables *[]projectVariableRequest` (pointer-to-slice so a missing field is structurally distinguishable from an explicit empty array — a missing field is a stable 400 with reason `errProjectVariablesBodyMissing` "must be supplied (use an empty array to clear every variable)", an empty array reaches the store as the deliberate clear). The handler takes OrganizationID from the principal's home org (NEVER the caller — the body carries no org id), so a cross-tenant {project_id} still hits the tenant-scoped Get and surfaces as 404 at the persistence boundary. NewHandler and newRouteTable signatures each grow ONE positional port (projectVariableReplacer ProjectVariableReplacer just after projectVariables ProjectVariableReader); a Python regex sweep over the test directory anchored on `fakeProjectVariableReader{}, nil)` -> `fakeProjectVariableReader{}, fakeProjectVariableReplacer{}, nil)` and `fakeProjectVariableReader{}, logger)` (multi-line variant included) handled the bulk of the NewHandler churn (31 files); the all-nil newRouteTable form with 31 nils received one trailing nil to become 32; two outlier patterns needed targeted edits — project_variables_test.go's `fakeProjectGrantReplacer{}, reader, nil)` (where `reader` is a named parameter, not a literal) and projects_delete_test.go / projects_restore_test.go's `fakeProjectGrantReader{}, nil, nil)` (where the new-port slot was already nil-filled by an earlier story, so one MORE trailing nil was added rather than inserting in the middle). The story implicitly delivers the writer half of project_variables CRUD repository acceptance criteria and the writer side of tenant-isolation criteria.
 - Reader-only scoped-child vertical (BE-0142 pattern, project_variables migration 0015, store/project_variable.go, httpapi/project_variables.go): a new (parent, scoped-children) resource family that ships JUST the GET endpoint mirrors the BE-0136 full-vertical shape with two narrowings worth pinning. (1) The migration is structurally identical to project_grants 0014 — composite (organization_id, project_id) FK -> projects with ON DELETE CASCADE, composite UNIQUE (organization_id, id) as the FK target a future override table (environment_variables / service_variables) can use, bigint version + bump_version trigger from 0011, set_updated_at trigger — but a different scope-uniqueness shape: project_variables uses UNIQUE (organization_id, project_id, key) directly (no COALESCE because key is non-nullable) where project_grants needs the COALESCE-NULLS index for env/svc-scoped uniqueness. (2) The reader vertical defers the writer's repository surface — only ListByProject(ctx, Querier, organizationID, projectID) lands now — so the repo file is short and the audit-grade write path (Upsert + DeleteByProjectExceptKeys + bulk validation) is BE-0145's job. The store-backed adapter (ProjectVariableReader) mirrors ProjectGrantReader exactly: composes ProjectRepository.Get + ListByProject inside one Store.Read transaction so a cross-tenant or unknown project_id surfaces as apierr.NotFound, never an empty list. ProjectVariable.LogValue redacts every value at the slog boundary (mirrors OrganizationVariable.LogValue), so a stray panic stack that captures the struct cannot leak a non-secret value either — the slog redaction is unconditional even though the wire layer only redacts secret values. NewHandler signature grows ONE positional port (projectVariables ProjectVariableReader after projectGrantReplacer); a JS regex sweep over 30 test files anchored on `fakeProjectGrantReplacer{}, nil)` -> `fakeProjectGrantReplacer{}, fakeProjectVariableReader{}, nil)` plus a second sweep on `fakeProjectGrantReplacer{}, logger)` handled the NewHandler churn (45 call sites); a separate state-machine sweep over newRouteTable calls appended one trailing arg to every direct invocation (8 files), and project_grants_put_test.go's `fakeProjectGrantReader{}, replacer, nil)` (where replacer is a real var, not a literal) was the one anchor the bulk regex couldn't reach. The KindProjectVariable Kind prefix is `pvar` (mirrors the ovar/pgrnt prefix shape); the existing id_test.go's hardcoded valid-kinds lists do NOT need updating — they sanity-check a subset (KindProjectGrant is also absent from those lists yet works in tests). KindProjectVariable still has to land in the kinds map for Kind.Valid() / ParseID to accept it.
 - Inverse-lifecycle endpoints (restore vs schedule-delete) reuse the same Repository+Service pattern: the repository is an SQL-idempotent UPDATE returning the row (with optional version WHERE — NotFound on no-rows + nil ifMatch, classifyProjectConcurrencyMiss on no-rows + non-nil), and the Service does the lifecycle-state precondition check inside the same Store.Write transaction. For restore: pre-check current.DeletionScheduledAt != nil (else apierr.Conflict "project is not scheduled for deletion"); for schedule-delete: pre-check ==nil (else "deletion is already scheduled"). The pre-check is the customer's truth-finding step — the repository MUST stay SQL-idempotent so workers/admin jobs can retry without surfacing a misleading Conflict. Audit metadata captures the prior state (for restore, current.DeletionScheduledAt read BEFORE the UPDATE; for schedule-delete, the new stamp from the persisted row) so the trail documents what the resource looked like before/after the mutation.
 - Backend code lives under internal/controlplane/<pkg>; CLI stays under internal/cli. Keep HTTP handlers thin.
@@ -10825,4 +10826,206 @@
     - The fakeProjectVariableReader, listProjectVariablesHandlerFor, getProjectVariables, decodeListProjectVariables, and seedProjectVariableWire helpers already exist in project_variables_test.go (BE-0142). Do NOT duplicate them; reuse them across both the contract suite (BE-0142) and the policy matrix (BE-0144). The new file added zero scaffolding beyond canonicalVariablesProject, canonicalVariablesSecretPlaintext, canonicalProjectVariables, and variablesDenyBodyLeak.
     - canonicalVariablesProject deliberately uses distinct ids/slug/displayName from canonicalGrantsProject (different fixture namespace) so the two matrices cannot accidentally share fixture state through any future shared fake.
     - The "stolen scoped key planted in foreign home org" engine assertion is identical-shape to the grants matrix's: a Principal with OrganizationID=org_sibling carrying a Grant whose Scope.OrganizationID=org_acme, authorized against a Resource in org_sibling, is denied at the engine because the principal's home org no longer matches the grant scope's org. CapRead/CapWrite/CapAdmin axis is irrelevant — the cross-tenant guard fires first. Always pin this on every grant-containment test.
+---
+
+## 2026-05-15 - BE-0145
+- What was implemented: PUT /v1/projects/{project_id}/variables — the
+  writer half of the project-scoped variables surface, mirroring the
+  existing PUT /v1/organizations/{org_id}/variables shape. The endpoint
+  replaces the entire variable set for the project named by the
+  {project_id} path parameter in one transaction (upsert each
+  caller-supplied entry, delete-by-exclusion the rest, append the audit
+  record, re-read the committed state), behind action env.write
+  (CapWrite, no cross-tenant support exception).
+  - internal/controlplane/store/project_variable.go: added Upsert(tx,
+    id, organizationID, projectID, key, value, isSecret) using ON
+    CONFLICT (organization_id, project_id, key) — the new triple from
+    migration 0015's UNIQUE — and DeleteByProjectExceptKeys(tx,
+    organizationID, projectID, keepKeys) where empty/nil keepKeys is
+    the deliberate full-clear. Both methods require *Tx so a mutation
+    cannot be persisted outside the transaction that also carries its
+    audit record. Added projectVariablesWriteAction = "env.write"
+    string constant (matches the org-level value, distinguished by
+    resource_kind in the audit row).
+  - internal/controlplane/store/project_variable_service.go (new):
+    ProjectVariableService with Replace(ctx, in) — validates inputs via
+    buildProjectVariableReplace (re-uses the org-level posixEnvVarName,
+    itoaVariableIndex, validate.MaxEnvVarNameLen/MaxEnvVarValueLen/
+    MaxSecretValueLen helpers verbatim — no duplication), then runs
+    inside one Store.Write transaction: ProjectRepository.Get (a
+    missing OR cross-tenant project surfaces as the typed NotFound the
+    GET reader already proves), per-variable Upsert minting fresh
+    pvar_ ids through domain.NewID(KindProjectVariable),
+    DeleteByProjectExceptKeys(keepKeys), audit.Append with
+    resource_kind=KindProject + resource_id={project_id} (mirroring
+    project lifecycle endpoints), and post-write ListByProject re-read
+    so the response body byte-matches the committed state. Audit
+    metadata records only counts (variable_count, secret_count) —
+    never variable keys or values, so a secret can never reach the
+    audit row through this endpoint. NewProjectVariableService rejects
+    nil store/projects/variables/audit at construction.
+  - internal/controlplane/store/project_variable_test.go: added six
+    integration tests for the new repository methods (Upsert inserts
+    fresh row, Upsert updates existing row preserving id and bumping
+    version, Upsert rejects cross-tenant via composite FK,
+    DeleteByProjectExceptKeys drops the rest, empty/nil keepKeys
+    clears, cross-tenant tuple deletes nothing) plus nil-tx guards on
+    both methods. All gated by YALLA_TEST_DATABASE_URL — skip without
+    a live test database.
+  - internal/controlplane/store/project_variable_service_test.go (new):
+    nine service-level integration tests covering happy-path insert,
+    bulk-replace contract (update existing + drop rest), empty list as
+    clear, NotFound for missing project, NotFound for cross-tenant
+    project (with cross-tenant id leak guard on the error message),
+    tenant isolation across two orgs with key collision, validation
+    chokepoint (5 subcases — non-POSIX digit prefix, dash, duplicate,
+    empty, NUL byte) proving an invalid request never opens a
+    transaction and validation reasons never echo the submitted value,
+    actor-org requirement (blank ActorOrgID = Internal), and
+    constructor nil-dep guards across all four positions.
+  - internal/controlplane/httpapi/project_variables.go: added
+    ProjectVariableReplacer port + replaceProjectVariablesHandler.
+    Request DTO is replaceProjectVariablesRequest{ Variables
+    *[]projectVariableRequest } — pointer-to-slice so a missing field
+    is structurally distinguishable from an explicit empty array (the
+    distinction surfaces as errProjectVariablesBodyMissing reason
+    "must be supplied (use an empty array to clear every variable)").
+    OrganizationID is taken from the principal's home org (never the
+    caller — the body carries no org id), so a cross-tenant
+    {project_id} still hits the tenant-scoped Get and surfaces as 404
+    at the persistence boundary. Response uses the existing
+    projectVariableOf projection, so secret values redact to
+    output.Sentinel on the wire even on PUT — a customer cannot read
+    back a secret value they just submitted.
+  - internal/controlplane/httpapi/routes.go: registered the PUT
+    apiRoute with RequiresAuth=true, RequiredAction=
+    policy.ActionEnvWrite, resolver=projectIDResolver (so a
+    cross-tenant {project_id} is a 403 BEFORE the handler runs).
+    env.write is CapWrite in the policy catalog and has no
+    cross-tenant support exception — unlike CapRead actions, the
+    support principal cannot replace another tenant's variables.
+    newRouteTable signature gained one positional port
+    (projectVariableReplacer ProjectVariableReplacer) just after
+    projectVariables ProjectVariableReader.
+  - internal/controlplane/httpapi/server.go: NewHandler signature
+    gained ProjectVariableReplacer (one new positional arg threaded
+    into newRouteTable). Doc comments updated to enumerate the new
+    port.
+  - internal/controlplane/httpapi/project_variables_test.go: added
+    fakeProjectVariableReplacer test double mirroring
+    fakeProjectGrantReplacer (vars/err/got/callCount fields, Replace
+    method) so future BE-0146 contract tests can drive the PUT path
+    deterministically. Also fixed the existing listProjectVariables-
+    HandlerFor helper and the newRouteTable contract test to pass
+    fakeProjectVariableReplacer{}.
+  - cmd/yalla-api/main.go: builds the ProjectVariableService at
+    startup (composed over the existing dataStore +
+    ProjectRepository + ProjectVariableRepository + auditRepo) and
+    threads it into NewHandler as the new positional arg.
+  - Mechanical churn: a Python regex sweep over 31 *_test.go files
+    anchored on `fakeProjectVariableReader{}, nil)` ->
+    `fakeProjectVariableReader{}, fakeProjectVariableReplacer{}, nil)`
+    (plus the `, logger)` and multi-line variants) handled the bulk
+    of the NewHandler call-site churn. The all-nil newRouteTable
+    form with 31 nils (six files) received one trailing nil to
+    become 32 — done by a second Python sweep that counted nils
+    inside `newRouteTable\(...\)` rather than anchoring on a literal
+    BuildInfo shape. Two outliers needed targeted edits:
+    project_variables_test.go's helper passes a named parameter
+    `reader` (not a literal) at the slot, so the bulk regex couldn't
+    reach it; projects_delete_test.go and projects_restore_test.go
+    pass `fakeProjectGrantReader{}, nil, nil)` (where the
+    ProjectGrantReplacer and ProjectVariableReader slots were already
+    nil-filled by earlier stories), so one MORE trailing nil was
+    added rather than inserting in the middle.
+- Files changed:
+  - internal/controlplane/store/project_variable.go (extended)
+  - internal/controlplane/store/project_variable_service.go (new)
+  - internal/controlplane/store/project_variable_test.go (extended)
+  - internal/controlplane/store/project_variable_service_test.go (new)
+  - internal/controlplane/httpapi/project_variables.go (extended)
+  - internal/controlplane/httpapi/project_variables_test.go (extended)
+  - internal/controlplane/httpapi/routes.go (signature + new route)
+  - internal/controlplane/httpapi/server.go (signature)
+  - cmd/yalla-api/main.go (service init + handler wiring)
+  - 31 internal/controlplane/httpapi/*_test.go files (regex sweep
+    of NewHandler / newRouteTable call sites)
+  - ralph/prd.json (passes=true for BE-0145)
+- Verification run:
+  - gofmt -w . (clean)
+  - go mod tidy (clean)
+  - go build ./... (clean)
+  - go vet ./... (clean)
+  - go test ./... (all packages pass; integration tests that depend
+    on YALLA_TEST_DATABASE_URL skip silently when the env var is
+    unset, which is the documented default for normal local runs —
+    the same posture every other store-integration story takes)
+  - go test -race ./... (all packages pass)
+  - goimports not installed locally; gofmt covered formatting.
+  - golangci-lint / staticcheck / govulncheck not installed locally.
+- Remaining risks or follow-ups:
+  - BE-0146 (contract tests for PUT /v1/projects/{project_id}/variables)
+    is the natural next story; the fakeProjectVariableReplacer test
+    double is already in place so the contract tests can be added
+    without further test-helper churn.
+  - BE-0147 (policy matrix for PUT /v1/projects/{project_id}/variables)
+    is unblocked by this story — the route is registered with action
+    env.write under projectIDResolver, so the policy matrix can be
+    written as a sibling of the CapWrite-on-{project_id}-resolver
+    matrix (projects_delete_policy_test.go) using the variables-
+    flavoured leak guards (request-body anchored on caller-supplied
+    distinctive ids + would-have-returned-data anchored on the
+    seeded secret plaintext to prove a deny path never echoes a
+    submitted secret).
+  - Integration tests under YALLA_TEST_DATABASE_URL were verified by
+    inspection; the standard story posture is to skip them when the
+    env var is unset and rely on CI to run them with a real database.
+- Learnings for future iterations:
+  - The writer-variants pattern is now established at two scopes
+    (org-level since BE-0089, project-level here): the only axes
+    that change between scopes are the upsert key shape
+    (organization_id, key) vs (organization_id, project_id, key)
+    and the parent-existence check (OrganizationRepository.Get vs
+    ProjectRepository.Get). Every other piece — buildVariableReplace
+    validation, posixEnvVarName, value-size ceilings keyed on
+    is_secret, audit counts-only metadata, projectVariableOf wire
+    redaction, the *Tx/Querier asymmetry — is reused verbatim.
+    Future scope-narrowing override tables (environment_variables /
+    service_variables) should be able to follow the same template
+    by widening the upsert key once more and pointing the parent-
+    existence check at EnvironmentRepository / ServiceRepository.
+  - The Python regex sweep approach is reliable for inserting a
+    NEW positional NewHandler port when the anchor literal (here
+    `fakeProjectVariableReader{}`) is unambiguous and structurally
+    placed at the boundary. Two follow-up patterns must always be
+    audited by hand after the sweep: (a) helpers that pass a named
+    parameter at the new port's position (so the regex anchor
+    misses them — search the symptom `vet: not enough arguments
+    in call to NewHandler`), and (b) call sites where the new
+    port's slot was already filled with `nil` by an earlier story
+    (so the slot lives MID-arg-list, not at the trailing edge —
+    these need a trailing `, nil)` insertion, not an
+    insertion-in-the-middle). The all-nil newRouteTable forms are
+    a structurally different sweep (count nils, append one more)
+    and must be done as a separate pass — they share no anchor
+    with the NewHandler churn.
+  - When extending an existing test file with new repository tests,
+    the established convention is to KEEP the file growing
+    (project_variable_test.go went from 286 lines to ~450 with
+    Upsert + DeleteByProjectExceptKeys coverage) rather than to
+    fragment into a *_upsert_test.go / *_delete_test.go split —
+    the test file is the per-resource focal point, not the
+    per-method one. The service-level tests go in a separate
+    project_variable_service_test.go so the unit-of-work surface
+    (which depends on AuditRepository + ProjectRepository in
+    addition to the variable repo) is exercised independently
+    from the repository's own narrow methods.
+  - projectVariablesWriteAction = "env.write" is the SAME string
+    as the org-level envWriteAction (catalog action mapped to
+    CapWrite) — they cannot diverge by definition because the
+    policy engine reads ONE action string. The audit row's
+    distinguishing axis is resource_kind (KindProject vs
+    KindOrganization), not Action. Future scope-narrowing override
+    tables (environment / service variables) MUST also use
+    "env.write" for the same reason.
 ---

@@ -108,12 +108,14 @@ type versionPayload struct {
 // /v1/projects/{project_id}, projectRestorer backs POST
 // /v1/projects/{project_id}/restore, projectGrants backs GET
 // /v1/projects/{project_id}/grants, projectGrantReplacer backs PUT
-// /v1/projects/{project_id}/grants, and projectVariables backs GET
-// /v1/projects/{project_id}/variables. Any may be nil for tests and tooling
-// that only inspect the route table's metadata; a request that actually
-// reaches a handler with a nil dependency is reported as a typed internal
-// error rather than a misleading empty list or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader) []apiRoute {
+// /v1/projects/{project_id}/grants, projectVariables backs GET
+// /v1/projects/{project_id}/variables, and projectVariableReplacer backs
+// PUT /v1/projects/{project_id}/variables. Any may be nil for tests and
+// tooling that only inspect the route table's metadata; a request that
+// actually reaches a handler with a nil dependency is reported as a
+// typed internal error rather than a misleading empty list or a
+// silently dropped write.
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -463,6 +465,37 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// persistence boundary.
 			resolver: projectIDResolver,
 			handler:  listProjectVariablesHandler(projectVariables),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodPut,
+				Path:           "/v1/projects/{project_id}/variables",
+				OperationID:    "replaceProjectVariables",
+				Summary:        "Replace project variables",
+				Description:    "Replaces the project-scoped environment variables attached to the project named by the {project_id} path parameter in one transaction. The request body supplies the complete replacement set — every variable absent from the body is removed, every variable present is upserted on (organization_id, project_id, key), so a re-submission with the same set is structurally idempotent. An explicit empty array means \"clear every project-scoped variable\" — a meaningful (extreme) operation, never a silent no-op. Every field is validated before any database work; an invalid request (missing variables field, non-POSIX key, duplicate key, oversize value, invalid UTF-8, NUL byte in value) never opens a transaction. Action env.write is authorized against the (principal home organization, {project_id}) resource the path names before the handler runs: env.write is a CapWrite action, so the gate admits the principal's organization-wide write roles (owner, admin, developer, ci) or a scoped grant that covers the resource (a project-scoped Developer / Admin / Owner grant for THAT project, an environment- or service-scoped grant under it) while denying viewer, support, and grants that name only a sibling project, an unrelated environment, or an unrelated service because the policy engine asks whether the grant scope contains the resource scope, never the reverse. env.write is a CapWrite action, so there is no cross-tenant support exception — a support principal cannot replace another tenant's variables. A cross-tenant or unknown project_id reaches the persistence layer with the principal's home organization id and is rejected as a deterministic 404 by the project existence check, never disguised as an empty success. The replace, the audit record, and the post-write re-read are committed in one transaction so a partial replace and an orphaned audit row are both impossible. The response carries the persisted variables in the same stable wire shape GET /v1/projects/{project_id}/variables returns — every column projected onto the deterministic (key, id) order. Secret values are still redacted on the wire to the sentinel, so PUT cannot leak a secret value the customer just submitted; non-secret values project verbatim.",
+				Tags:           []string{tagProjects, tagVariables},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionEnvWrite),
+				PathParams: []openapi.PathParam{{
+					Name:        "project_id",
+					Description: "The id of the project whose variables to replace.",
+				}},
+				SuccessDescription: "The variables of the project after the replace.",
+			},
+			// projectIDResolver authorizes action env.write against the
+			// (principal home organization, {project_id}) resource the path
+			// names, not merely the principal's home organization, so a
+			// scoped write grant that names THIS project authorizes the write
+			// while a grant that names only a SIBLING project does not. The
+			// organization id is taken from the principal's home org (never
+			// the caller — there is no organization id in the request body),
+			// so a cross-tenant project_id still hits the tenant-scoped
+			// repository query and surfaces as a 404 at the persistence
+			// boundary. env.write is a CapWrite action and has no
+			// cross-tenant support exception — unlike CapRead actions, the
+			// support principal cannot replace variables in another tenant.
+			resolver: projectIDResolver,
+			handler:  replaceProjectVariablesHandler(projectVariableReplacer),
 		},
 		{
 			endpoint: openapi.Endpoint{

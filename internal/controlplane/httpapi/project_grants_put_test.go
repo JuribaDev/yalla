@@ -64,7 +64,7 @@ func replaceProjectGrantsHandlerFor(id auth.Identity, authErr error, replacer Pr
 		fakeOrgVariableReader{}, fakeOrgVariableReplacer{}, fakeOrgVariablePatcher{}, fakeOrgVariableDeleter{},
 		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
 		fakeProjectReader{}, fakeProjectCreator{}, fakeProjectUpdater{}, fakeProjectDeleter{}, fakeProjectRestorer{},
-		fakeProjectGrantReader{}, replacer, fakeProjectVariableReader{}, nil)
+		fakeProjectGrantReader{}, replacer, fakeProjectVariableReader{}, fakeProjectVariableReplacer{}, nil)
 }
 
 // putProjectGrants issues PUT /v1/projects/{projectID}/grants against

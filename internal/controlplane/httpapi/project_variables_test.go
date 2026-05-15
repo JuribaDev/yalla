@@ -65,6 +65,31 @@ func (f fakeProjectVariableReader) ListProjectVariables(_ context.Context, organ
 	return f.vars, f.err
 }
 
+// fakeProjectVariableReplacer is the test double for the
+// ProjectVariableReplacer port. The zero value returns nil/nil from
+// Replace, which is all the tests that never reach the PUT handler (the
+// public-surface, /v1/me, and other-route suites) need. Tests that drive
+// the PUT endpoint set vars/err and read got back to prove the
+// ReplaceProjectVariablesInput forwarded to the store carries the
+// principal's home org and actor id verbatim — never a caller-controlled
+// organization id, and never a leaked secret in audit metadata.
+type fakeProjectVariableReplacer struct {
+	vars      []store.ProjectVariable
+	err       error
+	got       *store.ReplaceProjectVariablesInput
+	callCount *int
+}
+
+func (f fakeProjectVariableReplacer) Replace(_ context.Context, in store.ReplaceProjectVariablesInput) ([]store.ProjectVariable, error) {
+	if f.got != nil {
+		*f.got = in
+	}
+	if f.callCount != nil {
+		*f.callCount++
+	}
+	return f.vars, f.err
+}
+
 // listProjectVariablesSuccessEnvelope is the decoded shape of the GET
 // /v1/projects/{project_id}/variables success envelope.
 type listProjectVariablesSuccessEnvelope struct {
@@ -88,7 +113,7 @@ func listProjectVariablesHandlerFor(id auth.Identity, authErr error, reader Proj
 		fakeOrgVariableReader{}, fakeOrgVariableReplacer{}, fakeOrgVariablePatcher{}, fakeOrgVariableDeleter{},
 		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
 		fakeProjectReader{}, fakeProjectCreator{}, fakeProjectUpdater{}, fakeProjectDeleter{}, fakeProjectRestorer{},
-		fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, reader, nil)
+		fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, reader, fakeProjectVariableReplacer{}, nil)
 }
 
 // getProjectVariables issues GET /v1/projects/{project_id}/variables
@@ -388,7 +413,7 @@ func TestListProjectVariablesOpenAPIRouteIsRegistered(t *testing.T) {
 		fakeOrgVariableReader{}, fakeOrgVariableReplacer{}, fakeOrgVariablePatcher{}, fakeOrgVariableDeleter{},
 		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
 		fakeProjectReader{}, fakeProjectCreator{}, fakeProjectUpdater{}, fakeProjectDeleter{}, fakeProjectRestorer{},
-		fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, fakeProjectVariableReader{})
+		fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, fakeProjectVariableReader{}, fakeProjectVariableReplacer{})
 
 	var found bool
 	for _, rt := range table {

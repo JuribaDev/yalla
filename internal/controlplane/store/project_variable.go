@@ -10,6 +10,14 @@ import (
 	"github.com/JuribaDev/yalla/internal/output"
 )
 
+// projectVariablesWriteAction is the action recorded on the audit event for
+// PUT /v1/projects/{project_id}/variables. It is kept as a plain string so
+// the store layer takes no build dependency on internal/controlplane/policy;
+// the HTTP authorization middleware authorizes the same action before the
+// handler is reached, and the policy matrix tests keep the two values in
+// sync.
+const projectVariablesWriteAction = "env.write"
+
 // ProjectVariable is a single project-scoped environment variable —
 // the second-from-lowest precedence layer of the
 // Organization -> Project -> Environment -> Service variable hierarchy the
@@ -114,6 +122,85 @@ func (r *ProjectVariableRepository) ListByProject(ctx context.Context, q Querier
 		return nil, apierr.StoreUnavailable(err)
 	}
 	return out, nil
+}
+
+// Upsert inserts or updates the (organization_id, project_id, key) row
+// carrying value / is_secret. The (organization_id, project_id, key) UNIQUE
+// constraint from migration 0015 is the conflict target, so an existing row
+// keeps its id and bumps version through the bump_version trigger; a new row
+// uses the caller-supplied id (already minted by the service layer through
+// domain.NewID(KindProjectVariable) so the id is non-guessable and
+// tenant-anonymous). The returned ProjectVariable reflects the committed
+// state — its id is the row's stable id (the existing id for an update, the
+// freshly minted one for an insert), its version is the post-trigger
+// version, and its updated_at is the moment the row persisted.
+//
+// The tenant predicate is non-optional: organization_id AND project_id are
+// part of the upsert key, so a cross-tenant smuggling attempt at this seam
+// either matches an existing (organization_id, project_id, key) tuple
+// owned by the supplied tenant (the intended idempotent overwrite) or
+// inserts a fresh row scoped to that tenant — never another tenant's data.
+// Validation of organizationID, projectID, key, and value happens in the
+// service layer before a transaction is opened; this method assumes its
+// inputs already cleared the same shape checks the PUT endpoint enforces.
+//
+// A foreign-key violation (organizationID/projectID does not exist) and the
+// table's CHECK constraints both surface as apierr.Conflict through
+// mapWriteError; any other driver error surfaces as apierr.StoreUnavailable.
+// The raw driver error is wrapped as the cause for server-side logging only
+// and never reaches the user-facing message — so a customer-facing 409 here
+// never echoes value content.
+func (r *ProjectVariableRepository) Upsert(ctx context.Context, tx *Tx, id, organizationID, projectID, key, value string, isSecret bool) (ProjectVariable, error) {
+	if tx == nil {
+		return ProjectVariable{}, apierr.Internal(errors.New("store: ProjectVariableRepository.Upsert called with a nil transaction"))
+	}
+	row := tx.QueryRow(ctx,
+		`INSERT INTO project_variables (id, organization_id, project_id, key, value, is_secret)
+		     VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (organization_id, project_id, key) DO UPDATE
+		    SET value     = EXCLUDED.value,
+		        is_secret = EXCLUDED.is_secret
+		RETURNING `+projectVariableColumns,
+		id, organizationID, projectID, key, value, isSecret)
+	v, err := scanProjectVariable(row)
+	if err != nil {
+		return ProjectVariable{}, mapWriteError(err, "the project variable could not be saved")
+	}
+	return v, nil
+}
+
+// DeleteByProjectExceptKeys removes every project_variables row owned by
+// (organizationID, projectID) whose key is not in keepKeys. It is the
+// counterpart of Upsert in the bulk-replace unit of work: Upsert applies
+// every variable the caller wants to keep, and this method drops the rest —
+// so the post-condition is "the project's variables == exactly the
+// caller-supplied set". keepKeys MAY be empty (the caller asked to clear
+// every project-scoped variable); the SQL predicate is written so
+// `key <> ALL($3)` is true for every row when the array is empty, producing
+// a deterministic full clear.
+//
+// The tenant predicate is non-optional: organization_id AND project_id are
+// part of the WHERE clause, so a cross-tenant tuple matches no rows and
+// deletes nothing — never another tenant's data. Validation of
+// organizationID, projectID, and the keep list happens in the service layer;
+// this method assumes the caller already produced a deduplicated, validated
+// list of POSIX env-var names.
+func (r *ProjectVariableRepository) DeleteByProjectExceptKeys(ctx context.Context, tx *Tx, organizationID, projectID string, keepKeys []string) error {
+	if tx == nil {
+		return apierr.Internal(errors.New("store: ProjectVariableRepository.DeleteByProjectExceptKeys called with a nil transaction"))
+	}
+	if keepKeys == nil {
+		keepKeys = []string{}
+	}
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM project_variables
+		  WHERE organization_id = $1
+		    AND project_id      = $2
+		    AND key <> ALL($3)`,
+		organizationID, projectID, keepKeys); err != nil {
+		return mapWriteError(err, "the project variables could not be reconciled")
+	}
+	return nil
 }
 
 // scanProjectVariable scans one project_variables row in
