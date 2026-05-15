@@ -8,6 +8,7 @@ import (
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apienvelope"
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
+	"github.com/JuribaDev/yalla/internal/controlplane/domain"
 	"github.com/JuribaDev/yalla/internal/controlplane/policy"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
 	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
@@ -27,6 +28,14 @@ var errNoMembershipReader = errors.New("httpapi: no membership reader configured
 // programming mistake, not a client error — so the handler reports it as a
 // typed internal failure rather than silently failing to persist the resource.
 var errNoMembershipCreator = errors.New("httpapi: no membership creator configured")
+
+// errNoMembershipUpdater is returned when PATCH
+// /v1/organizations/{org_id}/members/{member_id} is reached without a
+// membership updater wired into NewHandler. Like errNoMembershipCreator it
+// can only happen through a wiring error — a programming mistake, not a
+// client error — so the handler reports it as a typed internal failure
+// rather than silently failing to persist the role change.
+var errNoMembershipUpdater = errors.New("httpapi: no membership updater configured")
 
 // MembershipReader is the narrow persistence port GET
 // /v1/organizations/{org_id}/members and GET
@@ -269,6 +278,135 @@ func addMemberHandler(creator MembershipCreator) http.HandlerFunc {
 		}
 
 		apienvelope.WriteData(w, http.StatusCreated, requestID(r), addMemberPayload{
+			Member: memberResourceOf(member),
+		})
+	}
+}
+
+// MembershipUpdater is the narrow persistence port PATCH
+// /v1/organizations/{org_id}/members/{member_id} depends on.
+// *store.MembershipService satisfies it in production; tests supply a fake.
+// Like MembershipCreator it is an interface declared here so the handler
+// stays unit-testable without a real database — the concrete orchestrator
+// (the existence check, the role update with the role_version bump that
+// sweeps every outstanding session, and the audit record committed in one
+// transaction) lives in the store layer.
+type MembershipUpdater interface {
+	UpdateMember(ctx context.Context, in store.UpdateMembershipInput) (store.OrganizationMember, error)
+}
+
+// updateMemberRequest is the decoded PATCH
+// /v1/organizations/{org_id}/members/{member_id} request body. Role is the
+// only currently-mutable field on a membership; a future story may broaden
+// the patch surface — when that lands, every new field becomes a separate
+// optional pointer and a patch that names no field is rejected as 400. The
+// store layer validates the value before any database work — an invalid
+// request never opens a transaction — and the field carries no credential
+// material.
+//
+// Role is a pointer so a missing field can be distinguished from an empty
+// string: omitting it is a "patch with no field" client error, supplying ""
+// is a validation failure on the field itself, and the policy that "every
+// patch must change something" is enforced by the same code path that
+// rejects an unknown role.
+type updateMemberRequest struct {
+	Role *string `json:"role"`
+}
+
+// updateMemberPayload is the data block of the PATCH
+// /v1/organizations/{org_id}/members/{member_id} success envelope: the
+// membership after the role change — including the freshly bumped
+// role_version that backs session-token revocation — in the same stable wire
+// shape the GET endpoint uses. It carries no credential material.
+type updateMemberPayload struct {
+	Member memberResource `json:"member"`
+}
+
+// memberIDResolver derives the policy.Resource a PATCH or DELETE
+// /v1/organizations/{org_id}/members/{member_id} request acts on from its
+// path parameters. The resource scope is the organization the path names —
+// the same scope used by the rest of the membership endpoints — so action
+// members.manage is authorized against the tenant boundary the path
+// declares. A cross-tenant {org_id} is denied at the policy boundary before
+// the handler runs, so a cross-tenant member_id can never mutate another
+// tenant's membership graph.
+func memberIDResolver(r *http.Request) policy.Resource {
+	return policy.Resource{
+		Kind:  domain.KindUser,
+		Scope: policy.Scope{OrganizationID: r.PathValue("org_id")},
+	}
+}
+
+// updateMemberHandler builds the PATCH
+// /v1/organizations/{org_id}/members/{member_id} handler. It decodes and
+// delegates: the request body is strictly decoded (oversized, malformed, or
+// unknown-field bodies become a typed 400 that never echoes the input),
+// then the update-member unit of work — confirm the membership exists,
+// update the role (atomically bumping role_version so every outstanding
+// session for the member is invalidated), append the audit record, all in
+// one transaction — runs in the store layer through the MembershipUpdater
+// port.
+//
+// RequireAuth gates the route on action members.manage before the handler
+// runs — authorized through memberIDResolver against the organization the
+// path names — and attaches the resolved principal, so a request that
+// reaches the handler has already cleared the tenant boundary: a
+// cross-tenant {org_id} was rejected as a 403 by the policy engine, never
+// reaching this code. A request that arrives here with no principal is
+// therefore a wiring error and is reported as a typed internal error. The
+// principal and the request correlation identifiers are passed to the
+// updater so the audit record names the actor; a validation failure (bad
+// body, missing role, unknown role), a not-found membership (cross-tenant
+// or missing user), and a datastore outage each surface as their own typed
+// status, never disguised as one another.
+func updateMemberHandler(updater MembershipUpdater) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if updater == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoMembershipUpdater))
+			return
+		}
+
+		var req updateMemberRequest
+		if err := validate.DecodeJSON(r.Body, &req, 0); err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		// A PATCH with no role field is itself a client error: the only
+		// mutable field on a membership today is role, so a patch that
+		// names no field is a no-op. Surface it as 400 E_INVALID_INPUT
+		// naming the role field — the same shape the store layer would
+		// reject a blank role with, kept consistent at the boundary so
+		// agents see one stable contract for "patch with no field".
+		if req.Role == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "role",
+				Reason: "must be provided",
+			}))
+			return
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		member, err := updater.UpdateMember(r.Context(), store.UpdateMembershipInput{
+			OrganizationID: r.PathValue("org_id"),
+			UserID:         r.PathValue("member_id"),
+			Role:           *req.Role,
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), updateMemberPayload{
 			Member: memberResourceOf(member),
 		})
 	}

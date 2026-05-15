@@ -3902,3 +3902,186 @@
     are different decisions. For every new policy-matrix story on a
     path-resolved read, add an explicit support cross-tenant allow case.
 ---
+
+## 2026-05-15 - BE-0070
+- What was implemented: PATCH /v1/organizations/{org_id}/members/{member_id},
+  the partial-update endpoint that changes a member's organization-wide role
+  through the Yalla control-plane API.
+  - internal/controlplane/store/membership.go: added MembershipRepository.UpdateRole
+    (the role-change persistence primitive) — a single WITH-CTE UPDATE that
+    writes the new role AND atomically bumps role_version by 1 inside the
+    same statement, then joins the result with the users row so the caller
+    gets the full OrganizationMember shape back. Tenant scoped on
+    (organization_id, user_id), so a cross-tenant pairing is a typed
+    apierr.NotFound (404) — never disguised as a 5xx and never revealing
+    whether another tenant has that member. Requires *Tx so a role change
+    can never persist outside the transaction carrying its audit record.
+  - internal/controlplane/store/membershipservice.go: added
+    UpdateMembershipInput + MembershipService.UpdateMember — the
+    update-membership unit of work. Validation (split out as
+    validateMembershipUpdate) runs BEFORE the transaction is opened. Inside
+    one Store.Write the orchestrator reads the current row (typed NotFound
+    on missing/cross-tenant), runs UpdateRole, and appends ONE audit record
+    naming the actor with metadata {organization_id, previous_role, role} —
+    all non-secret CHECK-constrained values. The audit is filed under the
+    actor's home org while the resource id names the user, matching the
+    existing Add invariant. role_version is bumped on every successful PATCH
+    even when the new role equals the current one — a no-op patch that
+    pretends to succeed without sweeping sessions would be a silent
+    security hole, since role_version is what backs human-session
+    revocation.
+  - internal/controlplane/httpapi/members.go: added MembershipUpdater
+    port + updateMemberRequest/updateMemberPayload DTOs + memberIDResolver
+    + updateMemberHandler — a thin handler that:
+      * defensively reports E_INTERNAL on a missing principal / nil updater
+        (both are wiring errors),
+      * strictly decodes the body via validate.DecodeJSON (oversized,
+        malformed, or unknown-field bodies are stable 400s that never
+        echo the input),
+      * rejects "PATCH with no role field" as a 400 E_INVALID_INPUT at
+        the boundary (Role is *string so absent vs blank are distinguishable),
+      * forwards the {org_id} and {member_id} path params, the body role,
+        and the authenticated principal (never caller-controlled actor
+        fields) to the store layer,
+      * renders 200 with the updated member resource — including the
+        freshly bumped role_version — through apienvelope.WriteData.
+    memberIDResolver scopes policy.Resource{Kind:KindUser} to the {org_id}
+    organization so the engine authorizes against the tenant boundary the
+    path declares, matching the established organizationIDResolver shape.
+  - internal/controlplane/httpapi/routes.go: registered the PATCH route in
+    newRouteTable with RequiresAuth=true, RequiredAction=members.manage
+    (a CapManage action — the support principal has NO cross-tenant
+    exception, unlike CapRead actions), resolver=memberIDResolver,
+    operationId=updateOrganizationMember, two path params, 200 success
+    response. newRouteTable signature grew by one parameter
+    (memberUpdater MembershipUpdater).
+  - internal/controlplane/httpapi/server.go: NewHandler signature grew by
+    one parameter (memberUpdater MembershipUpdater) threaded through to
+    newRouteTable. All ~10 NewHandler call sites in *_test.go and
+    cmd/yalla-api/main.go were updated (the latter wires the same
+    *store.MembershipService that already backs the POST creator port —
+    one service satisfies both ports).
+  - Tests:
+    - store/membership_test.go: TestMembershipRepositoryUpdateRole (happy
+      path + persistence round-trip), MissingIsNotFound, IsTenantScoped
+      (a wrong-org UPDATE returns NotFound AND leaves the original tenant's
+      row untouched including role_version).
+    - store/membershipservice_test.go: TestMembershipServiceUpdateMember
+      (happy path: role + role_version + email/display_name returned,
+      re-read through MembershipReader, audit record carries previous_role
+      and role), SameRoleStillBumpsVersion (proves the
+      always-bumps-on-success invariant — a no-op patch is still a session
+      sweep), MissingIsNotFound (audit rolls back too), CrossTenantIsNotFound
+      (orgA row including role_version untouched after PATCH against orgB),
+      InvalidIsValidationError (no transaction opened — role_version
+      untouched), RejectsBlankActorOrg (wiring guard surfaces as Internal).
+    - store/membershipservice_internal_test.go: TestValidateMembershipUpdateAccepted
+      (every CHECK-allowed role, with whitespace trimming), and
+      TestValidateMembershipUpdateRejectsInvalidInput (blank/malformed/
+      cross-kind member_id, blank/unknown/non-DB role; each proves the
+      violation reason does NOT echo the submitted value).
+    - httpapi/members_update_test.go (NEW, ~470 lines): happy path,
+      ForwardsActorAndPath (proves the handler delegates path + body +
+      authenticated principal verbatim; no caller-controlled actor),
+      MalformedBody/UnknownField/MissingRole/InvalidRole all 400
+      E_INVALID_INPUT and the updater is never reached, NotFound 404
+      E_NOT_FOUND, Unauthenticated/InvalidCredentials both 401 E_AUTH
+      with the identical contract, CrossTenantIsForbidden 403 with the
+      stable policy reason and the cross-tenant org id never echoed,
+      DisabledPrincipal 403 with the stable reason, DependencyFailure 503
+      with the wrapped driver cause REDACTED (the literal "connection
+      refused" must not surface), PropagatesRequestID (envelope + echo
+      header), defensive no-principal and nil-updater both E_INTERNAL,
+      IsDocumentedInOpenAPI (PATCH method, x-required-action=members.manage,
+      both path params required, 200 response documented),
+      ResponseShape (single-member object — not a list — and role_version
+      reaches the wire).
+- Files changed:
+  - internal/controlplane/store/membership.go (+UpdateRole)
+  - internal/controlplane/store/membership_test.go (+3 UpdateRole tests)
+  - internal/controlplane/store/membershipservice.go (+UpdateMember,
+    UpdateMembershipInput, validateMembershipUpdate)
+  - internal/controlplane/store/membershipservice_test.go (+6 UpdateMember
+    integration tests)
+  - internal/controlplane/store/membershipservice_internal_test.go (+2
+    white-box validator tests)
+  - internal/controlplane/httpapi/members.go (+MembershipUpdater,
+    +memberIDResolver, +updateMemberHandler, +request/payload DTOs,
+    +errNoMembershipUpdater, +domain import)
+  - internal/controlplane/httpapi/members_update_test.go (NEW)
+  - internal/controlplane/httpapi/members_test.go (+fakeMembershipUpdater)
+  - internal/controlplane/httpapi/routes.go (+PATCH route, signature
+    change)
+  - internal/controlplane/httpapi/server.go (NewHandler signature change,
+    doc updates)
+  - 8 existing httpapi *_test.go files: appended fakeMembershipUpdater{}
+    to each NewHandler call site
+  - cmd/yalla-api/main.go: appended membershipService to NewHandler call
+  - ralph/prd.json (BE-0070 passes=true)
+  - ralph/progress.txt (this entry)
+- Verification run: gofmt -w .; go mod tidy; go build ./...; go vet ./...;
+  go test ./...; go test -race ./...; plus the Postgres-backed integration
+  tests with YALLA_TEST_DATABASE_URL=postgres://yalla:yalla@127.0.0.1:5432/yalla.
+- Results: all passed. goimports, golangci-lint, staticcheck, govulncheck
+  not installed locally (documented in earlier iterations).
+- Remaining risks / follow-ups:
+  - BE-0071 (contract tests for PATCH /v1/organizations/{org_id}/members/
+    {member_id}) and BE-0072 (policy matrix coverage for the same) are now
+    unblocked. members_update_test.go already covers much of BE-0071's
+    surface, but those remain separate PRD stories. BE-0072 follows the
+    members_get_policy_test.go shape: drive the production NewHandler +
+    real policy.NewEngine() against every built-in role + revoked/expired
+    + wrong-org principal; for a CapManage action the matrix is "only
+    owner/admin allow, support is NOT a cross-tenant write exception".
+  - "Record an audit event for every mutating request and every denied
+    authorization decision": the mutating-request half is satisfied — the
+    store unit of work writes one audit record atomically with the role
+    change. The denied-authorization-decision half is still N/A in
+    httpapi: RequireAuth does not yet audit denied decisions, and wiring
+    that uniformly across every endpoint remains a cross-cutting
+    follow-up story (same posture noted under BE-0040).
+  - "Integration tests run against isolated Postgres migrations": done
+    via testutil.RequireMigratedDB(t) on every Postgres-touching test;
+    the tests t.Skip when YALLA_TEST_DATABASE_URL is unset, so the
+    no-DB go test ./... stays green.
+  - PATCH carries no If-Match optimistic-concurrency check. The
+    organization PATCH does, but memberships are not in the 0011
+    optimistic_versions migration (which adds version columns to
+    organizations/projects/environments/services only). role_version is
+    a separate counter — it backs session revocation, not write
+    conflict detection — so the two are not interchangeable. Adding
+    optimistic concurrency to memberships is its own migration + story.
+- Learnings for future iterations:
+  - role_version is a session-revocation counter, NOT a generic
+    optimistic-concurrency token: it must ALWAYS be bumped on a
+    successful role write, even when the role value is unchanged. That
+    invariant lives in MembershipRepository.UpdateRole (the SET
+    role_version = role_version + 1 is unconditional) and is tested by
+    TestMembershipServiceUpdateMemberSameRoleStillBumpsVersion. Future
+    grant-bump stories that change member authority must follow the same
+    pattern — anything that broadens member capability without
+    incrementing role_version leaves the old token valid against the
+    new authority.
+  - WITH-CTE UPDATE...RETURNING + JOIN is the right shape for "mutate a
+    row then return the joined view" — single round-trip, no read-after-
+    write race, and pgx scans it like any RETURNING row. The same shape
+    is already used by MembershipRepository.Insert.
+  - The PATCH "no field" rejection lives at the HTTP boundary (req.Role
+    == nil before any store call) AND inside the store validator (blank
+    role). This is deliberate: the store layer must also reject the
+    no-field shape so a non-HTTP caller (a future internal command, an
+    admin tool, an exec hook) cannot silently submit an empty patch.
+    Two layers, one stable 400 E_INVALID_INPUT contract.
+  - NewHandler now has 11 dependencies (12 with logger). The PRD has
+    ~20 more endpoint stories that each grow that signature by one
+    port. The next iteration that adds a port should consider grouping
+    the dependencies into a struct (or a builder) before the
+    constructor becomes unreadable — but that refactor is its own
+    story; this iteration keeps the established positional pattern.
+  - One *store.MembershipService satisfies BOTH MembershipCreator
+    (POST) and MembershipUpdater (PATCH) — the cmd/yalla-api wiring
+    passes the same value to both positions. Future membership
+    mutating endpoints (DELETE next) should keep adding methods to
+    MembershipService rather than creating a new orchestrator, so
+    the transaction boundaries and audit conventions stay uniform.
+---

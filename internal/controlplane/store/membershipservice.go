@@ -15,6 +15,9 @@ import (
 // build dependency on it. The HTTP authorization middleware authorizes the
 // same action before the handler is reached; the value recorded here is the
 // audit trail of the decision, kept in sync by the policy matrix tests.
+//
+// membersManageAction is the action recorded for every membership mutation
+// (add, role change) — both go through the same policy gate.
 const membersManageAction = "members.manage"
 
 // membershipAllowedRoles is the set of organization-wide roles the
@@ -47,13 +50,43 @@ type AddMembershipInput struct {
 	CorrelationID  string
 }
 
+// UpdateMembershipInput is the unvalidated input to MembershipService.UpdateMember.
+// OrganizationID and UserID name the membership row to update. Role is the
+// new organization-wide role to assign. The Actor* and correlation fields
+// describe the authenticated principal performing the change and are recorded
+// verbatim on the audit event. They are plain strings so the store layer
+// takes no build dependency on the policy or telemetry packages — the
+// httpapi handler, which already holds the resolved principal and the
+// request correlation, fills them in.
+//
+// PATCH semantics: today's contract is that the role is the only mutable
+// field on a membership. A future story may broaden the patch surface (e.g.
+// grants) — when that lands, every new field is a separate optional pointer
+// and a patch that names no field is rejected as InvalidInput, mirroring the
+// organization PATCH pattern. Until then a missing/blank role is itself a
+// validation failure: a no-op patch is a client error, not a silent success.
+type UpdateMembershipInput struct {
+	OrganizationID string
+	UserID         string
+	Role           string
+	ActorID        string
+	ActorKind      string
+	ActorOrgID     string
+	RequestID      string
+	CorrelationID  string
+}
+
 // MembershipService is the unit-of-work orchestrator for adding members to an
-// organization. Add composes — in a fixed order, inside one transaction — the
-// existence checks for the organization and the user, the desired-state write
-// (the memberships row), and the immutable audit record. Because every step
-// shares the *Tx opened by Store.Write, a failure in any rolls the others
-// back: a member is never persisted without its audit event, and an audit
-// event is never written for a member that was not.
+// organization and updating their role. Add composes — in a fixed order,
+// inside one transaction — the existence checks for the organization and the
+// user, the desired-state write (the memberships row), and the immutable
+// audit record. UpdateMember composes — in a fixed order, inside one
+// transaction — the existence check for the (organization, user) membership,
+// the role update (which atomically bumps role_version), and the immutable
+// audit record. Because every step shares the *Tx opened by Store.Write, a
+// failure in any rolls the others back: a member is never persisted (or
+// re-roled) without its audit event, and an audit event is never written for
+// a mutation that did not happen.
 //
 // It enqueues no provisioning job: a membership is a Yalla-source-of-truth
 // concept; Dokploy has no notion of who is a member of a tenant.
@@ -153,6 +186,134 @@ func (svc *MembershipService) Add(ctx context.Context, in AddMembershipInput) (O
 		return OrganizationMember{}, txErr
 	}
 	return added, nil
+}
+
+// UpdateMember validates in, then runs the update-membership unit of work
+// inside one transaction: confirm the membership exists, write the new role
+// (which atomically bumps role_version, sweeping every outstanding session
+// for the member), append the audit event. Validation runs before the
+// transaction is opened, so an invalid request never touches the database. A
+// missing membership — including the wrong-organization-for-this-user case —
+// is the typed NotFound the repository produces; the audit record is rolled
+// back with it, so an audit trail can never name a mutation that did not
+// happen.
+//
+// The audit record is filed under the actor's home organization (the tenant
+// the principal authenticated into) while its resource id names the user
+// whose role was changed. metadata captures the target tenant, the new role,
+// and the previous role — all non-secret values — so the trail records
+// exactly what the mutation did without leaking input.
+func (svc *MembershipService) UpdateMember(ctx context.Context, in UpdateMembershipInput) (OrganizationMember, error) {
+	organizationID, userID, role, err := validateMembershipUpdate(in)
+	if err != nil {
+		return OrganizationMember{}, err
+	}
+
+	actorOrgID := strings.TrimSpace(in.ActorOrgID)
+	if actorOrgID == "" {
+		return OrganizationMember{}, apierr.Internal(errors.New("store: MembershipService.UpdateMember requires an actor organization for the audit record"))
+	}
+
+	var updated OrganizationMember
+	txErr := svc.store.Write(ctx, func(ctx context.Context, tx *Tx) error {
+		// Read the current row inside the same transaction so the audit
+		// record can name the previous role and so a missing membership is
+		// reported as NotFound (404) without relying on the UPDATE's no-rows
+		// path. The read is tenant scoped: a user id paired with the wrong
+		// organization simply does not match, so a cross-tenant member_id
+		// can never reveal another tenant's membership through this layer.
+		current, getErr := svc.memberships.GetMember(ctx, tx, organizationID, userID)
+		if getErr != nil {
+			return getErr
+		}
+
+		row, updErr := svc.memberships.UpdateRole(ctx, tx, organizationID, userID, role)
+		if updErr != nil {
+			return updErr
+		}
+
+		event := AuditEvent{
+			OrganizationID: actorOrgID,
+			ActorID:        strings.TrimSpace(in.ActorID),
+			ActorKind:      strings.TrimSpace(in.ActorKind),
+			Action:         membersManageAction,
+			ResourceKind:   string(domain.KindUser),
+			ResourceID:     userID,
+			Decision:       AuditDecisionAllowed,
+			Reason:         "authorization granted for members.manage",
+			RequestID:      strings.TrimSpace(in.RequestID),
+			CorrelationID:  strings.TrimSpace(in.CorrelationID),
+			// organization_id is the target tenant of the update; previous_role
+			// and role are CHECK-constrained values and carry no secret
+			// material, so all three are safe to record verbatim.
+			Metadata: map[string]string{
+				"organization_id": organizationID,
+				"previous_role":   current.Role,
+				"role":            role,
+			},
+		}
+		if _, audErr := svc.audit.Append(ctx, tx, event); audErr != nil {
+			return audErr
+		}
+		updated = row
+		return nil
+	})
+	if txErr != nil {
+		return OrganizationMember{}, txErr
+	}
+	return updated, nil
+}
+
+// validateMembershipUpdate validates the caller-supplied fields of in and
+// returns the trimmed, normalised values for the update unit of work. It is
+// split out from UpdateMember so the validation rules are unit testable
+// without a database, and so an invalid request is rejected before a
+// transaction is ever opened. On failure it returns a typed
+// apierr.InvalidInput carrying stable field paths — never the submitted
+// values — so the rejection can name the offending field without leaking
+// input.
+func validateMembershipUpdate(in UpdateMembershipInput) (organizationID, userID, role string, err error) {
+	organizationID = strings.TrimSpace(in.OrganizationID)
+	userID = strings.TrimSpace(in.UserID)
+	role = strings.TrimSpace(in.Role)
+
+	var violations []apierr.FieldViolation
+	if organizationID == "" {
+		violations = append(violations, apierr.FieldViolation{
+			Field:  "organization_id",
+			Reason: "must not be blank",
+		})
+	}
+	// member_id is treated as an opaque identifier the caller already has, so
+	// the rules mirror validateMembershipAdd: require the user-kind prefix as
+	// a defensive guard and let the in-transaction existence check enforce
+	// the rest. Format strictness is the job of internal/controlplane/domain
+	// when an id is minted; the auth/HTTP layer's earlier 403/404 also
+	// shields this layer from arbitrary cross-tenant probes.
+	if userID == "" || !strings.HasPrefix(userID, string(domain.KindUser)+"_") {
+		violations = append(violations, apierr.FieldViolation{
+			Field:  "member_id",
+			Reason: "must be a valid user identifier",
+		})
+	}
+	switch {
+	case role == "":
+		violations = append(violations, apierr.FieldViolation{
+			Field:  "role",
+			Reason: "must not be blank",
+		})
+	default:
+		if _, ok := membershipAllowedRoles[role]; !ok {
+			violations = append(violations, apierr.FieldViolation{
+				Field:  "role",
+				Reason: "must be one of owner, admin, or member",
+			})
+		}
+	}
+	if len(violations) > 0 {
+		return "", "", "", apierr.InvalidInput(violations...)
+	}
+	return organizationID, userID, role, nil
 }
 
 // validateMembershipAdd validates the caller-supplied fields of in and returns

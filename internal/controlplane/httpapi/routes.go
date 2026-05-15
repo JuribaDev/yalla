@@ -79,12 +79,14 @@ type versionPayload struct {
 // orgs backs the organization read endpoints, creator backs POST
 // /v1/organizations, updater backs PATCH /v1/organizations/{org_id}, deleter
 // backs DELETE /v1/organizations/{org_id}, members backs GET
-// /v1/organizations/{org_id}/members, and memberCreator backs POST
-// /v1/organizations/{org_id}/members. Any may be nil for tests and tooling
-// that only inspect the route table's metadata; a request that actually
-// reaches a handler with a nil dependency is reported as a typed internal
-// error rather than a misleading empty list or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator) []apiRoute {
+// /v1/organizations/{org_id}/members, memberCreator backs POST
+// /v1/organizations/{org_id}/members, and memberUpdater backs PATCH
+// /v1/organizations/{org_id}/members/{member_id}. Any may be nil for tests
+// and tooling that only inspect the route table's metadata; a request that
+// actually reaches a handler with a nil dependency is reported as a typed
+// internal error rather than a misleading empty list or a silently dropped
+// write.
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -361,6 +363,32 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// read, exactly as the policy matrix specifies for CapRead actions.
 			resolver: organizationIDResolver,
 			handler:  getMemberHandler(members),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodPatch,
+				Path:           "/v1/organizations/{org_id}/members/{member_id}",
+				OperationID:    "updateOrganizationMember",
+				Summary:        "Update a member of an organization",
+				Description:    "Updates the role of the member named by ({org_id}, {member_id}) in the source-of-truth database. The request body supplies the new role; it is validated before any database work, so an invalid request never opens a transaction. Action members.manage is authorized against the organization the path names before the handler runs: a principal updating a member outside its own tenant is rejected with a deterministic 403, so a cross-tenant id can never mutate another tenant's membership graph. A user id paired with the wrong organization is the same deterministic 404 as a missing row, so the endpoint can never reveal whether another tenant has that member. The role update atomically bumps the member's role_version, which invalidates every outstanding session token issued to the member — making a single role change a complete session sweep without a denylist. The updated membership row and an immutable audit record naming the authenticated principal are committed in one transaction: an update can never be persisted without its audit trail. The role must be one of owner, admin, or member. The response carries no credential material.",
+				Tags:           []string{tagMembers},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionMembersManage),
+				PathParams: []openapi.PathParam{
+					{Name: "org_id", Description: "The id of the organization the member belongs to."},
+					{Name: "member_id", Description: "The id of the user whose membership is updated."},
+				},
+				SuccessDescription: "The updated membership.",
+			},
+			// memberIDResolver authorizes action members.manage against the
+			// organization the {org_id} path parameter names, not merely the
+			// principal's home organization, so a cross-tenant id is denied
+			// at the policy boundary before the handler mutates any data.
+			// members.manage is a CapManage action and has no cross-tenant
+			// support exception — unlike CapRead actions, the support
+			// principal cannot manage members of another tenant.
+			resolver: memberIDResolver,
+			handler:  updateMemberHandler(memberUpdater),
 		},
 	}
 }

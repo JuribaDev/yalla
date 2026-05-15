@@ -457,3 +457,120 @@ func TestMembershipReaderGetMemberNotFound(t *testing.T) {
 		t.Fatalf("GetMember error = %v, want a typed E_NOT_FOUND", getErr)
 	}
 }
+
+// TestMembershipRepositoryUpdateRole proves the role-change repository
+// primitive behind PATCH /v1/organizations/{org_id}/members/{member_id}: it
+// writes the new role, atomically bumps role_version, returns the joined
+// OrganizationMember (so the joined user identity and the database-assigned
+// timestamps round-trip), and the row is persisted exactly as returned.
+func TestMembershipRepositoryUpdateRole(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	repo := store.NewMembershipRepository()
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	org := seedOrg(t, db, f, "acme")
+	userID := seedUser(t, db, f, org, "ada")
+	seedMembership(t, db, org.ID, userID, "member", 5)
+
+	var got store.OrganizationMember
+	if err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		var err error
+		got, err = repo.UpdateRole(ctx, tx, org.ID, userID, "owner")
+		return err
+	}); err != nil {
+		t.Fatalf("UpdateRole returned %v, want nil", err)
+	}
+
+	if got.Role != "owner" {
+		t.Errorf("UpdateRole role = %q, want owner", got.Role)
+	}
+	if got.RoleVersion != 6 {
+		t.Errorf("UpdateRole role_version = %d, want 6 (5 + 1)", got.RoleVersion)
+	}
+	if got.Email == "" || got.UserDisplayName == "" {
+		t.Errorf("UpdateRole returned %+v, want email/display_name joined from the users row", got)
+	}
+
+	// Persistence: re-read through the same repository to prove the write
+	// landed as returned.
+	var live store.OrganizationMember
+	if err := s.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		var err error
+		live, err = repo.GetMember(ctx, q, org.ID, userID)
+		return err
+	}); err != nil {
+		t.Fatalf("GetMember returned %v, want nil", err)
+	}
+	if live.Role != "owner" || live.RoleVersion != 6 {
+		t.Errorf("re-read membership = %+v, want role owner / role_version 6", live)
+	}
+}
+
+// TestMembershipRepositoryUpdateRoleMissingIsNotFound proves a UPDATE that
+// matched no rows — for any reason, including a cross-tenant pairing — is
+// the typed apierr.NotFound the GET endpoint uses, so a 404 contract is
+// preserved at the persistence boundary.
+func TestMembershipRepositoryUpdateRoleMissingIsNotFound(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	repo := store.NewMembershipRepository()
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	org := seedOrg(t, db, f, "acme")
+	userID := seedUser(t, db, f, org, "ada") // the user exists, but no membership row
+
+	err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		_, updErr := repo.UpdateRole(ctx, tx, org.ID, userID, "admin")
+		return updErr
+	})
+	var ye *yerr.Error
+	if !stderrors.As(err, &ye) || ye.Code != yerr.CodeNotFound {
+		t.Fatalf("UpdateRole error = %v, want a typed E_NOT_FOUND", err)
+	}
+}
+
+// TestMembershipRepositoryUpdateRoleIsTenantScoped proves the persistence
+// layer's tenant guard: a user id paired with another organization is the
+// same deterministic NotFound as a missing row, and the original tenant's
+// row is left untouched.
+func TestMembershipRepositoryUpdateRoleIsTenantScoped(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	repo := store.NewMembershipRepository()
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	orgA := seedOrg(t, db, f, "alpha")
+	orgB := seedOrg(t, db, f, "beta")
+	userID := seedUser(t, db, f, orgA, "ada")
+	seedMembership(t, db, orgA.ID, userID, "owner", 3)
+
+	err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		_, updErr := repo.UpdateRole(ctx, tx, orgB.ID, userID, "admin")
+		return updErr
+	})
+	var ye *yerr.Error
+	if !stderrors.As(err, &ye) || ye.Code != yerr.CodeNotFound {
+		t.Fatalf("cross-tenant UpdateRole error = %v, want E_NOT_FOUND — no membership leak", err)
+	}
+
+	// orgA's row must be untouched: a cross-tenant UPDATE cannot reach into
+	// another tenant's data even on the role_version field.
+	var live store.Membership
+	if err := s.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		var err error
+		live, err = repo.Get(ctx, q, orgA.ID, userID)
+		return err
+	}); err != nil {
+		t.Fatalf("Get(orgA) returned %v, want nil", err)
+	}
+	if live.Role != "owner" || live.RoleVersion != 3 {
+		t.Errorf("orgA membership after cross-tenant UpdateRole = %+v, want unchanged role owner / role_version 3", live)
+	}
+}

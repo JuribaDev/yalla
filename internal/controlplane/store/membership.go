@@ -113,6 +113,58 @@ func (r *MembershipRepository) Insert(ctx context.Context, tx *Tx, organizationI
 	return m, nil
 }
 
+// UpdateRole writes a new role for the (organizationID, userID) membership
+// inside tx, atomically bumps the row's role_version, joins the result with
+// the member's global user identity, and returns the persisted
+// OrganizationMember. It requires a *Tx — not a bare Querier — so a role
+// change can never be persisted outside the transaction that also carries its
+// audit record.
+//
+// role_version is incremented in the same statement that overwrites role:
+// internal/controlplane/auth mints human session tokens that embed the
+// role_version they were issued with and the auth middleware rejects a token
+// whose embedded version no longer matches the current row, so a single
+// monotonic increment here invalidates every outstanding session for the
+// member at once — without a denylist. Bumping the version on every successful
+// role change is what makes the revocation invariant honest; callers that do
+// not want a session sweep should not call UpdateRole at all.
+//
+// The query is tenant scoped — it filters on (organization_id, user_id) — so a
+// user id paired with the wrong organization simply does not match and is
+// reported as the typed apierr.NotFound the GET endpoint uses, never disguised
+// as a 5xx and never revealing whether another tenant has that member. A
+// driver error that is not a missing row surfaces as apierr.StoreUnavailable
+// through mapWriteError; the membership has no schema constraint a role change
+// could realistically violate (the role CHECK is enforced by validateMembershipRoleUpdate
+// before this layer is reached), so a Conflict here is always reported through
+// the generic mapWriteError contract.
+func (r *MembershipRepository) UpdateRole(ctx context.Context, tx *Tx, organizationID, userID, role string) (OrganizationMember, error) {
+	if tx == nil {
+		return OrganizationMember{}, apierr.Internal(errors.New("store: MembershipRepository.UpdateRole called with a nil transaction"))
+	}
+	row := tx.QueryRow(ctx,
+		`WITH updated AS (
+		     UPDATE memberships
+		        SET role         = $3,
+		            role_version = role_version + 1
+		      WHERE organization_id = $1 AND user_id = $2
+		     RETURNING organization_id, user_id, role, role_version, created_at, updated_at
+		 )
+		 SELECT u_m.organization_id, u_m.user_id, u_m.role, u_m.role_version,
+		        u_m.created_at, u_m.updated_at, u.email, u.display_name
+		   FROM updated u_m
+		   JOIN users u ON u.id = u_m.user_id`,
+		organizationID, userID, role)
+	m, err := scanOrganizationMember(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return OrganizationMember{}, apierr.NotFound("membership", userID)
+	}
+	if err != nil {
+		return OrganizationMember{}, mapWriteError(err, "the membership cannot be updated")
+	}
+	return m, nil
+}
+
 // UserExists reports whether userID names a row in the global users table. It
 // is the membership service's pre-check before INSERT: a missing user is
 // surfaced as the typed apierr.NotFound a caller can read, instead of relying

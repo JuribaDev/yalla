@@ -255,6 +255,283 @@ func TestMembershipServiceAddIsTenantScoped(t *testing.T) {
 	}
 }
 
+// TestMembershipServiceUpdateMember is the happy path for the role-change
+// unit of work: a valid request updates the role, atomically bumps the row's
+// role_version (so every outstanding session for the member is invalidated),
+// and writes one audit record carrying the previous role and the new role.
+func TestMembershipServiceUpdateMember(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	target := seedOrg(t, db, f, "acme")
+	actor := seedOrg(t, db, f, "actor-co")
+	userID := seedUser(t, db, f, target, "grace")
+	seedMembership(t, db, target.ID, userID, "member", 3)
+	svc := newMembershipService(t, s)
+
+	updated, err := svc.UpdateMember(ctx, store.UpdateMembershipInput{
+		OrganizationID: target.ID,
+		UserID:         userID,
+		Role:           "admin",
+		ActorID:        "usr_ada",
+		ActorKind:      "usr",
+		ActorOrgID:     actor.ID,
+		RequestID:      "req_test",
+		CorrelationID:  "corr_test",
+	})
+	if err != nil {
+		t.Fatalf("UpdateMember returned %v, want nil", err)
+	}
+	if updated.OrganizationID != target.ID || updated.UserID != userID {
+		t.Errorf("UpdateMember returned %+v, want a membership of %q in %q", updated, userID, target.ID)
+	}
+	if updated.Role != "admin" {
+		t.Errorf("UpdateMember role = %q, want admin", updated.Role)
+	}
+	if updated.RoleVersion != 4 {
+		t.Errorf("UpdateMember role_version = %d, want 4 (3 + 1)", updated.RoleVersion)
+	}
+	if updated.Email == "" || updated.UserDisplayName == "" {
+		t.Errorf("UpdateMember returned %+v, want email/display_name joined from the users row", updated)
+	}
+
+	// Re-read through the production reader path the GET endpoint uses to
+	// prove the row is persisted exactly as returned.
+	reader, err := store.NewMembershipReader(s)
+	if err != nil {
+		t.Fatalf("NewMembershipReader: %v", err)
+	}
+	read, err := reader.GetMember(ctx, target.ID, userID)
+	if err != nil {
+		t.Fatalf("GetMember returned %v, want nil", err)
+	}
+	if read.Role != "admin" || read.RoleVersion != 4 {
+		t.Errorf("re-read membership = %+v, want role admin / role_version 4", read)
+	}
+
+	events := listAuditEvents(t, s, actor.ID)
+	if len(events) != 1 {
+		t.Fatalf("audit events = %d, want exactly one for the update", len(events))
+	}
+	ev := events[0]
+	if ev.Action != "members.manage" {
+		t.Errorf("audit action = %q, want members.manage", ev.Action)
+	}
+	if ev.Decision != store.AuditDecisionAllowed {
+		t.Errorf("audit decision = %q, want allowed", ev.Decision)
+	}
+	if ev.ResourceID != userID {
+		t.Errorf("audit resource_id = %q, want the updated user id %q", ev.ResourceID, userID)
+	}
+	if ev.Metadata["organization_id"] != target.ID {
+		t.Errorf("audit metadata organization_id = %q, want the target org id %q",
+			ev.Metadata["organization_id"], target.ID)
+	}
+	if ev.Metadata["previous_role"] != "member" {
+		t.Errorf("audit metadata previous_role = %q, want member", ev.Metadata["previous_role"])
+	}
+	if ev.Metadata["role"] != "admin" {
+		t.Errorf("audit metadata role = %q, want admin", ev.Metadata["role"])
+	}
+}
+
+// TestMembershipServiceUpdateMemberSameRoleStillBumpsVersion proves the
+// invariant that a successful PATCH always bumps role_version — even when the
+// new role equals the current role. The role_version is what backs session
+// revocation, and a no-op patch that pretends to succeed but does not sweep
+// sessions would be a silent security hole. The CHECK and write happen
+// unconditionally; the validator already rejected a blank role.
+func TestMembershipServiceUpdateMemberSameRoleStillBumpsVersion(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	target := seedOrg(t, db, f, "acme")
+	actor := seedOrg(t, db, f, "actor-co")
+	userID := seedUser(t, db, f, target, "grace")
+	seedMembership(t, db, target.ID, userID, "admin", 7)
+	svc := newMembershipService(t, s)
+
+	updated, err := svc.UpdateMember(ctx, store.UpdateMembershipInput{
+		OrganizationID: target.ID,
+		UserID:         userID,
+		Role:           "admin",
+		ActorID:        "usr_ada",
+		ActorKind:      "usr",
+		ActorOrgID:     actor.ID,
+	})
+	if err != nil {
+		t.Fatalf("UpdateMember returned %v, want nil", err)
+	}
+	if updated.Role != "admin" {
+		t.Errorf("role = %q, want admin (unchanged)", updated.Role)
+	}
+	if updated.RoleVersion != 8 {
+		t.Errorf("role_version = %d, want 8 (7 + 1) — a successful PATCH must always sweep sessions",
+			updated.RoleVersion)
+	}
+}
+
+// TestMembershipServiceUpdateMemberMissingIsNotFound proves a membership that
+// does not exist is the typed NotFound the GET endpoint uses, never disguised
+// as a 5xx, and the audit record is rolled back with the unit of work.
+func TestMembershipServiceUpdateMemberMissingIsNotFound(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	target := seedOrg(t, db, f, "acme")
+	actor := seedOrg(t, db, f, "actor-co")
+	userID := seedUser(t, db, f, target, "grace") // the user exists, but no membership row
+	svc := newMembershipService(t, s)
+
+	_, err := svc.UpdateMember(ctx, store.UpdateMembershipInput{
+		OrganizationID: target.ID,
+		UserID:         userID,
+		Role:           "admin",
+		ActorID:        "usr_ada",
+		ActorKind:      "usr",
+		ActorOrgID:     actor.ID,
+	})
+	var ye *yerr.Error
+	if !stderrors.As(err, &ye) || ye.Code != yerr.CodeNotFound {
+		t.Fatalf("UpdateMember error = %v, want a typed E_NOT_FOUND for the missing membership", err)
+	}
+
+	events := listAuditEvents(t, s, actor.ID)
+	if len(events) != 0 {
+		t.Errorf("audit events for actor = %d, want 0 — a missing membership must not leave an audit trail", len(events))
+	}
+}
+
+// TestMembershipServiceUpdateMemberCrossTenantIsNotFound proves the
+// persistence layer's tenant guard: a user id paired with the wrong
+// organization is the same deterministic NotFound as a missing row, so a
+// caller can never tell whether the user is a member of another tenant
+// through this layer. The HTTP layer's policy engine has already rejected a
+// cross-tenant {org_id} as 403; this guards the persistence layer when the
+// auth/policy layers are bypassed (support principals, internal tooling).
+func TestMembershipServiceUpdateMemberCrossTenantIsNotFound(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	orgA := seedOrg(t, db, f, "alpha")
+	orgB := seedOrg(t, db, f, "beta")
+	actor := seedOrg(t, db, f, "actor-co")
+	userID := seedUser(t, db, f, orgA, "ada")
+	seedMembership(t, db, orgA.ID, userID, "owner", 1)
+	svc := newMembershipService(t, s)
+
+	_, err := svc.UpdateMember(ctx, store.UpdateMembershipInput{
+		OrganizationID: orgB.ID, // wrong tenant
+		UserID:         userID,
+		Role:           "admin",
+		ActorID:        "usr_support",
+		ActorKind:      "usr",
+		ActorOrgID:     actor.ID,
+	})
+	var ye *yerr.Error
+	if !stderrors.As(err, &ye) || ye.Code != yerr.CodeNotFound {
+		t.Fatalf("UpdateMember error = %v, want a typed E_NOT_FOUND for the cross-tenant id", err)
+	}
+
+	// orgA's membership row must be untouched: a cross-tenant PATCH cannot
+	// reach into another tenant's data even on the role_version field.
+	reader, err := store.NewMembershipReader(s)
+	if err != nil {
+		t.Fatalf("NewMembershipReader: %v", err)
+	}
+	live, err := reader.GetMember(ctx, orgA.ID, userID)
+	if err != nil {
+		t.Fatalf("GetMember(orgA) returned %v, want nil", err)
+	}
+	if live.Role != "owner" || live.RoleVersion != 1 {
+		t.Errorf("orgA membership after cross-tenant PATCH = %+v, want role owner / role_version 1 — unchanged", live)
+	}
+}
+
+// TestMembershipServiceUpdateMemberInvalidIsValidationError proves an invalid
+// request never opens a transaction: the validator returns InvalidInput and
+// the membership row, including its role_version, is untouched.
+func TestMembershipServiceUpdateMemberInvalidIsValidationError(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	target := seedOrg(t, db, f, "acme")
+	actor := seedOrg(t, db, f, "actor-co")
+	userID := seedUser(t, db, f, target, "grace")
+	seedMembership(t, db, target.ID, userID, "member", 1)
+	svc := newMembershipService(t, s)
+
+	_, err := svc.UpdateMember(ctx, store.UpdateMembershipInput{
+		OrganizationID: target.ID,
+		UserID:         userID,
+		Role:           "emperor", // unknown
+		ActorID:        "usr_ada",
+		ActorKind:      "usr",
+		ActorOrgID:     actor.ID,
+	})
+	var ye *yerr.Error
+	if !stderrors.As(err, &ye) || ye.Code != yerr.CodeInvalidInput {
+		t.Fatalf("UpdateMember error = %v, want a typed E_INVALID_INPUT", err)
+	}
+
+	reader, err := store.NewMembershipReader(s)
+	if err != nil {
+		t.Fatalf("NewMembershipReader: %v", err)
+	}
+	live, err := reader.GetMember(ctx, target.ID, userID)
+	if err != nil {
+		t.Fatalf("GetMember returned %v, want nil", err)
+	}
+	if live.Role != "member" || live.RoleVersion != 1 {
+		t.Errorf("membership after invalid PATCH = %+v, want role member / role_version 1 — unchanged", live)
+	}
+}
+
+// TestMembershipServiceUpdateMemberRejectsBlankActorOrg proves the wiring
+// guard: an authenticated request always carries an actor organization;
+// reaching this layer without one is reported as Internal rather than a
+// misleading validation failure.
+func TestMembershipServiceUpdateMemberRejectsBlankActorOrg(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	target := seedOrg(t, db, f, "acme")
+	userID := seedUser(t, db, f, target, "grace")
+	seedMembership(t, db, target.ID, userID, "admin", 1)
+	svc := newMembershipService(t, s)
+
+	_, err := svc.UpdateMember(ctx, store.UpdateMembershipInput{
+		OrganizationID: target.ID,
+		UserID:         userID,
+		Role:           "owner",
+		ActorID:        "usr_ada",
+		ActorKind:      "usr",
+		ActorOrgID:     "  ",
+	})
+	var ye *yerr.Error
+	if !stderrors.As(err, &ye) || ye.Code != yerr.CodeInternal {
+		t.Fatalf("UpdateMember error = %v, want a typed E_INTERNAL", err)
+	}
+}
+
 // TestMembershipServiceAddRejectsBlankActorOrg proves the wiring guard: an
 // authenticated request always carries an actor organization; reaching this
 // layer without one is reported as Internal rather than a misleading
