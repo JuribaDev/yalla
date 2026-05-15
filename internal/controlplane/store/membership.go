@@ -157,6 +157,37 @@ func scanOrganizationMember(row pgx.Row) (OrganizationMember, error) {
 	return m, err
 }
 
+// GetMember returns the membership of userID within organizationID, joined
+// with the member's global user identity — the shape GET
+// /v1/organizations/{org_id}/members/{member_id} needs. The query is tenant
+// scoped: it filters by organization_id first, so a user id paired with the
+// wrong organization simply does not match and is reported as the typed
+// apierr.NotFound (with the user id, never the organization id, as the
+// surfaced identifier) — a cross-tenant member_id can never reveal another
+// organization's membership. It accepts a Querier so it works against a
+// read-only transaction or an open write transaction.
+//
+// The JOIN is INNER because the memberships.user_id foreign key guarantees a
+// matching users row for every membership; a missing user is therefore a
+// schema invariant violation, surfaced as the typed apierr.StoreUnavailable
+// every other repository read produces, never disguised as a not-found.
+func (r *MembershipRepository) GetMember(ctx context.Context, q Querier, organizationID, userID string) (OrganizationMember, error) {
+	row := q.QueryRow(ctx,
+		`SELECT `+organizationMemberColumns+`
+		   FROM memberships m
+		   JOIN users u ON u.id = m.user_id
+		  WHERE m.organization_id = $1 AND m.user_id = $2`,
+		organizationID, userID)
+	m, err := scanOrganizationMember(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return OrganizationMember{}, apierr.NotFound("membership", userID)
+	}
+	if err != nil {
+		return OrganizationMember{}, apierr.StoreUnavailable(err)
+	}
+	return m, nil
+}
+
 // ListByOrganization returns every membership of organizationID, joined with
 // each member's global user identity, ordered deterministically by creation
 // time then user id so the response is stable for a given set of rows. The
@@ -232,4 +263,24 @@ func (r *MembershipReader) ListMembers(ctx context.Context, organizationID strin
 		return nil, err
 	}
 	return members, nil
+}
+
+// GetMember returns the membership of userID within organizationID, joined
+// with the member's global user identity, reading it inside a short-lived
+// read-only transaction. The read is tenant scoped: a user id paired with
+// the wrong organization simply does not match and is reported as the typed
+// apierr.NotFound, so a cross-tenant member_id can never reveal another
+// organization's membership. A datastore failure is propagated as its own
+// typed error.
+func (r *MembershipReader) GetMember(ctx context.Context, organizationID, userID string) (OrganizationMember, error) {
+	var member OrganizationMember
+	err := r.store.Read(ctx, func(ctx context.Context, q Querier) error {
+		var getErr error
+		member, getErr = r.memberships.GetMember(ctx, q, organizationID, userID)
+		return getErr
+	})
+	if err != nil {
+		return OrganizationMember{}, err
+	}
+	return member, nil
 }

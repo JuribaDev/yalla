@@ -314,3 +314,146 @@ func TestNewMembershipReaderRejectsNilStore(t *testing.T) {
 		t.Fatal("NewMembershipReader(nil) returned nil error, want a typed construction error")
 	}
 }
+
+// TestMembershipRepositoryGetMember proves the joined per-member read: the
+// row carries the source-of-truth membership fields plus the user's email
+// and display name from the global users table, so GET
+// /v1/organizations/{org_id}/members/{member_id} can render the same wire
+// shape as the list endpoint without a second lookup.
+func TestMembershipRepositoryGetMember(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	repo := store.NewMembershipRepository()
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	org := seedOrg(t, db, f, "acme")
+	userID := seedUser(t, db, f, org, "ada")
+	seedMembership(t, db, org.ID, userID, "admin", 4)
+
+	var got store.OrganizationMember
+	if err := s.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		var err error
+		got, err = repo.GetMember(ctx, q, org.ID, userID)
+		return err
+	}); err != nil {
+		t.Fatalf("GetMember returned %v, want nil", err)
+	}
+	if got.OrganizationID != org.ID || got.UserID != userID {
+		t.Errorf("GetMember returned %+v, want the membership of %q in %q", got, userID, org.ID)
+	}
+	if got.Role != "admin" || got.RoleVersion != 4 {
+		t.Errorf("GetMember role/version = %q/%d, want admin/4", got.Role, got.RoleVersion)
+	}
+	if got.Email == "" || got.UserDisplayName == "" {
+		t.Errorf("GetMember = %+v, want email/display_name from the joined users row", got)
+	}
+	if got.CreatedAt.IsZero() || got.UpdatedAt.IsZero() {
+		t.Error("GetMember did not return the database-assigned timestamps")
+	}
+}
+
+// TestMembershipRepositoryGetMemberNotFound proves a user id with no row in
+// the tenant is the typed apierr.NotFound — the same contract every
+// repository read produces, never disguised as a row with zero fields.
+func TestMembershipRepositoryGetMemberNotFound(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	repo := store.NewMembershipRepository()
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	org := seedOrg(t, db, f, "acme")
+	userID := seedUser(t, db, f, org, "ada") // the user exists, but has no membership row
+
+	err := s.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		_, err := repo.GetMember(ctx, q, org.ID, userID)
+		return err
+	})
+	var ye *yerr.Error
+	if !stderrors.As(err, &ye) || ye.Code != yerr.CodeNotFound {
+		t.Fatalf("GetMember error = %v, want a typed E_NOT_FOUND", err)
+	}
+}
+
+// TestMembershipRepositoryGetMemberIsTenantScoped proves cross-tenant
+// isolation: a user id from one organization, paired with another
+// organization, must not reveal the first organization's membership — it is
+// a deterministic not-found, indistinguishable from a missing row.
+func TestMembershipRepositoryGetMemberIsTenantScoped(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	repo := store.NewMembershipRepository()
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	orgA := seedOrg(t, db, f, "alpha")
+	orgB := seedOrg(t, db, f, "beta")
+	userID := seedUser(t, db, f, orgB, "ada")
+	seedMembership(t, db, orgB.ID, userID, "owner", 2)
+
+	err := s.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		_, err := repo.GetMember(ctx, q, orgA.ID, userID)
+		return err
+	})
+	var ye *yerr.Error
+	if !stderrors.As(err, &ye) || ye.Code != yerr.CodeNotFound {
+		t.Fatalf("cross-tenant GetMember error = %v, want E_NOT_FOUND — no membership leak", err)
+	}
+}
+
+// TestMembershipReaderGetMember proves the store-backed adapter composes the
+// repository through its own Store.Read transaction and surfaces the join
+// with the users table.
+func TestMembershipReaderGetMember(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	reader, err := store.NewMembershipReader(s)
+	if err != nil {
+		t.Fatalf("NewMembershipReader: %v", err)
+	}
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	org := seedOrg(t, db, f, "acme")
+	adaID := seedUser(t, db, f, org, "ada")
+	seedMembership(t, db, org.ID, adaID, "owner", 1)
+
+	got, err := reader.GetMember(ctx, org.ID, adaID)
+	if err != nil {
+		t.Fatalf("GetMember returned %v, want nil", err)
+	}
+	if got.UserID != adaID || got.OrganizationID != org.ID {
+		t.Errorf("GetMember = %+v, want the seeded ada row in %q", got, org.ID)
+	}
+	if got.Email == "" || got.UserDisplayName == "" {
+		t.Errorf("GetMember = %+v, want a joined email/display_name", got)
+	}
+}
+
+// TestMembershipReaderGetMemberNotFound proves the adapter propagates the
+// repository's typed not-found contract through Store.Read.
+func TestMembershipReaderGetMemberNotFound(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	reader, err := store.NewMembershipReader(s)
+	if err != nil {
+		t.Fatalf("NewMembershipReader: %v", err)
+	}
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	org := seedOrg(t, db, f, "acme")
+	userID := seedUser(t, db, f, org, "ada") // the user exists, but has no membership row
+
+	_, getErr := reader.GetMember(ctx, org.ID, userID)
+	var ye *yerr.Error
+	if !stderrors.As(getErr, &ye) || ye.Code != yerr.CodeNotFound {
+		t.Fatalf("GetMember error = %v, want a typed E_NOT_FOUND", getErr)
+	}
+}

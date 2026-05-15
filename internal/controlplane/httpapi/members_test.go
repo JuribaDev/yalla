@@ -37,14 +37,21 @@ import (
 // "authorization" coverage for this story.
 
 // fakeMembershipReader is a canned MembershipReader for httpapi tests. The
-// zero value returns an empty list and no error, which is all the tests that
-// never reach the handler (the public-surface, /v1/me, and other-org-route
-// suites) need; member tests set members/err and read gotOrgID back to prove
-// the read is scoped to the {org_id} path parameter.
+// zero value returns an empty list and no error from ListMembers and a typed
+// not-found from GetMember, which is all the tests that never reach the
+// handler (the public-surface, /v1/me, and other-org-route suites) need.
+// Member tests set members/err and read gotOrgID back to prove the list read
+// is scoped to the {org_id} path parameter; getMember tests set member/getErr
+// and read gotMemberOrgID/gotMemberUserID back to prove the read is scoped to
+// both the {org_id} and the {member_id} path parameters.
 type fakeMembershipReader struct {
-	members  []store.OrganizationMember
-	err      error
-	gotOrgID *string
+	members         []store.OrganizationMember
+	err             error
+	gotOrgID        *string
+	member          store.OrganizationMember
+	getErr          error
+	gotMemberOrgID  *string
+	gotMemberUserID *string
 }
 
 func (f fakeMembershipReader) ListMembers(_ context.Context, organizationID string) ([]store.OrganizationMember, error) {
@@ -52,6 +59,22 @@ func (f fakeMembershipReader) ListMembers(_ context.Context, organizationID stri
 		*f.gotOrgID = organizationID
 	}
 	return f.members, f.err
+}
+
+func (f fakeMembershipReader) GetMember(_ context.Context, organizationID, userID string) (store.OrganizationMember, error) {
+	if f.gotMemberOrgID != nil {
+		*f.gotMemberOrgID = organizationID
+	}
+	if f.gotMemberUserID != nil {
+		*f.gotMemberUserID = userID
+	}
+	if f.getErr != nil {
+		return store.OrganizationMember{}, f.getErr
+	}
+	if f.member.UserID == "" {
+		return store.OrganizationMember{}, apierr.NotFound("membership", userID)
+	}
+	return f.member, nil
 }
 
 // fakeMembershipCreator is a canned MembershipCreator for httpapi tests. The
@@ -471,6 +494,389 @@ func TestListMembersIsDocumentedInOpenAPI(t *testing.T) {
 	p := op.Parameters[0]
 	if p.Name != "org_id" || p.In != "path" || !p.Required {
 		t.Errorf("path parameter = %+v, want {Name:org_id In:path Required:true}", p)
+	}
+}
+
+// getMemberSuccessEnvelope is the decoded shape of the GET
+// /v1/organizations/{org_id}/members/{member_id} success envelope.
+type getMemberSuccessEnvelope struct {
+	SchemaVersion string           `json:"schema_version"`
+	OK            bool             `json:"ok"`
+	RequestID     string           `json:"request_id"`
+	Data          getMemberPayload `json:"data"`
+}
+
+// getMember issues GET /v1/organizations/{orgID}/members/{memberID} against
+// handler, optionally with a bearer token.
+func getMember(handler http.Handler, orgID, memberID, token string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, "/v1/organizations/"+orgID+"/members/"+memberID, nil)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec
+}
+
+func decodeGetMember(t *testing.T, rec *httptest.ResponseRecorder) getMemberSuccessEnvelope {
+	t.Helper()
+	var env getMemberSuccessEnvelope
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode success envelope: %v; body %s", err, rec.Body.String())
+	}
+	if env.SchemaVersion != "yalla.output.v1" {
+		t.Errorf("schema_version = %q, want yalla.output.v1", env.SchemaVersion)
+	}
+	if !env.OK {
+		t.Errorf("ok = false, want true")
+	}
+	if env.RequestID == "" {
+		t.Errorf("request_id is empty, want a generated id")
+	}
+	return env
+}
+
+// TestGetMemberReturnsMember is the happy path for GET
+// /v1/organizations/{org_id}/members/{member_id}: an authenticated principal
+// requesting a member of its own organization receives the joined membership
+// in a stable yalla.output.v1 envelope, with every source-of-truth field
+// projected onto the wire shape.
+func TestGetMemberReturnsMember(t *testing.T) {
+	t.Parallel()
+
+	created := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	updated := time.Date(2026, 5, 14, 6, 7, 8, 0, time.UTC)
+	reader := fakeMembershipReader{member: seedMember(
+		"org_acme", "usr_ada", "ada@acme.example", "Ada Lovelace", "owner", 3, created, updated,
+	)}
+	handler := listMembersHandlerFor(
+		auth.Identity{Principal: orgPrincipal("usr_grace", "org_acme", policy.RoleViewer)}, nil, reader)
+
+	rec := getMember(handler, "org_acme", "usr_ada", "a-valid-session-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("content-type = %q, want application/json", got)
+	}
+
+	env := decodeGetMember(t, rec)
+	want := memberResource{
+		UserID:          "usr_ada",
+		Email:           "ada@acme.example",
+		UserDisplayName: "Ada Lovelace",
+		Role:            "owner",
+		RoleVersion:     3,
+		CreatedAt:       created.Format(time.RFC3339Nano),
+		UpdatedAt:       updated.Format(time.RFC3339Nano),
+	}
+	if env.Data.Member != want {
+		t.Errorf("member = %+v, want %+v", env.Data.Member, want)
+	}
+}
+
+// TestGetMemberScopesReadToPathParameters proves the handler reads exactly
+// the membership named by ({org_id}, {member_id}) — both path values reach
+// the reader, in order, so the read is scoped to the tenant the path names
+// and the user the path names, never just one or the other.
+func TestGetMemberScopesReadToPathParameters(t *testing.T) {
+	t.Parallel()
+
+	var gotOrg, gotUser string
+	reader := fakeMembershipReader{
+		member: seedMember("org_acme", "usr_ada", "ada@acme.example", "Ada Lovelace",
+			"owner", 1, time.Now().UTC(), time.Now().UTC()),
+		gotMemberOrgID:  &gotOrg,
+		gotMemberUserID: &gotUser,
+	}
+	handler := listMembersHandlerFor(
+		auth.Identity{Principal: orgPrincipal("usr_grace", "org_acme", policy.RoleOwner)}, nil, reader)
+
+	rec := getMember(handler, "org_acme", "usr_ada", "a-valid-session-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body %s", rec.Code, rec.Body.String())
+	}
+	if gotOrg != "org_acme" {
+		t.Errorf("reader received organization id %q, want org_acme", gotOrg)
+	}
+	if gotUser != "usr_ada" {
+		t.Errorf("reader received member id %q, want usr_ada", gotUser)
+	}
+}
+
+// TestGetMemberNotFoundIsStable proves a member id with no row in the tenant
+// surfaces as a deterministic 404 E_NOT_FOUND — the typed contract that
+// makes a cross-tenant member_id indistinguishable from a missing row.
+func TestGetMemberNotFoundIsStable(t *testing.T) {
+	t.Parallel()
+
+	reader := fakeMembershipReader{getErr: apierr.NotFound("membership", "usr_missing")}
+	handler := listMembersHandlerFor(
+		auth.Identity{Principal: orgPrincipal("usr_ada", "org_acme", policy.RoleOwner)}, nil, reader)
+
+	rec := getMember(handler, "org_acme", "usr_missing", "a-valid-session-token")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body %s", rec.Code, rec.Body.String())
+	}
+	decodeError(t, rec, "E_NOT_FOUND")
+}
+
+// TestGetMemberCrossTenantIsForbidden proves a principal reading a member of
+// another tenant is denied with a deterministic 403 E_FORBIDDEN carrying the
+// stable cross-tenant reason — and the reader is never reached, so a
+// cross-tenant id can never reveal another tenant's members or even whether
+// that organization exists.
+func TestGetMemberCrossTenantIsForbidden(t *testing.T) {
+	t.Parallel()
+
+	var gotOrg, gotUser string
+	reader := fakeMembershipReader{
+		member: seedMember("org_victim", "usr_v", "v@victim.example", "V", "owner", 1,
+			time.Now().UTC(), time.Now().UTC()),
+		gotMemberOrgID:  &gotOrg,
+		gotMemberUserID: &gotUser,
+	}
+	handler := listMembersHandlerFor(
+		auth.Identity{Principal: orgPrincipal("usr_mallory", "org_attacker", policy.RoleOwner)}, nil, reader)
+
+	rec := getMember(handler, "org_victim", "usr_v", "a-valid-session-token")
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body %s", rec.Code, rec.Body.String())
+	}
+	env := decodeError(t, rec, "E_FORBIDDEN")
+	if !strings.Contains(env.Error.Message, string(policy.ReasonDeniedCrossTenant)) {
+		t.Errorf("message = %q, want it to carry the stable reason %q",
+			env.Error.Message, policy.ReasonDeniedCrossTenant)
+	}
+	if gotOrg != "" || gotUser != "" {
+		t.Errorf("reader was reached with org=%q user=%q for a cross-tenant request; it must never run", gotOrg, gotUser)
+	}
+	if strings.Contains(env.Error.Message, "org_victim") {
+		t.Errorf("error message %q echoes the cross-tenant organization id", env.Error.Message)
+	}
+}
+
+// TestGetMemberSupportReadsAnotherTenant proves the one deliberate
+// cross-tenant exception: a support principal performing a read is allowed
+// to read a member of an organization outside its home tenant, exactly as
+// the policy matrix specifies for CapRead actions.
+func TestGetMemberSupportReadsAnotherTenant(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now().UTC()
+	reader := fakeMembershipReader{member: seedMember(
+		"org_customer", "usr_c", "c@customer.example", "Customer", "owner", 1, now, now,
+	)}
+	handler := listMembersHandlerFor(
+		auth.Identity{Principal: orgPrincipal("usr_support", "org_yalla", policy.RoleSupport)}, nil, reader)
+
+	rec := getMember(handler, "org_customer", "usr_c", "a-valid-session-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body %s", rec.Code, rec.Body.String())
+	}
+	env := decodeGetMember(t, rec)
+	if env.Data.Member.UserID != "usr_c" {
+		t.Errorf("member.user_id = %q, want usr_c", env.Data.Member.UserID)
+	}
+}
+
+// TestGetMemberRequiresAuthentication proves a request with no credential is
+// a stable 401 E_AUTH and never reaches the reader.
+func TestGetMemberRequiresAuthentication(t *testing.T) {
+	t.Parallel()
+
+	handler := listMembersHandlerFor(auth.Identity{}, nil,
+		fakeMembershipReader{getErr: stderrors.New("reader must not be called")})
+
+	rec := getMember(handler, "org_acme", "usr_ada", "")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401; body %s", rec.Code, rec.Body.String())
+	}
+	env := decodeError(t, rec, "E_AUTH")
+	if env.Error.Message != "authentication is required" {
+		t.Errorf("message = %q, want %q", env.Error.Message, "authentication is required")
+	}
+}
+
+// TestGetMemberInvalidCredentials proves an unverifiable credential is a
+// stable 401 E_AUTH — identical to the missing-credential contract.
+func TestGetMemberInvalidCredentials(t *testing.T) {
+	t.Parallel()
+
+	handler := listMembersHandlerFor(auth.Identity{}, auth.ErrInvalidCredentials,
+		fakeMembershipReader{getErr: stderrors.New("reader must not be called")})
+
+	rec := getMember(handler, "org_acme", "usr_ada", "yk_bogus")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401; body %s", rec.Code, rec.Body.String())
+	}
+	env := decodeError(t, rec, "E_AUTH")
+	if env.Error.Message != "the supplied credentials are invalid" {
+		t.Errorf("message = %q, want %q", env.Error.Message, "the supplied credentials are invalid")
+	}
+}
+
+// TestGetMemberDisabledPrincipal proves a revoked or expired credential
+// surfaces as a disabled principal and is denied with a 403 E_FORBIDDEN
+// carrying the stable reason — and the reader is never reached.
+func TestGetMemberDisabledPrincipal(t *testing.T) {
+	t.Parallel()
+
+	disabled := orgPrincipal("usr_ada", "org_acme", policy.RoleOwner)
+	disabled.Disabled = true
+	handler := listMembersHandlerFor(auth.Identity{Principal: disabled}, nil,
+		fakeMembershipReader{getErr: stderrors.New("reader must not be called")})
+
+	rec := getMember(handler, "org_acme", "usr_ada", "a-revoked-session-token")
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body %s", rec.Code, rec.Body.String())
+	}
+	env := decodeError(t, rec, "E_FORBIDDEN")
+	if !strings.Contains(env.Error.Message, string(policy.ReasonDeniedPrincipalDisabled)) {
+		t.Errorf("message = %q, want it to carry the stable reason %q",
+			env.Error.Message, policy.ReasonDeniedPrincipalDisabled)
+	}
+}
+
+// TestGetMemberReaderUnavailable proves a datastore outage surfaces as its
+// own typed 5xx, never disguised as a not-found or a zero member — and the
+// wrapped driver cause never reaches the user-facing message.
+func TestGetMemberReaderUnavailable(t *testing.T) {
+	t.Parallel()
+
+	reader := fakeMembershipReader{getErr: apierr.StoreUnavailable(stderrors.New("connection refused"))}
+	handler := listMembersHandlerFor(
+		auth.Identity{Principal: orgPrincipal("usr_ada", "org_acme", policy.RoleViewer)}, nil, reader)
+
+	rec := getMember(handler, "org_acme", "usr_ada", "a-valid-session-token")
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503; body %s", rec.Code, rec.Body.String())
+	}
+	env := decodeError(t, rec, "E_UNAVAILABLE")
+	if strings.Contains(env.Error.Message, "connection refused") {
+		t.Errorf("error message %q leaks the wrapped datastore cause", env.Error.Message)
+	}
+}
+
+// TestGetMemberPropagatesRequestID proves the resolved request_id reaches
+// both the response envelope and the echoed response header.
+func TestGetMemberPropagatesRequestID(t *testing.T) {
+	t.Parallel()
+
+	reader := fakeMembershipReader{member: seedMember(
+		"org_acme", "usr_ada", "ada@acme.example", "Ada Lovelace", "owner", 1,
+		time.Now().UTC(), time.Now().UTC(),
+	)}
+	handler := listMembersHandlerFor(
+		auth.Identity{Principal: orgPrincipal("usr_ada", "org_acme", policy.RoleViewer)}, nil, reader)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/organizations/org_acme/members/usr_ada", nil)
+	req.Header.Set("Authorization", "Bearer a-valid-session-token")
+	req.Header.Set(telemetry.HeaderRequestID, "caller-supplied-id")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body %s", rec.Code, rec.Body.String())
+	}
+	env := decodeGetMember(t, rec)
+	if env.RequestID != "caller-supplied-id" {
+		t.Errorf("envelope request_id = %q, want caller-supplied-id", env.RequestID)
+	}
+	if got := rec.Header().Get(telemetry.HeaderRequestID); got != "caller-supplied-id" {
+		t.Errorf("response header request_id = %q, want caller-supplied-id", got)
+	}
+}
+
+// TestGetMemberHandlerWithoutPrincipalIsInternal proves the defensive path:
+// if the handler is ever reached without RequireAuth having placed a
+// principal on the context, it reports a typed internal error rather than
+// reading a member for a zero principal.
+func TestGetMemberHandlerWithoutPrincipalIsInternal(t *testing.T) {
+	t.Parallel()
+
+	rec := run(getMemberHandler(fakeMembershipReader{}),
+		httptest.NewRequest(http.MethodGet, "/v1/organizations/org_acme/members/usr_ada", nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body %s", rec.Code, rec.Body.String())
+	}
+	decodeError(t, rec, "E_INTERNAL")
+}
+
+// TestGetMemberHandlerWithNilReaderIsInternal proves a route registered
+// without a membership reader is a wiring error reported as a typed internal
+// failure — never a misleading not-found.
+func TestGetMemberHandlerWithNilReaderIsInternal(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/organizations/org_acme/members/usr_ada", nil)
+	req = req.WithContext(policy.WithPrincipal(req.Context(),
+		orgPrincipal("usr_ada", "org_acme", policy.RoleViewer)))
+	rec := run(getMemberHandler(nil), req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body %s", rec.Code, rec.Body.String())
+	}
+	decodeError(t, rec, "E_INTERNAL")
+}
+
+// TestGetMemberIsDocumentedInOpenAPI proves the served route is also a
+// documented route: GET /v1/organizations/{org_id}/members/{member_id}
+// appears in the OpenAPI document requiring the API-key security scheme,
+// naming its policy action through the x-required-action extension, and
+// declaring both {org_id} and {member_id} as path parameters.
+func TestGetMemberIsDocumentedInOpenAPI(t *testing.T) {
+	t.Parallel()
+
+	handler := listMembersHandlerFor(auth.Identity{}, nil, fakeMembershipReader{})
+	req := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body %s", rec.Code, rec.Body.String())
+	}
+
+	var doc struct {
+		Paths map[string]map[string]struct {
+			OperationID    string                `json:"operationId"`
+			Security       []map[string][]string `json:"security"`
+			RequiredAction string                `json:"x-required-action"`
+			Parameters     []struct {
+				Name     string `json:"name"`
+				In       string `json:"in"`
+				Required bool   `json:"required"`
+			} `json:"parameters"`
+		} `json:"paths"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("decode openapi document: %v", err)
+	}
+	op, ok := doc.Paths["/v1/organizations/{org_id}/members/{member_id}"]["get"]
+	if !ok {
+		t.Fatalf("openapi document does not describe GET /v1/organizations/{org_id}/members/{member_id}")
+	}
+	if op.OperationID != "getOrganizationMember" {
+		t.Errorf("operationId = %q, want getOrganizationMember", op.OperationID)
+	}
+	if op.RequiredAction != string(policy.ActionMembersRead) {
+		t.Errorf("x-required-action = %q, want %q", op.RequiredAction, policy.ActionMembersRead)
+	}
+	if len(op.Security) != 1 || len(op.Security[0]) != 1 {
+		t.Errorf("security = %+v, want it to require the ApiKeyAuth scheme", op.Security)
+	}
+	if len(op.Parameters) != 2 {
+		t.Fatalf("parameters = %+v, want two path parameters", op.Parameters)
+	}
+	gotParams := map[string]bool{}
+	for _, p := range op.Parameters {
+		if p.In != "path" || !p.Required {
+			t.Errorf("path parameter %q = %+v, want {In:path Required:true}", p.Name, p)
+		}
+		gotParams[p.Name] = true
+	}
+	for _, want := range []string{"org_id", "member_id"} {
+		if !gotParams[want] {
+			t.Errorf("missing path parameter %q; got %+v", want, op.Parameters)
+		}
 	}
 }
 

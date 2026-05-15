@@ -3723,3 +3723,112 @@
     another — the policy matrix is the contract of WHICH deny reason fires,
     not just that something denies.
 ---
+
+## 2026-05-15 - BE-0067
+- What was implemented: GET /v1/organizations/{org_id}/members/{member_id} —
+  the third members endpoint, returning the single joined membership for the
+  user named by {member_id}.
+  - internal/controlplane/store/membership.go: MembershipRepository.GetMember
+    — tenant-scoped read with INNER JOIN on users (the memberships.user_id FK
+    guarantees the join, so a missing user is a schema invariant violation
+    not a not-found). Tenant scoping comes first (organization_id=$1) so a
+    user id paired with the wrong organization yields the typed
+    apierr.NotFound, indistinguishable from a missing row.
+    MembershipReader.GetMember — store-backed adapter method that composes
+    the repository through Store.Read; mirrors the existing ListMembers
+    adapter so the tenant-scoping guarantees are inherited and the test
+    coverage shape is uniform.
+  - internal/controlplane/store/membership_test.go: 5 new integration tests
+    (TestMembershipRepositoryGetMember/NotFound/IsTenantScoped +
+    TestMembershipReaderGetMember/NotFound). They prove the joined read, the
+    typed not-found contract for both a missing row and a cross-tenant pair,
+    and the adapter's transactional composition. All five pass against the
+    repo's docker-compose Postgres.
+  - internal/controlplane/httpapi/members.go: MembershipReader interface
+    extended with GetMember (now satisfies both list and per-member reads
+    through one port — the OrganizationReader pattern). getMemberHandler is
+    a thin handler that reads policy.PrincipalFromContext, calls
+    reader.GetMember(org_id, member_id), and renders getMemberPayload
+    through apienvelope.WriteData. The wire DTO reuses memberResource +
+    memberResourceOf from the list endpoint so the per-member shape is
+    byte-for-byte identical to one list element.
+  - internal/controlplane/httpapi/members_test.go: fakeMembershipReader
+    extended with member/getErr/gotMemberOrgID/gotMemberUserID fields and
+    a GetMember method (zero-value returns NotFound by convention so
+    accidental routing into GetMember from unrelated suites surfaces as a
+    deterministic 404, not a misleading zero member). 12 new contract tests
+    cover the happy path, scoping to BOTH path params, stable 404,
+    cross-tenant 403 with stable reason + non-leaky message, the support
+    cross-tenant CapRead exception, 401 missing-cred, 401 invalid-cred,
+    403 disabled principal, 503 reader unavailable (no driver-cause leak),
+    request_id propagation to envelope+header, the defensive
+    no-principal/no-reader internal paths, and OpenAPI documentation with
+    both path parameters declared.
+  - internal/controlplane/httpapi/routes.go: new apiRoute for GET
+    /v1/organizations/{org_id}/members/{member_id} with operationId
+    getOrganizationMember, RequiresAuth + RequiredAction members.read,
+    organizationIDResolver (cross-tenant {org_id} -> 403 at the policy
+    boundary), and both path params declared in OpenAPI.
+  - No change to NewHandler signature, no change to cmd/yalla-api wiring:
+    the new method lives on the existing MembershipReader port + adapter,
+    so the production wiring (store.NewMembershipReader -> httpapi
+    "members" parameter) already serves the new route.
+- Files changed: internal/controlplane/store/{membership.go,membership_test.go},
+  internal/controlplane/httpapi/{members.go,members_test.go,routes.go},
+  ralph/prd.json, ralph/progress.txt.
+- Verification run: gofmt -w .; go mod tidy; go build ./...; go vet ./...;
+  go test ./...; go test -race ./...; plus the 5 new Postgres-backed store
+  tests against the docker-compose Postgres (YALLA_TEST_DATABASE_URL set).
+- Results: all passed. goimports, golangci-lint, staticcheck, govulncheck
+  still not installed locally (documented in earlier iterations).
+- Remaining risks / follow-ups:
+  - Acceptance criterion "audit event for every mutating request and every
+    denied authorization decision" is N/A for this read endpoint: it
+    mutates nothing, and RequireAuth still does not emit audit events for
+    denied decisions (no audit wiring exists in the HTTP path). This is the
+    same cross-cutting follow-up flagged on every read story; it should
+    land as its own story so every endpoint gets it uniformly.
+  - Acceptance criterion "validation failure unit tests" is N/A: the
+    endpoint has no request body and no query parameters; its only inputs
+    are two opaque path identifiers. The not-found + cross-tenant 403 +
+    invalid-cred paths cover the rejection space instead, matching the
+    pattern established for GET /v1/organizations/{org_id}.
+  - BE-0068 (contract tests for GET .../{member_id}) and BE-0069 (policy
+    matrix for GET .../{member_id}) are now unblocked. members_test.go
+    already covers most of BE-0068's contract surface, but they remain
+    separate PRD stories.
+- Learnings for future iterations:
+  - "Get one of <child>" can reuse the list endpoint's wire DTO verbatim:
+    memberResource/memberResourceOf were built for the list response and
+    drop straight into a single-entry getMemberPayload — no new
+    persistence-to-wire projection needed. Mirror this whenever the
+    list-element shape and the singleton-resource shape would be
+    structurally identical; a separate "detailResource" with the same
+    fields is duplication, not future-proofing.
+  - The existing tenant-scoped Get on MembershipRepository returns the
+    bare Membership (no user join) because the auth path uses it to
+    resolve a session token's current role/revocation — it does not need
+    email/display_name. The HTTP layer's per-member endpoint DOES need
+    the join, so it gets its own GetMember returning the joined
+    OrganizationMember. Same "scope first, then narrow by id" SQL pattern,
+    different return shape; the bare Get stays untouched so the auth
+    layer is not perturbed. The takeaway: do not retrofit a join onto a
+    read used by the auth/session path — add a new method that returns
+    the joined shape, mirroring the list method's join.
+  - The new method should extend the EXISTING reader port, not introduce
+    a new one. Adding GetMember to httpapi.MembershipReader (and updating
+    the one fake that satisfies it) is one diff; introducing a separate
+    MembershipMemberReader port would have meant a new NewHandler
+    parameter, an updated wiring in cmd/yalla-api, and a churn rename
+    across every *_test.go that calls NewHandler. The shape of the port
+    follows the shape of the data: one port per resource family.
+  - fakeMembershipReader's zero-value contract evolved cleanly: the
+    pre-existing zero-value ListMembers returns an empty list + nil error
+    (callers that don't care about members rely on this); the new
+    zero-value GetMember returns the typed apierr.NotFound for the
+    requested user id, so an unrelated suite that accidentally routes a
+    request into GetMember surfaces as a deterministic 404 instead of a
+    silent zero OrganizationMember. When extending a fake, pick the
+    zero-value behavior the largest existing caller is already implicitly
+    relying on, not the one that's easiest to write.
+---

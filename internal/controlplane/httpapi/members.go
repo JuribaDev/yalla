@@ -29,19 +29,23 @@ var errNoMembershipReader = errors.New("httpapi: no membership reader configured
 var errNoMembershipCreator = errors.New("httpapi: no membership creator configured")
 
 // MembershipReader is the narrow persistence port GET
-// /v1/organizations/{org_id}/members depends on. *store.MembershipReader
-// satisfies it in production; tests supply a fake. Keeping the dependency an
-// interface keeps the handler unit-testable without a real database, the same
-// way OrganizationReader keeps GET /v1/organizations testable.
+// /v1/organizations/{org_id}/members and GET
+// /v1/organizations/{org_id}/members/{member_id} depend on.
+// *store.MembershipReader satisfies it in production; tests supply a fake.
+// Keeping the dependency an interface keeps the handler unit-testable without
+// a real database, the same way OrganizationReader keeps GET /v1/organizations
+// testable.
 //
-// ListMembers is tenant scoped at the persistence layer: the repository
-// filters by organization_id, so a cross-tenant id simply matches no rows and
-// yields an empty list, never another organization's members. The
-// organizationIDResolver this route uses authorizes the call against the
-// {org_id} path parameter before the handler runs, so a cross-tenant id is
-// rejected as a 403 long before this port is reached.
+// Both reads are tenant scoped at the persistence layer: the repository
+// filters by organization_id, so a cross-tenant id simply matches no rows —
+// ListMembers yields an empty list and GetMember surfaces a typed not-found,
+// never another organization's members. The organizationIDResolver these
+// routes use authorizes the calls against the {org_id} path parameter before
+// the handler runs, so a cross-tenant id is rejected as a 403 long before
+// this port is reached.
 type MembershipReader interface {
 	ListMembers(ctx context.Context, organizationID string) ([]store.OrganizationMember, error)
+	GetMember(ctx context.Context, organizationID, userID string) (store.OrganizationMember, error)
 }
 
 // listMembersPayload is the data block of the GET
@@ -126,6 +130,55 @@ func listMembersHandler(reader MembershipReader) http.HandlerFunc {
 			out = append(out, memberResourceOf(m))
 		}
 		apienvelope.WriteData(w, http.StatusOK, requestID(r), listMembersPayload{Members: out})
+	}
+}
+
+// getMemberPayload is the data block of the GET
+// /v1/organizations/{org_id}/members/{member_id} success envelope: the
+// single membership addressed by the {member_id} path parameter, in the same
+// stable wire shape GET /v1/organizations/{org_id}/members returns for each
+// list element. It carries no credential material.
+type getMemberPayload struct {
+	Member memberResource `json:"member"`
+}
+
+// getMemberHandler builds the GET /v1/organizations/{org_id}/members/{member_id}
+// handler. It reads the single membership named by ({org_id}, {member_id}) —
+// joined with the member's global user identity — from the source-of-truth
+// database through the MembershipReader port, and renders it in a stable
+// yalla.output.v1 envelope.
+//
+// RequireAuth gates the route on action members.read before the handler runs
+// — authorized through organizationIDResolver against the organization the
+// path names — and attaches the resolved principal, so a request that
+// reaches the handler has already cleared the tenant boundary: a
+// cross-tenant {org_id} was rejected as a 403 by the policy engine, never
+// reaching this code. A request that arrives here with no principal is
+// therefore a wiring error and is reported as a typed internal error rather
+// than reading for a zero principal. A reader-store outage surfaces as its
+// own typed 5xx, and a {member_id} with no row in the tenant is a
+// deterministic 404 — a user id paired with the wrong organization is the
+// same not-found, indistinguishable from a missing row, so the endpoint can
+// never reveal whether another tenant has that member.
+func getMemberHandler(reader MembershipReader) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if reader == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoMembershipReader))
+			return
+		}
+		member, err := reader.GetMember(r.Context(), r.PathValue("org_id"), r.PathValue("member_id"))
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), getMemberPayload{
+			Member: memberResourceOf(member),
+		})
 	}
 }
 

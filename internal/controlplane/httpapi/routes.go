@@ -337,6 +337,31 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			resolver: organizationIDResolver,
 			handler:  addMemberHandler(memberCreator),
 		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodGet,
+				Path:           "/v1/organizations/{org_id}/members/{member_id}",
+				OperationID:    "getOrganizationMember",
+				Summary:        "Get a member of an organization",
+				Description:    "Returns the single membership of the organization named by the {org_id} path parameter for the user named by the {member_id} path parameter, joined with that user's global identity — user id, email, display name, role, role version, and lifecycle timestamps. Action members.read is authorized against the organization the path names before the handler runs: a principal reading a member outside its own tenant is rejected with a deterministic 403, so a cross-tenant id can never reveal another tenant's membership. A user id paired with the wrong organization is the same deterministic 404 as a missing row, so the endpoint can never reveal whether another tenant has that member. The response carries no credential material — a membership row stores a role, never a secret.",
+				Tags:           []string{tagMembers},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionMembersRead),
+				PathParams: []openapi.PathParam{
+					{Name: "org_id", Description: "The id of the organization the member belongs to."},
+					{Name: "member_id", Description: "The id of the user whose membership is read."},
+				},
+				SuccessDescription: "The membership of the organization.",
+			},
+			// organizationIDResolver authorizes action members.read against the
+			// organization the {org_id} path parameter names, not merely the
+			// principal's home organization, so a cross-tenant id is denied at
+			// the policy boundary before the handler reads any data — the lone
+			// exception is the support principal's deliberate cross-tenant
+			// read, exactly as the policy matrix specifies for CapRead actions.
+			resolver: organizationIDResolver,
+			handler:  getMemberHandler(members),
+		},
 	}
 }
 
