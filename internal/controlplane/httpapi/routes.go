@@ -25,6 +25,7 @@ const (
 	tagAPIKeys       = "api-keys"
 	tagVariables     = "variables"
 	tagProjects      = "projects"
+	tagEnvironments  = "environments"
 )
 
 // apiRoute couples a served HTTP route with the OpenAPI metadata that
@@ -109,13 +110,14 @@ type versionPayload struct {
 // /v1/projects/{project_id}/restore, projectGrants backs GET
 // /v1/projects/{project_id}/grants, projectGrantReplacer backs PUT
 // /v1/projects/{project_id}/grants, projectVariables backs GET
-// /v1/projects/{project_id}/variables, and projectVariableReplacer backs
-// PUT /v1/projects/{project_id}/variables. Any may be nil for tests and
-// tooling that only inspect the route table's metadata; a request that
-// actually reaches a handler with a nil dependency is reported as a
-// typed internal error rather than a misleading empty list or a
-// silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer) []apiRoute {
+// /v1/projects/{project_id}/variables, projectVariableReplacer backs
+// PUT /v1/projects/{project_id}/variables, and projectEnvironments
+// backs GET /v1/projects/{project_id}/environments. Any may be nil
+// for tests and tooling that only inspect the route table's metadata;
+// a request that actually reaches a handler with a nil dependency is
+// reported as a typed internal error rather than a misleading empty
+// list or a silently dropped write.
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -496,6 +498,34 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// support principal cannot replace variables in another tenant.
 			resolver: projectIDResolver,
 			handler:  replaceProjectVariablesHandler(projectVariableReplacer),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodGet,
+				Path:           "/v1/projects/{project_id}/environments",
+				OperationID:    "listProjectEnvironments",
+				Summary:        "List project environments",
+				Description:    "Lists the environments configured for the project named by the {project_id} path parameter, in deterministic (slug, id) order. Each entry carries the environment's id, the id of the organization that owns it, the id of the project it belongs to, slug (unique within the project), display name, optimistic-concurrency version, and lifecycle timestamps. Environments are the third layer of the Organization -> Project -> Environment -> Service hierarchy the Dokploy provisioning model mirrors; an environment groups the services that share a deployment target (for example production, staging, preview) within a project. Action environment.read is authorized against the (principal home organization, {project_id}) resource the path names before the handler runs: a CapRead action gated by an organization-wide role (owner, admin, developer, viewer, ci) or a scoped grant that covers the resource (a project-, environment-, or service-scoped grant inside this project) while a grant that names only a sibling project, an unrelated environment, or an unrelated service is rejected at the boundary because the policy engine asks whether the grant scope contains the resource scope, never the reverse. The support principal's deliberate cross-tenant read exception does NOT apply through this endpoint because the resource scope is pinned to the principal's home organization, not the path's tenant; support cross-tenant reads remain available through endpoints whose path carries an {org_id}. A cross-tenant or unknown project_id reaches the persistence layer with the principal's home organization id and is rejected as a deterministic 404 by the reader's project existence check, never disguised as an empty success. A project with no environments is a deterministic empty list. The response carries no credential material — the environments table stores only structural identifiers, a slug, a display name, an optimistic-concurrency version, and lifecycle timestamps.",
+				Tags:           []string{tagProjects, tagEnvironments},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionEnvironmentRead),
+				PathParams: []openapi.PathParam{{
+					Name:        "project_id",
+					Description: "The id of the project whose environments to list.",
+				}},
+				SuccessDescription: "The environments of the project.",
+			},
+			// projectIDResolver authorizes action environment.read against
+			// the (principal home organization, {project_id}) resource the
+			// path names, not merely the principal's home organization, so
+			// a scoped grant that names THIS project authorizes the read
+			// while a grant that names only a SIBLING project does not. The
+			// organization id is taken from the principal's home org (never
+			// the caller), so a cross-tenant project_id still hits the
+			// tenant-scoped repository query and surfaces as a 404 at the
+			// persistence boundary.
+			resolver: projectIDResolver,
+			handler:  listProjectEnvironmentsHandler(projectEnvironments),
 		},
 		{
 			endpoint: openapi.Endpoint{
