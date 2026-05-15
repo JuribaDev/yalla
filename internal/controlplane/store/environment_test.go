@@ -240,6 +240,214 @@ func TestEnvironmentReaderUnknownProjectID(t *testing.T) {
 	}
 }
 
+// TestEnvironmentRepoGetByIDReturnsRow proves GetByID returns the
+// persisted row for a live environment in the principal's own tenant —
+// every column projected through environmentColumns, with the
+// optimistic-concurrency Version still at 1 for a fresh INSERT.
+func TestEnvironmentRepoGetByIDReturnsRow(t *testing.T) {
+	t.Parallel()
+
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	org := seedOrg(t, db, f, "EnvGetAcme")
+	proj := seedProject(t, db, f, org, "Web")
+	env := seedEnvironment(t, db, f, proj, "production")
+
+	repo := store.NewEnvironmentRepository()
+	var got store.Environment
+	if err := s.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		var getErr error
+		got, getErr = repo.GetByID(ctx, q, org.ID, env.ID)
+		return getErr
+	}); err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+
+	if got.ID != env.ID {
+		t.Errorf("got.ID = %q; want %q", got.ID, env.ID)
+	}
+	if got.OrganizationID != org.ID || got.ProjectID != proj.ID {
+		t.Errorf("got.(OrganizationID, ProjectID) = (%q, %q); want (%q, %q)",
+			got.OrganizationID, got.ProjectID, org.ID, proj.ID)
+	}
+	if got.Slug != "production" {
+		t.Errorf("got.Slug = %q; want production", got.Slug)
+	}
+	if got.Version != 1 {
+		t.Errorf("got.Version = %d; want 1 (a fresh INSERT)", got.Version)
+	}
+}
+
+// TestEnvironmentRepoGetByIDIsTenantScoped proves a cross-tenant
+// (organization_id, environment_id) tuple yields apierr.NotFound even
+// when the environment exists in another organization. The error must
+// not echo any cross-tenant identifier.
+func TestEnvironmentRepoGetByIDIsTenantScoped(t *testing.T) {
+	t.Parallel()
+
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	orgA := seedOrg(t, db, f, "EnvGetTenantA")
+	orgB := seedOrg(t, db, f, "EnvGetTenantB")
+	projB := seedProject(t, db, f, orgB, "B")
+	envB := seedEnvironment(t, db, f, projB, "production")
+
+	repo := store.NewEnvironmentRepository()
+	err := s.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		_, getErr := repo.GetByID(ctx, q, orgA.ID, envB.ID)
+		return getErr
+	})
+	if err == nil {
+		t.Fatalf("GetByID(crossTenant) returned no error; want apierr.NotFound")
+	}
+	var ye *yerr.Error
+	if !errors.As(err, &ye) || ye.Code != yerr.CodeNotFound {
+		t.Fatalf("err = %v (%T); want yerr CodeNotFound", err, err)
+	}
+	leaks := []string{projB.ID, envB.Slug}
+	msg := err.Error()
+	for _, n := range leaks {
+		if n != "" && strings.Contains(msg, n) {
+			t.Errorf("error leaks cross-tenant identifier %q: %v", n, err)
+		}
+	}
+}
+
+// TestEnvironmentRepoGetByIDUnknownEnvironmentID proves an unknown
+// environment_id (in the principal's own tenant) surfaces as the same
+// deterministic apierr.NotFound — same shape as a cross-tenant id, so
+// the response is not a "does this env_id exist?" oracle.
+func TestEnvironmentRepoGetByIDUnknownEnvironmentID(t *testing.T) {
+	t.Parallel()
+
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	org := seedOrg(t, db, f, "EnvGetUnknownAcme")
+
+	repo := store.NewEnvironmentRepository()
+	err := s.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		_, getErr := repo.GetByID(ctx, q, org.ID, "env_unknown")
+		return getErr
+	})
+	if err == nil {
+		t.Fatalf("GetByID(unknown) returned no error; want apierr.NotFound")
+	}
+	var ye *yerr.Error
+	if !errors.As(err, &ye) || ye.Code != yerr.CodeNotFound {
+		t.Fatalf("err = %v (%T); want yerr CodeNotFound", err, err)
+	}
+}
+
+// TestEnvironmentReaderGetEnvironmentHappyPath proves the store-backed
+// adapter composes EnvironmentRepository.GetByID inside a short-lived
+// read-only transaction and projects the row verbatim to the caller.
+func TestEnvironmentReaderGetEnvironmentHappyPath(t *testing.T) {
+	t.Parallel()
+
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	org := seedOrg(t, db, f, "ReaderGetAcme")
+	proj := seedProject(t, db, f, org, "Web")
+	env := seedEnvironment(t, db, f, proj, "production")
+
+	reader, err := store.NewEnvironmentReader(s)
+	if err != nil {
+		t.Fatalf("NewEnvironmentReader: %v", err)
+	}
+
+	got, err := reader.GetEnvironment(ctx, org.ID, env.ID)
+	if err != nil {
+		t.Fatalf("GetEnvironment: %v", err)
+	}
+	if got.ID != env.ID || got.Slug != env.Slug || got.OrganizationID != org.ID || got.ProjectID != proj.ID {
+		t.Errorf("got = %+v; want (id=%q, slug=%q, org=%q, proj=%q)",
+			got, env.ID, env.Slug, org.ID, proj.ID)
+	}
+	if got.Version != 1 {
+		t.Errorf("got.Version = %d; want 1", got.Version)
+	}
+}
+
+// TestEnvironmentReaderGetEnvironmentRejectsCrossTenant proves a
+// cross-tenant environment_id reaches the GetByID check inside the
+// reader's transaction and surfaces as a typed apierr.NotFound — never
+// as another tenant's row, never as a 500. The error must not echo any
+// cross-tenant identifier.
+func TestEnvironmentReaderGetEnvironmentRejectsCrossTenant(t *testing.T) {
+	t.Parallel()
+
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	orgA := seedOrg(t, db, f, "EnvReaderCrossA")
+	orgB := seedOrg(t, db, f, "EnvReaderCrossB")
+	projB := seedProject(t, db, f, orgB, "B")
+	envB := seedEnvironment(t, db, f, projB, "production")
+
+	reader, err := store.NewEnvironmentReader(s)
+	if err != nil {
+		t.Fatalf("NewEnvironmentReader: %v", err)
+	}
+
+	_, err = reader.GetEnvironment(ctx, orgA.ID, envB.ID)
+	if err == nil {
+		t.Fatalf("GetEnvironment(crossTenant) returned no error; want apierr.NotFound")
+	}
+	var ye *yerr.Error
+	if !errors.As(err, &ye) || ye.Code != yerr.CodeNotFound {
+		t.Fatalf("err = %v (%T); want yerr CodeNotFound", err, err)
+	}
+	leaks := []string{projB.ID, envB.Slug}
+	msg := err.Error()
+	for _, n := range leaks {
+		if n != "" && strings.Contains(msg, n) {
+			t.Errorf("error leaks cross-tenant identifier %q: %v", n, err)
+		}
+	}
+}
+
+// TestEnvironmentReaderGetEnvironmentUnknownID proves an unknown
+// environment_id in the principal's own tenant surfaces as the same
+// deterministic apierr.NotFound a cross-tenant id surfaces as.
+func TestEnvironmentReaderGetEnvironmentUnknownID(t *testing.T) {
+	t.Parallel()
+
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	org := seedOrg(t, db, f, "EnvReaderUnknownAcme")
+
+	reader, err := store.NewEnvironmentReader(s)
+	if err != nil {
+		t.Fatalf("NewEnvironmentReader: %v", err)
+	}
+
+	_, err = reader.GetEnvironment(ctx, org.ID, "env_unknown")
+	if err == nil {
+		t.Fatalf("GetEnvironment(unknown) returned no error; want apierr.NotFound")
+	}
+	var ye *yerr.Error
+	if !errors.As(err, &ye) || ye.Code != yerr.CodeNotFound {
+		t.Fatalf("err = %v (%T); want yerr CodeNotFound", err, err)
+	}
+}
+
 // TestNewEnvironmentReaderRejectsNilStore proves the constructor fails
 // fast — a misconfigured adapter fails at construction rather than on
 // its first request.

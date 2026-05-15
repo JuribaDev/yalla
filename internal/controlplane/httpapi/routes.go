@@ -112,13 +112,14 @@ type versionPayload struct {
 // /v1/projects/{project_id}/grants, projectVariables backs GET
 // /v1/projects/{project_id}/variables, projectVariableReplacer backs
 // PUT /v1/projects/{project_id}/variables, projectEnvironments backs
-// GET /v1/projects/{project_id}/environments, and environmentCreator
-// backs POST /v1/projects/{project_id}/environments. Any may be nil
-// for tests and tooling that only inspect the route table's metadata;
-// a request that actually reaches a handler with a nil dependency is
-// reported as a typed internal error rather than a misleading empty
-// list or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator) []apiRoute {
+// GET /v1/projects/{project_id}/environments, environmentCreator
+// backs POST /v1/projects/{project_id}/environments, and
+// environmentReader backs GET /v1/environments/{environment_id}. Any
+// may be nil for tests and tooling that only inspect the route table's
+// metadata; a request that actually reaches a handler with a nil
+// dependency is reported as a typed internal error rather than a
+// misleading empty list or a silently dropped write.
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -560,6 +561,38 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// cannot create environments in another tenant.
 			resolver: projectIDResolver,
 			handler:  createProjectEnvironmentHandler(environmentCreator),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodGet,
+				Path:           "/v1/environments/{environment_id}",
+				OperationID:    "getEnvironment",
+				Summary:        "Get an environment",
+				Description:    "Returns the environment named by the {environment_id} path parameter, as the source-of-truth database stores it — its id, the id of the organization that owns it, the id of the project it belongs to, slug, display name, optimistic-concurrency version, and lifecycle timestamps. Environments are the third layer of the Organization -> Project -> Environment -> Service hierarchy the Dokploy provisioning model mirrors. Action environment.read is authorized against the (principal home organization, {environment_id}) resource the path names before the handler runs: a CapRead action gated by the principal's organization-wide read roles (owner, admin, developer, viewer, ci). The support principal's deliberate cross-tenant read exception does NOT apply through this endpoint because the resource scope is pinned to the principal's home organization, not the path env's tenant; support cross-tenant reads remain available through endpoints whose path carries an {org_id}. The path carries no parent project_id, so the policy engine cannot pin the ProjectID leg of the resource scope at authorization time — project-, environment-, and service-scoped grants are denied at the boundary because the engine asks whether the grant scope (which pins ProjectID) covers the resource scope (which does not), never the reverse; principals whose only access is a scoped grant must use the parent-scoped GET /v1/projects/{project_id}/environments to address an environment by its (project, environment) tuple. The handler reads from the principal's home organization id only — it never trusts a caller-supplied organization id — so a cross-tenant environment_id reaches the persistence layer with the principal's home organization id and is rejected as a deterministic 404 by the tenant-scoped GetByID query, never revealing another tenant's environment. The response carries no credential material — the environments table itself stores only structural identifiers, a slug, a display name, an optimistic-concurrency version, and lifecycle timestamps; environment-scoped variables and other secrets live behind their own endpoints where the redaction policy applies.",
+				Tags:           []string{tagEnvironments},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionEnvironmentRead),
+				PathParams: []openapi.PathParam{{
+					Name:        "environment_id",
+					Description: "The id of the environment to return.",
+				}},
+				SuccessDescription: "The requested environment.",
+			},
+			// environmentIDResolver authorizes action environment.read
+			// against the (principal home organization, {environment_id})
+			// resource the path names, not merely the principal's home
+			// organization. The organization id is taken from the
+			// principal's home org (never the caller), so a cross-tenant
+			// environment_id still hits the tenant-scoped GetByID query
+			// and surfaces as a 404 at the persistence boundary. The
+			// path carries no parent project_id, so the resource scope
+			// pins only OrganizationID and EnvironmentID — project- and
+			// environment-scoped grants are denied at the policy
+			// boundary by design (the engine's covers() rule), forcing
+			// scoped-grant-only principals onto the parent-scoped
+			// /v1/projects/{project_id}/environments route.
+			resolver: environmentIDResolver,
+			handler:  getEnvironmentHandler(environmentReader),
 		},
 		{
 			endpoint: openapi.Endpoint{

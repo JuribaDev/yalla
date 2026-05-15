@@ -5,6 +5,8 @@ import (
 	"errors"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
 )
 
@@ -128,6 +130,40 @@ func (r *EnvironmentRepository) ListByProject(ctx context.Context, q Querier, or
 	return out, nil
 }
 
+// GetByID returns the single environments row identified by
+// (organizationID, environmentID), tenant-scoped at the SQL predicate. The
+// composite predicate is non-optional: a missing or cross-tenant
+// organizationID matches no row even when an environment with the same id
+// exists in another tenant, so the response is never an oracle that
+// reveals another organization's environment ids. A row that does not
+// exist — whether because it was never created, was destructively torn
+// down, or simply belongs to another tenant — surfaces as the same typed
+// apierr.NotFound, never as a 500 leaking the cause; the not-found
+// payload names only the env_id the caller already supplied. A raw
+// driver error surfaces as the typed apierr.StoreUnavailable — the
+// cause is wrapped for logging only, never leaked into the
+// customer-facing message.
+//
+// GetByID is the persistence half of GET /v1/environments/{environment_id};
+// the EnvironmentReader adapter composes it inside a short-lived
+// read-only transaction so the tenant boundary the predicate proves at
+// the database is inherited by the HTTP boundary for free.
+func (r *EnvironmentRepository) GetByID(ctx context.Context, q Querier, organizationID, environmentID string) (Environment, error) {
+	row := q.QueryRow(ctx,
+		`SELECT `+environmentColumns+`
+		   FROM environments
+		  WHERE organization_id = $1 AND id = $2`,
+		organizationID, environmentID)
+	e, err := scanEnvironment(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Environment{}, apierr.NotFound("environment", environmentID)
+	}
+	if err != nil {
+		return Environment{}, apierr.StoreUnavailable(err)
+	}
+	return e, nil
+}
+
 // scanEnvironment scans one environments row in environmentColumns order.
 func scanEnvironment(row scanRow) (Environment, error) {
 	var e Environment
@@ -172,6 +208,39 @@ func NewEnvironmentReader(s *Store) (*EnvironmentReader, error) {
 		projects:     NewProjectRepository(),
 		environments: NewEnvironmentRepository(),
 	}, nil
+}
+
+// GetEnvironment returns the single environment identified by
+// (organizationID, environmentID), reading it inside a short-lived
+// read-only transaction. The read is tenant-scoped at the SQL leg, so a
+// cross-tenant or unknown environment_id surfaces as a deterministic
+// apierr.NotFound — never as another tenant's row, and never as a 500
+// leaking the cause. A live environment in the principal's own tenant
+// returns the persisted row verbatim. A datastore failure is propagated
+// as its own typed error.
+//
+// GetEnvironment is the persistence half of GET
+// /v1/environments/{environment_id} (BE-0154): the bare top-level
+// lookup-by-id endpoint that does not carry the parent project_id in
+// its path. The handler authorizes on action environment.read against
+// the (principal home organization, environment_id) resource the
+// resolver builds, and trusts this method to keep the tenant boundary
+// at the persistence layer even when the policy resource scope cannot
+// pin the parent project_id.
+func (r *EnvironmentReader) GetEnvironment(ctx context.Context, organizationID, environmentID string) (Environment, error) {
+	var env Environment
+	err := r.store.Read(ctx, func(ctx context.Context, q Querier) error {
+		got, getErr := r.environments.GetByID(ctx, q, organizationID, environmentID)
+		if getErr != nil {
+			return getErr
+		}
+		env = got
+		return nil
+	})
+	if err != nil {
+		return Environment{}, err
+	}
+	return env, nil
 }
 
 // ListProjectEnvironments returns every environment owned by

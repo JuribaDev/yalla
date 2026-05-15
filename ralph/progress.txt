@@ -72,6 +72,8 @@
 - Deep-resource PATCH pattern (BE-0127, PATCH /v1/projects/{project_id}, internal/controlplane/httpapi/projects.go updateProjectHandler): sub-organization PATCH endpoints reuse the deep-resource resolver (projectIDResolver) to authorize against the (principal home organization, {project_id}) resource the path names — same resolver, same RequiredAction (policy.ActionProjectUpdate), and the store call is built from principal.OrganizationID and r.PathValue("project_id"), NEVER from the request body. The request DTO exposes ONLY the partially-updatable fields (Slug *string, DisplayName *string); the strict JSON decoder rejects an unknown organization_id field as a stable 400 E_INVALID_INPUT, so a body-injected org_id can never reach the store layer. Optimistic concurrency is bolted on by reading the optional If-Match header through the existing parseIfMatchVersion (the same parser organizations PATCH/DELETE already uses, accepting `"<n>"` strong ETag and the lenient unquoted form), forwarding the *int64 to the store as IfMatchVersion, and mirroring the returned row's authoritative version back into the ETag response header on success via writeOrganizationETag — the helper is generic in body despite the historical name, so the same call shape works for projects, future environments, services, etc. The handler stays thin: read principal, parse If-Match, validate.DecodeJSON, call port, render. The orchestrator (ProjectService.Update) follows the OrganizationService.Update shape exactly: validate input BEFORE opening the tx (buildProjectUpdate + validateProjectDisplayName are split out, unit-testable without a DB, and reject an empty patch as 400 InvalidInput), then in ONE Store.Write tx Get current, version pre-check (current.Version != *IfMatchVersion -> apierr.ConflictStale(current.Version)), apply non-nil fields, repo.Update(tx, desired, IfMatchVersion), audit.Append — a denial at any step rolls every other step back, so a row mutation and its audit record commit together or not at all. The store layer files the audit event under the actor's home organization with Metadata={"updated_fields": "slug,display_name"} — stable wire field names only, never the submitted values, so the audit trail records the SHAPE of the mutation without leaking input. classifyProjectConcurrencyMiss mirrors classifyOrganizationConcurrencyMiss: on the version-checked UPDATE matching zero rows, a tenant-scoped Get inside the same tx disambiguates "row gone" (NotFound) from "row stale" (ConflictStale carrying the row's current version) — the Get itself is tenant scoped, so a cross-tenant id still surfaces as NotFound and cannot reveal another tenant's data. Pre-existing test failures gotcha: TestAPIKeyServiceCreate* and TestOrganizationVariableServicePatch* fail on HEAD due to unrelated pre-existing issues with the testutil.Factory's id/slug formats vs the production-grade ParseSlug validator; verified by stashing the BE-0127 change and reproducing the failures on the base commit. These are NOT caused by BE-0127 and are out of scope.
 
 - New customer-data resource = full vertical (BE-0136 pattern, project_grants migration 0014, store/project_grant.go, httpapi/project_grants.go): one story is allowed to land the whole vertical when the resource has no foundation yet (no migration, no repo, no port, no handler, no wiring). The migration declares the table tenant-scoped at the database (composite (organization_id, project_id) FK -> projects with ON DELETE CASCADE, composite UNIQUE (organization_id, id) as the FK target for future scope-narrowing override tables, bigint version + bump_version trigger from 0011, set_updated_at trigger), CHECKs the enum-shaped columns to a closed set (principal_kind IN ('usr','sa'), role IN (six built-in roles)), and uses a UNIQUE index with COALESCE(env_id,'') / COALESCE(svc_id,'') so per-principal scope-tuple dedup works through NULLs (Postgres unique constraints treat NULLs as distinct by default until v15's NULLS NOT DISTINCT). The repository (ProjectGrantRepository) and reader adapter (ProjectGrantReader) follow OrganizationVariableReader exactly — repo accepts a Querier for reads, mutations need *Tx, reader composes the repo through Store.Read; cross-tenant queries return empty (no rows) at the SQL leg, but the LIST-FOR-PARENT shape (list grants OF a project) requires the reader to Get the project first inside the same transaction so a cross-tenant or unknown project_id surfaces as apierr.NotFound — never as an empty list, which would invite an agent to believe the project exists with no grants. The HTTP layer adds a new ProjectGrantReader port + handler + projection (projectGrantResource), and the route plugs into the existing projectIDResolver and policy.ActionProjectGrantsRead in routes.go's newRouteTable. EnvironmentID / ServiceID stay nullable pointers all the way from the schema to the wire so the (project | environment | service)-scoped distinction reaches an agent intact; the principal projects as a nested object Principal(id, kind) for the same reason the audit_event.actor and usage.limit endpoints do — one boolean (principal.kind == 'usr') instead of branching on coupled scalars. NewHandler signature gets ONE more positional port, which forces a sweep of every test file that constructs the production handler (a Python regex over 28 test files anchored on `fakeProjectRestorer{}, X)` plus manual edits to projects_restore_test.go and projects_delete_test.go whose end-of-call shape didn't match the dominant anchor; six single-line newRouteTable calls with all-nil args need a separate sweep to add one trailing nil). cmd/yalla-api wires *store.ProjectGrantReader at startup. The story implicitly delivers most of BE-0439's repository acceptance criteria (CRUD comes with the PUT story BE-0139 later) and BE-0440's tenant-isolation criteria for the list path.
+- Bare top-level lookup-by-id endpoint for a deep resource (BE-0154 pattern, GET /v1/environments/{environment_id}, store/environment.go GetByID + GetEnvironment, httpapi/environments.go): a customer-facing route that addresses a deep resource (env, service, deployment) by its global id WITHOUT carrying its parent ids in the path. Two load-bearing constraints: (1) the resolver builds policy.Resource{Scope: {OrganizationID = principal.home, <ResourceLevel>ID = path.id}} — pinning OrgID to the principal's home (NEVER the caller-supplied id) is the structural anti-spoof, and pinning the resource-level id is the only scope leg the path actually carries; (2) the resolver CANNOT pin the parent ids without a DB lookup, and the policy engine's Scope.covers() rule (internal/controlplane/policy/policy.go) requires every level the grant pins to match the resource — a grant with pinned ProjectID against a resource with empty ProjectID is structurally denied. Accepted design: middleware admits org-wide read roles + org-wide grants + (for CapRead actions) the support cross-tenant exception is suppressed because the resolver pins OrgID to principal.home; project-/env-/service-scoped grants are denied at the boundary by design, and grant-only principals must use the parent-scoped /v1/projects/{project_id}/environments instead. Document this in the route description, the resolver doc, and the handler doc — readers will misinterpret the structural deny as a bug otherwise. The store layer adds a tenant-scoped GetByID(ctx, q, organizationID, resourceID) on the existing repository (composite (organization_id, id) predicate so cross-tenant returns apierr.NotFound, never another tenant's row, never a 500 leaking the cause), and the existing reader struct grows a Get<Resource>(ctx, organizationID, resourceID) method that wraps GetByID inside Store.Read. The HTTP layer adds a NEW narrow port (distinct from the existing parent-scoped port — e.g. EnvironmentReader vs ProjectEnvironmentReader — so a handler change to one doesn't ripple through the other), a NEW resolver function (e.g. environmentIDResolver), and a NEW handler that REUSES the existing wire-shape projection (projectEnvironmentOf for environments) so the GET-by-id response is byte-identical to one element of the LIST response (modulo the wrapping object name). cmd/yalla-api/main.go passes the same *store.<Resource>Reader value twice — once for the parent-scoped port, once for the new bare-lookup port — because both methods live on the same store struct; no second startup wiring is needed. The contract tests cover the standard envelope: happy path, NotFound (cross-tenant + unknown both render as the same 404 — no oracle), 401 unauthenticated + invalid credentials (no token echo), 503 store outage (no raw cause leak), 500 nil-port wiring guard, envelope shape lock (asserts the documented field set against a generic decode so a future struct column added without updating the projection is caught), bearer-token never-logged guard (slog over a buffer), OpenAPI route registration, and TWO resolver unit tests (pins home org + path id; no panic with no principal on context). The matching policy matrix story (BE-0156 for environments, the structural template for service/deployment lookups) tests the deny — the deny matrix on the bare endpoint is part of the contract, not a gap.
+
 
 ## 2026-05-15 - BE-0103
 - What was implemented: GET /v1/organizations/{org_id}/audit-events, the
@@ -11648,4 +11650,188 @@
     and one leak-guard helper was required, matching the BE-0150
     learning that a new policy-matrix file should be ~0 KB of new
     fixtures.
+---
+## 2026-05-15 - BE-0154
+- What was implemented: GET /v1/environments/{environment_id}, the
+  bare top-level environment lookup-by-id endpoint — the first
+  customer-facing route that addresses an environment by its global
+  env_id without carrying the parent project_id in the path.
+  - internal/controlplane/store/environment.go: EnvironmentRepository
+    grew GetByID(ctx, q, organizationID, environmentID) — a
+    tenant-scoped SELECT under the composite (organization_id, id)
+    predicate, so a cross-tenant or unknown environment_id yields
+    apierr.NotFound("environment", env_id) rather than another tenant's
+    row, and never a 500 leaking the cause. EnvironmentReader grew
+    GetEnvironment(ctx, organizationID, environmentID) — the adapter
+    composes GetByID inside Store.Read (a short-lived read-only
+    transaction) so the predicate's tenant guarantee is inherited by
+    the HTTP boundary for free. The constructor (NewEnvironmentReader)
+    needed no change because it builds the repositories the new method
+    uses.
+  - internal/controlplane/store/environment_test.go: six new
+    integration tests against an isolated migrated Postgres database —
+    GetByID happy path (returns the persisted row through
+    environmentColumns with Version=1 for a fresh INSERT), GetByID
+    tenant-scoping (a cross-tenant (orgA, envB_id) tuple yields
+    apierr.NotFound and the error string never echoes envB.ID,
+    projB.ID, or envB.Slug), GetByID unknown-id (same NotFound shape),
+    and three reader-level mirrors (happy path, cross-tenant
+    rejection, unknown id). The cross-tenant tests anchor on
+    yerr.CodeNotFound + a leak guard over the cross-tenant identifier
+    set so a future regression in the SQL predicate is caught at the
+    persistence boundary.
+  - internal/controlplane/httpapi/environments.go (new): the
+    HTTP-layer vertical for the new endpoint. EnvironmentReader is a
+    new narrow port (GetEnvironment) — distinct from
+    ProjectEnvironmentReader (which backs the LIST endpoint) so a
+    handler change to one doesn't ripple through the other.
+    environmentIDResolver builds policy.Resource{Kind:
+    domain.KindEnvironment, Scope: {OrganizationID: principal.home,
+    EnvironmentID: path.environment_id}} — pinning OrgID to the
+    principal's home (never the caller's id) is the structural
+    anti-spoof. The resolver deliberately does NOT pin ProjectID
+    because the bare top-level path carries no parent project_id;
+    that's a load-bearing decision documented inline (see "Resolver
+    cannot pin ProjectID" pattern below). getEnvironmentHandler is
+    thin: read principal, check reader, call port, render
+    yalla.output.v1 envelope through projectEnvironmentOf — the
+    existing wire-shape projection is reused, so the GET-by-id
+    response is byte-identical to one element of the LIST response
+    (modulo the wrapping {environment: ...} object instead of
+    {environments: [...]}).
+  - internal/controlplane/httpapi/environments_test.go (new): 11
+    contract tests in package httpapi exercising the real NewHandler +
+    real policy engine (fake Authenticator + fake EnvironmentReader
+    only) — happy-path forwarding (org_id and env_id reach the reader
+    verbatim, every projectEnvironment field renders correctly),
+    not-found typed envelope (E_NOT_FOUND + 404), cross-tenant behaves
+    as the same NotFound (no oracle), unauthenticated 401 (no reader
+    call), invalid credentials 401 (uniform message, no token echo),
+    reader outage 503 (typed E_UNAVAILABLE + no raw cause leak),
+    nil-reader-wiring 500 (E_INTERNAL), envelope shape lock
+    (asserts the documented field set against a generic decode so a
+    future store.Environment column added without updating
+    projectEnvironmentOf is caught), bearer-token never-logged guard
+    (slog JSON handler over a buffer), OpenAPI route registration
+    (operationId getEnvironment, RequiredAction environment.read,
+    tagEnvironments, single environment_id path param, non-nil
+    resolver), and two environmentIDResolver unit tests (pins home
+    org + path env_id; no panic when called for a context with no
+    principal).
+  - internal/controlplane/httpapi/routes.go: newRouteTable signature
+    grew one trailing parameter (environmentReader EnvironmentReader)
+    and registered the new route entry between the
+    createProjectEnvironment route and getOrganization. The route
+    description is the longest in the table so an agent reading the
+    OpenAPI document discovers the load-bearing distinction the
+    handler enforces (org-wide read roles allowed; scoped grants
+    structurally denied because the resolver cannot pin ProjectID;
+    cross-tenant id is 404 by tenant-scoped persistence; resource
+    carries no credentials).
+  - internal/controlplane/httpapi/server.go: NewHandler grew the
+    same new positional parameter (environmentReader EnvironmentReader)
+    immediately before logger, and forwards it to newRouteTable.
+  - cmd/yalla-api/main.go: passes the existing projectEnvironments
+    (which is *store.EnvironmentReader) twice — once for the
+    ProjectEnvironmentReader port (LIST) and once for the new
+    EnvironmentReader port (GET-by-id). The same store-side adapter
+    satisfies both ports because both methods are on the same
+    *store.EnvironmentReader struct; no second startup wiring is
+    needed.
+  - 33 *_test.go files swept to add fakeEnvironmentReader{} as the
+    new last positional arg before the trailing nil) or logger) on
+    NewHandler call sites, plus 9 newRouteTable stubs (7 all-nil
+    forms, 2 with-named-fakes forms) updated to add one more nil/fake
+    in the same positional slot.
+- Files changed:
+  - internal/controlplane/store/environment.go
+  - internal/controlplane/store/environment_test.go
+  - internal/controlplane/httpapi/environments.go (new)
+  - internal/controlplane/httpapi/environments_test.go (new)
+  - internal/controlplane/httpapi/routes.go
+  - internal/controlplane/httpapi/server.go
+  - cmd/yalla-api/main.go
+  - 33 internal/controlplane/httpapi/*_test.go files (sweep adding
+    fakeEnvironmentReader + nil to NewHandler / newRouteTable
+    call sites)
+- Verification run: gofmt -w ., go mod tidy, go vet ./..., go test
+  ./..., go test -race ./..., plus targeted go test -v -run on the
+  new env tests. goimports not installed locally — same posture as
+  prior stories.
+- Results: all green. Postgres integration tests skip when
+  YALLA_TEST_DATABASE_URL is unset (the documented contract); the
+  new store-level tests follow the same skip posture as every other
+  *_test.go in store/. The httpapi-layer tests run unconditionally
+  against fake ports and all pass under -race.
+- Remaining risks / follow-ups:
+  - Scoped-grant principals (project-, environment-, service-scoped
+    grants WITHOUT an org-wide role) are denied at the policy
+    middleware on this endpoint by structural design — the resolver
+    cannot pin ProjectID without a DB lookup, and the engine's
+    covers() rule requires every level the grant pins to match the
+    resource. They must use the parent-scoped GET
+    /v1/projects/{project_id}/environments instead. This is
+    documented inline in the route description, the resolver doc, and
+    the handler doc, so BE-0156 (the policy matrix story this story
+    unblocks) can assert the deny matrix on the bare endpoint without
+    changing the policy engine.
+  - The endpoint is read-only; no audit event is emitted on success
+    (matches every other GET endpoint). A future "audit denied
+    authorization decisions" story (separate from BE-0154) would add
+    that behavior at the middleware seam, not in this handler.
+- **Learnings for future iterations:**
+  - Resolver cannot pin ProjectID for a bare /v1/{resource}/{id}
+    path (BE-0154 environments, will recur for /v1/services/{id}):
+    the policy engine's Scope.covers() rule (internal/controlplane/
+    policy/policy.go) requires each level the grant pins to match
+    the resource; an empty resource ProjectID against a grant with
+    pinned ProjectID returns false, so project-/env-/service-scoped
+    grants are structurally denied at the middleware on bare
+    lookup-by-id endpoints. The accepted design is: resolver pins
+    {OrgID = principal.home, EnvironmentID = path.env_id} (just the
+    one scope leg the path carries), the middleware admits org-wide
+    read roles + org-wide grants, scoped-grant principals are
+    redirected to the parent-scoped /v1/projects/{project_id}/
+    environments endpoint. Document this in the route description,
+    the resolver doc, and the handler doc so a reader doesn't
+    interpret the deny as a bug. BE-0156 (the matching policy
+    matrix) tests the deny — it is part of the contract, not a gap.
+  - Reusing an existing wire-shape projection across the LIST and
+    GET-by-id endpoints (projectEnvironmentOf for both
+    listProjectEnvironmentsPayload.Environments[i] and
+    getEnvironmentPayload.Environment) means a single chokepoint
+    reviews any future store.Environment column for wire exposure.
+    The new GET-by-id handler imports nothing new from the store
+    package because the projection lives in project_environments.go
+    and is package-private — same package, free reuse.
+  - When a new HTTP port is added to the same store-side struct
+    that already satisfies an existing port (here:
+    *store.EnvironmentReader satisfies both ProjectEnvironmentReader
+    via ListProjectEnvironments and the new EnvironmentReader via
+    GetEnvironment), cmd/yalla-api/main.go does NOT need a second
+    construction — pass the same projectEnvironments value twice.
+    This is the cheapest wiring posture for "second method on
+    existing reader" stories.
+  - The newRouteTable test-stub sweep has TWO shapes: (a) the
+    all-nil form newRouteTable(runtime.BuildInfo{}, nil*N) which
+    needs one more nil per signature change (now 35 nils after this
+    story), and (b) the named-fakes form ending in
+    ", fakeEnvironmentCreator{})" or
+    ", fakeEnvironmentCreator{}, nil)" which needs one more positional
+    fake/nil. Both were swept programmatically with regexes anchored
+    on those exact tails — server_test.go has TWO such call sites
+    (lines 591 + 614) and a per-file regex over each handles them
+    in one pass.
+  - Do NOT add a CodeStoreUnavailable constant when writing a new
+    test — it does not exist in internal/errors/. The store-outage
+    typed code is yerr.CodeUnavailable (single source of truth in
+    internal/errors/errors.go); StoreUnavailable() and
+    QueueUnavailable() both wrap it, the apierr_test.go matrix pins
+    the mapping. A first-pass test that uses the wrong constant
+    name will fail go vet at the "undefined: yerr.CodeXxx" stage
+    before any test runs.
+  - The "missing principal on context" guard (errNoPrincipalOnContext)
+    is shared across handlers. Reuse it in any new handler that
+    reads a principal — a handler that defines its own sentinel
+    would split the typed-error surface for no benefit.
 ---
