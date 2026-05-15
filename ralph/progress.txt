@@ -7,6 +7,7 @@
 - Secret-bearing structs implement slog.LogValuer + fmt.Stringer with redacted views as defence-in-depth.
 - Tests inject dependencies (e.g. config.MapLookup) instead of touching real process env/filesystem. Use t.Parallel().
 - Quality gate before commit: gofmt -w ., go mod tidy, go build ./..., go vet ./..., go test ./..., go test -race ./....
+- Partial-update (PATCH) endpoints: the request DTO and store *Input use *string fields — nil means "field omitted, leave unchanged". The store builds+validates the patch BEFORE opening the transaction (rejecting a patch that names no field as a 400), then inside Store.Write reads the current row, applies the non-nil fields, and Updates. A repository Update using UPDATE ... RETURNING must check errors.Is(err, pgx.ErrNoRows) for the missing-row case BEFORE mapWriteError (which only classifies constraint-violation vs outage). Never set updated_at in an Update statement — the per-table set_updated_at() BEFORE UPDATE trigger owns it.
 - Process lifecycle is owned by internal/controlplane/runtime: RunHTTPServer(ctx, srv, shutdownTimeout, logger) for the API and worker.Loop for background jobs. Backend binaries derive shutdown from one signal.NotifyContext and pass cfg.ShutdownTimeout; they do not hand-roll select/Shutdown blocks.
 - runtime.Readiness holds named startup gates (concurrency-safe). httpapi.NewHandler takes a runtime.ReadinessReporter; /readyz must be 503 yalla.error.v1 E_SERVER until every gate passes, 200 yalla.output.v1 after. /healthz is liveness-only and never depends on downstream checks.
 - worker.Loop depends only on the Claimer/Lease interfaces so the durable job store can land later. The loop checks ctx before every Claim (stop claiming on shutdown) and releases interrupted in-flight leases on a context.WithoutCancel context so the release survives shutdown. A job whose Run returns nil is committed and must never be released.
@@ -3039,3 +3040,93 @@
     that as a contract so a future logging change cannot silently regress it.
     Build the test logger at slog.LevelDebug so the assertion is not masked by
     a level threshold dropping the record.
+---
+
+## 2026-05-15 - BE-0055
+- What was implemented: PATCH /v1/organizations/{org_id}, the first mutating
+  customer-facing endpoint that updates an existing source-of-truth resource.
+  It applies a partial update (slug, display_name, or both) to the organization
+  named by the path parameter, committed in one transaction with an immutable
+  organization.update audit record.
+  - store/organization.go: OrganizationRepository.Update — UPDATE ... RETURNING
+    by id, missing row -> apierr.NotFound, slug collision -> apierr.Conflict via
+    mapWriteError. updated_at is refreshed by the existing
+    organizations_set_updated_at trigger, so it is not set in SQL.
+  - store/organizationservice.go: UpdateOrganizationInput (Slug/DisplayName are
+    *string — nil means "field omitted"), OrganizationService.Update (the
+    update-organization unit of work: validate -> Store.Write{ Get current ->
+    apply patch -> Update -> Append audit }), buildOrganizationUpdate (pure,
+    pre-transaction validation; rejects a patch that names no field),
+    validateOrganizationDisplayName (extracted helper now shared with
+    buildOrganizationToCreate — mechanical refactor, existing white-box tests
+    still cover it). Audit metadata records updated_fields (stable wire names,
+    never values). New const organizationUpdateAction.
+  - httpapi/organizations.go: OrganizationUpdater port, updateOrganizationRequest
+    (*string fields), updateOrganizationPayload, updateOrganizationHandler —
+    thin: principal -> DecodeJSON -> updater.Update -> 200 envelope.
+    errNoOrganizationUpdater sentinel.
+  - httpapi/routes.go: PATCH /v1/organizations/{org_id} apiRoute (operationId
+    updateOrganization, RequiredAction organization.update, org_id PathParam,
+    resolver organizationIDResolver so a cross-tenant id is a 403 before the
+    handler runs). newRouteTable gained an updater parameter.
+  - httpapi/server.go: NewHandler signature gained updater OrganizationUpdater.
+  - cmd/yalla-api/main.go: the one store.OrganizationService value is passed as
+    both creator and updater (it satisfies both ports).
+- Files changed: internal/controlplane/store/{organization.go,
+  organizationservice.go,organizationservice_test.go,
+  organizationservice_internal_test.go}, internal/controlplane/httpapi/{
+  organizations.go,routes.go,server.go,organizations_patch_test.go (new),
+  me_test.go,me_contract_test.go,organizations_test.go,
+  organizations_create_test.go,routes_test.go,server_test.go,AGENTS.md},
+  cmd/yalla-api/main.go, ralph/prd.json, ralph/progress.txt.
+- Verification (docker compose postgres up, YALLA_TEST_DATABASE_URL set):
+  gofmt -w . clean, go mod tidy clean, go build ./... clean, go vet ./... clean,
+  go test ./... PASS (all packages incl. store + httpapi integration), go test
+  -race ./... PASS. goimports / golangci-lint / staticcheck / govulncheck still
+  not installed locally (documented in earlier iterations).
+- organizations_patch_test.go covers: success (200, projected wire shape),
+  handler forwards the *string patch + path id + authenticated actor unchanged,
+  malformed body -> 400, unknown field -> 400, store InvalidInput -> 400,
+  cross-tenant {org_id} -> 403 with updater never reached and the foreign id
+  never echoed, insufficient in-tenant role -> 403, not-found -> 404,
+  unauthenticated/invalid-credential -> 401, disabled principal -> 403, slug
+  conflict -> 409, datastore outage -> 503 with the wrapped cause not leaked,
+  request_id propagation, no-principal/nil-updater wiring errors -> 500, and
+  OpenAPI documentation. Store integration: TestOrganizationServiceUpdate
+  (atomic row+audit, updated_fields metadata), not-found, slug-conflict
+  rollback (no orphaned audit), invalid-input-never-opens-transaction,
+  requires-actor-organization. White-box: buildOrganizationUpdate accepted /
+  partial / empty-patch-rejected / invalid-fields.
+- Remaining risks / follow-ups:
+  - BE-0056 (contract tests for PATCH) and BE-0057 (policy matrix, priority 1)
+    are still passes:false. organizations_patch_test.go already covers most of
+    BE-0056's criteria; a future iteration should diff + flip it, then add the
+    dedicated policy matrix for BE-0057 (the now-unblocked priority-1 story).
+  - Denied-authorization-decision auditing at the RequireAuth boundary remains
+    unwired for every endpoint (a cross-cutting concern, unchanged by this
+    story) — only the allowed mutation is audited here.
+  - The organizations table has no version column yet (BE-0027, optimistic
+    concurrency, is still pending), so PATCH does no If-Match / version check;
+    last-write-wins for now. Layer the version guard in when BE-0027 lands.
+- **Learnings for future iterations:**
+  - The endpoint triplet (implement @ p2, contract tests @ p2, policy matrix
+    @ p1) means the p1 story is blocked on its p2 implementation — pick the
+    implementation story even though the later sibling carries the higher
+    priority number. BE-0057 was the nominal top story; BE-0055 was its real
+    unblocker.
+  - Partial-update (PATCH) endpoints: the request DTO uses *string fields so
+    nil distinguishes "omitted" from "set to empty". The store builds a
+    validated patch (buildOrganizationUpdate) before opening the transaction,
+    then reads the current row inside the Store.Write and applies the non-nil
+    fields. A patch that names no field is a 400, not a no-op success.
+  - A repository Update that uses UPDATE ... RETURNING must check
+    errors.Is(err, pgx.ErrNoRows) for the missing-row case BEFORE calling
+    mapWriteError — mapWriteError only classifies constraint violations vs.
+    outages and would mis-map a no-rows result to a 503.
+  - updated_at is refreshed by the per-table set_updated_at() BEFORE UPDATE
+    trigger (see 0002_tenant_hierarchy), so repository Update statements must
+    NOT set updated_at themselves.
+  - openapi.Endpoint has no request-body schema field, so a mutating endpoint
+    documents its method/path/action/path-params but not a JSON body schema —
+    PATCH and POST are documented the same way GET is.
+---

@@ -29,6 +29,13 @@ var errNoOrganizationReader = errors.New("httpapi: no organization reader config
 // typed internal failure rather than silently failing to persist the resource.
 var errNoOrganizationCreator = errors.New("httpapi: no organization creator configured")
 
+// errNoOrganizationUpdater is returned when PATCH /v1/organizations/{org_id} is
+// reached without an organization updater wired into NewHandler. Like
+// errNoOrganizationCreator it can only happen through a wiring error — a
+// programming mistake, not a client error — so the handler reports it as a
+// typed internal failure rather than silently failing to persist the change.
+var errNoOrganizationUpdater = errors.New("httpapi: no organization updater configured")
+
 // OrganizationReader is the narrow persistence port GET /v1/organizations
 // depends on. *store.OrganizationReader satisfies it in production; tests
 // supply a fake. Keeping the dependency an interface keeps the handler
@@ -251,6 +258,94 @@ func createOrganizationHandler(creator OrganizationCreator) http.HandlerFunc {
 		}
 
 		apienvelope.WriteData(w, http.StatusCreated, requestID(r), createOrganizationPayload{
+			Organization: organizationResourceOf(org),
+		})
+	}
+}
+
+// OrganizationUpdater is the narrow persistence port PATCH
+// /v1/organizations/{org_id} depends on. *store.OrganizationService satisfies
+// it in production; tests supply a fake. Like OrganizationCreator it is an
+// interface declared here so the handler stays unit-testable without a real
+// database — the concrete orchestrator (the desired-state write and the audit
+// record committed in one transaction) lives in the store layer.
+type OrganizationUpdater interface {
+	Update(ctx context.Context, in store.UpdateOrganizationInput) (store.Organization, error)
+}
+
+// updateOrganizationRequest is the decoded PATCH /v1/organizations/{org_id}
+// request body. Both fields are optional pointers: a nil pointer means the
+// caller did not include the field and it is left unchanged, which is what
+// makes the endpoint a partial update. The store layer validates every
+// supplied field before any database work and rejects a patch that names no
+// field at all — a mutation that changes nothing is a client error, not a
+// silent success. Neither field carries credential material.
+type updateOrganizationRequest struct {
+	Slug        *string `json:"slug"`
+	DisplayName *string `json:"display_name"`
+}
+
+// updateOrganizationPayload is the data block of the PATCH
+// /v1/organizations/{org_id} success envelope: the organization after the
+// update, in the same stable wire shape the other organization endpoints
+// return. It carries no credential material.
+type updateOrganizationPayload struct {
+	Organization organizationResource `json:"organization"`
+}
+
+// updateOrganizationHandler builds the PATCH /v1/organizations/{org_id}
+// handler. It decodes and delegates: the request body is strictly decoded
+// (oversized, malformed, or unknown-field bodies become a typed 400 that never
+// echoes the input), then the update-organization unit of work — validate,
+// read the row, write it back, append the audit record, all in one
+// transaction — runs in the store layer through the OrganizationUpdater port.
+//
+// RequireAuth gates the route on action organization.update before the handler
+// runs — authorized through organizationIDResolver against the organization the
+// path names — and attaches the resolved principal, so a request that reaches
+// the handler has already cleared the tenant boundary: a cross-tenant {org_id}
+// was rejected as a 403 by the policy engine, never reaching this code. A
+// request that arrives here with no principal is therefore a wiring error and
+// is reported as a typed internal error. The principal and the request
+// correlation identifiers are passed to the updater so the audit record names
+// the actor; a validation failure, a not-found {org_id}, a slug conflict, and a
+// datastore outage each surface as their own typed status, never disguised as
+// one another.
+func updateOrganizationHandler(updater OrganizationUpdater) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if updater == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoOrganizationUpdater))
+			return
+		}
+
+		var req updateOrganizationRequest
+		if err := validate.DecodeJSON(r.Body, &req, 0); err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		org, err := updater.Update(r.Context(), store.UpdateOrganizationInput{
+			OrganizationID: r.PathValue("org_id"),
+			Slug:           req.Slug,
+			DisplayName:    req.DisplayName,
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), updateOrganizationPayload{
 			Organization: organizationResourceOf(org),
 		})
 	}

@@ -67,16 +67,19 @@ port, render. When the endpoint has no path/query parameter, the tenant
 boundary is **structural** — the handler only ever passes `principal.OrganizationID`,
 so there is no caller input that could point the read at another tenant.
 
-Mutating endpoints (e.g. `POST /v1/organizations`) use the same idea with a
-**narrow writer/creator port** (`OrganizationCreator`), satisfied in production
-by a `store` **unit-of-work orchestrator** (`store.OrganizationService`, the
+Mutating endpoints (e.g. `POST /v1/organizations`, `PATCH /v1/organizations/{org_id}`)
+use the same idea with a **narrow writer port** (`OrganizationCreator`,
+`OrganizationUpdater`), satisfied in production by a `store` **unit-of-work
+orchestrator** (`store.OrganizationService`, the
 `ProjectService`/`ServiceAccountService` pattern) — not a bare repository. The
 orchestrator validates input before opening a transaction, then writes the
 desired state **and** appends the audit record inside one `Store.Write`. The
 handler stays thin: read the principal, `validate.DecodeJSON` the body, pull
-`telemetry.FromContext`, pass slug/display-name plus the principal's
-id/kind/org and the correlation ids into the `store.CreateXInput`, then render
-`http.StatusCreated`. Never open a `Store.Write` from a handler — that is the
+`telemetry.FromContext`, pass the resource fields plus the principal's
+id/kind/org and the correlation ids into the `store.<Verb>XInput`, then render.
+A partial-update (PATCH) body uses `*string` fields — a nil pointer means
+"field omitted, leave unchanged"; the orchestrator rejects a patch that names
+no field at all. Never open a `Store.Write` from a handler — that is the
 orchestrator's job.
 
 ## Tests
@@ -106,10 +109,11 @@ orchestrator's job.
 
 ## Binary wiring
 
-`NewHandler(build, readiness, meta, authenticator, engine, orgs, creator, logger)`.
+`NewHandler(build, readiness, meta, authenticator, engine, orgs, creator, updater, logger)`.
 `cmd/yalla-api` builds the real `authenticator` at startup from the pgxpool
 (`store.New` → `store.NewCredentialReader` → `auth.NewAuthenticator`), the
-`orgs` reader (`store.NewOrganizationReader`), the `creator`
-(`store.NewOrganizationService`), and a `policy.NewEngine()`.
+`orgs` reader (`store.NewOrganizationReader`), and the `creator`/`updater`
+(one `store.NewOrganizationService` value satisfies both ports), plus a
+`policy.NewEngine()`.
 Registering a `RequiresAuth` route with a nil authenticator/engine panics at
 startup — a wiring error, never a runtime 500.

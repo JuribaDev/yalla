@@ -75,12 +75,13 @@ type versionPayload struct {
 // reports an unknown migration version, which suits tests and processes with
 // no startup dependencies wired yet.
 //
-// orgs backs GET /v1/organizations and creator backs POST /v1/organizations.
-// Both may be nil for tests and tooling that only inspect the route table's
+// orgs backs the organization read endpoints, creator backs POST
+// /v1/organizations, and updater backs PATCH /v1/organizations/{org_id}. Any
+// may be nil for tests and tooling that only inspect the route table's
 // metadata; a request that actually reaches a handler with a nil dependency is
 // reported as a typed internal error rather than a misleading empty list or a
 // silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator) []apiRoute {
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -233,6 +234,29 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// principal — and the created organization does not exist yet, so
 			// there is no deeper resource target to resolve.
 			handler: createOrganizationHandler(creator),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodPatch,
+				Path:           "/v1/organizations/{org_id}",
+				OperationID:    "updateOrganization",
+				Summary:        "Update an organization",
+				Description:    "Updates the organization named by the {org_id} path parameter in the source-of-truth database. The request body is a partial update: it may carry a new canonical slug, a new human-authored display name, or both — every supplied field is validated before any database work, and a patch that names no field is rejected with a stable 400. Action organization.update is authorized against the organization the path names before the handler runs: a principal updating an organization outside its own tenant is rejected with a deterministic 403, so a cross-tenant id can never mutate another tenant's data. The updated organization row and an immutable audit record naming the authenticated principal are committed in one transaction: an update can never be persisted without its audit trail. The response carries no credential material.",
+				Tags:           []string{tagOrganizations},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionOrganizationUpdate),
+				PathParams: []openapi.PathParam{{
+					Name:        "org_id",
+					Description: "The id of the organization to update.",
+				}},
+				SuccessDescription: "The updated organization.",
+			},
+			// organizationIDResolver authorizes action organization.update
+			// against the organization the {org_id} path parameter names, not
+			// merely the principal's home organization, so a cross-tenant id is
+			// denied at the policy boundary before the handler mutates any data.
+			resolver: organizationIDResolver,
+			handler:  updateOrganizationHandler(updater),
 		},
 	}
 }

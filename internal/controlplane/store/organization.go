@@ -89,6 +89,37 @@ func (r *OrganizationRepository) Insert(ctx context.Context, tx *Tx, o Organizat
 	return created, nil
 }
 
+// Update writes new slug and display_name values for the organization
+// identified by o.ID inside tx and returns the persisted row, including the
+// trigger-refreshed updated_at timestamp. It requires a *Tx — not a bare
+// Querier — so an organization can never be updated outside the transaction
+// that also carries its audit record. A missing id is reported as a typed
+// NotFound — the same shape any other unknown id produces, so a caller can
+// never tell "no such organization" apart from "an organization you cannot
+// see". A slug that collides with an existing organization is reported as a
+// typed Conflict; the raw driver error, which may name the constraint, is
+// preserved only as the wrapped cause for server-side logging and never
+// reaches the user-facing message.
+func (r *OrganizationRepository) Update(ctx context.Context, tx *Tx, o Organization) (Organization, error) {
+	if tx == nil {
+		return Organization{}, apierr.Internal(errors.New("store: OrganizationRepository.Update called with a nil transaction"))
+	}
+	row := tx.QueryRow(ctx,
+		`UPDATE organizations
+		    SET slug = $2, display_name = $3
+		  WHERE id = $1
+		 RETURNING `+organizationColumns,
+		o.ID, o.Slug, o.DisplayName)
+	updated, err := scanOrganization(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Organization{}, apierr.NotFound("organization", o.ID)
+	}
+	if err != nil {
+		return Organization{}, mapWriteError(err, "an organization with this slug already exists")
+	}
+	return updated, nil
+}
+
 // scanOrganization scans one organizations row in organizationColumns order.
 func scanOrganization(row pgx.Row) (Organization, error) {
 	var o Organization
