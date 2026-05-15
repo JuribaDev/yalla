@@ -10,6 +10,8 @@ import (
 	"github.com/JuribaDev/yalla/internal/controlplane/domain"
 	"github.com/JuribaDev/yalla/internal/controlplane/policy"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
+	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
+	"github.com/JuribaDev/yalla/internal/controlplane/validate"
 )
 
 // errNoEnvironmentReader is returned when GET
@@ -19,6 +21,14 @@ import (
 // client error — so the handler reports it as a typed internal failure
 // rather than serving a misleading not-found.
 var errNoEnvironmentReader = errors.New("httpapi: no environment reader configured")
+
+// errNoEnvironmentUpdater is returned when PATCH
+// /v1/environments/{environment_id} is reached without an environment
+// updater wired into NewHandler. Like errNoEnvironmentReader it can
+// only happen through a wiring error — a programming mistake, not a
+// client error — so the handler reports it as a typed internal failure
+// rather than silently failing to persist the mutation.
+var errNoEnvironmentUpdater = errors.New("httpapi: no environment updater configured")
 
 // EnvironmentReader is the narrow persistence port GET
 // /v1/environments/{environment_id} depends on.
@@ -145,6 +155,141 @@ func getEnvironmentHandler(reader EnvironmentReader) http.HandlerFunc {
 		}
 		apienvelope.WriteData(w, http.StatusOK, requestID(r), getEnvironmentPayload{
 			Environment: projectEnvironmentOf(env),
+		})
+	}
+}
+
+// EnvironmentUpdater is the narrow persistence port PATCH
+// /v1/environments/{environment_id} depends on.
+// *store.EnvironmentService satisfies it in production; tests supply a
+// fake. Like EnvironmentCreator it is an interface declared here so
+// the handler stays unit-testable without a real database — the
+// concrete orchestrator (the desired-state write and the immutable
+// audit record committed in one transaction) lives in the store layer.
+type EnvironmentUpdater interface {
+	Update(ctx context.Context, in store.UpdateEnvironmentInput) (store.Environment, error)
+}
+
+// updateEnvironmentRequest is the decoded PATCH
+// /v1/environments/{environment_id} request body. Both fields are
+// optional pointers: a nil pointer means the caller did not include
+// the field and it is left unchanged, which is what makes the
+// endpoint a partial update. The store layer validates every supplied
+// field before any database work and rejects a patch that names no
+// field at all — a mutation that changes nothing is a client error,
+// not a silent success. Neither field carries credential material.
+//
+// The request body intentionally exposes no organization_id,
+// project_id, or environment_id field: the organization is derived
+// from the authenticated principal's home organization and the
+// environment_id comes from the path, never from the body, so a
+// caller cannot point the mutation at another tenant's environment
+// even if the strict decoder were bypassed. The parent project_id is
+// not mutable through this endpoint: an environment belongs to
+// exactly one project for its lifetime, and reparenting is a
+// deliberate operation that would belong to a separate move endpoint
+// behind a different action constant.
+type updateEnvironmentRequest struct {
+	Slug        *string `json:"slug"`
+	DisplayName *string `json:"display_name"`
+}
+
+// updateEnvironmentPayload is the data block of the PATCH
+// /v1/environments/{environment_id} success envelope: the environment
+// after the update, in the same stable wire shape the other
+// environment endpoints return. It carries no credential material —
+// the environments table itself stores no secrets; environment-scoped
+// variables and other secrets live behind their own endpoints where
+// the redaction policy applies.
+type updateEnvironmentPayload struct {
+	Environment projectEnvironment `json:"environment"`
+}
+
+// updateEnvironmentHandler builds the PATCH
+// /v1/environments/{environment_id} handler. It decodes and delegates:
+// the request body is strictly decoded (oversized, malformed, or
+// unknown-field bodies become a typed 400 that never echoes the
+// input), the If-Match header is parsed as an optional
+// optimistic-concurrency precondition, and then the update-environment
+// unit of work — validate, read the current row, apply the patch,
+// write the row back, append the audit record, all in one transaction
+// — runs in the store layer through the EnvironmentUpdater port.
+//
+// RequireAuth gates the route on action environment.update before the
+// handler runs — authorized through environmentIDResolver against the
+// (principal home organization, {environment_id}) resource the path
+// names — and attaches the resolved principal, so a request that
+// reaches the handler has already cleared the policy boundary.
+// environment.update is a CapWrite action, so the gate admits the
+// principal's organization-wide write roles (owner, admin, developer,
+// ci) and denies viewer, denies support (a support principal is
+// CapRead-only and cannot mutate even within its home tenant). The
+// path carries no parent project_id, so the policy engine cannot pin
+// the ProjectID leg of the resource scope at authorization time —
+// project-, environment-, and service-scoped grants are denied at the
+// boundary by the engine's covers() rule (a grant with a pinned
+// ProjectID cannot cover a resource with no ProjectID); principals
+// whose only access is a scoped grant must use a parent-scoped route
+// to address an environment by its (project, environment) tuple.
+//
+// The handler never trusts a caller-supplied organization id: the
+// store call is built from principal.OrganizationID and
+// r.PathValue("environment_id"), so a cross-tenant environment_id
+// reaches the tenant-scoped repository query with the principal's
+// home organization id and is reported as a deterministic NotFound by
+// the persistence layer, never another tenant's row. A request that
+// arrives with no principal is a wiring error reported as a typed
+// internal error; a validation failure, a slug conflict, a not-found
+// {environment_id}, a stale If-Match version, and a datastore outage
+// each surface as their own typed status, never disguised as one
+// another. On success, the handler mirrors the row's authoritative
+// version into the ETag response header so the caller can echo it
+// back as the next If-Match precondition without re-reading the row.
+func updateEnvironmentHandler(updater EnvironmentUpdater) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if updater == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoEnvironmentUpdater))
+			return
+		}
+
+		ifMatchVersion, ifMatchErr := parseIfMatchVersion(r)
+		if ifMatchErr != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(ifMatchErr))
+			return
+		}
+
+		var req updateEnvironmentRequest
+		if err := validate.DecodeJSON(r.Body, &req, 0); err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		environment, err := updater.Update(r.Context(), store.UpdateEnvironmentInput{
+			OrganizationID: p.OrganizationID,
+			EnvironmentID:  r.PathValue("environment_id"),
+			Slug:           req.Slug,
+			DisplayName:    req.DisplayName,
+			IfMatchVersion: ifMatchVersion,
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		writeOrganizationETag(w, environment.Version)
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), updateEnvironmentPayload{
+			Environment: projectEnvironmentOf(environment),
 		})
 	}
 }

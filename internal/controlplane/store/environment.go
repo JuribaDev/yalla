@@ -130,6 +130,77 @@ func (r *EnvironmentRepository) ListByProject(ctx context.Context, q Querier, or
 	return out, nil
 }
 
+// Update writes new slug and display_name values for the environment
+// identified by (e.OrganizationID, e.ID) inside tx and returns the
+// persisted row, including the trigger-refreshed updated_at timestamp
+// and bumped version. It requires a *Tx — not a bare Querier — so an
+// environment can never be mutated outside the transaction that also
+// carries its audit record. The query is tenant scoped by
+// organization_id first, so an environment id that belongs to another
+// organization simply does not match and is reported as NotFound — a
+// cross-tenant id can never reveal another organization's data. The
+// parent project relationship is preserved by construction: the UPDATE
+// touches only the mutable columns (slug, display_name) and never the
+// composite (organization_id, project_id) tenant key.
+//
+// ifMatchVersion enforces optimistic concurrency identically to the
+// projects repository: a nil pointer disables the check
+// (next-write-wins behaviour), a non-nil pointer adds a WHERE clause
+// on the row's current version, and a stale view is reported as a
+// typed apierr.ConflictStale carrying the row's authoritative version.
+// A slug that collides with another environment in the same project
+// violates UNIQUE (project_id, slug) and surfaces through
+// mapWriteError as a deterministic apierr.Conflict, never as a 500
+// leaking the constraint name.
+func (r *EnvironmentRepository) Update(ctx context.Context, tx *Tx, e Environment, ifMatchVersion *int64) (Environment, error) {
+	if tx == nil {
+		return Environment{}, apierr.Internal(errors.New("store: EnvironmentRepository.Update called with a nil transaction"))
+	}
+	var row pgx.Row
+	if ifMatchVersion == nil {
+		row = tx.QueryRow(ctx,
+			`UPDATE environments
+			    SET slug = $3, display_name = $4
+			  WHERE organization_id = $1 AND id = $2
+			 RETURNING `+environmentColumns,
+			e.OrganizationID, e.ID, e.Slug, e.DisplayName)
+	} else {
+		row = tx.QueryRow(ctx,
+			`UPDATE environments
+			    SET slug = $3, display_name = $4
+			  WHERE organization_id = $1 AND id = $2 AND version = $5
+			 RETURNING `+environmentColumns,
+			e.OrganizationID, e.ID, e.Slug, e.DisplayName, *ifMatchVersion)
+	}
+	updated, err := scanEnvironment(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if ifMatchVersion == nil {
+			return Environment{}, apierr.NotFound("environment", e.ID)
+		}
+		return Environment{}, classifyEnvironmentConcurrencyMiss(ctx, r, tx, e.OrganizationID, e.ID)
+	}
+	if err != nil {
+		return Environment{}, mapWriteError(err, "an environment with this slug already exists in the project")
+	}
+	return updated, nil
+}
+
+// classifyEnvironmentConcurrencyMiss disambiguates the two reasons a
+// version-checked UPDATE matched no rows: the environment was deleted
+// (rare, and reported as NotFound for parity with the unchecked path)
+// or the caller's view of the version is stale (reported as
+// ConflictStale with the row's current version). It runs inside the
+// same transaction so the disambiguation is consistent with the failed
+// UPDATE. The query is tenant scoped, so a cross-tenant id is still
+// reported as NotFound.
+func classifyEnvironmentConcurrencyMiss(ctx context.Context, r *EnvironmentRepository, tx *Tx, organizationID, environmentID string) error {
+	current, getErr := r.GetByID(ctx, tx, organizationID, environmentID)
+	if getErr != nil {
+		return getErr
+	}
+	return apierr.ConflictStale(current.Version)
+}
+
 // GetByID returns the single environments row identified by
 // (organizationID, environmentID), tenant-scoped at the SQL predicate. The
 // composite predicate is non-optional: a missing or cross-tenant

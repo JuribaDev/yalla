@@ -113,13 +113,14 @@ type versionPayload struct {
 // /v1/projects/{project_id}/variables, projectVariableReplacer backs
 // PUT /v1/projects/{project_id}/variables, projectEnvironments backs
 // GET /v1/projects/{project_id}/environments, environmentCreator
-// backs POST /v1/projects/{project_id}/environments, and
-// environmentReader backs GET /v1/environments/{environment_id}. Any
-// may be nil for tests and tooling that only inspect the route table's
-// metadata; a request that actually reaches a handler with a nil
-// dependency is reported as a typed internal error rather than a
+// backs POST /v1/projects/{project_id}/environments,
+// environmentReader backs GET /v1/environments/{environment_id}, and
+// environmentUpdater backs PATCH /v1/environments/{environment_id}.
+// Any may be nil for tests and tooling that only inspect the route
+// table's metadata; a request that actually reaches a handler with a
+// nil dependency is reported as a typed internal error rather than a
 // misleading empty list or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader) []apiRoute {
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -593,6 +594,42 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// /v1/projects/{project_id}/environments route.
 			resolver: environmentIDResolver,
 			handler:  getEnvironmentHandler(environmentReader),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodPatch,
+				Path:           "/v1/environments/{environment_id}",
+				OperationID:    "updateEnvironment",
+				Summary:        "Update an environment",
+				Description:    "Partially updates the environment named by the {environment_id} path parameter, as the source-of-truth database stores it. The request body is a partial-update document: both slug and display_name are optional pointers, so omitting a field leaves it unchanged. A patch that names no updatable field is a stable 400 — a mutation that changes nothing is a client error, not a silent success. Every supplied field is validated before any database work; an invalid request never opens a transaction. The desired-state write and an immutable audit record naming the authenticated principal are committed in one transaction — an update can never be persisted without its audit trail, and a duplicate slug within the same project rolls the whole transaction back as a deterministic 409. Action environment.update is authorized against the (principal home organization, {environment_id}) resource the path names before the handler runs: environment.update is a CapWrite action, so the gate admits the principal's organization-wide write roles (owner, admin, developer, ci) and denies viewer, denies support (CapRead-only — a support principal cannot mutate even within its home tenant). The path carries no parent project_id, so the policy engine cannot pin the ProjectID leg of the resource scope at authorization time — project-, environment-, and service-scoped grants are denied at the boundary by the engine's covers() rule; principals whose only access is a scoped grant must use a parent-scoped route to address an environment by its (project, environment) tuple. A cross-tenant or unknown environment_id reaches the persistence layer with the principal's home organization id and is rejected as a deterministic 404 by the tenant-scoped repository query, never revealing another tenant's environment. The optional If-Match request header carries the row's optimistic-concurrency version (a strong ETag of the form \"<n>\"); a stale version is rejected as a deterministic 409 carrying the row's authoritative version under details.current_version. The response mirrors the row's new version into the ETag response header so the caller can echo it back as the next If-Match precondition. The response carries no credential material — the environments table itself stores no secrets; environment-scoped variables and other secrets live behind their own endpoints where the redaction policy applies.",
+				Tags:           []string{tagEnvironments},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionEnvironmentUpdate),
+				PathParams: []openapi.PathParam{{
+					Name:        "environment_id",
+					Description: "The id of the environment to update.",
+				}},
+				SuccessDescription: "The environment was updated.",
+			},
+			// environmentIDResolver authorizes action environment.update
+			// against the (principal home organization, {environment_id})
+			// resource the path names, not merely the principal's home
+			// organization. The organization id is taken from the
+			// principal's home org (never the caller — there is no
+			// organization id in the request body), so a cross-tenant
+			// environment_id still hits the tenant-scoped repository
+			// query and surfaces as a 404 at the persistence boundary.
+			// The path carries no parent project_id, so the resource
+			// scope pins only OrganizationID and EnvironmentID —
+			// project-, environment-, and service-scoped grants are
+			// denied at the policy boundary by design (the engine's
+			// covers() rule), forcing scoped-grant-only principals onto
+			// parent-scoped routes. environment.update is a CapWrite
+			// action and has no cross-tenant support exception — unlike
+			// CapRead actions, a support principal cannot mutate
+			// environments in another tenant.
+			resolver: environmentIDResolver,
+			handler:  updateEnvironmentHandler(environmentUpdater),
 		},
 		{
 			endpoint: openapi.Endpoint{
