@@ -14052,3 +14052,71 @@
     profile level is invisible to operators (production still
     enforces) and zero-config for test authors.
 ---
+
+## 2026-05-16 - BE-0180
+- Story scope: BE-0180 adds policy-matrix coverage for
+  GET /v1/environments/{environment_id}/services. The structural twin
+  of environments_get_policy_test.go (BE-0156) at the same CapRead
+  capability tier: same environmentIDResolver, same '''no-ProjectID
+  leg in the resource scope''' constraint, same '''all six roles allow,
+  all scoped grants deny OutOfScope, org-level grant allows end-to-
+  end''' wire/engine matrix. The load-bearing distinction from the
+  environments_get_policy template: services rows themselves carry
+  NO credential material, so the deny-path leak guard needles for
+  the existence of every seeded service id, slug, and display name
+  (plus parent project / environment id) rather than for a redacted
+  secret plaintext. The slot-in service grant uses the SAME id as
+  the seeded service in the leak-needle list (svc_matrix_api), so a
+  hypothetical regression that let a service-scoped key surface its
+  own row through this list route would fail the leak guard as well
+  as the OutOfScope assertion.
+
+- Files changed:
+  - added: internal/controlplane/httpapi/environment_services_policy_test.go
+  - modified: ralph/prd.json (BE-0180 passes=true)
+  - modified: ralph/progress.txt (this entry)
+
+- Verification run from the repository root:
+  - gofmt -w internal/controlplane/httpapi/environment_services_policy_test.go -> ok
+  - go mod tidy                                                                -> ok
+  - go vet ./...                                                               -> ok
+  - go test ./internal/controlplane/httpapi/ -run TestListEnvironmentServicesPolicy -count=1 -> ok (0.434s)
+  - go test ./...                                                              -> ok (all packages green, no failures)
+  - go test -race ./... -count=1                                               -> ok (all packages green under race)
+  - goimports / golangci-lint / staticcheck / govulncheck                      -> not installed (documented by earlier iterations)
+
+- Remaining risks / follow-ups:
+  - The next P=1 policy-matrix stories (BE-0183, BE-0186, BE-0189,
+    BE-0192, BE-0195, BE-0198, BE-0201, BE-0204, BE-0207, BE-0210,
+    BE-0213, BE-0216, BE-0219, BE-0222, ...) are all blocked on the
+    matching P=2 endpoint stories (BE-0181 POST services,
+    BE-0184 GET /v1/services/{service_id}, etc.). The picker rule
+    "P=1 policy-matrix story sitting on a P=2 endpoint story" still
+    holds — pick whichever endpoint story comes first in the chain.
+
+- Learnings for future iterations:
+  - The environments_get_policy_test.go template (env-id route + a
+    CapRead action) ports cleanly to other env-id-rooted CapRead
+    endpoints. The only adjustments needed for BE-0180 were:
+    (a) swap policy.ActionEnvironmentRead -> policy.ActionServiceRead;
+    (b) swap fakeEnvironmentReader/EnvironmentReader -> fakeEnvironmentServiceReader/EnvironmentServiceReader (already exposed gotOrgID/gotEnvironmentID/callCount);
+    (c) swap getEnvironmentByIDHandlerForIdentity -> listEnvironmentServicesHandlerFor (the existing contract-test helper already accepts a per-test auth.Identity, so no new identity-injected handler factory was needed);
+    (d) replace the single-row canonical fixture with a two-row services slice and update the wire-projection assertion to compare every projected service against its seeded counterpart;
+    (e) widen the deny-path leak needle list from "one row" to "every seeded service id + slug + display name" — and INCLUDE the grantee'''s own service id (svc_matrix_api) in the needles so the service-grant deny-on-wire test catches a regression that surfaced the grantee'''s own row;
+    (f) keep every other structural property identical: ReasonAllowedByRole on the role matrix, ReasonDeniedPrincipalDisabled on revoked/expired, NotFound at the wire + ReasonDeniedCrossTenant/AllowedBySupport at the engine on wrong-organization, ReasonDeniedOutOfScope for every scoped grant against the no-ProjectID resource scope, ReasonAllowedByGrant for the org-level Viewer grant on the allow path.
+  - Future CapRead env-id-rooted endpoints (e.g. GET
+    /v1/environments/{environment_id}/grants — already shipped under
+    BE-0168 — and any future env-id-rooted read) should follow the
+    same six-step adaptation; the template now has a third instance
+    (after environments_get_policy_test.go itself), so consider
+    consolidating the shared sequence as a Codebase Patterns entry
+    if a fourth instance lands.
+  - The existing contract-test helper '''listEnvironmentServicesHandlerFor'''
+    is already shaped for matrix tests (it takes id, authErr, reader),
+    unlike '''getEnvironmentHandlerFor''' which baked in a canonical
+    principal and forced BE-0156 to add a sibling
+    '''getEnvironmentByIDHandlerForIdentity'''. When implementing the
+    endpoint story (BE-0178'''s peer here), prefer the per-test-identity
+    shape so the policy-matrix story (BE-0180'''s peer) does NOT need
+    to add a second handler factory.
+---
