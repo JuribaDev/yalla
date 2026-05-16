@@ -90,6 +90,11 @@ const (
 	BuilderNixpacks = "nixpacks"
 	// BuilderImage deploys a pre-built image reference without a build step.
 	BuilderImage = "image"
+	// BuilderDropArtifact deploys a pre-built artifact (tarball, zip, or
+	// similar bundle) that the customer uploaded to Yalla. There is no git
+	// source and no registry image — the worker hands the recorded artifact
+	// reference to Dokploy verbatim.
+	BuilderDropArtifact = "drop-artifact"
 )
 
 // VariableSource identifies which level of the hierarchy contributed a
@@ -140,7 +145,8 @@ type ResourceLimits struct {
 // Builder are dropped, so the rendered spec is unambiguous.
 type BuildSettings struct {
 	// Builder selects the build strategy: BuilderDockerfile, BuilderNixpacks,
-	// or BuilderImage. It defaults to BuilderDockerfile when blank.
+	// BuilderImage, or BuilderDropArtifact. It defaults to BuilderDockerfile
+	// when blank.
 	Builder string `json:"builder"`
 	// DockerfilePath is the Dockerfile path relative to the repository root;
 	// it applies only to BuilderDockerfile and defaults to "Dockerfile".
@@ -154,6 +160,10 @@ type BuildSettings struct {
 	// GitCommit pins the build to a specific commit; it applies to
 	// BuilderDockerfile and BuilderNixpacks.
 	GitCommit string `json:"git_commit,omitempty"`
+	// ArtifactURL is a pre-built artifact reference (typically a Yalla
+	// storage URL pointing at a tarball or zip the customer uploaded); it
+	// is required for and applies only to BuilderDropArtifact.
+	ArtifactURL string `json:"artifact_url,omitempty"`
 }
 
 // DomainSpec is a requested hostname for a web service.
@@ -579,10 +589,22 @@ func normaliseBuild(violations *[]apierr.FieldViolation, in BuildSettings) Build
 			Builder: BuilderImage,
 			Image:   image,
 		}
+	case BuilderDropArtifact:
+		artifact := strings.TrimSpace(in.ArtifactURL)
+		if artifact == "" {
+			*violations = append(*violations, apierr.FieldViolation{
+				Field:  "build.artifact_url",
+				Reason: "required when builder is drop-artifact",
+			})
+		}
+		return BuildSettings{
+			Builder:     BuilderDropArtifact,
+			ArtifactURL: artifact,
+		}
 	default:
 		*violations = append(*violations, apierr.FieldViolation{
 			Field:  "build.builder",
-			Reason: "must be dockerfile, nixpacks, or image",
+			Reason: "must be dockerfile, nixpacks, image, or drop-artifact",
 		})
 		return BuildSettings{}
 	}

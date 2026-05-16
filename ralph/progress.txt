@@ -19978,3 +19978,132 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     inverted boundary so a reader scanning sibling files immediately sees
     which subtype each file pins.
 ---
+
+## 2026-05-16 - BE-0305
+- Implemented BE-0305: Provision application-drop-artifact services
+  (renderer-side contract + new builder constant).
+  Production code (small, additive — single seam):
+  * internal/controlplane/dokploy/renderer.go:
+    - Added new builder constant `BuilderDropArtifact = "drop-artifact"`
+      with a doc comment that flags the customer-uploaded-bundle semantic
+      (no git source, no registry image).
+    - Added `ArtifactURL string` field to `BuildSettings` (json
+      `artifact_url,omitempty`) with a doc comment naming it as
+      drop-artifact-only.
+    - Extended `BuildSettings.Builder` doc comment to list the new
+      builder option.
+    - Added `case BuilderDropArtifact:` to `normaliseBuild()` that trims
+      and requires the ArtifactURL (otherwise emits a stable
+      `apierr.FieldViolation{Field: "build.artifact_url", Reason:
+      "required when builder is drop-artifact"}`) and returns a
+      BuildSettings whose ONLY non-empty fields are Builder and
+      ArtifactURL — every git-source-only field AND the BuilderImage
+      `Image` field are dropped at the renderer seam.
+    - Updated the default-case reason text from "must be dockerfile,
+      nixpacks, or image" to "must be dockerfile, nixpacks, image, or
+      drop-artifact" so the field-violation message stays accurate.
+      Existing tests assert on the Field path only ("build.builder") so
+      the message-text change does not break any test.
+  Renderer-contract test (new file, mirrors the BE-0301/BE-0303 template):
+  * internal/controlplane/dokploy/renderer_application_drop_artifact_test.go:
+    - applicationDropArtifactInput() helper anchored on validInput().
+    - TestRenderApplicationDropArtifactSuccess (ArtifactURL preserved
+      verbatim; every git-source-only AND image-only build field stays
+      empty).
+    - TestRenderApplicationDropArtifactDropsGitAndImageFields — DUAL
+      subtype-boundary pin against BE-0301 AND BE-0303; submits leaky
+      dockerfile_path/git_branch/git_commit/image, asserts every one is
+      dropped and that the leaked values never reach Summary JSON, slog
+      record, or Summary.String().
+    - TestRenderApplicationDropArtifactRoleMatrix across web/worker/cron
+      with ArtifactURL preservation invariants on every row.
+    - TestRenderApplicationDropArtifactValidationFailures covering
+      organization id, parent linkage, tier, role, service type, cron
+      schedule absence, cron schedule bad form, variable name, negative
+      cpu, drop-artifact-builder-missing-artifact-url (the
+      subtype-specific case neither BE-0301 nor BE-0303 cover), and bad
+      builder; leaky table now includes the ArtifactURL so any echo
+      would fail.
+    - TestRenderApplicationDropArtifactTierResourceDefaults
+      (production/web -> 2 replicas; all others -> 1).
+    - TestRenderApplicationDropArtifactRedactsAllVariableValuesAcrossRoles
+      asserts both the verbatim secret reaches RenderedSpec AND every
+      Summary variable value site shows the redaction sentinel, while
+      the verbatim ArtifactURL and secret still reach the worker through
+      RenderedSpec.
+    - TestRenderApplicationDropArtifactDeterministic for byte-stable
+      re-renders.
+- Files changed:
+  * internal/controlplane/dokploy/renderer.go (production: builder
+    constant, BuildSettings.ArtifactURL field, normaliseBuild case,
+    error-message text).
+  * internal/controlplane/dokploy/renderer_application_drop_artifact_test.go
+    (new).
+  * ralph/prd.json (BE-0305 passes=true with notes).
+  * ralph/progress.txt (this entry).
+- Verification run:
+  * gofmt -l . (clean).
+  * go vet ./... (clean).
+  * go mod tidy (no-op).
+  * go test -count=1 -run 'TestRenderApplicationDropArtifact'
+    ./internal/controlplane/dokploy/... (ok, 0.515s).
+  * go test -count=1 ./... -> every package PASS (37 packages green;
+    no FAIL lines).
+  * go test -race -count=1 ./... -> every package PASS (37 packages
+    race-clean).
+  * goimports / golangci-lint / staticcheck / govulncheck still not
+    installed locally (documented in earlier iterations).
+- Results:
+  * BE-0305 passes=true. The renderer-side acceptance criteria for
+    application-drop-artifact (declarative-content + validation +
+    drop-foreign-field + redaction + determinism + role matrix + tier
+    defaults) are now structurally pinned. The worker-side acceptance
+    criteria (dokploy_refs atomic write, quota conversion, fake-Dokploy
+    create/update/deploy/poll/failure/retry/replay) defer to a later
+    worker story by design — the per-subtype-renderer pattern
+    established in BE-0301 documents this seam.
+- Remaining risks or follow-ups:
+  * The wire endpoint for application-drop-artifact services (request
+    decoding, artifact upload flow, auth, not-found behavior) is
+    delivered by separate endpoint stories; when that lands the renderer
+    file does not need to change.
+  * BE-0307 (compose) is the next provisioning-service-type story; the
+    BE-0301 template assumed compose will pin Engine instead of Builder
+    and drop the role field, but compose actually carries its own
+    sub-shape (compose_file content or path); the test file there will
+    diverge more than BE-0303/BE-0305 did from BE-0301.
+- **Learnings for future iterations:**
+  * BE-0305 is the FIRST per-subtype renderer story to require a
+    production-code change (a new builder constant + a new BuildSettings
+    field + a new normaliseBuild case): BE-0303 (application-image)
+    needed only a test file because the BuilderImage seam was already
+    in place. The structural pattern still holds: when a subtype's
+    declarative content cannot be expressed with the existing
+    BuildSettings fields, the renderer.go change comes BEFORE the test
+    file — add the constant, add the field, add the normaliseBuild case
+    that drops every foreign-builder field, then clone the BE-0301
+    template and adjust the subtype-boundary test to cover all foreign
+    builders (BE-0305 drops BOTH git-source fields AND the image
+    field — its DropsGitAndImageFields test is the structural barrier
+    against TWO sibling subtypes at once).
+  * The bad-builder error message text is NOT load-bearing in any test;
+    only the Field path is. Updating it to keep the enum accurate is
+    safe across the suite. Future enum extensions should always extend
+    this string in lockstep.
+  * The new `build.artifact_url` ValidationFailures row covers the
+    drop-artifact-specific missing-artifact case the way BE-0303 covers
+    `build.image` missing-image — the wantField is the
+    `apierr.FieldViolation.Field` path, not the Reason text. This makes
+    the test pattern resilient to future Reason-text refinements.
+  * The leaky-values slice in the ValidationFailures table now includes
+    the verbatim ArtifactURL (full URL with scheme + host + path), so
+    any future regression that echoes a submitted artifact URL into an
+    error envelope (a typical "leak the user's input back to them"
+    mistake) is caught immediately.
+  * Production-side dual-boundary normaliseBuild change is one switch
+    case + four ignored input fields — the renderer is the single seam
+    where "the BuildSettings the caller submitted" becomes "the
+    BuildSettings the worker receives", so adding a new builder by
+    extending only this switch is structurally complete: there is no
+    second seam in the renderer that could leak a foreign-builder field.
+---
