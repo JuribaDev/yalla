@@ -19077,3 +19077,64 @@ Learnings for future iterations:
   - **The picker rule for engine-only pins, expanded: when the wire endpoint does not exist AND the AC are all engine properties, prefer the engine-only pin over bundling the endpoint+contract+policy into a single iteration.** This iteration's BE-0273 acceptance criteria are entirely engine properties (the principal-role matrix, the disabled-principal short-circuit, the cross-tenant guard, the three grant-containment cases). The bundling rule (BE-0244+0245+0246 / BE-0256+0257+0258 / BE-0259+0260+0261) applies when the P=1 policy story's coverage REQUIRES a wire endpoint to exist (so wire-level test assertions about resolver scope construction can be made). When the AC are pure engine properties, the engine pin is sufficient AND the bundling cost (a 5+ layer greenfield drop: store port + service + handler + route + contract + policy-wire + policy-engine) is unjustified for a single P=1 story. The trade-off: the wire-level twin of this file (httpapi/jobs_list_policy_test.go) MUST be added when BE-0271+0272 land, otherwise the resolver-scope-construction and 404-vs-403-ordering properties remain unpinned at the wire level. The engine pin alone is sufficient for BE-0273 because the AC do not reference resolver scope construction or 404-vs-403 ordering; those are properties of the endpoint, not the action.
   - **Project/env/service grant containment for an org-level list must pin allow-equal-scope alongside deny-shallower-resource.** The project-scoped preview pattern in preview_read_policy_test.go pins only the deny direction (deeper grant denied against project-level resource is impossible because the canonical resource IS project-level). For an org-level list, the same containment matrix has TWO sides: (1) deeper grant denied against the shallower org-level resource (ReasonDeniedOutOfScope), and (2) the SAME deeper grant ALLOWED against a deeper resource shape that mimics the future query-filter case (ReasonAllowedByGrant). Pinning only (1) would let a future regression that broke covers() at the deeper-scope-equals-resource-scope case slip through silently — a project-scoped automation key that should be able to list its own project's jobs would be denied with no signal. Pinning (2) alongside (1) is what makes the matrix proof complete.
 ---
+
+## 2026-05-16 - BE-0053
+- Added contract test suite for GET /v1/organizations/{org_id} closing the
+  contract-test gaps left by organizations_get_test.go: server writes response
+  data only through http.ResponseWriter (captureProcessOutput proves stdout and
+  stderr remain empty), per-request structured log redacts bearer credential on
+  success AND authorization-failure paths, and the error envelope built from a
+  wrapped dependency cause (apierr.StoreUnavailable) never leaks the wrapped
+  driver text or datastore host onto the wire (only the stable generic
+  E_UNAVAILABLE message). The new file is the structural twin of the BE-0050
+  (organizations_create_contract_test.go) and BE-0047
+  (organizations_contract_test.go) contract suites, adapted to the GET
+  single-organization shape ({org_id} path parameter, 200 success status,
+  OrganizationReader port). All three contract suites now share the same
+  three-test shape (stdout/stderr capture, bearer-redaction matrix, dependency-
+  cause-leak) so future per-endpoint contract suites can clone from any of the
+  three with mechanical substitutions.
+- Files changed:
+  - internal/controlplane/httpapi/organizations_get_contract_test.go (new)
+  - ralph/prd.json (BE-0053 passes=true)
+- Verification:
+  - gofmt -w .
+  - go vet ./...
+  - go test -run TestGetOrganization ./internal/controlplane/httpapi/
+  - go test ./...
+  - go test -race ./...
+- Results: all passing, no failures, no data races.
+- Remaining risks or follow-ups: BE-0056 (PATCH /v1/organizations/{org_id})
+  and BE-0059 (DELETE /v1/organizations/{org_id}) are the next contract suites
+  in the same family; they will follow the same three-test shape and can clone
+  this file with substitutions for HTTP method, request body shape, success
+  status (200 for PATCH, 200 with snapshot or 202 for DELETE), and port
+  (OrganizationUpdater / OrganizationDeleter respectively).
+- **Learnings for future iterations:**
+  - The contract-test suite family for a single endpoint is now a stable
+    three-test shape: (a) ServerWritesResponseDataOnlyToResponseWriter using
+    captureProcessOutput (must be non-parallel because it swaps the global
+    os.Stdout/os.Stderr), (b) RequestLogRedactsBearerToken as a table test
+    with a success row and an authorization-failure row (the deny row uses a
+    fake port that errors if invoked, which proves the deny path short-circuits
+    at policy before reaching the persistence layer), (c) ErrorEnvelopeDoesNot
+    LeakDependencyCause asserting both the wrapped driver text and the
+    datastore host are absent from the response body. The three tests together
+    close the "stdout/stderr / log redaction / response redaction" rows of the
+    public-API contract checklist that the main endpoint test file
+    (organizations_get_test.go, organizations_create_test.go,
+    organizations_test.go) does not assert directly.
+  - The per-endpoint *HandlerForWithLogger helper takes the same NewHandler
+    argument list as the non-logger variant plus a *slog.Logger as the
+    second-to-last argument (logger, nil): the final nil is the metrics
+    parameter. Keep them in lockstep — the non-logger variant ends with
+    (nil, nil) and the logger variant ends with (logger, nil).
+  - For an endpoint with no request body and no query parameters (GET single
+    resource), the "invalid input" row of the contract checklist is satisfied
+    structurally — there is no syntactic request to reject. A malformed or
+    unknown {org_id} surfaces as the typed NotFound the reader produces, and
+    an id outside the principal's tenant surfaces as a deterministic 403; both
+    paths live in the main endpoint test file, not the contract suite. Document
+    this in the file header so a future reader does not look for a missing
+    "invalid input" test.
+---
