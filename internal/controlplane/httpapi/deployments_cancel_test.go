@@ -102,7 +102,7 @@ func cancelServiceDeploymentHandlerFor(id auth.Identity, authErr error, canceler
 		fakeEnvironmentDeleter{}, fakeEnvironmentCloner{}, fakeEnvironmentGrantReader{}, fakeEnvironmentGrantReplacer{},
 		fakeEnvironmentVariableReader{}, fakeEnvironmentVariableReplacer{}, fakeEnvironmentServiceReader{}, fakeEnvironmentServiceCreator{},
 		fakeServiceReader{}, fakeServiceUpdater{}, fakeServiceDeleter{}, fakeServiceRestorer{}, fakeServiceVariableReader{}, fakeServiceVariableReplacer{},
-		fakeDeploymentCreator{}, fakeDeploymentLister{}, fakeDeploymentGetter{}, canceler, fakeBreakGlassController{}, nil, nil)
+		fakeDeploymentCreator{}, fakeDeploymentLister{}, fakeDeploymentGetter{}, canceler, fakeDeploymentRollbacker{}, fakeBreakGlassController{}, nil, nil)
 }
 
 // cancelServiceDeployment issues POST /v1/deployments/{deployment_id}/cancel
@@ -465,7 +465,7 @@ func TestCancelServiceDeploymentOpenAPIRouteIsRegistered(t *testing.T) {
 		fakeEnvironmentDeleter{}, fakeEnvironmentCloner{}, fakeEnvironmentGrantReader{}, fakeEnvironmentGrantReplacer{},
 		fakeEnvironmentVariableReader{}, fakeEnvironmentVariableReplacer{}, fakeEnvironmentServiceReader{}, fakeEnvironmentServiceCreator{},
 		fakeServiceReader{}, fakeServiceUpdater{}, fakeServiceDeleter{}, fakeServiceRestorer{}, fakeServiceVariableReader{}, fakeServiceVariableReplacer{},
-		fakeDeploymentCreator{}, fakeDeploymentLister{}, fakeDeploymentGetter{}, fakeDeploymentCanceler{}, fakeBreakGlassController{})
+		fakeDeploymentCreator{}, fakeDeploymentLister{}, fakeDeploymentGetter{}, fakeDeploymentCanceler{}, fakeDeploymentRollbacker{}, fakeBreakGlassController{})
 
 	var found bool
 	for _, rt := range table {

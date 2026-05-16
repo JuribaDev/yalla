@@ -524,3 +524,302 @@ func (svc *DeploymentService) Cancel(ctx context.Context, in CancelDeploymentInp
 	}
 	return cancelled, nil
 }
+
+// RollbackDeploymentInput is the unvalidated input to
+// DeploymentService.Rollback. OrganizationID and ServiceID name the
+// rollback target service: the new deployment row's project_id and
+// environment_id legs are derived from the persisted services row
+// inside the transaction, never from caller input, so the child can
+// never land in another project or environment even if a request body
+// field tried to redirect it. TargetDeploymentID names the previous
+// deployment whose source / source_ref the rollback row will copy
+// verbatim — it MUST belong to the same (organization, service) and
+// MUST be in the terminal 'succeeded' status, otherwise the unit of
+// work refuses the rollback. IdempotencyKey is required: it is the
+// per-organization unique key that makes a retried POST
+// /v1/services/{service_id}/rollback structurally idempotent.
+//
+// The Actor* and correlation fields describe the authenticated
+// principal performing the rollback and are recorded verbatim on the
+// audit event. They are plain strings so the store layer takes no
+// build dependency on the policy or telemetry packages — the httpapi
+// handler, which already holds the resolved principal and the request
+// correlation, fills them in.
+//
+// OrganizationID is sourced from the principal's home organization at
+// the HTTP boundary (never from the request body or path), so a
+// cross-tenant id cannot point the write at another tenant by
+// construction. ServiceID is sourced from the {service_id} PATH
+// parameter; TargetDeploymentID is sourced from the JSON request
+// body. The rollback unit of work reads the parent service under
+// (OrganizationID, ServiceID) and the target deployment under
+// (OrganizationID, TargetDeploymentID) before any write — every
+// cross-tenant or unknown id surfaces as a deterministic
+// apierr.NotFound rather than a 500 or a silent success.
+type RollbackDeploymentInput struct {
+	OrganizationID     string
+	ServiceID          string
+	TargetDeploymentID string
+	IdempotencyKey     string
+	ActorID            string
+	ActorKind          string
+	ActorOrgID         string
+	RequestID          string
+	CorrelationID      string
+}
+
+// Rollback validates in, then runs the rollback-deployment unit of
+// work inside one transaction: confirm the parent service exists under
+// (OrganizationID, ServiceID), short-circuit on a previously persisted
+// idempotency key, re-authorize action deployment.rollback against the
+// parent service's organization on the same *Tx (defense-in-depth
+// against a grant change that landed between the HTTP authorize and
+// the desired-state write), confirm the target deployment exists under
+// the SAME (organization, service) and is in the terminal 'succeeded'
+// status, reserve quota against the concurrent_deployments resource,
+// insert a new deployment whose source / source_ref are copied
+// verbatim from the target row, enqueue the provisioning job that
+// mirrors the rollback into Dokploy, and append the immutable audit
+// record. Because every step shares the *Tx, a failure in any of them
+// rolls the others back: a partial rollback and an orphaned audit row
+// are both impossible, and the rollback deployment row can never exist
+// without its provisioning job.
+//
+// The parent-service Get is tenant-scoped — it filters by
+// organization_id first — so a cross-tenant or unknown service_id
+// surfaces as a deterministic apierr.NotFound. The target-deployment
+// Get is also tenant-scoped, and the rollback unit of work then
+// confirms target.ServiceID == parent.ID so a deployment that exists
+// in the same tenant but belongs to ANOTHER service is also reported
+// as 404 — never disguised as a 200 that would let a caller probe for
+// cross-service deployment ids through this endpoint. A target in any
+// non-succeeded lifecycle state ('queued', 'running', 'failed',
+// 'cancelled', or 'rolled_back') is rejected as a deterministic 409:
+// a rollback target must be a known-good deployment.
+//
+// Idempotency: a retried POST with the same idempotency_key returns
+// the previously persisted rollback deployment verbatim — no second
+// row, no duplicate audit event, no duplicate provisioning job. The
+// short-circuit happens INSIDE the transaction so a concurrent retry
+// observed by the second writer rolls back deterministically.
+func (svc *DeploymentService) Rollback(ctx context.Context, in RollbackDeploymentInput) (Deployment, error) {
+	deployment, err := validateRollbackDeploymentInput(in)
+	if err != nil {
+		return Deployment{}, err
+	}
+	targetID := strings.TrimSpace(in.TargetDeploymentID)
+
+	actorOrgID := strings.TrimSpace(in.ActorOrgID)
+	if actorOrgID == "" {
+		return Deployment{}, apierr.Internal(errors.New("store: DeploymentService.Rollback requires an actor organization for the audit record"))
+	}
+
+	var created Deployment
+	txErr := svc.store.Write(ctx, func(ctx context.Context, tx *Tx) error {
+		// Parent-service existence is tenant-scoped: a cross-tenant or
+		// unknown service_id surfaces as the typed apierr.NotFound the
+		// repository produces, never a 500 or a silent success. The
+		// project_id and environment_id legs of the new deployment row
+		// are taken from the PERSISTED service row — never from caller
+		// input — so the child cannot accidentally land in another
+		// project or environment even if a later request body field
+		// tried to redirect it.
+		parent, getErr := svc.services.GetByID(ctx, tx, deployment.OrganizationID, deployment.ServiceID)
+		if getErr != nil {
+			return getErr
+		}
+		// A service that has already been scheduled for teardown cannot
+		// accept new deployments — including rollback deployments: a
+		// rollback job would race the soft-delete worker and either
+		// succeed against a half-torn-down service or fail mid-flight.
+		// Refuse the rollback at the boundary with a deterministic 409
+		// rather than emit a job whose outcome is undefined.
+		if parent.DeletionScheduledAt != nil {
+			return apierr.Conflict("the service is scheduled for deletion and cannot accept new deployments")
+		}
+		deployment.ProjectID = parent.ProjectID
+		deployment.EnvironmentID = parent.EnvironmentID
+
+		// Idempotency short-circuit: a previous request with the same
+		// (organization_id, idempotency_key) is returned verbatim. The
+		// lookup shares the *Tx so a concurrent retry that races us is
+		// rejected by the UNIQUE constraint when this transaction
+		// reaches Insert below — never as a 5xx, always as a
+		// deterministic idempotent return.
+		if existing, ok, lookupErr := svc.deployments.FindByIdempotencyKey(ctx, tx, deployment.OrganizationID, deployment.IdempotencyKey); lookupErr != nil {
+			return lookupErr
+		} else if ok {
+			created = existing
+			return nil
+		}
+
+		// Defense-in-depth: the HTTP RequireAuth middleware already
+		// authorized action deployment.rollback against the (home org,
+		// service_id) resource the path names. The in-transaction
+		// Authorize is a redundant check whose real adapter reads
+		// grant rows from the same *Tx as the desired-state write —
+		// so a grant change that landed between the HTTP authorize
+		// and this point still cannot let the write through.
+		if err := svc.authz.Authorize(ctx, tx, deploymentRollbackAction, deployment.OrganizationID); err != nil {
+			return err
+		}
+
+		// Target-deployment existence is tenant-scoped: a cross-tenant
+		// or unknown target deployment id surfaces as the typed
+		// apierr.NotFound the repository produces. After the lookup, we
+		// further constrain the target by service: a deployment that
+		// belongs to ANOTHER service in the same tenant is also
+		// reported as 404, never disguised as a 200 that would let a
+		// caller probe for cross-service deployment ids through this
+		// endpoint.
+		target, getErr := svc.deployments.GetByID(ctx, tx, deployment.OrganizationID, targetID)
+		if getErr != nil {
+			return getErr
+		}
+		if target.ServiceID != parent.ID {
+			return apierr.NotFound("deployment", targetID)
+		}
+		if target.Status != DeploymentStatusSucceeded {
+			return apierr.Conflict("the target deployment must be in the 'succeeded' status to roll back to")
+		}
+		// Copy the target's source taxonomy verbatim. The worker will
+		// re-roll the service against the same ref so the rolled-back
+		// state matches what 'succeeded' last produced.
+		deployment.Source = target.Source
+		deployment.SourceRef = target.SourceRef
+
+		if err := svc.quota.Reserve(ctx, tx, deployment.OrganizationID, string(QuotaResourceConcurrentDeployments)); err != nil {
+			return err
+		}
+		row, err := svc.deployments.Insert(ctx, tx, deployment)
+		if err != nil {
+			return err
+		}
+		// The rollback deployment row and its provisioning job commit
+		// atomically: every JobEnqueuer adapter pins the job's
+		// organization_id to the deployment's tenant, and the row's
+		// UNIQUE (organization_id, idempotency_key) collides with the
+		// equivalent job idempotency key, so a duplicate job is
+		// structurally impossible even under retry.
+		if err := svc.jobs.Enqueue(ctx, tx, deployment.OrganizationID, deploymentProvisionJob, row.ID); err != nil {
+			return err
+		}
+		event := AuditEvent{
+			OrganizationID: actorOrgID,
+			ActorID:        strings.TrimSpace(in.ActorID),
+			ActorKind:      strings.TrimSpace(in.ActorKind),
+			Action:         deploymentRollbackAction,
+			ResourceKind:   string(domain.KindDeployment),
+			ResourceID:     row.ID,
+			Decision:       AuditDecisionAllowed,
+			Reason:         "authorization granted for deployment.rollback",
+			RequestID:      strings.TrimSpace(in.RequestID),
+			CorrelationID:  strings.TrimSpace(in.CorrelationID),
+			// The structural identifiers and the closed-taxonomy source
+			// enum are safe to record verbatim. The idempotency key is
+			// opaque caller input and is NOT projected onto audit
+			// metadata — a future support reader sees the deployment
+			// id, not the caller's deduplication token. The
+			// target_deployment_id is recorded so an auditor can trace
+			// which previously persisted deployment the rollback row
+			// copies from.
+			Metadata: map[string]string{
+				"service_id":           row.ServiceID,
+				"environment_id":       row.EnvironmentID,
+				"project_id":           row.ProjectID,
+				"source":               row.Source.String(),
+				"target_deployment_id": target.ID,
+			},
+		}
+		if _, err := svc.audit.Append(ctx, tx, event); err != nil {
+			return err
+		}
+		created = row
+		return nil
+	})
+	if txErr != nil {
+		return Deployment{}, txErr
+	}
+	return created, nil
+}
+
+// validateRollbackDeploymentInput checks in and returns the
+// Deployment row it would map to (with Source / SourceRef left empty —
+// they are copied verbatim from the persisted target deployment row
+// inside the rollback transaction). Validation runs before any
+// transaction is opened, so an invalid request never touches the
+// database. The target_deployment_id is validated as a non-empty
+// deployment id before any database work; a value outside the
+// taxonomy is a typed 400 with a stable field violation, never a 500
+// leaking the database CHECK constraint name.
+//
+// ProjectID, EnvironmentID, Source, and SourceRef are intentionally
+// NOT validated here: ProjectID and EnvironmentID come from the
+// persisted parent service row inside the transaction; Source and
+// SourceRef are copied verbatim from the persisted target deployment
+// row, which already passed source validation at its own create time.
+//
+// The ID and Status are minted here so the unit of work commits with
+// a non-guessable id and the canonical initial status. RequestedBy is
+// filled from ActorID at the service boundary — the actor that called
+// the endpoint is the rollback deployment's requester.
+func validateRollbackDeploymentInput(in RollbackDeploymentInput) (Deployment, error) {
+	violations := validate.New()
+
+	orgID := strings.TrimSpace(in.OrganizationID)
+	if id, err := domain.ParseID(orgID); err != nil || id.Kind() != domain.KindOrganization {
+		violations.Add("organization_id", "must be a valid organization id")
+	}
+
+	serviceID := strings.TrimSpace(in.ServiceID)
+	if id, err := domain.ParseID(serviceID); err != nil || id.Kind() != domain.KindService {
+		violations.Add("service_id", "must be a valid service id")
+	}
+
+	targetID := strings.TrimSpace(in.TargetDeploymentID)
+	if id, err := domain.ParseID(targetID); err != nil || id.Kind() != domain.KindDeployment {
+		violations.Add("target_deployment_id", "must be a valid deployment id")
+	}
+
+	key := strings.TrimSpace(in.IdempotencyKey)
+	switch {
+	case key == "":
+		violations.Add("idempotency_key", "must not be blank")
+	case !utf8.ValidString(key):
+		violations.Add("idempotency_key", "must be valid UTF-8")
+	case len(key) > deploymentIdempotencyKeyMaxLen:
+		violations.Addf("idempotency_key", "must be at most %d characters", deploymentIdempotencyKeyMaxLen)
+	case strings.ContainsRune(key, 0):
+		violations.Add("idempotency_key", "must not contain NUL bytes")
+	}
+
+	actorID := strings.TrimSpace(in.ActorID)
+	if actorID == "" {
+		// ActorID is the requested_by column; the database CHECK
+		// rejects an empty value, so validate before any database
+		// work. A missing actor is a wiring error (an authenticated
+		// request always carries one) but it is surfaced as a typed
+		// 400 here rather than letting the DB CHECK leak into a 5xx.
+		violations.Add("requested_by", "must not be blank")
+	}
+
+	if err := violations.Err(); err != nil {
+		return Deployment{}, err
+	}
+
+	id, err := domain.NewID(domain.KindDeployment)
+	if err != nil {
+		return Deployment{}, apierr.Internal(err)
+	}
+
+	return Deployment{
+		ID:             id.String(),
+		OrganizationID: orgID,
+		ServiceID:      serviceID,
+		Status:         DeploymentStatusQueued,
+		RequestedBy:    actorID,
+		IdempotencyKey: key,
+		RequestID:      strings.TrimSpace(in.RequestID),
+		CorrelationID:  strings.TrimSpace(in.CorrelationID),
+	}, nil
+}

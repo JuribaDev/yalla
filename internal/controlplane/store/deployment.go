@@ -478,6 +478,18 @@ const deploymentCreateAction = "deployment.create"
 // that produced it without a translation table.
 const deploymentCancelAction = "deployment.cancel"
 
+// deploymentRollbackAction is the action recorded on the audit event
+// emitted by every deployment rollback. It matches the wire-level
+// action constant the policy engine authorizes (deployment.rollback),
+// so an audit reader can correlate the audit event back to the API
+// surface that produced it without a translation table. A rollback
+// inserts a new deployments row whose source / source_ref are copied
+// verbatim from a previously persisted terminal-succeeded deployment
+// in the same service, so the audit Action distinguishes a rollback
+// re-roll from a fresh create even when the resulting row's source
+// taxonomy is identical to a create row.
+const deploymentRollbackAction = "deployment.rollback"
+
 // deploymentProvisionJob is the job_type the worker observes when
 // claiming a deployment provisioning job. Like deploymentCreateAction
 // it is the wire-level constant the durable job queue persists and the

@@ -17008,3 +17008,293 @@ Learnings for future iterations:
     posture). Future agent integrations read this Description to
     discover the contract without parsing test files.
 ---
+
+
+## 2026-05-16 - BE-0217 + BE-0218 + BE-0219
+- Story scope: Implement POST /v1/services/{service_id}/rollback — the
+  rollback intent endpoint. Inserts a new deployments row whose
+  source / source_ref are copied verbatim from a previously persisted
+  terminal-succeeded deployment in the SAME service, enqueues the
+  durable provisioning job that mirrors the rollback into Dokploy,
+  and writes an immutable audit record (Action 'deployment.rollback'
+  with target_deployment_id in Metadata). Bundled with its full
+  contract surface (httpapi unit/contract tests + OpenAPI route
+  assertion) and its full authorization matrix (engine + wire-level
+  policy proofs). The structural sibling is BE-0214/0215/0216
+  (deployment.cancel) with one load-bearing difference: this route
+  uses serviceIDResolver (pins OrganizationID + ServiceID; no
+  ProjectID leg) instead of deploymentIDResolver (pins only
+  OrganizationID).
+- Files changed:
+  - internal/controlplane/store/deployment.go: new const
+    deploymentRollbackAction = "deployment.rollback" alongside the
+    existing deploymentCreateAction / deploymentCancelAction. No
+    repository changes — the rollback unit of work reuses the
+    existing DeploymentRepository.Insert verbatim, since a rollback
+    deployment is structurally a fresh deployments row whose source
+    / source_ref happen to be copied from another row in the same
+    service.
+  - internal/controlplane/store/deployment_service.go: new
+    RollbackDeploymentInput, validateRollbackDeploymentInput, and
+    DeploymentService.Rollback(ctx, in). Unit of work composes —
+    inside one Store.Write transaction — a tenant-scoped parent-
+    service Get (404 on cross-tenant / unknown), a service-not-
+    scheduled-for-deletion check (409), an idempotency-key
+    short-circuit (FindByIdempotencyKey on the same *Tx), an
+    in-tx Authorize (defense-in-depth against a grant change that
+    landed between HTTP authorize and the desired-state write), a
+    target-deployment Get tenant-scoped at (org, target_id) AND
+    further constrained by target.ServiceID == parent.ID (a
+    same-tenant deployment that belongs to ANOTHER service is also
+    404 — never a 200 that would let a caller probe for cross-
+    service deployment ids), a target.Status == DeploymentStatus-
+    Succeeded check (409 otherwise — a rollback target MUST be a
+    known-good deployment, never queued/running/failed/cancelled/
+    rolled_back), a verbatim copy of target.Source / target.SourceRef
+    onto the new row, a QuotaReserver.Reserve against
+    concurrent_deployments, a DeploymentRepository.Insert that
+    Inherits the same UNIQUE (organization_id, idempotency_key)
+    contract the create endpoint enforces, a JobEnqueuer.Enqueue
+    pinning the job's organization_id to the deployment's tenant,
+    and an AuditAppender.Append writing
+    Action=deployment.rollback with Metadata={service_id,
+    environment_id, project_id, source, target_deployment_id}. The
+    audit row deliberately omits the idempotency_key (opaque caller
+    input) but records the target_deployment_id so an auditor can
+    trace which deployment was rolled back to. ProjectID and
+    EnvironmentID are sourced from the PERSISTED parent service row,
+    never from caller input; Source and SourceRef are sourced from
+    the PERSISTED target deployment row, never from caller input —
+    so the new row can never land in another project / environment /
+    source taxonomy even if a request body field tried to redirect
+    it.
+  - internal/controlplane/httpapi/services_rollback.go (NEW): the
+    DeploymentRollbacker port (Rollback(ctx, in) (Deployment, error)
+    — *store.DeploymentService satisfies it in production, fakes
+    supply it in tests); the rollbackServiceDeploymentRequest body
+    (target_deployment_id + idempotency_key only — strict decoder
+    rejects any other field, including organization_id /
+    project_id / environment_id / service_id, so the wire-level
+    tenant boundary is structural); the rollbackServiceDeployment-
+    Payload (wraps a single deployment in the same wire shape every
+    other deployment endpoint returns); the rollbackServiceDeploy-
+    mentHandler that decodes / delegates to the rollbacker / renders
+    the 202 Accepted yalla.output.v1 envelope. The handler resolves
+    OrganizationID from principal.OrganizationID (never the caller),
+    ServiceID from r.PathValue("service_id") (never the body),
+    ActorID/ActorKind/ActorOrgID from the resolved principal, and
+    request/correlation IDs from telemetry.FromContext — every
+    caller-controlled input flows through the strict decoder into
+    one of {target_deployment_id, idempotency_key}.
+  - internal/controlplane/httpapi/routes.go: registered POST
+    /v1/services/{service_id}/rollback with serviceIDResolver,
+    RequiredAction=policy.ActionDeploymentRollback, 202 Accepted
+    SuccessStatus, [tagServices, tagDeployments] tags, and a
+    multi-paragraph OpenAPI Description that documents the rollback
+    contract (target_deployment_id semantics, body shape, role
+    matrix, scoped-grant containment, cross-tenant 404 surface,
+    target-must-be-succeeded 409, service-scheduled-for-deletion
+    409, no-credential redaction posture). newRouteTable gains a
+    new positional deploymentRollbacker DeploymentRollbacker
+    parameter inserted AFTER deploymentCanceler and BEFORE
+    breakGlass — matching the canonical create-list-get-cancel-
+    rollback-breakGlass ordering across the deployment ports.
+  - internal/controlplane/httpapi/server.go: NewHandler gains the
+    same deploymentRollbacker positional parameter in the same slot
+    and threads it into newRouteTable.
+  - cmd/yalla-api/main.go: passes deploymentService as the new
+    rollbacker dependency to httpapi.NewHandler. *store.Deployment-
+    Service already satisfies DeploymentRollbacker through the new
+    Rollback(ctx, RollbackDeploymentInput) (Deployment, error)
+    method — no separate construction or wiring change is needed.
+  - internal/controlplane/httpapi/services_rollback_test.go (NEW):
+    fakeDeploymentRollbacker {dep, err, got *RollbackDeploymentInput}
+    (the shared rollbacker fake every other handler test now uses to
+    fill the new NewHandler slot — defined HERE rather than in a
+    sibling test file because the bare-id sibling test only uses
+    fakeDeploymentRollbacker{} as a placeholder, never reads it);
+    rollbackServiceDeploymentHandlerFor and rollbackServiceDeploy-
+    ment / canonicalRollbackBody / decodeRollbackServiceDeployment
+    test helpers; canonicalRollbackDeployment fixture; TestRollback-
+    ServiceDeploymentSuccess (asserts 202 Accepted, yalla.output.v1
+    envelope, source / source_ref projection match, and that the
+    handler forwards principal.OrganizationID + path service_id +
+    body target_deployment_id + body idempotency_key + actor
+    identity to the rollbacker); TestRollbackServiceDeployment-
+    RejectsUnknownField + TestRollbackServiceDeploymentRejects-
+    MalformedJSON (the strict JSON decoder); TestRollbackService-
+    DeploymentForwardsValidationToStore (typed apierr.InvalidInput
+    from the rollbacker renders as 400); TestRollbackService-
+    DeploymentIgnoresOrganizationIDInBody (a body service_id is
+    rejected by the strict decoder — the wire-level tenant boundary
+    is structural); TestRollbackServiceDeploymentUnauthenticated
+    (401 before the rollbacker); TestRollbackServiceDeployment-
+    Forbidden (a CapRead-only viewer is denied at RequireAuth);
+    TestRollbackServiceDeploymentNotFound + TestRollbackService-
+    DeploymentTargetNotSucceededConflict + TestRollbackService-
+    DeploymentServiceScheduledForDeletionConflict (the typed
+    store-layer disambiguations render as 404/409); TestRollback-
+    ServiceDeploymentStoreUnavailable (503 with no pgx leak);
+    TestRollbackServiceDeploymentCrossTenantNoForeignEcho (the
+    captured rollbacker input carries the attacker's home org id —
+    never the path-derived foreign one — and the deny envelope
+    never echoes the victim org); TestRollbackServiceDeployment-
+    MissingRollbacker (a nil rollbacker is a typed Internal error,
+    not a misleading 2xx); TestRollbackServiceDeploymentOpenAPI-
+    RouteIsRegistered (operationId=rollbackServiceDeployment,
+    RequiredAction=deployment.rollback, RequiresAuth, 202 success
+    status, both [tagServices, tagDeployments] tags).
+  - internal/controlplane/httpapi/services_rollback_policy_test.go
+    (NEW): structural sibling of services-rollback-test.go but for
+    the authorization contract — TestRollbackServiceDeployment-
+    PolicyMatrixRoles (every built-in role: Owner / Admin /
+    Developer / CI allowed via ReasonAllowedByRole; Viewer / Support
+    denied via ReasonDeniedNoCapability — engine verdict AND wire
+    verdict pinned in lockstep so a roleCaps catalog regression
+    fails BOTH); TestRollbackServiceDeploymentPolicyRevokedAnd-
+    ExpiredKeys (a revoked/expired credential is 401 with no row
+    or principal-id leak); TestRollbackServiceDeploymentPolicy-
+    WrongOrganizationPrincipal (a cross-tenant service_id surfaces
+    as 404 at the persistence boundary with the principal's home
+    org id captured AND the engine matrix denies every role —
+    including Support — at a foreign-org resource scope via
+    ReasonDeniedCrossTenant, the load-bearing CapDeploy-vs-CapRead
+    distinction); TestRollbackServiceDeploymentPolicyGrantContain-
+    ment (project-scoped grant: allow on parent-project service,
+    deny on sibling project, deny on bare-id route via OutOfScope;
+    env-scoped grant on staging: allow on staging service, deny on
+    production service, deny on bare-id route; service-scoped
+    grant: allow on that service, deny on parent env via
+    env.read, deny on unrelated sibling service, deny on bare-id
+    route — the latter the load-bearing distinction from the
+    resolver, because the grant pins ProjectID a leg the resource
+    leaves empty; org-Admin grant: allow end-to-end on both
+    engine and wire; org-Viewer grant: deny end-to-end on the
+    bare-id route via ReasonDeniedNoCapability, the load-bearing
+    distinction from the read-side grant matrix where the same
+    grant is allowed end-to-end — a regression-blocker against a
+    future catalog change that downgraded deployment.rollback
+    from CapDeploy to CapRead).
+  - All 58 sibling *_test.go files that construct NewHandler or
+    newRouteTable: a single bulk Python substitution inserted a
+    positional fakeDeploymentRollbacker{} after the existing
+    fakeDeploymentCanceler{} slot — 100 single-line replacements
+    plus one custom replacement in deployments_cancel_test.go's
+    "canceler, fakeBreakGlassController{}" form plus one custom
+    edit in break_glass_test.go's "fakeDeploymentCanceler{}, ctl,
+    nil, nil)" form. The bulk substitution mirrors the BE-0103
+    pattern documented earlier and avoided 58 manual edits.
+- Verification run: gofmt -w .; go mod tidy; go build ./...;
+  go vet ./...; go test ./... (full suite); go test -race ./...
+  (full suite); go test -run TestRollbackServiceDeployment ./...
+  (focused suite); go test -run TestRollbackServiceDeploymentPolicy
+  ./... (policy matrix).
+- Results: all changes pass (-race included). Integration tests
+  against a live Postgres are NOT runnable in this environment
+  (YALLA_TEST_DATABASE_URL=unset, same as prior story sessions;
+  the migration suite + DeploymentService Postgres adapter tests
+  are exercised in CI). golangci-lint / goimports / staticcheck /
+  govulncheck still not installed locally (consistent with the
+  prior BE-0103 onwards entries).
+- Remaining risks or follow-ups:
+  - BE-0220+0221+0222 (POST /v1/services/{service_id}/restart),
+    BE-0223+0224+0225 (POST .../stop), and BE-0226+0227+0228 (POST
+    .../start) are now ready to land as the next service-action
+    triples. They share the structural shape (action verb on
+    serviceIDResolver, CapDeploy action) but differ in the
+    desired-state semantics: restart re-rolls the service against
+    its existing desired state (no new deployment row needed
+    necessarily — closer to a 'manual' deployment in
+    DeploymentSource taxonomy than a target-deployment-id rollback),
+    stop transitions the service to a non-running desired state,
+    start transitions it back. Each will likely need a separate
+    new audit action (deployment.restart / service.stop /
+    service.start or similar — TBD, the catalog only currently
+    pins ActionDeploymentCancel / ActionDeploymentRollback /
+    ActionDeploymentCreate / ActionDeploymentRead). Confirm the
+    catalog before implementing each.
+  - The rollback row's source / source_ref are copied verbatim
+    from the target deployment — no validation is re-run on those
+    values. That is by design (the target already passed source
+    validation at its own create time), but it means a target
+    persisted under a future relaxed validator and then rolled
+    back from would propagate the relaxed value. Acceptable
+    because the source CHECK at the database is the belt-and-
+    braces, but worth noting if validation rules ever tighten.
+  - The audit Metadata records target_deployment_id verbatim. This
+    is an internal store-controlled id, not caller input, so no
+    redaction is needed — but if a future Metadata field carried
+    caller-controlled values (e.g. a customer-supplied rollback
+    reason), it MUST flow through the output redactor before
+    persistence. The current shape contains no such field.
+- Learnings for future iterations:
+  - BE-0217 / BE-0218 / BE-0219 followed the BE-0214 / BE-0215 /
+    BE-0216 (deployment.cancel) bundled-commit pattern verbatim. The
+    p=1 policy-matrix story (BE-0219) sits ON TOP of the p=2
+    endpoint story (BE-0217) in the PRD priority field, but the
+    endpoint MUST exist before the policy matrix can drive
+    authentic wire-level engine vs handler boundary tests — so the
+    picker rule "p=1 policy-matrix story sitting on a p=2 endpoint
+    story" is "implement the triple as one commit, not the
+    policy-matrix story alone". Forward-applicable to BE-0220 /
+    0221 / 0222 (restart), BE-0223 / 0224 / 0225 (stop), BE-0226 /
+    0227 / 0228 (start), etc.
+  - For a POST action on serviceIDResolver that creates a new
+    deployments row, the rollback unit of work proves you can
+    SOURCE the new row's source / source_ref from another
+    persisted row (target deployment) rather than caller input —
+    the validation layer simply leaves Source / SourceRef empty
+    and the orchestrator fills them inside the transaction. This
+    shape is reusable for any future endpoint that derives a new
+    row's payload from an existing row in the same tenant
+    (clone-from-template, copy-config, etc.). The
+    target.ServiceID == parent.ID check INSIDE the transaction is
+    load-bearing: without it, a same-tenant target id that
+    belongs to ANOTHER service would let an agent re-deploy
+    service A's last-good ref onto service B — a structurally
+    valid Insert (the schema's composite FKs would accept it
+    because the target's service_id is irrelevant to the new
+    row's service_id leg) but a security violation. Forward-
+    applicable to every "from another row in the same service"
+    endpoint.
+  - The deployment store action constants pattern: each new
+    deployment action gets its own constant in store/deployment.go
+    that matches the wire-level policy.Action constant verbatim.
+    This keeps the audit-event Action and the policy-engine
+    Action in lockstep so an audit reader can correlate without
+    a translation table; a future audit action that drifts from
+    the policy action would silently break audit-log driven
+    incident-response. BE-0217 added deploymentRollbackAction
+    alongside the existing deploymentCreateAction and
+    deploymentCancelAction.
+  - The NewHandler / newRouteTable bulk substitution pattern from
+    BE-0103 is the right tool when a NEW positional port is
+    inserted in the deployment slot: a single regex over 58 test
+    files inserted "fakeDeploymentRollbacker{}, fakeBreakGlass-
+    Controller{}" in place of "fakeBreakGlassController{}" alone
+    — 100 replacements plus 1 form-specific replacement in
+    deployments_cancel_test.go (which uses "canceler" as the
+    variable name) plus 1 form-specific edit in
+    break_glass_test.go (which uses "ctl" as the variable name
+    AND omits the fakeBreakGlassController{} wrapping). The 2
+    custom edits are mechanical churn worth doing by hand once,
+    not by extending the substitution to cover them. The fake
+    type itself (fakeDeploymentRollbacker) is defined in the new
+    services_rollback_test.go where the rollback contract tests
+    actually USE its fields (dep / err / got) — every other test
+    file uses the zero value as a placeholder slot.
+  - On services_rollback_policy_test.go, the wire-level
+    canonical-deployment-data leak guard (rollbackDeploymentDeny-
+    BodyLeak) deliberately needles for the canonical deployment's
+    structural ids (ID, source_ref, project, env, idempotency_key)
+    but NOT the target_deployment_id. The reason: on a deny path
+    the rollbacker MUST never run, so the canonical deployment's
+    fields (which are the values the rollbacker WOULD return on
+    an allow path) must never reach the wire. The target_deploy-
+    ment_id is caller-supplied in the request body — it would
+    leak ONLY through an echo-the-body bug in the deny envelope,
+    not through the rollbacker — and the existing strict-decoder
+    coverage already proves the body does not echo to the deny
+    envelope. Forward-applicable to every endpoint that takes a
+    "lookup another row by id" body field.
+---

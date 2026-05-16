@@ -1570,7 +1570,7 @@
       "type": "validation",
       "priority": 1,
       "passes": true,
-      "notes": "Implemented internal/controlplane/validate: Collector accumulates apierr.FieldViolation entries (field path + value-free reason) into one apierr.InvalidInput. Validators: Name, Slug, ID, Path, URL, Domain (DomainOptions.AllowWildcard gates wildcards — caller resolves feature flag + quota), Resources, EnvVars (secret vs non-secret split via .secret[] path segment + larger secret ceiling), GitRepoURL, GitBranch, GitCommit, ImageRef, DecodeJSON (strict, size-capped, body-free errors). 8 fuzz targets cover malformed JSON, long strings, invalid UTF-8, path traversal. No value is ever echoed into a reason/error."
+      "notes": "Implemented internal/controlplane/validate: Collector accumulates apierr.FieldViolation entries (field path + value-free reason) into one apierr.InvalidInput. Validators: Name, Slug, ID, Path, URL, Domain (DomainOptions.AllowWildcard gates wildcards \u2014 caller resolves feature flag + quota), Resources, EnvVars (secret vs non-secret split via .secret[] path segment + larger secret ceiling), GitRepoURL, GitBranch, GitCommit, ImageRef, DecodeJSON (strict, size-capped, body-free errors). 8 fuzz targets cover malformed JSON, long strings, invalid UTF-8, path traversal. No value is ever echoed into a reason/error."
     },
     {
       "id": "BE-0037",
@@ -2368,7 +2368,7 @@
       "type": "policy-api-key",
       "priority": 1,
       "passes": true,
-      "notes": "internal/controlplane/httpapi/api_keys_list_policy_test.go drives the real NewHandler + real policy.NewEngine() through every built-in role (owner/admin allow via ReasonAllowedByRole; developer/viewer/ci/support deny via ReasonDeniedNoCapability — keys.read is CapAdmin), through revoked/expired credentials (Disabled principal -> ReasonDeniedPrincipalDisabled), through a wrong-organization principal (ReasonDeniedCrossTenant; the load-bearing assertion: support is NOT a cross-tenant exception for keys.read because CapAdmin is excluded from the engine's cross-tenant clause; bonus: support cannot list keys of its own home org either — ReasonDeniedNoCapability), and through scoped grant containment (project/env/service-scoped admin grants all denied keys.read on the org root via ReasonDeniedOutOfScope, sibling project / production env / parent env-write all denied at the engine, organization-level admin grant allowed via ReasonAllowedByGrant, organization-level viewer grant denied — pinning CapAdmin against the grant path; cross-tenant {org_id} on a scoped key still 403 ReasonDeniedCrossTenant). All deny paths assert the reader is never reached and the body never echoes the seeded key id/prefix or the principal/org/member id."
+      "notes": "internal/controlplane/httpapi/api_keys_list_policy_test.go drives the real NewHandler + real policy.NewEngine() through every built-in role (owner/admin allow via ReasonAllowedByRole; developer/viewer/ci/support deny via ReasonDeniedNoCapability \u2014 keys.read is CapAdmin), through revoked/expired credentials (Disabled principal -> ReasonDeniedPrincipalDisabled), through a wrong-organization principal (ReasonDeniedCrossTenant; the load-bearing assertion: support is NOT a cross-tenant exception for keys.read because CapAdmin is excluded from the engine's cross-tenant clause; bonus: support cannot list keys of its own home org either \u2014 ReasonDeniedNoCapability), and through scoped grant containment (project/env/service-scoped admin grants all denied keys.read on the org root via ReasonDeniedOutOfScope, sibling project / production env / parent env-write all denied at the engine, organization-level admin grant allowed via ReasonAllowedByGrant, organization-level viewer grant denied \u2014 pinning CapAdmin against the grant path; cross-tenant {org_id} on a scoped key still 403 ReasonDeniedCrossTenant). All deny paths assert the reader is never reached and the body never echoes the seeded key id/prefix or the principal/org/member id."
     },
     {
       "id": "BE-0079",
@@ -2729,7 +2729,7 @@
       "type": "endpoint-quota",
       "priority": 2,
       "passes": true,
-      "notes": "Implemented: PATCH /v1/organizations/{org_id}/limits upserts organization-scoped quota policies. Request body: {limits:[{resource,limit_value,enforcement_mode?}, ...]} validated by httpapi (missing limit_value -> 400) and by the store layer (closed-set resource, non-negative limit, closed-set mode, no duplicates). Required action limits.write (CapAdmin, no support cross-tenant exception). Store-layer LimitsService composes a tenant existence pre-check (typed NotFound on missing org), one organization-scoped quota_policies upsert per entry, an immutable audit record (action=limits.write, metadata.updated_resources=sorted closed-set names), and an in-tx re-read of effective limits — all in one Store.Write. New QuotaRepository.UpsertOrganizationPolicy uses ON CONFLICT (organization_id, resource) WHERE scope_kind='organization' to target the partial unique index. Wired through NewHandler/newRouteTable as a new LimitsUpdater port; the route uses organizationIDResolver so cross-tenant {org_id} is a 403 before the handler runs. cmd/yalla-api builds the LimitsService at startup."
+      "notes": "Implemented: PATCH /v1/organizations/{org_id}/limits upserts organization-scoped quota policies. Request body: {limits:[{resource,limit_value,enforcement_mode?}, ...]} validated by httpapi (missing limit_value -> 400) and by the store layer (closed-set resource, non-negative limit, closed-set mode, no duplicates). Required action limits.write (CapAdmin, no support cross-tenant exception). Store-layer LimitsService composes a tenant existence pre-check (typed NotFound on missing org), one organization-scoped quota_policies upsert per entry, an immutable audit record (action=limits.write, metadata.updated_resources=sorted closed-set names), and an in-tx re-read of effective limits \u2014 all in one Store.Write. New QuotaRepository.UpsertOrganizationPolicy uses ON CONFLICT (organization_id, resource) WHERE scope_kind='organization' to target the partial unique index. Wired through NewHandler/newRouteTable as a new LimitsUpdater port; the route uses organizationIDResolver so cross-tenant {org_id} is a 403 before the handler runs. cmd/yalla-api builds the LimitsService at startup."
     },
     {
       "id": "BE-0098",
@@ -3394,7 +3394,7 @@
       "type": "policy-project",
       "priority": 1,
       "passes": true,
-      "notes": "Added internal/controlplane/httpapi/projects_delete_policy_test.go: four tests driving real NewHandler + real policy.NewEngine() against the production request path. Roles matrix (Owner/Admin/Developer allow via ReasonAllowedByRole at 202 Accepted with the canonical scheduled-deletion row; Viewer/CI/Support deny via ReasonDeniedNoCapability at 403 — CapWrite is OUTSIDE the support cross-tenant exception). Revoked/expired Disabled keys deny via ReasonDeniedPrincipalDisabled. Wrong-organization principal surfaces as 404 NotFound at the persistence boundary (deleter called with attacker home org, never the victim's) AND every role denies cross-tenant via ReasonDeniedCrossTenant at the engine. Grant containment: project-target Admin allowed, project-sibling Admin denied OutOfScope, project-VIEWER denied NoCapability, env-scope denied OutOfScope (with explicit staging→production denial proof), service-scope denied OutOfScope (with sibling-service and parent-env denial), org-Admin allowed, org-Viewer denied NoCapability, and a foreign-home grantee denied. Every deny path proves the deleter was never reached and the body never echoes the canonical project's id/slug/display name. gofmt, go vet, go build, go test ./..., go test -race ./... all pass."
+      "notes": "Added internal/controlplane/httpapi/projects_delete_policy_test.go: four tests driving real NewHandler + real policy.NewEngine() against the production request path. Roles matrix (Owner/Admin/Developer allow via ReasonAllowedByRole at 202 Accepted with the canonical scheduled-deletion row; Viewer/CI/Support deny via ReasonDeniedNoCapability at 403 \u2014 CapWrite is OUTSIDE the support cross-tenant exception). Revoked/expired Disabled keys deny via ReasonDeniedPrincipalDisabled. Wrong-organization principal surfaces as 404 NotFound at the persistence boundary (deleter called with attacker home org, never the victim's) AND every role denies cross-tenant via ReasonDeniedCrossTenant at the engine. Grant containment: project-target Admin allowed, project-sibling Admin denied OutOfScope, project-VIEWER denied NoCapability, env-scope denied OutOfScope (with explicit staging\u2192production denial proof), service-scope denied OutOfScope (with sibling-service and parent-env denial), org-Admin allowed, org-Viewer denied NoCapability, and a foreign-home grantee denied. Every deny path proves the deleter was never reached and the body never echoes the canonical project's id/slug/display name. gofmt, go vet, go build, go test ./..., go test -race ./... all pass."
     },
     {
       "id": "BE-0133",
@@ -3451,7 +3451,7 @@
       "type": "policy-project",
       "priority": 1,
       "passes": true,
-      "notes": "Policy matrix coverage delivered in internal/controlplane/httpapi/projects_restore_policy_test.go: TestRestoreProjectPolicyMatrixRoles (six roles split by CapWrite), TestRestoreProjectPolicyRevokedAndExpiredKeys (Disabled principal denied via ReasonDeniedPrincipalDisabled), TestRestoreProjectPolicyWrongOrganizationPrincipal (wire + every-role engine cross-tenant deny — including Support, since CapWrite is OUTSIDE the support exception), and TestRestoreProjectPolicyGrantContainment (project/env/service/org-level grants, viewer-grant no-capability, foreign-home grantee deny, sibling-env environment.delete deny). Drives REAL NewHandler + real policy.NewEngine() against fake Authenticator + fake ProjectRestorer; allow path asserts 200 OK with deletion_scheduled_at == nil; every deny asserts restorer never ran and body never echoes canonical project."
+      "notes": "Policy matrix coverage delivered in internal/controlplane/httpapi/projects_restore_policy_test.go: TestRestoreProjectPolicyMatrixRoles (six roles split by CapWrite), TestRestoreProjectPolicyRevokedAndExpiredKeys (Disabled principal denied via ReasonDeniedPrincipalDisabled), TestRestoreProjectPolicyWrongOrganizationPrincipal (wire + every-role engine cross-tenant deny \u2014 including Support, since CapWrite is OUTSIDE the support exception), and TestRestoreProjectPolicyGrantContainment (project/env/service/org-level grants, viewer-grant no-capability, foreign-home grantee deny, sibling-env environment.delete deny). Drives REAL NewHandler + real policy.NewEngine() against fake Authenticator + fake ProjectRestorer; allow path asserts 200 OK with deletion_scheduled_at == nil; every deny asserts restorer never ran and body never echoes canonical project."
     },
     {
       "id": "BE-0136",
@@ -4648,7 +4648,7 @@
       "type": "policy-service",
       "priority": 1,
       "passes": true,
-      "notes": "Authorization coverage for GET /v1/services/{service_id}/rendered. Implemented internal/controlplane/httpapi/services_rendered_policy_test.go porting the BE-0186 services_get policy matrix to the /rendered route with distinct canonical fixtures (canonicalRenderedSvcForMatrix, renderedSvcDenyBodyLeak) and an allow-path assertion helper (assertRenderedAllowPath) that pins the rendered envelope schema, service projection, Dokploy-safe name, type, and the deterministic 4-label structural attribution. Reuses the existing serviceIDResolver fixtures (getServiceHandlerForIdentity) and rendered wire shapes (decodeRenderedServiceBody) from BE-0186 / BE-0196 — no production change. Verified gofmt, go vet ./..., go test ./..., go test -race ./..."
+      "notes": "Authorization coverage for GET /v1/services/{service_id}/rendered. Implemented internal/controlplane/httpapi/services_rendered_policy_test.go porting the BE-0186 services_get policy matrix to the /rendered route with distinct canonical fixtures (canonicalRenderedSvcForMatrix, renderedSvcDenyBodyLeak) and an allow-path assertion helper (assertRenderedAllowPath) that pins the rendered envelope schema, service projection, Dokploy-safe name, type, and the deterministic 4-label structural attribution. Reuses the existing serviceIDResolver fixtures (getServiceHandlerForIdentity) and rendered wire shapes (decodeRenderedServiceBody) from BE-0186 / BE-0196 \u2014 no production change. Verified gofmt, go vet ./..., go test ./..., go test -race ./..."
     },
     {
       "id": "BE-0199",
@@ -4705,7 +4705,7 @@
       "type": "policy-variables",
       "priority": 1,
       "passes": true,
-      "notes": "Authorization coverage for GET /v1/services/{service_id}/variables. Implemented internal/controlplane/httpapi/service_variables_policy_test.go porting the BE-0198 services_rendered policy matrix to the env.read action on serviceIDResolver (action env.read on the same bare-id resource shape: principal-home org + path service_id, no ProjectID leg). Adds a per-matrix canonical fixture (canonicalSvcVarsServiceID / canonicalServiceVariables / canonicalSvcVarsSecretPlaintext) plus svcVarsDenyBodyLeak — the secret-plaintext-anchored deny-path leak guard layered on top of the structural leak guard, mirroring environment_variables_policy_test.go (BE-0174) for the env-id route — and an allow-path assertion helper (assertSvcVarsAllowPath) that pins the listServiceVariables envelope schema, redaction chokepoint (secret values render as output.Sentinel), and the non-secret-verbatim contract. Reuses existing service-variables wire fixtures (listServiceVariablesHandlerFor, getServiceVariables, decodeListServiceVariables, fakeServiceVariableReader, seedServiceVariableWire) from service_variables_test.go and the shared orgPrincipal / decodeError helpers — no production change. Verified gofmt, go vet ./..., go test ./..., go test -race ./..."
+      "notes": "Authorization coverage for GET /v1/services/{service_id}/variables. Implemented internal/controlplane/httpapi/service_variables_policy_test.go porting the BE-0198 services_rendered policy matrix to the env.read action on serviceIDResolver (action env.read on the same bare-id resource shape: principal-home org + path service_id, no ProjectID leg). Adds a per-matrix canonical fixture (canonicalSvcVarsServiceID / canonicalServiceVariables / canonicalSvcVarsSecretPlaintext) plus svcVarsDenyBodyLeak \u2014 the secret-plaintext-anchored deny-path leak guard layered on top of the structural leak guard, mirroring environment_variables_policy_test.go (BE-0174) for the env-id route \u2014 and an allow-path assertion helper (assertSvcVarsAllowPath) that pins the listServiceVariables envelope schema, redaction chokepoint (secret values render as output.Sentinel), and the non-secret-verbatim contract. Reuses existing service-variables wire fixtures (listServiceVariablesHandlerFor, getServiceVariables, decodeListServiceVariables, fakeServiceVariableReader, seedServiceVariableWire) from service_variables_test.go and the shared orgPrincipal / decodeError helpers \u2014 no production change. Verified gofmt, go vet ./..., go test ./..., go test -race ./..."
     },
     {
       "id": "BE-0202",
@@ -5008,7 +5008,7 @@
       ],
       "type": "endpoint-deployment",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Endpoint belongs to the deployment backend surface."
     },
     {
@@ -5027,7 +5027,7 @@
       ],
       "type": "test-deployment",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Contract coverage for POST /v1/services/{service_id}/rollback."
     },
     {
@@ -5046,7 +5046,7 @@
       ],
       "type": "policy-deployment",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Authorization coverage for POST /v1/services/{service_id}/rollback."
     },
     {

@@ -135,11 +135,12 @@ type versionPayload struct {
 // deploymentLister backs GET /v1/services/{service_id}/deployments.
 // deploymentGetter backs GET /v1/deployments/{deployment_id}.
 // deploymentCanceler backs POST /v1/deployments/{deployment_id}/cancel.
+// deploymentRollbacker backs POST /v1/services/{service_id}/rollback.
 // Any may be nil for tests and tooling that only inspect the route
 // table's metadata; a request that actually reaches a handler with a
 // nil dependency is reported as a typed internal error rather than a
 // misleading empty list or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter, environmentCloner EnvironmentCloner, environmentGrants EnvironmentGrantReader, environmentGrantReplacer EnvironmentGrantReplacer, environmentVariables EnvironmentVariableReader, environmentVariableReplacer EnvironmentVariableReplacer, environmentServices EnvironmentServiceReader, environmentServiceCreator EnvironmentServiceCreator, services ServiceReader, serviceUpdater ServiceUpdater, serviceDeleter ServiceDeleter, serviceRestorer ServiceRestorer, serviceVariables ServiceVariableReader, serviceVariableReplacer ServiceVariableReplacer, deploymentCreator DeploymentCreator, deploymentLister DeploymentLister, deploymentGetter DeploymentGetter, deploymentCanceler DeploymentCanceler, breakGlass BreakGlassController) []apiRoute {
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter, environmentCloner EnvironmentCloner, environmentGrants EnvironmentGrantReader, environmentGrantReplacer EnvironmentGrantReplacer, environmentVariables EnvironmentVariableReader, environmentVariableReplacer EnvironmentVariableReplacer, environmentServices EnvironmentServiceReader, environmentServiceCreator EnvironmentServiceCreator, services ServiceReader, serviceUpdater ServiceUpdater, serviceDeleter ServiceDeleter, serviceRestorer ServiceRestorer, serviceVariables ServiceVariableReader, serviceVariableReplacer ServiceVariableReplacer, deploymentCreator DeploymentCreator, deploymentLister DeploymentLister, deploymentGetter DeploymentGetter, deploymentCanceler DeploymentCanceler, deploymentRollbacker DeploymentRollbacker, breakGlass BreakGlassController) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -1281,6 +1282,47 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// deployment.
 			resolver: deploymentIDResolver,
 			handler:  cancelServiceDeploymentHandler(deploymentCanceler),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodPost,
+				Path:           "/v1/services/{service_id}/rollback",
+				OperationID:    "rollbackServiceDeployment",
+				Summary:        "Roll back a service to a previous deployment",
+				Description:    "Records customer intent to roll the service named by the {service_id} path parameter back to a previously persisted terminal-succeeded deployment, and enqueues the durable provisioning job that mirrors the rollback into Dokploy. The request body supplies the target_deployment_id (the previously persisted deployment whose source / source_ref the new rollback deployment will copy verbatim — the target MUST belong to the same (organization, service) as the path service) and the per-organization idempotency_key that makes a retried POST structurally idempotent — a second request with the same key returns the previously persisted rollback deployment verbatim, never a duplicate Dokploy provisioning job. The request body intentionally exposes no organization_id, project_id, environment_id, or service_id field: the organization is derived from the authenticated principal's home organization, the service comes from the {service_id} path parameter, and the new deployment inherits its parent service's project_id and environment_id from the persisted row — there is no caller-supplied parameter that could redirect the rollback at another tenant, another project, or another environment. Every supplied field is validated before any database work; an invalid request never opens a transaction. The new deployment row, the provisioning job that mirrors it into Dokploy, and an immutable audit record naming the authenticated principal (Action 'deployment.rollback', Metadata carrying target_deployment_id so an auditor can trace which deployment was rolled back to) are committed in one transaction — a rolled-back deployment can never exist without its provisioning job or its audit trail, and a duplicate idempotency_key within the same organization rolls the whole transaction back as the deterministic idempotent return. Action deployment.rollback is authorized against the (principal home organization, {service_id}) resource the path names before the handler runs: deployment.rollback is a CapDeploy action, so the gate admits the principal's organization-wide deploy roles (owner, admin, developer, ci) and denies viewer (CapRead only), denies support (CapRead+CapSupport — support is a deliberate cross-tenant READ exception, never a deploy one). The path carries no parent project_id or environment_id, so the policy engine cannot pin those legs of the resource scope at authorization time — project-, environment-, and service-scoped grants are denied at the boundary by the engine's covers() rule (a grant with a pinned ProjectID cannot cover a resource with no ProjectID); principals whose only access is a scoped grant must use a parent-scoped route to address a service by its (project, environment, service) tuple. A cross-tenant or unknown service_id reaches the persistence layer with the principal's home organization id and is rejected as a deterministic 404 by the tenant-scoped repository query, never revealing another tenant's service. A target_deployment_id that belongs to ANOTHER tenant — or to a different service in the same tenant — is also reported as 404, never disguised as a 200 that would let a caller probe for cross-service deployment ids through this endpoint. A target in any non-succeeded lifecycle state ('queued', 'running', 'failed', 'cancelled', or 'rolled_back') is rejected as a deterministic 409 — a rollback target must be a known-good deployment. A service already scheduled for deletion is a deterministic 409 — a rollback cannot land on a service whose teardown is queued. The response carries no credential material — the deployments table itself stores no secrets, the source / source_ref are copied verbatim from the persisted target deployment (already redacted at its own create time), and the worker-written error_message on a failed deployment is run through the output redactor before persistence so tokens, API keys, and rendered environment variable values can never reach the column.",
+				Tags:           []string{tagServices, tagDeployments},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionDeploymentRollback),
+				SuccessStatus:  http.StatusAccepted,
+				PathParams: []openapi.PathParam{{
+					Name:        "service_id",
+					Description: "The id of the service to roll back.",
+				}},
+				SuccessDescription: "The rollback deployment was accepted and a provisioning job was enqueued.",
+			},
+			// serviceIDResolver authorizes action deployment.rollback
+			// against the (principal home organization, {service_id})
+			// resource the path names. The path carries no parent
+			// project_id, so the resource scope pins only
+			// OrganizationID and ServiceID — project-, environment-,
+			// and service-scoped grants are denied at the policy
+			// boundary by design (the engine's covers() rule), forcing
+			// scoped-grant-only principals onto parent-scoped routes.
+			// deployment.rollback is a CapDeploy action and has no
+			// cross-tenant support exception — unlike CapRead actions,
+			// the support principal cannot roll back deployments in
+			// another tenant. The organization id is taken from the
+			// principal's home org (never the caller — there is no
+			// organization id in the request body), so a cross-tenant
+			// service_id still hits the tenant-scoped repository
+			// query and surfaces as a 404 at the persistence
+			// boundary. A target_deployment_id that belongs to
+			// another tenant or to a different service in the same
+			// tenant is also reported as 404 — never disguised as a
+			// 200 that would let a caller probe for cross-service
+			// deployment ids through this endpoint.
+			resolver: serviceIDResolver,
+			handler:  rollbackServiceDeploymentHandler(deploymentRollbacker),
 		},
 		{
 			endpoint: openapi.Endpoint{
