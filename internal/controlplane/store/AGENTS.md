@@ -172,6 +172,56 @@ Postgres persistence for control-plane source-of-truth state.
   internal accounting, not domain resources — `newAuditID` mints their ids
   locally (`aud_<32hex>`), no `domain.Kind`.
 
+## SQL injection resistance (`sql_injection_static_test.go`, `sql_injection_test.go`)
+
+- The parameterization invariant — "every SQL statement is fully parameterized;
+  caller input is bound through pgx placeholders ($1, $2, …) only, never
+  interpolated into the SQL string" — is enforced by two complementary tests
+  in this package:
+  - `sql_injection_static_test.go` is the **regression backstop**. It parses
+    every non-test `.go` file in this package and asserts the SQL argument
+    passed to `.Exec`/`.Query`/`.QueryRow` is a compile-time-constant string
+    expression (string literal, `const` identifier, parenthesised wrapper,
+    or `+`-concatenation of those). Anything else — `fmt.Sprintf`,
+    `string(x)`, a method call, a function parameter, a `var`-typed local
+    — fails the test with file:line. A companion check rejects
+    `fmt.Sprintf` calls whose string-literal first argument contains
+    uppercase SQL keywords (`SELECT`/`INSERT INTO`/`UPDATE …`/
+    `DELETE FROM`/…), catching the indirect "build a query string first,
+    then run it" pattern. A self-check
+    (`TestSQLInjectionStaticAnalyzerDetectsRegressions`) parses synthetic
+    bad sources to prove the analyzer fires when the control is removed.
+  - `sql_injection_test.go` is the **runtime evidence**. It runs against
+    an isolated migrated Postgres and feeds canonical injection payloads
+    (`'; DROP TABLE …`, `' OR 1=1 --`, UNION/UPDATE/INSERT stacks, dollar-
+    quoted strings, multi-line, URL-encoded) through every customer-input
+    string field of representative repository methods. Read paths must
+    return typed `E_NOT_FOUND` (or empty), **never** `E_UNAVAILABLE` —
+    that code is the store's mapping for raw driver errors and a SQL
+    syntax error escaping the parameter binder would surface there.
+    After the loop, row counts on `organizations`/`projects`/
+    `environments`/`services`/`api_keys`/`audit_events`/`service_accounts`
+    are asserted byte-identical to the pre-loop baseline (DROP/TRUNCATE/
+    UPDATE/DELETE side effects would visibly move them). A separate test
+    (`TestSQLInjectionPayloadsStoredVerbatim`) inserts each payload as a
+    free-text column value (`display_name`) and reads it back, asserting
+    the round-trip is byte-identical — the strongest possible evidence
+    that pgx is the security boundary and the server stored the payload
+    as data, did not execute it.
+- One exemption is encoded structurally in the static analyzer: the three
+  methods on `*Tx` (`Exec`/`Query`/`QueryRow`) that define the Querier
+  surface are thin pass-through wrappers forwarding the SQL string parameter
+  to pgx. The SQL safety contract is satisfied at the **callers** of those
+  methods, every one of which is itself a repository site this scan visits.
+  Inside the wrapper the SQL argument is — and must be — the function
+  parameter named `sql`. The exemption is recognised by the receiver shape
+  and method name; no other shape is exempt.
+- The runtime tests deliberately omit NUL bytes from the payload list: pgx
+  rejects NUL in a `text` parameter before it reaches the server, which
+  would surface as `E_UNAVAILABLE` for reasons unrelated to SQL injection
+  resistance and pollute the load-bearing negative assertion. NUL handling
+  is a separate input-rejection concern.
+
 ## Repository transaction pattern (`store.go`, `project.go`, `projectservice.go`)
 
 - The `store` package is the **only** place repository code reaches the

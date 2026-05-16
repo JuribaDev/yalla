@@ -121,6 +121,8 @@
 - Quota-dimension story whose call site is NOT yet wired (BE-0337 api_keys pattern, internal/controlplane/store/apikeyservice.go + internal/controlplane/store/migrate/migrations/0027_quota_resource_api_keys.{up,down}.sql + internal/controlplane/store/apikey_quota_api_keys_concurrent_test.go + cmd/yalla-api/main.go; structural template for BE-0338 members and ANY future dimension story whose owning Service.Create predates the QuotaReserver port — applies whenever a dimension story is the FIRST to wire its service-layer Reserve, distinct from the BE-0331..BE-0336 'call site already there' siblings whose owning unit-of-work already reserves the dimension). The minimum atomic delivery is FOUR change axes: (1) closed-set expansion — a new `NNNN_quota_resource_<name>.{up,down}.sql` migration that follows the BE-0326 backup_schedules template verbatim (DO block looking up the inline DOMAIN CHECK by `contypid = 'quota_resource'::regtype AND contype = 'c'` so the migration is robust to any Postgres-assigned constraint name, then `ALTER DOMAIN quota_resource ADD CONSTRAINT quota_resource_check CHECK (VALUE IN (...))` with the prior set + the new label; the .down.sql is structurally identical and narrows back to the prior set, accepting that any row carrying the new label fails the restored CHECK — that is the correct behaviour, silently dropping rows would lose audit-relevant state); plus the matching `QuotaResource<Name>` constant + membership-set entry in internal/controlplane/store/quota.go; plus updating the `valid` slice in internal/controlplane/store/quota_internal_test.go::TestQuotaResourceValid which pins `len(valid) == len(quotaResources)` — the test is a sealing-trap that catches a forgotten membership-set entry but ALSO fires on a forgotten valid-slice entry; both must change together. (2) Constructor port widening — the existing service struct grows a `quota QuotaReserver` field, the constructor parameter list grows the same port, the nil-guard switch grows a `case quota == nil` arm placed BETWEEN the last existing repo arm and the audit arm (the convention is store → parent repos → own repo → authz? → quota → jobs? → audit), and the Create unit of work grows a `svc.quota.Reserve(ctx, tx, key.OrganizationID, string(QuotaResource<Name>))` call placed AFTER every existence/parent-lookup check and BEFORE the desired-state Insert so a 404 on the parent is never disguised as a quota rejection AND a row-level conflict (slug, prefix, unique constraint) rolls the reservation back with the rest of the unit of work. (3) Constructor call-site fanout — three call sites change: cmd/yalla-api/main.go grows a `<name>Quota := noopQuotaReserver{}` placeholder (the real quota.Checker adapter is wired separately by a cross-cutting plan-resolver story; placeholder mirrors the projectQuota / environmentQuota / serviceQuota convention exactly), the in-package `package store` constructor-nil test grows a `nopQuotaReserver{}` local + a new `{nil quota, ...}` case wedged BETWEEN the last existing nil case and the audit case (positional ordering must mirror the constructor's nil-guard switch), and the `package store_test` integration-test helper grows the shared `&recordingQuota{}` (defined in projectservice_test.go — not a local `noopQuotaReserver{}`, which is only visible to cmd/yalla-api; the store_test package has its OWN allow-all fake hierarchy and the convention is to reuse `recordingQuota` for happy-path constructors). (4) Concurrent integration test — clone of the BE-0336 concurrent_deployments test with five structural simplifications when the owning service has no Authorizer / JobEnqueuer ports (api_keys is pure Yalla identity with no Dokploy mirror, so APIKeyService takes neither): no `atomicAuthorizer` / `atomicJobs` fakes need to be defined or counted; no `authz.calls == attempts` and no `jobs.calls == successes` assertions; the per-goroutine input loop calls `auth.Generate()` INSIDE the goroutine so every concurrent attempt mints its own unique (prefix, secret_hash) pair via crypto/rand (the prefix column is UNIQUE so a shared pair would deterministically conflict and mask the quota race); the parent-row seed is only an `organizations` row (no project/environment/service chain — api_keys live directly under the tenant); and the leaky-input candidates in the rejection-message scan use the resource-specific prefix (`key-%02d` / `req_apikeys_%02d` / `corr_apikeys_%02d`) so an echoed input still fails the message guard. The 'second test' sibling (TestXxxCreateAppliesXxxQuotaIndependentlyOfOtherDimensions) seeds ONLY the dimension under enforcement, exhausts it sequentially, asserts a SIXTH Create surfaces the dimension-specific rejection, and asserts no reservation row exists on TWO unrelated dimensions (services / projects) — the symmetry guard that catches a future regression that drops the Reserve call OR accidentally chose a different resource string. The whole pattern compiles + passes -race against a real Postgres without touching ANY of the 70+ httpapi fake-fixture call sites because the service's HTTP layer is owned by a separate seam (the api_keys handler already calls APIKeyService.Create with the same input shape; only the store-layer wiring changes). Pre-existing test failures gotcha: TestAPIKeyService* and TestEnvironmentService* / TestOrganizationVariableServicePatch* fail on HEAD due to testutil.Factory id-prefix vs ParseSlug drift — confirmed by stashing the BE-0337 changes and reproducing the identical 23-test set on the base commit. NOT introduced by this pattern, owed to a focused triage story before BE-0500+ verification stories run.
 
 - Pure N-scope inheritance resolver (BE-0343 pattern, internal/controlplane/variables/{doc.go, resolver.go, resolver_test.go, AGENTS.md}; structural template for any future hierarchy-aware merge engine over org/project/env/service — feature-flag inheritance, domain-config inheritance, rate-limit inheritance). Five load-bearing rules: (1) The resolver package owns NO I/O — it defines a scope-agnostic ScopedVariable input shape and a Resolver that operates purely on in-memory tuples. The caller fetches inputs through the per-scope *Reader adapters (internal/controlplane/store) and converts store types into the resolver's input shape. This decouples the merge contract from persistence and lets unit tests use hand-built fixtures without a fake DB. (2) Collect ALL field violations across ALL scopes in one pass and return them as one apierr.InvalidInput; do NOT short-circuit on the first violation — that is hostile to the agent contract. Field paths anchor on <scope>.variables[<index>].<field> and NEVER echo the submitted value. (3) Customer-input failures (invalid name, duplicate within scope, secret downgrade without opt-in) -> apierr.FieldViolation -> apierr.InvalidInput (HTTP 400). Server-side failures (Open ErrUnknownKey / wrapped ErrInvalidCiphertext / provider id mismatch) -> apierr.Internal with a wrapped cause for server-side logging (HTTP 500). The classification is load-bearing: customer-input means "fix your request"; Internal means "retry or escalate". (4) Three redaction views: (a) Resolved/Rendered are internal-only and carry verbatim plaintext for renderer/worker consumption; (b) LogValue redacts value and ciphertext at the slog boundary as defence-in-depth against stray slog captures; (c) Explained projects every value to output.Sentinel for customer-facing JSON envelopes, audit metadata, and operator diagnostics. Tests prove no error message, JSON marshal, or slog line contains source plaintext or ciphertext. (5) Closed-set Options.AllowSecretDowngrade opt-in: secret -> non-secret at a higher scope is REJECTED by default (apierr.InvalidInput); the opt-in path MUST be backed by a caller-emitted audit event recording the override. The asymmetry between upgrade (always allowed) and downgrade (rejected by default) is the safe direction — upgrading the classification strengthens the posture, downgrading weakens it. Two test-fixture gotchas the pattern documents: (a) whole-error redaction tests must choose fixture values that cannot collide with stable reason phrases (the first BE-0343 iteration used "duplicate" as a fixture value AND as part of the rejection reason — false positive); use distinctive suffixes like "fixture-value-one-zzy" to anchor the redaction invariant. (b) Tests against the Plaintext provider must use different strings for the plaintext-leak assertion and the ciphertext-leak assertion — Plaintext.Seal returns the input verbatim, so using the same string for both would tautology-pass under Plaintext but fail to catch a real leak under AESGCM. NOT applicable to the dokploy renderer's mergeVariables (renderer.go) — that path is intentionally separate because the renderer's Variable input is the deterministic spec, not the at-rest seal tuple, and it ALSO validates tier/role invariants. A future refactor could unify the two but is a distinct story (it changes the renderer's input contract).
+
+- Security-verification two-test pattern (BE-0344 pattern, internal/controlplane/store/{sql_injection_static_test.go, sql_injection_test.go, AGENTS.md}; structural template for BE-0345..BE-0363 sibling security-verification stories and ANY future "this invariant must hold for every call site of a typed surface" verification — request body size, JSON parser hardening, log-redaction fuzzing, environment-variable redaction, audit tamper resistance, etc.). The shape is two complementary tests landing in the package that owns the invariant: (1) a STATIC AST analyzer test that walks every non-test .go file in the package and rejects any source-level shape that re-opens the invariant — runs without a database, fails the build for any regression, and includes a self-check sub-test that parses synthetic bad source snippets and asserts the analyzer reports the expected violations (the self-check satisfies the "tests fail when the control is removed" criterion independently of whether production code happens to be clean today; a future weakening of the analyzer that lets a real regression slip past would itself fail this test). (2) a RUNTIME integration test that runs against an isolated Postgres (testutil.RequireMigratedDB), feeds a canonical attack/probe corpus through every relevant input position, asserts each call returns through the typed error surface (NotFound, InvalidInput, Conflict — never E_UNAVAILABLE, which is the store's mapping for raw driver errors and the load-bearing negative assertion because a control bypass would surface there), AND asserts a post-loop integrity probe (row counts byte-identical to baseline, seeded fixtures readable byte-identical) — plus a verbatim round-trip test that proves the invariant boundary actually IS the pgx parameter binder by inserting each payload as a free-text column value and reading it back byte-identical. Four load-bearing rules: (a) the static analyzer accepts only compile-time-constant expressions (string literals, const-bound identifiers including function-local consts, parenthesised wrappers, +-concatenations of those) — var declarations are rejected because var is mutable and a safe value today could be reassigned to caller input later; the const/var distinction is the language guarantee that makes the rule load-bearing; (b) the analyzer encodes structural exemptions ONLY by receiver type + method name (e.g. *Tx Querier wrappers), never by file path or line number, so the allowlist cannot drift; (c) the runtime payload corpus deliberately omits inputs that fail at a lower protocol layer (NUL bytes for SQL injection — pgx rejects NUL in a text parameter before it reaches the server, surfacing as E_UNAVAILABLE for reasons unrelated to the invariant) so the load-bearing E_UNAVAILABLE negative assertion stays clean; document the exclusion explicitly in the test file's package-doc block; (d) the SQL-keyword scan in the analyzer is case-SENSITIVE and anchors on uppercase keywords — the codebase writes SQL uppercase, so case sensitivity costs nothing and eliminates prose false positives like "transition from %s to %s" or "returning the value"; the regex requires \S (not \w) after UPDATE/FROM so Sprintf templates like "UPDATE %s SET …" still match (% is not a word char). The package's AGENTS.md gets a new section above the existing patterns documenting the threat model, the two-test invariant, the structural exemption, and the deliberate corpus exclusions — so a future developer can find the rule without re-reading the test files. Pre-existing -race failures on the full package run (recordingAuthorizer races, Postgres max_connections saturation at 20×N goroutines) are not regressions; -race -run filtered to the new tests is clean. NOT applicable to verification stories whose invariant is a runtime contract with NO static analog (e.g. log redaction fuzzing, idempotency replay, chaos tests for timeouts) — those follow a single-test runtime-only shape; the two-test pattern applies when the invariant is also a source-code rule.
 ## 2026-05-15 - BE-0103
 - What was implemented: GET /v1/organizations/{org_id}/audit-events, the
   organization-scoped audit-trail read endpoint — the first endpoint to
@@ -22892,7 +22894,7 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     - For value-leak assertions on InvalidInput errors, the durable assertion is "the error must NOT contain any submitted value string" (the project-variable pattern). The fragile assertion is "the error must contain the field path" — the field path lives in the structured Violations field, not necessarily in err.Error(). BE-0342 migrated service_variables to the durable shape; the same migration is owed any future per-resource variable story that copied the BE-0202 template.
   - Gotchas encountered:
     - The pre-existing TestServiceVariableServiceReplaceInvalidInputNeverOpensTransaction was failing on `err.Error()` not containing "variables[0].key". Verified by `git stash` + re-test that this was NOT a regression introduced by BE-0342 — the assertion is broken at HEAD against a real Postgres. Rewriting to the project-variable-style "no submitted value in err message" makes the test pass AND aligns the value-redaction contract BE-0342 itself promises.
-    - When the BE-0339 plaintext provider seals "x" -> "x" and the InvalidInput cases include `Value: "x"` (the original test used "x"), the no-value-leak assertion fires false positives on the literal "x". The project test pattern works around this by using longer, distinctive value strings (first-value-alpha, second-value-bravo, value-charlie, before-delta after-echo). Mirror that vocabulary verbatim — the test stays robust as future error strings absorb more context.
+    - When the BE-0339 plaintext provider seals "x" -> "x" and the InvalidInput cases include `Value: "x"` (the original test used "x"), the no-value-leak assertion fires false positives on the literal "x". The project test pattern works around this by using longer, distinctive value strings (first-value-alpha, second-value-bravo, value-charlie, before-delta
     - The shared local Postgres at 127.0.0.1:5432 is shared across multiple test packages running concurrently. A full `go test ./internal/controlplane/store/` run against it surfaces flaky failures in quota / api-key / environment tests (E_INVALID_INPUT: request validation failed) that are reproducible WITHOUT BE-0342 changes. They are NOT regressions from BE-0342. Scope the BE-0342 verification to `-run "TestServiceVariable|TestNewServiceVariableService|TestMigrations"` to keep the integration signal clean; the broader flake fix belongs in its own story.
     - testutil ID format: testutil.Service has `.ID` field (svc_xxx kind). When mirroring the env test, the renaming pattern is environment -> service: env := seedEnvironment(...); service := seedService(t, db, f, env, "api") — the local variable name `service` (not `svc`) is preferred because `svc` is already taken by the *ServiceVariableService instance in the surrounding test scope.
   - Useful context:
@@ -23141,4 +23143,231 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
       Anthropic-tier "deterministic error code" contract:
       Internal means retry or escalate to support, never
       reword the request.
+---
+
+## 2026-05-16 - BE-0344 (Security verification: SQL injection resistance)
+- What was implemented:
+  Two complementary tests under internal/controlplane/store
+  that pin the "every SQL statement is fully parameterized"
+  invariant the store package has carried as documentation
+  since the baseline. The static test runs without a
+  database and walks every non-test .go file in the package,
+  failing the build for any change that re-opens the
+  parameterization hole. The integration test runs against
+  real Postgres and proves the invariant end-to-end with
+  canonical injection payloads.
+
+  (1) sql_injection_static_test.go (new) — three subtests in
+      package store_test:
+      - TestSQLArgsAreConstantExpressions walks each
+        non-test .go file and asserts the second positional
+        argument of every .Exec/.Query/.QueryRow call (the
+        SQL string) is a compile-time-constant string
+        expression: a string literal, a const-bound
+        identifier (package-level OR function-local), a
+        parenthesised wrapper, or a +-concatenation of any
+        of those. The const collector iterates to a fixed
+        point so a const that references another const
+        resolves once the dependency is known. var
+        declarations are deliberately rejected because var
+        is mutable. Identifiers that are not const-bound
+        are rejected — this catches a function parameter,
+        a method receiver, or a normal local being used as
+        SQL.
+      - TestSQLNoSprintfBuildsQueryStrings rejects every
+        fmt.Sprintf / fmt.Sprint / fmt.Sprintln call whose
+        first argument is a string literal containing
+        uppercase SQL keywords (SELECT, INSERT INTO,
+        UPDATE \S, DELETE FROM, UNION, FROM \S, WHERE,
+        JOIN, RETURNING, VALUES (). The check is
+        case-sensitive on the keyword head — the codebase
+        writes SQL keywords uppercase, lowercase prose
+        like "transition from %s to %s" or "returning the
+        value" is correctly excluded. This catches the
+        indirect pattern where a developer builds a
+        query string with Sprintf and then passes the
+        local to .Query — TestSQLArgsAreConstant would
+        still fire on the .Query call site, but firing
+        on the Sprintf site too makes the diagnostic
+        point at the actual mistake.
+      - TestSQLInjectionStaticAnalyzerDetectsRegressions
+        is the self-check: it parses five synthetic bad
+        source snippets (direct fmt.Sprintf-in-Query,
+        Sprintf-then-Query, concat-with-non-const,
+        string-conversion, method-call result as SQL) and
+        asserts each analyzer reports the expected number
+        of violations. This satisfies the
+        "tests fail when the control is removed"
+        acceptance criterion independently of whether the
+        production code happens to be clean today: a
+        future weakening of the analyzer that lets a real
+        regression slip past would itself fail this test.
+      One structural exemption is encoded in
+      findUnsafeSQLArgs: the three methods on *Tx
+      (Exec/Query/QueryRow) that define the Querier
+      surface in store.go are thin pass-through wrappers
+      forwarding the SQL parameter to pgx. The exemption
+      is recognised by the receiver type (`*Tx`) and the
+      method-name-match against the call site. No other
+      shape is exempt; in particular, no file or line is
+      hard-coded.
+
+  (2) sql_injection_test.go (new) — two integration tests
+      in package store_test, both using
+      testutil.RequireMigratedDB so they skip cleanly when
+      YALLA_TEST_DATABASE_URL is unset:
+      - TestSQLInjectionReadPathsAreSafelyParameterised
+        seeds two organizations, then for each of twelve
+        canonical injection payloads (quote-break, OR 1=1,
+        UNION, stacked DELETE/INSERT/UPDATE, backtick,
+        subquery-in-predicate, URL-encoded, comment-style,
+        dollar-quoted, multi-line) feeds the payload
+        through five customer-input string positions:
+        OrganizationRepository.Get(id=payload),
+        APIKeyRepository.FindByPrefix(prefix=payload),
+        APIKeyRepository.Get(orgID=valid, keyID=payload),
+        APIKeyRepository.Get(orgID=payload, keyID=valid),
+        AuditRepository.ListByOrganization(orgID=payload).
+        Each call must return typed E_NOT_FOUND or an
+        empty list. The load-bearing negative assertion
+        is "never E_UNAVAILABLE" — that code is the
+        store's mapping for raw driver errors and a SQL
+        syntax error escaping the parameter binder would
+        surface there. After every payload has run, the
+        row counts of organizations / projects /
+        environments / services / api_keys /
+        audit_events / service_accounts are asserted
+        byte-identical to the pre-loop baseline (2 orgs,
+        0 everything-else); a DROP/TRUNCATE/UPDATE/DELETE
+        side effect would move them. A belt-and-suspenders
+        re-read of both seeded orgs confirms their slug /
+        display_name / id survived the loop unchanged.
+      - TestSQLInjectionPayloadsStoredVerbatim inserts a
+        fresh organization with display_name = payload
+        for each payload, then re-reads it through the
+        same repository and asserts the round-tripped
+        bytes equal the submitted bytes exactly. This is
+        the strongest evidence that pgx is the security
+        boundary, not application-layer escaping: the
+        payload survives a write→read cycle exactly as
+        the caller submitted it, including embedded
+        quotes, dollar signs, semicolons, and comment
+        markers. The slug column has a citext + length
+        check and the factory's unique generator owns it,
+        so display_name is the deliberate free-text
+        target for this round-trip proof. Each subtest
+        gets its own org id + slug from the factory so
+        subtests do not collide on slug uniqueness.
+
+  (3) internal/controlplane/store/AGENTS.md — added a new
+      "SQL injection resistance" section above the
+      Repository transaction pattern section that
+      documents the two-test pattern, the *Tx pass-through
+      exemption, and the deliberate NUL-byte omission from
+      the payload list (pgx rejects NUL in a text
+      parameter before it reaches the server, which would
+      surface as E_UNAVAILABLE for reasons unrelated to
+      SQL injection resistance).
+- Files changed:
+  internal/controlplane/store/sql_injection_static_test.go (new, ~430 lines),
+  internal/controlplane/store/sql_injection_test.go (new, ~330 lines),
+  internal/controlplane/store/AGENTS.md (added SQL injection
+  section above the Repository transaction pattern section).
+- Verification run:
+  - gofmt -w . (clean)
+  - go vet ./... (clean)
+  - go test ./... -count=1 (all packages green;
+    YALLA_TEST_DATABASE_URL set so the integration test
+    actually runs against the local Docker Postgres)
+  - go test -race -run
+    'TestSQLInjection|TestSQLArgs|TestSQLNoSprintf'
+    ./internal/controlplane/store/ -count=1 (race-clean for
+    the new tests in isolation)
+  - go test -race ./internal/controlplane/store/ (the
+    pre-existing recordingAuthorizer race in
+    project_quota_concurrent_test.go fires as documented
+    in the Codebase Patterns section on concurrent quota
+    test harness contention; not introduced by this story
+    and unrelated to the SQL injection controls)
+- Results: BE-0344 passes.
+- Remaining risks or follow-ups:
+  None for SQL injection itself. The static analyzer is a
+  per-file walk and stays cheap as the package grows.
+  Sibling BE-0345..BE-0363 security-verification stories
+  follow the same shape (threat model + static + runtime
+  proof + AGENTS section); the BE-0344 pair is the
+  structural template.
+- Learnings for future iterations:
+  - Patterns discovered:
+    - The two-test pattern (static AST analyzer +
+      runtime payload probe) is the right shape for
+      security-verification stories whose invariant
+      is "X must hold for every call site of a typed
+      surface". The static test is the regression
+      backstop and runs without a database; the
+      runtime test is the load-bearing end-to-end
+      proof and requires Postgres. Each test answers
+      a different question: the static test answers
+      "is the source code still safe?", the runtime
+      test answers "is the actual database actually
+      parameterized?" — both questions matter and
+      neither subsumes the other.
+    - For runtime injection probes, the load-bearing
+      negative assertion is "never E_UNAVAILABLE",
+      not "got E_NOT_FOUND". E_UNAVAILABLE is the
+      store's driver-error escape hatch; a SQL
+      syntax error from an unparameterized query
+      would surface there. Asserting "must be
+      NotFound" alone would miss a successful
+      injection that happens to return zero rows.
+    - For static SQL-arg checks, treating
+      function-local consts as safe is required
+      (deployment.go uses `const updateBase` inside
+      the function body), but treating var as safe
+      would re-open the hole because var is
+      mutable. The const/var distinction is the
+      load-bearing language guarantee.
+    - The *Tx Querier surface (Exec/Query/QueryRow)
+      is the lone place where the SQL argument to
+      a .Exec/.Query/.QueryRow call is legitimately
+      a string parameter rather than a constant
+      expression. The structural recognition
+      (receiver = *Tx, method-name-match against the
+      call site) is the right exemption: no file
+      paths, no line numbers, no allowlist drift.
+  - Gotchas encountered:
+    - The SQL-keyword regex must be case-SENSITIVE
+      and anchor on uppercase keywords; the first
+      iteration used (?i)\b(...) and tripped on
+      lowercase prose like "transition from %s to
+      %s" in job.go's error message. The codebase
+      consistently writes SQL keywords uppercase,
+      so case sensitivity costs nothing and
+      eliminates the false positives.
+    - The UPDATE / FROM keyword pattern must allow
+      \S (any non-whitespace) after the trailing
+      whitespace, not just \w (word characters);
+      Sprintf templates like "UPDATE %s SET …"
+      have % after UPDATE, which is not a word
+      character. With \S, "UPDATE %s" still matches
+      and "UPDATE the" still matches; only
+      whitespace-only follow-ups slip through.
+    - NUL bytes in injection payloads belong to a
+      separate test category. pgx rejects NUL in a
+      text parameter at the protocol layer, which
+      surfaces as E_UNAVAILABLE — not because the
+      injection succeeded but because the protocol
+      cannot encode the byte at all. Including NUL
+      in the canonical injection payload list would
+      pollute the load-bearing E_UNAVAILABLE
+      negative assertion; the file's package-doc
+      block records this exclusion.
+    - The race-detected failures in the full
+      store-package -race run come from a
+      pre-existing recordingAuthorizer race in
+      project_quota_concurrent_test.go (a shared
+      mutable .calls counter across 20 goroutines).
+      The Codebase Patterns section already
+      documents this; -race -run filtered to the
+      new BE-0344 tests is race-clean.
 ---
