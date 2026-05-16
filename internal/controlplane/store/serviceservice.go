@@ -250,6 +250,21 @@ func (svc *ServiceService) Create(ctx context.Context, in CreateServiceInput) (S
 		if err := svc.quota.Reserve(ctx, tx, service.OrganizationID, string(QuotaResourceServices)); err != nil {
 			return err
 		}
+		// Per-subtype quota: the "applications" dimension counts ONLY
+		// services in the application taxonomy member. Compose and
+		// database services do not consume this dimension and are
+		// counted by their own per-subtype quotas (BE-0327 / BE-0328).
+		// The reservation runs in the SAME transaction as the
+		// services-dimension reservation and the desired-state write,
+		// so an organization that exhausts either dimension cannot
+		// half-write a service row whose other dimension passed —
+		// every failure after this point rolls the whole unit of
+		// work back together.
+		if service.Kind == ServiceKindApplication {
+			if err := svc.quota.Reserve(ctx, tx, service.OrganizationID, string(QuotaResourceApplications)); err != nil {
+				return err
+			}
+		}
 		row, err := svc.services.Insert(ctx, tx, service)
 		if err != nil {
 			return err
