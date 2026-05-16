@@ -4666,8 +4666,8 @@
       ],
       "type": "endpoint-variables",
       "priority": 2,
-      "passes": false,
-      "notes": "Endpoint belongs to the variables backend surface."
+      "passes": true,
+      "notes": "Endpoint belongs to the variables backend surface. Implemented GET /v1/services/{service_id}/variables: migration 0021_service_variables (composite FK to services(organization_id, id), per-service key uniqueness, optimistic-concurrency version trigger), domain.KindServiceVariable='svar', store.ServiceVariableRepository.ListByService + store.ServiceVariableReader.ListServiceVariables (Gets service first inside Store.Read tx so cross-tenant or unknown service_id surfaces as apierr.NotFound), httpapi.listServiceVariablesHandler with redaction chokepoint (secret values render as output.Sentinel, non-secret verbatim), route registered with action env.read on serviceIDResolver, contract+OpenAPI tests, integration tests with two-tenant isolation + sibling service isolation. NewHandler/newRouteTable signatures grew one positional port (serviceVariables ServiceVariableReader) at the tail of the service-ports group; sweep across 53 test files. gofmt/go vet/go test/go test -race all green."
     },
     {
       "id": "BE-0200",

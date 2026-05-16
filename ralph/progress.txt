@@ -15734,3 +15734,145 @@ Learnings for future iterations:
     project_id and environment_id) are constants — they identify the
     canonical fixture across the matrix and are stable across runs.
 ---
+
+## 2026-05-16 - BE-0199
+- Implemented: GET /v1/services/{service_id}/variables — the wire +
+  persistence contract for listing service-scoped environment
+  variables.
+- Files added:
+  - internal/controlplane/store/migrate/migrations/0021_service_variables.up.sql
+  - internal/controlplane/store/migrate/migrations/0021_service_variables.down.sql
+    (mirrors 0018_environment_variables: composite FK
+    (organization_id, service_id) -> services(organization_id, id)
+    ON DELETE CASCADE, UNIQUE (organization_id, service_id, key) for
+    per-service uniqueness, UNIQUE (organization_id, id) for future
+    override targeting, set_updated_at + bump_version triggers from
+    migration 0011)
+  - internal/controlplane/store/service_variable.go
+    (ServiceVariable struct + LogValue redaction, scanServiceVariable,
+    ServiceVariableRepository.ListByService with deterministic
+    (key ASC, id ASC) order + serviceVariableListMaxRows=500 ceiling,
+    ServiceVariableReader composing ServiceRepository.GetByID +
+    ListByService inside Store.Read so cross-tenant or unknown
+    service_id surfaces as apierr.NotFound never an empty list)
+  - internal/controlplane/store/service_variable_test.go
+    (eight integration tests: deterministic ordering with verbatim
+    value round-trip, two-tenant isolation, empty-service empty
+    slice, sibling-service isolation in same env, reader happy
+    path, cross-tenant 404 with leak-fragment scan, unknown
+    service_id 404, NewServiceVariableReader nil-store rejection)
+  - internal/controlplane/httpapi/service_variables.go
+    (ServiceVariableReader port, serviceVariable wire DTO with
+    is_secret redaction chokepoint -> output.Sentinel for secrets,
+    listServiceVariablesHandler reading principal.OrganizationID +
+    r.PathValue("service_id"), errNoServiceVariableReader for
+    wiring mistakes)
+  - internal/controlplane/httpapi/service_variables_test.go
+    (seven contract tests: happy path with secret redaction +
+    leak-fragment scan, empty-service [] (not null), reader 404,
+    reader 503 without driver-cause leak, unauthenticated 401
+    short-circuits before reader, missing-reader 500,
+    OpenAPI route registered with operation_id, env.read
+    required_action, and services+variables tags)
+- Files changed:
+  - internal/controlplane/domain/id.go (added KindServiceVariable
+    Kind = "svar" and added it to the kinds map; doc comment
+    explains it is highest-precedence layer + tenant-anonymous id
+    for future per-row PATCH/DELETE stories)
+  - internal/controlplane/httpapi/routes.go (newRouteTable signature
+    grew one positional port `serviceVariables ServiceVariableReader`
+    at the tail of the service-ports group, between serviceRestorer
+    and breakGlass; registered GET /v1/services/{service_id}/variables
+    with serviceIDResolver, action env.read, tagServices+tagVariables,
+    full description block mirroring the env_variables list
+    description with service-specific narrowing)
+  - internal/controlplane/httpapi/server.go (NewHandler grew the
+    matching positional port + forwards it to newRouteTable)
+  - cmd/yalla-api/main.go (constructed serviceVariables via
+    store.NewServiceVariableReader(dataStore) and forwarded it to
+    httpapi.NewHandler — single concrete reader satisfies the port)
+  - 52 *_test.go files (sweep adding `fakeServiceVariableReader{}`
+    between fakeServiceRestorer{} and the trailing
+    fakeBreakGlassController{}/`ctl` argument in every NewHandler /
+    newRouteTable call site)
+  - internal/controlplane/httpapi/services_restore_test.go
+    (special-case sweep — restorer-named call form)
+  - ralph/prd.json (BE-0199 -> passes:true with implementation
+    notes)
+  - ralph/progress.txt (this entry)
+- Verification run:
+  - gofmt -w .                                  -> clean
+  - go vet ./...                                -> clean
+  - go mod tidy                                 -> clean
+  - go test ./...                               -> all pass
+    (full suite including controlplane/store running migrations
+    from empty Postgres with the new 0021 migration, controlplane/
+    httpapi running new contract tests + OpenAPI route assertion
+    + all swept-signature suites, plus migrateimport, policy,
+    quota, reconcile, worker)
+  - go test -race ./...                         -> all pass
+- Results: all green. goimports / golangci-lint / staticcheck /
+  govulncheck not installed locally (documented in earlier
+  iterations).
+- Remaining risks / follow-ups:
+  - BE-0200 (contract tests for GET
+    /v1/services/{service_id}/variables) — this story already adds
+    extensive contract tests but the dedicated BE-0200 story may
+    still want additional coverage (boundary cases, large-list
+    truncation, key character classes).
+  - BE-0201 (policy matrix coverage for GET
+    /v1/services/{service_id}/variables) — will follow the
+    BE-0198 services_rendered_policy_test.go pattern, since
+    serviceIDResolver is the same resolver and env.read is the
+    same CapRead action class as service.read.
+  - BE-0202+ (PUT
+    /v1/services/{service_id}/variables) — needs the
+    ServiceVariableService unit of work (Upsert + DeleteByService
+    ExceptKeys + audit + post-write re-read in one transaction,
+    mirroring EnvironmentVariableService). The current
+    ServiceVariableRepository deliberately exposes only the read
+    path; the write path lands with BE-0202.
+- Learnings for future iterations:
+  - The service-scoped variables vertical's reader-only story is
+    structurally identical to BE-0142 (project_variables reader)
+    and BE-0172 (environment_variables reader): the migration
+    pattern, the ServiceVariableRepository.ListByService method,
+    and the ServiceVariableReader-composing-GetByID-then-list
+    pattern all forward-apply verbatim, with one substitution:
+    the FK target table differs (services vs environments vs
+    projects). The services table at migration 0002 already
+    carried UNIQUE (organization_id, id), so the FK target was
+    available without an intermediate migration.
+  - serviceIDResolver pins NO ProjectID leg on the resource
+    scope (the bare /v1/services/{service_id}/variables path
+    carries only the service id, not its parent project), so
+    project-, environment-, and service-scoped grants are
+    denied at the boundary by the engine's covers() rule —
+    the same posture as
+    /v1/services/{service_id} (BE-0186) and
+    /v1/services/{service_id}/rendered (BE-0196). Forward-
+    applicable to every future bare-id service sub-route.
+  - The HTTP redaction chokepoint sits in serviceVariableOf(),
+    NOT in the handler — a future caller of the same projection
+    function cannot accidentally skip the secret redaction, and
+    the store layer round-trips values verbatim so a future
+    write path can be lossless. Same pattern as
+    environmentVariableOf() and projectVariableOf().
+  - The route-table positional sweep across 53 test files anchored
+    on the three exact-string patterns:
+      'fakeServiceRestorer{}, fakeBreakGlassController{})'  ->
+        for newRouteTable() invocations
+      'fakeServiceRestorer{}, fakeBreakGlassController{}, nil, nil)'
+        -> for NewHandler() invocations with nil logger+limiter
+      'fakeServiceRestorer{}, fakeBreakGlassController{}, logger, nil)'
+        -> for the four NewHandler() invocations that thread a real
+           logger (environments_test.go, me_contract_test.go,
+           server_test.go, services_test.go)
+    Plus one special-case form 'restorer, fakeBreakGlassController{},
+    nil, nil)' in services_restore_test.go (the local 'restorer'
+    fake name), and 'ctl, nil, nil)' in break_glass_test.go (the
+    local 'ctl' BreakGlassController fake). Future BE stories that
+    grow the NewHandler positional contract should reuse the same
+    three-pattern sweep + handle 1-2 named-local-variable
+    exceptions.
+---

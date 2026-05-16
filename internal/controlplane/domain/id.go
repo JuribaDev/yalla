@@ -106,6 +106,19 @@ const (
 	// stable, non-guessable id so a per-row PATCH / DELETE story has an
 	// addressable resource later.
 	KindEnvironmentVariable Kind = "evar"
+	// KindServiceVariable is one row in the service-scoped variables surface —
+	// the highest-precedence (lowest-level) layer of the
+	// Organization -> Project -> Environment -> Service variable hierarchy the
+	// Dokploy renderer composes. A service-scoped variable shadows the
+	// environment-, project-, and organization-scoped variables of the same
+	// key for that service only — a key set here cannot leak into sibling
+	// services in the same environment, the same project, or the same tenant.
+	// Like KindEnvironmentVariable, a variable is not a tenant root; the audit
+	// layer files variable mutations under the parent service's audit scope
+	// (resource_kind=svc), but a variable row carries its own stable,
+	// non-guessable id so a per-row PATCH / DELETE story has an addressable
+	// resource later.
+	KindServiceVariable Kind = "svar"
 )
 
 // kinds is the authoritative set of valid resource kinds. It backs Kind.Valid
@@ -125,6 +138,7 @@ var kinds = map[Kind]struct{}{
 	KindEnvironmentGrant:     {},
 	KindProjectVariable:      {},
 	KindEnvironmentVariable:  {},
+	KindServiceVariable:      {},
 }
 
 // Valid reports whether k is one of the canonical resource kinds.
