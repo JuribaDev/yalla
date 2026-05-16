@@ -7022,7 +7022,7 @@
       ],
       "type": "quota-dimension",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Quota dimension: projects."
     },
     {
