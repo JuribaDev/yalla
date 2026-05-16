@@ -24790,3 +24790,91 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     proves the deny short-circuits at policy, so any logged "rotator
     error" cannot mask the real source of a credential leak.
 ---
+
+## 2026-05-17 - BE-0354
+- What was implemented: Security verification — dependency vulnerability
+  scanning. Static-analysis pinning of the entire supply-chain gate so a
+  silent removal of any scanner step in CI, in the local commit gate, or
+  in the published security policy is caught at build time.
+  - internal/release/dependency_scan_static_test.go (new): seven test
+    funcs, packaged as the BE-0344-family two-test pattern adapted for a
+    CI/config defence. Pins (1) the `security` job in
+    .github/workflows/ci.yml runs a `govulncheck ./...` step backed by
+    a `go install golang.org/x/vuln/cmd/govulncheck` install
+    reference; (2) the same job also runs `staticcheck ./...` and uses
+    `golangci/golangci-lint-action@<version>`; (3) the
+    .github/workflows/dependency-review.yml workflow's `review` job
+    uses the canonical `actions/dependency-review-action@v<N>` with a
+    `fail-on-severity` value in {high, moderate, low} (critical is
+    rejected — it would let real-world high advisories slip through)
+    and an `allow-licenses` superset of {MIT, Apache-2.0,
+    BSD-2-Clause, BSD-3-Clause}; (4) scripts/verify.sh contains the
+    literal `govulncheck ./...` invocation AND the
+    `golang.org/x/vuln/cmd/govulncheck` install reference so a
+    contributor with a missing tool has a path back to a working gate;
+    (5) CONTRIBUTING.md still carries the "Dependency Review Checklist"
+    section and the references contributors need; (6) SECURITY.md still
+    carries the verification-gates table row referencing
+    `govulncheck ./...` and `actions/dependency-review-action`;
+    (7) self-check that feeds synthetic known-bad and known-good
+    fixtures (canonical install + run, scoped-away invocation, forked
+    action, critical-only severity, missing license) through every
+    matcher in both directions so over- and under-tightening of the
+    analysers are both caught.
+  - internal/release/AGENTS.md: appended a "Dependency vulnerability
+    scanning (BE-0354)" subsection that documents the five surfaces the
+    static test pins, the rule that future supply-chain controls must
+    update both the workflow file AND the matcher in the same edit,
+    and the role of the self-check.
+- Files changed: internal/release/dependency_scan_static_test.go (new,
+  ~530 lines), internal/release/AGENTS.md (appended subsection).
+- Verification run:
+  - gofmt -l . (clean — initial draft tripped gofmt on the workflowStep
+    struct alignment; reformatted in place).
+  - go vet ./... (clean).
+  - go mod tidy (clean — no module changes).
+  - go test ./... (all packages PASS, including the new release tests).
+  - go test -race ./... (all packages PASS).
+  - go test -count=1 -v -run "TestCIWorkflowSecurityGate|TestDependencyReviewWorkflow|TestVerifyScriptInvokesGovulncheck|TestContributingDocumentsDependencyReviewChecklist|TestSecurityPolicyListsVulnerabilityScan|TestDependencyScanStaticAnalyzerDetectsRegressions" ./internal/release/ — all 7 tests + 21 sub-cases of the self-check PASS.
+- Results: ALL quality gates pass. Story marked passes: true in
+  ralph/prd.json.
+- Remaining risks or follow-ups: none for BE-0354. The next P1 security
+  verification stories (BE-0355 container image hardening, BE-0356 TLS
+  and proxy header trust, BE-0357 admin endpoint isolation, ...) are
+  natural-next iterations.
+- **Learnings for future iterations:**
+  - The BE-0344 two-test pattern adapts cleanly to a CI/config-only
+    defence even though there is no Go code to pin. The shape is the
+    same: load the artifact (YAML, shell, markdown), run a matcher,
+    self-check the matcher against synthetic fixtures so over- and
+    under-tightening are both caught.
+  - The natural home for a CI workflow defence is internal/release/ —
+    the package already owns the YAML-parsing helpers (workflow file
+    reads, projectRoot walker) and AGENTS.md documents this as the
+    canonical home for "GitHub Actions workflow assertions". Don't add
+    a new package for a defence whose owning artifact is in
+    .github/workflows.
+  - The workflow YAML uses `runs-on:` which Go's struct tag must
+    match exactly — `yaml:"runs-on"` not `yaml:"runsOn"`. The
+    decoder silently sets the field to the zero value on a mismatch,
+    which would have made a "missing runs-on" regression invisible. We
+    don't currently pin runs-on (we only walk steps), but worth
+    knowing for any future widening of the matcher.
+  - `map[string]interface{}` for the step's `with:` block is the
+    only shape that survives yaml.v3 without exploding on
+    heterogeneous keys (boolean comment-summary-in-pr, string
+    fail-on-severity, multi-line allow-licenses). The matchers
+    perform their own type-assert and skip non-string values, which
+    is the right tradeoff — the closed set of keys we care about are
+    all strings.
+  - For `uses:`-style references, prefer a HasPrefix match on
+    `<canonical>@` rather than an exact-version match. We want to
+    forbid forks and unpinned references but accept future v5/v6
+    upgrades of the canonical action without churning the matcher.
+  - Self-check sub-tests must include BOTH directions even when the
+    canonical case feels "obvious". The "stricter low severity is
+    accepted" sub-case exists because a future contributor tightening
+    the supply-chain gate must not be blocked by this test — the
+    matcher accepts everything at-or-stricter than `high`, and the
+    sub-case documents it.
+---
