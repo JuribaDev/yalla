@@ -17501,3 +17501,141 @@ Learnings for future iterations:
     is in flight" from the 202 status code + the audit trail, not
     from a job handle.
 ---
+
+## 2026-05-16 - BE-0223 + BE-0224 + BE-0225
+- Implemented POST /v1/services/{service_id}/stop end-to-end as a
+  three-story bundle, mirroring the BE-0220+0221+0222 restart
+  pattern (commit 220d7875).
+- Store layer (internal/controlplane/store/serviceservice.go):
+  added serviceStopAction = "service.stop", serviceStopJob =
+  "service.stop", StopServiceInput, and ServiceService.Stop. Stop
+  is structurally identical to Restart: same in-tx unit of work
+  (tenant-scoped GetByID → DeletionScheduledAt 409 →
+  authz.Authorize → jobs.Enqueue → audit.Append), same
+  defense-in-depth posture (HTTP RequireAuth is authoritative; the
+  in-tx Authorize is the redundant grant-change guard), same audit
+  metadata schema (service_id, environment_id, project_id only —
+  no caller-supplied free-form text on the stop path, so no
+  redactor pass needed). The service row's desired state does NOT
+  change on stop (a stopped service can be started again without
+  recreating it), so the response projection is the current row
+  exactly as it sits in the source-of-truth database.
+- HTTP layer (internal/controlplane/httpapi/services_stop.go,
+  routes.go, server.go): new ServiceStopper port + stopServiceHandler
+  + stopServicePayload + errNoServiceStopper, plus the route entry
+  on serviceIDResolver with action service.stop, OperationID
+  "stopService", 202 Accepted success status, tagServices tag, and
+  the full restart-twin Description (CapDeploy role gate, no
+  cross-tenant support exception, covers() rule denies
+  project-/env-/svc-scoped grants on the bare service-id path, 404
+  for cross-tenant service_id, 409 for service already scheduled
+  for deletion, audit + job commit atomically). serviceStopper
+  threaded through NewHandler + newRouteTable signatures in
+  exactly one new slot between serviceRestarter and serviceVariables.
+- Wiring (cmd/yalla-api/main.go): added one more serviceService
+  positional argument for the stopper slot — the same
+  *store.ServiceService instance satisfies every service-port
+  interface, the wiring pattern every service-port story before
+  this one has used.
+- Contract tests (internal/controlplane/httpapi/services_stop_test.go,
+  BE-0224): fakeServiceStopper + 8 tests covering happy path (202
+  + envelope shape + principal-home-org forwarding + path
+  service_id forwarding + actor identity forwarding),
+  unauthenticated 401, viewer 403 (CapDeploy gate), 404 NotFound,
+  409 deletion-scheduled conflict, 503 store-unavailable + no
+  driver-cause leak, cross-tenant no-foreign-echo (handler always
+  uses principal home org), nil-stopper wiring-error 500, and
+  OpenAPI route-table presence (operationId, required action,
+  202 success, services tag).
+- Policy matrix tests (BE-0225,
+  internal/controlplane/httpapi/services_stop_policy_test.go): 3
+  tests covering the full role × tenant × grant-scope matrix —
+  TestStopServicePolicyMatrixRoles (owner/admin/developer/ci allow
+  via ReasonAllowedByRole, viewer/support deny via
+  ReasonDeniedNoCapability — the CapDeploy gate is the load-bearing
+  distinction from read-side matrices), TestStopServicePolicyRevoked
+  AndExpiredKeys (401 + no row leak + no principal id leak + no
+  org id leak), TestStopServicePolicyWrongOrganizationPrincipal
+  (handler uses principal home org so a cross-tenant svc_id
+  surfaces as 404 with no foreign-org echo + engine-level
+  defence-in-depth that EVERY role including Support is denied
+  ReasonDeniedCrossTenant at a foreign-org resource scope —
+  CapDeploy is OUTSIDE the support cross-tenant exception), and
+  TestStopServicePolicyGrantContainment (project-scoped Admin grant
+  allows on a fully-scoped service resource but denies a sibling
+  project AND denies the bare-service-id route via
+  ReasonDeniedOutOfScope, env-scoped Developer grant on staging
+  denies a production service, service-scoped grant denies the
+  parent env via ActionEnvRead AND denies unrelated sibling
+  services AND denies the bare-service-id route, org-level Admin
+  grant allows end-to-end on the wire, org-level Viewer grant
+  DENIES on the wire — load-bearing distinction from the read-side
+  matrix where org-level Viewer is allowed for CapRead actions; a
+  future catalog change that downgraded service.stop from
+  CapDeploy to CapRead would silently let every viewer key stop
+  any service in the org, and this assertion blocks that
+  regression).
+- Port-arity bump across 61 test files updated with one sed pass
+  using the dominant `fakeServiceRestarter{}, fakeServiceVariableReader{}`
+  → `fakeServiceRestarter{}, fakeServiceStopper{}, fakeServiceVariableReader{}`
+  pattern (104 occurrences), plus one named-arg fix in
+  services_restart_test.go (`restarter, fakeServiceVariableReader{}`)
+  and one named-arg fix in service_variables_test.go (`fakeServiceRestarter{}, reader,`).
+  Pre-flight vet was the authority that pinpointed each unfixed
+  call site by file.
+- Verification: gofmt -w . (clean), go mod tidy (clean), go vet
+  ./... (clean), go test ./... (PASS — internal/controlplane/httpapi
+  0.739s, internal/controlplane/store 0.400s, all other packages
+  cached PASS), go test -race ./... (PASS — httpapi 5.922s, store
+  1.433s, all other packages cached PASS). goimports and
+  golangci-lint not installed in this environment (documented).
+- Remaining risks: none. Stop is a fire-and-forget signal with no
+  caller-supplied parameters, so the handler is structurally
+  identical to restart and inherits its proven boundaries (tenant
+  isolation via principal-home-org sourcing, deterministic 404 for
+  cross-tenant svc_id, 409 for deletion-scheduled, atomic
+  audit+job commit, no secret-bearing fields in the response).
+  The worker side of service.stop (the Dokploy-side container halt
+  dispatched from the durable serviceStopJob enqueued by Stop) is
+  out of scope for this story bundle and tracked separately.
+- **Learnings for future iterations:**
+  - Service-lifecycle action endpoints (stop/start/restart on the
+    same resolver) are structural triplets. Restart was BE-0220+0221+0222,
+    Stop is BE-0223+0224+0225, Start is BE-0226+0227+0228 — each
+    bundle is implementation + contract tests + policy matrix. The
+    store, http, contract, and policy files for stop are
+    byte-identical to restart modulo s/Restart/Stop/g and one extra
+    comment paragraph noting that a stopped service can be started
+    again without recreating it. The Start vertical (BE-0226+0227+0228)
+    will follow the same pattern; the next iteration should fold it
+    into a single commit too.
+  - The dominant port-arity-bump replacement pattern remains
+    `fakeServiceRestarter{}, fakeServiceVariableReader{}` →
+    `fakeServiceRestarter{}, fakeServiceStopper{}, fakeServiceVariableReader{}`
+    (the slot the new port lives in is between serviceRestarter
+    and serviceVariables in the NewHandler/newRouteTable
+    signatures). A single sed pass over 61 test files catches 104
+    of 106 call sites; the remaining 2 (named-arg fixes in
+    services_restart_test.go and service_variables_test.go) are
+    surfaced by `go vet` and fixed by hand. Pre-flight invariant:
+    after every port-arity bump, run `go vet ./internal/controlplane/httpapi/`
+    BEFORE committing — vet surfaces every short-arity call site in
+    one pass and is the only authoritative way to find all forms.
+  - The catalog already had ActionServiceStop wired through
+    policy/catalog.go (CapDeploy) and policy/actions.go (with all
+    helper sets); BE-0225 needed zero policy-package changes.
+    Future service-lifecycle stories should expect the same — the
+    catalog was provisioned for the full stop/start/restart
+    triplet up-front.
+  - The Description prose on the routes.go endpoint entry is
+    public agent-facing contract: every CapDeploy gate detail
+    (which roles allow, why support is denied, the covers() rule
+    one-way containment on the bare service-id path, the 404 vs
+    409 vs 503 dispositions, the atomic-job-and-audit guarantee,
+    the no-secret-material claim) should be present verbatim in
+    every CapDeploy stop/start/restart endpoint Description for
+    grep parity. The OpenAPI test asserts only the structural
+    metadata (operation_id, required_action, success_status,
+    requires_auth, tag), so prose drift is harmless to CI but
+    breaks agent reading; keep the prose in lock-step manually.
+---
