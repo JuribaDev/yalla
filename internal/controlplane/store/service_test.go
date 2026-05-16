@@ -298,3 +298,194 @@ func TestNewServiceReaderRejectsNilStore(t *testing.T) {
 		t.Fatalf("NewServiceReader(nil) = nil; want non-nil error")
 	}
 }
+
+// TestServiceRepoGetByIDHappyPath proves GetByID returns the persisted
+// row verbatim under its own tenancy. Version starts at 1 on the fresh
+// INSERT and the tenancy legs (organization_id, project_id,
+// environment_id) match the seeded parents — the predicate is
+// non-optional, so a missing or wrong organization_id would not match
+// the row.
+func TestServiceRepoGetByIDHappyPath(t *testing.T) {
+	t.Parallel()
+
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	org := seedOrg(t, db, f, "SvcGetAcme")
+	proj := seedProject(t, db, f, org, "Backend")
+	env := seedEnvironment(t, db, f, proj, "production")
+	svc := seedService(t, db, f, env, "api")
+
+	repo := store.NewServiceRepository()
+	var got store.Service
+	if err := s.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		var getErr error
+		got, getErr = repo.GetByID(ctx, q, org.ID, svc.ID)
+		return getErr
+	}); err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.ID != svc.ID {
+		t.Errorf("ID = %q; want %q", got.ID, svc.ID)
+	}
+	if got.OrganizationID != org.ID || got.ProjectID != proj.ID || got.EnvironmentID != env.ID {
+		t.Errorf("tenancy = (org=%q, proj=%q, env=%q); want (%q, %q, %q)",
+			got.OrganizationID, got.ProjectID, got.EnvironmentID, org.ID, proj.ID, env.ID)
+	}
+	if got.Version != 1 {
+		t.Errorf("Version = %d; want 1 (a fresh INSERT)", got.Version)
+	}
+	if got.Kind == "" {
+		t.Errorf("Kind is empty; want non-empty")
+	}
+}
+
+// TestServiceRepoGetByIDIsTenantScoped proves a service id that belongs
+// to another organization is reported as the same apierr.NotFound as a
+// truly missing id, so the predicate is never an oracle revealing
+// another tenant's service ids. The not-found payload must NOT echo any
+// cross-tenant identifier (project id, environment id, environment
+// slug, service slug).
+func TestServiceRepoGetByIDIsTenantScoped(t *testing.T) {
+	t.Parallel()
+
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	orgA := seedOrg(t, db, f, "SvcGetTenantA")
+	orgB := seedOrg(t, db, f, "SvcGetTenantB")
+	projB := seedProject(t, db, f, orgB, "B")
+	envB := seedEnvironment(t, db, f, projB, "production")
+	svcB := seedService(t, db, f, envB, "api")
+
+	repo := store.NewServiceRepository()
+	var err error
+	if readErr := s.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		_, err = repo.GetByID(ctx, q, orgA.ID, svcB.ID)
+		return nil
+	}); readErr != nil {
+		t.Fatalf("Read: %v", readErr)
+	}
+	if err == nil {
+		t.Fatalf("GetByID(crossTenant) returned no error; want apierr.NotFound")
+	}
+	var ye *yerr.Error
+	if !errors.As(err, &ye) || ye.Code != yerr.CodeNotFound {
+		t.Fatalf("err = %v (%T); want yerr CodeNotFound", err, err)
+	}
+	leaks := []string{projB.ID, envB.ID, envB.Slug, svcB.Slug}
+	msg := err.Error()
+	for _, n := range leaks {
+		if n != "" && strings.Contains(msg, n) {
+			t.Errorf("error leaks cross-tenant identifier %q: %v", n, err)
+		}
+	}
+}
+
+// TestServiceReaderGetServiceHappyPath proves the store-backed adapter
+// resolves an in-tenant service_id inside a short-lived read-only
+// transaction and projects the row verbatim to the caller.
+func TestServiceReaderGetServiceHappyPath(t *testing.T) {
+	t.Parallel()
+
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	org := seedOrg(t, db, f, "ReaderGetSvcAcme")
+	proj := seedProject(t, db, f, org, "Web")
+	env := seedEnvironment(t, db, f, proj, "production")
+	svc := seedService(t, db, f, env, "api")
+
+	reader, err := store.NewServiceReader(s)
+	if err != nil {
+		t.Fatalf("NewServiceReader: %v", err)
+	}
+
+	got, err := reader.GetService(ctx, org.ID, svc.ID)
+	if err != nil {
+		t.Fatalf("GetService: %v", err)
+	}
+	if got.ID != svc.ID {
+		t.Errorf("ID = %q; want %q", got.ID, svc.ID)
+	}
+	if got.OrganizationID != org.ID || got.ProjectID != proj.ID || got.EnvironmentID != env.ID {
+		t.Errorf("tenancy = (org=%q, proj=%q, env=%q); want (%q, %q, %q)",
+			got.OrganizationID, got.ProjectID, got.EnvironmentID, org.ID, proj.ID, env.ID)
+	}
+}
+
+// TestServiceReaderGetServiceCrossTenantNotFound proves a service id
+// that belongs to another organization surfaces as a typed
+// apierr.NotFound through the reader's short-lived read-only
+// transaction, never as another tenant's row. The error must not echo
+// cross-tenant identifiers other than the caller-supplied id.
+func TestServiceReaderGetServiceCrossTenantNotFound(t *testing.T) {
+	t.Parallel()
+
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	orgA := seedOrg(t, db, f, "ReaderGetSvcCrossA")
+	orgB := seedOrg(t, db, f, "ReaderGetSvcCrossB")
+	projB := seedProject(t, db, f, orgB, "B")
+	envB := seedEnvironment(t, db, f, projB, "production")
+	svcB := seedService(t, db, f, envB, "api")
+
+	reader, err := store.NewServiceReader(s)
+	if err != nil {
+		t.Fatalf("NewServiceReader: %v", err)
+	}
+
+	_, err = reader.GetService(ctx, orgA.ID, svcB.ID)
+	if err == nil {
+		t.Fatalf("GetService(crossTenant) = nil; want apierr.NotFound")
+	}
+	var ye *yerr.Error
+	if !errors.As(err, &ye) || ye.Code != yerr.CodeNotFound {
+		t.Fatalf("err = %v (%T); want yerr CodeNotFound", err, err)
+	}
+	leaks := []string{projB.ID, envB.ID, envB.Slug, svcB.Slug}
+	msg := err.Error()
+	for _, n := range leaks {
+		if n != "" && strings.Contains(msg, n) {
+			t.Errorf("error leaks cross-tenant identifier %q: %v", n, err)
+		}
+	}
+}
+
+// TestServiceReaderGetServiceUnknownIDNotFound proves an unknown
+// service id (in the principal's own tenant) surfaces as the same
+// deterministic apierr.NotFound as a cross-tenant id — the response is
+// not a "does this service_id exist?" oracle.
+func TestServiceReaderGetServiceUnknownIDNotFound(t *testing.T) {
+	t.Parallel()
+
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	org := seedOrg(t, db, f, "ReaderGetSvcUnknownAcme")
+
+	reader, err := store.NewServiceReader(s)
+	if err != nil {
+		t.Fatalf("NewServiceReader: %v", err)
+	}
+
+	_, err = reader.GetService(ctx, org.ID, "svc_unknown")
+	if err == nil {
+		t.Fatalf("GetService(unknown) = nil; want apierr.NotFound")
+	}
+	var ye *yerr.Error
+	if !errors.As(err, &ye) || ye.Code != yerr.CodeNotFound {
+		t.Fatalf("err = %v (%T); want yerr CodeNotFound", err, err)
+	}
+}

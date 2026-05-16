@@ -14536,3 +14536,188 @@
     cover {EnvID=env_X} resource scopes would fail before it could
     regress a real customer.
 ---
+
+## 2026-05-16 - BE-0184
+- What was implemented: GET /v1/services/{service_id}, the bare
+  top-level lookup-by-id endpoint for the services surface — the
+  fourth and lowest level of Yalla's Organization -> Project ->
+  Environment -> Service hierarchy. Strucural sibling of BE-0154
+  (GET /v1/environments/{environment_id}).
+  - internal/controlplane/store/service.go: added
+    ServiceRepository.GetByID(ctx, q, organizationID, serviceID) and
+    ServiceReader.GetService(ctx, organizationID, serviceID). The
+    repository method is tenant-scoped at the SQL predicate
+    (organization_id = $1 AND id = $2) and surfaces NotFound for any
+    miss (cross-tenant, unknown, or torn-down id) — never another
+    tenant's row, never a 500 leaking the cause; the not-found
+    payload only names the service_id the caller already supplied.
+    The ServiceReader adapter composes GetByID inside a short-lived
+    read-only transaction (Store.Read), inheriting the persistence
+    layer's tenant-scoping guarantees for free.
+  - internal/controlplane/store/service_test.go: added four
+    integration tests against an isolated migrated Postgres — happy
+    path (verbatim projection + tenancy + Version=1), tenant scoping
+    (cross-tenant id returns NotFound, error leaks no cross-tenant
+    identifier), reader happy path, reader cross-tenant NotFound,
+    reader unknown-id NotFound. The cross-tenant leak guards check
+    for projB.ID / envB.ID / envB.Slug / svcB.Slug in the error
+    message.
+  - internal/controlplane/httpapi/services.go (new): added
+    errNoServiceReader sentinel, ServiceReader port, getServicePayload
+    DTO, serviceIDResolver, and getServiceHandler. The handler is
+    thin — read principal, call port, render through
+    environmentServiceOf into a yalla.output.v1 envelope. The wire
+    shape reuses environmentService (defined in
+    environment_services.go) verbatim so the (slug, id, kind,
+    version, timestamps) projection is single-source-of-truth — a
+    future column on store.Service is reviewed for its wire exposure
+    at one chokepoint.
+  - internal/controlplane/httpapi/services_test.go (new): 12
+    contract tests in package httpapi exercising the real
+    NewHandler + real policy engine (fake Authenticator + fake
+    ServiceReader only) — happy-path forwarding (org_id reaches the
+    reader from the principal, service_id reaches it from the path),
+    NotFound (404 + E_NOT_FOUND), cross-tenant behaves as NotFound,
+    unauthenticated 401 E_AUTH with reader-not-called proof, invalid
+    credentials 401 with no token echo + reader-not-called proof,
+    store outage 503 E_STORE_UNAVAILABLE with no raw cause leak, nil
+    reader 500 E_INTERNAL wiring guard, envelope shape lock (asserts
+    the documented field set against a generic decode), bearer-token
+    never-logged guard (slog over a bytes.Buffer), OpenAPI route
+    registered (operation_id=getService, action=service.read,
+    requires_auth=true, tag=services, single service_id path param,
+    resolver wired), and two serviceIDResolver tests pinning that it
+    builds {OrganizationID = principal.OrganizationID, ServiceID =
+    path service_id} with EnvironmentID and ProjectID both empty (the
+    load-bearing distinction from parent-scoped routes — the
+    bare-id path carries no parent_id, so the policy engine's
+    covers() rule will deny every scoped grant with a pinned
+    ProjectID at the boundary).
+  - internal/controlplane/httpapi/routes.go: registered the new
+    apiRoute under RequiresAuth=true,
+    RequiredAction=policy.ActionServiceRead, resolver=serviceIDResolver
+    (so a cross-tenant {service_id} is a 403 OutOfScope BEFORE the
+    handler runs for scoped-grant-only principals, and is a 404 at
+    the persistence boundary for org-wide principals — the wire
+    shape is "no oracle"). Added tagServices="services" OpenAPI tag
+    (first user of the services tag). The OpenAPI Description doc
+    is verbatim the BE-0154 environment-bare-id pattern adapted to
+    services — same hierarchy explainer, same support-cross-tenant
+    explainer, same scoped-grant covers() explainer, same "no
+    credential material on the wire" explainer.
+  - internal/controlplane/httpapi/server.go: NewHandler signature
+    gained `services ServiceReader` (one new positional arg
+    threaded right before `breakGlass`) and forwards it to
+    newRouteTable. Same single-arg insertion pattern BE-0163
+    documents.
+  - cmd/yalla-api/main.go: the production *store.ServiceReader (the
+    existing `environmentServices` variable) satisfies both the
+    EnvironmentServiceReader (for the LIST route) AND the new
+    ServiceReader port (for the bare-id GET route), so the wiring
+    passes the same value through both positional slots — no new
+    store.New<…>() call. Defense-in-depth: the production
+    *store.ServiceReader composes the same repositories in both
+    methods so a single constructor failure surfaces uniformly.
+- Files changed:
+  - internal/controlplane/store/service.go (added GetByID +
+    GetService)
+  - internal/controlplane/store/service_test.go (added five tests
+    for GetByID and GetService)
+  - internal/controlplane/httpapi/services.go (new)
+  - internal/controlplane/httpapi/services_test.go (new)
+  - internal/controlplane/httpapi/routes.go (tagServices, +1 route)
+  - internal/controlplane/httpapi/server.go (NewHandler +1 port)
+  - cmd/yalla-api/main.go (+1 arg to NewHandler call)
+  - 44 test files updated via a NewHandler/newRouteTable call-site
+    sweep (the three-pattern anchor: NewHandler-with-nil-trailing
+    pair, NewHandler-with-logger-trailing, newRouteTable-no-trailing,
+    plus three port-substituted outliers in
+    environment_services_test.go, environment_services_create_test.go,
+    and break_glass_test.go where the `reader`/`creator`/`ctl`
+    variable replaced the position-adjacent fake).
+- Verification run:
+  - gofmt -w . — no diffs
+  - goimports — not installed locally (documented; CI will catch
+    any import-order regressions)
+  - go mod tidy — clean
+  - go vet ./... — clean
+  - go test ./... — pass (httpapi 0.924s, store 0.945s, full ok)
+  - go test -race ./... — pass (httpapi 4.276s, store 2.609s,
+    quota 1.434s, worker 2.205s, full ok)
+- Remaining risks or follow-ups: BE-0185 (contract tests in a
+  dedicated file — already largely satisfied by services_test.go; the
+  PRD treats it as a separate story so the failing flag stands until
+  a dedicated review pass), BE-0186 (policy matrix for the same
+  endpoint — the next priority-1 story and the direct sibling of
+  BE-0156). BE-0186 inherits this story's serviceIDResolver, the
+  ServiceReader port, the route registration, and the
+  fakeServiceReader test fake — all already in place.
+- **Learnings for future iterations:**
+  - The bare-id lookup-by-id vertical for a deep resource (env, svc,
+    deployment) collapses to: store repo GetByID under
+    (organization_id, id), reader wrapper GetXxx wrapping it in a
+    short-lived Store.Read, narrow httpapi port (ServiceReader,
+    distinct from EnvironmentServiceReader so a handler change to
+    one doesn't ripple), bare-id resolver pinning only
+    OrganizationID + the resource's ID leg (no ProjectID leg, no
+    EnvironmentID leg — the load-bearing distinction from
+    parent-scoped resolvers), and the existing wire-shape projection
+    (environmentServiceOf for service). NewHandler/newRouteTable
+    grow ONE positional port at the tail of the relevant resource
+    group (right before `breakGlass`); the call-site sweep handles
+    the three anchor patterns plus a handful of port-substituted
+    outliers where a `reader`/`creator`/`ctl` variable sits in the
+    position the sweep anchors on. Forward-applicable to BE-0213
+    (GET /v1/deployments/{deployment_id}), and the same shape
+    underpins the PATCH/DELETE/POST sub-action stories that follow
+    on this resource.
+  - The ServiceReader port for the bare-id GET reuses the same
+    production *store.ServiceReader instance the parent-scoped
+    EnvironmentServiceReader uses. One *store.ServiceReader
+    satisfies both interfaces because the methods are structurally
+    distinct (GetService vs ListEnvironmentServices) and the
+    interface boundary is narrow per-handler — the wiring threads
+    the same value through both positional slots in cmd/yalla-api.
+    The HTTP boundary keeps the two interfaces SEPARATE (so a
+    handler change to one doesn't ripple through the other and so
+    fake replacement is per-route), but the production wiring
+    collapses them into one constructor and one read-only
+    transaction lifecycle. Forward-applicable to every future
+    parent-scoped vs bare-id pair (EnvironmentReader vs the future
+    EnvironmentByIDReader equivalent, ProjectReader vs the future
+    ProjectByIDReader equivalent, etc.).
+  - serviceIDResolver pins NO ProjectID leg and NO EnvironmentID
+    leg on the resource scope, even though the underlying
+    store.Service row carries both. This is intentional — the policy
+    boundary is built from the principal's HOME org and the PATH
+    service_id, NEVER from the row's parent ids (which the
+    authorize step has not yet read). The scoped-grant deny
+    property (environment-scoped Admin grant naming THIS service's
+    parent environment is denied) is structurally identical to
+    BE-0156's env-id-resolver shape and the same load-bearing
+    distinction applies: the engine's covers() rule is one-way, and
+    a grant scope pinning a ProjectID cannot cover a resource scope
+    that does not.
+  - First user of `tagServices = "services"`. Future GET
+    /v1/deployments/{deployment_id} will introduce `tagDeployments`;
+    future jobs, previews, backups endpoints each get their own
+    top-level tag. The convention from this story: a top-level
+    resource that owns its own bare-id route family gets its own
+    OpenAPI tag (singular, lower-kebab, listed in alphabetical
+    order in the tag-const block).
+  - The full call-site sweep across 44 test files was driven by a
+    three-pattern anchor list:
+    `fakeEnvironmentServiceReader{}, fakeEnvironmentServiceCreator{}, fakeBreakGlassController{}, nil, nil)`
+    -> ..., +fakeServiceReader{} between Creator and BreakGlass
+    (NewHandler trailing-nil-pair form);
+    `fakeEnvironmentServiceCreator{}, fakeBreakGlassController{}, logger, nil)`
+    -> +fakeServiceReader{} (NewHandler logger form);
+    `fakeEnvironmentServiceCreator{}, fakeBreakGlassController{})`
+    -> +fakeServiceReader{} (newRouteTable no-trailing form). The
+    three port-substituted outliers (the env_services suite, the
+    env_services_create suite, the break_glass suite) needed
+    targeted edits because they had `reader`/`creator`/`ctl` in
+    one of the positions the anchor matched. Forward-applicable
+    sweep mechanics for every future "+1 port at the tail of an
+    existing group" story.
+---

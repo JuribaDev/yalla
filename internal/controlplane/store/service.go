@@ -5,6 +5,8 @@ import (
 	"errors"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
 )
 
@@ -141,6 +143,40 @@ func (r *ServiceRepository) Insert(ctx context.Context, tx *Tx, s Service) (Serv
 	return created, nil
 }
 
+// GetByID returns the single services row identified by
+// (organizationID, serviceID), tenant-scoped at the SQL predicate. The
+// composite predicate is non-optional: a missing or cross-tenant
+// organizationID matches no row even when a service with the same id
+// exists in another tenant, so the response is never an oracle that
+// reveals another organization's service ids. A row that does not
+// exist — whether because it was never created, was destructively torn
+// down, or simply belongs to another tenant — surfaces as the same
+// typed apierr.NotFound, never as a 500 leaking the cause; the
+// not-found payload names only the service_id the caller already
+// supplied. A raw driver error surfaces as the typed
+// apierr.StoreUnavailable — the cause is wrapped for logging only,
+// never leaked into the customer-facing message.
+//
+// GetByID is the persistence half of GET /v1/services/{service_id};
+// the ServiceReader adapter composes it inside a short-lived read-only
+// transaction so the tenant boundary the predicate proves at the
+// database is inherited by the HTTP boundary for free.
+func (r *ServiceRepository) GetByID(ctx context.Context, q Querier, organizationID, serviceID string) (Service, error) {
+	row := q.QueryRow(ctx,
+		`SELECT `+serviceColumns+`
+		   FROM services
+		  WHERE organization_id = $1 AND id = $2`,
+		organizationID, serviceID)
+	s, err := scanService(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Service{}, apierr.NotFound("service", serviceID)
+	}
+	if err != nil {
+		return Service{}, apierr.StoreUnavailable(err)
+	}
+	return s, nil
+}
+
 // scanService scans one services row in serviceColumns order.
 func scanService(row scanRow) (Service, error) {
 	var s Service
@@ -189,6 +225,39 @@ func NewServiceReader(s *Store) (*ServiceReader, error) {
 		environments: NewEnvironmentRepository(),
 		services:     NewServiceRepository(),
 	}, nil
+}
+
+// GetService returns the single service identified by
+// (organizationID, serviceID), reading it inside a short-lived
+// read-only transaction. The read is tenant-scoped at the SQL leg, so
+// a cross-tenant or unknown service_id surfaces as a deterministic
+// apierr.NotFound — never as another tenant's row, and never as a 500
+// leaking the cause. A live service in the principal's own tenant
+// returns the persisted row verbatim. A datastore failure is
+// propagated as its own typed error.
+//
+// GetService is the persistence half of GET /v1/services/{service_id}
+// (BE-0184): the bare top-level lookup-by-id endpoint that does not
+// carry the parent project_id or environment_id in its path. The
+// handler authorizes on action service.read against the (principal
+// home organization, service_id) resource the resolver builds, and
+// trusts this method to keep the tenant boundary at the persistence
+// layer even when the policy resource scope cannot pin the parent
+// project_id or environment_id.
+func (r *ServiceReader) GetService(ctx context.Context, organizationID, serviceID string) (Service, error) {
+	var svc Service
+	err := r.store.Read(ctx, func(ctx context.Context, q Querier) error {
+		got, getErr := r.services.GetByID(ctx, q, organizationID, serviceID)
+		if getErr != nil {
+			return getErr
+		}
+		svc = got
+		return nil
+	})
+	if err != nil {
+		return Service{}, err
+	}
+	return svc, nil
 }
 
 // ListEnvironmentServices returns every service owned by
