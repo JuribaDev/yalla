@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
 	"github.com/JuribaDev/yalla/internal/controlplane/domain"
 	"github.com/JuribaDev/yalla/internal/controlplane/validate"
@@ -281,6 +283,13 @@ func (r *ServiceBackupRepository) Insert(ctx context.Context, tx *Tx, b ServiceB
 // in the store layer because the audit event is written from the same
 // *Tx as the desired-state row.
 const serviceBackupCreateAction = "backup.create"
+
+// serviceBackupRunAction is the immutable audit-event Action string
+// emitted when a service backup policy is manually triggered through
+// POST /v1/services/{service_id}/backups/{backup_id}/run. The
+// constant lives in the store layer because the audit event is
+// written from the same *Tx as the status flip the worker observes.
+const serviceBackupRunAction = "backup.run"
 
 // serviceBackupDefaultRetentionCount is the retention applied when the
 // caller does not supply one; the table's default is the same, so a
@@ -642,4 +651,249 @@ func validateServiceBackupSchedule(c *validate.Collector, field, value string) {
 			return
 		}
 	}
+}
+
+// GetByID returns the single service_backups row identified by
+// (organizationID, serviceID, backupID). The read is tenant scoped at
+// the SQL predicate: a cross-tenant (organization_id, service_id, id)
+// tuple matches no row even when a backup with the same id exists in
+// another tenant, so the response is never an oracle that confirms
+// another organization's backup ids. A missing row surfaces as the
+// typed apierr.NotFound the customer-facing endpoints render as 404;
+// the customer-facing message names the resource kind and the
+// requested id only — never the parent service or organization, both
+// of which are derived from the principal at the HTTP boundary and
+// would only confirm the caller's own identity.
+func (r *ServiceBackupRepository) GetByID(ctx context.Context, q Querier, organizationID, serviceID, backupID string) (ServiceBackup, error) {
+	row := q.QueryRow(ctx,
+		`SELECT `+serviceBackupColumns+`
+		   FROM service_backups
+		  WHERE organization_id = $1 AND service_id = $2 AND id = $3`,
+		organizationID, serviceID, backupID)
+	b, err := scanServiceBackup(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ServiceBackup{}, apierr.NotFound("service backup", backupID)
+	}
+	if err != nil {
+		return ServiceBackup{}, apierr.StoreUnavailable(err)
+	}
+	return b, nil
+}
+
+// MarkPending flips the service_backups row identified by
+// (organizationID, serviceID, backupID) into the pending state so the
+// worker takes the next transition on its next scheduling pass. The
+// row's version column is owned by the service_backups_bump_version
+// trigger from migration 0024 — MarkPending never writes it itself,
+// the trigger bumps it on every successful UPDATE — and updated_at is
+// refreshed by service_backups_set_updated_at, so the returned row
+// names the row's authoritative state after the write. A no-row
+// UPDATE (tenant tuple does not match an existing row) surfaces as
+// the typed apierr.NotFound — never a 500 leaking the cause —
+// because the customer-facing handler will already have proved the
+// row exists in the same *Tx through GetByID, so a no-row outcome
+// here is the deletion-race path. The repository is tenant-scoped at
+// the SQL predicate.
+func (r *ServiceBackupRepository) MarkPending(ctx context.Context, tx *Tx, organizationID, serviceID, backupID string) (ServiceBackup, error) {
+	if tx == nil {
+		return ServiceBackup{}, apierr.Internal(errors.New("store: ServiceBackupRepository.MarkPending called with a nil transaction"))
+	}
+	row := tx.QueryRow(ctx,
+		`UPDATE service_backups
+		    SET status = $4
+		  WHERE organization_id = $1 AND service_id = $2 AND id = $3
+		 RETURNING `+serviceBackupColumns,
+		organizationID, serviceID, backupID, ServiceBackupStatusPending)
+	updated, err := scanServiceBackup(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ServiceBackup{}, apierr.NotFound("service backup", backupID)
+	}
+	if err != nil {
+		return ServiceBackup{}, apierr.StoreUnavailable(err)
+	}
+	return updated, nil
+}
+
+// RunServiceBackupInput is the unvalidated input to
+// ServiceBackupService.Run. OrganizationID, ServiceID, and BackupID
+// name the backup-policy row whose manual run was requested; the
+// Actor* and correlation fields describe the authenticated principal
+// performing the request and are recorded verbatim on the audit
+// event. They are plain strings so the store layer takes no build
+// dependency on the policy or telemetry packages — the httpapi
+// handler, which already holds the resolved principal and the
+// request correlation, fills them in.
+//
+// OrganizationID is sourced from the principal's home organization
+// at the HTTP boundary (never from the request body or path), and
+// ServiceID and BackupID are sourced from the {service_id} and
+// {backup_id} PATH parameters; the run unit of work re-reads the
+// parent service and the backup row under
+// (OrganizationID, ServiceID[, BackupID]) before any mutation, so a
+// cross-tenant or unknown id surfaces as a deterministic
+// apierr.NotFound rather than a 500 or a silent success.
+//
+// The run request carries no caller-supplied body fields beyond the
+// path parameters: backup.run is a fire-and-forget signal that
+// targets a single backup-policy row and carries no caller-supplied
+// schedule, retention, or override. The worker is the authority for
+// the actual run — Run flips the row's status to pending so the
+// worker picks it up on its next scheduling pass and appends the
+// immutable audit record naming the actor; the worker subsequently
+// transitions the row to running, succeeded, or failed.
+type RunServiceBackupInput struct {
+	OrganizationID string
+	ServiceID      string
+	BackupID       string
+	ActorID        string
+	ActorKind      string
+	ActorOrgID     string
+	RequestID      string
+	CorrelationID  string
+}
+
+// Run records customer intent to trigger a manual run of the backup
+// policy named by (in.OrganizationID, in.ServiceID, in.BackupID) and
+// flips the row into the pending state so the worker takes the next
+// transition on its next scheduling pass. The unit of work runs
+// inside one transaction: confirm the parent service exists under
+// (OrganizationID, ServiceID), confirm the backup row exists under
+// (OrganizationID, ServiceID, BackupID), reject a disabled or
+// already-running policy with a deterministic 409, re-authorize
+// action backup.run against the parent service's organization on the
+// same *Tx (defense-in-depth against a grant change that landed
+// between the HTTP authorize and the desired-state write), flip the
+// row's status to pending, and append the immutable audit record.
+// Because every step shares the *Tx, a failure in any of them rolls
+// the others back: a partial run and an orphaned audit row are both
+// impossible, and a backup.run audit record can never exist without
+// the desired-state flip.
+//
+// The parent-service Get is tenant-scoped — it filters by
+// organization_id first — so a cross-tenant or unknown service_id
+// surfaces as a deterministic apierr.NotFound. The backup Get is
+// likewise tenant-scoped on the composite (organization_id,
+// service_id, id) tuple, so a backup id from another tenant or under
+// another service cannot be addressed. A backup whose enabled flag
+// is false cannot be manually run — the customer must first PATCH
+// the row to enabled=true; the rejection is a deterministic 409
+// rather than a silent flip that would later surprise the customer
+// when the worker refused the disabled policy. A backup whose
+// status is already 'running' cannot be re-triggered: the
+// concurrent-run rejection is a deterministic 409 too, never a 500
+// or a silent success that would double-enqueue work.
+//
+// The HTTP RequireAuth middleware is the authoritative authorization
+// gate for action backup.run (service-scoped via
+// serviceIDResolver). The store-layer Authorize call is
+// defense-in-depth against a grant change that landed between the
+// HTTP authorize and the desired-state write — it runs on the same
+// *Tx as the write so the in-transaction policy view sees exactly
+// the state the row commits against.
+func (svc *ServiceBackupService) Run(ctx context.Context, in RunServiceBackupInput) (ServiceBackup, error) {
+	c := validate.New()
+	organizationID := strings.TrimSpace(in.OrganizationID)
+	validate.ID(c, "organization_id", organizationID, domain.KindOrganization)
+	serviceID := strings.TrimSpace(in.ServiceID)
+	validate.ID(c, "service_id", serviceID, domain.KindService)
+	backupID := strings.TrimSpace(in.BackupID)
+	validate.ID(c, "backup_id", backupID, domain.KindServiceBackup)
+	if err := c.Err(); err != nil {
+		return ServiceBackup{}, err
+	}
+
+	// The audit record is filed under the actor's home organization —
+	// the tenant the principal authenticated into — while its
+	// resource id names the backup that was triggered. A missing
+	// actor organization is a wiring error (an authenticated request
+	// always carries one), not client input, so it is reported as
+	// Internal rather than a validation failure.
+	actorOrgID := strings.TrimSpace(in.ActorOrgID)
+	if actorOrgID == "" {
+		return ServiceBackup{}, apierr.Internal(errors.New("store: ServiceBackupService.Run requires an actor organization for the audit record"))
+	}
+
+	var triggered ServiceBackup
+	txErr := svc.store.Write(ctx, func(ctx context.Context, tx *Tx) error {
+		// Parent-service existence is tenant-scoped: a cross-tenant
+		// or unknown service_id surfaces as the typed apierr.NotFound
+		// the repository produces, never a 500 or a silent success.
+		if _, err := svc.services.GetByID(ctx, tx, organizationID, serviceID); err != nil {
+			return err
+		}
+		// Backup existence is also tenant-scoped: the composite
+		// (organization_id, service_id, id) predicate matches no row
+		// even when a backup with the same id exists in another
+		// tenant or under another service.
+		current, err := svc.backups.GetByID(ctx, tx, organizationID, serviceID, backupID)
+		if err != nil {
+			return err
+		}
+		// A disabled policy cannot be manually run: the worker would
+		// refuse the row, so refuse here with a deterministic 409
+		// rather than emit a no-op run whose outcome would later
+		// surprise the customer.
+		if !current.Enabled {
+			return apierr.Conflict("backup is disabled")
+		}
+		// A backup whose status is already 'running' cannot be
+		// re-triggered: a concurrent run would double-enqueue work
+		// the worker has already accepted.
+		if current.Status == ServiceBackupStatusRunning {
+			return apierr.Conflict("backup is already running")
+		}
+		// Defense-in-depth: the HTTP RequireAuth middleware already
+		// authorized action backup.run against the (home org,
+		// service_id) resource the path names. The in-transaction
+		// Authorize is a redundant check whose real adapter reads
+		// grant rows from the same *Tx as the desired-state write —
+		// so a grant change that landed between the HTTP authorize
+		// and this point still cannot let the write through.
+		if err := svc.authz.Authorize(ctx, tx, serviceBackupRunAction, organizationID); err != nil {
+			return err
+		}
+		updated, err := svc.backups.MarkPending(ctx, tx, organizationID, serviceID, backupID)
+		if err != nil {
+			return err
+		}
+		event := AuditEvent{
+			OrganizationID: actorOrgID,
+			ActorID:        strings.TrimSpace(in.ActorID),
+			ActorKind:      strings.TrimSpace(in.ActorKind),
+			Action:         serviceBackupRunAction,
+			ResourceKind:   string(domain.KindServiceBackup),
+			ResourceID:     updated.ID,
+			Decision:       AuditDecisionAllowed,
+			Reason:         "authorization granted for backup.run",
+			RequestID:      strings.TrimSpace(in.RequestID),
+			CorrelationID:  strings.TrimSpace(in.CorrelationID),
+			// The service_id is recorded verbatim because it is a
+			// structural identifier, never secret material. The
+			// status_before and status_after fields are closed-
+			// taxonomy enums (one of disabled/pending/running/
+			// succeeded/failed), so they are safe to record by
+			// construction. The display_name and schedule are
+			// caller-controlled free text and are NOT recorded as
+			// audit metadata for this action — Run does not edit
+			// either field, so neither needs to appear on the audit
+			// row to make the run reconstructable, and keeping them
+			// off the row keeps the audit trail free of any value
+			// the application layer cannot prove redaction-safe by
+			// construction.
+			Metadata: map[string]string{
+				"service_id":    updated.ServiceID,
+				"status_before": current.Status,
+				"status_after":  updated.Status,
+			},
+		}
+		if _, err := svc.audit.Append(ctx, tx, event); err != nil {
+			return err
+		}
+		triggered = updated
+		return nil
+	})
+	if txErr != nil {
+		return ServiceBackup{}, txErr
+	}
+	return triggered, nil
 }

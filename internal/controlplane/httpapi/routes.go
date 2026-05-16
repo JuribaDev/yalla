@@ -175,6 +175,8 @@ type backupHealthPayload struct {
 // serviceDomainReader backs GET /v1/services/{service_id}/domains.
 // serviceBackupReader backs GET /v1/services/{service_id}/backups.
 // serviceBackupCreator backs POST /v1/services/{service_id}/backups.
+// serviceBackupRunner backs POST
+// /v1/services/{service_id}/backups/{backup_id}/run.
 // serviceDomainCreator backs POST /v1/services/{service_id}/domains.
 // serviceDomainUpdater backs PATCH
 // /v1/services/{service_id}/domains/{domain_id}.
@@ -184,7 +186,7 @@ type backupHealthPayload struct {
 // table's metadata; a request that actually reaches a handler with a
 // nil dependency is reported as a typed internal error rather than a
 // misleading empty list or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, backupReporter backup.Reporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter, environmentCloner EnvironmentCloner, environmentGrants EnvironmentGrantReader, environmentGrantReplacer EnvironmentGrantReplacer, environmentVariables EnvironmentVariableReader, environmentVariableReplacer EnvironmentVariableReplacer, environmentServices EnvironmentServiceReader, environmentServiceCreator EnvironmentServiceCreator, services ServiceReader, serviceUpdater ServiceUpdater, serviceDeleter ServiceDeleter, serviceRestorer ServiceRestorer, serviceRestarter ServiceRestarter, serviceStarter ServiceStarter, serviceStopper ServiceStopper, serviceLogReader ServiceLogReader, serviceMetricsReader ServiceMetricsReader, serviceDomainReader ServiceDomainReader, serviceDomainCreator ServiceDomainCreator, serviceDomainUpdater ServiceDomainUpdater, serviceDomainDeleter ServiceDomainDeleter, serviceBackupReader ServiceBackupReader, serviceBackupCreator ServiceBackupCreator, serviceVariables ServiceVariableReader, serviceVariableReplacer ServiceVariableReplacer, deploymentCreator DeploymentCreator, deploymentLister DeploymentLister, deploymentGetter DeploymentGetter, deploymentCanceler DeploymentCanceler, deploymentRollbacker DeploymentRollbacker, breakGlass BreakGlassController) []apiRoute {
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, backupReporter backup.Reporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter, environmentCloner EnvironmentCloner, environmentGrants EnvironmentGrantReader, environmentGrantReplacer EnvironmentGrantReplacer, environmentVariables EnvironmentVariableReader, environmentVariableReplacer EnvironmentVariableReplacer, environmentServices EnvironmentServiceReader, environmentServiceCreator EnvironmentServiceCreator, services ServiceReader, serviceUpdater ServiceUpdater, serviceDeleter ServiceDeleter, serviceRestorer ServiceRestorer, serviceRestarter ServiceRestarter, serviceStarter ServiceStarter, serviceStopper ServiceStopper, serviceLogReader ServiceLogReader, serviceMetricsReader ServiceMetricsReader, serviceDomainReader ServiceDomainReader, serviceDomainCreator ServiceDomainCreator, serviceDomainUpdater ServiceDomainUpdater, serviceDomainDeleter ServiceDomainDeleter, serviceBackupReader ServiceBackupReader, serviceBackupCreator ServiceBackupCreator, serviceBackupRunner ServiceBackupRunner, serviceVariables ServiceVariableReader, serviceVariableReplacer ServiceVariableReplacer, deploymentCreator DeploymentCreator, deploymentLister DeploymentLister, deploymentGetter DeploymentGetter, deploymentCanceler DeploymentCanceler, deploymentRollbacker DeploymentRollbacker, breakGlass BreakGlassController) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -1772,6 +1774,48 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// persistence boundary.
 			resolver: serviceIDResolver,
 			handler:  createServiceBackupHandler(serviceBackupCreator),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodPost,
+				Path:           "/v1/services/{service_id}/backups/{backup_id}/run",
+				OperationID:    "runServiceBackup",
+				Summary:        "Run a service backup",
+				Description:    "Records customer intent to trigger a manual run of the backup-policy row named by ({service_id}, {backup_id}) and flips the row's status to 'pending' so the worker picks it up on its next scheduling pass. The request body is empty: backup.run is a fire-and-forget signal that targets a single backup-policy row and carries no caller-supplied parameters. Action backup.run is authorized against the (principal home organization, {service_id}) resource the path names before the handler runs: backup.run is a CapDeploy action, so the gate admits the principal's organization-wide deploy roles (owner, admin, developer, ci) and denies viewer (CapRead only), denies support (CapRead+CapSupport — support is a deliberate cross-tenant READ exception, never a deploy one). The path carries no parent project_id or environment_id, so the policy engine cannot pin those legs of the resource scope at authorization time — project-, environment-, and service-scoped grants are denied at the boundary by the engine's covers() rule (a grant with a pinned ProjectID cannot cover a resource with no ProjectID); principals whose only access is a scoped grant must use a parent-scoped route to address a service by its (project, environment, service) tuple. A cross-tenant or unknown service_id or backup_id reaches the persistence layer with the principal's home organization id and is rejected as a deterministic 404 by the tenant-scoped repository queries, never revealing another tenant's service or backup. A backup whose enabled flag is false is a deterministic 409 — a disabled policy cannot be manually run; the customer must PATCH the row to enabled=true first. A backup whose status is already 'running' is likewise a deterministic 409 — a concurrent run would double-enqueue work the worker has already accepted. The status flip and an immutable audit record naming the authenticated principal (Action 'backup.run', Metadata carrying service_id / status_before / status_after) commit in one transaction — a run audit record can never exist without the desired-state flip. The response carries no credential material: the schedule column is a cron-style expression, and the backup artefact bytes themselves never round-trip through this endpoint (they live in the worker / Dokploy / object-storage layer).",
+				Tags:           []string{tagServices},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionBackupRun),
+				SuccessStatus:  http.StatusAccepted,
+				PathParams: []openapi.PathParam{
+					{
+						Name:        "service_id",
+						Description: "The id of the service the backup policy belongs to.",
+					},
+					{
+						Name:        "backup_id",
+						Description: "The id of the backup policy to run.",
+					},
+				},
+				SuccessDescription: "The manual run was accepted and the backup row was flipped to pending.",
+			},
+			// serviceIDResolver authorizes action backup.run against
+			// the (principal home organization, {service_id}) resource
+			// the path names. The path carries no parent project_id, so
+			// the resource scope pins only OrganizationID and ServiceID
+			// — project-, environment-, and service-scoped grants are
+			// denied at the policy boundary by design (the engine's
+			// covers() rule), forcing scoped-grant-only principals onto
+			// parent-scoped routes. backup.run is a CapDeploy action
+			// and has no cross-tenant support exception — unlike CapRead
+			// actions, the support principal cannot trigger backups in
+			// another tenant. The organization id is taken from the
+			// principal's home org (never the caller — there is no
+			// organization id in the request body), so a cross-tenant
+			// service_id or backup_id still hits the tenant-scoped
+			// repository queries and surfaces as a 404 at the
+			// persistence boundary.
+			resolver: serviceIDResolver,
+			handler:  runServiceBackupHandler(serviceBackupRunner),
 		},
 		{
 			endpoint: openapi.Endpoint{

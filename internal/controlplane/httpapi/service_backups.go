@@ -33,6 +33,15 @@ var errNoServiceBackupReader = errors.New("httpapi: no service backup reader con
 // misleading 2xx with no side effect.
 var errNoServiceBackupCreator = errors.New("httpapi: no service backup creator configured")
 
+// errNoServiceBackupRunner is returned when POST
+// /v1/services/{service_id}/backups/{backup_id}/run is reached
+// without a ServiceBackupRunner wired into NewHandler. Like
+// errNoServiceBackupCreator it can only happen through a wiring
+// error — a programming mistake, not a client error — so the handler
+// reports it as a typed internal failure rather than serving a
+// misleading 2xx with no side effect.
+var errNoServiceBackupRunner = errors.New("httpapi: no service backup runner configured")
+
 // ServiceBackupReader is the narrow persistence port GET
 // /v1/services/{service_id}/backups depends on.
 // *store.ServiceBackupReader satisfies it in production; tests supply
@@ -370,6 +379,132 @@ func createServiceBackupHandler(creator ServiceBackupCreator) http.HandlerFunc {
 
 		apienvelope.WriteData(w, http.StatusCreated, requestID(r), createServiceBackupPayload{
 			Backup: serviceBackupOf(created),
+		})
+	}
+}
+
+// ServiceBackupRunner is the narrow persistence port POST
+// /v1/services/{service_id}/backups/{backup_id}/run depends on.
+// *store.ServiceBackupService satisfies it in production; tests
+// supply a fake. Keeping the dependency an interface keeps the
+// handler unit-testable without a real database — the concrete
+// orchestrator (the parent-service existence check, the tenant-
+// scoped backup existence check, the disabled/already-running
+// preconditions, the in-tx authorize, the status flip to pending,
+// and the audit append, all in one transaction) lives in the store
+// layer.
+//
+// The HTTP boundary is the authoritative authorization gate:
+// RequireAuth authorizes action backup.run against the (principal
+// home organization, {service_id}) resource the path names through
+// serviceIDResolver, so a request that reaches the runner has
+// already cleared the policy boundary. The store layer still
+// re-authorizes inside the same *Tx as the status flip —
+// defense-in-depth against a grant change that landed between the
+// HTTP authorize and the desired-state write.
+type ServiceBackupRunner interface {
+	Run(ctx context.Context, in store.RunServiceBackupInput) (store.ServiceBackup, error)
+}
+
+// runServiceBackupPayload is the data block of the POST
+// /v1/services/{service_id}/backups/{backup_id}/run success
+// envelope: the backup-policy row whose run was just enqueued, in
+// the same stable wire shape GET /v1/services/{service_id}/backups
+// and POST /v1/services/{service_id}/backups return. The row's
+// status is 'pending' on the way out — the worker will subsequently
+// transition it to running, succeeded, or failed — and the row
+// carries no credential material (a service_backups row stores
+// none; the actual backup artefact bytes live in the worker /
+// Dokploy / object-storage layer and never round-trip through this
+// endpoint).
+type runServiceBackupPayload struct {
+	Backup serviceBackup `json:"backup"`
+}
+
+// runServiceBackupHandler builds the POST
+// /v1/services/{service_id}/backups/{backup_id}/run handler. It
+// records the customer's manual-run intent through the
+// ServiceBackupRunner port — which flips the row to pending,
+// re-authorizes inside the transaction, and appends the immutable
+// audit record in one transaction — then renders the backup row in
+// a stable yalla.output.v1 envelope.
+//
+// RequireAuth gates the route on action backup.run through
+// serviceIDResolver before the handler runs and attaches the
+// resolved principal, so a request that reaches the handler with
+// no principal is a wiring error reported as a typed internal
+// error. backup.run is a CapDeploy action evaluated against the
+// (principal home organization, {service_id}) resource, so the
+// gate admits the principal's organization-wide deploy roles
+// (owner, admin, developer, ci) and denies viewer (CapRead only),
+// denies support (CapRead+CapSupport — support is a deliberate
+// cross-tenant READ exception, never a deploy one). The path
+// carries no parent project_id or environment_id, so the policy
+// engine cannot pin those legs of the resource scope at
+// authorization time — project-, environment-, and service-scoped
+// grants are denied at the boundary by the engine's covers() rule
+// (a grant with a pinned ProjectID cannot cover a resource with
+// no ProjectID); principals whose only access is a scoped grant
+// must use a parent-scoped route to address a service by its
+// (project, environment, service) tuple.
+//
+// The handler resolves the organization id from the authenticated
+// principal's home organization and the service and backup ids
+// from the {service_id} and {backup_id} PATH parameters — never
+// from the request body — so the tenant boundary is structural
+// here: there is no caller input that could point the write at
+// another tenant. A cross-tenant service_id or backup_id reaches
+// the persistence layer with the principal's home organization id
+// and is rejected as a deterministic 404 by the store-layer's
+// tenant-scoped existence checks (the same property GET
+// /v1/services/{service_id}/backups inherits), never disguised as
+// a 200 or a 403 that would confirm the foreign id's existence. A
+// disabled backup or one whose status is already 'running' is a
+// deterministic 409 — a manual run cannot land on a disabled
+// policy or double-enqueue against a worker-active run. The
+// principal and the request correlation identifiers are passed to
+// the runner so the audit record names the actor.
+//
+// The request body is empty: backup.run is a fire-and-forget
+// signal that targets one backup-policy row and carries no
+// caller-supplied parameters. Requests with a non-empty body are
+// accepted to keep the path simple; the worker derives all needed
+// context from the persisted backup row.
+func runServiceBackupHandler(runner ServiceBackupRunner) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if runner == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoServiceBackupRunner))
+			return
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		// OrganizationID is taken from the principal's home org
+		// (never the caller — the request body carries no fields at
+		// all), so a cross-tenant service_id or backup_id still hits
+		// the tenant-scoped repository queries and surfaces as a 404
+		// at the persistence boundary.
+		triggered, err := runner.Run(r.Context(), store.RunServiceBackupInput{
+			OrganizationID: p.OrganizationID,
+			ServiceID:      r.PathValue("service_id"),
+			BackupID:       r.PathValue("backup_id"),
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		apienvelope.WriteData(w, http.StatusAccepted, requestID(r), runServiceBackupPayload{
+			Backup: serviceBackupOf(triggered),
 		})
 	}
 }

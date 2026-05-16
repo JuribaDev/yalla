@@ -5692,7 +5692,7 @@
       ],
       "type": "endpoint-backup",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Endpoint belongs to the backup backend surface."
     },
     {
@@ -5711,7 +5711,7 @@
       ],
       "type": "test-backup",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Contract coverage for POST /v1/services/{service_id}/backups/{backup_id}/run."
     },
     {
@@ -5730,7 +5730,7 @@
       ],
       "type": "policy-backup",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Authorization coverage for POST /v1/services/{service_id}/backups/{backup_id}/run."
     },
     {
