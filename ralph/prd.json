@@ -5616,8 +5616,8 @@
       ],
       "type": "policy-backup",
       "priority": 1,
-      "passes": false,
-      "notes": "Authorization coverage for GET /v1/services/{service_id}/backups."
+      "passes": true,
+      "notes": "Policy-matrix coverage for GET /v1/services/{service_id}/backups: internal/controlplane/httpapi/service_backups_policy_test.go mirrors service_domains_policy_test.go (BE-0237). Three test funcs cover the six-role allow matrix (owner/admin/developer/viewer/ci/support via ReasonAllowedByRole), revoked + expired credentials (handler never reaches reader; body never leaks canonical backup data), wrong-org principal (cross-tenant service_id surfaces as 404 with principal's home-org id forwarded to reader; engine defence-in-depth pins ReasonDeniedCrossTenant for every non-support role and ReasonAllowedBySupport for support), and PRD grant-containment properties (sibling-project deny, env-grant does not imply prod, service-grant does not widen to parent secrets or unrelated services; project/env/service-scoped grants denied at the wire via ReasonDeniedOutOfScope; org-scoped Viewer grant allowed end-to-end as the load-bearing CapRead distinction from service.start). gofmt, go mod tidy, go vet ./..., go test ./..., go test -race ./... all green."
     },
     {
       "id": "BE-0250",
