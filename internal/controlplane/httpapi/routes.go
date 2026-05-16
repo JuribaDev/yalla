@@ -134,7 +134,7 @@ type versionPayload struct {
 // table's metadata; a request that actually reaches a handler with a
 // nil dependency is reported as a typed internal error rather than a
 // misleading empty list or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter, environmentCloner EnvironmentCloner, environmentGrants EnvironmentGrantReader, environmentGrantReplacer EnvironmentGrantReplacer, environmentVariables EnvironmentVariableReader, environmentVariableReplacer EnvironmentVariableReplacer, environmentServices EnvironmentServiceReader, environmentServiceCreator EnvironmentServiceCreator, services ServiceReader, serviceUpdater ServiceUpdater, serviceDeleter ServiceDeleter, serviceRestorer ServiceRestorer, serviceVariables ServiceVariableReader, breakGlass BreakGlassController) []apiRoute {
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter, environmentCloner EnvironmentCloner, environmentGrants EnvironmentGrantReader, environmentGrantReplacer EnvironmentGrantReplacer, environmentVariables EnvironmentVariableReader, environmentVariableReplacer EnvironmentVariableReplacer, environmentServices EnvironmentServiceReader, environmentServiceCreator EnvironmentServiceCreator, services ServiceReader, serviceUpdater ServiceUpdater, serviceDeleter ServiceDeleter, serviceRestorer ServiceRestorer, serviceVariables ServiceVariableReader, serviceVariableReplacer ServiceVariableReplacer, breakGlass BreakGlassController) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -1104,6 +1104,40 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// 404 at the persistence boundary.
 			resolver: serviceIDResolver,
 			handler:  listServiceVariablesHandler(serviceVariables),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodPut,
+				Path:           "/v1/services/{service_id}/variables",
+				OperationID:    "replaceServiceVariables",
+				Summary:        "Replace service variables",
+				Description:    "Replaces the service-scoped variables attached to the service named by the {service_id} path parameter in one transaction. The request body supplies the complete replacement set — every variable absent from the body is removed, every variable present is upserted on (organization_id, service_id, key), so a re-submission with the same set is structurally idempotent. An explicit empty array means \"clear every service-scoped variable\" — a meaningful (extreme) operation, never a silent no-op. Every field is validated before any database work; an invalid request (missing variables field, non-POSIX key, duplicate key, oversize value, invalid UTF-8, NUL byte in value) never opens a transaction. Action env.write is authorized against the (principal home organization, {service_id}) resource the path names before the handler runs: env.write is a CapWrite action, so the gate admits the principal's organization-wide write roles (owner, admin, developer, ci) while denying viewer and support (the latter is a deliberate cross-tenant READ exception, never a write one). The path carries no parent project_id, so the policy engine cannot pin the ProjectID leg of the resource scope at authorization time — project-, environment-, and service-scoped grants are denied at the boundary because the engine asks whether the grant scope (which pins ProjectID) covers the resource scope (which does not), never the reverse; principals whose only access is a scoped grant must use a parent-scoped route to address a service-scoped variable replace. env.write is a CapWrite action, so there is no cross-tenant support exception — a support principal cannot replace another tenant's variables. A cross-tenant or unknown service_id reaches the persistence layer with the principal's home organization id and is rejected as a deterministic 404 by the service existence check, never disguised as an empty success. The replace, the audit record, and the post-write re-read are committed in one transaction so a partial replace and an orphaned audit row are both impossible. The response carries the persisted variables in the same stable wire shape GET /v1/services/{service_id}/variables returns — every column projected onto the deterministic (key, id) order. Secret values are still redacted on the wire to the sentinel, so PUT cannot leak a secret value the customer just submitted; non-secret values project verbatim.",
+				Tags:           []string{tagServices, tagVariables},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionEnvWrite),
+				PathParams: []openapi.PathParam{{
+					Name:        "service_id",
+					Description: "The id of the service whose variables to replace.",
+				}},
+				SuccessDescription: "The variables of the service after the replace.",
+			},
+			// serviceIDResolver authorizes action env.write against the
+			// (principal home organization, {service_id}) resource the path
+			// names. The path carries no parent project_id, so the resource
+			// scope pins only OrganizationID and ServiceID — project-,
+			// environment-, and service-scoped grants are denied at the
+			// policy boundary by design (the engine's covers() rule),
+			// forcing scoped-grant-only principals onto parent-scoped
+			// routes. env.write is a CapWrite action and has no
+			// cross-tenant support exception — unlike CapRead actions, the
+			// support principal cannot replace variables in another tenant.
+			// The organization id is taken from the principal's home org
+			// (never the caller — there is no organization id in the
+			// request body), so a cross-tenant service_id still hits the
+			// tenant-scoped repository query and surfaces as a 404 at the
+			// persistence boundary.
+			resolver: serviceIDResolver,
+			handler:  replaceServiceVariablesHandler(serviceVariableReplacer),
 		},
 		{
 			endpoint: openapi.Endpoint{

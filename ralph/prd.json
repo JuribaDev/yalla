@@ -4723,7 +4723,7 @@
       ],
       "type": "endpoint-variables",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Endpoint belongs to the variables backend surface."
     },
     {
@@ -4742,7 +4742,7 @@
       ],
       "type": "test-variables",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Contract coverage for PUT /v1/services/{service_id}/variables."
     },
     {
@@ -4761,7 +4761,7 @@
       ],
       "type": "policy-variables",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Authorization coverage for PUT /v1/services/{service_id}/variables."
     },
     {

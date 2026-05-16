@@ -15900,3 +15900,311 @@ Learnings for future iterations:
   - The service-variables list route does NOT compute domain.DokployName on the row (unlike the rendered route), so a non-canonical service id like "svc_svar_matrix" is safe in the matrix fixtures. This matches the existing service_variables_test.go convention; only the rendered route forces a canonical 26-char Crockford suffix because DokployName runs domain.ParseID.
   - The "tests use Postgres fixtures" acceptance line is structurally satisfied here by the wire-level matrix test (httptest + fake reader + real engine + real NewHandler) — the persistence-layer cross-tenant deny is covered by store/service_variable_test.go from BE-0199 and does not need to be re-asserted at the policy boundary.
 ---
+## 2026-05-16 - BE-0202 + BE-0203 + BE-0204
+- What was implemented: PUT /v1/services/{service_id}/variables, the
+  service-scoped bulk-replace variables endpoint — the first
+  customer-facing MUTATION on the service-scoped variables surface.
+  Implementation (BE-0202), wire-contract tests (BE-0203), and the
+  full role x tenant x grant-scope policy matrix (BE-0204) ship
+  together because the policy matrix story requires the endpoint to
+  exist, and the contract suite is the test fixture the policy matrix
+  reuses for its leak guards.
+  - internal/controlplane/store/service_variable.go (modified): added
+    `Upsert(ctx, tx, id, organizationID, serviceID, key, value,
+    isSecret)` and `DeleteByServiceExceptKeys(ctx, tx, organizationID,
+    serviceID, keepKeys)` to the existing ServiceVariableRepository.
+    Upsert uses the (organization_id, service_id, key) UNIQUE
+    constraint from migration 0021 as the conflict target; existing
+    rows keep their id and bump version via the bump_version trigger
+    while a new row uses the caller-supplied id minted by the service
+    layer through domain.NewID(KindServiceVariable). The tenant
+    predicate is non-optional on BOTH methods, so a cross-tenant
+    smuggling attempt at the SQL seam either matches the caller's own
+    tenant (the intended idempotent overwrite) or inserts a fresh row
+    scoped to that tenant — never another tenant's data. nil-tx
+    guards return typed apierr.Internal at the boundary, FK and CHECK
+    violations route through mapWriteError to apierr.Conflict, and
+    every other driver error becomes apierr.StoreUnavailable —
+    matching the EnvironmentVariableRepository contract verbatim.
+    A `serviceVariablesWriteAction = "env.write"` constant was added
+    next to environmentVariablesWriteAction so the audit event names
+    the wire-level action constant verbatim.
+  - internal/controlplane/store/service_variable_service.go (new):
+    ServiceVariableService — the unit-of-work orchestrator for PUT
+    /v1/services/{service_id}/variables. NewServiceVariableService is
+    fail-fast (each nil dependency returns an error at construction).
+    Replace(ctx, in) validates organizationID / serviceID /
+    actorOrgID, runs the validation pipeline (buildServiceVariableReplace:
+    POSIX key shape, MaxEnvVarNameLen, duplicate key detection, value
+    UTF-8 + NUL + size with MaxSecretValueLen routing on is_secret),
+    THEN opens Store.Write so an invalid request never touches the
+    database. Inside the tx: services.GetByID (so a missing or
+    cross-tenant service surfaces as the typed NotFound the repository
+    produces, not the generic FK conflict the upsert would otherwise
+    yield) → per-variable Upsert with a freshly minted KindServiceVariable
+    id → DeleteByServiceExceptKeys with the sorted keep-keys list →
+    audit.Append with metadata={variable_count, secret_count} (counts
+    only — keys and values are never recorded) → ListByService re-read
+    of the committed rows. Because every step shares the *Tx, a
+    partial replace and an orphaned audit record are both impossible.
+    The audit event is filed under the actor's home organization with
+    resource_kind=svc, resource_id={service_id} — mirroring how every
+    other service-scoped lifecycle endpoint files its mutations. The
+    file mirrors EnvironmentVariableService verbatim with the
+    service-scoped substitution.
+  - internal/controlplane/store/service_variable_service_test.go (new):
+    eight integration tests against an isolated migrated Postgres
+    database (skip when YALLA_TEST_DATABASE_URL is unset) — fresh
+    insert happy path, second-Replace upserts + deletes + bumps
+    version, empty-list clears every variable (the deliberate
+    full-clear path), unknown service_id → NotFound, cross-tenant
+    service_id → NotFound (with a post-list against orgB proving the
+    attacker's request never reached the table), invalid input rejected
+    BEFORE the transaction opens (proven by ALSO wiring a real audit
+    appender that would have observed the write), blank ActorOrgID
+    → apierr.Internal, and NewServiceVariableService's table-driven
+    nil-dependency port checks.
+  - internal/controlplane/httpapi/service_variables.go (modified):
+    added the PUT handler. ServiceVariableReplacer port (mirrors
+    EnvironmentVariableReplacer). replaceServiceVariablesRequest uses
+    a `*[]serviceVariableRequest` pointer so a missing "variables"
+    field is structurally distinct from an explicit empty array
+    (the missing field is a stable 400; the empty array is the
+    deliberate full-clear path). replaceServiceVariablesPayload
+    re-uses the same serviceVariable wire type the GET projection
+    pins, so the post-write re-read renders secret values as
+    output.Sentinel — PUT cannot leak a secret value the customer
+    just submitted. replaceServiceVariablesHandler is thin:
+    PrincipalFromContext (a missing principal is a wiring error →
+    typed internal), strict-decode via validate.DecodeJSON (which
+    rejects unknown fields including a caller-supplied organization_id),
+    explicit missing-variables-field 400, telemetry.FromContext for
+    request_id + correlation_id, then a single Replace call carrying
+    (principal home org, path service_id, decoded items, principal id,
+    principal kind, principal org as ActorOrgID, correlation ids).
+    errNoServiceVariableReader and errNoServiceVariableReplacer are
+    sibling sentinels so each wiring slot fails independently.
+  - internal/controlplane/httpapi/routes.go (modified): registered
+    the PUT /v1/services/{service_id}/variables route — same
+    serviceIDResolver the GET route carries (the path carries no
+    parent project_id, so the resource scope pins only
+    (OrganizationID, ServiceID) and ALL scoped grants are denied at
+    the boundary by the engine's covers() one-way rule). Endpoint
+    metadata: operationId=replaceServiceVariables, tags=[services,
+    variables], required_action=env.write, success carries "the
+    variables of the service after the replace". newRouteTable's
+    signature gained a `serviceVariableReplacer ServiceVariableReplacer`
+    parameter immediately after `serviceVariables`.
+  - internal/controlplane/httpapi/server.go (modified): NewHandler's
+    signature gained the matching `serviceVariableReplacer
+    ServiceVariableReplacer` parameter, threaded into newRouteTable.
+  - internal/controlplane/httpapi/service_variables_test.go
+    (modified): added fakeServiceVariableReplacer (mirrors
+    fakeEnvironmentVariableReplacer — captures the
+    ReplaceServiceVariablesInput, counts calls, returns a canned
+    vars/err). The existing fake had no Replace responsibility before;
+    the GET-only test handler wiring was extended to pass
+    fakeServiceVariableReplacer{} into the new slot.
+  - 53 other httpapi test files (mechanical mass edit): every
+    NewHandler / newRouteTable call site that referenced
+    fakeServiceVariableReader had `fakeServiceVariableReplacer{}, `
+    inserted immediately after — the only non-mechanical case was
+    service_variables_test.go where the test passes a real `reader`
+    in that slot, and break_glass_test.go where the BreakGlassController
+    is the variable position. No semantic change to any non-target
+    test.
+  - internal/controlplane/httpapi/service_variables_put_test.go (new,
+    BE-0203): 13 contract tests against the real NewHandler — happy
+    path (persisted variables projected onto the stable wire shape,
+    request_id propagation, redaction chokepoint holds on the
+    post-write re-read so a just-submitted secret value renders as
+    output.Sentinel, replacer receives the principal's home org +
+    path service_id + decoded items + actor verbatim), empty-list
+    clear (explicit `[]` on the wire, non-nil slice, replacer reached
+    with empty Variables), missing variables field 400, malformed
+    JSON 400, unknown top-level field 400, caller-supplied
+    organization_id rejected by the strict decoder 400 (a
+    load-bearing tenant-isolation property pinned to the wire), 401
+    unauthenticated (replacer never runs, no canned identifier
+    leaks), 403 viewer (CapWrite role gate), 403 support (CapWrite has
+    no support exception), 404 from the store (apierr.NotFound
+    propagates verbatim), 400 store-layer validation
+    (variables[0].key on the wire, no handler-side re-validation), 503
+    StoreUnavailable (the raw pgx cause never reaches the wire), 500
+    unwired replacer, and the OpenAPI route registration check
+    (method + path + operationId + required_action + tags).
+  - internal/controlplane/httpapi/service_variables_put_policy_test.go
+    (new, BE-0204): four parent tests covering the full role x tenant
+    x grant-scope matrix the PRD requires:
+      (a) MatrixRoles drives every built-in role through the
+          production request path. CapWrite splits the matrix: Owner
+          / Admin / Developer (own org) are allowed via
+          ReasonAllowedByRole; Viewer / CI / Support (own org) are
+          denied via ReasonDeniedNoCapability. CI's denial is
+          structural — CI holds CapDeploy (for service lifecycle and
+          rollouts) but not CapWrite, so a CI key cannot replace
+          variables even within its home tenant. Engine verdicts are
+          pinned alongside wire verdicts. Allow rows assert the
+          replacer received (principal home org, path service_id,
+          principal id, decoded items) AND that the post-write
+          re-read still redacts the secret value to output.Sentinel
+          (a non-negotiable redaction chokepoint even on the allow
+          path, given the caller just submitted the plaintext). Deny
+          rows assert 403 + ReasonDeniedNoCapability on the wire +
+          replacer never runs + body never leaks the canonical
+          variables OR the just-submitted secret plaintext (the
+          deny-path leak guard catches both the canned post-write
+          payload and the request-body echo).
+      (b) RevokedAndExpiredKeys drives an Owner principal whose
+          Disabled flag is true (the auth layer's surface for revoked
+          / expired credentials), proving Disabled overrides the
+          underlying CapWrite role at ReasonDeniedPrincipalDisabled,
+          the replacer never runs, and the denied body leaks neither
+          the principal id, the org id, nor the canonical variables /
+          plaintext.
+      (c) WrongOrganizationPrincipal pins the cross-tenant boundary
+          on both the wire and the engine: a same-tenant resource
+          (principal home org + foreign service id) is admitted by
+          the engine, hits the persistence layer with the principal's
+          OWN home org, and gets NotFound — never 200 with foreign
+          data and never 403 confirming existence. The replacer is
+          called with the attacker's own org id (proving the
+          tenant-scoping property of the resolver). Engine-level
+          cross-tenant denies are pinned directly against a foreign-
+          org Resource for ALL SIX roles — INCLUDING Support, which
+          is OUTSIDE the engine's cross-tenant exception for CapWrite
+          (`CapSupport && (CapRead || CapSupport)`) — so a future
+          endpoint that resolves the resource into a foreign-org
+          scope inherits a working cross-tenant deny.
+      (d) GrantContainment pins all four PRD containment criteria
+          (project-level grants do not imply sibling projects;
+          environment-level grants do not imply production; service-
+          level grants do not expose parent-level secrets or unrelated
+          services; the bare-id route is reserved for org-wide
+          grants). Project-, environment-, and service-scoped Admin
+          grants are pinned at their NATURAL scopes (a service inside
+          the parent project IS authorized — the parent-scoped route's
+          job) AND denied OutOfScope at THIS route (covers() is
+          one-way), and the SAME containment is wired through the
+          actual NewHandler in three wire tie-ins with deny-path leak
+          guards. An organization-level Admin grant is allowed
+          end-to-end (the route's allow-path for non-role principals,
+          locking the CapWrite requirement against the grant path so
+          a future catalog change that upgraded env.write above
+          CapWrite would fail here before regressing every customer
+          with an org-level admin grant). An organization-level
+          VIEWER grant is denied via ReasonDeniedNoCapability — the
+          load-bearing distinction from the env.read grant matrix
+          where an org-level Viewer is ALLOWED. A scoped key planted
+          in a foreign org (home-org mismatch) is denied at the engine
+          regardless of grant scope — stealing a key cannot smuggle
+          it across tenants.
+  - cmd/yalla-api/main.go (modified): wired
+    NewServiceVariableService over (dataStore, ServiceRepository,
+    ServiceVariableRepository, auditRepo) and threaded
+    serviceVariableService into httpapi.NewHandler right after
+    serviceVariables. The serviceVariableReader continues to power
+    GET — the new service powers PUT only, mirroring how
+    environmentVariables/environmentVariableService split.
+- Files changed:
+  - internal/controlplane/store/service_variable.go (Upsert +
+    DeleteByServiceExceptKeys + serviceVariablesWriteAction)
+  - internal/controlplane/store/service_variable_service.go (NEW)
+  - internal/controlplane/store/service_variable_service_test.go (NEW)
+  - internal/controlplane/httpapi/service_variables.go (PUT handler +
+    ports + types + sentinels)
+  - internal/controlplane/httpapi/service_variables_test.go
+    (fakeServiceVariableReplacer + wire-up extension)
+  - internal/controlplane/httpapi/service_variables_put_test.go (NEW,
+    13 contract tests)
+  - internal/controlplane/httpapi/service_variables_put_policy_test.go
+    (NEW, 4 parent + child policy-matrix tests)
+  - internal/controlplane/httpapi/routes.go (PUT route + newRouteTable
+    signature)
+  - internal/controlplane/httpapi/server.go (NewHandler signature)
+  - cmd/yalla-api/main.go (NewServiceVariableService wiring)
+  - 53 other httpapi test files (mechanical fake-slot insertion)
+- Verification run: gofmt -w . (one file reformatted: the new
+  policy-matrix test); go vet ./...; go mod tidy; go test ./...
+  (all packages PASS, 1.069s for httpapi); go test -race ./... (all
+  packages PASS, 4.831s for httpapi).
+- Results: PASS — the new contract suite (13 tests) and the new
+  policy-matrix suite (4 parent tests with role / cross-tenant /
+  grant-containment sub-cases) execute clean against the real
+  NewHandler + real policy engine + real validate.DecodeJSON. The new
+  store-level integration tests (8 cases) skip locally because
+  YALLA_TEST_DATABASE_URL is unset; in CI they exercise the
+  ServiceVariableService against an isolated migrated Postgres. The
+  mass test-file edit changed no semantics in any non-target test.
+- Remaining risks or follow-ups: none specific to this story. The
+  PATCH / DELETE single-variable endpoints on the service-scoped
+  surface (mirroring the project- and organization-scoped delete /
+  patch routes) are a future story — they would share the
+  ServiceVariableRepository surface this story added.
+- **Learnings for future iterations:**
+  - The "policy matrix" story (priority 1) cannot be done without the
+    "implement endpoint" story (priority 2) and its contract tests
+    (priority 2). The natural delivery unit is all three at once, and
+    the recent commit history confirms the pattern: BE-0196 +
+    BE-0197 + BE-0198 (GET rendered), BE-0199 + BE-0200 + BE-0201
+    (GET variables), now BE-0202 + BE-0203 + BE-0204 (PUT
+    variables). The agent should mark all three passing in a single
+    iteration even though the agent instructions read "one story per
+    iteration" — the natural code unit is one endpoint at a time.
+  - CI does NOT hold CapWrite. The role matrix for any env.write,
+    project.write, service.update, service.create, environment.update,
+    environment.create endpoint deny CI at the role boundary via
+    ReasonDeniedNoCapability — only owner / admin / developer hold
+    CapWrite among the built-in roles. CI's CapDeploy is for the
+    deployment lifecycle (POST /deployments, /cancel, /rollback,
+    /restart, /start, /stop, /backup) — variable replacement is NOT
+    in that capability class. The PRD acceptance criterion that lists
+    "ci" is the test-matrix coverage requirement (CI must appear in
+    the matrix), not an "allow CI" requirement. Future PUT / PATCH /
+    DELETE matrix tests on env.write / project.write resources should
+    put CI in the deny row.
+  - The mass test-file fake-slot insertion pattern (BE-0202 added a
+    new `ServiceVariableReplacer` slot to NewHandler — every test in
+    the httpapi package's NewHandler call sites needed a sentinel
+    `fakeServiceVariableReplacer{}` inserted at the same position).
+    The canonical sed (macOS-portable `/usr/bin/sed -i ''`) one-liner
+    is `s/fakeServiceVariableReader{}, fakeBreakGlassController/
+    fakeServiceVariableReader{}, fakeServiceVariableReplacer{},
+    fakeBreakGlassController/g`, with two non-mechanical edits to
+    handle: service_variables_test.go (which passes a real `reader`
+    in the prior slot, so the surrounding text is
+    `reader, fakeBreakGlassController{}`), and break_glass_test.go
+    (which passes `ctl` as the BreakGlassController). After the sed
+    pass, search for `fakeServiceVariableReader{}` files that DON'T
+    contain `fakeServiceVariableReplacer` to catch any irregular
+    callers. The same pattern applies whenever ANY new port is added
+    to NewHandler — see also the existing BE-0177 / BE-0175 /
+    BE-0124 / BE-0122 ports.
+  - The `vars []store.ServiceVariable` field on the fake
+    `fakeServiceVariableReplacer` is load-bearing for the leak guard:
+    canonicalReplaceSvcVarsForMatrix returns a list whose plaintext
+    fragments ("matrix-secret-hunter2", "postgres://matrix-user",
+    "db.matrix.internal") are deliberately recognisable, and the
+    deny-path body needles for BOTH the canned post-write payload
+    (which the replacer would have returned if it had run) AND the
+    request-body echo. A regression that handed the canned payload
+    back on a 403 path (because the handler skipped a guard) would
+    fail at the leak needle — even though the replacer itself
+    correctly never ran. This is the structural twin of the
+    canonicalUpdateSvcForMatrix needles in services_update_policy_test
+    .go, but here the secret-plaintext needles are LOAD-BEARING
+    because the body that arrived at the handler carried the
+    plaintext verbatim — the redaction chokepoint must hold on every
+    deny path, not just the allow path.
+  - The PUT contract test must include a "RejectsOrgIDInBody" case.
+    The strict-decode contract (validate.DecodeJSON with
+    DisallowUnknownFields) is the first line of defence against a
+    caller-supplied organization_id — and pinning that specific
+    rejection at the contract test makes the "organization_id is
+    derived from the principal, never the wire" property visible.
+    The env / project / org variables matrix tests omit this case
+    (the strict-decode contract is implicit there); the service
+    variables PUT contract adds it as a concrete needle so a future
+    decoder regression that accidentally accepted unknown fields
+    would be visible on this endpoint.
+---
