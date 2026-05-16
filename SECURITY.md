@@ -69,6 +69,7 @@ defined in `.github/workflows/ci.yml`:
 | Vulnerability scan | `govulncheck ./...` | CI `security` job | Every push and PR |
 | Lint suite | `staticcheck ./...` and `golangci-lint run ./...` | CI `security` job | Every push and PR |
 | Dependency review | `actions/dependency-review-action` | CI on PRs | Every PR |
+| Container image hardening | `go test ./internal/release/... -run TestDockerfile` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Release config | `goreleaser check` and `goreleaser release --snapshot` | CI `goreleaser-check` job | Every push and PR |
 
 Before cutting a tag the maintainer additionally runs:
@@ -93,6 +94,59 @@ Go module, follow the checklist in
 expect the dependency-review CI job to gate the PR. New modules with
 unknown licenses or known high-severity advisories will be rejected
 automatically.
+
+## Container Image Hardening
+
+The production `Dockerfile` ships the `yalla-api` binary inside a
+`gcr.io/distroless/static-debian12:nonroot` runtime so a leaked or
+compromised image carries no shell, no package manager, no busybox,
+and no setuid binaries — only the API binary and the system CA
+bundle. The hardening posture is part of the public contract and is
+pinned by `internal/release/container_hardening_static_test.go`; a
+regression in any one of the following is caught at build time:
+
+- **Multi-stage build.** The Go toolchain, module cache, and source
+  tree never reach the runtime layer. A single-stage Dockerfile is
+  rejected.
+- **Distroless `nonroot` runtime.** The runtime stage's base image
+  is pinned to `gcr.io/distroless/static-debian12:nonroot` (UID/GID
+  65532). Debian/Ubuntu/Alpine slim runtimes are rejected because
+  they reintroduce a shell and a package manager.
+- **`USER nonroot:nonroot`.** The runtime stage MUST run as the
+  non-root user. A missing or partial (`USER nonroot`) directive is
+  rejected.
+- **Hardened build flags.** The builder stage MUST invoke
+  `go build` with `CGO_ENABLED=0` (static binary compatible with
+  the distroless static image), `-trimpath` (strip local filesystem
+  paths from the binary), and `-ldflags="-s -w"` (drop the symbol
+  and DWARF tables). Each missing flag is a separate regression.
+- **No `ADD <url>`.** Fetching arbitrary content at build time
+  without checksum verification is forbidden. Use `COPY` or a
+  `RUN curl ... | sha256sum -c` pattern.
+- **No baked secrets.** The Dockerfile MUST NOT declare ENV values
+  whose key names contain `TOKEN`, `PASSWORD`, `SECRET`, `API_KEY`,
+  `PRIVATE_KEY`, `SIGNING_KEY`, or `DSN`. Secrets are supplied by
+  the operator at runtime through environment variables, never
+  baked into the image.
+- **No package install in the runtime stage.** `apt-get`,
+  `apt install`, `yum install`, `dnf install`, `microdnf install`,
+  and `apk add` are rejected in the final layer. The builder stage
+  is free to install build dependencies; the runtime stage is not.
+- **`COPY --from=builder --chown=nonroot:nonroot`.** Every
+  cross-stage COPY into the runtime layer MUST chown to the
+  non-root user so the copied artefact is not owned by root.
+- **Explicit `ENTRYPOINT`.** The runtime stage MUST declare an
+  `ENTRYPOINT` (not just `CMD`) so `docker run -- <args>` cannot
+  replace the binary at launch.
+
+Operators are expected to run the image with `--read-only`,
+`--cap-drop=ALL`, and a non-host network. The Dockerfile's header
+comment documents the canonical `docker run` invocation.
+
+The local integration-test stack (`docker-compose.yml`) MUST pin
+the Postgres image to a major version tag (`postgres:16`, not
+`postgres` and not `postgres:latest`) and declare a `healthcheck`
+so the integration-test harness has a deterministic readiness gate.
 
 ## Disclosure Timeline (Best Effort)
 

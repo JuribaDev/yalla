@@ -52,3 +52,41 @@ same edit. The self-check
 fixtures through every matcher so over-tightening (a real upgrade
 trips the analyser) and under-tightening (a real regression slips
 through) are both caught at the AST.
+
+## Container image hardening (BE-0355)
+
+`container_hardening_static_test.go` pins the production container
+posture across three surfaces:
+
+- **`Dockerfile`** — parsed by a small in-test Dockerfile parser
+  (`parseDockerfile`) that joins backslash continuations, resolves
+  global ARG defaults, and groups instructions under their owning
+  FROM stage. The matchers assert: (1) multi-stage build present,
+  (2) runtime base image is `gcr.io/distroless/static-debian12:nonroot`
+  (ARG-expanded), (3) runtime stage carries `USER nonroot:nonroot`
+  (the canonical user+group form, not bare `USER nonroot`), (4) the
+  builder stage's joined RUN payload contains every member of
+  `requiredBuilderBuildFlags` (`CGO_ENABLED=0`, `-trimpath`, `-s -w`),
+  (5) `ENTRYPOINT` is declared in the runtime stage, (6) no
+  `ADD <url>` instruction exists in any stage, (7) no ENV key in any
+  stage matches a member of `forbiddenSecretEnvFragments`
+  (case-insensitive), (8) no RUN body in the runtime stage matches a
+  member of `forbiddenRuntimePackageInstalls`, (9) every
+  `COPY --from=...` in the runtime stage carries
+  `--chown=nonroot:nonroot`.
+- **`docker-compose.yml`** — the matchers assert the `postgres`
+  service's `image` matches `postgres:<digits>` (never `postgres` and
+  never `postgres:latest`) and a non-empty `healthcheck` is declared.
+- **`SECURITY.md`** — the test pins the verification-gates table row
+  AND the dedicated `## Container Image Hardening` section so the
+  public security posture stays in lockstep with the Dockerfile.
+
+Self-check (`TestContainerHardeningStaticAnalyzerDetectsRegressions`)
+drives every matcher with synthetic known-good AND known-bad
+Dockerfile + compose fixtures so over- and under-tightening are both
+caught. When tightening or widening the hardening contract (e.g. a
+new forbidden ENV fragment, a new required build flag, a different
+runtime base image), update the constants at the top of the test
+file AND the regression-fixture catalogue in the same edit. The
+package's existing `projectRoot` helper is reused so the test stays
+location-independent.
