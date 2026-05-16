@@ -1,0 +1,66 @@
+# .dockerignore — shrinks the build context and keeps secrets out of it.
+#
+# The build context is everything the daemon ships to the build process. Even
+# a multi-stage Dockerfile that only COPYs go.mod, go.sum, and the source tree
+# still streams the whole context to the daemon. Excluding noise here speeds
+# up builds and prevents secret-bearing files from ever entering the build
+# pipeline. This is defence in depth — .dockerignore is not an authorization
+# boundary; secrets must never be checked in.
+
+# Version-control state and editor noise.
+.git
+.gitignore
+.gitattributes
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Build outputs that must never land in the image. The builder stage produces
+# its own binary inside the container; a host-built one would defeat the
+# reproducibility -trimpath / -ldflags guarantee.
+bin/
+dist/
+yalla
+yalla.exe
+yalla-api
+yalla-api.exe
+yalla-worker
+yalla-worker.exe
+*.test
+*.exe
+
+# Test caches and coverage reports.
+coverage.txt
+coverage.out
+*.coverprofile
+
+# OS junk.
+.DS_Store
+Thumbs.db
+
+# npm wrapper runtime artefacts (downloaded at install time, not source).
+node_modules/
+
+# Local-only operator artefacts and credentials. Even though these should
+# never exist in a clean checkout, exclude them explicitly so a developer who
+# experiments locally cannot accidentally ship them.
+.env
+.env.*
+*.pem
+*.key
+*.p12
+secrets/
+.codex-cache/
+
+# Repo-tracked documentation and tooling that are not part of the runtime
+# image. The builder stage's `go build ./cmd/yalla-api` does not need any of
+# these.
+docs/
+ralph/
+outputs/
+Codex.dmg
+
+# The Dockerfile and .dockerignore themselves do not need to enter the build
+# context — but excluding them would break `docker build .` invocations that
+# resolve them by relative path. Keep them in.
