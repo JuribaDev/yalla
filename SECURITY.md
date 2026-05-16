@@ -71,6 +71,7 @@ defined in `.github/workflows/ci.yml`:
 | Dependency review | `actions/dependency-review-action` | CI on PRs | Every PR |
 | Container image hardening | `go test ./internal/release/... -run TestDockerfile` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | TLS and proxy header trust | `go test ./internal/release/... -run TestHTTPServerHardening` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| Admin endpoint isolation | `go test ./internal/release/... -run TestAdminEndpointIsolation` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Release config | `goreleaser check` and `goreleaser release --snapshot` | CI `goreleaser-check` job | Every push and PR |
 
 Before cutting a tag the maintainer additionally runs:
@@ -207,6 +208,73 @@ The reverse proxy MUST be configured to:
 4. **Use an internal network or loopback** to reach the API. The
    API listener is HTTP-only and MUST NOT be exposed to the
    public internet directly.
+
+## Admin Endpoint Isolation
+
+The Yalla control-plane API binary (`cmd/yalla-api`) deliberately
+ships **no `/debug/` surface**. There is no `/debug/pprof/*`, no
+`/debug/vars`, no `/debug/requests`, and no `/debug/events` route on
+the customer-facing listener — neither authenticated nor
+unauthenticated. Goroutine profiles, heap snapshots, command-line
+arguments, registered `expvar` variables, and live CPU profiles are
+load-bearing operator-only secrets; exposing any of them on a
+listener customers can reach is a build-blocking regression. The
+posture is pinned by
+`internal/release/admin_endpoint_isolation_static_test.go`; the
+gate rejects any of the following shapes at build time:
+
+- **No side-effecting debug imports.** Neither `cmd/yalla-api` nor
+  any production source file under `internal/controlplane/httpapi`
+  may import `net/http/pprof`, `expvar`, or
+  `golang.org/x/net/trace`. A blank import alone is sufficient to
+  register the surface on `http.DefaultServeMux`; the matcher
+  rejects every form of import (blank, named, aliased) of those
+  three paths.
+- **Private mux only.** `httpapi.NewHandler` MUST construct its own
+  mux via `http.NewServeMux()` and MUST NOT reference
+  `http.DefaultServeMux` anywhere. The private mux severs the API
+  listener from any default-mux registrations made elsewhere in the
+  binary (a transitive dependency, a hand-rolled experiment, a
+  future contributor's debugging helper). The matcher flags the
+  absence of `http.NewServeMux()` and any reference to
+  `DefaultServeMux` in the handler file.
+- **Explicit `http.Server.Handler`.** The API binary's
+  `*http.Server` composite literal in `cmd/yalla-api/main.go` MUST
+  set `Handler` to a non-nil value. A nil `Handler` falls back to
+  `http.DefaultServeMux` per the standard library's documented
+  contract, and that fallback would re-introduce the exposure the
+  private-mux contract disclaims. The matcher flags both the
+  missing field and an explicit `Handler: nil`.
+- **No `/debug/*` literal or `pprof.*` / `expvar.*` selector.** No
+  production source file under `cmd/yalla-api` or
+  `internal/controlplane/httpapi` may carry a `/debug/pprof`,
+  `/debug/vars`, `/debug/requests`, or `/debug/events` string
+  literal, name `http.DefaultServeMux`, or reference a `pprof.*` or
+  `expvar.*` selector. The file-wide pass is belt-and-braces for
+  the import scan: a regression that registers the routes through
+  a hand-rolled handler or a vendored fork would still leave the
+  path literal in source.
+
+The runtime evidence half is implicit: any `/debug/*` request that
+slips past the gates is intercepted by `notFoundRecorder` in
+`internal/controlplane/httpapi/server.go` and returned as the
+stable `yalla.error.v1` envelope with code `E_NOT_FOUND`, while
+`telemetry.RequestLogging` records the rejected request in the
+redacted structured log. The static analyser ensures we never
+register the surface in the first place; `notFoundRecorder` is the
+defence-in-depth wall.
+
+The set of legitimate operator-visible routes on the API listener
+is closed and documented in the OpenAPI document served at
+`GET /openapi.json`: `GET /healthz`, `GET /readyz`,
+`GET /healthz/backup`, `GET /version`, plus the customer-facing
+`/v1/*` surface. Any genuine operational telemetry (profiling,
+live heap snapshots, request traces) MUST be reached out-of-band
+from the API process — for example, by attaching `dlv` to a
+production replica from inside the cluster, or by exporting metrics
+through the OpenTelemetry pipeline that already ships from
+`internal/controlplane/telemetry`. The default-mux surface is not
+the right transport for any of those.
 
 ## Disclosure Timeline (Best Effort)
 

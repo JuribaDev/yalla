@@ -145,3 +145,78 @@ SECURITY.md "Slowloris guard" bullet in the same edit. The
 self-check sub-tests for each matcher MUST be extended with a
 fresh known-bad fixture in the same edit so over- and
 under-tightening of the analyser are both caught.
+
+## Admin endpoint isolation (BE-0357)
+
+`admin_endpoint_isolation_static_test.go` pins the operator-facing
+contract that the customer-facing API listener ships NO `/debug/*`
+surface — no pprof, no expvar, no `golang.org/x/net/trace`, no
+default-mux fallback. Four real-file matchers run alongside one
+synthetic self-check
+(`TestAdminEndpointIsolationStaticAnalyzerDetectsRegressions`):
+
+- **`cmd/yalla-api/main.go` + `internal/controlplane/httpapi/*.go`
+  (non-test files)** — `findForbiddenAdminImports` walks the AST's
+  import declarations and rejects any path in
+  `forbiddenAdminImports` (`net/http/pprof`, `expvar`,
+  `golang.org/x/net/trace`). The match is path-based, so blank
+  imports (`_ "net/http/pprof"`), named imports
+  (`pprof "net/http/pprof"`), and aliased imports
+  (`rogue "net/http/pprof"`) are all caught — the side-effect
+  registration fires regardless of the local alias. Test files
+  (`*_test.go`) are deliberately skipped via `adminProductionFiles`
+  so a future runtime regression test can simulate the threat
+  without tripping the gate.
+- **`cmd/yalla-api/main.go`** — `findAdminHandlerRegressions`
+  locates every `http.Server` composite literal (via
+  `isAdminHTTPServerCompositeLit`, the package-qualified
+  `http.Server` selector) and rejects: (1) the absence of the
+  `Handler` key entirely (the Go zero value falls back to
+  `http.DefaultServeMux`), and (2) `Handler: nil` explicitly (same
+  fallback, written down). The matcher targets only `http.Server`
+  literals so unrelated structs in main.go are untouched.
+- **`internal/controlplane/httpapi/server.go`** —
+  `findAdminPrivateMuxRegressions` runs two orthogonal passes
+  against the handler file. The first asserts a call to
+  `http.NewServeMux()` appears somewhere in the file; the absence
+  means the gate cannot prove the handler is built on a private
+  mux. The second walks every SelectorExpr and rejects any whose
+  `Sel.Name` equals `DefaultServeMux` — this catches
+  `http.DefaultServeMux.Handle("…", …)`, passing
+  `http.DefaultServeMux` as an argument, or returning it from a
+  function. Both passes are required because a regression that
+  builds a private mux AND ALSO hands routes to the default mux
+  would slip past either pass in isolation.
+- **`cmd/yalla-api/main.go` + `internal/controlplane/httpapi/*.go`
+  (non-test files)** — `findAdminDebugLiteralRegressions` runs the
+  belt-and-braces literal scan. The string-literal pass rejects any
+  literal containing a member of `forbiddenAdminLiterals`
+  (`/debug/pprof`, `/debug/vars`, `/debug/requests`, `/debug/events`,
+  `http.DefaultServeMux`); the selector pass rejects any
+  SelectorExpr whose root identifier is in
+  `forbiddenAdminSelectorPackages` (`pprof`, `expvar`). The literal
+  scan is case-sensitive (the stdlib paths are case-sensitive at
+  the HTTP layer); the selector scan catches an unaliased import
+  use (`pprof.Index`, `expvar.Handler`) even when the import
+  scanner would have missed a different import path.
+- **`SECURITY.md`** —
+  `TestAdminEndpointIsolationSecurityDocumented` pins the
+  `## Admin Endpoint Isolation` heading, the verification-gates
+  table row, and the canonical substrings (`net/http/pprof`,
+  `expvar`, `http.NewServeMux`, `/debug/`, and the test file path
+  itself). The substrings carry the load-bearing facts so a future
+  reader does not have to open the test file to learn the contract.
+
+When adding a new debug-shaped import that has a LEGITIMATE
+production purpose (this is intentionally rare — most diagnostic
+tooling belongs out-of-band), update `forbiddenAdminImports` AND
+the SECURITY.md "No side-effecting debug imports" bullet AND the
+self-check fixture catalogue in the same edit. When adding a new
+operator-visible route to the API listener (analogous to
+`/healthz/backup`), it goes through the same `apiRoute` table the
+customer-facing routes use — not a side-channel — so the gate
+keeps holding. The self-check sub-tests for each matcher MUST be
+extended with a fresh known-bad fixture in the same edit so over-
+and under-tightening of the analyser are both caught. The
+`adminProductionFiles` helper sorts its output so a regression in
+ANY production file in scope produces a deterministic diagnostic.
