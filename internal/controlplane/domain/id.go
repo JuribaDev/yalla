@@ -128,6 +128,15 @@ const (
 	// non-guessable id so per-row PATCH / DELETE stories have an
 	// addressable resource.
 	KindServiceDomain Kind = "sdom"
+	// KindServiceBackup is one row in the service-scoped backups surface —
+	// a backup policy (schedule, retention, on/off flag) and the most
+	// recent worker-driven run state bound to a single service. Like
+	// KindServiceVariable and KindServiceDomain, a backup is not a tenant
+	// root; the audit layer files backup mutations under the parent
+	// service's audit scope (resource_kind=svc), but a backup row carries
+	// its own stable, non-guessable id so per-row PATCH / DELETE / run
+	// stories have an addressable resource.
+	KindServiceBackup Kind = "sbkp"
 )
 
 // kinds is the authoritative set of valid resource kinds. It backs Kind.Valid
@@ -149,6 +158,7 @@ var kinds = map[Kind]struct{}{
 	KindEnvironmentVariable:  {},
 	KindServiceVariable:      {},
 	KindServiceDomain:        {},
+	KindServiceBackup:        {},
 }
 
 // Valid reports whether k is one of the canonical resource kinds.

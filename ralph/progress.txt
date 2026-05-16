@@ -18712,3 +18712,33 @@ Learnings for future iterations:
     counterpart of the "updater MUST never run on any deny path"
     invariant — same structure, more load-bearing reason.
 ---
+
+## 2026-05-16 - BE-0247
+- Implemented GET /v1/services/{service_id}/backups (LIST backup policies for a service).
+- Files changed:
+  - internal/controlplane/store/migrate/migrations/0024_service_backups.up.sql + down.sql — new service_backups table modelled on service_domains (composite FK to services, optimistic-concurrency version, set_updated_at + bump_version triggers, closed-set status CHECK).
+  - internal/controlplane/domain/id.go — added KindServiceBackup ("sbkp").
+  - internal/controlplane/store/service_backup.go — ServiceBackup struct, ServiceBackupRepository.ListByService (tenant-scoped, deterministic order, capped at 500), ServiceBackupReader composing ServiceRepository.GetByID + ServiceBackupRepository.ListByService inside a short-lived read-only tx.
+  - internal/controlplane/httpapi/service_backups.go — ServiceBackupReader port, serviceBackup wire DTO, listServiceBackupsPayload, listServiceBackupsHandler, serviceBackupOf projection.
+  - internal/controlplane/httpapi/routes.go — GET /v1/services/{service_id}/backups route on serviceIDResolver + ActionBackupRead; newRouteTable arg added.
+  - internal/controlplane/httpapi/server.go — NewHandler arg added + threaded into newRouteTable call.
+  - cmd/yalla-api/main.go — wired store.NewServiceBackupReader and passed to NewHandler.
+  - internal/controlplane/httpapi/service_backups_test.go — full contract test suite: success, empty-list-as-[], unauthenticated, NotFound, StoreUnavailable, cross-tenant-no-foreign-echo, missing-reader, OpenAPI route registered.
+  - Mechanical sweep: perl -i -pe 's/fakeServiceDomainDeleter{},/fakeServiceDomainDeleter{}, fakeServiceBackupReader{},/g' across 69 httpapi test files (119 call sites total). One non-literal call site (service_domains_delete_test.go where the last positional arg was bound to a local `deleter` variable) was swept with a second regex on `fakeServiceDomainUpdater{}, deleter,`.
+- Verification run:
+  - gofmt -w . — applied (re-aligned field widths in service_backup.go and service_backups_test.go).
+  - goimports — NOT installed in this environment (documented).
+  - go mod tidy — clean.
+  - go vet ./... — exit 0.
+  - go test ./... — exit 0 across all 38 test packages.
+  - go test -race ./... — exit 0 across all 36 test packages.
+- Remaining risks / follow-ups:
+  - BE-0248 (contract tests) and BE-0249 (policy matrix) for the same endpoint remain passes: false. The contract test file I added covers most of BE-0248's AC (envelope, request_id, OpenAPI registration, unauthenticated, not-found, happy path, redaction) but does NOT cover the full role x grant-scope policy matrix that BE-0249 specifies (owner/admin/developer/viewer/ci/support/revoked/expired/wrong-org x project/env/service-scoped grant denials). The structural template is service_domains_policy_test.go (~660 lines).
+  - The endpoint exposes a placeholder backup row shape (status, last_run_at, last_succeeded_at). The real worker that transitions status from pending -> running -> {succeeded, failed} lands in BE-0253 (POST /backups/{backup_id}/run) and the provisioning worker stories beyond.
+- **Learnings for future iterations:**
+  - Bare-id read endpoint for a service-deep resource is now THREE consistent instances under serviceIDResolver: logs (BE-0229-0231), metrics (BE-0232-0234), domains (BE-0235-0237). Backups (BE-0247-0249) is the fourth — same shape, same mechanical sweep recipe (insert one positional port after the last service-* port, perl-anchored on the IMMEDIATELY PRECEDING fake type literal). The pattern handles 119 call sites in one regex pass.
+  - The non-literal call site case (anchor preceded by a local variable name, not the bare struct literal) needs a second targeted regex on `fakeXXX{}, varname,`. service_domains_delete_test.go had ONE such site — the variable was `deleter`. Future arity bumps that pass through this file will need the same one-line follow-up sweep.
+  - The contract test file does NOT inherit the BE-0235 `listServiceDomainsSuccessEnvelope` shape (it's package-private to its declaring file but accessible to other test files in the same package). For uniformity, each LIST endpoint defines its OWN test-side envelope shape + test-row struct + decode helper + handlerFor helper + happy-path fixture. Reusing the domain helpers would create coupling; the test files are intentionally parallel siblings.
+  - Status column was added now (instead of in a later worker story) so the LIST wire shape never changes when the worker lands — the current LIST returns rows with status='pending' / 'disabled', and BE-0253 will only transition existing rows.
+  - The optional last_run_at / last_succeeded_at columns were modelled as nullable timestamptz on the DB side and *time.Time pointers on the Go side. They render on the wire as empty strings (not as JSON null) when nil — keeping the wire shape uniform with the always-present created_at / updated_at fields. An agent does not need to special-case null-vs-empty.
+---
