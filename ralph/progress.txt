@@ -1,4 +1,46 @@
 ## Codebase Patterns
+- Read-endpoint contract-test triple (BE-0095/BE-0101 pattern,
+  internal/controlplane/httpapi/{limits_get_contract_test.go,
+  usage_get_contract_test.go}; structural template for every
+  P=2 "Add contract tests for GET .../{org_id}/X" story whose
+  endpoint shape is "{org_id} path param + no body + no query +
+  list response with the StoreUnavailable dependency-failure
+  path"). Three named tests close the contract gaps the base
+  *_test.go + *_policy_test.go pair leaves open: (1) "server
+  writes response data only through ResponseWriter" — wraps the
+  served request in captureProcessOutput, asserts os.Stdout
+  AND os.Stderr are empty, AND that the structured logger sink
+  is non-empty (a regression to no-logging would surface here),
+  AND that the response body still carries the seeded payload
+  (the data path must work even with stdout/stderr capture in
+  effect). Not parallel — captureProcessOutput swaps the global
+  os streams. (2) "request log redacts bearer token" — two
+  parallel subtests (success + authorization-failure where the
+  authorization-failure leg uses a Disabled-flagged principal
+  AND a reader whose List path errors if invoked, so any logged
+  reader-error cannot be the leak source); each asserts the
+  bearer credential constant does not appear in the log buffer
+  nor in the response body. Logger level = LevelDebug so a
+  future debug-level log addition is also captured. (3) "error
+  envelope does not leak dependency cause" — wraps a fixed
+  cause string carrying a bare datastore address
+  ("connection refused dialing 10.0.0.5:5432") in
+  apierr.StoreUnavailable, asserts 503 / E_UNAVAILABLE / non-
+  empty stable Message / cause string absent / host "10.0.0.5"
+  absent from the body. Probe bytes are intentionally identical
+  across sibling contract tests so the invariant is a single
+  closed regression set, not a per-endpoint variant. The new
+  helper this pattern requires is a "WithLogger" clone of the
+  existing handler-builder that swaps the second-to-last
+  NewHandler nil slot for the caller-supplied *slog.Logger —
+  identical edit across every read endpoint, because the logger
+  seam lives at the same position in NewHandler's parameter
+  list regardless of which reader port the route depends on.
+  Forward-applicable verbatim to BE-0104 audit-events, BE-0107
+  variables-list, and every future GET .../{org_id}/* read
+  endpoint contract-test story; the only per-story knobs are
+  the reader port type, the fake reader's field name, and the
+  envelope decoder.
 - Log-redaction fuzz harness, single-test runtime-only variant (BE-0359 pattern, internal/output/redact_fuzz_test.go + SECURITY.md "## Log Redaction Fuzzing" section + internal/output/AGENTS.md "Log redaction fuzzing (BE-0359)" subsection; FIRST worked instance of the single-test runtime-only shape called out in the BE-0344 pattern's closing line — applies to verification stories whose invariant is a runtime contract with NO static analog, e.g. log redaction fuzzing, idempotency replay, chaos tests for timeouts). Six load-bearing rules: (1) FUZZ-MARKER design — when proving a structural redaction rule scrubs the value-half of a transport pattern, bracket the fuzz-supplied value with a unique fixed marker (`"FUZZAUTHMARKERXYZ"`, `"FUZZQRYMARKERZYX"`) and assert the marker never appears in the redacted output. The marker is the leak detector, independent of the value's bytes. Asserting that the value-bytes do not appear false-positives whenever the value happens to equal a substring of the test's static suffix (e.g. `"example"` if the test constructs `Host: example.com`). The marker pattern is reusable for ANY future fuzz target that proves "structural rule X scrubs the value half of transport Y" — cookies, refresh tokens, future header/query patterns. (2) REGEX-VALUE-CLASS gotcha — Go's `regexp` `\s` is exactly `[\t\n\f\r ]`; vertical-tab (`\v`) is NOT in `\s` but form-feed (`\f`) IS. When constructing a fuzz value that must traverse a regex value class without being cut short, strip every character in the regex's exclusion set including every member of Go's `\s`. The first revision missed `\f` and a seed containing it ended the regex mid-value, surviving the marker bracket and producing a false-positive leak. (3) DEFENCE-IN-DEPTH interactions — when two structural rules can both fire on a fuzz value (e.g. a query value containing `AUTHORIZATION:` triggers the bearer regex which eats the rest of the URL), assert ONLY the safety property (marker absent), NOT cosmetic properties (non-secret params survive). Document the interaction in the test file so a future reader understands why the survival assertion is absent. (4) SENTINEL-OVERLAP scope-out — `Redactor.Redact` uses `strings.ReplaceAll(s, secret, Sentinel)`; if `secret` is a substring of `Sentinel` (e.g. `"REDA"` inside `"[REDACTED]"`), the second pass rewrites the freshly-inserted sentinel substring and the function is NOT idempotent. Skip these inputs in fuzz AND pin the exclusion in a regression test (`TestRedactor_FuzzScopeExclusionsAreReal`) so a future redactor fix (single-pass regex substitution that does not re-scan substituted text) deliberately breaks that test and forces a coordinated update to the fuzz scope, the SECURITY.md section, and the AGENTS.md note. (5) SEED-CORPUS vs `-fuzz` — `go test ./...` runs every seed in `f.Add` once, so the seed corpus is the regression net every commit exercises; `-fuzz` is operator-opt-in. When adding a new redaction rule, the worked pattern is: append a seed input to `redactFuzzSeeds` that triggers the new rule, add a fuzz target if the rule has a distinct structural shape, and update both the AGENTS.md and SECURITY.md sections at the same time. (6) `-fuzztime` SHUTDOWN quirk — `go test -fuzz=… -fuzztime=5s` with the default 16 workers sometimes reports `context deadline exceeded` at shutdown; this is a harness-internal timing quirk, not a real fuzz failure (no `testdata/fuzz/…` corpus file is written). Re-running with `-parallel=2` makes the shutdown cleaner. Forward-applicable to any future security-verification story whose invariant has no AST shape to gate (BE-0360 environment-variable redaction if the rule is purely "the variables service MUST pass every rendered value through the redactor before logging" with no AST shape; BE-0363 rate-limit bypass resistance; chaos-tests for timeouts; idempotency replay).
 - Admin endpoint isolation static-pin pattern (BE-0357, internal/release/admin_endpoint_isolation_static_test.go + SECURITY.md "## Admin Endpoint Isolation" section AND a new row in the Required Verification Gates table + internal/release/AGENTS.md "Admin endpoint isolation (BE-0357)" subsection; SECOND instance of the BE-0356 Go-source-file variant of the BE-0355 single-test-file template applied to ENTIRE-DIRECTORY-OF-SOURCE-FILES rather than a single file — structural template for ANY future security-verification story whose invariant is 'no production source under directory D may import package P, name selector S, or carry literal L'). Eight load-bearing rules: (1) The test file uses `package release_test` (NOT `package release`) so the canonical `projectRoot(t)` helper from release_test.go links — same gotcha as BE-0356, every static-pin test in internal/release MUST follow this convention. (2) The directory scan is bounded by a SINGLE small helper (`adminProductionFiles(t, root) -> []string`) that returns ONLY non-`_test.go` `.go` files plus the entry binary, sorted for deterministic diagnostics; test files are deliberately skipped because a future runtime regression test needs to mention the threat without tripping the gate. (3) The import scan parses with `parser.SkipObjectResolution|parser.ImportsOnly` (fast; ignores function bodies), the literal/selector scan parses with `parser.SkipObjectResolution|parser.ParseComments`; mixing modes by matcher is the right call when the matcher's needs differ. (4) Closed sets of forbidden imports (`net/http/pprof`, `expvar`, `golang.org/x/net/trace`), forbidden selector roots (`pprof`, `expvar`), and forbidden literals (`/debug/pprof`, `/debug/vars`, `/debug/requests`, `/debug/events`, `http.DefaultServeMux`) at the top of the test file — every set is closed, every member is named in SECURITY.md, every set extension is a deliberate two-file edit. (5) The http.Server `Handler` field is pinned by PRESENCE (omission falls back to DefaultServeMux per the stdlib docs) AND an explicit `Handler: nil` is rejected with the same diagnostic — both shapes are functionally equivalent and must both fail the gate. (6) The private-mux contract on `internal/controlplane/httpapi/server.go` is TWO orthogonal passes: a presence assertion (`http.NewServeMux` call must appear) AND a forbidden-reference scan (`DefaultServeMux` selector must not appear). Both are required — a regression that builds a private mux AND ALSO hands routes to the default mux would slip past either pass in isolation. (7) SECURITY.md gets a dedicated section heading (`## Admin Endpoint Isolation`), a verification-gates table row keyed on `-run TestAdminEndpointIsolation`, and a closed list of canonical substrings that name every forbidden import path BY NAME so a reader does not need to open the test file to learn the contract. (8) The runtime evidence half is implicit (the existing `notFoundRecorder` returns the stable `yalla.error.v1` envelope for any `/debug/*` request) — same single-test-file shape as BE-0355 and BE-0356. Forward-applicable to: any future security-verification story whose invariant is 'no production source file under directory D may carry shape X', including future stories for forbidden environment-variable echoes, forbidden log-format strings, forbidden cipher-suite literals, or forbidden file-scheme URL literals.
 - TLS and proxy header trust static-pin pattern (BE-0356, internal/release/http_server_hardening_static_test.go + SECURITY.md "## TLS Termination and Proxy Header Trust" section AND a new row in the Required Verification Gates table + internal/release/AGENTS.md "TLS and proxy header trust" subsection; FIRST instance of the BE-0355 single-test-file template applied to GO SOURCE FILES instead of declarative manifests; structural template for ANY future security-verification story whose invariant lives in (a) the construction shape of a typed struct literal in production Go code AND (b) the closed allow-list of string literals consulted in a designated function body). Six load-bearing rules: (1) The test file MUST use `package release_test` (NOT `package release`) so the canonical `projectRoot(t)` helper from release_test.go is in scope — the other static-pin tests in internal/release follow the same convention and a mismatched package gives an undefined-symbol build error at link time. (2) The struct-literal scan uses a package-qualified type selector helper (`isHTTPServerCompositeLit` matches a SelectorExpr with X=`http`, Sel=`Server`) so unrelated structs in the same source file are not scanned. Two closed sets ride on this matcher: `requiredHTTPServerFields = {ReadHeaderTimeout}` (every literal MUST include them, missing field = regression) and `forbiddenAPITLSStructFields = {TLSConfig, TLSNextProto}` (presence = regression). (3) The closed-set string-literal scan needs TWO ORTHOGONAL PASSES: a scoped pass on the named function body (`ClientIP` here — every `r.Header.Get(...)` literal must be in `allowedProxyHeaderLiterals` case-sensitively) AND a file-wide pass on every BasicLit in the file (no `forbiddenProxyHeaderLiterals` literal anywhere, case-insensitively). One pass is insufficient because a regression could land in a sibling helper added later; the file-wide pass catches that. Both passes share the same diagnostic prefix so operators see a consistent error format. (4) The scoped pass MUST also assert a required-identifier presence (`RemoteAddr` here — the fallback chain) AND emit a single 'missing function' hit if the named function is absent entirely, so the gate cannot pass silently when its target is removed by refactor. (5) SECURITY.md is the human-facing co-contract: the test pins (a) a verification-gate row in the Required Verification Gates table (with the `-run <Prefix>` selector — use a single shared test-function name prefix like `TestHTTPServerHardening` so one selector covers all four tests) AND (b) a dedicated section heading AND (c) a closed list of canonical substrings (operator expectations, the closed allow-list of headers BY NAME so a reader cannot mistake the policy, the load-bearing field name like `ReadHeaderTimeout`, and the test file path itself as the link to the enforcement). Watch line breaks in SECURITY.md substrings — a typed prose paragraph reflows and the apostrophe in `operator's` can land on its own line, breaking `strings.Contains`; either rewrap to keep the canonical phrase on a single line (preferred) or split into shorter pinned substrings. (6) The self-check sub-test feeds known-good AND known-bad synthetic fixtures through every matcher — for the struct-literal scan, every required field AND every forbidden field AND every forbidden call selector gets its own isolated regression fixture, plus a multiple-regressions fixture that confirms hits compose additively (e.g. missing-field + forbidden-field + forbidden-call = 3 hits). Forward-applicable to: any future security-verification story whose invariant is 'this typed struct literal in production code MUST/MUST NOT carry field X' or 'this named function MUST consult only allow-listed string literals' (e.g. middleware composition order pins, context-key allow-lists, telemetry attribute redaction key allow-lists, future proxy-trust expansions for X-Forwarded-Proto or RFC 7239 `Forwarded` if Yalla ever adopts them).
@@ -25732,4 +25774,103 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     can mirror BE-0359's single-fuzz-file +
     SECURITY.md section + AGENTS.md subsection
     layout.
+---
+
+## 2026-05-17 - BE-0101
+- What was implemented: contract test coverage for GET
+  /v1/organizations/{org_id}/usage — the three remaining
+  contract-test criteria that usage_test.go (BE-0100) and
+  usage_policy_test.go (BE-0102) do not already assert directly.
+  - internal/controlplane/httpapi/usage_get_contract_test.go (new):
+    structural twin of limits_get_contract_test.go (BE-0095). Adds
+    one new helper (listUsageHandlerForWithLogger — clone of
+    listUsageHandlerFor with the second-to-last NewHandler nil slot
+    swapped for the caller-supplied *slog.Logger) plus three tests:
+    (1) TestListUsageServerWritesResponseDataOnlyToResponseWriter —
+    captureProcessOutput pins that the served request writes
+    nothing to os.Stdout/os.Stderr and the payload is carried by
+    the http.ResponseWriter alone; the structured logger writes to
+    its own buffer and must not be empty (a regression to
+    no-logging would surface here). (2)
+    TestListUsageRequestLogRedactsBearerToken — two parallel
+    subtests (success path with the owner principal + authorization-
+    failure path with a Disabled-flagged owner principal) prove the
+    bearer credential never appears in the structured log nor in the
+    response body. The deny leg uses a fakeUsageReader whose
+    ListOrganizationUsage path errors if invoked, so any logged
+    "reader error" cannot be the leak source — the deny short-
+    circuits at policy. (3)
+    TestListUsageErrorEnvelopeDoesNotLeakDependencyCause — wraps a
+    cause string carrying a bare datastore address
+    ("connection refused dialing 10.0.0.5:5432") in
+    apierr.StoreUnavailable, then pins that the rendered error
+    envelope returns 503, code E_UNAVAILABLE, a non-empty stable
+    Message, AND neither the cause string nor the bare host "10.0.0.5"
+    appears in the response body. Distinct from
+    TestListUsageForwardsStoreUnavailableAsTypedFiveHundred in
+    usage_test.go, which pins the typed-status half but does not
+    assert the structural no-host-leak invariant.
+  - ralph/prd.json: BE-0101 passes flipped to true.
+- Files changed:
+  - internal/controlplane/httpapi/usage_get_contract_test.go (new)
+  - ralph/prd.json (BE-0101.passes -> true)
+- Verification run (TMPDIR set to /tmp to dodge a sandbox quirk
+  where the default TMPDIR contains the project root and Go
+  refuses to honor go.mod under a "system temp root"):
+  - gofmt -l . -> clean
+  - go vet ./... -> clean
+  - go mod tidy -> no-op
+  - go test -run "<the three new tests>" -count=1 -v
+    ./internal/controlplane/httpapi/ -> PASS x3
+  - go test -race -run "<the three new tests>" -count=1
+    ./internal/controlplane/httpapi/ -> PASS
+  - go test -count=1 ./internal/controlplane/httpapi/ -> PASS
+  - go test -count=1 ./... -> PASS (every package)
+  - go test -race -count=1 ./... -> PASS (every package)
+  - goimports not installed locally; gofmt already covers the
+    import-grouping shape used in the file.
+- Results: all required gates green. No new flakes, no new race
+  warnings.
+- Remaining risks or follow-ups: none. BE-0100 (handler impl) and
+  BE-0102 (policy matrix) were already passing; BE-0101 closes the
+  contract-test row of that endpoint trilogy. The next pending
+  contract-test story in this family is BE-0104 (GET
+  /v1/organizations/{org_id}/audit-events).
+- Learnings for future iterations:
+  - The BE-0095 limits_get_contract_test.go template ports
+    one-for-one to GET /usage with only three substitutions:
+    (a) helper name listLimits -> listUsage, (b) reader port type
+    LimitsReader -> UsageReader and reader fake fakeLimitsReader
+    -> fakeUsageReader (whose fields are usage []store.OrganizationResourceUsage,
+    err error, got *string — identical shape to fakeLimitsReader),
+    (c) envelope decoder decodeLimitsList(t, body) -> decodeUsageList
+    (t, body) which projects under .Data.Usage (the limits decoder
+    projects under .Limits at the top level because the existing
+    limits envelope shape predates the data-block convention).
+    The handler-builder NewHandler arg position the reader takes is
+    different (UsageReader is the third arg after LimitsReader and
+    LimitsUpdater in NewHandler's parameter list) but the second-
+    to-last "logger seam" nil slot is in the SAME place — this is
+    the load-bearing invariant that lets the contract-test pattern
+    generalise across every read endpoint sharing the NewHandler
+    wiring contract.
+  - The "datastore address must not leak" assertion bytes (cause
+    string "connection refused dialing 10.0.0.5:5432" + host probe
+    "10.0.0.5") are the same bytes the limits contract test uses
+    on purpose: the goal is to pin the structural invariant ("a
+    bare host:port in a wrapped cause never reaches the wire"),
+    not to vary the byte pattern per endpoint. Future sibling
+    contract tests (BE-0104 audit-events, BE-0107 variables list,
+    every GET .../{org_id}/* read endpoint that surfaces
+    apierr.StoreUnavailable) should reuse the same probe bytes
+    so the invariant is a single closed set of regression probes
+    across the read surface.
+  - Sandbox TMPDIR quirk: the ctx_execute shell sandbox sets
+    TMPDIR to a path that contains the project root. Go's module
+    resolver then reports `ignoring go.mod in system temp root
+    /Users/juribadev/projects/poc/yalla` and refuses to honor the
+    module. Workaround: `export TMPDIR=/tmp; export GOTMPDIR=/tmp`
+    at the top of every ctx_execute shell block that runs `go
+    test|vet|mod`. Forward-applicable to every future Ralph
+    iteration on this machine.
 ---
