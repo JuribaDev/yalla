@@ -1835,7 +1835,7 @@
       ],
       "type": "test-organization",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Contract coverage for POST /v1/organizations."
     },
     {
