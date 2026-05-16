@@ -19165,3 +19165,70 @@ Learnings for future iterations:
   - updateOrganizationHandlerForWithLogger is the THIRD instance of the *HandlerForWithLogger pattern in the organizations endpoint family (after organizationsHandlerForWithLogger for GET-list and getOrganizationHandlerForWithLogger for GET-single and createOrganizationHandlerForWithLogger for POST). Each helper hardcodes the FULL NewHandler signature with one port slot replaced by the caller's value and one trailing logger slot — when NewHandler's arity grows by one port (the recurring "port-arity sweep" pattern from BE-0244), every *HandlerForWithLogger helper grows by exactly one fakeX{} literal at the same slot the production-code arity grew. The perl sweep pattern from BE-0244 applies here unchanged.
   - go vet's "ignoring go.mod in system temp root" warning is a sandbox cosmetic: the context-mode ctx_execute sandbox sets TMPDIR=/Users/juribadev/projects/poc/yalla in some configurations, and Go's module loader refuses to load a go.mod that lives under the configured TMPDIR. Running via Bash (which inherits the user shell's TMPDIR=/tmp) sidesteps the issue completely. Future iterations should not chase the warning as a real bug; the workaround is to run go commands via Bash rather than ctx_execute.
 ---
+
+## 2026-05-16 - BE-0276
+- Added engine-level policy matrix for ActionJobRead on the bare-{job_id}
+  fetch variant. The wire endpoint GET /v1/jobs/{job_id} (BE-0274) and its
+  contract tests (BE-0275) have not landed yet; this file pins the
+  authorization contract the bare-id fetch must satisfy regardless of which
+  endpoint surfaces it, mirroring the engine-only precedent BE-0273
+  established for the GET /v1/jobs list variant.
+- Files changed:
+  - internal/controlplane/policy/job_read_byid_policy_test.go (new, 7
+    tests + 28 subtests): canonical fixture ids
+    canonicalJobReadByIDProjectID / canonicalJobReadByIDSiblingID (distinct
+    from canonicalJobReadProjectID so the list and by-id matrices cannot
+    accidentally share state through a future shared helper). Four
+    resource-builder helpers — jobReadByIDOrgResource (org-rooted job
+    row), jobReadByIDProjectResource (project-owned), jobReadByIDEnvResource
+    (env-owned), jobReadByIDServiceResource (service-owned) — model every
+    owning-scope shape the bare-id resolver will construct when it looks
+    up the row's owner before deciding. The {job_id} segment is treated as
+    a routing artefact, not a policy boundary; the load-bearing pin is
+    that a service-scoped key cannot escalate to a parent- or sibling-
+    owned job row by id, and a staging-env-scoped key cannot fetch a
+    production-owned job row by id.
+  - ralph/prd.json: BE-0276 passes:true.
+  - ralph/progress.txt: this entry.
+- Verification: gofmt clean; go vet ./... clean; go test ./... PASS; go
+  test -race ./... PASS; focused TestJobReadByIDPolicy* — 7 tests + 28
+  subtests PASS.
+- Remaining risks / follow-ups: BE-0274 (Implement GET /v1/jobs/{job_id})
+  and BE-0275 (contract tests) still pending — the engine pin here is the
+  authoritative contract until they land. The wire 404-vs-403 distinction
+  (treat foreign-tenant or unknown-row {job_id} as not-found for non-
+  Support roles, allow Support to surface it for cross-tenant incident
+  response) lives in the contract test for BE-0275 and is intentionally
+  not pinned at the engine layer.
+- **Learnings for future iterations:**
+  - Bare-{id} fetch policy matrices for org-rooted resources (job, future
+    deployment-by-id at /v1/deployments/{deployment_id}, audit-event-by-
+    id, etc.) follow the same containment shape as the list variant they
+    sit alongside, with one structural difference: the resource the
+    resolver constructs reflects the ROW'S OWNING SCOPE (the depth at
+    which the row was created), not the path. So instead of a single
+    org-only or project-narrowed Resource builder, the file ships ONE
+    builder per layer (org/project/env/svc) and the containment matrix
+    pins every (grant-depth × resource-owner-depth) cell rather than just
+    the (grant-depth × filter-narrowing) cells the list variant pins.
+    The (grant-deeper-than-resource) cells are denies; the
+    (grant-equal-or-shallower-than-resource) cells are allows. A
+    sibling-row-at-same-depth deny cell (e.g. service-scoped grant on
+    svc_a evaluating against an svc_b-owned job row) is the destructive-
+    by-omission case that catches a future resolver regression
+    collapsing every row's owning scope to the org root.
+  - The list-variant policy file (job_read_policy_test.go) and the byid-
+    variant policy file (job_read_byid_policy_test.go) deliberately use
+    DISTINCT canonical project ids so a future shared helper cannot
+    leak fixture state between the two matrices. Same convention as the
+    three preview matrices (canonicalPreviewProjectID /
+    canonicalPreviewReadProjectID / canonicalPreviewDeleteProjectID).
+  - Engine-only pin precedent: when an action's wire endpoint hasn't
+    landed yet but a sibling endpoint of the same action HAS landed
+    (here: GET /v1/jobs at BE-0271 pending, with BE-0273's engine pin
+    covering the list shape), the bare-id-variant engine pin lands
+    BEFORE the wire endpoint and is the authoritative contract until
+    the route appears. This is the same posture preview_read /
+    preview_create / preview_delete adopted before their respective
+    wire endpoints landed.
+---
