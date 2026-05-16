@@ -131,7 +131,7 @@ type versionPayload struct {
 // table's metadata; a request that actually reaches a handler with a
 // nil dependency is reported as a typed internal error rather than a
 // misleading empty list or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter, environmentCloner EnvironmentCloner, environmentGrants EnvironmentGrantReader, environmentGrantReplacer EnvironmentGrantReplacer, environmentVariables EnvironmentVariableReader, environmentVariableReplacer EnvironmentVariableReplacer, environmentServices EnvironmentServiceReader, breakGlass BreakGlassController) []apiRoute {
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter, environmentCloner EnvironmentCloner, environmentGrants EnvironmentGrantReader, environmentGrantReplacer EnvironmentGrantReplacer, environmentVariables EnvironmentVariableReader, environmentVariableReplacer EnvironmentVariableReplacer, environmentServices EnvironmentServiceReader, environmentServiceCreator EnvironmentServiceCreator, breakGlass BreakGlassController) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -868,6 +868,42 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// persistence boundary.
 			resolver: environmentIDResolver,
 			handler:  listEnvironmentServicesHandler(environmentServices),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodPost,
+				Path:           "/v1/environments/{environment_id}/services",
+				OperationID:    "createEnvironmentService",
+				Summary:        "Create an environment service",
+				Description:    "Creates a service under the environment named by the {environment_id} path parameter — the fourth and lowest level of Yalla's Organization -> Project -> Environment -> Service hierarchy. The request body supplies the caller-minted canonical id for the new service (an idempotent retry is structural, not header-encoded), the canonical [a-z0-9-] slug it is addressed by within the parent environment, its human-authored display name, and its Dokploy kind taxonomy ('application', 'database', or 'compose') — the database CHECK confines kind to that closed set. The request body intentionally exposes no organization_id, project_id, or environment_id field: the organization is derived from the authenticated principal's home organization, the environment_id comes from the {environment_id} path parameter, and the new service inherits its parent environment's project_id — there is no caller-supplied parameter that could redirect the create at another tenant or another project. Every supplied field is validated before any database work; an invalid request never opens a transaction. The new service row, the provisioning job that mirrors it into Dokploy, and an immutable audit record naming the authenticated principal are committed in one transaction — a created service can never exist without its provisioning job or its audit trail, and a duplicate slug within the parent environment rolls the whole transaction back as a deterministic 409. Action service.create is authorized against the (principal home organization, {environment_id}) resource the path names before the handler runs: service.create is a CapWrite action, so the gate admits the principal's organization-wide write roles (owner, admin, developer, ci) and denies viewer, denies support (CapRead-only — a support principal cannot mutate even within its home tenant). The path carries no parent project_id, so the policy engine cannot pin the ProjectID leg of the resource scope at authorization time — project-, environment-, and service-scoped grants are denied at the boundary by the engine's covers() rule (a grant with a pinned ProjectID cannot cover a resource with no ProjectID); principals whose only access is a scoped grant must use a parent-scoped route to address an environment by its (project, environment) tuple. A cross-tenant or unknown environment_id reaches the persistence layer with the principal's home organization id and is rejected as a deterministic 404 by the tenant-scoped repository query, never revealing another tenant's environment. The response carries no credential material — the services table itself stores no secrets; service-scoped variables and other secret-bearing resources live behind their own endpoints (later stories) where the redaction policy applies.",
+				Tags:           []string{tagEnvironments},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionServiceCreate),
+				SuccessStatus:  http.StatusCreated,
+				PathParams: []openapi.PathParam{{
+					Name:        "environment_id",
+					Description: "The id of the environment the new service belongs to.",
+				}},
+				SuccessDescription: "The service was created.",
+			},
+			// environmentIDResolver authorizes action service.create against
+			// the (principal home organization, {environment_id}) resource
+			// the path names, not merely the principal's home organization.
+			// The organization id is taken from the principal's home org
+			// (never the caller — there is no organization id in the
+			// request body), so a cross-tenant environment_id still hits
+			// the tenant-scoped repository query and surfaces as a 404 at
+			// the persistence boundary. The path carries no parent
+			// project_id, so the resource scope pins only OrganizationID
+			// and EnvironmentID — project-, environment-, and
+			// service-scoped grants are denied at the policy boundary by
+			// design (the engine's covers() rule), forcing scoped-grant-
+			// only principals onto parent-scoped routes. service.create is
+			// a CapWrite action and has no cross-tenant support exception
+			// — unlike CapRead actions, a support principal cannot create
+			// services in another tenant.
+			resolver: environmentIDResolver,
+			handler:  createEnvironmentServiceHandler(environmentServiceCreator),
 		},
 		{
 			endpoint: openapi.Endpoint{

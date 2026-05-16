@@ -64,6 +64,33 @@ func (f fakeEnvironmentServiceReader) ListEnvironmentServices(_ context.Context,
 	return f.services, f.err
 }
 
+// fakeEnvironmentServiceCreator is a canned EnvironmentServiceCreator
+// for httpapi tests. The zero value returns the zero service value
+// and a nil error from Create, which is all the tests that never
+// reach the POST handler (the public-surface, /v1/me, and other-
+// route suites) need. Tests that drive POST
+// /v1/environments/{environment_id}/services set service / err and
+// read gotInput + callCount back to prove the handler forwarded the
+// principal's home org id and the path environment id, never a
+// caller-controlled organization id, and to prove the principal /
+// correlation fields landed on the audit event.
+type fakeEnvironmentServiceCreator struct {
+	service   store.Service
+	err       error
+	gotInput  *store.CreateServiceInput
+	callCount *int
+}
+
+func (f fakeEnvironmentServiceCreator) Create(_ context.Context, in store.CreateServiceInput) (store.Service, error) {
+	if f.gotInput != nil {
+		*f.gotInput = in
+	}
+	if f.callCount != nil {
+		*f.callCount++
+	}
+	return f.service, f.err
+}
+
 // listEnvironmentServicesSuccessEnvelope is the decoded shape of the
 // GET /v1/environments/{environment_id}/services success envelope.
 type listEnvironmentServicesSuccessEnvelope struct {
@@ -87,7 +114,7 @@ func listEnvironmentServicesHandlerFor(id auth.Identity, authErr error, reader E
 		fakeOrgVariableReader{}, fakeOrgVariableReplacer{}, fakeOrgVariablePatcher{}, fakeOrgVariableDeleter{},
 		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
 		fakeProjectReader{}, fakeProjectCreator{}, fakeProjectUpdater{}, fakeProjectDeleter{}, fakeProjectRestorer{},
-		fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, fakeProjectVariableReader{}, fakeProjectVariableReplacer{}, fakeProjectEnvironmentReader{}, fakeEnvironmentCreator{}, fakeEnvironmentReader{}, fakeEnvironmentUpdater{}, fakeEnvironmentDeleter{}, fakeEnvironmentCloner{}, fakeEnvironmentGrantReader{}, fakeEnvironmentGrantReplacer{}, fakeEnvironmentVariableReader{}, fakeEnvironmentVariableReplacer{}, reader, fakeBreakGlassController{}, nil, nil)
+		fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, fakeProjectVariableReader{}, fakeProjectVariableReplacer{}, fakeProjectEnvironmentReader{}, fakeEnvironmentCreator{}, fakeEnvironmentReader{}, fakeEnvironmentUpdater{}, fakeEnvironmentDeleter{}, fakeEnvironmentCloner{}, fakeEnvironmentGrantReader{}, fakeEnvironmentGrantReplacer{}, fakeEnvironmentVariableReader{}, fakeEnvironmentVariableReplacer{}, reader, fakeEnvironmentServiceCreator{}, fakeBreakGlassController{}, nil, nil)
 }
 
 // getEnvironmentServices issues GET

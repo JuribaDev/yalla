@@ -243,6 +243,28 @@ func main() {
 		logger.Error("failed to initialize the service reader", "error", err.Error())
 		os.Exit(1)
 	}
+	// Defense-in-depth ports for the service creation unit of work.
+	// As with environmentAuthz / environmentQuota / environmentJobs,
+	// the HTTP RequireAuth middleware is the authoritative gate for
+	// action service.create; the in-transaction Authorizer is a
+	// redundant check whose real adapter (a policy.Engine-driven port
+	// that reads grant rows from the same *Tx as the desired-state
+	// write) lands with the quota and jobs adapters in later stories.
+	// Until those land, the placeholder always allows — the policy
+	// boundary at the HTTP layer is what protects the tenant boundary
+	// — and the quota and jobs ports record no-ops. A nil dependency
+	// at the store-service construction site is rejected by
+	// store.NewServiceService, so the placeholders also guard the
+	// contract that ServiceService never runs with an unwired
+	// dependency.
+	serviceAuthz := alwaysAllowAuthorizer{}
+	serviceQuota := noopQuotaReserver{}
+	serviceJobs := noopJobEnqueuer{}
+	serviceService, err := store.NewServiceService(dataStore, store.NewProjectRepository(), store.NewEnvironmentRepository(), store.NewServiceRepository(), serviceAuthz, serviceQuota, serviceJobs, auditRepo)
+	if err != nil {
+		logger.Error("failed to initialize the service service", "error", err.Error())
+		os.Exit(1)
+	}
 	breakGlassService, err := store.NewBreakGlassService(dataStore, store.NewOrganizationRepository(), store.NewBreakGlassRepository(), auditRepo, nil)
 	if err != nil {
 		logger.Error("failed to initialize the break-glass service", "error", err.Error())
@@ -296,7 +318,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              cfg.APIAddr,
-		Handler:           httpapi.NewHandler(build, readiness, meta, authenticator, engine, organizations, organizationService, organizationService, organizationService, members, membershipService, membershipService, membershipService, limits, limitsService, usage, auditEvents, orgVariables, orgVariableService, orgVariableService, orgVariableService, apiKeys, apiKeyService, apiKeyService, apiKeyService, apiKeyService, projects, projectService, projectService, projectService, projectService, projectGrants, projectGrantService, projectVariables, projectVariableService, projectEnvironments, environmentService, projectEnvironments, environmentService, environmentService, environmentService, environmentGrants, environmentGrantService, environmentVariables, environmentVariableService, environmentServices, breakGlassService, logger, httpRateLimiter),
+		Handler:           httpapi.NewHandler(build, readiness, meta, authenticator, engine, organizations, organizationService, organizationService, organizationService, members, membershipService, membershipService, membershipService, limits, limitsService, usage, auditEvents, orgVariables, orgVariableService, orgVariableService, orgVariableService, apiKeys, apiKeyService, apiKeyService, apiKeyService, apiKeyService, projects, projectService, projectService, projectService, projectService, projectGrants, projectGrantService, projectVariables, projectVariableService, projectEnvironments, environmentService, projectEnvironments, environmentService, environmentService, environmentService, environmentGrants, environmentGrantService, environmentVariables, environmentVariableService, environmentServices, serviceService, breakGlassService, logger, httpRateLimiter),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

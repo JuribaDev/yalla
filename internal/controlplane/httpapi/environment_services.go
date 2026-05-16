@@ -10,6 +10,8 @@ import (
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
 	"github.com/JuribaDev/yalla/internal/controlplane/policy"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
+	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
+	"github.com/JuribaDev/yalla/internal/controlplane/validate"
 )
 
 // errNoEnvironmentServiceReader is returned when GET
@@ -19,6 +21,14 @@ import (
 // — so the handler reports it as a typed internal failure rather than
 // serving an empty or misleading list.
 var errNoEnvironmentServiceReader = errors.New("httpapi: no environment service reader configured")
+
+// errNoEnvironmentServiceCreator is returned when POST
+// /v1/environments/{environment_id}/services is reached without an
+// EnvironmentServiceCreator wired into NewHandler. Like
+// errNoEnvironmentServiceReader it can only happen through a wiring
+// error and is reported as a typed internal failure rather than a
+// misleading 2xx with no side effect.
+var errNoEnvironmentServiceCreator = errors.New("httpapi: no environment service creator configured")
 
 // EnvironmentServiceReader is the narrow persistence port GET
 // /v1/environments/{environment_id}/services depends on.
@@ -157,5 +167,147 @@ func listEnvironmentServicesHandler(reader EnvironmentServiceReader) http.Handle
 			out = append(out, environmentServiceOf(s))
 		}
 		apienvelope.WriteData(w, http.StatusOK, requestID(r), listEnvironmentServicesPayload{Services: out})
+	}
+}
+
+// EnvironmentServiceCreator is the narrow persistence port POST
+// /v1/environments/{environment_id}/services depends on.
+// *store.ServiceService satisfies it in production; tests supply a
+// fake. Keeping the dependency an interface keeps the handler unit-
+// testable without a real database — the concrete orchestrator (the
+// parent-environment existence check / in-transaction authorize /
+// quota reservation / desired-state write / provisioning-job enqueue
+// / audit append composition committed in one transaction) lives in
+// the store layer.
+//
+// The HTTP boundary is the authoritative authorization gate:
+// RequireAuth authorizes action service.create against the
+// (principal home organization, {environment_id}) resource the path
+// names through environmentIDResolver, so a request that reaches the
+// creator has already cleared the policy boundary. The store layer
+// still re-authorizes inside the same *Tx as the desired-state write
+// — defense-in-depth against a grant change that landed between the
+// HTTP authorize and the quota reservation.
+type EnvironmentServiceCreator interface {
+	Create(ctx context.Context, in store.CreateServiceInput) (store.Service, error)
+}
+
+// createEnvironmentServiceRequest is the decoded POST
+// /v1/environments/{environment_id}/services request body. ServiceID
+// is the caller-supplied canonical service id — the agent contract
+// mints ids client-side so an idempotent retry is structural rather
+// than header-encoded; Slug is the canonical [a-z0-9-] identifier
+// the service is addressed by within its environment; DisplayName is
+// its human-authored label; Kind is the Dokploy taxonomy
+// ("application", "database", "compose") the database CHECK
+// confines. The request body intentionally exposes no
+// organization_id, project_id, or environment_id field: the
+// organization is derived from the authenticated principal's home
+// organization, the environment is sourced from the
+// {environment_id} PATH parameter, and the new service inherits its
+// parent environment's project_id — there is no caller-supplied
+// parameter that could redirect the create at another tenant or
+// another project. The store layer validates every field before any
+// database work, so an invalid request never opens a transaction —
+// and the request body never carries credential material.
+type createEnvironmentServiceRequest struct {
+	ServiceID   string `json:"service_id"`
+	Slug        string `json:"slug"`
+	DisplayName string `json:"display_name"`
+	Kind        string `json:"kind"`
+}
+
+// createEnvironmentServicePayload is the data block of the POST
+// /v1/environments/{environment_id}/services success envelope: the
+// service that was created, in the same stable wire shape GET
+// /v1/environments/{environment_id}/services returns. It carries no
+// credential material — a services row stores no secrets.
+type createEnvironmentServicePayload struct {
+	Service environmentService `json:"service"`
+}
+
+// createEnvironmentServiceHandler builds the POST
+// /v1/environments/{environment_id}/services handler. It decodes and
+// delegates: the request body is strictly decoded (oversized,
+// malformed, or unknown-field bodies become a typed 400 that never
+// echoes the input), then the create-service unit of work —
+// re-authorize, reserve quota, write the service row, enqueue the
+// provisioning job, append the audit record, all in one transaction
+// — runs in the store layer through the EnvironmentServiceCreator
+// port.
+//
+// RequireAuth gates the route on action service.create through
+// environmentIDResolver before the handler runs and attaches the
+// resolved principal, so a request that reaches the handler with no
+// principal is a wiring error reported as a typed internal error.
+// service.create is a CapWrite action evaluated against the
+// (principal home organization, {environment_id}) resource, so the
+// gate admits the principal's organization-wide write roles (owner,
+// admin, developer, ci) and denies viewer (CapRead only), denies
+// support (CapRead-only — support is a deliberate cross-tenant READ
+// exception, never a write one). The path carries no parent
+// project_id, so the policy engine cannot pin the ProjectID leg of
+// the resource scope at authorization time — project-, environment-,
+// and service-scoped grants are denied at the boundary by the
+// engine's covers() rule (a grant scope that pins ProjectID cannot
+// cover a resource scope that does not); principals whose only access
+// is a scoped grant must use a parent-scoped route to address an
+// environment by its (project, environment) tuple.
+//
+// The handler resolves the organization id from the authenticated
+// principal's home organization and the environment id from the
+// {environment_id} PATH parameter — never from the request body — so
+// the tenant boundary is structural here: there is no caller input
+// that could point the write at another tenant. A cross-tenant
+// environment_id reaches the persistence layer with the principal's
+// home organization id and is rejected as a deterministic 404 by the
+// store-layer's tenant-scoped environment existence check (the same
+// property GET /v1/environments/{environment_id}/services inherits),
+// never disguised as a 200 or a 403 that would confirm the foreign
+// environment's existence. The principal and the request correlation
+// identifiers are passed to the creator so the audit record names the
+// actor; a validation failure, a slug conflict, an exhausted quota,
+// a denied in-tx authorize, and a datastore outage each surface as
+// their own typed status, never disguised as one another.
+func createEnvironmentServiceHandler(creator EnvironmentServiceCreator) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if creator == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoEnvironmentServiceCreator))
+			return
+		}
+
+		var req createEnvironmentServiceRequest
+		if err := validate.DecodeJSON(r.Body, &req, 0); err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		service, err := creator.Create(r.Context(), store.CreateServiceInput{
+			OrganizationID: p.OrganizationID,
+			EnvironmentID:  r.PathValue("environment_id"),
+			ServiceID:      req.ServiceID,
+			Slug:           req.Slug,
+			DisplayName:    req.DisplayName,
+			Kind:           req.Kind,
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		apienvelope.WriteData(w, http.StatusCreated, requestID(r), createEnvironmentServicePayload{
+			Service: environmentServiceOf(service),
+		})
 	}
 }

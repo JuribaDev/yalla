@@ -105,6 +105,42 @@ func (r *ServiceRepository) ListByEnvironment(ctx context.Context, q Querier, or
 	return out, nil
 }
 
+// Insert writes a new services row inside the supplied transaction
+// and returns the persisted row, in serviceColumns order, so the
+// caller sees the database-assigned timestamps and the initial
+// version (1) without re-reading. Calling Insert with a nil
+// transaction is a wiring error and is reported as a typed
+// apierr.Internal so the bug can never silently degrade into a
+// "succeeded with no audit trail" failure mode.
+//
+// The schema enforces the tenant invariant — the composite foreign
+// key (organization_id, project_id, environment_id) references
+// environments (organization_id, project_id, id) — so a service whose
+// organization_id, project_id, or environment_id does not match its
+// parent environment's row is rejected at the database before it can
+// be persisted, regardless of application bugs. The kind CHECK in
+// migration 0002 confines kind to the closed Dokploy taxonomy
+// ("application", "database", "compose"), and a slug already taken by
+// another service in the same environment violates UNIQUE
+// (environment_id, slug) and surfaces through mapWriteError as a
+// deterministic apierr.Conflict — never a 500 leaking the constraint
+// name.
+func (r *ServiceRepository) Insert(ctx context.Context, tx *Tx, s Service) (Service, error) {
+	if tx == nil {
+		return Service{}, apierr.Internal(errors.New("store: ServiceRepository.Insert called with a nil transaction"))
+	}
+	row := tx.QueryRow(ctx,
+		`INSERT INTO services (id, organization_id, project_id, environment_id, slug, display_name, kind)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		 RETURNING `+serviceColumns,
+		s.ID, s.OrganizationID, s.ProjectID, s.EnvironmentID, s.Slug, s.DisplayName, s.Kind)
+	created, err := scanService(row)
+	if err != nil {
+		return Service{}, mapWriteError(err, "a service with this slug already exists in the environment")
+	}
+	return created, nil
+}
+
 // scanService scans one services row in serviceColumns order.
 func scanService(row scanRow) (Service, error) {
 	var s Service

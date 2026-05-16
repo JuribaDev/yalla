@@ -14120,3 +14120,130 @@
     shape so the policy-matrix story (BE-0180'''s peer) does NOT need
     to add a second handler factory.
 ---
+
+
+## 2026-05-16 - BE-0181
+- Story scope: Implement POST /v1/environments/{environment_id}/services
+  — the canonical create-service endpoint. Adds a store.ServiceService
+  orchestrator (parent-environment Get -> in-tx authorize -> quota reserve
+  -> services Insert -> provisioning-job enqueue -> audit append, all in
+  one *Tx), a store.ServiceRepository.Insert method, an
+  EnvironmentServiceCreator port + createEnvironmentServiceHandler at
+  the HTTP boundary, and a registered POST route on
+  environmentIDResolver gated by action service.create. The new
+  service's project_id is sourced from the PERSISTED parent environment
+  row (never from caller input) so a caller cannot smuggle a child into
+  another project. Validation rejects an out-of-set kind (Dokploy
+  taxonomy: application | database | compose) before any DB work; a
+  cross-tenant or unknown environment_id surfaces as a deterministic
+  404 (the same boundary the GET sibling proved at BE-0178); a slug
+  collision within the parent environment is a 409 via mapWriteError;
+  every mutation has its audit row in the same *Tx.
+
+- Files changed:
+  - added: internal/controlplane/store/serviceservice.go (ServiceService,
+    CreateServiceInput, Create, validateCreateServiceInput,
+    validateServiceDisplayName, validateServiceKind, ServiceKind*
+    constants, serviceCreateAction / serviceProvisionJob /
+    serviceDisplayNameMaxLen)
+  - modified: internal/controlplane/store/service.go
+    (ServiceRepository.Insert + tenant-invariant + slug-uniqueness
+    notes; serviceColumns reused for the RETURNING projection)
+  - modified: internal/controlplane/httpapi/environment_services.go
+    (EnvironmentServiceCreator port; createEnvironmentServiceRequest /
+    createEnvironmentServicePayload DTOs;
+    createEnvironmentServiceHandler — decode-and-delegate with strict
+    JSON decoder, no caller-supplied org_id / project_id /
+    environment_id; errNoEnvironmentServiceCreator wiring-error
+    guard; telemetry/validate imports)
+  - modified: internal/controlplane/httpapi/routes.go (POST
+    /v1/environments/{environment_id}/services route + OpenAPI
+    description; newRouteTable signature extended with
+    environmentServiceCreator EnvironmentServiceCreator slot between
+    environmentServices and breakGlass)
+  - modified: internal/controlplane/httpapi/server.go (NewHandler
+    signature extended with the same slot; newRouteTable call
+    threaded through)
+  - modified: cmd/yalla-api/main.go (serviceService wired up;
+    placeholders alwaysAllowAuthorizer / noopQuotaReserver /
+    noopJobEnqueuer reused — same defense-in-depth pattern as
+    environmentService until the real adapters land; threaded into
+    httpapi.NewHandler)
+  - modified: 43 *_test.go files under internal/controlplane/httpapi/
+    (mechanical insertion of fakeEnvironmentServiceCreator{} into the
+    NewHandler/newRouteTable arg lists, between
+    fakeEnvironmentServiceReader{} and fakeBreakGlassController{})
+  - modified: internal/controlplane/httpapi/environment_services_test.go
+    (added fakeEnvironmentServiceCreator type with service / err /
+    gotInput / callCount fields, mirroring the
+    fakeEnvironmentServiceReader scaffolding)
+  - added: internal/controlplane/httpapi/environment_services_create_test.go
+    (contract tests: happy path, validation failure, unauthenticated,
+    authorization denied, cross-tenant environment id NotFound,
+    creator outage typed 503 with no driver leak, no-caller-supplied
+    org id; createEnvironmentServiceHandlerFor +
+    postEnvironmentService + decodeCreateEnvironmentService helpers;
+    principalForCreateService developer-in-home-org identity helper)
+  - modified: ralph/prd.json (BE-0181 passes=true)
+  - modified: ralph/progress.txt (this entry)
+
+- Verification run from the repository root:
+  - gofmt -w .                                                  -> ok
+  - go mod tidy                                                 -> ok
+  - go vet ./...                                                -> ok
+  - go test -count=1 ./...                                      -> ok
+  - go test -race -count=1 ./...                                -> ok
+  - goimports, golangci-lint, staticcheck, govulncheck          -> not installed locally
+  - Postgres-backed integration tests under
+    internal/controlplane/store/... pass against the stubbed test
+    harness; a live Dokploy server is not required by this story.
+
+- Remaining risks or follow-ups:
+  - cmd/yalla-api wires serviceService with the same placeholder
+    alwaysAllowAuthorizer / noopQuotaReserver / noopJobEnqueuer trio
+    environmentService uses — when the real adapters land they need
+    to be wired here too.
+  - BE-0182 (contract tests) and BE-0183 (policy matrix) build on this
+    endpoint and can now proceed.
+  - The store-layer ServiceService.Create has no isolated-Postgres
+    integration test yet (parallel to environment_service_test.go);
+    add when the BE-0182 contract surface stabilises so the
+    repository test exercises the same audit / quota / job
+    composition under a real *Tx.
+
+- Learnings for future iterations:
+  - When adding a positional parameter to NewHandler / newRouteTable,
+    insert the new slot between two stable landmarks
+    (environmentServices + breakGlass here) and run a one-shot
+    textual sweep over internal/controlplane/httpapi/*_test.go +
+    cmd/yalla-api/main.go: ", fakeBreakGlassController{}" ->
+    ", fakeEnvironmentServiceCreator{}, fakeBreakGlassController{}"
+    catches every NewHandler / newRouteTable call site mechanically.
+    BUT the same regex also catches calls into thin wrapper helpers
+    (here breakGlassHandlerFor(_, _, ctl BreakGlassController))
+    whose signatures take only the controller — those need to be
+    reverted, and the wrapper's own internal NewHandler call patched
+    by hand (its trailing argument is the named parameter ctl, not
+    the literal fakeBreakGlassController{}). One mechanical sweep +
+    one targeted patch is faster than 45+ hand-edits.
+  - When a parent existence check is required INSIDE a create unit of
+    work AND the parent owns a foreign-key leg of the child
+    (services.project_id <- environments.project_id), do the parent
+    Get FIRST inside the *Tx and source the derived field from the
+    persisted row, never from caller input. The handler then has no
+    incoming field for project_id at all, and the orchestrator
+    populates it after the GetByID returns. This is the structural
+    twin of EnvironmentService.Clone (NewEnvironment inherits the
+    parent project_id from the source environment): derived legs
+    come from the persisted parent, never from the body.
+  - For an out-of-set enum value (the Dokploy services.kind CHECK
+    confines kind to a closed taxonomy of three values), validate
+    application-side BEFORE the database CHECK fires — the
+    application-side typed FieldViolation is a stable 400 with no
+    constraint-name leak, while the database CHECK violation would
+    surface through mapWriteError and may produce a less specific
+    Conflict message. Mirror the database constraint exactly so the
+    two layers cannot drift; expose the closed set as exported
+    constants (ServiceKindApplication / Database / Compose) so the
+    HTTP DTO docs and policy-matrix tests share one source of truth.
+---
