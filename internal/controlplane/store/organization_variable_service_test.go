@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/JuribaDev/yalla/internal/controlplane/secrets"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
 	"github.com/JuribaDev/yalla/internal/controlplane/testutil"
 	yerr "github.com/JuribaDev/yalla/internal/errors"
@@ -29,7 +30,8 @@ func newOrgVariableService(t *testing.T, s *store.Store) *store.OrganizationVari
 	svc, err := store.NewOrganizationVariableService(s,
 		store.NewOrganizationRepository(),
 		store.NewOrganizationVariableRepository(),
-		store.NewAuditRepository())
+		store.NewAuditRepository(),
+		secrets.NewPlaintext())
 	if err != nil {
 		t.Fatalf("NewOrganizationVariableService: %v", err)
 	}
@@ -69,7 +71,7 @@ func TestOrganizationVariableServiceReplaceInsertsFreshVariables(t *testing.T) {
 		t.Fatalf("post-write variables = %+v, want two entries", vars)
 	}
 	// Deterministic (key, id) order: DATABASE_URL < REGION lexically.
-	if vars[0].Key != "DATABASE_URL" || vars[0].Value != "postgres://user:hunter2@db/app" || !vars[0].IsSecret {
+	if vars[0].Key != "DATABASE_URL" || revealVariableValue(vars[0]) != "postgres://user:hunter2@db/app" || !vars[0].IsSecret {
 		t.Errorf("vars[0] = %+v, want DATABASE_URL/<value>/is_secret", vars[0])
 	}
 	if vars[1].Key != "REGION" || vars[1].Value != "us-east-1" || vars[1].IsSecret {
@@ -185,7 +187,7 @@ func TestOrganizationVariableServiceReplaceUpdatesExistingVariablesAndDeletesThe
 	if alpha.ID != idByKey["ALPHA"] {
 		t.Errorf("ALPHA id = %q, want preserved %q (UPSERT must not mint a new id)", alpha.ID, idByKey["ALPHA"])
 	}
-	if alpha.Value != "updated" || !alpha.IsSecret {
+	if revealVariableValue(alpha) != "updated" || !alpha.IsSecret {
 		t.Errorf("ALPHA = %+v, want value=updated/is_secret=true", alpha)
 	}
 	if alpha.Version <= versionByKey["ALPHA"] {
@@ -400,15 +402,18 @@ func TestOrganizationVariableServiceReplaceInvalidInputNeverOpensTransaction(t *
 
 // TestNewOrganizationVariableServiceRejectsNilDependencies proves the
 // constructor's fail-fast posture: a misconfigured service that lacks
-// the store, the organization repository, the variable repository, or
-// the audit appender fails at construction rather than on its first
-// request — mirroring NewLimitsService and NewOrganizationService.
+// the store, the organization repository, the variable repository, the
+// audit appender, or the secrets provider fails at construction rather
+// than on its first request — mirroring NewLimitsService and
+// NewOrganizationService.
 func TestNewOrganizationVariableServiceRejectsNilDependencies(t *testing.T) {
 	t.Parallel()
+	provider := secrets.NewPlaintext()
 	if _, err := store.NewOrganizationVariableService(nil,
 		store.NewOrganizationRepository(),
 		store.NewOrganizationVariableRepository(),
-		store.NewAuditRepository()); err == nil {
+		store.NewAuditRepository(),
+		provider); err == nil {
 		t.Errorf("NewOrganizationVariableService(nil store) returned no error")
 	}
 	// Build a real store via the test pool so the other nil-checks have
@@ -417,20 +422,30 @@ func TestNewOrganizationVariableServiceRejectsNilDependencies(t *testing.T) {
 	s := newStore(t, db)
 	if _, err := store.NewOrganizationVariableService(s, nil,
 		store.NewOrganizationVariableRepository(),
-		store.NewAuditRepository()); err == nil {
+		store.NewAuditRepository(),
+		provider); err == nil {
 		t.Errorf("NewOrganizationVariableService(nil orgs) returned no error")
 	}
 	if _, err := store.NewOrganizationVariableService(s,
 		store.NewOrganizationRepository(),
 		nil,
-		store.NewAuditRepository()); err == nil {
+		store.NewAuditRepository(),
+		provider); err == nil {
 		t.Errorf("NewOrganizationVariableService(nil vars) returned no error")
 	}
 	if _, err := store.NewOrganizationVariableService(s,
 		store.NewOrganizationRepository(),
 		store.NewOrganizationVariableRepository(),
-		nil); err == nil {
+		nil,
+		provider); err == nil {
 		t.Errorf("NewOrganizationVariableService(nil audit) returned no error")
+	}
+	if _, err := store.NewOrganizationVariableService(s,
+		store.NewOrganizationRepository(),
+		store.NewOrganizationVariableRepository(),
+		store.NewAuditRepository(),
+		nil); err == nil {
+		t.Errorf("NewOrganizationVariableService(nil provider) returned no error")
 	}
 }
 

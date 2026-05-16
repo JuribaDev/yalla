@@ -101,6 +101,12 @@ var defaultsByProfile = map[Profile]profileDefaults{
 // would produce weak signatures, so it is rejected outright.
 const minSigningKeyLen = 16
 
+// secretKeyHexLen is the required hex-encoded length of a YALLA_SECRET_KEYS
+// entry. Each key seals through AES-256-GCM, which requires exactly 32 raw
+// bytes — 64 hex characters. A shorter or longer entry is almost always a
+// truncated paste or the wrong key material, so it is rejected outright.
+const secretKeyHexLen = 64
+
 // shutdownTimeout bounds. A non-positive timeout would make graceful
 // shutdown a no-op (in-flight work dropped immediately); an unbounded one
 // would let a wedged request block process exit indefinitely. Both are
@@ -164,6 +170,7 @@ func Load(lookup LookupFunc) (*Config, error) {
 		PublicURL:        valueOr(lookup, EnvPublicURL, defaults.publicURL),
 		DatabaseURL:      valueOr(lookup, EnvDatabaseURL, ""),
 		SigningKeys:      splitList(valueOr(lookup, EnvSigningKeys, "")),
+		SecretKeys:       splitList(valueOr(lookup, EnvSecretKeys, "")),
 		DokployBaseURL:   valueOr(lookup, EnvDokployBaseURL, ""),
 		DokployToken:     valueOr(lookup, EnvDokployToken, ""),
 		ShutdownTimeout:  shutdownTimeout,
@@ -225,6 +232,20 @@ func (c *Config) Validate() error {
 				EnvSigningKeys, i+1, minSigningKeyLen)
 		}
 	}
+	for i, key := range c.SecretKeys {
+		if len(key) != secretKeyHexLen {
+			return yerr.Newf(yerr.CodeConfig,
+				"%s entry #%d has wrong length (want %d hex characters for a 32-byte AES-256 key)",
+				EnvSecretKeys, i+1, secretKeyHexLen)
+		}
+		for _, b := range key {
+			isHex := (b >= '0' && b <= '9') || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F')
+			if !isHex {
+				return yerr.Newf(yerr.CodeConfig,
+					"%s entry #%d is not valid hex", EnvSecretKeys, i+1)
+			}
+		}
+	}
 
 	if c.ShutdownTimeout < minShutdownTimeout || c.ShutdownTimeout > maxShutdownTimeout {
 		return yerr.Newf(yerr.CodeConfig,
@@ -266,6 +287,9 @@ func (c *Config) requireStrictFields() error {
 	}
 	if len(c.SigningKeys) == 0 {
 		missing = append(missing, EnvSigningKeys)
+	}
+	if len(c.SecretKeys) == 0 {
+		missing = append(missing, EnvSecretKeys)
 	}
 	if c.DokployBaseURL == "" {
 		missing = append(missing, EnvDokployBaseURL)

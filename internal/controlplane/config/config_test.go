@@ -22,6 +22,7 @@ func strictEnv() map[string]string {
 		EnvPublicURL:      "https://api.yalla.example",
 		EnvDatabaseURL:    "postgres://yalla:s3cr3t@db.internal:5432/yalla",
 		EnvSigningKeys:    "primary-signing-key-aaaa,rotated-signing-key-bb",
+		EnvSecretKeys:     "0011223344556677889900112233445566778899001122334455667788990011,aabbccddeeff00112233445566778899aabbccddeeff001122334455667788aa",
 		EnvDokployBaseURL: "https://dokploy.internal",
 		EnvDokployToken:   "dokploy-service-token-zzzz",
 		EnvLogLevel:       "info",

@@ -77,8 +77,8 @@ func TestOrganizationVariableServicePatchUpdatesValueAndIsSecret(t *testing.T) {
 	if updated.Key != "REGION" {
 		t.Errorf("updated.key = %q, want REGION", updated.Key)
 	}
-	if updated.Value != "eu-west-1" || !updated.IsSecret {
-		t.Errorf("updated value/is_secret = (%q, %v), want (eu-west-1, true)", updated.Value, updated.IsSecret)
+	if revealVariableValue(updated) != "eu-west-1" || !updated.IsSecret {
+		t.Errorf("updated value/is_secret = (%q, %v), want (eu-west-1, true)", revealVariableValue(updated), updated.IsSecret)
 	}
 	if updated.Version <= seededVersion {
 		t.Errorf("updated.version = %d, want > seeded version %d (the bump_version trigger must fire)", updated.Version, seededVersion)
@@ -148,8 +148,8 @@ func TestOrganizationVariableServicePatchValueOnlyPreservesIsSecret(t *testing.T
 	if err != nil {
 		t.Fatalf("Patch: %v", err)
 	}
-	if updated.Value != "postgres://new@db/app" {
-		t.Errorf("updated.value = %q, want the patched value", updated.Value)
+	if revealVariableValue(updated) != "postgres://new@db/app" {
+		t.Errorf("updated.value = %q, want the patched value", revealVariableValue(updated))
 	}
 	if !updated.IsSecret {
 		t.Errorf("updated.is_secret = false, want true (an omitted field must be preserved)")
@@ -193,8 +193,8 @@ func TestOrganizationVariableServicePatchIsSecretOnlyPreservesValue(t *testing.T
 	if err != nil {
 		t.Fatalf("Patch: %v", err)
 	}
-	if updated.Value != "us-east-1" {
-		t.Errorf("updated.value = %q, want the seeded value (omitted field preserved)", updated.Value)
+	if revealVariableValue(updated) != "us-east-1" {
+		t.Errorf("updated.value = %q, want the seeded value (omitted field preserved)", revealVariableValue(updated))
 	}
 	if !updated.IsSecret {
 		t.Errorf("updated.is_secret = %v, want true", updated.IsSecret)
@@ -402,8 +402,8 @@ func TestOrganizationVariableServicePatchRejectsDemotionOverflow(t *testing.T) {
 	if !v.IsSecret {
 		t.Errorf("variable.is_secret = false after a rejected demotion; transaction did not roll back")
 	}
-	if len(v.Value) != len(bigSecret) {
-		t.Errorf("variable.value length = %d, want %d (unchanged)", len(v.Value), len(bigSecret))
+	if got := len(revealVariableValue(v)); got != len(bigSecret) {
+		t.Errorf("variable.value length = %d, want %d (unchanged)", got, len(bigSecret))
 	}
 }
 

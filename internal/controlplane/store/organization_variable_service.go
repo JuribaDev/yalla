@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
 	"github.com/JuribaDev/yalla/internal/controlplane/domain"
+	"github.com/JuribaDev/yalla/internal/controlplane/secrets"
 	"github.com/JuribaDev/yalla/internal/controlplane/validate"
 )
 
@@ -93,10 +95,11 @@ type ReplaceOrganizationVariablesInput struct {
 // persisted — the same coherence guarantee LimitsService.UpdateLimits
 // gives PATCH /v1/organizations/{org_id}/limits.
 type OrganizationVariableService struct {
-	store *Store
-	orgs  *OrganizationRepository
-	vars  *OrganizationVariableRepository
-	audit AuditAppender
+	store    *Store
+	orgs     *OrganizationRepository
+	vars     *OrganizationVariableRepository
+	audit    AuditAppender
+	provider secrets.Provider
 }
 
 // NewOrganizationVariableService wires an OrganizationVariableService from
@@ -104,7 +107,16 @@ type OrganizationVariableService struct {
 // misconfigured service fails at construction rather than on its first
 // request — the same fail-fast posture every other unit-of-work
 // orchestrator in this package takes.
-func NewOrganizationVariableService(s *Store, orgs *OrganizationRepository, vars *OrganizationVariableRepository, audit AuditAppender) (*OrganizationVariableService, error) {
+//
+// provider is the secrets.Provider that seals every secret value before
+// it is persisted and opens sealed values for internal-only read paths.
+// It is required: a nil provider is rejected at construction so a
+// production process cannot accidentally start with the at-rest seam
+// disabled. Tests that do not exercise the encryption seam directly
+// pass secrets.NewPlaintext() — the plaintext provider is acceptable
+// in local/test profiles only and cmd/yalla-api rejects it for
+// staging/production.
+func NewOrganizationVariableService(s *Store, orgs *OrganizationRepository, vars *OrganizationVariableRepository, audit AuditAppender, provider secrets.Provider) (*OrganizationVariableService, error) {
 	switch {
 	case s == nil:
 		return nil, errors.New("store: nil store")
@@ -114,8 +126,33 @@ func NewOrganizationVariableService(s *Store, orgs *OrganizationRepository, vars
 		return nil, errors.New("store: nil organization variable repository")
 	case audit == nil:
 		return nil, errors.New("store: nil audit appender")
+	case provider == nil:
+		return nil, errors.New("store: nil secrets provider")
 	}
-	return &OrganizationVariableService{store: s, orgs: orgs, vars: vars, audit: audit}, nil
+	return &OrganizationVariableService{store: s, orgs: orgs, vars: vars, audit: audit, provider: provider}, nil
+}
+
+// sealVariableValue projects an OrganizationVariableReplace onto the
+// repository's upsert tuple, calling secrets.Provider.Seal for IsSecret
+// = true items. Non-secret items pass through with empty encryption-at-
+// rest columns. Seal failures surface as apierr.Internal — a sealing
+// error is a server-side problem, never a customer instruction, and the
+// wrapped cause is value-free (the secrets package contract).
+func (svc *OrganizationVariableService) sealVariableValue(item OrganizationVariableReplace) (OrganizationVariableUpsert, error) {
+	if !item.IsSecret {
+		return OrganizationVariableUpsert{Value: item.Value, IsSecret: false}, nil
+	}
+	ciphertext, keyID, err := svc.provider.Seal([]byte(item.Value))
+	if err != nil {
+		return OrganizationVariableUpsert{}, apierr.Internal(fmt.Errorf("seal organization variable: %w", err))
+	}
+	return OrganizationVariableUpsert{
+		Value:            "",
+		IsSecret:         true,
+		SecretProvider:   svc.provider.ProviderID(),
+		SecretKeyID:      keyID,
+		SecretCiphertext: ciphertext,
+	}, nil
 }
 
 // Replace validates in, then runs the replace-variables unit of work
@@ -226,7 +263,11 @@ func (svc *OrganizationVariableService) Replace(ctx context.Context, in ReplaceO
 			if idErr != nil {
 				return apierr.Internal(idErr)
 			}
-			if _, upErr := svc.vars.Upsert(ctx, tx, id.String(), organizationID, item.Key, item.Value, item.IsSecret); upErr != nil {
+			sealed, sealErr := svc.sealVariableValue(item)
+			if sealErr != nil {
+				return sealErr
+			}
+			if _, upErr := svc.vars.Upsert(ctx, tx, id.String(), organizationID, item.Key, sealed); upErr != nil {
 				return upErr
 			}
 		}
@@ -372,9 +413,28 @@ func (svc *OrganizationVariableService) Patch(ctx context.Context, in PatchOrgan
 			return getErr
 		}
 
-		value := current.Value
-		if in.Value != nil {
+		// The post-state value depends on which fields the patch named.
+		// If the caller supplied a new value, use it verbatim. If the
+		// caller only flipped is_secret, reuse the current row's value
+		// — for a row that already carried a sealed secret this means
+		// calling Provider.Open against the current ciphertext so the
+		// post-state row can be re-sealed under the (possibly new)
+		// active key, or stored as plaintext on a demotion. The current
+		// row's plain `value` column is always "" for sealed rows by
+		// the CHECK constraint, so we must NOT use current.Value as the
+		// post-state plaintext for a secret-to-anything patch.
+		var value string
+		switch {
+		case in.Value != nil:
 			value = *in.Value
+		case current.IsSecret:
+			plaintext, openErr := svc.provider.Open(current.SecretCiphertext, current.SecretKeyID)
+			if openErr != nil {
+				return apierr.Internal(fmt.Errorf("open organization variable for patch: %w", openErr))
+			}
+			value = string(plaintext)
+		default:
+			value = current.Value
 		}
 		isSecret := current.IsSecret
 		if in.IsSecret != nil {
@@ -396,7 +456,15 @@ func (svc *OrganizationVariableService) Patch(ctx context.Context, in PatchOrgan
 			})
 		}
 
-		row, upErr := svc.vars.UpdateMutable(ctx, tx, organizationID, key, value, isSecret)
+		sealed, sealErr := svc.sealVariableValue(OrganizationVariableReplace{
+			Key:      key,
+			Value:    value,
+			IsSecret: isSecret,
+		})
+		if sealErr != nil {
+			return sealErr
+		}
+		row, upErr := svc.vars.UpdateMutable(ctx, tx, organizationID, key, sealed)
 		if upErr != nil {
 			return upErr
 		}

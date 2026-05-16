@@ -28,6 +28,8 @@
 package config
 
 import (
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -56,6 +58,16 @@ const (
 	// entry is the active key; the rest are accepted during rotation.
 	// Treated as a secret: never logged.
 	EnvSigningKeys = "YALLA_SIGNING_KEYS"
+	// EnvSecretKeys is a comma-separated list of hex-encoded 32-byte
+	// AES-256 master keys consumed by internal/controlplane/secrets.AESGCM
+	// to seal organization (and later project/environment/service)
+	// variable values at rest. The first entry is the active key (used by
+	// Seal); the rest are accepted for Open during a key rotation. Strict
+	// profiles (staging, production) require this variable; local and
+	// test profiles fall back to a passthrough Plaintext provider so unit
+	// tests and local development can exercise the at-rest seam without
+	// real key material. Treated as a secret: never logged.
+	EnvSecretKeys = "YALLA_SECRET_KEYS"
 	// EnvDokployBaseURL is the base URL of the private Dokploy API.
 	EnvDokployBaseURL = "YALLA_DOKPLOY_BASE_URL"
 	// EnvDokployToken is the privileged Dokploy service token used by the
@@ -162,9 +174,9 @@ func (p Profile) Valid() bool {
 // and worker binaries. It is immutable from a caller's perspective: load it
 // once at startup and pass it by pointer.
 //
-// The DatabaseURL, SigningKeys, and DokployToken fields are secrets. Never
-// log, format, or serialise them directly; use Redacted, LogValue, or
-// String, all of which scrub credentials.
+// The DatabaseURL, SigningKeys, SecretKeys, and DokployToken fields are
+// secrets. Never log, format, or serialise them directly; use Redacted,
+// LogValue, or String, all of which scrub credentials.
 type Config struct {
 	// Profile is the resolved deployment profile.
 	Profile Profile
@@ -177,6 +189,13 @@ type Config struct {
 	// SigningKeys holds the signing keys; index 0 is the active key and the
 	// remainder are accepted during rotation. Secret.
 	SigningKeys []string
+	// SecretKeys holds the AES-256 master keys consumed by
+	// internal/controlplane/secrets.AESGCM; index 0 is the active key
+	// (used by Seal) and the remainder are accepted during rotation
+	// (used by Open against rows that still reference a retired key id).
+	// Each entry is the hex-encoded form of exactly 32 raw bytes.
+	// Secret.
+	SecretKeys []string
 	// DokployBaseURL is the base URL of the private Dokploy API.
 	DokployBaseURL string
 	// DokployToken is the privileged Dokploy service token. Secret.
@@ -260,6 +279,31 @@ func (c *Config) ActiveSigningKey() string {
 	return c.SigningKeys[0]
 }
 
+// DecodedSecretKeys decodes every entry of SecretKeys from hex into the
+// raw 32-byte AES-256 key material the internal/controlplane/secrets
+// package consumes. Order is preserved: the first entry is the active
+// key, the rest are accepted during rotation. The returned slice is a
+// fresh allocation; callers may mutate it without affecting the config.
+// DecodedSecretKeys returns an error when an entry fails the hex shape
+// already enforced by Validate (defence-in-depth — Validate runs at
+// process startup, but callers should still error rather than panic if
+// the post-condition is somehow violated). The returned error never
+// echoes any of the key material.
+func (c *Config) DecodedSecretKeys() ([][]byte, error) {
+	if c == nil || len(c.SecretKeys) == 0 {
+		return nil, nil
+	}
+	out := make([][]byte, 0, len(c.SecretKeys))
+	for i, hexed := range c.SecretKeys {
+		raw, err := decodeHexSecretKey(hexed)
+		if err != nil {
+			return nil, fmt.Errorf("%s entry #%d: %w", EnvSecretKeys, i+1, err)
+		}
+		out = append(out, raw)
+	}
+	return out, nil
+}
+
 // FeatureEnabled reports whether the named feature flag is enabled. Unknown
 // flags are reported as disabled so callers never need a nil check.
 func (c *Config) FeatureEnabled(name string) bool {
@@ -279,6 +323,7 @@ type RedactedConfig struct {
 	PublicURL             string          `json:"public_url"`
 	DatabaseURL           string          `json:"database_url"`
 	SigningKeysConfigured int             `json:"signing_keys_configured"`
+	SecretKeysConfigured  int             `json:"secret_keys_configured"`
 	DokployBaseURL        string          `json:"dokploy_base_url"`
 	DokployToken          string          `json:"dokploy_token"`
 	ShutdownTimeout       string          `json:"shutdown_timeout"`
@@ -313,6 +358,7 @@ func (c *Config) Redacted() RedactedConfig {
 		PublicURL:             c.PublicURL,
 		DatabaseURL:           redact(c.DatabaseURL),
 		SigningKeysConfigured: len(c.SigningKeys),
+		SecretKeysConfigured:  len(c.SecretKeys),
 		DokployBaseURL:        c.DokployBaseURL,
 		DokployToken:          redact(c.DokployToken),
 		ShutdownTimeout:       c.ShutdownTimeout.String(),
@@ -345,6 +391,7 @@ func (c *Config) LogValue() slog.Value {
 		slog.String("public_url", r.PublicURL),
 		slog.String("database_url", r.DatabaseURL),
 		slog.Int("signing_keys_configured", r.SigningKeysConfigured),
+		slog.Int("secret_keys_configured", r.SecretKeysConfigured),
 		slog.String("dokploy_base_url", r.DokployBaseURL),
 		slog.String("dokploy_token", r.DokployToken),
 		slog.String("shutdown_timeout", r.ShutdownTimeout),
@@ -354,6 +401,20 @@ func (c *Config) LogValue() slog.Value {
 		slog.Bool("rate_limit_enabled", r.RateLimitEnabled),
 		slog.Group("feature_flags", anyAttrs(attrs)...),
 	)
+}
+
+// decodeHexSecretKey turns a hex-encoded YALLA_SECRET_KEYS entry into the
+// raw 32-byte AES-256 key. The error path is value-free: it names only
+// the failure classification, never the input bytes.
+func decodeHexSecretKey(hexed string) ([]byte, error) {
+	raw, err := hex.DecodeString(hexed)
+	if err != nil {
+		return nil, errors.New("invalid hex encoding")
+	}
+	if len(raw) != 32 {
+		return nil, fmt.Errorf("must decode to exactly 32 bytes, got %d", len(raw))
+	}
+	return raw, nil
 }
 
 // anyAttrs adapts a []slog.Attr to the variadic any signature slog.Group
@@ -379,8 +440,8 @@ func (c *Config) String() string {
 	}
 	sort.Strings(flags)
 	return fmt.Sprintf(
-		"config{profile:%s api_addr:%s public_url:%s database_url:%s signing_keys_configured:%d dokploy_base_url:%s dokploy_token:%s shutdown_timeout:%s backup_status_file:%s backup_max_age:%s log_level:%s rate_limit_enabled:%t feature_flags:[%s]}",
-		r.Profile, r.APIAddr, r.PublicURL, r.DatabaseURL, r.SigningKeysConfigured,
+		"config{profile:%s api_addr:%s public_url:%s database_url:%s signing_keys_configured:%d secret_keys_configured:%d dokploy_base_url:%s dokploy_token:%s shutdown_timeout:%s backup_status_file:%s backup_max_age:%s log_level:%s rate_limit_enabled:%t feature_flags:[%s]}",
+		r.Profile, r.APIAddr, r.PublicURL, r.DatabaseURL, r.SigningKeysConfigured, r.SecretKeysConfigured,
 		r.DokployBaseURL, r.DokployToken, r.ShutdownTimeout, r.BackupStatusFile, r.BackupMaxAge,
 		r.LogLevel, r.RateLimitEnabled, strings.Join(flags, " "),
 	)

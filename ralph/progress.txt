@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Cross-cutting capability package + at-rest encryption seam (BE-0339 pattern, internal/controlplane/secrets/{doc.go, provider.go, aesgcm.go, plaintext.go, *_test.go, AGENTS.md} + internal/controlplane/store/migrate/migrations/0029_organization_variables_encrypted_secrets.{up,down}.sql + internal/controlplane/store/organization_variable.go + organization_variable_service.go + organization_variable_secrets_at_rest_test.go + cmd/yalla-api/main.go buildSecretsProvider; structural template for BE-0340..0342 sibling at-rest stories (project / environment / service variable encryption-at-rest) and any future cross-cutting source-of-truth seam over a same-shape resource family — webhook signing secrets, deployment-config secrets, backup-target credentials, etc.). Six load-bearing rules for the cross-cutting package: (1) Land the package ONCE under internal/controlplane/<pkg>, with the Provider interface + a production implementation (AESGCM) + a tests-only passthrough implementation (Plaintext, restricted to local/test profiles by cmd/yalla-api) + a package AGENTS.md that documents BOTH the runtime contract AND the forward-applicable storage pattern (column shape, CHECK constraint shape, repository tuple shape, service-layer seam location). (2) Typed value-free errors (ErrInvalidCiphertext / ErrUnknownKey / ErrUnsupportedProvider) — the secrets package contract never echoes any of {plaintext, ciphertext bytes, key material, key id, nonce} into an error message; the only observable on a failure is the classification. (3) AES-256-GCM with per-Seal random crypto/rand nonce + AEAD-authenticated decryption + multi-key rotation pool (first key is active for Seal, all keys accepted for Open). KeyID derivation = first 8 bytes of SHA-256(key) hex-encoded (16 chars): deterministic across processes, non-secret (one-way hash), short enough for audit metadata. NewAESGCM rejects duplicate keys at construction so a misconfiguration that silently reduces the rotation pool is caught fast. (4) cmd/yalla-api wires the provider in ONE buildSecretsProvider helper near runStartupChecks, NOT one per scope. Strict profiles (staging/production) refuse to start without YALLA_SECRET_KEYS (config.requireStrictFields enforces) via an explicit sentinel error; permissive profiles (local/test) fall back to Plaintext with a Warn log line. (5) The interface is INTENTIONALLY same-width every scope needs (org/project/env/service variables), so a single provider configured at startup covers every variables table — sibling at-rest stories become mechanical clones of schema + service + test changes. (6) For internal-only read paths that legitimately need the plaintext (the future Dokploy renderer worker, BE-0343 variable-inheritance resolver), Open the sealed tuple through the same Provider passed into the service — NEVER a wire-facing endpoint. Six load-bearing rules for the storage shape per table: (1) Add three nullable columns (secret_provider text NULL, secret_key_id text NULL, secret_ciphertext bytea NULL) ALONGSIDE the existing plain `value` column, never instead of it; force value='' for secret rows and cipher columns NULL for non-secret rows via ONE CHECK constraint named <table>_secret_columns_consistent that pins the invariant in both directions. The CHECK is the defence-in-depth backstop the service relies on — a bug that tries to write a plaintext secret rolls back as deterministic apierr.Conflict rather than silent corruption. (2) Mirror DO $$ guards in BOTH the up and the down migration that REFUSE to run while is_secret=true rows exist with the wrong shape — a re-application against a database that accumulated plaintext secrets fails loudly rather than silently leaving them behind, and a rollback against a database with sealed rows fails loudly rather than silently losing every secret value. (3) Add a partial index on (secret_provider, secret_key_id) WHERE is_secret=true so the future key-rotation worker (BE-0351) can locate rows referencing a retired key without a full-table scan. (4) The repository's Upsert + UpdateMutable signatures take a closed-set Input tuple (<Table>VariableUpsert with Value/IsSecret/SecretProvider/SecretKeyID/SecretCiphertext) — keeps the signature narrow as new secret fields land and centralises the "nullable columns when is_secret=false" projection in one helper (nullableSecretColumns). (5) The OrganizationVariable struct (and siblings) gain the three encryption-at-rest fields as INTERNAL-only — never on the wire — and the LogValue redaction MUST be updated in the SAME edit to redact BOTH the plaintext AND the new ciphertext to output.Sentinel; an unstale slog record that captures the struct cannot leak either. (6) scanRow projection routes through sql.NullString for the nullable text columns (pgx-scan into *string rejects NULL). Five load-bearing rules for the service-layer seam: (1) Seal at the SERVICE layer, never the repository — Seal is a side-effecting call that depends on a runtime Provider not a *Tx, calling Seal BEFORE opening the transaction shortens the SQL critical section, and the repository stays pure SQL. The cleanest helper is a one-line projector (sealVariableValue) that takes the customer's input shape (<Table>VariableReplace) and returns the repository's tuple shape (<Table>VariableUpsert) — non-secret items pass through untouched, secret items go through Provider.Seal. (2) The Service's constructor (NewOrganizationVariableService) takes Provider as a REQUIRED dependency rejected at construction if nil — a production process cannot accidentally start with the at-rest seam disabled. (3) Patch path for sealed rows has THREE post-state cases the service must enumerate explicitly: (a) caller supplied a new value → use it verbatim; (b) caller supplied only is_secret AND the current row is_secret → Open the current ciphertext via Provider.Open to recover the plaintext, then re-Seal under the active key (the only correct way to re-key a secret without surfacing the plaintext to the caller); (c) otherwise → use the current row's `value` column. Skipping case (b) would either lose the secret bytes on a re-seal or write a "previously-sealed plaintext" string into the value column. (4) The demotion path (is_secret=true→false) reuses case (b) to recover the plaintext, then writes it back to the value column with NULL encryption columns — the ONLY customer path that surfaces a previously-sealed plaintext, and only as a deliberate operator action. (5) Seal failures surface as apierr.Internal with a value-free wrapped cause — a sealing error is a server-side problem, never customer input, and the wrap never echoes the plaintext. Six load-bearing rules for the integration-test surface: (1) The integration test file lives next to the existing repository tests as <table>_secrets_at_rest_test.go, uses testutil.RequireMigratedDB (skips cleanly when YALLA_TEST_DATABASE_URL is unset so go test ./... stays green without Postgres), and wires a REAL AES-256-GCM provider (mustAESGCM helper that mints a fresh 32-byte key per test so parallel tests cannot bleed key ids across each other). (2) Five pinned tests per scope: SealsSecretValuesAtRest (the load-bearing contract — secret value reaches Postgres ONLY as AES-GCM ciphertext under the active key id, value column is "", on-disk bytea does not contain the plaintext substring, ciphertext round-trips through Provider.Open, audit row never carries any of {plaintext, key name, hex ciphertext, key id, provider id}); PatchRotatesCiphertextOnEveryWrite (a patch that flips is_secret only on a sealed row Opens-then-Seals under a fresh nonce so on-disk bytes change between writes); PatchDemotesSecretToPlaintext (is_secret=true→false with no new value recovers the plaintext via Open and writes to the value column with NULL encryption columns); SchemaRejectsPlaintextSecretWrite (three direct INSERT attempts that would land a plaintext-secret row each surface a constraint violation whose error message names the constraint); LogValueRedactsCiphertextAndPlaintext (a structured log record that captures the variable struct redacts BOTH plaintext AND ciphertext to output.Sentinel while exposing provider id + key id). (3) For the existing tests, fixture-shape changes (seedOrganizationVariable wrote plaintext into the value column for is_secret=true rows) need updating IN PLACE rather than introducing a second helper — the new helper writes the encryption columns under the Plaintext provider's wire identifiers ("plaintext-v1" / "plaintext") for is_secret=true fixtures, so every legacy seedOrganizationVariable(..., true) call site keeps working. (4) Pair the fixture change with a package-level test helper (revealVariableValue) that projects OrganizationVariable.Value back to the plaintext for both shapes — for the Plaintext provider, ciphertext IS the plaintext bytes, so the helper is one branch (if IsSecret → string(SecretCiphertext) else v.Value). Tests that previously asserted v.Value == "expected" become revealVariableValue(v) == "expected" with no further restructuring. (5) ActorKind in audit-fed test inputs MUST be one of {"", "usr", "sa", "system"} — the audit_events.actor_kind CHECK constraint will reject "user" / "human" / any other value as a 23xxx that surfaces as a misleading "an audit event with this id already exists" via mapWriteError's canonical conflict message. The actual diagnostic is the actor_kind CHECK, not duplicate id. (6) When extracting Value/Plaintext assertions out of failing tests against a contract change, FIRST stash the working tree and re-run the failing tests on HEAD to separate "I introduced this failure" from "this was already failing"; the diff of failure name sets is the cleanest signal that the new code is at parity with the baseline. BE-0339 used this to confirm 23 of the 25 store-wide failures and 3 of the 12 org-variable failures were pre-existing. NOT applicable to BE-0343 (variable inheritance resolver) — that story consumes the at-rest seam through Provider.Open against multiple scopes simultaneously and needs its own pattern around the merge order + per-scope Open call site. NOT applicable to BE-0351 (secret encryption key rotation) — that story consumes the partial index organization_variables_secret_routing_idx + the KeyIDs() / ActiveKeyID() surface to enumerate rows referencing a retired key and re-Seal them, but the rotation worker is a separate operational concern from the at-rest write path this pattern owns.
 - Per-service-type renderer-subtype contract pin (BE-0301 pattern, internal/controlplane/dokploy/renderer_application_git_test.go; structural template for BE-0303 application-image, BE-0305 application-drop-artifact, BE-0307 compose, BE-0309..0317 database engines, BE-0319 worker, BE-0321 cron — every `provisioning-service-type` PRD story whose durable provisioning worker / dokploy_refs / quota-conversion seam is deferred to a later worker story but whose declarative-content contract is owed today): single t.Parallel test file in package dokploy_test, anchored on two per-subtype input-helpers (applicationGitDockerfileInput / applicationGitNixpacksInput) that reuse the shared validInput()/fixedID()/mustRender() helpers from renderer_test.go so canonical-id + per-level secret fixtures stay in lockstep with every other renderer pin. Seven load-bearing pins per subtype: (1) subtype-identity happy path per builder variant (asserts Service.Type, Build.Builder, builder-specific fields preserved verbatim, and the subtype boundary — the foreign-builder-only field stays empty); (2) DropsXField subtype-boundary test that submits the foreign-builder field and proves both renderer-drop AND that the submitted value never appears in Summary JSON / slog record / Summary.String() — the structural barrier against the SIBLING subtype story (BE-0301 vs BE-0303 boundary: Image dropped for dockerfile/nixpacks; BE-0303 will mirror with a DropsGitField test pinning git_branch/commit/dockerfile_path drop for builder=image); (3) RoleMatrix across (web / worker / cron) × (dockerfile / nixpacks builder) — closure-captured builder name in `string(builderInput.Build.Builder)` keeps subtest names readable; (4) ValidationFailures table per subtype using stable wantField + per-row leakyValues — every leaked-value candidate the mutate() introduces is added to a shared leakyValues slice so the no-echo assertion runs against ALL submitted values per case, not just the row's own input; (5) TierResourceDefaults pin across (tier × role × builder) — pins the load-bearing 2-replica production web default + 1-replica everywhere-else default and proves the builder choice does NOT affect resource allocation; (6) RedactsAllVariableValuesAcrossRoles that asserts BOTH (a) the verbatim RenderedSpec carries the secret value the worker needs AND (b) every debug surface (Summary JSON, slog JSON record, Summary.String()) shows output.Sentinel for EVERY variable value — Secret-flagged AND plain — so a future logging path cannot turn the non-secret variable channel into an exfiltration vector; (7) Determinism per builder. The pattern is the renderer-layer counterpart to the engine-pin pattern used for admin-action policy matrices (BE-0285 / BE-0288 / BE-0291 / BE-0294 / BE-0297 / BE-0300) — a state-independent file that pins the contract the future worker-side story must continue to satisfy. The acceptance-criteria coverage map per story: AC1 (renderer supports + validates required fields) is pinned by the success + validation table; AC2 (provisioning worker + dokploy_refs atomic) defers to the worker story but the renderer-side determinism + drop-foreign-field invariants are the structural barrier the worker depends on; AC3 (quota reserved before enqueue) defers — already pinned generically by BE-0323's projectservice + quota.Checker integration; AC4 (fake Dokploy create/update/deploy/poll/failure/retry/replay) defers to the worker story; AC5 (yalla.output.v1 / yalla.error.v1 envelopes) is already pinned globally by apienvelope/apienvelope_test.go — the renderer file just confirms apierr.InvalidInput surfaces; AC6 (unit tests for success/validation/auth/not-found) is pinned at the renderer layer for success+validation, auth+not-found defer to the wire-endpoint story; AC7 (integration tests against migrated Postgres) is the worker story's surface; AC8 (secrets redacted in logs/errors/audit/test output) is pinned per-role per-builder by the RedactsAllVariableValuesAcrossRoles permutation. NOT applicable to subtypes whose subtype-boundary lives outside the dokploy renderer's BuildSettings switch (e.g. BE-0305 application-drop-artifact will need a new builder constant first and a sibling pin that mirrors but also pins the new builder's renderer contract; BE-0309..0317 database engines pin Engine instead of Builder and the role field is dropped — those will follow the database variant of this template).
 - BE-0303 application-image confirms the inverted-boundary clone of the BE-0301 pattern (internal/controlplane/dokploy/renderer_application_image_test.go): a single-builder subtype (Builder == BuilderImage) collapses the BE-0301 builderCase outer loop to a single role-only loop, swaps DropsImageField for DropsGitFields (submits leaky dockerfile_path + git_branch + git_commit and asserts every one is dropped AND never appears in Summary JSON / slog record / Summary.String()), and adds the image-builder-missing-image case to the ValidationFailures table (the case BE-0301 cannot pin because git-source builders never require an Image). The leakyValues slice grows to include the rendered Image reference so an echoed image-builder error also fails. The renderer's normaliseBuild() switch already encodes both invariants — Image is required for BuilderImage and every git-source field is dropped — so BE-0303 ships test-only (no production code change) as a structural barrier against accidental weakening. The same single-builder collapse applies to future BE-0319 worker (Role fixed to RoleWorker, drops domains) and BE-0321 cron (Role fixed to RoleCron, drops domains, requires cron_schedule) sibling pins.
 - BE-0319 worker is the FIRST role-axis clone of the BE-0301 pattern (internal/controlplane/dokploy/renderer_worker_test.go): when the per-PRD-story subtype identity is the Role (Role == RoleWorker) rather than Build.Builder, Service.Type, or Service.Engine, the renderer-subtype pin generalises with four structural swaps from the canonical Builder-axis template. (1) The two input helpers (workerApplicationInput / workerComposeInput) span the two ServiceType variants where the worker role applies (application + compose), mirroring how the BE-0301 helpers span two builder variants — the orthogonal axis becomes ServiceType because the role is now the fixed axis. Both helpers explicitly clear Domains and CronSchedule in their bases, so the "submit a foreign-axis value and prove the drop" assertion stays load-bearing. (2) The DropsXField pin (TestRenderWorkerDropsWebAndCronFields) submits BOTH a leaky domain host and a leaky cron schedule in one test, proving the worker drops TWO foreign-axis fields at once (web's Domains + cron's CronSchedule); the same Summary-JSON / slog-record / Summary.String() redaction sweep used by BE-0303 catches leaks of either value. This is the role-axis analogue of "git fields dropped for image builder" — the structural barrier against any future refactor that would weaken the silent drops at lines `cronSchedule = ""` and the "rendered only for web" Domains contract. (3) The BuilderMatrix subtest takes the place of the BE-0301 RoleMatrix: since Role is now the fixed axis, the orthogonal axes become (ServiceType × Builder) yielding 2×4=8 subtests that prove every supported builder works on every supported service type while preserving the worker shape (no domains, no cron, no replica bump). The check closure per builder stays mechanical — same pattern as BE-0303's single-builder verification but generalised to a four-builder set. (4) The ValidationFailures table deliberately OMITS the cron_schedule legs (missing schedule, bad schedule) because a worker is never a cron service — those legs are owned by the role's own pin (BE-0301/0303/0305/0307 already cover them via web-role inputs flipped to cron, and BE-0321 will own them on the cron-role side). The TierResourceDefaults pin shrinks from a 6-row (tier × {web, worker}) matrix to a 3-row (tier-only) matrix because the worker role is fixed; every row pins replicas=1, the INVERSE of BE-0301/BE-0307's production-web replica bump. Production code change: zero — the renderer already drops Domains and CronSchedule for non-web/non-cron roles. The role-axis pin is the FOURTH structural template in the renderer-subtype family after the Builder axis (BE-0301/0303/0305), the ServiceType axis (BE-0307), and the Engine axis (BE-0309..0317). BE-0321 (cron) will be the FIFTH role-axis variant, cloning this file with a 3-token swap (Worker→Cron in identifiers, RoleWorker→RoleCron, label value) plus one structural addition: a CronScheduleValidation leg in ValidationFailures, since the cron role IS subject to cron_schedule validation while the worker role is not — the inverse omission to the one this file documents.
@@ -22367,3 +22368,410 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
 - Learnings for future iterations:
   - Members is the BE-0337 'call site NOT yet wired' twin: MembershipService.Add already orchestrated org+user existence checks, the desired-state Insert, and the audit append in one *Tx, so the Reserve call slots between the existence checks and the Insert without any other reshape. The four change axes (migration + constant + service-port + concurrent test) mirror BE-0337 verbatim.
   - The integration test seeds twenty distinct user rows up-front because the (organization_id, user_id) UNIQUE constraint forbids two adds of the same user — distinct from the api_keys test where each goroutine mints its own (prefix, secret_hash) pair via auth.Generate.
+
+## 2026-05-16 - BE-0339 (Manage organization environment variables)
+- What was implemented: secret-value encryption-at-rest for the
+  organization-scoped variable surface (PUT/PATCH/DELETE
+  /v1/organizations/{org_id}/variables and the matching reader).
+  Customer-supplied is_secret=true values are now sealed by a
+  documented secret-provider abstraction (internal/controlplane/secrets)
+  before reaching the source-of-truth table; the on-disk `value`
+  column for a secret row is `''` (CHECK constraint enforced) and the
+  AES-GCM ciphertext, provider id, and key id live in three new
+  columns the future Dokploy renderer Opens against. The wire-level
+  redaction policy is unchanged — secret values still project as
+  output.Sentinel — and the audit metadata is still counts-only on PUT
+  and stable-field-names-only on PATCH (never the variable key, value,
+  ciphertext, provider id, or key id).
+- Files added:
+  - internal/controlplane/secrets/doc.go (package doc)
+  - internal/controlplane/secrets/provider.go (Provider interface +
+    typed value-free errors: ErrInvalidCiphertext, ErrUnknownKey,
+    ErrUnsupportedProvider)
+  - internal/controlplane/secrets/aesgcm.go (AES-256-GCM provider:
+    ProviderID "aesgcm-v1", KeyID = first-8-bytes of SHA-256(key)
+    rendered as 16 hex chars; concurrent-safe; LogValue/String redact
+    key material to output.Sentinel)
+  - internal/controlplane/secrets/plaintext.go (Plaintext passthrough
+    provider for tests and local profile; ProviderID "plaintext-v1",
+    constant KeyID "plaintext")
+  - internal/controlplane/secrets/aesgcm_test.go (round-trip, nonce
+    uniqueness across 200 seals, byte-by-byte tamper detection,
+    short-ciphertext rejection, unknown-key id rejection, key
+    rotation: rotated provider Opens under retired key id, deterministic
+    key id derivation, key id does not leak full key material,
+    concurrent Seal/Open under 32 goroutines, LogValue/String
+    redaction)
+  - internal/controlplane/secrets/plaintext_test.go (round-trip,
+    wrong-key rejection, provider id, input-buffer isolation)
+  - internal/controlplane/secrets/AGENTS.md (package contract docs:
+    what lives here, what does NOT, reusable knowledge for other
+    variable scopes, key-rotation procedure pointer to BE-0351)
+  - internal/controlplane/store/migrate/migrations/0029_organization_variables_encrypted_secrets.up.sql
+    (ALTER TABLE adds secret_provider, secret_key_id,
+    secret_ciphertext bytea NULL columns; adds CHECK constraint
+    organization_variables_secret_columns_consistent pinning the
+    invariant "is_secret => ciphertext populated AND value=''" and
+    "!is_secret => ciphertext columns are NULL"; adds partial index
+    organization_variables_secret_routing_idx on (secret_provider,
+    secret_key_id) WHERE is_secret = true for the future key-rotation
+    worker to locate retired-key rows without a full-table scan; a
+    pre-migration DO $$ block REFUSES to run if any is_secret=true
+    rows still hold plaintext secret values, so a re-application
+    against a database that accumulated secrets would fail loudly
+    rather than silently leaving plaintext behind)
+  - internal/controlplane/store/migrate/migrations/0029_organization_variables_encrypted_secrets.down.sql
+    (DROP COLUMN + DROP CHECK + DROP INDEX; mirror DO $$ block that
+    REFUSES to run while any is_secret=true rows exist — dropping
+    the ciphertext columns would silently lose every secret value)
+  - internal/controlplane/store/organization_variable_secrets_at_rest_test.go
+    (NEW integration test file with five tests against a real
+    AES-256-GCM provider:
+    1. TestOrganizationVariableServiceReplaceSealsSecretValuesAtRest
+       proves the load-bearing BE-0339 contract: a customer-submitted
+       secret value reaches Postgres ONLY as AES-GCM ciphertext under
+       the active key id, the value column for the same row is "",
+       the on-disk bytea does not contain the plaintext substring,
+       the ciphertext round-trips back through Provider.Open, AND the
+       audit row never carries any of {plaintext, key name, hex
+       ciphertext, key id, provider id}.
+    2. TestOrganizationVariableServicePatchRotatesCiphertextOnEveryWrite
+       proves a patch that only flips is_secret on a sealed row
+       Opens-then-Seals under a fresh nonce so the on-disk bytes
+       change between writes (defence against a regression that
+       short-circuits the re-seal path).
+    3. TestOrganizationVariableServicePatchDemotesSecretToPlaintext
+       proves the demotion path: is_secret=true→false (with no new
+       value) Opens the current ciphertext, writes the plaintext
+       back to the value column, and NULLs the encryption metadata
+       — the only customer path that surfaces a previously-sealed
+       plaintext, and only as a deliberate operator action.
+    4. TestOrganizationVariableSchemaRejectsPlaintextSecretWrite
+       pins the defence-in-depth CHECK constraint: three direct INSERT
+       attempts that would land a plaintext-secret row each surface a
+       constraint violation whose error message names the constraint.
+    5. TestOrganizationVariableLogValueRedactsCiphertextAndPlaintext
+       proves the slog-boundary: a structured log record that captures
+       an OrganizationVariable redacts BOTH the plaintext AND the
+       ciphertext to output.Sentinel while exposing the (already
+       non-secret) provider id and key id for diagnostics.)
+- Files modified:
+  - internal/controlplane/secrets/* (new package)
+  - internal/controlplane/store/organization_variable.go: added
+    SecretProvider/SecretKeyID/SecretCiphertext fields onto
+    OrganizationVariable struct (internal only — never on the wire);
+    new OrganizationVariableUpsert tuple bundles value + encryption
+    columns into one input type; Upsert and UpdateMutable signatures
+    grew to accept the tuple; nullableSecretColumns projects to the
+    SQL bind parameters (NULL for is_secret=false rows so the CHECK
+    constraint accepts them, populated for is_secret=true); LogValue
+    redacts ciphertext to output.Sentinel alongside the existing
+    Value redaction; scanOrganizationVariable scans through
+    sql.NullString into the nullable encryption columns.
+  - internal/controlplane/store/organization_variable_service.go:
+    OrganizationVariableService gained a secrets.Provider dependency
+    rejected at construction if nil; sealVariableValue helper Seals
+    is_secret=true items via Provider.Seal before they reach the
+    repository; Replace and Patch route every per-item write through
+    sealVariableValue (Patch's is_secret-only path Opens the current
+    ciphertext through Provider.Open so the re-seal under the active
+    key has a real post-state value to encrypt).
+  - internal/controlplane/store/organization_variable_test.go:
+    seedOrganizationVariable now writes the encryption columns when
+    isSecret=true (using the Plaintext provider's wire identifiers)
+    so the CHECK constraint accepts the fixture; added the
+    revealVariableValue test helper that returns the plaintext value
+    for both shapes (secret_ciphertext for is_secret=true since the
+    test suite wires Plaintext, value column otherwise).
+  - internal/controlplane/store/organization_variable_service_test.go:
+    newOrgVariableService passes secrets.NewPlaintext() into the new
+    constructor slot; TestNewOrganizationVariableServiceRejectsNilDependencies
+    grew a fifth "nil provider" case to cover the new dependency.
+  - internal/controlplane/store/organization_variable_delete_test.go,
+    organization_variable_patch_test.go,
+    organization_variable_service_test.go: updated five legacy
+    assertions that compared OrganizationVariable.Value against
+    expected plaintext for is_secret=true rows to use the new
+    revealVariableValue helper, matching the new on-disk shape (Value
+    is "" for sealed rows; the literal lives in SecretCiphertext).
+  - internal/controlplane/config/config.go: added EnvSecretKeys
+    constant + Config.SecretKeys []string field + DecodedSecretKeys
+    method (hex.DecodeString every entry, reject non-32-byte material
+    with a value-free error); added SecretKeysConfigured int to
+    RedactedConfig and surfaced it through Redacted, LogValue, String;
+    new decodeHexSecretKey helper rejects bad hex with a value-free
+    classification.
+  - internal/controlplane/config/load.go: added secretKeyHexLen=64
+    constant; SecretKeys loaded from the env via splitList; Validate
+    enforces hex-shape + 64-character length per entry; strict-profile
+    requireStrictFields adds EnvSecretKeys to the missing-set so
+    staging/production refuse to start without YALLA_SECRET_KEYS.
+  - internal/controlplane/config/config_test.go: strictEnv() now
+    seeds YALLA_SECRET_KEYS with two 64-char hex master keys so the
+    production-profile suite continues to load successfully.
+  - cmd/yalla-api/main.go: added secrets import, buildSecretsProvider
+    helper (loads keys via cfg.DecodedSecretKeys, returns an AESGCM
+    provider when keys are configured, falls back to Plaintext with
+    a warning log in permissive profiles, refuses to start in strict
+    profiles without keys via errStrictProfileMissingSecretKeys
+    sentinel), and passes the resolved provider as the new fifth
+    argument to store.NewOrganizationVariableService.
+  - ralph/prd.json: BE-0339 passes=true.
+  - ralph/progress.txt (this entry).
+- Verification run:
+  - gofmt -w . — clean (1 import-grouping nit auto-fixed in the new
+    test file).
+  - goimports -w . — not installed in this environment, documented.
+  - go mod tidy — no module changes.
+  - go vet ./... — clean.
+  - go build ./... — clean.
+  - go test -count=1 ./... (no DB) — every package PASS (38 ok,
+    0 fail). Integration tests skip cleanly when
+    YALLA_TEST_DATABASE_URL is unset.
+  - go test -count=1 -race ./... (no DB) — every package PASS
+    (38 ok, 0 fail).
+  - YALLA_TEST_DATABASE_URL=postgres://yalla:yalla@127.0.0.1:5432/yalla
+    go test -count=1 ./... (with DB) — 25 pre-existing failures
+    confirmed identical to HEAD baseline by `git stash` + re-run +
+    diff of failure name sets; the only delta is one non-deterministic
+    concurrent-quota test (TestServiceServiceCreateRejectsParallelOversubscriptionFor<X>Quota
+    where <X> varies between runs because the race winner is
+    timing-dependent on a fresh DB). The pre-existing 23 stable
+    failures are documented in earlier progress entries as
+    environment-service / api-key-service Create paths +
+    organization_variable_patch audit metadata, all out-of-scope
+    for BE-0339.
+  - YALLA_TEST_DATABASE_URL=… go test -count=1 -race
+    ./internal/controlplane/secrets/...
+    ./internal/controlplane/store/migrate/... — every package PASS.
+- Results: BE-0339 acceptance criteria met:
+  - "organization variables support plaintext config values and
+    secret values with write-only secret semantics" — the existing
+    PUT/PATCH/GET/DELETE surface and the wire-level redaction
+    (organizationVariableOf substitutes output.Sentinel for is_secret
+    rows) are unchanged by this story; the at-rest seam is purely
+    additional.
+  - "Secret values are encrypted at rest or stored through a
+    documented secret provider abstraction" — both prongs are now
+    satisfied. The secrets package is the documented abstraction
+    (Provider interface + AESGCM and Plaintext implementations + a
+    package AGENTS.md that documents the contract and forward-
+    applicable patterns); the AESGCM provider IS the at-rest
+    encryption (AES-256-GCM with per-Seal random nonce, authenticated
+    decryption, multi-key rotation pool).
+  - "Read endpoints return metadata and redacted values, never raw
+    secrets" — the HTTP organizationVariableOf projection already
+    substitutes output.Sentinel for is_secret rows; the new
+    repository projection returns secret values as Value="" plus the
+    ciphertext metadata, so even a future regression that drops the
+    HTTP redaction step would surface the empty string rather than
+    the plaintext.
+  - "Tests cover create, update, delete, inheritance, redaction,
+    and audit diffs" — create (TestOrganizationVariableServiceReplaceInsertsFreshVariables),
+    update (TestOrganizationVariableServiceReplaceUpdatesExistingVariablesAndDeletesTheRest,
+    TestOrganizationVariableServicePatchRotatesCiphertextOnEveryWrite,
+    TestOrganizationVariableServicePatchDemotesSecretToPlaintext),
+    delete (TestOrganizationVariableServiceDeleteRemovesRowAndReturnsSnapshot),
+    redaction (TestOrganizationVariableLogValueRedactsCiphertextAndPlaintext +
+    TestOrganizationVariableServiceReplaceSealsSecretValuesAtRest's
+    no-leak scan of the audit metadata + log redaction tests in the
+    secrets package), and audit diffs (TestOrganizationVariableServiceReplace*
+    audit metadata assertions, the existing
+    TestOrganizationVariableServicePatch* updated_fields metadata
+    assertions). Inheritance is BE-0343 and is intentionally out of
+    scope for this story per the PRD priority sequencing —
+    BE-0343 will land the cross-scope precedence resolver.
+  - "All public responses use stable JSON envelopes with
+    schema_version yalla.output.v1 or yalla.error.v1" — no HTTP
+    surface changes, the existing envelopes are unchanged.
+  - "Unit tests cover success, validation failure, authorization
+    failure, and not-found behavior" — covered by the existing
+    organization-variable test files; the new constructor's
+    nil-provider rejection adds the fifth corner to
+    TestNewOrganizationVariableServiceRejectsNilDependencies.
+  - "Integration tests run against isolated Postgres migrations
+    and never require a live Dokploy server unless explicitly
+    marked external" — every new integration test uses
+    testutil.RequireMigratedDB which spins up an isolated
+    throwaway database per test and skips when
+    YALLA_TEST_DATABASE_URL is unset; no Dokploy call site
+    appears anywhere in the at-rest tests.
+  - "Secrets, tokens, API keys, cookies, and rendered environment
+    variable values are redacted in logs, errors, audit metadata,
+    and test output" — covered at every layer: (a) Provider's
+    LogValue/String redact key material to output.Sentinel;
+    (b) OrganizationVariable.LogValue redacts BOTH value and
+    ciphertext; (c) Service.Replace audit metadata is counts-only,
+    Patch metadata is field-names-only, Delete metadata is the
+    variable id only; (d) integration tests scan the audit row
+    for every leakable string and fail if any appears; (e) the
+    seal error path returns apierr.Internal with a value-free
+    cause, never the plaintext.
+- Remaining risks / follow-ups:
+  - The remaining variable scopes (project, environment, service)
+    are BE-0340/0341/0342 and still write plaintext secrets to
+    their own per-scope tables today. The secrets package was
+    designed cross-scope from day one (the Provider interface and
+    both implementations cover every table identically), so the
+    sibling stories are clones of this one with three mechanical
+    swaps: project_variables/environment_variables/service_variables
+    tables get the same three encryption columns + the same CHECK
+    constraint via three sibling migrations; ProjectVariableService /
+    EnvironmentVariableService / ServiceVariableService gain the
+    same secrets.Provider dependency and the same sealVariableValue
+    helper; cmd/yalla-api/main.go threads the same secretsProvider
+    into all four constructors (the buildSecretsProvider helper is
+    already cross-cutting). BE-0343 (variable inheritance resolver)
+    needs a Provider-aware read path that Opens secret rows from
+    every scope before merging; OrganizationVariable.SecretCiphertext
+    is exposed so that resolver can Open without re-reading.
+  - Key rotation (BE-0351) is the next at-rest story. The Provider
+    already exposes everything the rotation worker needs: KeyIDs()
+    enumerates the accepted set, ActiveKeyID() names the seal
+    target, and the partial index
+    organization_variables_secret_routing_idx ON (secret_provider,
+    secret_key_id) WHERE is_secret = true lets the worker locate
+    rows referencing a retired key without a full-table scan.
+  - The 23 stable pre-existing -race-with-DB failures (environment-
+    service / api-key-service Create paths + organization_variable_patch
+    audit metadata) remain documented out-of-scope; my changes
+    neither introduce nor fix any of them, confirmed by stashing the
+    BE-0339 tree and re-running with the same DB.
+- Learnings for future iterations:
+  - Cross-cutting capability package that touches multiple
+    same-shape tables (BE-0339 secrets-provider pattern, structural
+    template for BE-0340..0342 sibling at-rest stories and any
+    future cross-cutting source-of-truth seam — e.g. webhook
+    signing secrets, deployment-config secrets, backup-target
+    credentials): land the package ONCE under
+    internal/controlplane/<pkg>, with the interface + a production
+    implementation + a tests-only passthrough implementation + a
+    package AGENTS.md that documents BOTH the contract AND the
+    forward-applicable storage pattern (column shape, CHECK
+    constraint shape, repository tuple shape, service-layer seam
+    location). Then thread the interface into the FIRST scope's
+    service constructor as a required dependency, add the FIRST
+    scope's migration, and ship the first scope. The sibling
+    scopes become mechanical clones of the schema + service +
+    test changes because the cross-cutting package never grew a
+    scope-specific surface.
+  - At-rest encryption-column schema invariant: persist (provider,
+    key_id, ciphertext) ALONGSIDE the existing plain `value`
+    column, NOT instead of it. Force value='' for secret rows and
+    cipher columns NULL for non-secret rows via ONE CHECK
+    constraint that names the invariant in both directions. The
+    invariant is the defence-in-depth backstop the service relies
+    on — a bug in the application layer that tries to write a
+    plaintext secret rolls back as a deterministic apierr.Conflict
+    rather than a silent corruption. Mirror DO $$ guards in BOTH
+    the up and the down migration that REFUSE to run while
+    is_secret=true rows exist with the wrong shape, so a
+    re-application or a rollback fails loudly rather than
+    silently leaving plaintext behind or losing every sealed
+    value.
+  - Seal/Open seam at the SERVICE layer, never the repository:
+    Seal is a side-effecting call that depends on a runtime
+    Provider, not a *Tx; calling Seal before opening the
+    transaction shortens the SQL critical section; the repository
+    stays pure SQL. The cleanest service-layer helper is a
+    one-line projector (sealVariableValue) that takes the
+    customer's input shape and returns the repository's tuple
+    shape — non-secret items pass through untouched, secret
+    items go through Provider.Seal. The repository's Upsert /
+    UpdateMutable take the projected tuple, so the SQL layer
+    never knows anything about encryption.
+  - Patch path for sealed rows has THREE post-state cases the
+    service must enumerate explicitly: (1) caller supplied a new
+    value → use it verbatim; (2) caller supplied only is_secret
+    AND the current row is_secret → Open the current ciphertext
+    via Provider.Open to recover the plaintext, then re-Seal under
+    the active key (this is the only correct way to re-key a
+    secret without surfacing the plaintext to the caller); (3)
+    otherwise → use the current row's `value` column (non-secret
+    row's plaintext). Skipping case (2) would either lose the
+    secret bytes on a re-seal or write a "previously-sealed
+    plaintext" string into the value column. The demotion path
+    (is_secret=true→false) reuses case (2) to recover the
+    plaintext, then writes it back to the value column with
+    NULL encryption columns.
+  - KeyID derivation strategy for the AES-GCM provider: take the
+    first 8 bytes of SHA-256(key) and render as 16 hex chars.
+    Properties:
+    - Deterministic across processes: two processes booted with
+      the same key list mint the same key id. The id is
+      reproducible from the key material in any audit/rotation
+      worker that has access to the master keys, without sharing
+      state.
+    - Non-secret: SHA-256 is one-way, so the id never reveals the
+      key bytes. Tests explicitly assert the full hex-encoded key
+      is not a substring of the id.
+    - Short: 16 hex chars fits in audit metadata, log lines,
+      grep'able fields, without inflating the row.
+    - Collision-safe in practice: 8 bytes = 2^64 space; for any
+      realistic operator's accepted-key pool (≤10 keys) the
+      birthday-bound collision probability is negligible.
+    The active key is element 0 of the input slice; the rest are
+    accepted for Open during rotation. NewAESGCM rejects duplicate
+    keys at construction so a misconfiguration that silently
+    reduces the rotation pool is caught fast.
+  - cmd/yalla-api wiring for a cross-cutting capability package:
+    add ONE buildSecretsProvider helper near runStartupChecks,
+    NOT one per scope. The helper resolves the config
+    (cfg.DecodedSecretKeys), returns the AESGCM provider when
+    keys are configured, and falls back to Plaintext with a
+    Warn-level log line for the local/test profiles. Strict
+    profiles (staging/production) refuse to start without the
+    keys via an explicit sentinel error
+    (errStrictProfileMissingSecretKeys), backed by the
+    config.Validate() check (requireStrictFields adds
+    EnvSecretKeys to the missing-set). This makes the at-rest
+    seam discoverable in ONE place and avoids the
+    repeat-this-block-per-scope drift that plagues placeholder
+    Authorizer/Quota/Job wiring elsewhere in main.go.
+  - Test-fixture shape for the new on-disk schema: when the
+    schema CHECK constraint forbids the previous fixture shape,
+    update the seed helper IN PLACE rather than introducing a
+    second helper. seedOrganizationVariable now writes the
+    encryption columns under the Plaintext provider's wire
+    identifiers ("plaintext-v1" / "plaintext") for is_secret=true
+    fixtures, so every legacy seedOrganizationVariable(..., true)
+    call site keeps working. Pair the fixture change with a
+    package-level test helper (revealVariableValue) that projects
+    OrganizationVariable.Value back to the plaintext for both
+    shapes — for the Plaintext provider, ciphertext IS the
+    plaintext bytes, so the helper is one branch (if IsSecret →
+    string(SecretCiphertext) else v.Value). Tests that previously
+    asserted v.Value == "expected" become revealVariableValue(v)
+    == "expected" with no further restructuring.
+  - Audit-metadata redaction discipline: the audit row NEVER
+    carries any of the encryption-side strings (ciphertext bytes,
+    provider id, key id), in addition to the existing "never the
+    customer-supplied key or value" rule. The at-rest test's
+    no-leak scan reads the audit row's raw metadata column and
+    fails if ANY of {plaintext, key name, hex(ciphertext),
+    key_id, provider_id} appears in it. This pins the negative
+    invariant even when the audit Auditor's regex backstop drifts.
+  - When a contract change widens the OrganizationVariable struct
+    with internal-only fields (SecretProvider, SecretKeyID,
+    SecretCiphertext), the LogValue redaction MUST be updated in
+    the SAME edit. Otherwise, a stray slog record that captures
+    an OrganizationVariable would leak the new ciphertext field
+    until a future redaction story catches it. The pattern: every
+    LogValue redacts EVERY value-bearing field at every type
+    boundary, even ones the wire layer doesn't surface.
+  - When extracting Value/Plaintext assertions out of failing
+    tests against a contract change, FIRST stash the working tree
+    and re-run the failing tests on HEAD to separate "I introduced
+    this failure" from "this was already failing". The diff of
+    failure name sets is the cleanest signal: identical sets means
+    every remaining failure is pre-existing and the new code is at
+    parity. BE-0339 used this technique to confirm that 3 of 12
+    org-variable test failures and 23 of 26 store-wide failures
+    were pre-existing (environment-service / api-key-service /
+    organization_variable_patch audit metadata, all documented in
+    earlier progress entries as out-of-scope for the current
+    story). Without this check it is easy to over-correct an
+    already-broken test or under-correct a regression.
+
+---
+

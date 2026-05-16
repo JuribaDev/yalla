@@ -75,8 +75,8 @@ func TestOrganizationVariableServiceDeleteRemovesRowAndReturnsSnapshot(t *testin
 	if deleted.Key != "DATABASE_URL" {
 		t.Errorf("deleted.key = %q, want DATABASE_URL", deleted.Key)
 	}
-	if deleted.Value != "postgres://user:hunter2@db/app" {
-		t.Errorf("deleted.value = %q, want the value at the moment of removal", deleted.Value)
+	if revealVariableValue(deleted) != "postgres://user:hunter2@db/app" {
+		t.Errorf("deleted.value = %q, want the value at the moment of removal", revealVariableValue(deleted))
 	}
 	if !deleted.IsSecret {
 		t.Errorf("deleted.is_secret = false, want true (the snapshot must reflect the row at removal)")

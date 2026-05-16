@@ -19,6 +19,7 @@ import (
 	"github.com/JuribaDev/yalla/internal/controlplane/policy"
 	"github.com/JuribaDev/yalla/internal/controlplane/ratelimit"
 	"github.com/JuribaDev/yalla/internal/controlplane/runtime"
+	"github.com/JuribaDev/yalla/internal/controlplane/secrets"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
 )
 
@@ -145,7 +146,12 @@ func main() {
 		os.Exit(1)
 	}
 	orgVariableRepo := store.NewOrganizationVariableRepository()
-	orgVariableService, err := store.NewOrganizationVariableService(dataStore, orgRepo, orgVariableRepo, auditRepo)
+	secretsProvider, err := buildSecretsProvider(cfg, logger)
+	if err != nil {
+		logger.Error("failed to initialize the secrets provider", "error", err.Error())
+		os.Exit(1)
+	}
+	orgVariableService, err := store.NewOrganizationVariableService(dataStore, orgRepo, orgVariableRepo, auditRepo, secretsProvider)
 	if err != nil {
 		logger.Error("failed to initialize the organization variable service", "error", err.Error())
 		os.Exit(1)
@@ -461,6 +467,65 @@ func runStartupChecks(ctx context.Context, pool *pgxpool.Pool) error {
 		return err
 	}
 	return nil
+}
+
+// buildSecretsProvider chooses the at-rest secret-protection provider
+// based on the resolved configuration profile.
+//
+//   - Strict profiles (staging, production) require YALLA_SECRET_KEYS to
+//     be configured (config.Validate enforces presence). buildSecretsProvider
+//     decodes the hex-encoded keys and returns an AES-256-GCM provider.
+//     A configuration where SecretKeys is somehow empty in a strict
+//     profile is rejected here as defence-in-depth (never reaches this
+//     code path under Validate, but the failure mode is explicit if it
+//     ever does).
+//
+//   - Permissive profiles (local, test) accept either a configured
+//     SecretKeys list (so a developer can exercise the production
+//     codepath locally) or no SecretKeys (the Plaintext passthrough
+//     provider is returned with a warning log so the operator notices
+//     they have no at-rest encryption). The Plaintext provider is NEVER
+//     returned from a strict profile.
+//
+// The returned provider is logged through its slog.LogValuer so the
+// startup record carries only the provider id and key id — the key
+// material never appears in any log.
+func buildSecretsProvider(cfg *config.Config, logger *slog.Logger) (secrets.Provider, error) {
+	keys, err := cfg.DecodedSecretKeys()
+	if err != nil {
+		return nil, err
+	}
+	if len(keys) > 0 {
+		provider, err := secrets.NewAESGCM(keys)
+		if err != nil {
+			return nil, err
+		}
+		logger.Info("secrets provider configured", "provider", provider)
+		return provider, nil
+	}
+	if cfg.Profile.IsStrict() {
+		return nil, errStrictProfileMissingSecretKeys
+	}
+	provider := secrets.NewPlaintext()
+	logger.Warn("secrets provider falling back to plaintext (no YALLA_SECRET_KEYS configured)", "provider", provider, "profile", cfg.Profile)
+	return provider, nil
+}
+
+// errStrictProfileMissingSecretKeys is the sentinel for the
+// defence-in-depth check inside buildSecretsProvider. config.Validate
+// should reject a strict profile without YALLA_SECRET_KEYS before
+// buildSecretsProvider is ever called; this sentinel is the explicit
+// failure if that invariant is somehow violated.
+var errStrictProfileMissingSecretKeys = errStrictProfileMissingSecretKeysFn()
+
+func errStrictProfileMissingSecretKeysFn() error {
+	return missingSecretKeysErr{}
+}
+
+type missingSecretKeysErr struct{}
+
+func (missingSecretKeysErr) Error() string {
+	return "YALLA_SECRET_KEYS is required in strict profiles"
 }
 
 // alwaysAllowAuthorizer is a placeholder store.Authorizer for the project

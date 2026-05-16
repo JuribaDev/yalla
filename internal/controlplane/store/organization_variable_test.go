@@ -8,6 +8,20 @@ import (
 	"github.com/JuribaDev/yalla/internal/controlplane/testutil"
 )
 
+// revealVariableValue returns the literal plaintext value of v. For
+// non-secret rows it is just v.Value. For is_secret rows the literal
+// value lives in v.SecretCiphertext (the schema CHECK forces Value=”
+// for secret rows after BE-0339), so we return the ciphertext bytes
+// verbatim — every test in this package wires the Plaintext provider,
+// for which Seal(plaintext) is plaintext, so the equivalence holds
+// without dragging a live provider through every assertion.
+func revealVariableValue(v store.OrganizationVariable) string {
+	if v.IsSecret {
+		return string(v.SecretCiphertext)
+	}
+	return v.Value
+}
+
 // Integration tests for the OrganizationVariableRepository — the
 // persistence half of the organization-variables surface. They run
 // against an isolated, freshly migrated Postgres database and skip when
@@ -21,10 +35,29 @@ import (
 // PUT/PATCH stories — this fixture only seeds rows for the read path.
 func seedOrganizationVariable(t *testing.T, db *testutil.DB, id, organizationID, key, value string, isSecret bool) {
 	t.Helper()
+	// Migration 0029 added a CHECK constraint requiring that secret rows
+	// carry a populated (secret_provider, secret_key_id, secret_ciphertext)
+	// tuple AND that the plain `value` column is ''. For test fixtures
+	// we stand in the secrets.Plaintext provider's wire identifiers so
+	// rows stay self-contained (no live provider dependency) and the
+	// HTTP/audit redaction contract still holds — the wire layer never
+	// projects the on-disk bytes for secret rows.
+	plainValue := value
+	var (
+		provider   any
+		keyID      any
+		ciphertext any
+	)
+	if isSecret {
+		plainValue = ""
+		provider = "plaintext-v1"
+		keyID = "plaintext"
+		ciphertext = []byte(value)
+	}
 	if _, err := db.Exec(context.Background(),
-		`INSERT INTO organization_variables (id, organization_id, key, value, is_secret)
-		 VALUES ($1, $2, $3, $4, $5)`,
-		id, organizationID, key, value, isSecret); err != nil {
+		`INSERT INTO organization_variables (id, organization_id, key, value, is_secret, secret_provider, secret_key_id, secret_ciphertext)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		id, organizationID, key, plainValue, isSecret, provider, keyID, ciphertext); err != nil {
 		t.Fatalf("seed organization_variables: %v", err)
 	}
 }
@@ -63,8 +96,10 @@ func TestOrganizationVariableRepoListByOrganizationReturnsRowsInDeterministicOrd
 			t.Errorf("got[%d].Key = %q, want %q", i, got[i].Key, want)
 		}
 	}
-	// Spot-check value + is_secret round-trip.
-	if got[1].Value != "m-value" || !got[1].IsSecret {
+	// Spot-check value + is_secret round-trip. For is_secret=true rows the
+	// literal value lives in secret_ciphertext after BE-0339; revealVariableValue
+	// projects the on-disk shape back to the plaintext for the assertion.
+	if revealVariableValue(got[1]) != "m-value" || !got[1].IsSecret {
 		t.Errorf("got[1] = %+v; want (m-value, is_secret=true)", got[1])
 	}
 }
@@ -98,7 +133,7 @@ func TestOrganizationVariableRepoDeleteByKeyReturnsRemovedSnapshot(t *testing.T)
 	if removed.ID != "ovar_beta" {
 		t.Errorf("removed.id = %q, want ovar_beta", removed.ID)
 	}
-	if removed.Key != "BETA" || removed.Value != "secret-b" || !removed.IsSecret {
+	if removed.Key != "BETA" || revealVariableValue(removed) != "secret-b" || !removed.IsSecret {
 		t.Errorf("removed = %+v, want BETA/secret-b/is_secret=true", removed)
 	}
 

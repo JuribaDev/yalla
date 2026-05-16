@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"log/slog"
 	"time"
@@ -16,29 +17,48 @@ import (
 // — the lowest-precedence layer of the Organization -> Project ->
 // Environment -> Service variable hierarchy the Dokploy renderer composes.
 //
-// Value is the literal value the variable carries. The repository returns it
-// verbatim from the database; the HTTP layer redacts secret values before
-// projection onto the wire, and the audit layer redacts every value
-// regardless of is_secret before persisting it in audit metadata. The
-// LogValue method below makes log records that accidentally carry an
-// OrganizationVariable safe by structurally hiding the value at the slog
-// boundary as a second line of defence — a panic stack trace or a debug
-// log that captures the struct cannot leak the literal.
+// Value is the literal value of NON-SECRET variables; for IsSecret = true
+// the column is forced to "" by the schema CHECK and the actual secret
+// bytes live behind (SecretProvider, SecretKeyID, SecretCiphertext),
+// sealed by an internal/controlplane/secrets.Provider. An internal-only
+// caller that legitimately needs the plaintext (today, the future Dokploy
+// provisioning renderer) calls Provider.Open against the sealed tuple.
+// The wire layer NEVER projects the sealed bytes — secret values appear
+// as output.Sentinel on every public response.
+//
+// SecretProvider / SecretKeyID / SecretCiphertext are populated when
+// IsSecret = true and empty/nil when IsSecret = false. The store layer
+// upholds that invariant in the same transaction as the write; the
+// database CHECK constraint
+// organization_variables_secret_columns_consistent is the defence-in-
+// depth guarantee that no row can ever drift from it.
+//
+// The LogValue method below makes log records that accidentally carry an
+// OrganizationVariable safe by structurally hiding both the plain value
+// AND the ciphertext at the slog boundary as a second line of defence —
+// a panic stack trace or a debug log that captures the struct cannot
+// leak the literal or the sealed bytes.
 type OrganizationVariable struct {
-	ID             string
-	OrganizationID string
-	Key            string
-	Value          string
-	IsSecret       bool
-	Version        int64
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID               string
+	OrganizationID   string
+	Key              string
+	Value            string
+	IsSecret         bool
+	SecretProvider   string
+	SecretKeyID      string
+	SecretCiphertext []byte
+	Version          int64
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 // LogValue redacts every variable value at the slog boundary so a stray
-// log record that captures an OrganizationVariable cannot leak the literal.
-// Non-secret values reach the wire through the HTTP projection (which has
-// its own explicit redaction policy); logs always see the sentinel.
+// log record that captures an OrganizationVariable cannot leak the literal
+// plaintext OR the sealed ciphertext. Non-secret values reach the wire
+// through the HTTP projection (which has its own explicit redaction
+// policy); logs always see the sentinel. The slog record exposes the
+// provider id and key id (already non-secret) so an operator can debug
+// the encryption seam without exfiltrating the bytes themselves.
 func (v OrganizationVariable) LogValue() slog.Value {
 	return slog.GroupValue(
 		slog.String("id", v.ID),
@@ -46,14 +66,21 @@ func (v OrganizationVariable) LogValue() slog.Value {
 		slog.String("key", v.Key),
 		slog.String("value", output.Sentinel),
 		slog.Bool("is_secret", v.IsSecret),
+		slog.String("secret_provider", v.SecretProvider),
+		slog.String("secret_key_id", v.SecretKeyID),
+		slog.String("secret_ciphertext", output.Sentinel),
 		slog.Int64("version", v.Version),
 	)
 }
 
 // organizationVariableColumns is the SELECT projection used by every read
 // in this repository. Keeping it as a single string keeps the column list
-// in lockstep with scanOrganizationVariable.
-const organizationVariableColumns = `id, organization_id, key, value, is_secret, version, created_at, updated_at`
+// in lockstep with scanOrganizationVariable. The encryption-at-rest
+// columns (secret_provider, secret_key_id, secret_ciphertext) live next
+// to value so a single Scan returns the whole row in one round trip; the
+// store-layer service decides whether and when to call Provider.Open
+// against the sealed tuple.
+const organizationVariableColumns = `id, organization_id, key, value, is_secret, secret_provider, secret_key_id, secret_ciphertext, version, created_at, updated_at`
 
 // organizationVariableListMaxRows caps how many rows a single
 // ListByOrganization call returns. An unbounded query can never be issued
@@ -107,6 +134,25 @@ func (r *OrganizationVariableRepository) ListByOrganization(ctx context.Context,
 	return out, nil
 }
 
+// OrganizationVariableUpsert is the closed-set tuple Upsert and
+// UpdateMutable accept. It binds the plain `value` column with the
+// (secret_provider, secret_key_id, secret_ciphertext) encryption-at-rest
+// tuple in one struct so the repository signature stays narrow as new
+// secret fields land. The store-layer service builds this struct by
+// calling secrets.Provider.Seal once per item; an IsSecret = true item
+// MUST carry a non-empty ciphertext and Value MUST be "", and an
+// IsSecret = false item MUST carry only Value with the ciphertext fields
+// zeroed. The database CHECK constraint
+// organization_variables_secret_columns_consistent rejects any drift as
+// a deterministic apierr.Conflict.
+type OrganizationVariableUpsert struct {
+	Value            string
+	IsSecret         bool
+	SecretProvider   string
+	SecretKeyID      string
+	SecretCiphertext []byte
+}
+
 // Upsert inserts or updates the (organization_id, key) row carrying value /
 // is_secret. The (organization_id, key) UNIQUE constraint from migration
 // 0012 is the conflict target, so an existing row keeps its id and bumps
@@ -134,23 +180,40 @@ func (r *OrganizationVariableRepository) ListByOrganization(ctx context.Context,
 // driver error is wrapped as the cause for server-side logging only and
 // never reaches the user-facing message — so a customer-facing 409 here
 // never echoes value content.
-func (r *OrganizationVariableRepository) Upsert(ctx context.Context, tx *Tx, id, organizationID, key, value string, isSecret bool) (OrganizationVariable, error) {
+func (r *OrganizationVariableRepository) Upsert(ctx context.Context, tx *Tx, id, organizationID, key string, in OrganizationVariableUpsert) (OrganizationVariable, error) {
 	if tx == nil {
 		return OrganizationVariable{}, apierr.Internal(errors.New("store: OrganizationVariableRepository.Upsert called with a nil transaction"))
 	}
+	provider, keyID, ciphertext := nullableSecretColumns(in)
 	row := tx.QueryRow(ctx,
-		`INSERT INTO organization_variables (id, organization_id, key, value, is_secret)
-		     VALUES ($1, $2, $3, $4, $5)
+		`INSERT INTO organization_variables (id, organization_id, key, value, is_secret, secret_provider, secret_key_id, secret_ciphertext)
+		     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (organization_id, key) DO UPDATE
-		    SET value     = EXCLUDED.value,
-		        is_secret = EXCLUDED.is_secret
+		    SET value             = EXCLUDED.value,
+		        is_secret         = EXCLUDED.is_secret,
+		        secret_provider   = EXCLUDED.secret_provider,
+		        secret_key_id     = EXCLUDED.secret_key_id,
+		        secret_ciphertext = EXCLUDED.secret_ciphertext
 		RETURNING `+organizationVariableColumns,
-		id, organizationID, key, value, isSecret)
+		id, organizationID, key, in.Value, in.IsSecret, provider, keyID, ciphertext)
 	v, err := scanOrganizationVariable(row)
 	if err != nil {
 		return OrganizationVariable{}, mapWriteError(err, "the organization variable could not be saved")
 	}
 	return v, nil
+}
+
+// nullableSecretColumns projects an OrganizationVariableUpsert onto the
+// (provider, keyID, ciphertext) tuple the SQL bind parameters expect.
+// For IsSecret = false the tuple is (nil, nil, nil) so the columns are
+// NULL — the CHECK constraint requires NULL in the non-secret state.
+// For IsSecret = true the tuple is (provider, keyID, ciphertext) values
+// the service just sealed.
+func nullableSecretColumns(in OrganizationVariableUpsert) (provider, keyID any, ciphertext any) {
+	if !in.IsSecret {
+		return nil, nil, nil
+	}
+	return in.SecretProvider, in.SecretKeyID, in.SecretCiphertext
 }
 
 // DeleteByOrganizationExceptKeys removes every organization_variables row
@@ -283,17 +346,21 @@ func (r *OrganizationVariableRepository) DeleteByKey(ctx context.Context, tx *Tx
 // other driver error. The raw driver error is wrapped as the cause for
 // server-side logging only and never reaches the user-facing message —
 // so a customer-facing 409 here never echoes value content.
-func (r *OrganizationVariableRepository) UpdateMutable(ctx context.Context, tx *Tx, organizationID, key, value string, isSecret bool) (OrganizationVariable, error) {
+func (r *OrganizationVariableRepository) UpdateMutable(ctx context.Context, tx *Tx, organizationID, key string, in OrganizationVariableUpsert) (OrganizationVariable, error) {
 	if tx == nil {
 		return OrganizationVariable{}, apierr.Internal(errors.New("store: OrganizationVariableRepository.UpdateMutable called with a nil transaction"))
 	}
+	provider, keyID, ciphertext := nullableSecretColumns(in)
 	row := tx.QueryRow(ctx,
 		`UPDATE organization_variables
-		    SET value     = $3,
-		        is_secret = $4
+		    SET value             = $3,
+		        is_secret         = $4,
+		        secret_provider   = $5,
+		        secret_key_id     = $6,
+		        secret_ciphertext = $7
 		  WHERE organization_id = $1 AND key = $2
 		 RETURNING `+organizationVariableColumns,
-		organizationID, key, value, isSecret)
+		organizationID, key, in.Value, in.IsSecret, provider, keyID, ciphertext)
 	updated, err := scanOrganizationVariable(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return OrganizationVariable{}, apierr.NotFound("organization_variable", key)
@@ -312,20 +379,40 @@ type scanRow interface {
 }
 
 // scanOrganizationVariable scans one row into an OrganizationVariable. The
-// column order must match organizationVariableColumns above.
+// column order must match organizationVariableColumns above. The three
+// encryption-at-rest columns are nullable in the schema (NULL for
+// non-secret rows); pgtype-aware scans into *string would reject NULL,
+// so we route through sql.NullString and sql.NullBytes here.
 func scanOrganizationVariable(row scanRow) (OrganizationVariable, error) {
-	var v OrganizationVariable
+	var (
+		v          OrganizationVariable
+		provider   sql.NullString
+		keyID      sql.NullString
+		ciphertext []byte
+	)
 	if err := row.Scan(
 		&v.ID,
 		&v.OrganizationID,
 		&v.Key,
 		&v.Value,
 		&v.IsSecret,
+		&provider,
+		&keyID,
+		&ciphertext,
 		&v.Version,
 		&v.CreatedAt,
 		&v.UpdatedAt,
 	); err != nil {
 		return OrganizationVariable{}, err
+	}
+	if provider.Valid {
+		v.SecretProvider = provider.String
+	}
+	if keyID.Valid {
+		v.SecretKeyID = keyID.String
+	}
+	if len(ciphertext) > 0 {
+		v.SecretCiphertext = ciphertext
 	}
 	return v, nil
 }
