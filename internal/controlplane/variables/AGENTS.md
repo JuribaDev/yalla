@@ -99,3 +99,58 @@ service) under the Dokploy-compatible precedence
   per-scope `*Reader` integration tests in `internal/controlplane/store`
   prove the tenant-scoping invariants of the inputs handed to this
   package, and the resolver is pure with no persistence to test.
+
+## Env-var redaction verification (BE-0360)
+
+Two complementary tests pin the package's redaction contract as a
+build-time invariant. See the matching `SECURITY.md` section
+"Environment Variable Redaction" for the threat-model documentation.
+
+- `env_var_redaction_static_test.go` is the static AST analyzer half. It
+  walks every non-test `.go` file in the package directory and enforces
+  three structural rules:
+  1. `(ScopedVariable).LogValue`, `(Rendered).LogValue`,
+     `(Resolved).LogValue` MUST reference `output.Sentinel` AND MUST NOT
+     emit a `<receiver>.Value` or `<receiver>.SecretCiphertext` selector.
+     The receiver-name tie prevents false positives from unrelated
+     `<other>.Value` accesses inside the method body.
+  2. Every `ExplainedVariable{...}` composite literal in package source
+     MUST set the `Value:` field to `output.Sentinel` exactly. An
+     omitted `Value:` field is also rejected — the field is mandatory
+     so the redaction is explicit and grep-able.
+  3. No call to `fmt.Sprint*` / `fmt.Errorf` / `errors.New` /
+     `apierr.Internal` / `apierr.InvalidInput` / `apierr.NotFound` /
+     `apierr.Conflict`, and no `apierr.FieldViolation{Reason: …,
+     Field: …}` composite literal, may carry a `.Value` /
+     `.SecretCiphertext` selector or a local identifier named
+     `plaintext` (the resolver's conventional name for bytes recovered
+     through `secrets.Provider.Open`).
+
+  The analyzer ships with `TestRedactionStaticAnalyzerDetectsRegressions`
+  — a self-check that parses synthetic bad and good source snippets and
+  asserts each rule fires (or stays silent) as expected. The synthetic
+  source lives in the test file as Go string literals so the bad code
+  never lives on disk and cannot be accidentally compiled or shipped.
+  Adding a new redaction-bearing type extends `redactingTypes`; adding a
+  new forbidden selector extends `forbiddenFieldNames`; adding a new
+  error-forming helper extends `errorFormingFuncs`. Each extension is a
+  one-line edit.
+
+- `env_var_redaction_test.go` is the runtime evidence half. Five
+  table-driven tests pin the no-leak invariant for the slog and the
+  customer-facing JSON projection across a hostile-value seed corpus
+  (long values, invalid UTF-8, control characters, regex metacharacters,
+  JSON-escape sequences, the `output.Sentinel` literal itself). Two
+  Go fuzz targets (`FuzzRedactionScopedVariableLogValue`,
+  `FuzzRedactionExplain`) widen the corpus coverage; CI runs the seed
+  corpus only, `-fuzz` is operator-opt-in. The marker-bracket pattern
+  (`FUZZENVMARKERLMN`) borrowed from the BE-0359 log-redaction fuzz
+  suite is the leak detector — every fuzz-supplied value is wrapped
+  with the marker so a leak surfaces independently of the bytes the
+  value happens to carry.
+
+When adding a new field that carries secret material, the same two-test
+pair stays load-bearing: extend the static analyzer's
+`forbiddenFieldNames` AND the runtime test's seed bracketing in the
+same edit. A drift that updates one but not the other is a regression
+the runtime tests catch on the next push.

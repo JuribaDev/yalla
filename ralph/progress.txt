@@ -25874,3 +25874,140 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     test|vet|mod`. Forward-applicable to every future Ralph
     iteration on this machine.
 ---
+
+## 2026-05-17 - BE-0360 - Security verification: environment variable redaction
+
+- What was implemented: BE-0360 — the third clone of the BE-0344
+  security-verification two-test pattern (after BE-0345 httpapi body size
+  and BE-0356/BE-0357/BE-0358 release-package static pins), this time
+  applied to the variables package's redaction surface. The static half
+  (internal/controlplane/variables/env_var_redaction_static_test.go) walks
+  every non-test .go file and enforces three structural rules: (1) each
+  of (ScopedVariable).LogValue / (Rendered).LogValue / (Resolved).LogValue
+  MUST reference output.Sentinel AND MUST NOT emit a <receiver>.Value /
+  <receiver>.SecretCiphertext selector inside the method body; (2) every
+  ExplainedVariable{...} composite literal MUST set the Value field to
+  output.Sentinel exactly (omitted Value is also rejected); (3) no
+  fmt.Sprint*/Errorf, errors.New, apierr.Internal/InvalidInput/NotFound/
+  Conflict call, and no apierr.FieldViolation{Reason: …, Field: …}
+  composite literal, may carry a `.Value` / `.SecretCiphertext` selector
+  or a local identifier named `plaintext` (the resolver's conventional
+  name for bytes recovered through secrets.Provider.Open). A
+  TestRedactionStaticAnalyzerDetectsRegressions self-check parses
+  synthetic bad and good source snippets and asserts each rule fires (or
+  stays silent). The runtime half
+  (internal/controlplane/variables/env_var_redaction_test.go) lands five
+  table-driven runtime tests and two Go fuzz targets that pin the no-leak
+  invariant across a hostile-value seed corpus (long values, invalid
+  UTF-8, control characters, NEL line terminator, regex metacharacters,
+  JSON-escape sequences, the output.Sentinel literal, a marker-prefixed
+  literal). The marker-bracket pattern (`FUZZENVMARKERLMN`) borrowed from
+  the BE-0359 log-redaction fuzz suite is the leak detector — every
+  fuzz-supplied value is wrapped with the marker so a leak surfaces
+  independently of the bytes the value happens to carry. The variables
+  package's AGENTS.md gets a new "Env-var redaction verification
+  (BE-0360)" section documenting the two-test contract. The top-level
+  SECURITY.md gets a new "Environment Variable Redaction" section above
+  the existing "Log Redaction Fuzzing" section plus a new row in the
+  Required Verification Gates table pointing at
+  `go test ./internal/controlplane/variables/... -run TestRedaction`.
+
+- Files changed:
+  - internal/controlplane/variables/env_var_redaction_static_test.go (new)
+  - internal/controlplane/variables/env_var_redaction_test.go (new)
+  - internal/controlplane/variables/AGENTS.md (Env-var redaction section)
+  - SECURITY.md (Environment Variable Redaction section + table row)
+  - ralph/prd.json (BE-0360 passes=true)
+  - ralph/progress.txt (this entry)
+
+- Verification run:
+  - `gofmt -w internal/controlplane/variables/` → no output (formatter
+    rewrote the static test once to canonical alignment; behaviour
+    unchanged).
+  - `go vet ./...` → no output.
+  - `go test ./...` → all packages OK (the variables package now runs
+    TestRedactionLogValueMethodsReferenceSentinel,
+    TestRedactionExplainedVariableLiteralsRedactValue,
+    TestRedactionNoPlaintextInErrorSurface,
+    TestRedactionStaticAnalyzerDetectsRegressions plus the five runtime
+    redaction tests and the two fuzz targets' seed corpora).
+  - `go test -race ./...` → all packages OK.
+  - Control-removal sanity check: temporarily mutating the first
+    `slog.String("value", output.Sentinel)` in resolver.go (the one in
+    ScopedVariable.LogValue) to `slog.String("value", v.Value)` makes
+    both the static analyzer (`(ScopedVariable).LogValue does not
+    reference output.Sentinel — the slog redaction seam has been
+    removed` AND `emits forbidden selector v.Value`) and the runtime
+    test (`plaintext or ciphertext leaked through
+    ScopedVariable.LogValue marker: "FUZZENVMARKERLMN"`) fail. The two
+    layers are independently load-bearing.
+
+- Results: all tests pass; the two-test pair fails when the control is
+  removed; the threat-model documentation in SECURITY.md and AGENTS.md
+  stays in sync with the runtime evidence.
+
+- Remaining risks or follow-ups:
+  - The Dokploy renderer at internal/controlplane/dokploy/renderer.go
+    consumes the merged Resolved view. The current renderer emits
+    variables into a Dokploy provisioning payload — that is a separate
+    audit/observability surface from the customer-facing API, so a
+    renderer regression that surfaced plaintext into the Dokploy wire
+    is NOT caught by this BE-0360 pair. The defence is the
+    dokploy/renderer's own redaction tests (BE-0301 family) which pin
+    the per-builder/per-type drop-and-redact contract for Dokploy
+    payloads. A future "all environment variables on the Dokploy wire
+    are also redacted in slog/audit captures" verification would be
+    its own sibling story; BE-0361 (Dokploy token isolation) is the
+    closest neighbour and may carry that scope.
+  - The store-package per-scope Reader integration tests already pin
+    tenant-scoping but do not pin redaction at the read boundary. The
+    Reader returns ScopedVariable values, so the redaction contract
+    holds transitively through LogValue, but a future Reader that
+    returned a different shape would need a sibling static rule. The
+    pattern's "Adding a new redaction-bearing type extends
+    redactingTypes" extension point is the right hook.
+
+- **Learnings for future iterations:**
+  - The BE-0344 security-verification two-test pattern keeps cloning
+    cleanly. Three structural rules in the static half plus a hostile-
+    value runtime fuzz seed corpus is the right size for a single
+    P=1 verification story. Past clones (BE-0345 body size, BE-0356
+    TLS, BE-0357 admin endpoints, BE-0358 support access, BE-0359 log
+    redaction) all converged on the same shape; this one extends it.
+  - The receiver-name tie in bodyForbiddenSelectors is what keeps the
+    LogValue forbidden-selector rule from generating false positives.
+    Without the tie, an unrelated `<other>.Value` inside the method
+    body (a literal map key, a constant lookup) would fire. The
+    receiverIdentNames helper extracts the name from fd.Recv.List;
+    anonymous receivers (`func (T) M() {}`) deliberately produce an
+    empty set so the rule degrades to "no forbidden selector ever",
+    which is also the safe default for a future anonymous LogValue.
+  - The errorFormingFuncs map is a closed set, not an allowlist of
+    safe calls. A future helper added without a corresponding entry
+    here passes the static check unconditionally, so the entry edit
+    is the load-bearing one when adding a new helper. The runtime
+    test is the second wall: even when the static analyser misses, a
+    helper that produces a string carrying the fuzz marker still
+    fails the captureSlog assertion.
+  - The Write tool occasionally corrupts string literals that mix
+    Go-escape sequences and non-ASCII characters in the same source
+    file (the NEL character U+0085 round-tripped as a literal 0xc2
+    0x85 byte sequence in one line and dropped the literal `" -null-
+    end",` line entirely, producing an unterminated string literal).
+    Workaround: prefer explicit `\xNN` escapes for non-ASCII bytes in
+    test seed corpora; never embed raw bytes in a Write call. The
+    runtime test's seed corpus uses `"\xc2\x85nextline-after-NEL"`
+    rather than the literal NEL character, and the file round-trips
+    cleanly through both gofmt and the build.
+  - The TMPDIR=/tmp prefix discovered in the BE-0101 entry still
+    applies to every shell sandbox `go` invocation; without it, Go
+    refuses to honour go.mod and reports `ignoring go.mod in system
+    temp root`. Forward-applicable to every future Ralph iteration.
+  - For env-var redaction specifically, the Plaintext provider
+    (secrets.NewPlaintext) is the right test seam — its ciphertext is
+    byte-equal to the plaintext, so the runtime tests can assert both
+    plaintext and ciphertext are redacted with a single marker check
+    on the slog output. A future test against the AES-GCM provider
+    would need a separate `Open()` step before the marker check.
+
+---

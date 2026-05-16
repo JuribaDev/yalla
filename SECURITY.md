@@ -73,6 +73,7 @@ defined in `.github/workflows/ci.yml`:
 | TLS and proxy header trust | `go test ./internal/release/... -run TestHTTPServerHardening` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Admin endpoint isolation | `go test ./internal/release/... -run TestAdminEndpointIsolation` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Support access review | `go test ./internal/release/... -run TestSupportAccessReview` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| Environment variable redaction | `go test ./internal/controlplane/variables/... -run TestRedaction` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Release config | `goreleaser check` and `goreleaser release --snapshot` | CI `goreleaser-check` job | Every push and PR |
 
 Before cutting a tag the maintainer additionally runs:
@@ -365,6 +366,107 @@ The break-glass mechanism is access-only and never mints customer
 credentials, so a compromised support principal can be reviewed
 and revoked through the audit trail without rotating customer API
 keys.
+
+## Environment Variable Redaction
+
+Customer environment variables can carry production secrets — database
+passwords, third-party API keys, signing keys, session tokens. The
+`internal/controlplane/variables` package is the single place that holds
+plaintext for every scope while it is being merged for a Dokploy render. A
+regression that lets a raw plaintext or sealed ciphertext escape the
+package via a slog record, a customer-facing JSON envelope, an error
+message, or an `apierr.FieldViolation` reason would land the secret in
+operator logs, customer-facing API responses, or the audit ring buffer —
+all of which are effectively persisted (log shippers, on-call dashboards,
+post-incident transcripts forward the byte).
+
+**Threat model.** The variables package exposes three customer-visible
+shapes: `ScopedVariable` (the input row), `Rendered` (a winning per-key
+value), and `Resolved` (the full merged set). Every one of these carries
+the plaintext bytes as a struct field — by design, since the resolver
+needs the bytes to drive a Dokploy render. The package contract therefore
+mandates **three structural redaction seams** between those structs and
+any operator- or customer-visible surface:
+
+1. `(ScopedVariable).LogValue`, `(Rendered).LogValue`,
+   `(Resolved).LogValue` — slog.LogValuer hooks that replace
+   plaintext/ciphertext-bearing fields with `output.Sentinel` before
+   slog reflects the struct. A stray `slog.Info("v", v)` capture cannot
+   surface the secret.
+2. `(Resolved).Explain` — the customer-facing projection
+   (`Explained` / `ExplainedVariable`) whose `Value` is always
+   `output.Sentinel`. Every JSON envelope and audit-metadata payload
+   that needs to surface the effective variable set goes through
+   `Explain` first.
+3. The package's error surfaces — no `fmt.Sprintf` / `fmt.Errorf` /
+   `errors.New` / `apierr.Internal` / `apierr.InvalidInput` /
+   `apierr.NotFound` / `apierr.Conflict` call, and no
+   `apierr.FieldViolation{Reason: …, Field: …}` composite literal, may
+   interpolate a `.Value` or `.SecretCiphertext` selector or a local
+   identifier named `plaintext`. The latter is the resolver's
+   conventional name for the bytes recovered through
+   `secrets.Provider.Open`, so the name is load-bearing for the static
+   guard.
+
+**Runtime evidence.** `internal/controlplane/variables/env_var_redaction_test.go`
+lands five table-driven runtime tests and two Go fuzz targets:
+
+- `TestRedactionScopedVariableLogValueNeverLeaks` —
+  `(ScopedVariable).LogValue` never lands the bracket-marker (and
+  therefore neither the plaintext nor the sealed ciphertext bytes) in a
+  JSON slog record, for every seed in the corpus.
+- `TestRedactionRenderedLogValueNeverLeaks` — same invariant for
+  `(Rendered).LogValue`.
+- `TestRedactionResolvedLogValueNeverLeaks` — same invariant for
+  `(Resolved).LogValue` (which slog also walks per element through the
+  `Variables` slice's nested LogValuers).
+- `TestRedactionExplainProjectionNeverLeaks` — every
+  `(Resolved).Explain` projection's `ExplainedVariable.Value` is exactly
+  `output.Sentinel` (bytes-equal, not just contains), and a
+  `json.Marshal` of the projection contains no fuzz marker.
+- `TestRedactionResolverOpenedSecretValueNeverEntersSlog` — drives the
+  resolver end-to-end with a sealed row, opens it through the Plaintext
+  provider, and asserts the post-Open plaintext never reaches a slog
+  record or a JSON projection.
+- `FuzzRedactionScopedVariableLogValue` — opt-in mutation-stage fuzzer
+  that widens the corpus coverage of `(ScopedVariable).LogValue`.
+- `FuzzRedactionExplain` — opt-in mutation-stage fuzzer that widens the
+  corpus coverage of `(Resolved).Explain`.
+
+`internal/controlplane/variables/env_var_redaction_static_test.go` is the
+companion static-analysis half. It walks every non-test `.go` file in the
+package and fails the build for any of the three structural rules above.
+A self-check sub-test parses synthetic bad and good source snippets and
+asserts each analyzer reports the expected diagnostics, so a regression
+that weakens the analyzer itself is also caught.
+
+The seed corpus mirrors the hostile shapes env-var redaction must survive
+— long values, invalid UTF-8, embedded control characters, regex
+metacharacters, JSON-escape sequences, NEL line terminator, the
+`output.Sentinel` literal itself, and a marker-prefixed literal that
+proves the leak detector still fires when the value happens to look like
+the marker. CI runs the seed corpus only via `go test ./...`; `-fuzz` is
+operator-opt-in.
+
+**Scope exclusions.** Two input classes are deliberately scoped out:
+
+1. A fuzz-supplied value containing the `FUZZENVMARKERLMN` marker itself
+   would false-positive the leak detector. The fuzz targets skip it.
+   `TestRedactionFuzzScopeExclusionsAreReal` pins the exclusion by
+   asserting the seed corpus still includes a marker-prefixed literal so
+   the seed-corpus path exercises the leak detector when the value
+   happens to look like the marker.
+2. The variable Key. Keys are validated against the resolver's
+   POSIX-shell `envVarName` regex at the resolver entry, so a Key
+   carrying control characters never reaches `LogValue` or `Explain` in
+   production. The runtime targets fix Key to a valid identifier; the
+   exclusion test confirms the resolver still rejects hostile-shaped
+   keys.
+
+**No live secrets.** The fuzz suite registers synthetic markers
+(`"FUZZENVMARKERLMN"`) and synthetic values (the corpus or the fuzzer's
+mutated raw bytes wrapped in marker brackets) — never real customer
+secrets, real Dokploy tokens, or real API keys.
 
 ## Log Redaction Fuzzing
 
