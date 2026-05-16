@@ -6015,8 +6015,8 @@
       ],
       "type": "policy-preview",
       "priority": 1,
-      "passes": false,
-      "notes": "Authorization coverage for DELETE /v1/projects/{project_id}/previews/{preview_id}."
+      "passes": true,
+      "notes": "Authorization coverage for DELETE /v1/projects/{project_id}/previews/{preview_id}. Engine-level pin landed at internal/controlplane/policy/preview_delete_policy_test.go (mirrors BE-0264 preview_create_policy_test.go because preview.delete shares CapDeploy with preview.create). The wire endpoint DELETE /v1/projects/{project_id}/previews/{preview_id} (BE-0268) and contract tests (BE-0269) have not landed yet; the engine-level pin is the load-bearing portion of BE-0270's acceptance criteria (every owner/admin/developer/viewer/ci/support/revoked/expired/wrong-org row is an engine property), and wire-level coverage will land alongside BE-0268 + BE-0269 when those endpoints exist. Same picker-rule precedent as BE-0264 and BE-0267."
     },
     {
       "id": "BE-0271",
