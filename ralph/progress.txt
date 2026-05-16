@@ -85,6 +85,8 @@
 - environment.grants.write-on-bare-{environment_id}-resolver policy matrix (BE-0171, internal/controlplane/httpapi/environment_grants_put_policy_test.go) is the structural HYBRID of the project.grants.write matrix (BE-0141, projects_grants_put_policy_test.go) and the environment.grants.read matrix (BE-0168, environment_grants_policy_test.go): take BE-0141's CapAdmin role table + cross-tenant + request-body-leak-guard skeleton, swap action+resolver for the write env-grants endpoint, and re-pin every wire tie-in with BE-0168's no-ProjectID covers() denial pattern (project/env/service scoped principals ALL denied OutOfScope at this route — even on a grant naming the SAME env id — because the env-id resolver pins NO ProjectID leg and covers() is one-way). Load-bearing engine distinction from BE-0168: CapAdmin is OUTSIDE the support cross-tenant exception, so the engine_cross_tenant_deny_* parallel subtests MUST include the Support row for write actions and exclude it for read actions. Net-new fixtures in the put_policy file are only a route-specific replaceEnvironmentGrantsMatrixBody (no environment_id field per grant — the env is named by the path) + replaceEnvironmentGrantsRequestBodyLeak with distinctive needles; the canonical*EnvGrants* fixtures, fake*EnvironmentGrant* fakes, replaceEnvironmentGrantsHandlerFor / putEnvironmentGrants / decodeReplaceEnvironmentGrants, and orgPrincipal / decodeError are all reused verbatim from BE-0168 and BE-0169.
 - Inbound HTTP rate-limit pattern (BE-0035, internal/controlplane/ratelimit/limiter.go + internal/controlplane/httpapi/ratelimit.go + apierr.RateLimited + config.RateLimit): the limiter is an in-process multi-dimensional token-bucket gate (per-org, per-API-key, per-IP) with read/write-class specs derived from the HTTP method (GET/HEAD/OPTIONS = read, everything else = write). Three load-bearing rules: (1) the gate wraps every route INSIDE RequireAuth in server.go's per-route loop (`h = rateLimit(h); if RequiresAuth: h = RequireAuth(...)(h)`) so the resolved principal (org id, key id, auth method) is on the request context when the limiter decides — public endpoints fall back to the IP bucket alone; (2) the internal-worker exemption is wired through a new package-private context helper `withAuthMethod` / `AuthMethodFromContext` in middleware.go that BOTH RequireAuth and RequireInternalWorker stamp with id.Method, so the rate-limit gate can recognise auth.MethodInternalWorker and pass `Exempt=true` to the limiter without re-running the credential store; (3) the "first exhausted bucket wins" rule short-circuits downstream debits (org denied -> key & ip buckets untouched) so a single throttled tenant cannot drain a shared NAT'd IP bucket of every neighbour. Bucket map is sync.Mutex'd with lazy eviction on the request path (no background goroutine; pruning sweeps every IdleTTL); the freshly-created bucket MUST set lastUsed=now BEFORE the sweep runs so the sweep cannot reap the bucket it just inserted (initial zero-value lastUsed is older than any cutoff and was a real bug caught by tests). The 429 wire shape is the standard yalla.error.v1 envelope with apierr.RateLimited(scope, retry) attaching `scope` (bucket dimension name only — "organization" / "api_key" / "ip", NEVER the tenant id or key id or IP) and `retry_after` (integer seconds, clamped to >=1 because the wire Retry-After header cannot carry sub-second); the response also sets the matching `Retry-After: N` header. NewHandler grew ONE new trailing parameter (RateLimiter) — sweep all 64 NewHandler call sites in tests via a Node script that walks the source with depth-tracking parens and appends `, nil` before each closing `)`. Config plumbing: new YALLA_RATE_LIMIT_* env vars (ORG/KEY/IP × READ/WRITE × RPS/BURST + IDLE_TTL + DISABLED master switch) layered over per-profile defaults; ProfileTest defaults to Disabled=true so contract tests across the whole repo never accidentally trip the limiter. The limiter constructor takes a `func() time.Time` clock injection point so deterministic tests (`fixedClock.Advance(d)`) can drive refill behaviour without sleeping. Forward-applicable to any future throughput cap (per-resource, per-tenant-tier, per-route-specific) — extend Specs/Specs.For pairs rather than adding a new bucket dimension. Redaction backstops: the 429 envelope, the Retry-After header, the WARN log record on denial, and every rate-limit identifier flow through telemetry.LogAttrs / apienvelope's regex-based scrubber so a bearer-token in the Authorization header on a throttled request NEVER reaches a log file (TestRateLimitDenialLogsNoSecretValue is the regression pin).
 - Pagination contract package (BE-0037, internal/controlplane/pagination): every customer-facing list endpoint composes the shared pagination.Params + pagination.Cursor + pagination.Page[T] envelope rather than reimplementing limit/cursor/sort/filter parsing. ParseParams(url.Values, ParseOptions) parses ?limit= ?cursor= ?sort= ?direction= ?filter.<k>= with stable apierr.InvalidInput (E_INVALID_INPUT) violations whose Reason text NEVER echoes the submitted value (only classification + accepted range — protects against reflection-style content channels), accumulates multiple violations into one envelope, enforces the package MaxLimit=200 ceiling even when an endpoint misconfigures its own, and rejects a cursor whose embedded Sort/Direction disagrees with the request as a stable 400 "fetch the first page again" instead of silently serving overlapping pages. Cursor is base64url-encoded JSON {v: "yalla.cursor.v1", p: Position, s: Sort, d: Direction} — opaque to clients, deterministic (same input -> same encoding so HTTP fixtures diff byte-for-byte), URL-safe (RawURLEncoding, no '+/='), and DOES NOT carry an organization_id / tenant / principal field by contract (a TestDecodeCursorTenantIsolationCannotBeBypassed test guards this so adding one is impossible without breaking the suite — tenant isolation stays the persistence layer's responsibility, cursor only encodes a within-set position). Page[T any] is the wire shape: Items always non-nil (BuildPage guarantees []T{} for empty), NextCursor omitempty (empty string == end of stream — agents do NOT compare len(Items) to limit), TotalEstimate *int64 omitempty (nil = "not cheap to compute", endpoints must NOT fabricate a value). BuildPage uses the over-fetch strategy: store fetches Limit+1 rows, BuildPage trims to Limit and encodes next_cursor from the last retained row's position via a PositionFunc[T] adapter. Cursor stability under inserts is proven end-to-end by TestCursorIsStableUnderInserts: seed N rows, page once, insert NEWER rows after the cursor boundary, prove page 2 still returns exactly the remaining originals (no duplicates, no skips, no newly-inserted rows leaking onto page 2 because the cursor is a strict upper bound on (sort_key DESC, id DESC)). Future list endpoints replace their bespoke parseXxxLimit / list payload struct with one ParseParams call + a BuildPage projection — the existing GET /v1/organizations/{org_id}/audit-events (BE-0103) and break_glass list are pre-pagination-contract and should migrate in their own stories.
+- Bare-id route on a deployment (BE-0211+0212+0213 pattern, GET /v1/deployments/{deployment_id}, store/deployment.go DeploymentReader.GetServiceDeployment, httpapi/deployments.go DeploymentGetter port + deploymentIDResolver + getServiceDeploymentHandler + getServiceDeploymentPayload, routes.go GET /v1/deployments/{deployment_id} entry, server.go NewHandler DeploymentGetter parameter, cmd/yalla-api/main.go wires the SAME *store.DeploymentReader as BOTH DeploymentLister AND DeploymentGetter): canonical shape for ALL bare-id read endpoints on a Deployment-level deep resource. Two LOAD-BEARING structural differences from the environment / service bare-id routes (BE-0154 / its services sibling): (1) policy.Scope has NO DeploymentID leg — the Scope hierarchy stops at ServiceID (Organization -> Project -> Environment -> Service), so the resolver pins ONLY OrganizationID, NOT (org + DeploymentID) the way environmentIDResolver pins (org + EnvironmentID). The resource scope carries no inner leg at all, which makes the engine's covers() rule deny EVERY scoped grant (project/env/service) at the boundary via ReasonDeniedOutOfScope — even a service-scoped grant naming the deployment's actual parent service is denied, because covers() is one-way (a grant scope that pins ServiceID cannot cover a resource scope that does not). Principals whose only access is a scoped grant must use a parent-scoped route family to address a deployment. (2) The store-layer adapter intentionally skips the parent-prefetch the list adapter performs: DeploymentReader.GetServiceDeployment composes only DeploymentRepository.GetByID inside a short-lived Store.Read tx (no service prefetch), because the schema's composite foreign keys on the deployments table already guarantee (organization_id, project_id), (organization_id, environment_id), and (organization_id, service_id) cannot diverge across the deployment row — a tenant-scoped GetByID is itself a complete tenant-isolation check, and a prefetch would only duplicate the work of the schema. This is the load-bearing distinction from the list adapter ListServiceDeployments (which DOES prefetch the service to disambiguate "service missing" from "service has no deployments"). The wire shape (serviceDeployment + serviceDeploymentOf in service_deployments.go) is REUSED verbatim — an agent that listed deployments for a service does not re-parse a different shape to fetch one of them by id. Production wiring passes the same *store.DeploymentReader pointer twice (deploymentService, deploymentReader, deploymentReader, breakGlassService, ...): one concrete adapter satisfies BOTH the DeploymentLister AND DeploymentGetter port interfaces, so adding a second read port costs zero new constructors / dependencies. The contract test suite (deployments_get_test.go, 12 tests) and policy matrix (deployments_get_policy_test.go, 4 parent tests) follow the BE-0210 list-side template structure verbatim, with one structural extension in the grant-containment matrix: a service-scoped grant naming THIS deployment's actual parent service is also denied at the wire, because the bare-id resource scope has no ServiceID leg to match. Future bare-id read endpoints on deep resources whose Scope leg does not exist (deployments today; jobs / runs in later stories) should adopt this exact pattern.
+
 
 ## 2026-05-15 - BE-0103
 - What was implemented: GET /v1/organizations/{org_id}/audit-events, the
@@ -16633,4 +16635,181 @@ Learnings for future iterations:
     and the service-sub-resource endpoints (BE-0229 through BE-0270);
     each natural delivery unit ships all three priority levels in
     one commit.
+---
+
+## 2026-05-16 - BE-0211 + BE-0212 + BE-0213 — GET /v1/deployments/{deployment_id}
+- What was implemented:
+  - BE-0211 endpoint: GET /v1/deployments/{deployment_id} — returns
+    the single deployment named by the {deployment_id} path
+    parameter. Required action deployment.read (CapRead). Returns
+    200 with a yalla.output.v1 envelope carrying the projected
+    serviceDeployment wire shape reused verbatim from the
+    service-scoped POST/GET endpoints.
+  - BE-0212 contract tests: happy path/200 with every wire field
+    pinned (including the omitempty lifecycle-timestamp contract for
+    queued vs succeeded rows); request_id propagation; projected
+    error_code/error_message verbatim; not-found from the getter/404
+    (apierr.NotFound translated by toAPIError); cross-tenant no
+    foreign-org echo; store outage/503 (no pgx cause leak);
+    unauthenticated/401 (getter never runs, no canned identifiers
+    leak); revoked credential short-circuit/401; unwired
+    getter/E_INTERNAL/500; OpenAPI registration check (path +
+    operationId + required_action + tags); plus TWO resolver unit
+    tests (pins home org and uses KindDeployment; no panic with no
+    principal on context).
+  - BE-0213 policy matrix tests: role matrix (owner / admin /
+    developer / viewer / CI / Support ALLOW via ReasonAllowedByRole
+    — every same-org role holds CapRead, AND Support own-org is
+    ReasonAllowedByRole not ReasonAllowedBySupport because the
+    resolver pins the resource to the principal's home org);
+    revoked + expired key deny (PrincipalDisabled / Unauthenticated
+    short-circuit); cross-tenant denied at the wire (404 with NO
+    foreign-org echo) AND at the engine — every role except Support
+    DENIED via ReasonDeniedCrossTenant, Support ALLOWED via
+    ReasonAllowedBySupport (CapRead IS INSIDE the engine's
+    `CapSupport && (CapRead || CapSupport)` exception — load-bearing
+    distinction from deployment.create which is OUTSIDE the
+    exception); grant containment (project / env / service-scoped
+    grants ALL denied at the bare-id route via
+    ReasonDeniedOutOfScope, with engine-level checks for
+    sibling-project, env-not-implying-prod, and
+    service-grant-not-widening properties; org-level Viewer grant
+    ALLOWED via ReasonAllowedByGrant — load-bearing distinction
+    from the create-side matrix where Viewer denies).
+
+- Files changed:
+  - internal/controlplane/store/deployment.go (modified): added
+    GetServiceDeployment method to *DeploymentReader (composes
+    DeploymentRepository.GetByID inside a Store.Read tx). Unlike
+    the list adapter, the bare-id getter does NOT prefetch a parent
+    service — the bare path carries no service_id, and the schema's
+    composite foreign keys already guarantee deployment.parent ids
+    cannot diverge from organization_id.
+  - internal/controlplane/httpapi/deployments.go (new): new file for
+    the bare-id deployment routes. Contains DeploymentGetter port,
+    deploymentIDResolver (pins ONLY OrganizationID — the
+    policy.Scope hierarchy stops at ServiceID so deployment_id is
+    NOT a scope leg), getServiceDeploymentPayload, and
+    getServiceDeploymentHandler. The wire shape (serviceDeployment)
+    is reused verbatim from service_deployments.go so an agent that
+    listed deployments for a service does not re-parse a different
+    shape to address one of them by id. errNoDeploymentGetter is
+    the typed internal-error sentinel for a wiring fault.
+  - internal/controlplane/httpapi/routes.go (modified): registered
+    GET /v1/deployments/{deployment_id} with operationId=
+    getServiceDeployment, required_action=deployment.read,
+    resolver=deploymentIDResolver, full Description pinning the
+    same-org-resource property (Support cross-tenant exception does
+    NOT apply through this resolver), the cross-tenant 404 boundary,
+    the no-credential-material payload property, and the
+    Scope-hierarchy-stops-at-ServiceID structural property that
+    makes the bare-id route deny every scoped grant. newRouteTable
+    signature gained a deploymentGetter DeploymentGetter parameter,
+    threaded into the handler.
+  - internal/controlplane/httpapi/server.go (modified): NewHandler
+    signature gained DeploymentGetter, threaded into newRouteTable.
+  - cmd/yalla-api/main.go (modified): wired the existing
+    *store.DeploymentReader as the production DeploymentGetter
+    (one adapter satisfies both DeploymentLister and
+    DeploymentGetter).
+  - internal/controlplane/httpapi/deployments_get_test.go (new,
+    BE-0211 + BE-0212): 12 tests against the real NewHandler + real
+    policy engine + real telemetry middleware, with
+    fakeDeploymentGetter as the seam. The fake captures
+    (organizationID, deploymentID, callCount) so the load-bearing
+    tenant-isolation properties (org from principal home, dep from
+    path) can be asserted on every test.
+  - internal/controlplane/httpapi/deployments_get_policy_test.go
+    (new, BE-0213): 4 parent test functions covering the full role
+    x tenant x grant-scope matrix the PRD requires; engine-level
+    verdicts pinned alongside wire-level verdicts so a catalog or
+    builtinRoleCaps regression fails here.
+  - 57 other httpapi test files (mechanical mass edit): every
+    NewHandler / newRouteTable call site that referenced
+    fakeDeploymentLister had `fakeDeploymentGetter{}, ` inserted
+    immediately after — three sed patterns covered the variants:
+    (a) `fakeDeploymentLister{}, fakeBreakGlassController{}` (most
+    files), (b) `fakeDeploymentLister{}, ctl,` (break_glass_test.go
+    where the break-glass controller comes through as the `ctl`
+    variable), and (c) `fakeDeploymentCreator{}, lister,
+    fakeBreakGlassController{}` (service_deployments_list_test.go
+    where `lister` is the named parameter for the list seam).
+    fakeDeploymentGetter itself is defined in the new
+    deployments_get_test.go alongside the contract tests.
+
+- Verification run: gofmt -w .; go mod tidy; go vet ./... (PASS);
+  go test ./... (all packages PASS); go test -race ./... (all
+  packages PASS — httpapi 5.117s).
+- Results: PASS — the new contract suite (12 tests) and the new
+  policy-matrix suite (4 parent tests with role / revoked /
+  cross-tenant / grant-containment sub-cases) execute clean
+  against the real NewHandler + real policy engine.
+
+- Remaining risks or follow-ups:
+  - Store-layer integration test for *DeploymentReader.GetServiceDeployment
+    against an isolated migrated Postgres is not yet written. The
+    HTTP layer test exercises the handler end-to-end through the
+    DeploymentGetter port, but a future story should add the
+    tenant-isolation integration test alongside the existing
+    repository tests (mirroring the pattern in store/auditreader_test.go).
+  - The /v1/deployments/{deployment_id} bare-id route opens the
+    "deployment-as-resource" route family; future deployment-id
+    endpoints (POST .../cancel — BE-0214; reads of logs, etc.) will
+    reuse deploymentIDResolver and the same scope-hierarchy posture.
+
+- **Learnings for future iterations:**
+  - policy.Scope has NO DeploymentID leg — the Scope hierarchy
+    stops at ServiceID (Organization -> Project -> Environment ->
+    Service). A bare-id route on a deployment is therefore a
+    structural simplification of the environment / service bare-id
+    routes: the resolver pins ONLY OrganizationID (never an inner
+    leg), and EVERY scoped grant (project/env/service) is denied at
+    the boundary by covers() — the same posture every other bare-id
+    route takes, but even stricter because the resource carries no
+    leg the grant scope could possibly match. Document this in the
+    route description AND the resolver doc so a reader does not
+    misinterpret the structural deny as a bug.
+  - The wire shape projection (serviceDeployment +
+    serviceDeploymentOf) is REUSED verbatim from the service-scoped
+    list / create endpoints. Reusing one projection across the
+    nested route family AND the bare-id route family is the
+    canonical pattern — an agent that lists deployments for a
+    service does not need to re-parse a different shape to fetch
+    one of them by id. Future bare-id routes on deep resources
+    (e.g. GET /v1/services/{service_id}, GET /v1/environments/
+    {environment_id}) follow the same convention: define the wire
+    shape ONCE in the nested-route file, then reuse it from a
+    deployments.go / environments.go sibling that owns the
+    bare-id family.
+  - DeploymentReader.GetServiceDeployment intentionally skips a
+    parent-service prefetch (the list adapter ListServiceDeployments
+    Gets the service first; the get adapter does not). The schema's
+    composite foreign keys already guarantee
+    (organization_id, project_id), (organization_id,
+    environment_id), and (organization_id, service_id) cannot
+    diverge across the deployment row, so a tenant-scoped GetByID
+    on the deployment is itself a complete tenant-isolation check —
+    a prefetch would only duplicate the work of the schema. This
+    is the load-bearing distinction from the list adapter (which
+    DOES prefetch the service to disambiguate "service missing"
+    from "service has no deployments").
+  - The cmd/yalla-api/main.go production wiring reuses the SAME
+    *store.DeploymentReader for both DeploymentLister and
+    DeploymentGetter ports. Adding a second port that the same
+    concrete adapter satisfies is the cheapest possible production
+    wiring — no new constructor, no new dependency to inject; just
+    pass the existing pointer twice. Future read-only ports on the
+    same resource (DeploymentMetricsReader, DeploymentLogsReader,
+    etc.) should consider the same posture: one *DeploymentReader,
+    many port interfaces, no duplication.
+  - The bare-id deployment route's policy matrix has structural
+    siblings in environments_get_policy_test.go and
+    services_get_policy_test.go (the bare-id env / service
+    routes). The deployment matrix is the strictest of the three
+    because the resource scope has fewer pinned legs (only
+    OrganizationID — environment and service routes ALSO pin
+    EnvironmentID / ServiceID respectively). Future bare-id-only
+    deep-resource routes should expect to take the strictest
+    posture: every scoped grant denied at the boundary, every
+    same-org role / org-level grant allowed.
 ---

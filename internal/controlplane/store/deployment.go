@@ -358,6 +358,39 @@ func (r *DeploymentReader) ListServiceDeployments(ctx context.Context, organizat
 	return out, nil
 }
 
+// GetServiceDeployment returns the single deployments row identified
+// by (organizationID, deploymentID), tenant-scoped at the SQL
+// predicate by composing DeploymentRepository.GetByID inside a
+// short-lived read-only transaction. The composite predicate is
+// non-optional, so a missing or cross-tenant organizationID matches
+// no row even when a deployment with the same id exists in another
+// tenant — the response is never an oracle that reveals another
+// organization's deployment ids. A row that does not exist surfaces
+// as the same typed apierr.NotFound the repository returns, never as
+// a 500 leaking the cause.
+//
+// Unlike the list adapter, this method does NOT prefetch the parent
+// service. The bare-id route /v1/deployments/{deployment_id} does not
+// take a service_id, so the only tenant-scoping leg that matters is
+// the organization id on the deployment row itself; the schema's
+// composite foreign keys guarantee a deployment whose parent ids do
+// not match its organization id cannot exist in the first place.
+func (r *DeploymentReader) GetServiceDeployment(ctx context.Context, organizationID, deploymentID string) (Deployment, error) {
+	var out Deployment
+	err := r.store.Read(ctx, func(ctx context.Context, q Querier) error {
+		d, getErr := r.deployments.GetByID(ctx, q, organizationID, deploymentID)
+		if getErr != nil {
+			return getErr
+		}
+		out = d
+		return nil
+	})
+	if err != nil {
+		return Deployment{}, err
+	}
+	return out, nil
+}
+
 // deploymentCreateAction is the action recorded on the audit event
 // emitted by every deployment create. It matches the wire-level action
 // constant the policy engine authorizes (deployment.create), so an

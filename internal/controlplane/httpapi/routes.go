@@ -137,7 +137,7 @@ type versionPayload struct {
 // table's metadata; a request that actually reaches a handler with a
 // nil dependency is reported as a typed internal error rather than a
 // misleading empty list or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter, environmentCloner EnvironmentCloner, environmentGrants EnvironmentGrantReader, environmentGrantReplacer EnvironmentGrantReplacer, environmentVariables EnvironmentVariableReader, environmentVariableReplacer EnvironmentVariableReplacer, environmentServices EnvironmentServiceReader, environmentServiceCreator EnvironmentServiceCreator, services ServiceReader, serviceUpdater ServiceUpdater, serviceDeleter ServiceDeleter, serviceRestorer ServiceRestorer, serviceVariables ServiceVariableReader, serviceVariableReplacer ServiceVariableReplacer, deploymentCreator DeploymentCreator, deploymentLister DeploymentLister, breakGlass BreakGlassController) []apiRoute {
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter, environmentCloner EnvironmentCloner, environmentGrants EnvironmentGrantReader, environmentGrantReplacer EnvironmentGrantReplacer, environmentVariables EnvironmentVariableReader, environmentVariableReplacer EnvironmentVariableReplacer, environmentServices EnvironmentServiceReader, environmentServiceCreator EnvironmentServiceCreator, services ServiceReader, serviceUpdater ServiceUpdater, serviceDeleter ServiceDeleter, serviceRestorer ServiceRestorer, serviceVariables ServiceVariableReader, serviceVariableReplacer ServiceVariableReplacer, deploymentCreator DeploymentCreator, deploymentLister DeploymentLister, deploymentGetter DeploymentGetter, breakGlass BreakGlassController) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -1208,6 +1208,41 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// the persistence boundary, never another tenant's deployments.
 			resolver: serviceIDResolver,
 			handler:  listServiceDeploymentsHandler(deploymentLister),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodGet,
+				Path:           "/v1/deployments/{deployment_id}",
+				OperationID:    "getServiceDeployment",
+				Summary:        "Get a service deployment",
+				Description:    "Returns the single deployment named by the {deployment_id} path parameter. The response carries the deployment's id, the id of the organization that owns it, the id of the project it belongs to, the id of the environment it targets, the id of the service it deploys, the closed-set source taxonomy ('git', 'image', or 'manual'), the customer-supplied source reference (a branch / commit / image reference — never tokens), the closed-set lifecycle status ('queued', 'running', 'succeeded', 'failed', 'cancelled', 'rolled_back'), the principal who requested the deployment, the per-organization idempotency key, the optimistic-concurrency version, the request and correlation identifiers the audit trail and the worker job share, and the lifecycle timestamps (created_at, updated_at, and the omitempty started_at / finished_at the worker writes as the deployment converges). The worker-written error_code and error_message fields on a failed deployment are run through the output redactor before persistence so tokens, API keys, and rendered environment variable values can never reach the column; the wire shape projects them verbatim. The response carries no credential material — the deployments table itself stores no secrets, the source reference is the customer-supplied value the worker mirrors verbatim into Dokploy, and the error summary is already redacted at the persistence boundary. Action deployment.read is authorized against the (principal home organization) Deployment resource before the handler runs: deployment.read is a CapRead action, so the gate admits the principal's organization-wide read roles (owner, admin, developer, viewer, ci); the support principal's deliberate cross-tenant read exception does NOT apply here because deploymentIDResolver pins the resource scope to the principal's own home organization, not the path deployment's tenant. The bare path carries only the deployment_id (the policy.Scope hierarchy stops at ServiceID, so the deployment_id itself is not a scope leg), so project-, environment-, and service-scoped grants are denied at the boundary by the engine's covers() rule (a grant with a pinned ProjectID cannot cover a resource with no ProjectID); principals whose only access is a scoped grant must use a parent-scoped route family to address a deployment by its (project, environment, service, deployment) tuple. A cross-tenant or unknown deployment_id reaches the persistence layer with the principal's home organization id and is rejected as a deterministic 404 by the tenant-scoped repository query, never disguised as a 200 with another tenant's data and never as a 403 that would confirm existence.",
+				Tags:           []string{tagDeployments},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionDeploymentRead),
+				PathParams: []openapi.PathParam{{
+					Name:        "deployment_id",
+					Description: "The id of the deployment to fetch.",
+				}},
+				SuccessDescription: "The deployment row owned by the principal's home organization.",
+			},
+			// deploymentIDResolver authorizes action deployment.read
+			// against the (principal home organization) Deployment
+			// resource. The policy.Scope hierarchy stops at ServiceID,
+			// so the deployment_id from the path is NOT a scope leg;
+			// the resolver pins only OrganizationID, and the engine's
+			// covers() rule denies every project-, environment-, and
+			// service-scoped grant at the boundary (the grant pins a
+			// leg the resource leaves empty) — forcing scoped-grant-only
+			// principals onto a parent-scoped route. deployment.read is
+			// a CapRead action, but because the resolver pins the
+			// resource to the principal's own home organization, the
+			// support principal's cross-tenant read exception does NOT
+			// apply — a cross-tenant deployment_id reaches the
+			// tenant-scoped repository query and surfaces as a 404 at
+			// the persistence boundary, never another tenant's
+			// deployment.
+			resolver: deploymentIDResolver,
+			handler:  getServiceDeploymentHandler(deploymentGetter),
 		},
 		{
 			endpoint: openapi.Endpoint{
