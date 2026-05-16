@@ -248,6 +248,21 @@ Postgres persistence for control-plane source-of-truth state.
   `SELECT ... FOR UPDATE NOWAIT` raises `*pgconn.PgError` with SQLSTATE `55P03`
   (`lock_not_available`) when another transaction holds the row — see
   `quota_schema_test.go`'s `TestQuotaReservationConcurrentRowLock`.
+- **Repository tenant-isolation tests** for a tenant-scoped table live in
+  `<table>_tenant_isolation_test.go` (e.g. `organization_tenant_isolation_test.go`),
+  separate from CRUD tests, and follow the byte-identical-snapshot pattern:
+  seed two organizations, snapshot the OTHER tenant's row, run the mutation
+  against THIS tenant, re-read the OTHER tenant, and assert every field
+  unchanged (slug/display_name/version/updated_at/deletion_scheduled_at).
+  Anchor on BOTH `version` (trigger-bumped on UPDATE) AND `updated_at`
+  (trigger-refreshed) — either catches a WHERE-less UPDATE independently.
+  Cover Get/Update/Update-with-stale-If-Match/ScheduleDeletion plus, for
+  child tables, a cross-tenant parent-id probe that must render NotFound
+  (never the other tenant's row, never a 500). Tenant-root tables
+  (organizations) have no `ListByParent` to test — document that absence in
+  the test file's package-doc comment so a future reader does not look for
+  a missing test. The story-template file for this pattern is
+  `organization_tenant_isolation_test.go` (BE-0426).
 - A state-machine table (`provisioning_jobs`, `store/job.go`) keeps the
   authoritative transition graph in Go (`JobStatus.CanTransitionTo`, backed by
   the `jobTransitions` map) and lets the DB CHECK only the *closed status set*

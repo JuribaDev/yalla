@@ -8979,8 +8979,8 @@
       ],
       "type": "tenant-isolation",
       "priority": 1,
-      "passes": false,
-      "notes": "Tenant isolation for organizations."
+      "passes": true,
+      "notes": "Repository-layer tenant-isolation coverage for the organizations source-of-truth landed as internal/controlplane/store/organization_tenant_isolation_test.go. Seven new integration tests prove (1) Get is keyed strictly by the row's own id and returns each tenant's own row, never another's; (2) an unknown organization_id is the same typed NotFound a principal sees for another tenant's id; (3) Update on orgA leaves orgB byte-identical (slug, display_name, version, updated_at, deletion_scheduled_at); (4) a stale-If-Match Update on orgA also leaves orgB byte-identical; (5) ScheduleDeletion on orgA stamps only orgA and never bleeds the stamp into orgB; (6) a soft-deleted orgA is still readable as its own row without masking orgB visibility; (7) slug uniqueness is globally enforced across the tenant root with a typed Conflict and the failed Insert lands no row. Tests run under -race against an isolated, freshly migrated Postgres database via YALLA_TEST_DATABASE_URL and skip when unset. gofmt -w, go mod tidy, go vet ./..., go test ./..., and go test -race -count=1 -run TestOrganizationRepository ./internal/controlplane/store/... all pass. The organizations table has no list-by-parent method at the repository layer (it is the tenant root); /v1/me/organizations is a membership-derived join handled at the httpapi layer and its tenant-isolation property is covered by the membership repository tests. goimports/golangci-lint/staticcheck/govulncheck are not installed locally."
     },
     {
       "id": "BE-0427",
