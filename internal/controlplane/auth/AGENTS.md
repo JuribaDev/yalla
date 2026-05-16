@@ -37,6 +37,79 @@ and `SecretHash` strings `auth.Generate` produces.
   by its public prefix, never by hashing a guess. Do not "upgrade" this to
   bcrypt/argon2 without changing the threat model.
 
+## API key rotation (BE-0352)
+
+- **Threat model.** A long-lived API key in source control, in an exported
+  shell history, or in a CI log is a permanent credential leak until it is
+  rotated. The mitigation is `POST
+  /v1/organizations/{org_id}/api-keys/{key_id}/rotate`, which atomically
+  swaps the row's credential body so that every subsequent authentication
+  attempt with the OLD token fails as cleanly as one against a non-existent
+  key. The cryptographic-primitive layer that makes this work is the same
+  surface that mints a new credential at create time: `auth.Generate`
+  produces fresh `Prefix` and `SecretHash` values; the store layer writes
+  both onto the row in one UPDATE; the handler returns the one-time
+  plaintext `Token` in the response body and nowhere else.
+- **Atomicity is load-bearing.** The credential body is `(Prefix,
+  SecretHash)` — a pair, not two independent fields. Rotation MUST replace
+  both in the same statement: `store.APIKeyRepository.RotateCredential` runs
+  `UPDATE api_keys SET prefix = $3, secret_hash = $4 WHERE organization_id =
+  $1 AND id = $2`. A regression that swaps only one (e.g. updates `prefix`
+  but leaves `secret_hash` stale) breaks one of two ways: if the prefix
+  changes but the hash does not, the old secret keeps verifying against the
+  new prefix and the leaked credential survives the "rotation"; if the hash
+  changes but the prefix does not, the new token's prefix lookup misses the
+  row and every authentication attempt with either credential fails. Either
+  failure is silent at the handler boundary because the response shape is
+  unchanged. The static-analysis sealing trap that pins this invariant
+  lives in `internal/controlplane/store/api_key_rotation_static_test.go`.
+- **Lifecycle conflicts surface as typed `apierr.Conflict`.** A revoked or
+  expired key is permanently out of authentication service: the row stays
+  in the table for audit-trail continuity, but no plaintext credential
+  body can re-activate it. `store.APIKeyService.Rotate` reads the current
+  row inside the same transaction it would UPDATE, checks `IsRevoked()` and
+  `IsExpired(now)`, and returns `apierr.Conflict("api key is revoked")` or
+  `apierr.Conflict("api key is expired")` before any credential primitive
+  is persisted. The caller learns to mint a new key through `Create`
+  instead of trying to revive a dead row.
+- **Audit metadata carries only public identifiers.** The audit event for
+  a successful rotation is a closed-set map: `organization_id` (the target
+  tenant) and `rotated_prefix` (the public lookup id the row now serves).
+  The secret hash, the plaintext token, the old prefix, and the actor's
+  bearer credential are never carried in the metadata — only the
+  identifiers a future investigator needs to correlate the event with the
+  rest of the audit trail. The static analyzer enforces the closed-set
+  invariant directly on the AST of `apikeyservice.go`.
+- **The plaintext escape hatch is greppable.** The one-time plaintext
+  Token of the new credential body is exposed exactly once, in the JSON
+  body of the rotate response, via the `auth.Token.Reveal()` method. Every
+  standard rendering of `auth.Token` (fmt `%v/%+v/%#v`, `slog`,
+  `json.Marshal`) emits `output.Sentinel` instead. The runtime test
+  `internal/controlplane/auth/api_key_rotation_test.go` drives the full
+  rotation lifecycle of the credential primitives — old vs. new key —
+  and asserts that every redaction projection survives across both keys,
+  that the old secret cannot verify against the new hash (and vice
+  versa), and that `Generate` keeps producing unique prefix+hash pairs at
+  scale.
+- **The OLD credential becomes unusable the moment the row is committed.**
+  There is no grace period and no dual-active window. Yalla's prefix-keyed
+  authentication path looks the row up by its current prefix only, so
+  every subsequent authentication attempt with the old token misses
+  through the same uniform invalid-credentials path that a non-existent
+  key produces (see `Authenticator.Authenticate`'s
+  `ErrInvalidCredentials` contract above). A grace-window design would
+  require a denylist for the old hash plus a recovery window during which
+  a leaked credential is still active — exactly the property rotation
+  exists to remove.
+- **Out of scope here.** The cross-tenant 404 invariant is enforced by
+  `APIKeyService.Rotate`'s in-transaction `Get(...)` against the named
+  tenant. The policy boundary that gates the rotate endpoint behind
+  `CapManage` (no support cross-tenant exception, unlike `CapRead`) is
+  pinned by `api_keys_rotate_policy_test.go`. The response envelope,
+  redaction in logs, and dependency-cause-no-leak invariants are pinned
+  by the BE-0092 contract test family. This AGENTS.md section is the
+  threat-model documentation that points future readers at those pins.
+
 ## Session token contract (public, stable)
 
 - `session.go` mints/verifies **human** session tokens as compact HS256 JWTs:

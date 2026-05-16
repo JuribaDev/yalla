@@ -24357,3 +24357,119 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
   - Capturing the slog projection for a leak test: build a `slog.NewJSONHandler` writing into a `bytes.Buffer`, call `LogAttrs(... slog.Any("provider", provider))`, then `json.Unmarshal` the result and assert against the resulting `map[string]any`. The `output.Sentinel` is the documented redaction marker — assert it appears in the `master_keys` field by name.
   - The AES-256-GCM `keyIDFromMaterial` is the first 8 bytes of SHA-256(key) hex-encoded (16 chars). A leak test cannot use the per-byte substring trick (any random 2-hex pair will collide with the 32-byte key with ~p=1/256 per byte) — it must instead assert the FULL key hex `fmt.Sprintf("%x", key)` is absent from the redacted output.
 ---
+
+## 2026-05-17 - BE-0352 - Security verification: API key rotation
+- Documented the API key rotation threat model and operator-facing
+  invariants in `internal/controlplane/auth/AGENTS.md` under a new
+  "API key rotation (BE-0352)" section: atomicity of the (prefix,
+  secret_hash) swap, lifecycle-conflict surface, closed-set audit
+  metadata, greppable plaintext escape hatch, and the no-grace-window
+  decision. Cross-links the static sibling in `store/` and the contract
+  pins in `httpapi/`.
+- Added `internal/controlplane/store/api_key_rotation_static_test.go` —
+  sealing-trap that parses `apikey.go` + `apikeyservice.go` and pins
+  three invariants: (a) `(*APIKeyRepository).RotateCredential`'s SQL
+  string is an UPDATE on `api_keys` that sets BOTH `prefix` AND
+  `secret_hash` in its SET clause and is tenant-scoped on
+  `organization_id = $1 AND id = $2`; (b) `(*APIKeyService).Rotate`
+  body contains `if current.IsRevoked() { return apierr.Conflict(...) }`
+  and `if current.IsExpired(...) { return apierr.Conflict(...) }`
+  lifecycle guards (any other return shape — bare error, NotFound, nil —
+  is rejected); (c) the `Rotate` audit event's `Metadata` map literal
+  carries exactly the closed-set keys `{organization_id, rotated_prefix}`
+  — `secret_hash`, `token`, `plaintext`, `prefix_old`, anything else is
+  rejected. Self-checks `TestRotateCredentialStaticAnalyzerDetectsRegressions`,
+  `TestRotateAuditMetadataStaticAnalyzerDetectsRegressions`, and
+  `TestRotateLifecycleGuardStaticAnalyzerDetectsRegressions` feed
+  synthetic known-bad and known-good sources through `go/parser` to the
+  three analysers and pin both directions, so over-tightening or
+  under-tightening the matchers is caught.
+- Added `internal/controlplane/auth/api_key_rotation_test.go` — runtime
+  test that drives the credential-primitive lifecycle of a rotation
+  in-process (no DB, no HTTP) and pins: (1) two `auth.Generate` calls
+  produce distinct prefixes, distinct secret hashes, and distinct
+  plaintext tokens; (2) `VerifySecret(old_secret, new_hash) == false`
+  AND `VerifySecret(new_secret, old_hash) == false` — the load-bearing
+  end-to-end statement that rotation invalidates the old credential
+  independent of any storage layer; (3) the redaction contract on
+  `auth.Token` holds for BOTH the old AND new key across `fmt`
+  `%v/%+v/%#v`, `String`, `slog.AnyValue`, and `json.Marshal` (plaintext
+  AND bare secret body both absent, redaction sentinel present), and
+  the embedding `GeneratedKey` struct survives `testutil.AssertRedactedValue`
+  on both halves; (4) a structured slog JSON record carrying both tokens
+  via `slog.Any` redacts every plaintext, secret body, and secret hash
+  for both keys while surfacing the public `rotated_prefix` verbatim
+  for correlation; (5) a 2000-call rotation simulation never repeats
+  any prefix / token / hash, smoke-testing the entropy budget.
+- Files added/changed:
+  - `internal/controlplane/auth/AGENTS.md` (+~60 lines: "API key
+    rotation (BE-0352)" section)
+  - `internal/controlplane/store/api_key_rotation_static_test.go` (new)
+  - `internal/controlplane/auth/api_key_rotation_test.go` (new)
+  - `ralph/prd.json` (BE-0352 passes=true)
+  - `ralph/progress.txt` (this entry)
+- Verification run:
+  - `gofmt -l .` (clean — gofmt reformatted the new static-test file
+    once after first write; final tree is gofmt-clean)
+  - `go mod tidy` (clean)
+  - `go vet ./...` (clean)
+  - `go test -count=1 ./...` (every package passes — full suite)
+  - `go test -race -count=1 ./internal/controlplane/auth/...
+    ./internal/controlplane/store/...` (auth, store, store/migrate all
+    pass under -race)
+  - goimports / golangci-lint / staticcheck / govulncheck not installed
+    locally (documented in earlier iterations).
+- Remaining risks/follow-ups: none for BE-0352. The static analyser
+  pins the SQL-literal shape, the lifecycle-conflict if-body shape,
+  and the audit-metadata closed set; a refactor that legitimately
+  renames `apierr` to a different alias would intentionally fail
+  `rotateHasLifecycleGuard` — this is by design, since the package
+  qualifier is part of the contract the audit reviewers rely on.
+  Sibling stories BE-0353..BE-0363 follow the BE-0344/0345/0346/
+  0349/0350/0351/0352 two-test pattern; each picks the package that
+  owns the invariant.
+- **Learnings for future iterations:**
+  - The "closed-set audit-metadata key" analyser is a strictly stronger
+    invariant than "this list of known-bad substrings is absent". The
+    BE-0352 instance walks the `Metadata: map[string]string{...}`
+    composite literal, collects every static string key, and asserts
+    SET-EQUAL against the documented `{organization_id, rotated_prefix}`
+    set. Any new key — even an apparently-innocuous one — fails the
+    analyser, which forces the author of the new key to also update
+    the documented closed set, AGENTS.md, and the rotation runbook.
+    This is the BE-0349 closed-set pattern (rejection reasons set-equal
+    to a documented list) applied to a struct-field surface instead of
+    a string-reason surface; the AST walk is mechanically identical
+    (KeyValueExpr.Key as BasicLit STRING → unquote → set membership).
+  - The "lifecycle-guard returns a typed `apierr.Conflict(...)`"
+    analyser is structurally close to BE-0344's "every SQL string arg
+    is a compile-time-constant expression" guard: both walk if-bodies
+    or call-arg shapes and reject anything outside a small closed set
+    of accepted AST patterns. The Conflict guard adds one wrinkle:
+    the `if` cond must be a `CallExpr` whose `Fun` is a `SelectorExpr`
+    ending in the method name (`IsRevoked`, `IsExpired`) — the receiver
+    name is NOT pinned, so a rename of the local `current` variable
+    is silent (which is correct: that variable name is not the
+    contract). The receiver pattern is "match on selector name only,
+    not on receiver identifier" and ports to any future lifecycle-
+    check analyser (e.g. "must call `Validate()` before persisting").
+  - The runtime cross-key `VerifySecret(old_secret, new_hash) == false`
+    assertion is the strongest end-to-end form of the rotation
+    property and stands independent of any storage layer. The
+    sanity-check pair (`VerifySecret(old, old_hash) == true` AND
+    `VerifySecret(new, new_hash) == true`) before the cross-key checks
+    is load-bearing — without it a regression in `VerifySecret` that
+    always returned false would trivially "pass" the cross-key
+    assertions and silently break authentication entirely. Always
+    pin the positive direction of a verifier before the negative one.
+  - `gofmt` invoked against a `.md` file emits a single illegal-
+    character warning and exits 0 with no rewrite — harmless but
+    confusing. Scope `gofmt -w` to `.go` files explicitly or use
+    `gofmt -l .` first to find the unformatted set.
+  - The `mustParseFile` helper in `store_test` (from `sql_injection_static_test.go`,
+    BE-0344) returns `(*token.FileSet, *ast.File)` from a bare relative
+    filename because `go test`'s working directory is the package
+    directory. New static tests in `store/` can reuse `mustParseFile`
+    directly; the local wrapper `mustParseStoreFile` exists only to
+    document the contract — it adds no behavior.
+---
