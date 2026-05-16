@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/JuribaDev/yalla/internal/controlplane/secrets"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
 	"github.com/JuribaDev/yalla/internal/controlplane/testutil"
 	yerr "github.com/JuribaDev/yalla/internal/errors"
@@ -28,7 +29,8 @@ func newProjectVariableService(t *testing.T, s *store.Store) *store.ProjectVaria
 	svc, err := store.NewProjectVariableService(s,
 		store.NewProjectRepository(),
 		store.NewProjectVariableRepository(),
-		store.NewAuditRepository())
+		store.NewAuditRepository(),
+		secrets.NewPlaintext())
 	if err != nil {
 		t.Fatalf("NewProjectVariableService: %v", err)
 	}
@@ -69,7 +71,7 @@ func TestProjectVariableServiceReplaceInsertsFreshVariables(t *testing.T) {
 	if len(vars) != 2 {
 		t.Fatalf("post-write variables = %+v, want two entries", vars)
 	}
-	if vars[0].Key != "DATABASE_URL" || vars[0].Value != "postgres://user:hunter2@db/app" || !vars[0].IsSecret {
+	if vars[0].Key != "DATABASE_URL" || revealProjectVariableValue(vars[0]) != "postgres://user:hunter2@db/app" || !vars[0].IsSecret {
 		t.Errorf("vars[0] = %+v, want DATABASE_URL/<value>/is_secret", vars[0])
 	}
 	if vars[1].Key != "REGION" || vars[1].Value != "us-east-1" || vars[1].IsSecret {
@@ -187,7 +189,7 @@ func TestProjectVariableServiceReplaceUpdatesExistingAndDeletesTheRest(t *testin
 	if alpha.ID != idByKey["ALPHA"] {
 		t.Errorf("ALPHA id = %q, want preserved %q (UPSERT must not mint a new id)", alpha.ID, idByKey["ALPHA"])
 	}
-	if alpha.Value != "updated" || !alpha.IsSecret {
+	if revealProjectVariableValue(alpha) != "updated" || !alpha.IsSecret {
 		t.Errorf("ALPHA = %+v, want value=updated/is_secret=true", alpha)
 	}
 	if alpha.Version <= versionByKey["ALPHA"] {
@@ -476,33 +478,46 @@ func TestProjectVariableServiceReplaceRequiresActorOrg(t *testing.T) {
 
 // TestNewProjectVariableServiceRejectsNilDependencies proves the
 // constructor's fail-fast posture: a misconfigured service that lacks the
-// store, the project repository, the variable repository, or the audit
-// appender fails at construction rather than on its first request.
+// store, the project repository, the variable repository, the audit
+// appender, or the secrets provider fails at construction rather than
+// on its first request.
 func TestNewProjectVariableServiceRejectsNilDependencies(t *testing.T) {
 	t.Parallel()
+	provider := secrets.NewPlaintext()
 	if _, err := store.NewProjectVariableService(nil,
 		store.NewProjectRepository(),
 		store.NewProjectVariableRepository(),
-		store.NewAuditRepository()); err == nil {
+		store.NewAuditRepository(),
+		provider); err == nil {
 		t.Errorf("NewProjectVariableService(nil store) returned no error")
 	}
 	db := testutil.RequireMigratedDB(t)
 	s := newStore(t, db)
 	if _, err := store.NewProjectVariableService(s, nil,
 		store.NewProjectVariableRepository(),
-		store.NewAuditRepository()); err == nil {
+		store.NewAuditRepository(),
+		provider); err == nil {
 		t.Errorf("NewProjectVariableService(nil projects) returned no error")
 	}
 	if _, err := store.NewProjectVariableService(s,
 		store.NewProjectRepository(),
 		nil,
-		store.NewAuditRepository()); err == nil {
+		store.NewAuditRepository(),
+		provider); err == nil {
 		t.Errorf("NewProjectVariableService(nil variables) returned no error")
 	}
 	if _, err := store.NewProjectVariableService(s,
 		store.NewProjectRepository(),
 		store.NewProjectVariableRepository(),
-		nil); err == nil {
+		nil,
+		provider); err == nil {
 		t.Errorf("NewProjectVariableService(nil audit) returned no error")
+	}
+	if _, err := store.NewProjectVariableService(s,
+		store.NewProjectRepository(),
+		store.NewProjectVariableRepository(),
+		store.NewAuditRepository(),
+		nil); err == nil {
+		t.Errorf("NewProjectVariableService(nil provider) returned no error")
 	}
 }

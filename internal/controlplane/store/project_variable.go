@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"log/slog"
 	"time"
@@ -25,30 +26,49 @@ const projectVariablesWriteAction = "env.write"
 // organization-scoped variable of the same key for services inside the
 // project.
 //
-// Value is the literal value the variable carries. The repository returns
-// it verbatim from the database; the HTTP layer redacts secret values
-// before projection onto the wire, and a future audit layer redacts every
-// value regardless of is_secret before persisting it in audit metadata.
+// Value is the literal value of NON-SECRET variables; for IsSecret = true
+// the column is forced to "" by the schema CHECK and the actual secret
+// bytes live behind (SecretProvider, SecretKeyID, SecretCiphertext),
+// sealed by an internal/controlplane/secrets.Provider. An internal-only
+// caller that legitimately needs the plaintext (today, the future Dokploy
+// provisioning renderer) calls Provider.Open against the sealed tuple.
+// The wire layer NEVER projects the sealed bytes — secret values appear
+// as output.Sentinel on every public response.
+//
+// SecretProvider / SecretKeyID / SecretCiphertext are populated when
+// IsSecret = true and empty/nil when IsSecret = false. The store layer
+// upholds that invariant in the same transaction as the write; the
+// database CHECK constraint
+// project_variables_secret_columns_consistent is the defence-in-
+// depth guarantee that no row can ever drift from it.
+//
 // The LogValue method below makes log records that accidentally carry a
-// ProjectVariable safe by structurally hiding the value at the slog
-// boundary as a second line of defence — a panic stack trace or a debug
-// log that captures the struct cannot leak the literal.
+// ProjectVariable safe by structurally hiding both the plain value AND
+// the ciphertext at the slog boundary as a second line of defence —
+// a panic stack trace or a debug log that captures the struct cannot
+// leak the literal or the sealed bytes.
 type ProjectVariable struct {
-	ID             string
-	OrganizationID string
-	ProjectID      string
-	Key            string
-	Value          string
-	IsSecret       bool
-	Version        int64
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID               string
+	OrganizationID   string
+	ProjectID        string
+	Key              string
+	Value            string
+	IsSecret         bool
+	SecretProvider   string
+	SecretKeyID      string
+	SecretCiphertext []byte
+	Version          int64
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 // LogValue redacts every variable value at the slog boundary so a stray
-// log record that captures a ProjectVariable cannot leak the literal.
-// Non-secret values reach the wire through the HTTP projection (which has
-// its own explicit redaction policy); logs always see the sentinel.
+// log record that captures a ProjectVariable cannot leak the literal
+// plaintext OR the sealed ciphertext. Non-secret values reach the wire
+// through the HTTP projection (which has its own explicit redaction
+// policy); logs always see the sentinel. The slog record exposes the
+// provider id and key id (already non-secret) so an operator can debug
+// the encryption seam without exfiltrating the bytes themselves.
 func (v ProjectVariable) LogValue() slog.Value {
 	return slog.GroupValue(
 		slog.String("id", v.ID),
@@ -57,14 +77,21 @@ func (v ProjectVariable) LogValue() slog.Value {
 		slog.String("key", v.Key),
 		slog.String("value", output.Sentinel),
 		slog.Bool("is_secret", v.IsSecret),
+		slog.String("secret_provider", v.SecretProvider),
+		slog.String("secret_key_id", v.SecretKeyID),
+		slog.String("secret_ciphertext", output.Sentinel),
 		slog.Int64("version", v.Version),
 	)
 }
 
 // projectVariableColumns is the SELECT projection used by every read in
 // this repository. Keeping it as a single string keeps the column list in
-// lockstep with scanProjectVariable.
-const projectVariableColumns = `id, organization_id, project_id, key, value, is_secret, version, created_at, updated_at`
+// lockstep with scanProjectVariable. The encryption-at-rest columns
+// (secret_provider, secret_key_id, secret_ciphertext) live next to value
+// so a single Scan returns the whole row in one round trip; the store-
+// layer service decides whether and when to call Provider.Open against
+// the sealed tuple.
+const projectVariableColumns = `id, organization_id, project_id, key, value, is_secret, secret_provider, secret_key_id, secret_ciphertext, version, created_at, updated_at`
 
 // projectVariableListMaxRows caps how many rows a single ListByProject
 // call returns. An unbounded query can never be issued by accident; an
@@ -124,15 +151,35 @@ func (r *ProjectVariableRepository) ListByProject(ctx context.Context, q Querier
 	return out, nil
 }
 
+// ProjectVariableUpsert is the closed-set tuple Upsert accepts. It binds
+// the plain `value` column with the (secret_provider, secret_key_id,
+// secret_ciphertext) encryption-at-rest tuple in one struct so the
+// repository signature stays narrow as new secret fields land. The
+// store-layer service builds this struct by calling
+// secrets.Provider.Seal once per item; an IsSecret = true item MUST
+// carry a non-empty ciphertext and Value MUST be "", and an
+// IsSecret = false item MUST carry only Value with the ciphertext fields
+// zeroed. The database CHECK constraint
+// project_variables_secret_columns_consistent rejects any drift as a
+// deterministic apierr.Conflict.
+type ProjectVariableUpsert struct {
+	Value            string
+	IsSecret         bool
+	SecretProvider   string
+	SecretKeyID      string
+	SecretCiphertext []byte
+}
+
 // Upsert inserts or updates the (organization_id, project_id, key) row
-// carrying value / is_secret. The (organization_id, project_id, key) UNIQUE
-// constraint from migration 0015 is the conflict target, so an existing row
-// keeps its id and bumps version through the bump_version trigger; a new row
-// uses the caller-supplied id (already minted by the service layer through
+// carrying value / is_secret and (for secret rows) the encryption-at-rest
+// tuple. The (organization_id, project_id, key) UNIQUE constraint from
+// migration 0015 is the conflict target, so an existing row keeps its id
+// and bumps version through the bump_version trigger; a new row uses the
+// caller-supplied id (already minted by the service layer through
 // domain.NewID(KindProjectVariable) so the id is non-guessable and
 // tenant-anonymous). The returned ProjectVariable reflects the committed
-// state — its id is the row's stable id (the existing id for an update, the
-// freshly minted one for an insert), its version is the post-trigger
+// state — its id is the row's stable id (the existing id for an update,
+// the freshly minted one for an insert), its version is the post-trigger
 // version, and its updated_at is the moment the row persisted.
 //
 // The tenant predicate is non-optional: organization_id AND project_id are
@@ -144,29 +191,47 @@ func (r *ProjectVariableRepository) ListByProject(ctx context.Context, q Querier
 // service layer before a transaction is opened; this method assumes its
 // inputs already cleared the same shape checks the PUT endpoint enforces.
 //
-// A foreign-key violation (organizationID/projectID does not exist) and the
-// table's CHECK constraints both surface as apierr.Conflict through
-// mapWriteError; any other driver error surfaces as apierr.StoreUnavailable.
-// The raw driver error is wrapped as the cause for server-side logging only
-// and never reaches the user-facing message — so a customer-facing 409 here
-// never echoes value content.
-func (r *ProjectVariableRepository) Upsert(ctx context.Context, tx *Tx, id, organizationID, projectID, key, value string, isSecret bool) (ProjectVariable, error) {
+// A foreign-key violation (organizationID/projectID does not exist), the
+// table's CHECK constraints (including the encryption-at-rest consistency
+// invariant), and any other 23xxx integrity violation surface as
+// apierr.Conflict through mapWriteError; any other driver error surfaces
+// as apierr.StoreUnavailable. The raw driver error is wrapped as the
+// cause for server-side logging only and never reaches the user-facing
+// message — so a customer-facing 409 here never echoes value content.
+func (r *ProjectVariableRepository) Upsert(ctx context.Context, tx *Tx, id, organizationID, projectID, key string, in ProjectVariableUpsert) (ProjectVariable, error) {
 	if tx == nil {
 		return ProjectVariable{}, apierr.Internal(errors.New("store: ProjectVariableRepository.Upsert called with a nil transaction"))
 	}
+	provider, keyID, ciphertext := nullableProjectSecretColumns(in)
 	row := tx.QueryRow(ctx,
-		`INSERT INTO project_variables (id, organization_id, project_id, key, value, is_secret)
-		     VALUES ($1, $2, $3, $4, $5, $6)
+		`INSERT INTO project_variables (id, organization_id, project_id, key, value, is_secret, secret_provider, secret_key_id, secret_ciphertext)
+		     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		ON CONFLICT (organization_id, project_id, key) DO UPDATE
-		    SET value     = EXCLUDED.value,
-		        is_secret = EXCLUDED.is_secret
+		    SET value             = EXCLUDED.value,
+		        is_secret         = EXCLUDED.is_secret,
+		        secret_provider   = EXCLUDED.secret_provider,
+		        secret_key_id     = EXCLUDED.secret_key_id,
+		        secret_ciphertext = EXCLUDED.secret_ciphertext
 		RETURNING `+projectVariableColumns,
-		id, organizationID, projectID, key, value, isSecret)
+		id, organizationID, projectID, key, in.Value, in.IsSecret, provider, keyID, ciphertext)
 	v, err := scanProjectVariable(row)
 	if err != nil {
 		return ProjectVariable{}, mapWriteError(err, "the project variable could not be saved")
 	}
 	return v, nil
+}
+
+// nullableProjectSecretColumns projects a ProjectVariableUpsert onto the
+// (provider, keyID, ciphertext) tuple the SQL bind parameters expect.
+// For IsSecret = false the tuple is (nil, nil, nil) so the columns are
+// NULL — the CHECK constraint requires NULL in the non-secret state.
+// For IsSecret = true the tuple is (provider, keyID, ciphertext) values
+// the service just sealed.
+func nullableProjectSecretColumns(in ProjectVariableUpsert) (provider, keyID any, ciphertext any) {
+	if !in.IsSecret {
+		return nil, nil, nil
+	}
+	return in.SecretProvider, in.SecretKeyID, in.SecretCiphertext
 }
 
 // DeleteByProjectExceptKeys removes every project_variables row owned by
@@ -204,9 +269,17 @@ func (r *ProjectVariableRepository) DeleteByProjectExceptKeys(ctx context.Contex
 }
 
 // scanProjectVariable scans one project_variables row in
-// projectVariableColumns order.
+// projectVariableColumns order. The three encryption-at-rest columns
+// are nullable in the schema (NULL for non-secret rows); pgtype-aware
+// scans into *string would reject NULL, so we route through
+// sql.NullString and a plain []byte slice here.
 func scanProjectVariable(row scanRow) (ProjectVariable, error) {
-	var v ProjectVariable
+	var (
+		v          ProjectVariable
+		provider   sql.NullString
+		keyID      sql.NullString
+		ciphertext []byte
+	)
 	if err := row.Scan(
 		&v.ID,
 		&v.OrganizationID,
@@ -214,11 +287,23 @@ func scanProjectVariable(row scanRow) (ProjectVariable, error) {
 		&v.Key,
 		&v.Value,
 		&v.IsSecret,
+		&provider,
+		&keyID,
+		&ciphertext,
 		&v.Version,
 		&v.CreatedAt,
 		&v.UpdatedAt,
 	); err != nil {
 		return ProjectVariable{}, err
+	}
+	if provider.Valid {
+		v.SecretProvider = provider.String
+	}
+	if keyID.Valid {
+		v.SecretKeyID = keyID.String
+	}
+	if len(ciphertext) > 0 {
+		v.SecretCiphertext = ciphertext
 	}
 	return v, nil
 }

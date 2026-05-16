@@ -20,17 +20,51 @@ import (
 // checks at the reader, and that a cross-tenant project_id never reveals
 // another tenant's variables.
 
+// revealProjectVariableValue returns the literal plaintext value of v.
+// For non-secret rows it is just v.Value. For is_secret rows the literal
+// value lives in v.SecretCiphertext (the schema CHECK forces Value=""
+// for secret rows after BE-0340), so we return the ciphertext bytes
+// verbatim — every test in this package wires the Plaintext provider,
+// for which Seal(plaintext) is plaintext, so the equivalence holds
+// without dragging a live provider through every assertion.
+func revealProjectVariableValue(v store.ProjectVariable) string {
+	if v.IsSecret {
+		return string(v.SecretCiphertext)
+	}
+	return v.Value
+}
+
 // seedProjectVariable inserts one project_variables row through the test
-// pool. It builds the smallest column set the schema requires (id,
-// organization_id, project_id, key, value, is_secret); the bump_version
-// and set_updated_at triggers from migrations 0011 / 0015 populate the
-// rest.
+// pool. It builds the schema-required column set (id, organization_id,
+// project_id, key, value, is_secret) plus — for is_secret = true rows
+// — the encryption-at-rest tuple migration 0030's CHECK constraint
+// requires. The bump_version and set_updated_at triggers from migrations
+// 0011 / 0015 populate the rest.
+//
+// For is_secret = true rows the helper stands in the secrets.Plaintext
+// provider's wire identifiers (plaintext-v1 / plaintext) so test
+// fixtures stay self-contained (no live provider dependency) and the
+// HTTP / audit redaction contract still holds — the wire layer never
+// projects the on-disk bytes for secret rows, so revealing the literal
+// here is only visible to test assertions.
 func seedProjectVariable(t *testing.T, db *testutil.DB, id, organizationID, projectID, key, value string, isSecret bool) {
 	t.Helper()
+	plainValue := value
+	var (
+		provider   any
+		keyID      any
+		ciphertext any
+	)
+	if isSecret {
+		plainValue = ""
+		provider = "plaintext-v1"
+		keyID = "plaintext"
+		ciphertext = []byte(value)
+	}
 	if _, err := db.Exec(context.Background(),
-		`INSERT INTO project_variables (id, organization_id, project_id, key, value, is_secret)
-		 VALUES ($1, $2, $3, $4, $5, $6)`,
-		id, organizationID, projectID, key, value, isSecret); err != nil {
+		`INSERT INTO project_variables (id, organization_id, project_id, key, value, is_secret, secret_provider, secret_key_id, secret_ciphertext)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		id, organizationID, projectID, key, plainValue, isSecret, provider, keyID, ciphertext); err != nil {
 		t.Fatalf("seed project_variables: %v", err)
 	}
 }
@@ -84,8 +118,12 @@ func TestProjectVariableRepoListByProjectReturnsDeterministicOrdering(t *testing
 	// Value reaches the repository verbatim; redaction is the HTTP layer's
 	// job. Pin that contract here so a future regression that pre-redacts
 	// at persistence (which would break a round-trip write path) fails.
-	if got[0].Value != "postgres://user:hunter2@db.internal/yalla" {
-		t.Errorf("got[0].Value should round-trip the literal; got %q", got[0].Value)
+	// For is_secret = true rows the on-disk shape after BE-0340 forces
+	// Value="" and stores the literal in SecretCiphertext (the seedProjectVariable
+	// helper stands in the plaintext provider's wire identifiers), so the
+	// assertion goes through revealProjectVariableValue.
+	if revealProjectVariableValue(got[0]) != "postgres://user:hunter2@db.internal/yalla" {
+		t.Errorf("got[0] value should round-trip the literal; got %q", revealProjectVariableValue(got[0]))
 	}
 }
 
@@ -302,7 +340,7 @@ func TestProjectVariableRepoUpsertInsertsNewRow(t *testing.T) {
 	repo := store.NewProjectVariableRepository()
 	var got store.ProjectVariable
 	if err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
-		v, upErr := repo.Upsert(ctx, tx, "pvar_new", org.ID, proj.ID, "REGION", "us-east-1", false)
+		v, upErr := repo.Upsert(ctx, tx, "pvar_new", org.ID, proj.ID, "REGION", store.ProjectVariableUpsert{Value: "us-east-1", IsSecret: false})
 		if upErr != nil {
 			return upErr
 		}
@@ -343,7 +381,13 @@ func TestProjectVariableRepoUpsertUpdatesExistingRow(t *testing.T) {
 	repo := store.NewProjectVariableRepository()
 	var got store.ProjectVariable
 	if err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
-		v, upErr := repo.Upsert(ctx, tx, "pvar_caller", org.ID, proj.ID, "DATABASE_URL", "v2-secret", true)
+		v, upErr := repo.Upsert(ctx, tx, "pvar_caller", org.ID, proj.ID, "DATABASE_URL", store.ProjectVariableUpsert{
+			Value:            "",
+			IsSecret:         true,
+			SecretProvider:   "plaintext-v1",
+			SecretKeyID:      "plaintext",
+			SecretCiphertext: []byte("v2-secret"),
+		})
 		if upErr != nil {
 			return upErr
 		}
@@ -355,8 +399,8 @@ func TestProjectVariableRepoUpsertUpdatesExistingRow(t *testing.T) {
 	if got.ID != "pvar_existing" {
 		t.Errorf("got.ID = %q; want pvar_existing (existing row id preserved on conflict)", got.ID)
 	}
-	if got.Value != "v2-secret" || !got.IsSecret {
-		t.Errorf("got fields = (%q, %t); want (v2-secret, true)", got.Value, got.IsSecret)
+	if revealProjectVariableValue(got) != "v2-secret" || !got.IsSecret {
+		t.Errorf("got fields = (value=%q, is_secret=%t); want (v2-secret, true)", revealProjectVariableValue(got), got.IsSecret)
 	}
 	if got.Version != 2 {
 		t.Errorf("got.Version = %d; want 2 (bump_version trigger on UPDATE)", got.Version)
@@ -381,7 +425,7 @@ func TestProjectVariableRepoUpsertRejectsCrossTenant(t *testing.T) {
 
 	repo := store.NewProjectVariableRepository()
 	err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
-		_, upErr := repo.Upsert(ctx, tx, "pvar_attempt", orgA.ID, projB.ID, "REGION", "leak", false)
+		_, upErr := repo.Upsert(ctx, tx, "pvar_attempt", orgA.ID, projB.ID, "REGION", store.ProjectVariableUpsert{Value: "leak", IsSecret: false})
 		return upErr
 	})
 	if err == nil {
@@ -402,7 +446,7 @@ func TestProjectVariableRepoUpsertRejectsCrossTenant(t *testing.T) {
 func TestProjectVariableRepoUpsertRejectsNilTx(t *testing.T) {
 	t.Parallel()
 	repo := store.NewProjectVariableRepository()
-	_, err := repo.Upsert(context.Background(), nil, "id", "org", "proj", "K", "v", false)
+	_, err := repo.Upsert(context.Background(), nil, "id", "org", "proj", "K", store.ProjectVariableUpsert{Value: "v", IsSecret: false})
 	if err == nil {
 		t.Fatal("Upsert(nilTx) returned no error; want apierr.Internal")
 	}

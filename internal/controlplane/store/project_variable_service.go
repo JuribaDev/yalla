@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
 	"github.com/JuribaDev/yalla/internal/controlplane/domain"
+	"github.com/JuribaDev/yalla/internal/controlplane/secrets"
 	"github.com/JuribaDev/yalla/internal/controlplane/validate"
 )
 
@@ -72,6 +74,7 @@ type ProjectVariableService struct {
 	projects  *ProjectRepository
 	variables *ProjectVariableRepository
 	audit     AuditAppender
+	provider  secrets.Provider
 }
 
 // NewProjectVariableService wires a ProjectVariableService from its
@@ -79,7 +82,16 @@ type ProjectVariableService struct {
 // misconfigured service fails at construction rather than on its first
 // request — the same fail-fast posture every other unit-of-work
 // orchestrator in this package takes.
-func NewProjectVariableService(s *Store, projects *ProjectRepository, variables *ProjectVariableRepository, audit AuditAppender) (*ProjectVariableService, error) {
+//
+// provider is the secrets.Provider that seals every secret value before
+// it is persisted and opens sealed values for internal-only read paths.
+// It is required: a nil provider is rejected at construction so a
+// production process cannot accidentally start with the at-rest seam
+// disabled. Tests that do not exercise the encryption seam directly
+// pass secrets.NewPlaintext() — the plaintext provider is acceptable
+// in local/test profiles only and cmd/yalla-api rejects it for
+// staging/production.
+func NewProjectVariableService(s *Store, projects *ProjectRepository, variables *ProjectVariableRepository, audit AuditAppender, provider secrets.Provider) (*ProjectVariableService, error) {
 	switch {
 	case s == nil:
 		return nil, errors.New("store: nil store")
@@ -89,8 +101,34 @@ func NewProjectVariableService(s *Store, projects *ProjectRepository, variables 
 		return nil, errors.New("store: nil project variable repository")
 	case audit == nil:
 		return nil, errors.New("store: nil audit appender")
+	case provider == nil:
+		return nil, errors.New("store: nil secrets provider")
 	}
-	return &ProjectVariableService{store: s, projects: projects, variables: variables, audit: audit}, nil
+	return &ProjectVariableService{store: s, projects: projects, variables: variables, audit: audit, provider: provider}, nil
+}
+
+// sealVariableValue projects a ProjectVariableReplace onto the
+// repository's upsert tuple, calling secrets.Provider.Seal for
+// IsSecret = true items. Non-secret items pass through with empty
+// encryption-at-rest columns. Seal failures surface as apierr.Internal
+// — a sealing error is a server-side problem, never a customer
+// instruction, and the wrapped cause is value-free (the secrets package
+// contract).
+func (svc *ProjectVariableService) sealVariableValue(item ProjectVariableReplace) (ProjectVariableUpsert, error) {
+	if !item.IsSecret {
+		return ProjectVariableUpsert{Value: item.Value, IsSecret: false}, nil
+	}
+	ciphertext, keyID, err := svc.provider.Seal([]byte(item.Value))
+	if err != nil {
+		return ProjectVariableUpsert{}, apierr.Internal(fmt.Errorf("seal project variable: %w", err))
+	}
+	return ProjectVariableUpsert{
+		Value:            "",
+		IsSecret:         true,
+		SecretProvider:   svc.provider.ProviderID(),
+		SecretKeyID:      keyID,
+		SecretCiphertext: ciphertext,
+	}, nil
 }
 
 // Replace validates in, then runs the replace-variables unit of work inside
@@ -198,7 +236,11 @@ func (svc *ProjectVariableService) Replace(ctx context.Context, in ReplaceProjec
 			if idErr != nil {
 				return apierr.Internal(idErr)
 			}
-			if _, upErr := svc.variables.Upsert(ctx, tx, id.String(), organizationID, projectID, item.Key, item.Value, item.IsSecret); upErr != nil {
+			sealed, sealErr := svc.sealVariableValue(item)
+			if sealErr != nil {
+				return sealErr
+			}
+			if _, upErr := svc.variables.Upsert(ctx, tx, id.String(), organizationID, projectID, item.Key, sealed); upErr != nil {
 				return upErr
 			}
 		}

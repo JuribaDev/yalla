@@ -212,7 +212,7 @@ func main() {
 		logger.Error("failed to initialize the project variable reader", "error", err.Error())
 		os.Exit(1)
 	}
-	projectVariableService, err := store.NewProjectVariableService(dataStore, store.NewProjectRepository(), store.NewProjectVariableRepository(), auditRepo)
+	projectVariableService, err := store.NewProjectVariableService(dataStore, store.NewProjectRepository(), store.NewProjectVariableRepository(), auditRepo, secretsProvider)
 	if err != nil {
 		logger.Error("failed to initialize the project variable service", "error", err.Error())
 		os.Exit(1)
