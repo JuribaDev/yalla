@@ -58,6 +58,9 @@ func GitRepoURL(c *Collector, field, value string) {
 		if strings.Contains(user, ":") {
 			c.Add(field, "must not embed credentials (a user:password@ component)")
 		}
+		if reason, blocked := disallowedSSRFHost(host); blocked {
+			c.Add(field, reason)
+		}
 		return
 	}
 	u, err := url.Parse(v)
@@ -77,6 +80,9 @@ func GitRepoURL(c *Collector, field, value string) {
 		if _, hasPassword := u.User.Password(); hasPassword {
 			c.Add(field, "must not embed credentials (a user:password@ component)")
 		}
+	}
+	if reason, blocked := disallowedSSRFHost(urlHost(u)); blocked {
+		c.Add(field, reason)
 	}
 }
 

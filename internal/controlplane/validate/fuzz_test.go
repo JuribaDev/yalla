@@ -245,6 +245,44 @@ func FuzzImageRef(f *testing.F) {
 	})
 }
 
+// FuzzURL asserts URL never panics and any accepted URL has a non-empty host
+// that is NOT in the SSRF blocklist (BE-0349). The seeds include each
+// loopback/link-local/private/CGNAT/IPv6-link-local/multicast IP shape, the
+// localhost/.internal/.local hostname surface, the cloud-metadata
+// hostnames, and the embedded-credentials form — so a fuzzer that drops a
+// category from disallowedSSRFHost fails the next replay.
+func FuzzURL(f *testing.F) {
+	for _, s := range fuzzSeeds {
+		f.Add(s)
+	}
+	for _, s := range []string{
+		"https://example.com/", "http://example.com/x", "https://github.com/acme/app",
+		"https://127.0.0.1/", "https://localhost/", "https://169.254.169.254/",
+		"https://10.0.0.1/", "https://172.16.5.5/", "https://192.168.1.1/",
+		"https://100.64.0.1/", "https://[::1]/", "https://[fe80::1]/",
+		"https://[fc00::1]/", "https://224.0.0.1/", "https://0.0.0.0/",
+		"https://metadata.google.internal/", "https://svc.consul.internal/",
+		"https://printer.local/", "https://api.localhost/",
+		"https://user:pass@example.com/", "ftp://example.com/",
+	} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, input string) {
+		c := validate.New()
+		validate.URL(c, "url", input)
+		if !c.OK() {
+			if err := c.Err(); err != nil && len(input) >= 16 && strings.Contains(err.Error(), input) {
+				t.Fatalf("URL reason echoed the submitted value")
+			}
+			return
+		}
+		v := strings.TrimSpace(input)
+		if v == "" || len(v) > validate.MaxURLLen || hasControl(v) {
+			t.Fatalf("URL accepted an out-of-range or control-bearing value %q", input)
+		}
+	})
+}
+
 // FuzzGitBranch asserts GitBranch never panics and never accepts a reference
 // with control characters, a ".." sequence, or an over-long value.
 func FuzzGitBranch(f *testing.F) {

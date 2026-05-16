@@ -41,6 +41,9 @@ func URL(c *Collector, field, value string) {
 	if u.User != nil {
 		c.Add(field, "must not embed credentials (a user:password@ component)")
 	}
+	if reason, blocked := disallowedSSRFHost(urlHost(u)); blocked {
+		c.Add(field, reason)
+	}
 }
 
 // DomainOptions tunes Domain validation with rules that depend on per-tenant
