@@ -6243,7 +6243,7 @@
       ],
       "type": "policy-jobs",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Authorization coverage for POST /v1/jobs/{job_id}/cancel."
     },
     {

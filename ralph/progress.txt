@@ -19278,3 +19278,116 @@ Learnings for future iterations:
   - The DELETE-shape clone of the PATCH contract template (BE-0056) drops exactly one parameter from updateOrganizationHandlerForWithLogger: the body is gone, so the helper signature is (id, authErr, deleter, logger) — no body arg — and the request builder is deleteOrganization(handler, orgID, token) instead of patchOrganization(handler, orgID, token, body). Everything else (the fake-port slot positions in NewHandler, the captureProcessOutput swap, the table-driven success-vs-deny test for bearer redaction, the apierr.StoreUnavailable wrapping host:port cause for the dependency-cause-leak test) is structurally identical. The one slot in NewHandler that changes is the OrganizationDeleter argument: it is the 4th store-port arg after Reader/Creator/Updater (positional slot index 9, immediately after fakeOrganizationUpdater{}). Cloning the PATCH twin therefore means: (a) drop the body decode + body arg + body line of the request, (b) flip the status assertion from http.StatusOK to http.StatusAccepted, (c) swap "Update"->"Delete" in test names + "updater"->"deleter" + "OrganizationUpdater"->"OrganizationDeleter" + "fakeOrganizationUpdater{org:...}"->"fakeOrganizationDeleter{org:...}" + "updateOrganizationContractSecret"->"deleteOrganizationContractSecret" + "patchOrganization"->"deleteOrganization" + "decodeUpdateOrganization"->"decodeDeleteOrganization" + "updateOrganizationHandlerForWithLogger"->"deleteOrganizationHandlerForWithLogger". Identical 211-line structure.
   - **Future mutating-endpoint contract clones at the same path-param shape** (PATCH/DELETE/POST with {parent_id}) follow this exact pattern. The next stories that need the same clone are BE-0062 (members GET — list shape, twin of BE-0047 organizations_contract_test.go), BE-0065 (members POST — twin of BE-0050), BE-0068 (member GET single — twin of BE-0053), BE-0071 (member PATCH — twin of BE-0056), BE-0074 (member DELETE — twin of THIS file). For BE-0074 specifically: members deletion is HARD (no scheduled_at column on members), so the status assertion should be 200 OR 204 depending on whether the handler returns a payload or empty body — check members_delete_test.go's existing assertion before cloning.
 ---
+
+## 2026-05-16 - BE-0282
+- What was implemented: engine-level policy matrix coverage for action
+  job.cancel — the authorization contract POST /v1/jobs/{job_id}/cancel
+  must satisfy regardless of which wire endpoint surfaces it. Engine-
+  only pin (the wire endpoint and its contract test have not landed
+  yet), mirroring the precedent BE-0273 / BE-0276 / BE-0279 set for
+  the two job-read variants and the job-retry sibling deploy-class
+  verb.
+  - internal/controlplane/policy/job_cancel_policy_test.go (new):
+    seven Test* funcs at package policy. (1) Roles matrix —
+    Owner/Admin/Developer/CI allow (ReasonAllowedByRole) and
+    Viewer/Support deny (ReasonDeniedNoCapability) on the org-rooted
+    bare-{job_id} resource, pinning CapDeploy as the catalog split.
+    (2) Revoked/expired keys — Owner role + Disabled=true denies with
+    ReasonDeniedPrincipalDisabled. (3) Wrong-organization principal —
+    every role including Support denies with ReasonDeniedCrossTenant,
+    pinning that CapDeploy is OUTSIDE the engine's support cross-
+    tenant exception. (4) Project-grant containment — admin allows
+    target project, denies org-root and sibling project; CI allows
+    target project; Viewer denies (CapDeploy). (5) Environment-grant
+    containment — staging-env admin allows staging-owned job, denies
+    org-root / parent-project / production-env-owned job, and denies
+    parent-env env.write as defence-in-depth. (6) Service-grant
+    containment — svc_a admin denies org-root / parent-project /
+    parent-env / sibling-service-owned job, denies parent env.write
+    and sibling service.update, allows own-svc-owned job.
+    (7) Org-grant capability matrix — CI/Developer allow, Viewer /
+    Support deny (CapDeploy requirement under an org-wide grant).
+    (8) Foreign-home-org grant — a project-scoped grant minted for
+    orgA, carried by a principal whose home is orgB, cannot
+    authorize job.cancel against an orgB resource (engine twin of
+    the wire-level "stolen scoped key" property).
+  - Canonical project ids are deliberately distinct from the
+    job-read / job-retry matrices (prj_jobs_cancel_matrix_alpha /
+    _beta) so the four engine files cannot accidentally share state
+    through a future shared helper.
+  - ralph/prd.json: flipped BE-0282.passes = true.
+- Verification run:
+  - gofmt -w internal/controlplane/policy/job_cancel_policy_test.go
+    (clean).
+  - go vet ./internal/controlplane/policy/... (clean).
+  - go vet ./... (clean).
+  - go test -run TestJobCancelPolicy ./internal/controlplane/policy/...
+    -> ok (0.500s).
+  - go test ./internal/controlplane/policy/... -> ok (cached).
+  - go test -race ./internal/controlplane/policy/... -> ok (1.305s).
+  - go test ./... -> all packages ok (cached corpus, three cmd dirs
+    have no tests by design: cmd/yalla, cmd/yalla-api,
+    cmd/yalla-worker; also no-test stubs at internal/controlplane/jobs
+    and internal/credentials, unchanged from baseline).
+  - go test -race ./... -> all packages ok.
+  - go mod tidy (clean).
+  - goimports installed: invocation no-op (file already canonical).
+  - golangci-lint / staticcheck / govulncheck still not installed
+    locally (documented in earlier iterations).
+- Remaining risks / follow-ups:
+  - The wire endpoint POST /v1/jobs/{job_id}/cancel is still pending
+    (it has no PRD story id in the BE-02xx job-* block listed under
+    the "passed" or "pending" pools — the engine-only pin pattern
+    explicitly lands BEFORE the wire endpoint to make the
+    authorization contract immune to wire-level regressions). The
+    matching contract test story (the BE-02xx slot adjacent to the
+    cancel endpoint) is not yet open in the PRD; when it lands it
+    will need a 404-vs-403 ladder, the per-role wire matrix, the
+    redaction proof, and a tenant-isolation proof against
+    canonicalJobCancelProjectID / canonicalJobCancelSiblingID. The
+    engine pins here are the load-bearing first line of defence
+    regardless.
+  - The catalog row ActionJobCancel -> CapDeploy at
+    internal/controlplane/policy/catalog.go is unchanged; this story
+    pins (not adds) the row. A future policy change that downgraded
+    job.cancel to CapRead would fail TestJobCancelPolicyMatrixRoles
+    (viewer/support cases) AND TestJobCancelPolicyOrgGrantCapability
+    Matrix (org-grant viewer/support cases). An upgrade to CapWrite
+    would fail TestJobCancelPolicyMatrixRoles (ci case) AND
+    TestJobCancelPolicyOrgGrantCapabilityMatrix (ci case).
+- **Learnings for future iterations:**
+  - The deploy-class-verb engine-only pin (job_retry_policy_test.go,
+    BE-0279) is the canonical template for any other CapDeploy bare-
+    {resource_id}/{verb} action that wraps a Dokploy mutation. The
+    shape transfers 1:1 to job.cancel (BE-0282) and will transfer
+    just as cleanly to deployment.cancel, deployment.rollback,
+    backup.run, service.restart/start/stop, and preview.create/delete
+    when those engine pins are next opened. The seven-test
+    structure (roles / disabled / cross-tenant / project-grant /
+    env-grant / service-grant / org-grant capability / foreign-home-
+    org grant) is the minimum coverage; deviating from any of those
+    seven cases leaves an authorization regression class unguarded.
+  - The canonical project id pair must be unique per action so a
+    future shared helper accidentally introduced under
+    internal/controlplane/policy/testdata/ cannot collapse the
+    matrices. The naming convention emerging is
+    `prj_<resource>_<verb>_matrix_alpha` /
+    `prj_<resource>_<verb>_matrix_beta`. The same convention applies
+    to principal ids (sa_<scope>_<role>_<verb>) so a leak across
+    matrices is detectable by grep alone.
+  - CapDeploy is OUTSIDE the engine's CapRead/CapSupport cross-tenant
+    exception. Every CapDeploy engine pin MUST include
+    TestXxxPolicyWrongOrganizationPrincipal with Support in the deny
+    list — this is the precise row that flips between job.read
+    (Support allowed cross-tenant via ReasonAllowedBySupport) and
+    every deploy-class verb (Support denied cross-tenant via
+    ReasonDeniedCrossTenant). Skipping it leaves the load-bearing
+    distinction between the read and deploy classes unenforced.
+  - The "engine-only pin lands BEFORE the wire endpoint" precedent
+    is now load-bearing for four files (job_read, job_read_byid,
+    job_retry, job_cancel). When the wire endpoint stories
+    eventually open, the contract tests must NOT collapse the engine
+    pins by replacing them — both layers remain (the engine layer
+    pins the authorization contract; the wire layer pins the wire
+    behaviour including the 404-vs-403 ladder).
+---
