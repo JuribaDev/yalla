@@ -5065,8 +5065,8 @@
       ],
       "type": "endpoint-operations",
       "priority": 2,
-      "passes": false,
-      "notes": "Endpoint belongs to the operations backend surface."
+      "passes": true,
+      "notes": "Endpoint belongs to the operations backend surface. Passes verified: gofmt, vet, go test, go test -race, golangci-lint."
     },
     {
       "id": "BE-0221",
@@ -5084,8 +5084,8 @@
       ],
       "type": "test-operations",
       "priority": 2,
-      "passes": false,
-      "notes": "Contract coverage for POST /v1/services/{service_id}/restart."
+      "passes": true,
+      "notes": "Contract coverage for POST /v1/services/{service_id}/restart. Passes verified: gofmt, vet, go test, go test -race, golangci-lint."
     },
     {
       "id": "BE-0222",
@@ -5103,8 +5103,8 @@
       ],
       "type": "policy-operations",
       "priority": 1,
-      "passes": false,
-      "notes": "Authorization coverage for POST /v1/services/{service_id}/restart."
+      "passes": true,
+      "notes": "Authorization coverage for POST /v1/services/{service_id}/restart. Passes verified: gofmt, vet, go test, go test -race, golangci-lint."
     },
     {
       "id": "BE-0223",

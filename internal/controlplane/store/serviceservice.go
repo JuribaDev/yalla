@@ -25,7 +25,20 @@ const (
 	serviceUpdateAction  = "service.update"
 	serviceDeleteAction  = "service.delete"
 	serviceRestoreAction = "service.restore"
+	// serviceRestartAction is the immutable audit-event Action string
+	// emitted by every service restart. It matches the wire-level
+	// action constant the policy engine authorizes (service.restart),
+	// so an auditor reading the audit row can pivot to the policy
+	// matrix tests that pin the authorization contract of the same
+	// action without translating between two vocabularies.
+	serviceRestartAction = "service.restart"
 	serviceProvisionJob  = "service.provision"
+	// serviceRestartJob is the durable-job kind enqueued by the
+	// restart unit of work. The worker reads this kind to dispatch a
+	// Dokploy-side restart of the named service. The kind is stable
+	// public job-schema contract — every operator-facing log line,
+	// metric, and dashboard groups by it.
+	serviceRestartJob = "service.restart"
 	// serviceDisplayNameMaxLen bounds a human-authored service display
 	// name, in runes. It mirrors the environment / project display-name
 	// bounds and exists so an unbounded string can never reach the
@@ -884,4 +897,181 @@ func (svc *ServiceService) Restore(ctx context.Context, in RestoreServiceInput) 
 		return Service{}, txErr
 	}
 	return restored, nil
+}
+
+// RestartServiceInput is the input to ServiceService.Restart.
+// OrganizationID identifies the tenant the service belongs to;
+// ServiceID names the service to restart. The Actor* and correlation
+// fields describe the authenticated principal performing the restart
+// and are recorded verbatim on the audit event. They are plain
+// strings so the store layer takes no build dependency on the policy
+// or telemetry packages — the httpapi handler, which already holds
+// the resolved principal and the request correlation, fills them in.
+//
+// OrganizationID is sourced from the principal's home organization at
+// the HTTP boundary (never from the request body or path), so a
+// cross-tenant id cannot point the write at another tenant by
+// construction. ServiceID is sourced from the {service_id} PATH
+// parameter; the restart unit of work reads the current row under
+// (OrganizationID, ServiceID) before any mutation, so a cross-tenant
+// or unknown service_id surfaces as a deterministic apierr.NotFound
+// rather than a 500 or a silent success.
+//
+// The restart request carries no caller-supplied body fields beyond
+// the path parameter: a restart is a fire-and-forget signal that
+// targets the entire service. The provisioning job that mirrors the
+// restart into Dokploy is enqueued by the unit of work — it cannot be
+// redirected, batched, or scheduled by the caller.
+type RestartServiceInput struct {
+	OrganizationID string
+	ServiceID      string
+	ActorID        string
+	ActorKind      string
+	ActorOrgID     string
+	RequestID      string
+	CorrelationID  string
+}
+
+// Restart records customer intent to restart the service named by
+// (in.OrganizationID, in.ServiceID) and enqueues the durable
+// provisioning job that mirrors the restart into Dokploy. The unit of
+// work runs inside one transaction: confirm the parent service exists
+// under (OrganizationID, ServiceID), reject a service that is already
+// scheduled for deletion, re-authorize action service.restart against
+// the parent service's organization on the same *Tx (defense-in-depth
+// against a grant change that landed between the HTTP authorize and
+// the desired-state write), enqueue the provisioning job, and append
+// the immutable audit record. Because every step shares the *Tx, a
+// failure in any of them rolls the others back: a partial restart and
+// an orphaned audit row are both impossible, and the restart audit
+// record can never exist without its provisioning job.
+//
+// The parent-service Get is tenant-scoped — it filters by
+// organization_id first — so a cross-tenant or unknown service_id
+// surfaces as a deterministic apierr.NotFound. A service that has
+// already been scheduled for teardown cannot accept new operations: a
+// restart job would race the soft-delete worker and either succeed
+// against a half-torn-down service or fail mid-flight. Refuse the
+// restart at the boundary with a deterministic 409 rather than emit
+// a job whose outcome is undefined.
+//
+// Restart writes NO new row to the services table — the service row's
+// desired state does not change. The persistence side effects are the
+// provisioning_jobs row that the worker will execute and the immutable
+// audit_events row that records the actor and the (organization_id,
+// service_id, project_id, environment_id) the operation targeted.
+func (svc *ServiceService) Restart(ctx context.Context, in RestartServiceInput) (Service, error) {
+	organizationID := strings.TrimSpace(in.OrganizationID)
+	if organizationID == "" {
+		return Service{}, apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "organization_id",
+			Reason: "must not be blank",
+		})
+	}
+	serviceID := strings.TrimSpace(in.ServiceID)
+	if serviceID == "" {
+		return Service{}, apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "service_id",
+			Reason: "must not be blank",
+		})
+	}
+
+	// The audit record is filed under the actor's home organization —
+	// the tenant the principal authenticated into — while its resource
+	// id names the service that was restarted. A missing actor
+	// organization is a wiring error (an authenticated request always
+	// carries one), not client input, so it is reported as Internal
+	// rather than a validation failure.
+	actorOrgID := strings.TrimSpace(in.ActorOrgID)
+	if actorOrgID == "" {
+		return Service{}, apierr.Internal(errors.New("store: ServiceService.Restart requires an actor organization for the audit record"))
+	}
+	actorID := strings.TrimSpace(in.ActorID)
+	if actorID == "" {
+		return Service{}, apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "requested_by",
+			Reason: "must not be blank",
+		})
+	}
+
+	var restarted Service
+	txErr := svc.store.Write(ctx, func(ctx context.Context, tx *Tx) error {
+		// Parent-service existence is tenant-scoped: a cross-tenant or
+		// unknown service_id surfaces as the typed apierr.NotFound the
+		// repository produces, never a 500 or a silent success.
+		parent, getErr := svc.services.GetByID(ctx, tx, organizationID, serviceID)
+		if getErr != nil {
+			return getErr
+		}
+		// A service that has already been scheduled for teardown
+		// cannot accept new operations: a restart job would race the
+		// soft-delete worker and either succeed against a half-torn-
+		// down service or fail mid-flight. Refuse at the boundary with
+		// a deterministic 409 rather than emit a job whose outcome is
+		// undefined.
+		if parent.DeletionScheduledAt != nil {
+			return apienvelopeServiceScheduledForDeletionConflict()
+		}
+
+		// Defense-in-depth: the HTTP RequireAuth middleware already
+		// authorized action service.restart against the (home org,
+		// service_id) resource the path names. The in-transaction
+		// Authorize is a redundant check whose real adapter reads
+		// grant rows from the same *Tx as the desired-state write —
+		// so a grant change that landed between the HTTP authorize
+		// and this point still cannot let the write through.
+		if err := svc.authz.Authorize(ctx, tx, serviceRestartAction, organizationID); err != nil {
+			return err
+		}
+
+		// The provisioning job and the audit record commit atomically
+		// with the in-tx authorize. Every JobEnqueuer adapter pins the
+		// job's organization_id to the service's tenant, so a job
+		// cannot reference another tenant's service.
+		if err := svc.jobs.Enqueue(ctx, tx, parent.OrganizationID, serviceRestartJob, parent.ID); err != nil {
+			return err
+		}
+		event := AuditEvent{
+			OrganizationID: actorOrgID,
+			ActorID:        actorID,
+			ActorKind:      strings.TrimSpace(in.ActorKind),
+			Action:         serviceRestartAction,
+			ResourceKind:   string(domain.KindService),
+			ResourceID:     parent.ID,
+			Decision:       AuditDecisionAllowed,
+			Reason:         "authorization granted for service.restart",
+			RequestID:      strings.TrimSpace(in.RequestID),
+			CorrelationID:  strings.TrimSpace(in.CorrelationID),
+			// The structural identifiers are non-secret and safe to
+			// record verbatim — a future support reader sees the
+			// service, its environment, and its project context. There
+			// is no caller-supplied free-form text on the restart
+			// path, so no field needs to flow through the output
+			// redactor before persistence.
+			Metadata: map[string]string{
+				"service_id":     parent.ID,
+				"environment_id": parent.EnvironmentID,
+				"project_id":     parent.ProjectID,
+			},
+		}
+		if _, err := svc.audit.Append(ctx, tx, event); err != nil {
+			return err
+		}
+		restarted = parent
+		return nil
+	})
+	if txErr != nil {
+		return Service{}, txErr
+	}
+	return restarted, nil
+}
+
+// apienvelopeServiceScheduledForDeletionConflict is the typed 409 the
+// restart unit of work returns when the parent service has already
+// been scheduled for soft-delete. It is a function rather than a
+// package-level apierr value so each call site produces a fresh
+// error with its own stack capture and so callers cannot accidentally
+// mutate shared state.
+func apienvelopeServiceScheduledForDeletionConflict() error {
+	return apierr.Conflict("the service is scheduled for deletion and cannot accept new operations")
 }

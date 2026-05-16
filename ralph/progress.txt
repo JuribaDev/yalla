@@ -17298,3 +17298,206 @@ Learnings for future iterations:
     envelope. Forward-applicable to every endpoint that takes a
     "lookup another row by id" body field.
 ---
+
+## 2026-05-16 - BE-0220 + BE-0221 + BE-0222
+- Story scope: Implement POST /v1/services/{service_id}/restart — the
+  service-restart intent endpoint. Enqueues the durable provisioning
+  job that mirrors the restart into Dokploy and writes an immutable
+  audit record (Action 'service.restart'). Bundled with its full
+  contract surface (httpapi unit/contract tests + OpenAPI route
+  assertion) and its full authorization matrix (engine + wire-level
+  policy proofs). Structural sibling is BE-0217/0218/0219
+  (deployment.rollback): same serviceIDResolver, same CapDeploy gate,
+  same one-way covers() boundary for scoped grants, same cross-tenant
+  posture (CapDeploy is outside the support cross-tenant exception).
+  Load-bearing difference: restart writes NO new row to any table
+  beyond the provisioning_jobs + audit_events pair — there is no
+  source/source_ref to copy from a target deployment, no idempotency
+  key in the request body, and no concurrent_deployments quota
+  reservation. Restart is a fire-and-forget signal that targets the
+  entire service; the worker re-launches its containers against the
+  already-persisted desired state.
+- Files changed:
+  - internal/controlplane/store/serviceservice.go: new constants
+    serviceRestartAction = "service.restart" and serviceRestartJob =
+    "service.restart" alongside the existing serviceCreateAction /
+    serviceUpdateAction / serviceDeleteAction / serviceRestoreAction
+    / serviceProvisionJob. New RestartServiceInput struct (plain
+    strings; no build dependency on policy or telemetry packages).
+    New ServiceService.Restart(ctx, in) method. Unit of work composes
+    — inside one Store.Write transaction — a tenant-scoped parent-
+    service Get (404 on cross-tenant / unknown), a service-not-
+    scheduled-for-deletion check (409), an in-tx Authorize
+    (defense-in-depth against a grant change that landed between the
+    HTTP authorize and the job-enqueue write), a JobEnqueuer.Enqueue
+    pinning the job's organization_id to the service's tenant, and an
+    AuditAppender.Append writing Action=service.restart with
+    Metadata={service_id, environment_id, project_id}. The audit row
+    deliberately omits any caller-controlled field — restart carries
+    no request body at all, so there is no idempotency_key or free-
+    form reason to redact. No call to QuotaReserver: a restart does
+    not allocate new concurrent_deployments; the existing service row
+    remains its single source of truth. No call to
+    DeploymentRepository.Insert: a restart leaves the deployments
+    table untouched. Returns the unchanged parent Service row so the
+    wire response is byte-identical to a GET on the same id.
+  - internal/controlplane/httpapi/services_restart.go: new
+    ServiceRestarter port + errNoServiceRestarter sentinel +
+    restartServicePayload + restartServiceHandler. The handler
+    accepts an empty request body (no fields are exposed: a restart
+    has no caller-supplied parameters). It pins OrganizationID from
+    the principal's home org (never from the path/body, so a cross-
+    tenant service_id surfaces as 404 at the persistence boundary),
+    forwards the actor identity and request-correlation through the
+    RestartServiceInput, and renders the persisted row in a stable
+    yalla.output.v1 envelope with 202 Accepted (matching the rollback
+    create endpoint's status — restart is intent, not synchronous
+    execution).
+  - internal/controlplane/httpapi/routes.go: register POST
+    /v1/services/{service_id}/restart on serviceIDResolver with the
+    new serviceRestarter ServiceRestarter port parameter threaded
+    through newRouteTable. OpenAPI Endpoint description documents
+    every observable property: CapDeploy role split, no parent-scope
+    leg on serviceIDResolver, cross-tenant 404 disposition,
+    not-scheduled-for-deletion 409, atomic job+audit commit, no
+    credential material in the response.
+  - internal/controlplane/httpapi/server.go: threaded serviceRestarter
+    parameter through NewHandler and forwarded to newRouteTable.
+  - cmd/yalla-api/main.go: pass serviceService as the new
+    serviceRestarter port (same *store.ServiceService instance that
+    already satisfies create / update / delete / restore).
+  - 60+ test files in internal/controlplane/httpapi/: added
+    fakeServiceRestarter{} (or the local restarter variable, in the
+    services_restart_test.go case) as the new positional argument to
+    every NewHandler/newRouteTable call site. The mechanical update
+    walked every file where fakeServiceRestorer{}, was followed by
+    fakeServiceVariableReader{}, plus one services_restore_test.go
+    case where the local 'restorer' variable substitutes for
+    fakeServiceRestorer{}, plus one services_delete_test.go case
+    where the local 'deleter' variable substitutes for
+    fakeServiceDeleter{}.
+  - internal/controlplane/httpapi/services_restart_test.go (NEW): the
+    fakeServiceRestarter type definition (shared by all restart
+    tests) plus the BE-0221 wire contract proofs: happy-path 202 +
+    yalla.output.v1 envelope + actor/principal forwarding, viewer
+    forbid, unauthenticated, store-layer NotFound, store-layer 409
+    on scheduled-for-deletion, store-unavailable 503 with no driver-
+    level cause leak, cross-tenant no-foreign-echo, missing-restarter
+    typed-internal, OpenAPI route registration assertion (operationId
+    'restartService', RequiredAction policy.ActionServiceRestart, tag
+    tagServices, success status 202).
+  - internal/controlplane/httpapi/services_restart_policy_test.go
+    (NEW): the BE-0222 full role x tenant x grant-scope policy
+    matrix. TestRestartServicePolicyMatrixRoles drives every built-in
+    role through the production request path with engine verdict
+    pinned alongside the wire verdict (Owner/Admin/Developer/CI
+    allowed via ReasonAllowedByRole; Viewer/Support denied via
+    ReasonDeniedNoCapability — CapDeploy splits the role matrix
+    differently from CapRead). TestRestartServicePolicyRevokedAndExpiredKeys
+    proves Unauthenticated principals never reach the restarter and
+    never receive canonical row data. TestRestartServicePolicyWrongOrganizationPrincipal
+    pins the cross-tenant boundary: a cross-tenant service_id is
+    rejected as 404 at the persistence layer, and at a foreign-org
+    resource scope every role including Support is denied via
+    ReasonDeniedCrossTenant — CapDeploy is OUTSIDE the support
+    cross-tenant exception (the load-bearing distinction from
+    service.read). TestRestartServicePolicyGrantContainment proves
+    one-way covers() containment: a project-scoped Admin grant
+    allows at the parent project's service resource but is denied
+    OutOfScope at the bare-service-id route, an env-scoped grant
+    does not reach production, a service-scoped grant does not widen
+    to the parent environment or sibling services, an organization-
+    level Admin grant is allowed end-to-end, and an organization-
+    level Viewer grant is DENIED at this endpoint because Viewer
+    holds only CapRead (the load-bearing distinction from the read-
+    side grant matrix that blocks a future catalog regression that
+    silently downgraded service.restart from CapDeploy to CapRead).
+  - ralph/prd.json: BE-0220 / BE-0221 / BE-0222 marked passes=true
+    with the verification note.
+- Verification: gofmt -w . (clean); go vet ./... (clean); go test
+  ./... (all passing); go test -race ./... (all passing); golangci-
+  lint run ./... (0 issues). goimports is not installed in this
+  environment.
+- Remaining risks or follow-ups:
+  - Restart propagation to Dokploy: the restart endpoint commits the
+    customer-intent provisioning_jobs row and the audit trail but
+    does NOT actually run a Dokploy restart yet — the worker that
+    claims service.restart jobs and calls the Dokploy restart API is
+    a future story. The job kind constant ("service.restart") and
+    the (org, service) target are in place today.
+  - Idempotency for the job-enqueue path: the current JobEnqueuer
+    interface signature is Enqueue(ctx, *Tx, orgID, jobKind,
+    resourceID) and the production noopJobEnqueuer accepts anything,
+    so two consecutive POST .../restart calls succeed in this code
+    path. Two operators independently restarting the same service IS
+    the intended semantic (each restart is a meaningful event), but
+    a future real JobRepository adapter will need to derive a
+    distinct idempotency_key per restart (e.g. include a timestamp
+    or request_id in the key derivation) so the UNIQUE (org,
+    idempotency_key) constraint does not collide. Today's noop impl
+    sidesteps this; the contract surface is in place.
+  - Store-layer integration tests for ServiceService.Restart were
+    not added in this story, mirroring the precedent set by the
+    restore / cancel / rollback stories. A follow-up story can
+    backfill the isolated-Postgres suite covering: tenant isolation
+    on Restart; 409 path when DeletionScheduledAt is non-nil;
+    atomic commit of job + audit (rollback of audit on job-enqueue
+    failure and vice versa). The HTTP-layer fake-driven contract +
+    policy matrix tests cover the behavior the public API exposes
+    today.
+- Learnings for future iterations:
+  - The "POST sub-action on a deep resource by bare id" pattern
+    (BE-0163 canonical: env.clone) splits into TWO sub-shapes today:
+    (1) the rollback/cancel/clone shape, which INSERTS a new
+    persisted row (deployments / environments) and uses
+    DeploymentRepository.Insert + QuotaReserver.Reserve + an
+    idempotency_key on the new row's UNIQUE constraint; (2) the
+    restart shape, which writes NO new row and only enqueues a job
+    + audit. The wire contract (serviceIDResolver, CapDeploy,
+    serviceIDResolver one-way covers() containment, 404 cross-
+    tenant disposition) is identical between the two. The store-
+    layer unit-of-work split is the difference: restart drops the
+    Repository.Insert + QuotaReserver.Reserve + idempotency_key
+    legs and keeps the JobEnqueuer.Enqueue + AuditAppender.Append
+    legs (plus the parent-service Get + DeletionScheduledAt 409
+    check + in-tx Authorize defense-in-depth that both shapes share).
+    Future "POST .../stop", "POST .../start", "POST .../scale" etc.
+    are direct restart-shape siblings — they should be modelled on
+    services_restart.go + ServiceService.Restart verbatim, with the
+    action constant and job kind changed.
+  - The mechanical newRouteTable parameter-threading edit (adding
+    one new port parameter to ~60 test call sites) is brittle when
+    test files use LOCAL VARIABLE NAMES instead of fake{} zero
+    values for the slot ahead of the new arg. The conservative
+    pattern is to (a) first do a tight regex replace anchored on
+    fakeServiceDeleter{}, fakeServiceRestorer{}, → with the new
+    fake inserted; (b) then do a second pass that catches every
+    remaining fakeServiceRestorer{}, NOT followed by the new fake
+    and inserts there; (c) then audit for any spurious insertions
+    that landed in unrelated 'restorer' or 'deleter' positions
+    (services_restore_test.go uses 'restorer' as a local for the
+    ProjectRestorer; projects_restore_test.go uses 'restorer' for
+    the ProjectRestorer; services_delete_test.go uses 'deleter' as
+    a local for ServiceDeleter). Each test file's NewHandler signature
+    is one long single-line invocation that vet's error message
+    exposes; the fast workflow is to run vet after each pass and
+    let it pinpoint mismatched slots by file.
+  - The request body for restart is deliberately empty — there is
+    no idempotency_key field. This is a deliberate departure from
+    deployment.create / deployment.rollback (which require an
+    idempotency_key for the deployments-row UNIQUE constraint).
+    Restart's persistence side effects are job + audit only; the
+    job idempotency contract is a future adapter concern. The
+    handler accepts a Content-Type:application/json body to allow
+    future evolution (an optional idempotency_key or reason field
+    could be added without breaking compatibility), but does not
+    parse one today.
+  - Restart's HTTP response is the unchanged Service row (status
+    202 Accepted), not the provisioning_jobs row or a job_id.
+    This matches the rollback/create deployments contract (which
+    returns the new deployment row, not the job id), and it lets
+    the caller chain a subsequent GET /v1/services/{id} without
+    re-parsing a different shape. The customer learns "your restart
+    is in flight" from the 202 status code + the audit trail, not
+    from a job handle.
+---
