@@ -4837,7 +4837,7 @@
       ],
       "type": "endpoint-deployment",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Endpoint belongs to the deployment backend surface."
     },
     {
@@ -4856,7 +4856,7 @@
       ],
       "type": "test-deployment",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Contract coverage for GET /v1/services/{service_id}/deployments."
     },
     {
@@ -4875,7 +4875,7 @@
       ],
       "type": "policy-deployment",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Authorization coverage for GET /v1/services/{service_id}/deployments."
     },
     {

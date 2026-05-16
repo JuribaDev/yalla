@@ -16460,3 +16460,177 @@ Learnings for future iterations:
     guard at the top of the tx — the lookahead avoids enqueueing a
     job that the worker cannot meaningfully execute.
 ---
+
+## 2026-05-16 - BE-0208 + BE-0209 + BE-0210 — GET /v1/services/{service_id}/deployments
+- What was implemented:
+  - BE-0208 endpoint: GET /v1/services/{service_id}/deployments —
+    lists every deployment owned by the service named by the
+    {service_id} path parameter. Required action deployment.read
+    (CapRead). Returns 200 with a yalla.output.v1 envelope carrying
+    the projected Deployments slice in reverse chronological order.
+  - BE-0209 contract tests: happy path/200 (every wire field pinned,
+    including lifecycle-timestamp omitempty for queued vs succeeded
+    rows), empty-list (non-nil [] on the wire), request_id
+    propagation, projected error_code/error_message verbatim,
+    not-found from the lister/404, cross-tenant no foreign-org echo,
+    store outage/503 (no pgx cause leak), unauthenticated/401 (lister
+    never runs, no canned identifiers leak), revoked credential
+    short-circuit/401, unwired lister/E_INTERNAL/500, OpenAPI
+    registration check (path + operationId + required_action + tags).
+  - BE-0210 policy matrix tests: role matrix (owner/admin/developer/
+    viewer/CI/Support ALLOW via ReasonAllowedByRole — every same-org
+    role holds CapRead, AND Support own-org is ReasonAllowedByRole
+    not ReasonAllowedBySupport because the resolver pins the
+    resource to the principal's home org); revoked + expired key
+    deny (PrincipalDisabled / Unauthenticated); cross-tenant denied
+    at the wire (404 with NO foreign-org echo) AND at the engine —
+    every role except Support DENIED via ReasonDeniedCrossTenant,
+    Support ALLOWED via ReasonAllowedBySupport (CapRead IS INSIDE
+    the engine's `CapSupport && (CapRead || CapSupport)` exception —
+    load-bearing distinction from deployment.create which is
+    OUTSIDE the exception); grant containment (project / env /
+    service-scoped grants ALL denied at the bare-id route via
+    ReasonDeniedOutOfScope, with engine-level checks for sibling-
+    project, env-not-implying-prod, and service-grant-not-widening
+    properties; org-level Viewer grant ALLOWED via
+    ReasonAllowedByGrant — load-bearing distinction from the
+    create-side matrix where Viewer denies).
+
+- Files changed:
+  - internal/controlplane/store/deployment.go (modified): added
+    DeploymentReader adapter (composes ServiceRepository.GetByID +
+    DeploymentRepository.ListByService inside a Store.Read tx) and
+    its NewDeploymentReader constructor (fail-fast on nil store);
+    added deploymentReadAction = "deployment.read" constant alongside
+    deploymentCreateAction.
+  - internal/controlplane/httpapi/service_deployments.go (modified):
+    added DeploymentLister port, listServiceDeploymentsPayload data
+    block, listServiceDeploymentsHandler (typed internal error for
+    missing principal / nil lister; OrganizationID from principal
+    home org NEVER from caller; ListServiceDeployments is the only
+    boundary-crossing call). serviceDeployment + serviceDeploymentOf
+    are reused verbatim from the BE-0205 POST endpoint.
+  - internal/controlplane/httpapi/routes.go (modified): registered
+    GET /v1/services/{service_id}/deployments with operationId=
+    listServiceDeployments, required_action=deployment.read,
+    resolver=serviceIDResolver, full Description pinning the
+    same-org-resource property (Support cross-tenant exception does
+    NOT apply through this resolver), the cross-tenant 404 boundary,
+    the no-credential-material payload property, and the deterministic
+    [] for empty-list. newRouteTable signature gained a
+    deploymentLister DeploymentLister parameter, threaded into the
+    handler.
+  - internal/controlplane/httpapi/server.go (modified): NewHandler
+    signature gained DeploymentLister, threaded into newRouteTable.
+  - cmd/yalla-api/main.go (modified): wired
+    store.NewDeploymentReader(dataStore) and threaded the result
+    into httpapi.NewHandler.
+  - internal/controlplane/httpapi/service_deployments_list_test.go
+    (new, BE-0209): 11 contract tests against the real NewHandler +
+    real policy engine + real telemetry middleware + real validate
+    decoder, with fakeDeploymentLister as the seam. The fake
+    captures (organizationID, serviceID, callCount) so the load-
+    bearing tenant-isolation properties (org from principal home,
+    svc from path) can be asserted on every test.
+  - internal/controlplane/httpapi/service_deployments_list_policy_test.go
+    (new, BE-0210): 4 parent test functions covering the full role x
+    tenant x grant-scope matrix the PRD requires; engine-level
+    verdicts pinned alongside wire-level verdicts so a catalog or
+    builtinRoleCaps regression fails here.
+  - 56 other httpapi test files (mechanical mass edit): every
+    NewHandler / newRouteTable call site that referenced
+    fakeDeploymentCreator had `fakeDeploymentLister{}, ` inserted
+    immediately after — except for the special-case pattern in
+    break_glass_test.go (`fakeDeploymentCreator{}, ctl, nil, nil)`)
+    and service_deployments_create_test.go (`creator,
+    fakeBreakGlassController{}`) which were handled by their own
+    sed branches. fakeDeploymentLister itself is defined in the new
+    service_deployments_list_test.go alongside the contract tests.
+
+- Verification run: gofmt -w .; go mod tidy; go vet ./... (PASS);
+  go test ./... (all packages PASS, 0.965s for httpapi); go test
+  -race ./... (all packages PASS, 5.009s for httpapi).
+- Results: PASS — the new contract suite (11 tests) and the new
+  policy-matrix suite (4 parent tests with role / revoked / cross-
+  tenant / grant-containment sub-cases) execute clean against the
+  real NewHandler + real policy engine + real validate.DecodeJSON.
+  The new store-level integration tests for DeploymentReader are
+  not added in this story (the GetByID + ListByService primitives
+  are already integration-tested under BE-0205); a follow-up story
+  could add a dedicated DeploymentReader integration test for
+  cross-tenant + unknown-service NotFound parity.
+- Remaining risks or follow-ups:
+  - Pagination story (cursor or offset/limit query params) is open;
+    the current bounded list is internal (deploymentListMaxRows =
+    200) and not exposed to the customer, so a service with > 200
+    deployments truncates silently. Future story should add
+    cursor=... and assert the wire envelope.
+  - The DeploymentReader has no dedicated integration test file
+    yet; the underlying primitives are covered, but a parity test
+    against ServiceVariableReader would be a useful regression
+    guard if the reader grows additional surface (kind filters,
+    status filters) in later stories.
+- **Learnings for future iterations:**
+  - The Support own-org allow on a CapRead bare-id route is
+    ReasonAllowedByRole — NOT ReasonAllowedBySupport. The latter
+    only fires when the resource org differs from the principal's
+    home org. Future BE-0213 / BE-0231 / BE-0234 / BE-0237 / BE-0249
+    matrix tests on CapRead bare-id routes should pin Support own-
+    org as ReasonAllowedByRole and only assert ReasonAllowedBySupport
+    in the engine_cross_tenant_allow_support sub-case (against a
+    foreign-org Resource).
+  - The CapRead vs CapDeploy split at the cross-tenant boundary is
+    load-bearing for every future deployment-lifecycle endpoint:
+      GET /v1/services/{service_id}/deployments    — Support cross-
+        tenant ALLOW (CapRead IS INSIDE the exception)
+      GET /v1/deployments/{deployment_id}          — Support cross-
+        tenant ALLOW (CapRead IS INSIDE the exception)
+      POST /v1/deployments/{id}/cancel             — Support cross-
+        tenant DENY (CapDeploy is OUTSIDE the exception)
+      POST /v1/services/{id}/rollback              — same as above
+      POST /v1/services/{id}/restart / start / stop — same as above
+    The PRD's role-matrix line "owner, admin, developer, viewer, ci,
+    support" is a coverage list; the SPLIT is determined by the
+    action's capability AND by whether the resource is same-org or
+    cross-tenant. Future matrix authors should look up
+    catalog.go::actionCaps for the action's capability AND check the
+    resolver's resource-scope construction before deciding which
+    row each principal belongs in.
+  - The new port slot in NewHandler — DeploymentLister, positioned
+    immediately AFTER DeploymentCreator and BEFORE BreakGlass —
+    triggered the same 56-file mechanical sweep BE-0202 documented.
+    Three sed patterns suffice:
+      's/fakeDeploymentCreator{}, fakeBreakGlassController/.../',
+      's/fakeDeploymentCreator{}, ctl, nil, nil)/.../',  (break_glass)
+      's/, creator, fakeBreakGlassController/.../'  (svc_deployments_create)
+    96 total insertions (110 fakeBreakGlassController{} occurrences
+    minus 14 that are local-variable usages in break_glass_test.go).
+    The service_deployments_create_test.go special case where the
+    creator slot holds a real local `creator` variable is the
+    canonical second exception to watch for (the first being
+    services_restore_test.go's `restorer` and break_glass_test.go's
+    `ctl`).
+  - DeploymentReader is the THIRD instance of the
+    {Reader struct + Get-parent-then-List-children + Store.Read tx}
+    pattern (after EnvironmentVariableReader and ServiceVariableReader).
+    The pattern is now firmly canonical for any future read adapter
+    that must distinguish "parent missing/cross-tenant" (NotFound)
+    from "parent has no children" (deterministic empty list). Future
+    readers — DeploymentReader.GetByID, ServiceLogReader,
+    ServiceMetricsReader, ServiceDomainReader, ServiceBackupReader,
+    ProjectPreviewReader, JobReader — should reuse the same shape:
+    short-lived Store.Read, parent existence Get for typed NotFound,
+    children list, return verbatim.
+  - The "policy matrix" story (priority 1) cannot be done without
+    the "implement endpoint" story (priority 2) and its contract
+    tests (priority 2). Same delivery unit pattern as BE-0205+0206
+    +0207 — three stories, one iteration, one commit. Recent
+    commit history confirms: BE-0196+0197+0198 (GET rendered),
+    BE-0199+0200+0201 (GET variables), BE-0202+0203+0204 (PUT
+    variables), BE-0205+0206+0207 (POST deployments), now BE-0208+
+    0209+0210 (GET deployments). This is the established cadence
+    for the deployment-lifecycle endpoints (BE-0211 through BE-0228)
+    and the service-sub-resource endpoints (BE-0229 through BE-0270);
+    each natural delivery unit ships all three priority levels in
+    one commit.
+---

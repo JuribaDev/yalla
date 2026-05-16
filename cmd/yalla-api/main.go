@@ -287,6 +287,11 @@ func main() {
 		logger.Error("failed to initialize the deployment service", "error", err.Error())
 		os.Exit(1)
 	}
+	deploymentReader, err := store.NewDeploymentReader(dataStore)
+	if err != nil {
+		logger.Error("failed to initialize the deployment reader", "error", err.Error())
+		os.Exit(1)
+	}
 	breakGlassService, err := store.NewBreakGlassService(dataStore, store.NewOrganizationRepository(), store.NewBreakGlassRepository(), auditRepo, nil)
 	if err != nil {
 		logger.Error("failed to initialize the break-glass service", "error", err.Error())
@@ -340,7 +345,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              cfg.APIAddr,
-		Handler:           httpapi.NewHandler(build, readiness, meta, authenticator, engine, organizations, organizationService, organizationService, organizationService, members, membershipService, membershipService, membershipService, limits, limitsService, usage, auditEvents, orgVariables, orgVariableService, orgVariableService, orgVariableService, apiKeys, apiKeyService, apiKeyService, apiKeyService, apiKeyService, projects, projectService, projectService, projectService, projectService, projectGrants, projectGrantService, projectVariables, projectVariableService, projectEnvironments, environmentService, projectEnvironments, environmentService, environmentService, environmentService, environmentGrants, environmentGrantService, environmentVariables, environmentVariableService, environmentServices, serviceService, environmentServices, serviceService, serviceService, serviceService, serviceVariables, serviceVariableService, deploymentService, breakGlassService, logger, httpRateLimiter),
+		Handler:           httpapi.NewHandler(build, readiness, meta, authenticator, engine, organizations, organizationService, organizationService, organizationService, members, membershipService, membershipService, membershipService, limits, limitsService, usage, auditEvents, orgVariables, orgVariableService, orgVariableService, orgVariableService, apiKeys, apiKeyService, apiKeyService, apiKeyService, apiKeyService, projects, projectService, projectService, projectService, projectService, projectGrants, projectGrantService, projectVariables, projectVariableService, projectEnvironments, environmentService, projectEnvironments, environmentService, environmentService, environmentService, environmentGrants, environmentGrantService, environmentVariables, environmentVariableService, environmentServices, serviceService, environmentServices, serviceService, serviceService, serviceService, serviceVariables, serviceVariableService, deploymentService, deploymentReader, breakGlassService, logger, httpRateLimiter),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

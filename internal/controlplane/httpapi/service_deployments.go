@@ -22,6 +22,14 @@ import (
 // misleading 2xx with no side effect.
 var errNoDeploymentCreator = errors.New("httpapi: no deployment creator configured")
 
+// errNoDeploymentLister is returned when GET
+// /v1/services/{service_id}/deployments is reached without a
+// DeploymentLister wired into NewHandler. It can only happen through a
+// wiring error — a programming mistake, not a client error — so the
+// handler reports it as a typed internal failure rather than serving an
+// empty or misleading list.
+var errNoDeploymentLister = errors.New("httpapi: no deployment lister configured")
+
 // DeploymentCreator is the narrow persistence port POST
 // /v1/services/{service_id}/deployments depends on.
 // *store.DeploymentService satisfies it in production; tests supply a
@@ -243,5 +251,103 @@ func createServiceDeploymentHandler(creator DeploymentCreator) http.HandlerFunc 
 		apienvelope.WriteData(w, http.StatusAccepted, requestID(r), createServiceDeploymentPayload{
 			Deployment: serviceDeploymentOf(deployment),
 		})
+	}
+}
+
+// DeploymentLister is the narrow persistence port GET
+// /v1/services/{service_id}/deployments depends on.
+// *store.DeploymentReader satisfies it in production; tests supply a
+// fake. Keeping the dependency an interface keeps the handler unit-
+// testable without a real database — the concrete adapter (the
+// tenant-scoped service existence check, then ListByService, all in
+// one short-lived read transaction) lives in the store layer.
+//
+// The read is tenant scoped at the persistence layer: the adapter Gets
+// the service under (organization_id, service_id) before listing its
+// deployments, so a cross-tenant or unknown service_id surfaces as a
+// typed apierr.NotFound — never as an empty list, which would invite
+// an agent to believe the service exists with no deployments. The
+// route uses serviceIDResolver which authorizes the call against the
+// (principal home org, path service_id) resource before the handler
+// runs; the support principal's deliberate cross-tenant read exception
+// does NOT apply here because the resource scope is pinned to the
+// principal's home organization, not the path service's tenant.
+// Project-, environment-, and service-scoped grants whose pinned
+// ProjectID is unknown to the resolver — the bare path carries only
+// the service_id — are denied by the engine; principals whose only
+// access is a scoped grant must use a parent-scoped route family to
+// address a service by its (project, environment, service) tuple.
+type DeploymentLister interface {
+	ListServiceDeployments(ctx context.Context, organizationID, serviceID string) ([]store.Deployment, error)
+}
+
+// listServiceDeploymentsPayload is the data block of the GET
+// /v1/services/{service_id}/deployments success envelope: every
+// deployment owned by the service, in reverse chronological order
+// (created_at DESC, id DESC as tiebreaker) so an agent observing the
+// response sees a stable ordering across calls and the most recent
+// deployment first. Deployments is always a non-nil slice so agents
+// can iterate it without a nil check; a live service with no
+// deployments yields [].
+type listServiceDeploymentsPayload struct {
+	Deployments []serviceDeployment `json:"deployments"`
+}
+
+// listServiceDeploymentsHandler builds the GET
+// /v1/services/{service_id}/deployments handler. It reads the
+// deployments of the service named by the {service_id} path parameter
+// from the source-of-truth database through the DeploymentLister port,
+// and renders them in a stable yalla.output.v1 envelope.
+//
+// RequireAuth gates the route on action deployment.read before the
+// handler runs — authorized through serviceIDResolver against the
+// (principal home organization, service_id) resource — and attaches
+// the resolved principal, so a request that reaches the handler has
+// already cleared the tenant boundary against the principal's home
+// organization combined with the path id. deployment.read is a
+// CapRead action, so the gate admits the principal's organization-wide
+// read roles (owner, admin, developer, viewer, ci); the support
+// principal's cross-tenant read exception does NOT apply here because
+// serviceIDResolver pins the resource scope to the principal's own
+// home organization, not the path service's tenant. Project-,
+// environment-, and service-scoped grants are denied at the policy
+// boundary by the engine's covers() rule (a grant with a pinned
+// ProjectID cannot cover a resource with no ProjectID); principals
+// whose only access is a scoped grant must use a parent-scoped route
+// to address a service-scoped resource.
+//
+// A request that arrives here with no principal is a wiring error and
+// is reported as a typed internal error rather than reading for a zero
+// principal. A reader-store outage surfaces as its own typed 5xx; a
+// cross-tenant or unknown service_id reaches the persistence layer
+// with the principal's home organization id and is rejected as a
+// deterministic 404 by the reader's service existence check — never
+// disguised as an empty success.
+func listServiceDeploymentsHandler(lister DeploymentLister) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if lister == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoDeploymentLister))
+			return
+		}
+		// OrganizationID is taken from the principal's home org (never
+		// the caller — there is no organization id on the read path),
+		// so a cross-tenant service_id still hits the tenant-scoped
+		// repository query and surfaces as a 404 at the persistence
+		// boundary.
+		deployments, err := lister.ListServiceDeployments(r.Context(), p.OrganizationID, r.PathValue("service_id"))
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		out := make([]serviceDeployment, 0, len(deployments))
+		for _, d := range deployments {
+			out = append(out, serviceDeploymentOf(d))
+		}
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), listServiceDeploymentsPayload{Deployments: out})
 	}
 }

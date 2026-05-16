@@ -296,6 +296,68 @@ func (r *DeploymentRepository) ListByService(ctx context.Context, q Querier, org
 	return out, nil
 }
 
+// DeploymentReader is the read-only adapter the GET
+// /v1/services/{service_id}/deployments endpoint depends on. It
+// composes ServiceRepository and DeploymentRepository through a
+// short-lived read-only transaction (Store.Read), so the
+// tenant-scoping guarantees the repositories prove in their
+// integration tests are inherited for free, and every cross-tenant or
+// unknown service_id surfaces as a deterministic apierr.NotFound
+// rather than an empty list.
+type DeploymentReader struct {
+	store       *Store
+	services    *ServiceRepository
+	deployments *DeploymentRepository
+}
+
+// NewDeploymentReader builds a DeploymentReader over store. It returns
+// an error for a nil store so a misconfigured adapter fails at
+// construction rather than on its first request.
+func NewDeploymentReader(s *Store) (*DeploymentReader, error) {
+	if s == nil {
+		return nil, errors.New("store: nil store")
+	}
+	return &DeploymentReader{
+		store:       s,
+		services:    NewServiceRepository(),
+		deployments: NewDeploymentRepository(),
+	}, nil
+}
+
+// ListServiceDeployments returns every deployment owned by
+// (organizationID, serviceID), in reverse chronological order. The
+// read is tenant scoped at both legs: it Gets the service first so a
+// cross-tenant or unknown service_id surfaces as a deterministic
+// apierr.NotFound — never as an empty list, which would invite an
+// agent to believe the service exists with no deployments. A live
+// service with no deployments is then a deterministic empty slice. A
+// datastore failure is propagated as its own typed error.
+//
+// The deployments table itself stores no credential material — the
+// columns are structural identifiers, the closed-set source taxonomy,
+// the customer-supplied source reference (a branch / commit / image
+// reference — never tokens), and the worker-written redacted error
+// summary — so the reader returns rows verbatim and the HTTP layer
+// renders them through the wire projection.
+func (r *DeploymentReader) ListServiceDeployments(ctx context.Context, organizationID, serviceID string) ([]Deployment, error) {
+	var out []Deployment
+	err := r.store.Read(ctx, func(ctx context.Context, q Querier) error {
+		if _, getErr := r.services.GetByID(ctx, q, organizationID, serviceID); getErr != nil {
+			return getErr
+		}
+		list, listErr := r.deployments.ListByService(ctx, q, organizationID, serviceID)
+		if listErr != nil {
+			return listErr
+		}
+		out = list
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // deploymentCreateAction is the action recorded on the audit event
 // emitted by every deployment create. It matches the wire-level action
 // constant the policy engine authorizes (deployment.create), so an
