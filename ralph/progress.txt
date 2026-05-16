@@ -15489,3 +15489,124 @@ Learnings for future iterations:
     string-replace covers ~99% of sites; the remaining ones surface
     immediately via go vet.
 ---
+
+## 2026-05-16 - BE-0195
+- Implemented: policy matrix coverage for POST /v1/services/{service_id}/restore.
+  Adds internal/controlplane/httpapi/services_restore_policy_test.go with four
+  tests:
+  - TestRestoreServicePolicyMatrixRoles: every built-in role through the
+    production NewHandler + policy.NewEngine(). Owner/Admin/Developer allow
+    via ReasonAllowedByRole (200 OK, restorer reached with the principal's
+    home org id, the path service_id, the principal id, and nil If-Match;
+    the rendered envelope carries the canonical restored row with
+    deletion_scheduled_at OMITTED on the wire — the restore cleared it).
+    Viewer/CI/Support deny via ReasonDeniedNoCapability (403 E_FORBIDDEN,
+    restorer never reached, deny body never echoes the canonical row or
+    parent ids). The engine verdict is pinned alongside the wire verdict.
+  - TestRestoreServicePolicyRevokedAndExpiredKeys: a Disabled
+    Owner-credentialled service-account principal is denied via
+    ReasonDeniedPrincipalDisabled — the restorer never runs and the body
+    never echoes the principal id, the organization, or the canonical
+    service.
+  - TestRestoreServicePolicyWrongOrganizationPrincipal: an attacker in
+    org_attacker hitting POST /v1/services/{svc_victim}/restore reaches
+    the fake restorer with (org_attacker, svc_victim_restore) and a
+    NotFound is surfaced as 404 E_NOT_FOUND with no foreign-org leak in
+    the body. The engine-level cross-tenant matrix pins
+    ReasonDeniedCrossTenant for every role INCLUDING Support, since
+    service.restore is CapWrite and OUTSIDE the engine's CapSupport-and-
+    (CapRead-or-CapSupport) exception.
+  - TestRestoreServicePolicyGrantContainment: every scoped grant
+    (project / env / service) on the bare service-id route is denied
+    OutOfScope at the engine — covers() is one-way and
+    serviceIDResolver pins NO ProjectID. The parent-scoped containment
+    is pinned at its natural scopes (sibling project deny on a service
+    in the sibling project; staging-scoped grant allowed at staging
+    but denied at production; service grant allowed at granted svc but
+    denied at sibling and denied at env.write on parent env). Three
+    wire tie-ins (project-, env-, service-scoped keys) confirm 403 +
+    restorer-never-ran + no body leak. An org-level Admin grant is
+    allowed end-to-end (200 with the canonical row and
+    deletion_scheduled_at nil); an org-level Viewer grant is denied
+    via ReasonDeniedNoCapability — the load-bearing distinction from
+    the service.read grant matrix. A project-scoped key planted in a
+    foreign home org is denied at the engine: a scoped key's home org
+    must match the grant scope's org or the engine refuses to consider
+    the grant.
+- Files changed:
+  - internal/controlplane/httpapi/services_restore_policy_test.go (new)
+  - ralph/prd.json (BE-0195 -> passes:true)
+- Verification run:
+  - gofmt -l . (clean)
+  - go vet ./... (clean)
+  - go mod tidy (clean)
+  - go test -run TestRestoreServicePolicy -count=1
+    ./internal/controlplane/httpapi/ (ok)
+  - go test ./... (34/34 ok)
+  - go test -race ./... (34/34 ok)
+- Results: all green. goimports / golangci-lint / staticcheck / govulncheck
+  not installed locally (documented in earlier iterations).
+- Remaining risks / follow-ups:
+  - BE-0193 (POST /v1/services/{id}/restore wire contract) landed in
+    8b643983 and is the structural twin this matrix sits on top of.
+    The next unblocked priority-1 policy-matrix stories are BE-0198
+    (GET /v1/services/{id}/rendered), BE-0201 (GET
+    /v1/services/{id}/variables), and BE-0204 (PUT
+    /v1/services/{id}/variables).
+  - This file does not exercise the scoped-key route variant (a
+    service-scoped key hitting a future
+    /v1/projects/{p}/environments/{e}/services/{s}/restore
+    parent-scoped POST). When that variant ships, its matrix will
+    inherit the engine cross-tenant deny pinned here.
+- **Learnings for future iterations:**
+  - **Pattern: service-id-route RESTORE matrix = service-id-route DELETE
+    matrix with three load-bearing edits.** The BE-0192 (DELETE service
+    policy matrix) template is the structural twin for BE-0195 (RESTORE
+    service policy matrix), and the diff is small and mechanical
+    because both routes share serviceIDResolver, the CapWrite
+    capability class, the "scoped grants denied OutOfScope" engine
+    property, and accept no request body. The three edits are:
+    (1) action constant — ActionServiceDelete -> ActionServiceRestore
+    everywhere; (2) wire shape — success is 200 OK (not 202 Accepted),
+    and the canonical row's DeletionScheduledAt is INTENTIONALLY nil
+    (the restore cleared it), so the allow-path wire check asserts
+    payload.Data.Service.DeletionScheduledAt IS NIL (inverse of the
+    DELETE matrix's IS NON-NIL assertion) — an accidentally-non-nil
+    value on the restore allow path would mean the projection
+    regressed and is rendering a not-actually-restored row; (3) fake
+    shape — fakeServiceRestorer (in services_restore_test.go) carries
+    only svc/err/got fields, no callCount, so the "restorer never
+    ran" assertion on deny paths checks captured.OrganizationID == ""
+    && captured.ServiceID == "" (a real call always sets both because
+    the handler forwards principal.OrganizationID + path service_id),
+    which gives the same negative-proof property as the delete
+    matrix's callCount == 0 check. The catalog assertions (CapWrite,
+    no support cross-tenant exception, ReasonAllowedByRole /
+    NoCapability / OutOfScope / AllowedByGrant), the cross-tenant
+    engine-level matrix, the project/env/service grant containment
+    pyramid, and the org-level Admin allow vs org-level Viewer deny
+    distinction reuse the BE-0192 structure verbatim. Future bare-id
+    mutating routes (cancel, restart, rollback, start, stop) on the
+    {service_id} family will follow this same pattern: copy the
+    delete-policy template, swap the action constant, adjust the
+    success status code and any side-effect projection
+    (deletion_scheduled_at / lifecycle field) on the allow-path wire
+    check, and adapt the fake-not-ran assertion to whichever fields
+    the corresponding fake captures.
+  - **Pattern: canonical fixtures across same-resource matrices must
+    use deliberately distinct identifiers.** services_test.go has
+    canonicalServiceForGet, services_get_policy_test.go has
+    canonicalGetSvcForMatrix, services_update_policy_test.go has
+    canonicalUpdateSvcForMatrix, services_delete_policy_test.go has
+    canonicalDeleteSvcForMatrix, services_restore_test.go has
+    canonicalRestoredSvc, and this file adds canonicalRestoreSvcForMatrix
+    with svc_matrix_restore / restore-svc / "Restore Service Matrix v2"
+    / prj_svc_matrix_res_parent / env_svc_matrix_res_parent. The
+    canonical row IDs are deliberately distinct across the six fixtures
+    so a future shared fake cannot accidentally short-circuit one
+    matrix into another's state, AND so deny-path leak-guard needles
+    cannot collide. The fixture function takes (orgID, projectID,
+    environmentID) parameters even when the matrix only varies one of
+    them, so the same builder can be reused by a future scoped-route
+    matrix in the same file family.
+---
