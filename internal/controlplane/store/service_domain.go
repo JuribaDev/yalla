@@ -501,19 +501,20 @@ type CreateServiceDomainInput struct {
 // write — it runs on the same *Tx as the write so the in-transaction
 // policy view sees exactly the state the row commits against.
 //
-// Service domains do not yet have a quota (the worker-driven
-// per-organization wildcard / custom-cert quota lands in a later
-// provisioning story) and do not yet enqueue a provisioning job — the
-// domain row is the source of truth, and the Dokploy reconciler will
-// project it as part of the broader service-reconcile loop. When the
-// dedicated worker story lands, the orchestrator will gain JobEnqueuer
-// and QuotaReserver dependencies the same way ServiceService did,
-// alongside the worker's contract tests.
+// Service domains consume the "domains" quota dimension (BE-0329): every
+// Create reserves one unit on the QuotaReserver in the SAME transaction
+// as the authorization check, the desired-state write, and the audit
+// append, so an organization that exhausts the dimension cannot half-
+// write a row whose quota reservation rolled back. The worker-driven
+// per-organization wildcard / custom-cert provisioning job lands in a
+// later story; this dimension is the desired-state cap that bounds how
+// many domain rows a tenant can persist before any of that runs.
 type ServiceDomainService struct {
 	store    *Store
 	services *ServiceRepository
 	domains  *ServiceDomainRepository
 	authz    Authorizer
+	quota    QuotaReserver
 	audit    AuditAppender
 }
 
@@ -521,7 +522,7 @@ type ServiceDomainService struct {
 // dependencies. It returns a typed error if any dependency is nil, so a
 // misconfigured service fails at construction rather than on its first
 // request.
-func NewServiceDomainService(s *Store, services *ServiceRepository, domains *ServiceDomainRepository, authz Authorizer, audit AuditAppender) (*ServiceDomainService, error) {
+func NewServiceDomainService(s *Store, services *ServiceRepository, domains *ServiceDomainRepository, authz Authorizer, quota QuotaReserver, audit AuditAppender) (*ServiceDomainService, error) {
 	switch {
 	case s == nil:
 		return nil, errors.New("store: nil store")
@@ -531,6 +532,8 @@ func NewServiceDomainService(s *Store, services *ServiceRepository, domains *Ser
 		return nil, errors.New("store: nil service domain repository")
 	case authz == nil:
 		return nil, errors.New("store: nil authorizer")
+	case quota == nil:
+		return nil, errors.New("store: nil quota reserver")
 	case audit == nil:
 		return nil, errors.New("store: nil audit appender")
 	}
@@ -539,6 +542,7 @@ func NewServiceDomainService(s *Store, services *ServiceRepository, domains *Ser
 		services: services,
 		domains:  domains,
 		authz:    authz,
+		quota:    quota,
 		audit:    audit,
 	}, nil
 }
@@ -597,6 +601,17 @@ func (svc *ServiceDomainService) Create(ctx context.Context, in CreateServiceDom
 		// so a grant change that landed between the HTTP authorize
 		// and this point still cannot let the write through.
 		if err := svc.authz.Authorize(ctx, tx, serviceDomainCreateAction, row.OrganizationID); err != nil {
+			return err
+		}
+		// Quota reservation (BE-0329): reserve one unit on the
+		// "domains" dimension before the Insert. The reservation runs
+		// inside the same *Tx as the Insert and the audit append, so a
+		// rejected reservation rolls the whole unit of work back and a
+		// tenant whose dimension is exhausted never persists a domain
+		// row. The Checker locks the tenant's usage counter row FOR
+		// UPDATE for hard-enforced limits, so concurrent Creates
+		// serialise on the counter and can never over-allocate.
+		if err := svc.quota.Reserve(ctx, tx, row.OrganizationID, string(QuotaResourceDomains)); err != nil {
 			return err
 		}
 		inserted, err := svc.domains.Insert(ctx, tx, row)

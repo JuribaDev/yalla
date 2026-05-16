@@ -21211,3 +21211,32 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
   - macOS dev env quirk: TMPDIR is set to the project root in this shell, which makes `go vet ./...` and `go test ./...` fail with "directory prefix internal/... does not contain main module" until `export TMPDIR=/tmp/` is set. Always reset TMPDIR before running Go tooling from this shell. The ralph runner sets this automatically; local repro needs the unset.
   - Postgres integration DSN for local runs: YALLA_TEST_DATABASE_URL=postgres://yalla:yalla@127.0.0.1:5432/yalla (docker-compose yalla-postgres-1 service, declared in docker-compose.yml header comment).
 ---
+
+## 2026-05-16 - BE-0329 - Enforce quota for domains
+- Added QuotaReserver dependency to ServiceDomainService (struct + NewServiceDomainService constructor).
+- ServiceDomainService.Create now calls svc.quota.Reserve(ctx, tx, OrgID, QuotaResourceDomains) inside the same *Tx as the in-transaction Authorize, the Insert, and the audit Append. A rejected reservation rolls the whole unit of work back.
+- cmd/yalla-api/main.go passes the existing serviceQuota placeholder (no-op) to NewServiceDomainService until the real quota.Checker is wired in the HTTP layer.
+- New integration tests at internal/controlplane/store/service_domain_quota_concurrent_test.go:
+  1. TestServiceDomainServiceCreateRejectsParallelOversubscriptionForDomainsQuota — 20 goroutines x domains limit=5 against a hard plan_default policy prove the quota_usage row lock serialises concurrent Creates; rejections carry the typed yerr.CodeQuotaExceeded code AND a recoverable quota.ExceededDetail{Resource=domains, Limit=5, Requested=1, Reserved=5, Current=0}; service_domains row count == 5; active domains reservations == 5; SumActiveReservations agrees; rejection message carries no caller-supplied hostname/request_id/correlation_id/domain_id leakage.
+  2. TestServiceDomainServiceCreateAppliesDomainsQuotaIndependentlyOfServicesQuota — after exhausting the domains dimension a 6th Create is rejected on the domains dimension; the services dimension is never touched (0 active services reservations) — proves the per-resource boundary.
+- Files changed:
+  - internal/controlplane/store/service_domain.go (struct + constructor + Create body)
+  - cmd/yalla-api/main.go (wire-up)
+  - internal/controlplane/store/service_domain_quota_concurrent_test.go (new)
+  - ralph/prd.json (BE-0329 passes:true + notes)
+- Verification:
+  - gofmt -w . — clean
+  - go vet ./... — clean
+  - go build ./... — clean
+  - go test ./... — pass
+  - YALLA_TEST_DATABASE_URL=postgres://yalla:yalla@127.0.0.1:5432/yalla go test -race -count=3 -run 'TestServiceDomainServiceCreate(Rejects|Applies)' ./internal/controlplane/store/ — pass
+- Pre-existing failures (unrelated to BE-0329, also fail on the base commit):
+  - TestEnvironmentServiceCreateQuotaFailureRollsBack
+  - TestOrganizationVariableServicePatchValueOnlyPreservesIsSecret
+  - Flaky race in TestNewServiceVariableServiceRejectsNilDependencies (only under -race ./internal/controlplane/store/...)
+- Learnings for future iterations:
+  - When adding a new quota dimension to a *Service: (a) struct gains QuotaReserver field, (b) constructor accepts and nil-checks it, (c) Reserve runs INSIDE the existing Write callback before the Insert. The callback already shares the *Tx, so atomicity is automatic.
+  - The service_domains table has a (hostname, path) UNIQUE constraint cluster-wide. Concurrent tests MUST use unique hostnames per goroutine — otherwise rejections drift onto the UNIQUE conflict path and never exercise the quota row lock.
+  - ServiceDomainService has no JobEnqueuer (the worker-driven domain reconcile lands in a later story), so no equivalent atomicJobs assertion is needed — unlike ServiceService which has both quota and jobs.
+  - cmd/yalla-api/main.go reuses the existing `serviceQuota` no-op placeholder across the entire service-family family of services (ServiceService, ServiceDomainService). When a new *Service in that family gains a QuotaReserver dep, just pass `serviceQuota` — no new placeholder needed.
+---

@@ -7136,8 +7136,8 @@
       ],
       "type": "quota-dimension",
       "priority": 1,
-      "passes": false,
-      "notes": "Quota dimension: domains."
+      "passes": true,
+      "notes": "Quota dimension: domains. ServiceDomainService.Create now reserves one unit on QuotaResourceDomains inside the same *Tx as the in-transaction authorize, the Insert, and the audit append (BE-0329). NewServiceDomainService gains a QuotaReserver dependency; cmd/yalla-api/main.go passes the existing serviceQuota placeholder until the real quota.Checker is wired into the HTTP layer. New integration tests at internal/controlplane/store/service_domain_quota_concurrent_test.go: (1) TestServiceDomainServiceCreateRejectsParallelOversubscriptionForDomainsQuota \u2014 20 goroutines x domains limit=5 prove the domains row lock serialises concurrent domain creates; rejections carry ExceededDetail{Resource=domains,Limit=5,Requested=1,Reserved=5,Current=0}; service_domains rows == 5; active domains reservations == 5; rejection diagnostic carries no caller hostname/request_id/correlation_id/domain_id leakage; (2) TestServiceDomainServiceCreateAppliesDomainsQuotaIndependentlyOfServicesQuota \u2014 after exhausting the domains dimension a 6th domain Create is rejected on the domains dimension and the services dimension is never touched (0 active services reservations). Pre-existing TestEnvironmentServiceCreateQuotaFailureRollsBack and TestOrganizationVariableServicePatchValueOnlyPreservesIsSecret failures unchanged (unrelated, documented under BE-0127 / BE-0324). gofmt, go vet ./..., go build ./..., go test ./..., and YALLA_TEST_DATABASE_URL=postgres://yalla:yalla@127.0.0.1:5432/yalla go test -race -count=1 -run \"TestServiceDomainServiceCreate(Rejects|Applies)\" ./internal/controlplane/store/ all pass."
     },
     {
       "id": "BE-0330",

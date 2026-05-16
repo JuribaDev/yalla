@@ -281,7 +281,7 @@ func main() {
 		logger.Error("failed to initialize the service domain reader", "error", err.Error())
 		os.Exit(1)
 	}
-	serviceDomainService, err := store.NewServiceDomainService(dataStore, store.NewServiceRepository(), store.NewServiceDomainRepository(), serviceAuthz, auditRepo)
+	serviceDomainService, err := store.NewServiceDomainService(dataStore, store.NewServiceRepository(), store.NewServiceDomainRepository(), serviceAuthz, serviceQuota, auditRepo)
 	if err != nil {
 		logger.Error("failed to initialize the service domain service", "error", err.Error())
 		os.Exit(1)
