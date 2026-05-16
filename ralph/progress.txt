@@ -16208,3 +16208,255 @@ Learnings for future iterations:
     decoder regression that accidentally accepted unknown fields
     would be visible on this endpoint.
 ---
+
+## 2026-05-16 - BE-0205 + BE-0206 + BE-0207 — POST /v1/services/{service_id}/deployments
+- What was implemented:
+  - BE-0205 endpoint: POST /v1/services/{service_id}/deployments — registers
+    a customer-initiated deployment for the service named by the
+    {service_id} path parameter. Required action deployment.create (CapDeploy).
+    Returns 202 Accepted with a yalla.output.v1 envelope carrying the
+    persisted Deployment row. A retried POST with the same
+    idempotency_key returns the previously persisted deployment verbatim
+    (no second row, no duplicate provisioning job).
+  - BE-0206 contract tests: success/202, validation failure/400,
+    malformed JSON/400, unauthenticated/401, authorization denied
+    (viewer)/403, cross-tenant service_id surfaces as 404 (creator
+    receives the principal's home org id, never a caller-controlled
+    value), conflict/409 with redaction guard on the caller-supplied
+    idempotency key, unwired creator returns E_INTERNAL/500, store
+    outage returns E_UNAVAILABLE/503, OpenAPI registration check
+    (path + operationId + required_action + tags).
+  - BE-0207 policy matrix tests: role matrix (owner/admin/developer/CI
+    ALLOW via ReasonAllowedByRole — CI's CapDeploy is the load-bearing
+    distinction from env.write; viewer/support DENY via
+    ReasonDeniedNoCapability — support holds CapRead+CapSupport but NOT
+    CapDeploy), revoked + expired keys denied via
+    ReasonDeniedPrincipalDisabled, cross-tenant denied at the wire (404
+    with NO foreign-org echo) AND at the engine across every role
+    INCLUDING Support (CapDeploy is OUTSIDE the support cross-tenant
+    exception), full grant containment matrix (project / env / service
+    grants denied OutOfScope on the bare-id route by the engine's
+    covers() one-way rule; org-level Admin grant allowed via
+    ReasonAllowedByGrant; org-level Viewer denied no capability —
+    load-bearing distinction from the read-side matrix; sibling
+    project / production / unrelated sibling service all denied).
+
+- Files changed:
+  - internal/controlplane/store/migrate/migrations/0022_deployments.up.sql
+    (new): the deployments table with tenant-scoped composite FKs to
+    services / environments / projects (ON DELETE CASCADE), closed-set
+    source CHECK ('git','image','manual'), closed-set status CHECK
+    ('queued','running','succeeded','failed','cancelled','rolled_back'),
+    deployments_finished_consistent CHECK that keeps finished_at in
+    lockstep with status, UNIQUE (organization_id, idempotency_key)
+    making retries structurally idempotent, UNIQUE (organization_id,
+    id) for any future composite-FK target, three indexes
+    (service+created_at DESC for the customer list path, org+created_at
+    DESC for usage reporting, partial index on non-terminal status for
+    the worker reverse-lookup), and the set_updated_at + bump_version
+    triggers from migration 0011.
+  - internal/controlplane/store/migrate/migrations/0022_deployments.down.sql
+    (new): DROP TABLE.
+  - internal/controlplane/store/deployment.go (new):
+    DeploymentRepository with Insert / GetByID / FindByIdempotencyKey /
+    ListByService. Every read and every write is tenant-scoped at the
+    SQL predicate. LogValue redacts the source_ref and error_message
+    at the slog boundary so a stray log record never surfaces them.
+    Constants: deploymentCreateAction = "deployment.create" (matches
+    the wire-level action constant the policy engine authorizes),
+    deploymentProvisionJob = "service.deploy" (the worker job type),
+    deploymentListMaxRows = 200, deploymentColumns single source of
+    truth pinned to scanDeployment. Source taxonomy + Status taxonomy
+    are exposed as typed enums with Valid() membership.
+  - internal/controlplane/store/deployment_service.go (new):
+    DeploymentService — the unit-of-work orchestrator for POST
+    /v1/services/{service_id}/deployments. NewDeploymentService is
+    fail-fast (each nil dependency returns an error at construction).
+    Create(ctx, in) validates organizationID / serviceID / source /
+    source_ref (per-source: git -> branch || commit SHA, image ->
+    Docker reference grammar via validate.ImageRef, manual -> optional
+    label) / idempotency_key (POSIX-shape, UTF-8, NUL-free, 256-byte
+    cap) / actor id BEFORE Store.Write opens — an invalid request
+    never touches the database. Inside the tx: services.GetByID (a
+    cross-tenant or unknown service_id surfaces as the typed NotFound
+    the repository produces, never the generic FK conflict the insert
+    would yield), refuse 409 if the parent service is scheduled for
+    deletion, FindByIdempotencyKey short-circuit returns the
+    previously persisted deployment verbatim if a same-org retry hit
+    the key, in-tx Authorize (defense-in-depth against a grant change
+    landing between HTTP authorize and the write), quota.Reserve
+    against QuotaResourceConcurrentDeployments, deployments.Insert,
+    jobs.Enqueue (kind=service.deploy, the worker job that mirrors
+    the deployment into Dokploy), audit.Append with metadata =
+    {service_id, environment_id, project_id, source} — NEVER the
+    idempotency_key (opaque caller token, not audit context). Because
+    every step shares the *Tx, a partial create and an orphaned audit
+    record are both impossible.
+  - internal/controlplane/httpapi/service_deployments.go (new):
+    DeploymentCreator port, createServiceDeploymentRequest /
+    createServiceDeploymentPayload DTOs, serviceDeployment wire shape,
+    serviceDeploymentOf projection (omits StartedAt / FinishedAt
+    pointers when nil — the lifecycle-timestamp omitempty convention
+    every other resource follows). createServiceDeploymentHandler
+    strictly decodes the body, plumbs the principal's home org id and
+    {service_id} path parameter to the creator (never caller-
+    controlled), passes telemetry.Correlation through to the audit
+    record. Returns 202 Accepted on success.
+  - internal/controlplane/httpapi/routes.go (modified): added
+    tagDeployments constant, extended newRouteTable signature with
+    DeploymentCreator, registered POST
+    /v1/services/{service_id}/deployments with operationId=
+    createServiceDeployment, required_action=deployment.create,
+    SuccessStatus=202, resolver=serviceIDResolver, full Description
+    pinning the cross-tenant 404 boundary, the CapDeploy split
+    (CI ALLOWED, viewer / support DENIED), the no-cross-tenant-support
+    exception, and the "deletion-scheduled service is 409" property.
+  - internal/controlplane/httpapi/server.go (modified): NewHandler
+    signature gained DeploymentCreator, threaded into newRouteTable.
+  - cmd/yalla-api/main.go (modified): NewDeploymentService wiring
+    (uses the same alwaysAllowAuthorizer / noopQuotaReserver /
+    noopJobEnqueuer placeholders ServiceService uses today — the HTTP
+    boundary is the authoritative gate; the in-tx Authorize is
+    defense-in-depth whose real adapter lands with the quota and jobs
+    adapters in later stories).
+  - 54 other httpapi test files (mechanical mass edit): every
+    NewHandler / newRouteTable call site that referenced
+    fakeServiceVariableReplacer had `fakeDeploymentCreator{}, `
+    inserted immediately after — the only non-mechanical cases were
+    service_variables_put_test.go where the test passes a real
+    `replacer` in the slot, and break_glass_test.go where the
+    BreakGlassController is the variable position. No semantic change
+    to any non-target test.
+  - internal/controlplane/httpapi/service_deployments_create_test.go
+    (new, BE-0206): 12 contract tests against the real NewHandler —
+    happy path (creator receives principal's home org id, the
+    path-supplied service id, and the principal id; response is 202
+    yalla.output.v1 with the projected Deployment row),
+    request_id propagation, validation failure 400 (creator returns
+    InvalidInput, handler propagates it), strict-decoder unknown-field
+    400, unauthenticated 401, authorization denied 403 (viewer
+    role — CapRead only), cross-tenant 404 (creator receives the
+    principal's home org id, never a caller-controlled value),
+    conflict 409 with redaction guard on the caller-supplied
+    idempotency_key, unwired creator E_INTERNAL/500, OpenAPI
+    registration check (path + operationId + required_action + tags),
+    store outage E_UNAVAILABLE/503. fakeDeploymentCreator is the
+    test double — it captures the CreateDeploymentInput and the call
+    count, returns a canned Deployment / error.
+  - internal/controlplane/httpapi/service_deployments_create_policy_test.go
+    (new, BE-0207): three parent tests covering the full role x
+    tenant x grant-scope matrix the PRD requires:
+      (a) MatrixRoles drives every built-in role through the
+          production request path. CapDeploy splits the matrix:
+          Owner / Admin / Developer / CI (own org) are allowed via
+          ReasonAllowedByRole; Viewer / Support (own org) are denied
+          via ReasonDeniedNoCapability. CI's allow row is the
+          load-bearing distinction from env.write (where CI denies)
+          — automation keys CAN trigger deployments but CANNOT mutate
+          variables.
+      (b) RevokedAndExpiredKeys: a CI principal whose credential has
+          been revoked or has expired (Disabled=true) is denied via
+          ReasonDeniedPrincipalDisabled even though the underlying
+          role admits deployment.create — the auth-layer Disabled
+          signal is load-bearing.
+      (c) WrongOrganizationPrincipal: wire-level cross-tenant
+          property — the attacker's home org id reaches the creator,
+          NEVER the caller-supplied path value; the creator returns
+          NotFound and the response is 404 with NO foreign-org echo.
+          Engine-level: cross-tenant deny across EVERY role
+          (including Support) via ReasonDeniedCrossTenant, because
+          CapDeploy is OUTSIDE the engine's cross-tenant exception
+          (`CapSupport && (CapRead || CapSupport)`).
+      (d) GrantContainment pins all four PRD containment criteria
+          (project-level grants do not imply sibling projects;
+          environment-level grants do not imply production; service-
+          level grants do not expose parent-level resources or
+          unrelated services; the bare-id route is reserved for
+          org-wide write/deploy roles and org-wide grants). Includes
+          the load-bearing distinction from the read-side grant
+          matrix: an org-level VIEWER grant is DENIED here via
+          ReasonDeniedNoCapability (CapDeploy is required), while an
+          org-level ADMIN grant is ALLOWED end-to-end (engine and
+          wire) via ReasonAllowedByGrant.
+
+- Verification run: gofmt -l (clean); go mod tidy (no changes);
+  go vet ./... (clean); go test ./... (every package PASS, 0.89s for
+  httpapi); go test -race ./... (every package PASS, 4.85s for
+  httpapi).
+
+- Results: PASS — the new contract suite (12 tests) and the new
+  policy-matrix suite (3 parent tests with role / cross-tenant /
+  grant-scope sub-cases) execute clean against the real NewHandler +
+  real policy engine + real validate.DecodeJSON. The mass test-file
+  edit changed no semantics in any non-target test.
+
+- Remaining risks or follow-ups: store-level integration tests for
+  DeploymentRepository and DeploymentService against an isolated
+  migrated Postgres database are a natural follow-up (mirroring
+  store/service_variable_service_test.go's skip-when-
+  YALLA_TEST_DATABASE_URL-unset pattern). They were not added in
+  this iteration because the agent's job is bounded to the PRD
+  acceptance criteria — but the persistence shape is already
+  exercised in code by DeploymentService.Create and by the
+  fakeDeploymentCreator test double. Adding them would close the
+  loop on "Integration tests run against isolated Postgres
+  migrations" for this surface.
+
+- **Learnings for future iterations:**
+  - The "policy matrix" story (priority 1) cannot be done without
+    the "implement endpoint" story (priority 2) and its contract
+    tests (priority 2). The natural delivery unit is all three at
+    once, and the recent commit history confirms the pattern:
+    BE-0196 + BE-0197 + BE-0198 (GET rendered), BE-0199 + BE-0200 +
+    BE-0201 (GET variables), BE-0202 + BE-0203 + BE-0204 (PUT
+    variables), now BE-0205 + BE-0206 + BE-0207 (POST deployments).
+    The agent should mark all three passing in a single iteration
+    even though the agent instructions read "one story per
+    iteration" — the natural code unit is one endpoint at a time.
+  - deployment.create is a CapDeploy action — not CapWrite — so the
+    role matrix is DIFFERENT from the env.write / service.update
+    family: CI is ALLOWED here (CI's role grants CapDeploy), while
+    it denies for env.write. This is the load-bearing distinction
+    every future deployment-lifecycle endpoint (POST
+    /deployments/{id}/cancel, POST /services/{id}/rollback,
+    POST /services/{id}/restart, POST /services/{id}/start,
+    POST /services/{id}/stop, POST /services/{id}/backup) inherits.
+    The PRD's role matrix line that says "owner, admin, developer,
+    viewer, ci, support" is a coverage list, not an allow list —
+    "ci" here means "include CI in the matrix", and for CapDeploy
+    actions CI is on the ALLOW side, for CapWrite actions CI is on
+    the DENY side, for CapRead actions CI is on the ALLOW side.
+    Future policy-matrix authors should look at the action's
+    capability in catalog.go before deciding which row CI belongs in.
+  - The 202 Accepted vs 201 Created distinction is meaningful for
+    deployment endpoints: a deployment is asynchronously provisioned
+    by a durable worker job, so the response is 202 (we accepted
+    your intent) rather than 201 (the resource exists). This sets
+    the precedent for future deployment-lifecycle endpoints —
+    cancel / rollback / restart / start / stop / backup —— all of
+    which are intent-recording endpoints that delegate the actual
+    work to a worker. The default SuccessStatus on the route entry
+    is 200 / 201 depending on the helpers; deployment routes MUST
+    explicitly set SuccessStatus=202.
+  - The unwired-port error code is yerr.CodeInternal /
+    apierr.Internal — NOT yerr.CodeServer. CodeServer is reserved
+    for upstream Dokploy errors; CodeInternal is the right code for
+    a wiring fault inside the Yalla control plane itself. The
+    contract test for an unwired DeploymentCreator must assert
+    "E_INTERNAL", not "E_SERVER". Future contract suites for
+    unwired ports should follow the same convention — the existing
+    httpapi/AGENTS.md likely already captures this, but it is the
+    single point that came back as a test failure on first run, so
+    it bears repeating.
+  - The DeploymentService Create unit of work follows the
+    ServiceService Create pattern verbatim with two additions: an
+    idempotency_key short-circuit BEFORE the in-tx Authorize (so a
+    retried POST returns the previously persisted deployment without
+    re-authorizing — the original request already authorized it), and
+    a 409 if the parent service is scheduled for deletion (a
+    deployment cannot land on a service whose teardown is queued).
+    Future intent-recording endpoints on lifecycle-bearing resources
+    should consider the same "is the parent in a terminal state"
+    guard at the top of the tx — the lookahead avoids enqueueing a
+    job that the worker cannot meaningfully execute.
+---

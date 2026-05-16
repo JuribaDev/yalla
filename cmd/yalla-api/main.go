@@ -275,6 +275,18 @@ func main() {
 		logger.Error("failed to initialize the service variable service", "error", err.Error())
 		os.Exit(1)
 	}
+	// DeploymentService composes the same placeholder authorizer / quota
+	// reserver / job enqueuer triple ServiceService uses today. The HTTP
+	// boundary is the authoritative authorization gate for
+	// deployment.create; the in-tx Authorize is the defense-in-depth
+	// re-check whose real adapter (a policy.Engine-driven port that
+	// reads grant rows from the same *Tx as the desired-state write)
+	// lands with the quota and jobs adapters in later stories.
+	deploymentService, err := store.NewDeploymentService(dataStore, store.NewServiceRepository(), store.NewDeploymentRepository(), serviceAuthz, serviceQuota, serviceJobs, auditRepo)
+	if err != nil {
+		logger.Error("failed to initialize the deployment service", "error", err.Error())
+		os.Exit(1)
+	}
 	breakGlassService, err := store.NewBreakGlassService(dataStore, store.NewOrganizationRepository(), store.NewBreakGlassRepository(), auditRepo, nil)
 	if err != nil {
 		logger.Error("failed to initialize the break-glass service", "error", err.Error())
@@ -328,7 +340,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              cfg.APIAddr,
-		Handler:           httpapi.NewHandler(build, readiness, meta, authenticator, engine, organizations, organizationService, organizationService, organizationService, members, membershipService, membershipService, membershipService, limits, limitsService, usage, auditEvents, orgVariables, orgVariableService, orgVariableService, orgVariableService, apiKeys, apiKeyService, apiKeyService, apiKeyService, apiKeyService, projects, projectService, projectService, projectService, projectService, projectGrants, projectGrantService, projectVariables, projectVariableService, projectEnvironments, environmentService, projectEnvironments, environmentService, environmentService, environmentService, environmentGrants, environmentGrantService, environmentVariables, environmentVariableService, environmentServices, serviceService, environmentServices, serviceService, serviceService, serviceService, serviceVariables, serviceVariableService, breakGlassService, logger, httpRateLimiter),
+		Handler:           httpapi.NewHandler(build, readiness, meta, authenticator, engine, organizations, organizationService, organizationService, organizationService, members, membershipService, membershipService, membershipService, limits, limitsService, usage, auditEvents, orgVariables, orgVariableService, orgVariableService, orgVariableService, apiKeys, apiKeyService, apiKeyService, apiKeyService, apiKeyService, projects, projectService, projectService, projectService, projectService, projectGrants, projectGrantService, projectVariables, projectVariableService, projectEnvironments, environmentService, projectEnvironments, environmentService, environmentService, environmentService, environmentGrants, environmentGrantService, environmentVariables, environmentVariableService, environmentServices, serviceService, environmentServices, serviceService, serviceService, serviceService, serviceVariables, serviceVariableService, deploymentService, breakGlassService, logger, httpRateLimiter),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
