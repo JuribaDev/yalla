@@ -366,6 +366,91 @@ credentials, so a compromised support principal can be reviewed
 and revoked through the audit trail without rotating customer API
 keys.
 
+## Log Redaction Fuzzing
+
+Every customer-controllable string that reaches a log record passes
+through `internal/output.Redactor` first. The `Redactor` is the
+**defence-in-depth** seam that strips three classes of secret-shaped
+content from human-readable output:
+
+1. Literal secrets the renderer was constructed with (the CLI's
+   `--token`, refresh tokens, future explicitly-flagged inputs).
+2. Authorization-class transport headers — `Authorization:`,
+   `X-API-Key:`, `X-Auth-Token:` — regardless of casing or the
+   value's content.
+3. Token-bearing query parameters — `?token=`, `?api_key=`,
+   `?access_token=`, `?x-auth-token=` and their `_`/`-` variants —
+   regardless of casing or the value's content.
+
+The first wall is error classification (every user-visible failure
+is a typed `internal/errors.Error` with a stable `Code`, so secrets
+never enter the error surface to begin with). The Redactor is the
+second wall: even when a careless caller passes an URL that
+smuggles `?token=abcd1234` through the request target, the
+per-request log record in `internal/controlplane/telemetry/logging.go`
+runs the entire target through `logRedactor.Redact` before slog
+sees it.
+
+**Threat model.** A regression that weakens any of the structural
+rules — a renamed header, a relaxed regex, a `strings.ReplaceAll`
+miss — would leak secrets into the structured log stream, where
+operators expect redacted records. Once a secret reaches stdout or
+the audit ring buffer, it is effectively persisted: log shippers,
+on-call dashboards, and post-incident transcripts all carry it
+forward. The fuzz suite below is the runtime evidence that the
+Redactor's structural rules survive hostile inputs.
+
+**Runtime evidence.** `internal/output/redact_fuzz_test.go` lands
+four Go fuzz targets and a scope-exclusion regression:
+
+- `FuzzRedactor_NoPanic` — `Redact` cannot be made to panic by any
+  `(secret, haystack)` pair, because a panic inside the request
+  logger would surface the unredacted URL in the runtime panic
+  dump.
+- `FuzzRedactor_ExplicitSecretNeverLeaks` — a literal secret
+  registered with `NewRedactor` never appears in `Redact`'s output
+  for any haystack within the contract scope.
+- `FuzzRedactor_AuthorizationHeaderNeverLeaks` — the bearer regex
+  scrubs every `Authorization:` / `X-API-Key:` / `X-Auth-Token:`
+  line value, regardless of casing or value content.
+- `FuzzRedactor_QueryTokenNeverLeaks` — the queryToken regex
+  scrubs every supported key shape, regardless of casing or value
+  content.
+- `FuzzRedactor_Idempotent` — `Redact(Redact(s)) == Redact(s)` for
+  every input in the contract scope, so a rewrite cannot oscillate
+  between passes.
+
+The seed corpus runs as part of `go test ./...`, so every commit
+exercises the regression net even without `-fuzz`. The `-fuzz`
+flag is operator-opt-in and exercises the random-mutation stage.
+
+**Scope exclusions.** Three input classes are deliberately scoped
+out of the fuzz domain because the contract does not promise them:
+
+1. Secrets shorter than `minRedactableLen` (4) after `TrimSpace`
+   are dropped by `NewRedactor` (a test fixture, not a real
+   token).
+2. Secrets that overlap the literal sentinel `[REDACTED]` in
+   either direction would race the sentinel substring through
+   `strings.ReplaceAll`. An operator who manages to pick
+   `[REDACTED]` as a real secret has a worse problem than logging.
+3. CR/LF inside a header-borne value ends the bearer regex match
+   at the linebreak by design (one header per line); a value that
+   wraps lines is a misfeature of the input, not the redactor.
+
+`TestRedactor_FuzzScopeExclusionsAreReal` pins these exclusions
+as the current behaviour. A future Redactor change that closes
+one of the gaps (for example by replacing the explicit-secret
+pass with a single regex substitution that does not re-scan
+substituted text) MUST update both the fuzz scope comments and
+this `SECURITY.md` section so the threat model stays accurate.
+
+**No live secrets.** The fuzz suite registers synthetic markers
+(`"FUZZAUTHMARKERXYZ"`, `"FUZZQRYMARKERZYX"`) and synthetic
+secrets (the fuzzer's mutated raw bytes wrapped in `~…~` markers)
+— never real `--token` values, real Dokploy tokens, or real
+customer API keys.
+
 ## Disclosure Timeline (Best Effort)
 
 1. **Day 0** — report received, acknowledgement sent.

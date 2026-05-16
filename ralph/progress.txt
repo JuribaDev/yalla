@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Log-redaction fuzz harness, single-test runtime-only variant (BE-0359 pattern, internal/output/redact_fuzz_test.go + SECURITY.md "## Log Redaction Fuzzing" section + internal/output/AGENTS.md "Log redaction fuzzing (BE-0359)" subsection; FIRST worked instance of the single-test runtime-only shape called out in the BE-0344 pattern's closing line — applies to verification stories whose invariant is a runtime contract with NO static analog, e.g. log redaction fuzzing, idempotency replay, chaos tests for timeouts). Six load-bearing rules: (1) FUZZ-MARKER design — when proving a structural redaction rule scrubs the value-half of a transport pattern, bracket the fuzz-supplied value with a unique fixed marker (`"FUZZAUTHMARKERXYZ"`, `"FUZZQRYMARKERZYX"`) and assert the marker never appears in the redacted output. The marker is the leak detector, independent of the value's bytes. Asserting that the value-bytes do not appear false-positives whenever the value happens to equal a substring of the test's static suffix (e.g. `"example"` if the test constructs `Host: example.com`). The marker pattern is reusable for ANY future fuzz target that proves "structural rule X scrubs the value half of transport Y" — cookies, refresh tokens, future header/query patterns. (2) REGEX-VALUE-CLASS gotcha — Go's `regexp` `\s` is exactly `[\t\n\f\r ]`; vertical-tab (`\v`) is NOT in `\s` but form-feed (`\f`) IS. When constructing a fuzz value that must traverse a regex value class without being cut short, strip every character in the regex's exclusion set including every member of Go's `\s`. The first revision missed `\f` and a seed containing it ended the regex mid-value, surviving the marker bracket and producing a false-positive leak. (3) DEFENCE-IN-DEPTH interactions — when two structural rules can both fire on a fuzz value (e.g. a query value containing `AUTHORIZATION:` triggers the bearer regex which eats the rest of the URL), assert ONLY the safety property (marker absent), NOT cosmetic properties (non-secret params survive). Document the interaction in the test file so a future reader understands why the survival assertion is absent. (4) SENTINEL-OVERLAP scope-out — `Redactor.Redact` uses `strings.ReplaceAll(s, secret, Sentinel)`; if `secret` is a substring of `Sentinel` (e.g. `"REDA"` inside `"[REDACTED]"`), the second pass rewrites the freshly-inserted sentinel substring and the function is NOT idempotent. Skip these inputs in fuzz AND pin the exclusion in a regression test (`TestRedactor_FuzzScopeExclusionsAreReal`) so a future redactor fix (single-pass regex substitution that does not re-scan substituted text) deliberately breaks that test and forces a coordinated update to the fuzz scope, the SECURITY.md section, and the AGENTS.md note. (5) SEED-CORPUS vs `-fuzz` — `go test ./...` runs every seed in `f.Add` once, so the seed corpus is the regression net every commit exercises; `-fuzz` is operator-opt-in. When adding a new redaction rule, the worked pattern is: append a seed input to `redactFuzzSeeds` that triggers the new rule, add a fuzz target if the rule has a distinct structural shape, and update both the AGENTS.md and SECURITY.md sections at the same time. (6) `-fuzztime` SHUTDOWN quirk — `go test -fuzz=… -fuzztime=5s` with the default 16 workers sometimes reports `context deadline exceeded` at shutdown; this is a harness-internal timing quirk, not a real fuzz failure (no `testdata/fuzz/…` corpus file is written). Re-running with `-parallel=2` makes the shutdown cleaner. Forward-applicable to any future security-verification story whose invariant has no AST shape to gate (BE-0360 environment-variable redaction if the rule is purely "the variables service MUST pass every rendered value through the redactor before logging" with no AST shape; BE-0363 rate-limit bypass resistance; chaos-tests for timeouts; idempotency replay).
 - Admin endpoint isolation static-pin pattern (BE-0357, internal/release/admin_endpoint_isolation_static_test.go + SECURITY.md "## Admin Endpoint Isolation" section AND a new row in the Required Verification Gates table + internal/release/AGENTS.md "Admin endpoint isolation (BE-0357)" subsection; SECOND instance of the BE-0356 Go-source-file variant of the BE-0355 single-test-file template applied to ENTIRE-DIRECTORY-OF-SOURCE-FILES rather than a single file — structural template for ANY future security-verification story whose invariant is 'no production source under directory D may import package P, name selector S, or carry literal L'). Eight load-bearing rules: (1) The test file uses `package release_test` (NOT `package release`) so the canonical `projectRoot(t)` helper from release_test.go links — same gotcha as BE-0356, every static-pin test in internal/release MUST follow this convention. (2) The directory scan is bounded by a SINGLE small helper (`adminProductionFiles(t, root) -> []string`) that returns ONLY non-`_test.go` `.go` files plus the entry binary, sorted for deterministic diagnostics; test files are deliberately skipped because a future runtime regression test needs to mention the threat without tripping the gate. (3) The import scan parses with `parser.SkipObjectResolution|parser.ImportsOnly` (fast; ignores function bodies), the literal/selector scan parses with `parser.SkipObjectResolution|parser.ParseComments`; mixing modes by matcher is the right call when the matcher's needs differ. (4) Closed sets of forbidden imports (`net/http/pprof`, `expvar`, `golang.org/x/net/trace`), forbidden selector roots (`pprof`, `expvar`), and forbidden literals (`/debug/pprof`, `/debug/vars`, `/debug/requests`, `/debug/events`, `http.DefaultServeMux`) at the top of the test file — every set is closed, every member is named in SECURITY.md, every set extension is a deliberate two-file edit. (5) The http.Server `Handler` field is pinned by PRESENCE (omission falls back to DefaultServeMux per the stdlib docs) AND an explicit `Handler: nil` is rejected with the same diagnostic — both shapes are functionally equivalent and must both fail the gate. (6) The private-mux contract on `internal/controlplane/httpapi/server.go` is TWO orthogonal passes: a presence assertion (`http.NewServeMux` call must appear) AND a forbidden-reference scan (`DefaultServeMux` selector must not appear). Both are required — a regression that builds a private mux AND ALSO hands routes to the default mux would slip past either pass in isolation. (7) SECURITY.md gets a dedicated section heading (`## Admin Endpoint Isolation`), a verification-gates table row keyed on `-run TestAdminEndpointIsolation`, and a closed list of canonical substrings that name every forbidden import path BY NAME so a reader does not need to open the test file to learn the contract. (8) The runtime evidence half is implicit (the existing `notFoundRecorder` returns the stable `yalla.error.v1` envelope for any `/debug/*` request) — same single-test-file shape as BE-0355 and BE-0356. Forward-applicable to: any future security-verification story whose invariant is 'no production source file under directory D may carry shape X', including future stories for forbidden environment-variable echoes, forbidden log-format strings, forbidden cipher-suite literals, or forbidden file-scheme URL literals.
 - TLS and proxy header trust static-pin pattern (BE-0356, internal/release/http_server_hardening_static_test.go + SECURITY.md "## TLS Termination and Proxy Header Trust" section AND a new row in the Required Verification Gates table + internal/release/AGENTS.md "TLS and proxy header trust" subsection; FIRST instance of the BE-0355 single-test-file template applied to GO SOURCE FILES instead of declarative manifests; structural template for ANY future security-verification story whose invariant lives in (a) the construction shape of a typed struct literal in production Go code AND (b) the closed allow-list of string literals consulted in a designated function body). Six load-bearing rules: (1) The test file MUST use `package release_test` (NOT `package release`) so the canonical `projectRoot(t)` helper from release_test.go is in scope — the other static-pin tests in internal/release follow the same convention and a mismatched package gives an undefined-symbol build error at link time. (2) The struct-literal scan uses a package-qualified type selector helper (`isHTTPServerCompositeLit` matches a SelectorExpr with X=`http`, Sel=`Server`) so unrelated structs in the same source file are not scanned. Two closed sets ride on this matcher: `requiredHTTPServerFields = {ReadHeaderTimeout}` (every literal MUST include them, missing field = regression) and `forbiddenAPITLSStructFields = {TLSConfig, TLSNextProto}` (presence = regression). (3) The closed-set string-literal scan needs TWO ORTHOGONAL PASSES: a scoped pass on the named function body (`ClientIP` here — every `r.Header.Get(...)` literal must be in `allowedProxyHeaderLiterals` case-sensitively) AND a file-wide pass on every BasicLit in the file (no `forbiddenProxyHeaderLiterals` literal anywhere, case-insensitively). One pass is insufficient because a regression could land in a sibling helper added later; the file-wide pass catches that. Both passes share the same diagnostic prefix so operators see a consistent error format. (4) The scoped pass MUST also assert a required-identifier presence (`RemoteAddr` here — the fallback chain) AND emit a single 'missing function' hit if the named function is absent entirely, so the gate cannot pass silently when its target is removed by refactor. (5) SECURITY.md is the human-facing co-contract: the test pins (a) a verification-gate row in the Required Verification Gates table (with the `-run <Prefix>` selector — use a single shared test-function name prefix like `TestHTTPServerHardening` so one selector covers all four tests) AND (b) a dedicated section heading AND (c) a closed list of canonical substrings (operator expectations, the closed allow-list of headers BY NAME so a reader cannot mistake the policy, the load-bearing field name like `ReadHeaderTimeout`, and the test file path itself as the link to the enforcement). Watch line breaks in SECURITY.md substrings — a typed prose paragraph reflows and the apostrophe in `operator's` can land on its own line, breaking `strings.Contains`; either rewrap to keep the canonical phrase on a single line (preferred) or split into shorter pinned substrings. (6) The self-check sub-test feeds known-good AND known-bad synthetic fixtures through every matcher — for the struct-literal scan, every required field AND every forbidden field AND every forbidden call selector gets its own isolated regression fixture, plus a multiple-regressions fixture that confirms hits compose additively (e.g. missing-field + forbidden-field + forbidden-call = 3 hits). Forward-applicable to: any future security-verification story whose invariant is 'this typed struct literal in production code MUST/MUST NOT carry field X' or 'this named function MUST consult only allow-listed string literals' (e.g. middleware composition order pins, context-key allow-lists, telemetry attribute redaction key allow-lists, future proxy-trust expansions for X-Forwarded-Proto or RFC 7239 `Forwarded` if Yalla ever adopts them).
 - Container image hardening static-pin pattern (BE-0355, internal/release/container_hardening_static_test.go + SECURITY.md "Container Image Hardening" section + internal/release/AGENTS.md "Container image hardening" subsection; structural template for ANY future security-verification story whose invariant lives in a non-Go declarative file — Dockerfile, docker-compose.yml, .github/workflows/*.yml, .goreleaser.yaml, Kubernetes manifests, OCI runtime spec). Single-test variant of the BE-0344 two-test pattern: the "runtime" half is implicit because the build/CI pipeline IS the runtime — there is no application-code call site to drive a parallel runtime test against, so the static analyser plus the self-check IS the load-bearing defence. Six load-bearing rules: (1) The parser lives in the test file itself, not in a separate package — keeps the production package API surface clean (only the SupportedTargets matrix in internal/release) and lets future hardening stories add their own parsers without coupling. The Dockerfile parser scope is intentionally narrow: join backslash continuations into logical instructions, resolve global ARG defaults so `FROM ${RUNTIME_IMAGE}` expands to the canonical value, group instructions under their owning FROM stage. Heredocs, `--mount=type=cache` flags, and ONBUILD are deliberately opaque — the matchers work above the parser's awareness of them. (2) Every invariant gets its own matcher function plus its own in-repo test plus its own self-check sub-test. The matcher takes the parsed model and returns a self-describing error; the in-repo test runs the matcher against the real Dockerfile/compose file; the self-check sub-test drives the matcher with a synthetic known-good baseline (a `minimalCanonicalDockerfile()` helper) AND a series of mutations each isolating one regression. (3) Required-value constants live at the top of the test file: `requiredRuntimeBaseImage = "gcr.io/distroless/static-debian12:nonroot"`, `requiredNonrootUser = "nonroot:nonroot"`, `requiredCopyChown = "--chown=nonroot:nonroot"`, `requiredBuilderBuildFlags = {CGO_ENABLED=0, -trimpath, -s -w}`. Closed sets for forbidden patterns: `forbiddenSecretEnvFragments = {TOKEN, PASSWORD, SECRET, API_KEY, PRIVATE_KEY, SIGNING_KEY, DSN}` (case-insensitive substring on ENV key), `forbiddenRuntimePackageInstalls = {apt-get, apt install, yum install, dnf install, apk add, microdnf install}` (substring on runtime stage's joined RUN payload). The closed-set design is deliberate — it catches the secret-shaped fragments the project's config layer actually uses, not every possible English word that contains "key", so a future ENV that holds a non-secret hint does not false-positive. (4) SECURITY.md is the human-facing co-contract: the same test file pins (a) a verification-gate row in the Required Verification Gates table AND (b) a dedicated `## Container Image Hardening` section with literal substrings (`distroless`, `nonroot`, `Multi-stage build`, `CGO_ENABLED=0`, `-trimpath`, `Container image hardening`). A regression that drops either is caught as deterministically as a Dockerfile regression. (5) The postgres image pin regex `^postgres:\d+$` deliberately rejects variant tags like `postgres:16-bookworm` because the local integration-test stack must remain reproducible across local environments; if a future story needs a variant the regex must widen in lockstep with the fixture catalogue. (6) Builder stage vs runtime stage have ASYMMETRIC rules: builder stages may install packages (`apt-get install git` for the goreleaser-style git tag lookup is legitimate), the runtime stage may not. The matcher pins the asymmetry by walking only the runtime stage's instructions for the package-install scan and only the builder stage's instructions for the build-flag scan. The runtime stage is identified as the LAST stage (the unnamed final FROM); the builder stage as the FIRST stage with an `AS` name. Five test-fixture gotchas: (a) when SECURITY.md and the matcher disagree on case (`multi-stage` vs `Multi-stage`), the test pins the EXACT casing the documentation file uses — Go's `strings.Contains` is case-sensitive, and pinning the documentation casing makes the matcher serve as a stability anchor for the published policy. (b) Self-check cases that mutate ONE invariant on top of a shared canonical baseline are independent by construction — a future widening of matcher M cannot accidentally pass a fixture that was constructed to test matcher N. (c) The runtime stage's `COPY --from=builder` matcher MUST scope the `--chown=` requirement to COPY instructions that ALSO carry `--from=` — a plain `COPY ./foo /etc/foo` from the build context legitimately does not need the flag because the build context's owner is the current user. (d) The `ADD <url>` matcher uses a regex anchored at start-of-args that tolerates leading `--chown=` style flags; a future addition that allows local-path `ADD` would fail this assertion only on URL shapes. (e) The Dockerfile parser silently ignores instructions that appear before the FIRST FROM (other than ARG, which becomes a global ARG default). This is the Dockerfile spec behaviour; the test relies on it so `# syntax=docker/dockerfile:1.7` parser directives and pre-FROM comments don't accidentally count as instructions in any stage. NOT applicable to verification stories whose invariant is a runtime contract WITH an application-code call site (request body size, JSON parser hardening, log redaction fuzzing) — those follow the BE-0344 two-test (static + runtime) shape because the runtime test has a real handler/repository call site to drive.
@@ -25528,4 +25529,207 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     explicitly cross-references the runtime tests by name so
     a future reviewer learns where the runtime evidence
     lives without having to discover it.
+---
+
+## 2026-05-17 - BE-0359 — Security verification: log redaction fuzzing
+- What was implemented:
+  - Added internal/output/redact_fuzz_test.go with four Go
+    `Fuzz*` targets and one regression test pinning the
+    documented scope exclusions:
+      * FuzzRedactor_NoPanic — `*Redactor.Redact` never
+        panics for any (secret, haystack) pair.
+      * FuzzRedactor_ExplicitSecretNeverLeaks — a literal
+        secret registered with `NewRedactor` never appears
+        in `Redact`'s output for any haystack in scope.
+      * FuzzRedactor_AuthorizationHeaderNeverLeaks — the
+        bearer regex scrubs the value of Authorization /
+        X-API-Key / X-Auth-Token lines for every casing.
+      * FuzzRedactor_QueryTokenNeverLeaks — the queryToken
+        regex scrubs the value of `?token=`, `?api_key=`,
+        `?access_token=`, `?x-auth-token=` (and `_`/`-`
+        variants) for every casing.
+      * FuzzRedactor_Idempotent — `Redact(Redact(s)) ==
+        Redact(s)` for every input within the contract
+        scope.
+      * TestRedactor_FuzzScopeExclusionsAreReal — pins the
+        three documented scope exclusions so a future
+        redactor change that closes a gap deliberately
+        breaks this test.
+    The seed corpus (`redactFuzzSeeds`) covers the hostile
+    shapes log-redaction must survive: long inputs, invalid
+    UTF-8, embedded control characters, regex metacharacters,
+    mixed-case header / query keys, the sentinel literal,
+    and the registered secret shape itself.
+  - Threaded the contract scope into the package's
+    AGENTS.md (`## Log redaction fuzzing (BE-0359)`) and a
+    new top-level SECURITY.md section
+    (`## Log Redaction Fuzzing`) that documents the threat
+    model, the runtime evidence, the scope exclusions, and
+    the no-live-secrets rule.
+- Files changed:
+  - internal/output/redact_fuzz_test.go (new — five tests).
+  - internal/output/AGENTS.md (appended a `Log redaction
+    fuzzing (BE-0359)` subsection at the bottom — five
+    pinned invariants plus the rule for extending the
+    seam).
+  - SECURITY.md (new section between Support Access Review
+    and Disclosure Timeline — threat model, runtime
+    evidence, scope exclusions, no-live-secrets rule).
+  - ralph/prd.json: BE-0359.passes = true.
+  - ralph/progress.txt: this entry.
+- Verification run:
+  - gofmt -w .
+  - go mod tidy (no changes)
+  - go vet ./... (clean)
+  - go test ./internal/output/... (seed corpus green —
+    0.581s).
+  - go test -race ./internal/output/... (race-detector
+    green — 2.186s).
+  - go test -fuzz=FuzzRedactor_NoPanic -fuzztime=5s
+    -run=^$ ./internal/output/ (PASS — 1.5M execs,
+    no failing input written).
+  - go test -fuzz=FuzzRedactor_ExplicitSecretNeverLeaks
+    -fuzztime=3s -parallel=2 -run=^$ ./internal/output/
+    (PASS — 153K execs).
+  - go test -fuzz=FuzzRedactor_AuthorizationHeaderNeverLeaks
+    -fuzztime=3s -parallel=2 -run=^$ ./internal/output/
+    (PASS — 34K execs).
+  - go test -fuzz=FuzzRedactor_QueryTokenNeverLeaks
+    -fuzztime=3s -parallel=2 -run=^$ ./internal/output/
+    (PASS — 27K execs).
+  - go test -fuzz=FuzzRedactor_Idempotent -fuzztime=3s
+    -parallel=2 -run=^$ ./internal/output/ (PASS — 13K
+    execs).
+  - go test ./... (full module green).
+  - go test -race ./... (full module green).
+- Results: all required checks pass. As part of unblocking
+  the pre-commit hook (`scripts/verify.sh --strict
+  --release`), `govulncheck` and `staticcheck` were
+  installed into `$(go env GOPATH)/bin` for the first
+  time in this session — both ran clean against the full
+  module after the install. `golangci-lint` (homebrew) and
+  `goreleaser` (homebrew) were already installed at session
+  start; `goimports` remains uninstalled but verify.sh does
+  not exercise it.
+- Remaining risks / follow-ups: None for BE-0359 itself.
+  The next priority-1 security-verification stories
+  BE-0360 (environment variable redaction), BE-0361
+  (Dokploy token isolation), BE-0362 (backup encryption),
+  and BE-0363 (rate-limit bypass resistance) are
+  unblocked. The seed-corpus regression net catches every
+  scope-internal regression; the operator-opt-in `-fuzz`
+  flag is the deeper net.
+- Learnings for future iterations:
+  - **Fuzz harness vs. structural rules: pair markers
+    with rules, not values.** The first revision of the
+    Authorization / query fuzz targets asserted that the
+    fuzz-supplied value did not appear in the redacted
+    output. That is fragile: if the fuzz value happens
+    to equal `"example"` (the static suffix the test
+    constructs) the assertion fires a false positive.
+    The robust shape is to bracket the value with a
+    unique, fixed marker (e.g. `"FUZZAUTHMARKERXYZ"`)
+    and assert that the marker never appears in the
+    redacted output. The marker is the leak detector,
+    independent of the value's bytes. Apply this
+    pattern to every future fuzz target that proves
+    "structural rule X scrubs the value half of
+    transport Y".
+  - **Regex value classes have surprising boundary
+    characters.** Go's `regexp` `\s` is exactly
+    `[\t\n\f\r ]` — vertical-tab (`\v`) is NOT in `\s`,
+    but form-feed (`\f`) IS. The first revision of the
+    query-token fuzz stripped only `\t \n \r ` from the
+    fuzz-supplied value and left form-feed alone; a
+    seed containing `\f` ended the regex match
+    mid-value and the marker bracket survived,
+    producing a false-positive leak. When constructing
+    a fuzz-generated value that must traverse a regex
+    value class without being cut short, strip every
+    character in the regex's exclusion set including
+    every member of Go's `\s` (`\t \n \f \r ` plus the
+    explicit literals from the character class).
+  - **Defence-in-depth rules interact under fuzz.**
+    A fuzz value containing `AUTHORIZATION:`
+    (substring shape) triggers the bearer regex when
+    embedded in a URL, which consumes the rest of the
+    URL up to the next CR/LF. The downstream
+    query-param survival assertion (`&page=2` still
+    present) fails — but the marker leak assertion
+    still passes, because both rules contribute to
+    scrubbing the value. The lesson: assert only the
+    safety property (marker absent) in fuzz targets,
+    not the cosmetic property (non-secret params
+    survive). Document the interaction in the test
+    file so a future reader understands why the
+    survival assertion is absent.
+  - **Sentinel-overlap is a redactor footgun.**
+    `Redactor.Redact` uses `strings.ReplaceAll(s,
+    secret, Sentinel)`. If `secret` is a substring of
+    `Sentinel` (e.g. `"REDA"`), the second pass
+    rewrites the freshly-inserted sentinel substring
+    and the function is NOT idempotent
+    (`"[REDACTED] token"` → `"[[REDACTED]CTED] token"`).
+    This is unreachable in practice — `[REDACTED]` is
+    not a plausible real secret — but the fuzz harness
+    must scope it out explicitly. The
+    `TestRedactor_FuzzScopeExclusionsAreReal` test
+    pins this as the current behaviour, so a future
+    fix to the redactor (e.g. switching to a regex
+    substitution that does not re-scan substituted
+    text) deliberately breaks the test and forces a
+    coordinated update to the fuzz scope, the
+    `SECURITY.md` section, and the AGENTS.md note.
+  - **Per-target seed corpus is the CI gate; `-fuzz`
+    is the operator-opt-in net.** `go test ./...`
+    runs every seed in `f.Add` once, so the seed
+    corpus is the regression net every commit
+    exercises. `-fuzz` exercises the random-mutation
+    stage and is operator-opt-in. When a new
+    redaction rule is added (cookies, refresh
+    tokens), the worked pattern is: (1) add a seed
+    input to `redactFuzzSeeds` that triggers the new
+    rule, (2) add a fuzz target if the new rule has
+    a structural shape distinct from the existing
+    four, (3) update both the AGENTS.md `Log
+    redaction fuzzing (BE-0359)` section and the
+    `SECURITY.md` `Log Redaction Fuzzing` section to
+    cover the new transport pattern.
+  - **`-fuzztime` shutdown timing with many
+    workers.** `go test -fuzz=… -fuzztime=5s` with
+    the default 16 workers sometimes reports
+    `context deadline exceeded` at shutdown — this
+    is a harness-internal timing quirk, not a real
+    fuzz failure (no `testdata/fuzz/…` corpus file
+    is written). Re-running with `-parallel=2`
+    makes the shutdown cleaner. Document this in
+    the progress entry so a future iteration does
+    not chase a phantom failure.
+  - **Single-test runtime-only verification pattern.**
+    Earlier security-verification stories (BE-0344
+    through BE-0358) follow the two-test pattern
+    (static AST analyzer + runtime integration
+    test) when the invariant has a source-code rule
+    AND a runtime contract. BE-0359 is the FIRST
+    worked instance of the single-test runtime-only
+    shape called out in the BE-0344 pattern's
+    closing line: "verification stories whose
+    invariant is a runtime contract with NO static
+    analog (e.g. log redaction fuzzing, idempotency
+    replay, chaos tests for timeouts) — those
+    follow a single-test runtime-only shape". The
+    fuzz harness IS the runtime contract; there is
+    no source-code shape an analyzer could pin (the
+    redactor's structural rules are regex patterns,
+    and a regression that weakened them would still
+    look like a regex). Future stories of this
+    shape (BE-0360 environment-variable redaction
+    where the rule is "the variables service MUST
+    pass every rendered value through the redactor
+    before logging" is also runtime-only if there
+    is no AST shape to gate; BE-0363 rate-limit
+    bypass resistance is similarly runtime-only)
+    can mirror BE-0359's single-fuzz-file +
+    SECURITY.md section + AGENTS.md subsection
+    layout.
 ---
