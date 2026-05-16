@@ -84,6 +84,7 @@
 - Bare top-level lookup-by-id endpoint for a deep resource (BE-0154 pattern, GET /v1/environments/{environment_id}, store/environment.go GetByID + GetEnvironment, httpapi/environments.go): a customer-facing route that addresses a deep resource (env, service, deployment) by its global id WITHOUT carrying its parent ids in the path. Two load-bearing constraints: (1) the resolver builds policy.Resource{Scope: {OrganizationID = principal.home, <ResourceLevel>ID = path.id}} — pinning OrgID to the principal's home (NEVER the caller-supplied id) is the structural anti-spoof, and pinning the resource-level id is the only scope leg the path actually carries; (2) the resolver CANNOT pin the parent ids without a DB lookup, and the policy engine's Scope.covers() rule (internal/controlplane/policy/policy.go) requires every level the grant pins to match the resource — a grant with pinned ProjectID against a resource with empty ProjectID is structurally denied. Accepted design: middleware admits org-wide read roles + org-wide grants + (for CapRead actions) the support cross-tenant exception is suppressed because the resolver pins OrgID to principal.home; project-/env-/service-scoped grants are denied at the boundary by design, and grant-only principals must use the parent-scoped /v1/projects/{project_id}/environments instead. Document this in the route description, the resolver doc, and the handler doc — readers will misinterpret the structural deny as a bug otherwise. The store layer adds a tenant-scoped GetByID(ctx, q, organizationID, resourceID) on the existing repository (composite (organization_id, id) predicate so cross-tenant returns apierr.NotFound, never another tenant's row, never a 500 leaking the cause), and the existing reader struct grows a Get<Resource>(ctx, organizationID, resourceID) method that wraps GetByID inside Store.Read. The HTTP layer adds a NEW narrow port (distinct from the existing parent-scoped port — e.g. EnvironmentReader vs ProjectEnvironmentReader — so a handler change to one doesn't ripple through the other), a NEW resolver function (e.g. environmentIDResolver), and a NEW handler that REUSES the existing wire-shape projection (projectEnvironmentOf for environments) so the GET-by-id response is byte-identical to one element of the LIST response (modulo the wrapping object name). cmd/yalla-api/main.go passes the same *store.<Resource>Reader value twice — once for the parent-scoped port, once for the new bare-lookup port — because both methods live on the same store struct; no second startup wiring is needed. The contract tests cover the standard envelope: happy path, NotFound (cross-tenant + unknown both render as the same 404 — no oracle), 401 unauthenticated + invalid credentials (no token echo), 503 store outage (no raw cause leak), 500 nil-port wiring guard, envelope shape lock (asserts the documented field set against a generic decode so a future struct column added without updating the projection is caught), bearer-token never-logged guard (slog over a buffer), OpenAPI route registration, and TWO resolver unit tests (pins home org + path id; no panic with no principal on context). The matching policy matrix story (BE-0156 for environments, the structural template for service/deployment lookups) tests the deny — the deny matrix on the bare endpoint is part of the contract, not a gap.
 - environment.grants.write-on-bare-{environment_id}-resolver policy matrix (BE-0171, internal/controlplane/httpapi/environment_grants_put_policy_test.go) is the structural HYBRID of the project.grants.write matrix (BE-0141, projects_grants_put_policy_test.go) and the environment.grants.read matrix (BE-0168, environment_grants_policy_test.go): take BE-0141's CapAdmin role table + cross-tenant + request-body-leak-guard skeleton, swap action+resolver for the write env-grants endpoint, and re-pin every wire tie-in with BE-0168's no-ProjectID covers() denial pattern (project/env/service scoped principals ALL denied OutOfScope at this route — even on a grant naming the SAME env id — because the env-id resolver pins NO ProjectID leg and covers() is one-way). Load-bearing engine distinction from BE-0168: CapAdmin is OUTSIDE the support cross-tenant exception, so the engine_cross_tenant_deny_* parallel subtests MUST include the Support row for write actions and exclude it for read actions. Net-new fixtures in the put_policy file are only a route-specific replaceEnvironmentGrantsMatrixBody (no environment_id field per grant — the env is named by the path) + replaceEnvironmentGrantsRequestBodyLeak with distinctive needles; the canonical*EnvGrants* fixtures, fake*EnvironmentGrant* fakes, replaceEnvironmentGrantsHandlerFor / putEnvironmentGrants / decodeReplaceEnvironmentGrants, and orgPrincipal / decodeError are all reused verbatim from BE-0168 and BE-0169.
 - Inbound HTTP rate-limit pattern (BE-0035, internal/controlplane/ratelimit/limiter.go + internal/controlplane/httpapi/ratelimit.go + apierr.RateLimited + config.RateLimit): the limiter is an in-process multi-dimensional token-bucket gate (per-org, per-API-key, per-IP) with read/write-class specs derived from the HTTP method (GET/HEAD/OPTIONS = read, everything else = write). Three load-bearing rules: (1) the gate wraps every route INSIDE RequireAuth in server.go's per-route loop (`h = rateLimit(h); if RequiresAuth: h = RequireAuth(...)(h)`) so the resolved principal (org id, key id, auth method) is on the request context when the limiter decides — public endpoints fall back to the IP bucket alone; (2) the internal-worker exemption is wired through a new package-private context helper `withAuthMethod` / `AuthMethodFromContext` in middleware.go that BOTH RequireAuth and RequireInternalWorker stamp with id.Method, so the rate-limit gate can recognise auth.MethodInternalWorker and pass `Exempt=true` to the limiter without re-running the credential store; (3) the "first exhausted bucket wins" rule short-circuits downstream debits (org denied -> key & ip buckets untouched) so a single throttled tenant cannot drain a shared NAT'd IP bucket of every neighbour. Bucket map is sync.Mutex'd with lazy eviction on the request path (no background goroutine; pruning sweeps every IdleTTL); the freshly-created bucket MUST set lastUsed=now BEFORE the sweep runs so the sweep cannot reap the bucket it just inserted (initial zero-value lastUsed is older than any cutoff and was a real bug caught by tests). The 429 wire shape is the standard yalla.error.v1 envelope with apierr.RateLimited(scope, retry) attaching `scope` (bucket dimension name only — "organization" / "api_key" / "ip", NEVER the tenant id or key id or IP) and `retry_after` (integer seconds, clamped to >=1 because the wire Retry-After header cannot carry sub-second); the response also sets the matching `Retry-After: N` header. NewHandler grew ONE new trailing parameter (RateLimiter) — sweep all 64 NewHandler call sites in tests via a Node script that walks the source with depth-tracking parens and appends `, nil` before each closing `)`. Config plumbing: new YALLA_RATE_LIMIT_* env vars (ORG/KEY/IP × READ/WRITE × RPS/BURST + IDLE_TTL + DISABLED master switch) layered over per-profile defaults; ProfileTest defaults to Disabled=true so contract tests across the whole repo never accidentally trip the limiter. The limiter constructor takes a `func() time.Time` clock injection point so deterministic tests (`fixedClock.Advance(d)`) can drive refill behaviour without sleeping. Forward-applicable to any future throughput cap (per-resource, per-tenant-tier, per-route-specific) — extend Specs/Specs.For pairs rather than adding a new bucket dimension. Redaction backstops: the 429 envelope, the Retry-After header, the WARN log record on denial, and every rate-limit identifier flow through telemetry.LogAttrs / apienvelope's regex-based scrubber so a bearer-token in the Authorization header on a throttled request NEVER reaches a log file (TestRateLimitDenialLogsNoSecretValue is the regression pin).
+- Pagination contract package (BE-0037, internal/controlplane/pagination): every customer-facing list endpoint composes the shared pagination.Params + pagination.Cursor + pagination.Page[T] envelope rather than reimplementing limit/cursor/sort/filter parsing. ParseParams(url.Values, ParseOptions) parses ?limit= ?cursor= ?sort= ?direction= ?filter.<k>= with stable apierr.InvalidInput (E_INVALID_INPUT) violations whose Reason text NEVER echoes the submitted value (only classification + accepted range — protects against reflection-style content channels), accumulates multiple violations into one envelope, enforces the package MaxLimit=200 ceiling even when an endpoint misconfigures its own, and rejects a cursor whose embedded Sort/Direction disagrees with the request as a stable 400 "fetch the first page again" instead of silently serving overlapping pages. Cursor is base64url-encoded JSON {v: "yalla.cursor.v1", p: Position, s: Sort, d: Direction} — opaque to clients, deterministic (same input -> same encoding so HTTP fixtures diff byte-for-byte), URL-safe (RawURLEncoding, no '+/='), and DOES NOT carry an organization_id / tenant / principal field by contract (a TestDecodeCursorTenantIsolationCannotBeBypassed test guards this so adding one is impossible without breaking the suite — tenant isolation stays the persistence layer's responsibility, cursor only encodes a within-set position). Page[T any] is the wire shape: Items always non-nil (BuildPage guarantees []T{} for empty), NextCursor omitempty (empty string == end of stream — agents do NOT compare len(Items) to limit), TotalEstimate *int64 omitempty (nil = "not cheap to compute", endpoints must NOT fabricate a value). BuildPage uses the over-fetch strategy: store fetches Limit+1 rows, BuildPage trims to Limit and encodes next_cursor from the last retained row's position via a PositionFunc[T] adapter. Cursor stability under inserts is proven end-to-end by TestCursorIsStableUnderInserts: seed N rows, page once, insert NEWER rows after the cursor boundary, prove page 2 still returns exactly the remaining originals (no duplicates, no skips, no newly-inserted rows leaking onto page 2 because the cursor is a strict upper bound on (sort_key DESC, id DESC)). Future list endpoints replace their bespoke parseXxxLimit / list payload struct with one ParseParams call + a BuildPage projection — the existing GET /v1/organizations/{org_id}/audit-events (BE-0103) and break_glass list are pre-pagination-contract and should migrate in their own stories.
 
 ## 2026-05-15 - BE-0103
 - What was implemented: GET /v1/organizations/{org_id}/audit-events, the
@@ -14246,4 +14247,179 @@
     two layers cannot drift; expose the closed set as exported
     constants (ServiceKindApplication / Database / Compose) so the
     HTTP DTO docs and policy-matrix tests share one source of truth.
+---
+## 2026-05-16 - BE-0037
+- What was implemented: the canonical pagination contract every customer-facing
+  list endpoint will compose — limit/cursor/sort/filter parsing with stable
+  apierr.InvalidInput violations, an opaque base64url cursor with a stable
+  internal schema, and the Page[T] envelope (items + next_cursor +
+  total_estimate) that goes inside the existing yalla.output.v1 success
+  envelope.
+  - internal/controlplane/pagination/pagination.go (new): package doc, the
+    DefaultLimit=50 / MaxLimit=200 / MinLimit=1 constants, the SortDirection
+    enum (asc/desc with IsValid()), the ParseOptions struct that an endpoint
+    constructs once at handler construction time (DefaultLimit, MaxLimit,
+    DefaultSort, DefaultDirection, SortAllowList, FilterAllowList), and
+    ParseParams(url.Values, ParseOptions) (Params, error). ParseParams
+    accumulates every violation into a single apierr.InvalidInput envelope
+    (e.g. limit=0 + direction=sideways returns ONE 400 with two field
+    violations, not a partial result), enforces the package MaxLimit ceiling
+    even when an endpoint misconfigures its own (effectiveMaxLimit clamps),
+    and the violation Reason text NEVER echoes the submitted value — only
+    classification + accepted range — so a caller cannot reflect arbitrary
+    content into the error message. Filter parsing strips the "filter."
+    prefix, rejects unknown keys + empty/whitespace values, and trims valid
+    values.
+  - internal/controlplane/pagination/cursor.go (new): Cursor struct
+    (Position + Sort + Direction), IsZero(), and EncodeCursor/DecodeCursor.
+    Wire format: base64url-encoded JSON {v: "yalla.cursor.v1", p, s, d} —
+    cursorSchemaVersion sentinel guards against fuzzed-base64 admit attacks
+    and reserves a future cursor schema bump. EncodeCursor is deterministic
+    (same input -> same encoding so HTTP fixtures diff byte-for-byte) and
+    URL-safe (RawURLEncoding, no '+/=' so it does not need percent-encoding).
+    DecodeCursor accepts both padded and unpadded base64 (some log pipelines
+    add padding); empty input resolves to the zero cursor with no error so
+    handlers branch uniformly on Cursor.IsZero. Every failure mode (invalid
+    base64, invalid JSON, unknown schema_version, empty Position, malformed
+    direction) collapses to a single errMalformedCursor sentinel —
+    DecodeCursor never returns a typed code, ParseParams wraps it as a
+    stable FieldViolation on the "cursor" field, so the wire contract
+    survives a future cursor-internal change.
+  - internal/controlplane/pagination/page.go (new): the Page[T any] generic
+    envelope (Items []T json:"items" — always non-nil per BuildPage,
+    NextCursor string json:"next_cursor,omitempty" — empty means end of
+    stream, TotalEstimate *int64 json:"total_estimate,omitempty" — pointer
+    so absent (nil/omitted) is distinguishable from zero rows on endpoints
+    that do not compute it cheaply). BuildPage[T any](rows, limit,
+    position, totalEstimate) implements the over-fetch trim: the store
+    fetches Limit+1 rows, BuildPage retains Limit and encodes next_cursor
+    from the last retained row's Position via a PositionFunc[T] adapter.
+    BuildPage never returns nil Items and tolerates a misconfigured
+    limit<MinLimit by clamping (does not panic).
+  - internal/controlplane/pagination/pagination_test.go (new): 17 tests
+    covering ParseParams defaults, endpoint-provided overrides,
+    MaxLimit-ceiling clamping (an endpoint that asks for MaxLimit*2 still
+    only gets MaxLimit), four bad-?limit= classifications (non-numeric,
+    zero, negative, too-large) each asserted to NOT echo the submitted
+    value, unknown-sort rejection, allow-listed-sort acceptance, bad-
+    direction rejection, unknown-filter-key rejection, empty-filter-value
+    rejection, allow-listed-filter trimming, malformed-cursor rejection,
+    cursor sort-mismatch rejection, cursor direction-mismatch rejection,
+    multi-violation accumulation, valid-cursor acceptance, the
+    SortDirection enum validator, and the effectiveDefaultLimit clamping
+    table.
+  - internal/controlplane/pagination/cursor_test.go (new): 12 tests
+    covering IsZero, EncodeCursor/DecodeCursor round trip, empty-cursor
+    semantics, encode determinism over 16 iterations, URL-safety (no
+    "+/="), the opacity guarantee (the plaintext Position string does NOT
+    appear as a substring in the encoded form), malformed-base64
+    rejection, malformed-JSON rejection, unknown-schema-version
+    rejection, empty-Position rejection, malformed-direction rejection,
+    both-padding-forms decode, AND the load-bearing tenant-isolation
+    contract guard: TestDecodeCursorTenantIsolationCannotBeBypassed
+    decodes a synthetic cursor payload into a generic map and asserts
+    NONE of {organization_id, org_id, tenant, tenant_id, principal,
+    principal_id} are keys — adding one is now impossible without
+    breaking the suite, which freezes the contract "cursor never carries
+    a tenant identifier; tenant isolation is the persistence layer's
+    responsibility".
+  - internal/controlplane/pagination/page_test.go (new): 9 tests covering
+    BuildPage's never-nil Items invariant, under-limit retention, over-
+    fetch trim + next_cursor encoding, TotalEstimate forwarding, zero-
+    limit non-panic, full-set traversal without duplicates across many
+    pages (a 10-row / pageSize=3 paging-end-to-end test asserts every
+    row appears exactly once across all pages and the final page has
+    NextCursor==""), cursor stability under concurrent inserts
+    (TestCursorIsStableUnderInserts: seed 6 rows, page once, insert
+    "r10" and "r11" with larger createdAt AFTER page 1 was served, page
+    2 returns exactly the 3 remaining originals — no duplicates, no
+    skips, the newly-inserted rows do NOT leak onto page 2 because the
+    cursor is a strict upper bound on the (sort_key DESC, id DESC)
+    composite key), tenant isolation under cursor paging
+    (TestCursorTenantIsolation: two organizations seeded with identical
+    row ids, paging org_a end to end never observes an org_b row, AND a
+    cursor produced from org_a paged against the store as org_b only
+    yields org_b's rows — the cursor only encodes a position, the
+    store layer's organization_id filter is authoritative), and a
+    tampered-cursor rejection through ParseParams.
+- Files changed:
+  - internal/controlplane/pagination/pagination.go (new)
+  - internal/controlplane/pagination/cursor.go (new)
+  - internal/controlplane/pagination/page.go (new)
+  - internal/controlplane/pagination/pagination_test.go (new)
+  - internal/controlplane/pagination/cursor_test.go (new)
+  - internal/controlplane/pagination/page_test.go (new)
+  - ralph/prd.json (BE-0037 passes=true)
+  - ralph/progress.txt (this entry + a new Codebase Patterns line)
+- Verification run:
+  - gofmt -w .                               -> clean
+  - goimports -w .                           -> not installed (documented)
+  - go mod tidy                              -> no diff
+  - go vet ./...                             -> clean
+  - go test ./...                            -> all packages pass
+  - go test -race ./...                      -> all packages pass; the
+    new pagination package runs clean under -race (1.420s)
+  - golangci-lint / staticcheck / govulncheck-> not installed locally
+- Results: BE-0037 acceptance criteria delivered. List endpoints can
+  now compose a single contract for limit/cursor/sort/filter without
+  reimplementing it per endpoint. The Page[T] envelope sits INSIDE the
+  existing yalla.output.v1 success envelope, so wiring is additive: a
+  list handler renders pagination.BuildPage(...) as the data block of
+  apienvelope.WriteData. Stable JSON field names (items, next_cursor,
+  total_estimate) are now the public wire contract for every future
+  list endpoint.
+- Remaining risks or follow-ups:
+  - Existing list endpoints (GET /v1/organizations/{org_id}/audit-events
+    in BE-0103, break_glass list, the projects/environments/services
+    list endpoints) predate this contract and still use bespoke
+    parseXxxLimit helpers and a one-off "events: [...]" payload shape.
+    Each is a separate migration story; BE-0037 is intentionally
+    additive (no behavior change to those endpoints).
+  - No store-layer cursor decoder helper yet — endpoints today should
+    treat cursor.Position as the row id of the last returned row, but
+    a future story can add a typed pagination/store helper for the
+    canonical "ORDER BY (sort_key, id) DESC, WHERE (sort_key, id) <
+    (cursor_sort, cursor_id) LIMIT ?+1" query template once two
+    endpoints have adopted the contract.
+  - The cursor schema_version sentinel ("yalla.cursor.v1") reserves a
+    future bump; document the migration plan when one is needed (a
+    bumped cursor must reject every old cursor as a stable 400
+    "fetch the first page again", not silently mis-order pages).
+- Learnings for future iterations:
+  - Pattern: foundational contract package (no net/http import, no
+    store import, no resource-specific type) — composes cleanly into
+    every list endpoint without locking the package into one shape.
+    Future contract stories (idempotency-key contract, ETag contract,
+    request-ID contract) should follow the same shape: a small typed
+    package under internal/controlplane/<name> that handlers compose,
+    plus the package's own test suite that proves the contract
+    standalone before any endpoint adopts it.
+  - Gotcha: ctx_execute sandbox rejects /Users/juribadev/projects/poc/yalla
+    as a "system temp root" and ignores go.mod, so go vet/test must
+    run through the Bash tool, not the sandbox. Documented for future
+    iterations.
+  - Generics + Go 1.21+ builtin min: the standard library now exposes
+    a builtin min; defining a local helper shadows it and is
+    unnecessary. Use the builtin directly. (Caught and removed during
+    implementation.)
+  - The opacity test (TestEncodeCursorIsOpaque) does NOT prove
+    cryptographic opacity — base64url is reversible — but it pins the
+    contract that an agent cannot recover the plaintext position
+    with a naive substring check. The TENANT-ISOLATION guarantee is
+    structural (no tenant id in the payload), not cryptographic.
+    Documented in cursor_test.go so a future change cannot blur the
+    distinction.
+  - Accumulating field violations is a real ergonomic win for agents:
+    one POST with a bad limit AND a bad direction returns BOTH
+    violations in one envelope, not a partial result that the agent
+    has to re-submit twice. apierr.InvalidInput sorts the violations
+    deterministically so the error message stays diff-stable across
+    runs.
+  - The cursor stability test (TestCursorIsStableUnderInserts) is the
+    contract guarantee an AI agent depends on: "if I page through a
+    list, an insert by another caller does not duplicate or skip a
+    row I have already seen". The test models a fake in-memory store
+    with the same ORDER BY composite key the production stores will
+    use (created_at DESC, id DESC), so the contract is proven against
+    the same shape repositories will adopt.
 ---
