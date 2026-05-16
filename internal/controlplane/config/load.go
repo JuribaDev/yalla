@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -147,23 +148,30 @@ func Load(lookup LookupFunc) (*Config, error) {
 		return nil, err
 	}
 
+	backupMaxAge, err := resolveBackupMaxAge(lookup)
+	if err != nil {
+		return nil, err
+	}
+
 	rateLimit, err := resolveRateLimit(lookup, defaults.rateLimit)
 	if err != nil {
 		return nil, err
 	}
 
 	cfg := &Config{
-		Profile:         profile,
-		APIAddr:         valueOr(lookup, EnvAPIAddr, defaults.apiAddr),
-		PublicURL:       valueOr(lookup, EnvPublicURL, defaults.publicURL),
-		DatabaseURL:     valueOr(lookup, EnvDatabaseURL, ""),
-		SigningKeys:     splitList(valueOr(lookup, EnvSigningKeys, "")),
-		DokployBaseURL:  valueOr(lookup, EnvDokployBaseURL, ""),
-		DokployToken:    valueOr(lookup, EnvDokployToken, ""),
-		ShutdownTimeout: shutdownTimeout,
-		LogLevel:        logLevel,
-		FeatureFlags:    flags,
-		RateLimit:       rateLimit,
+		Profile:          profile,
+		APIAddr:          valueOr(lookup, EnvAPIAddr, defaults.apiAddr),
+		PublicURL:        valueOr(lookup, EnvPublicURL, defaults.publicURL),
+		DatabaseURL:      valueOr(lookup, EnvDatabaseURL, ""),
+		SigningKeys:      splitList(valueOr(lookup, EnvSigningKeys, "")),
+		DokployBaseURL:   valueOr(lookup, EnvDokployBaseURL, ""),
+		DokployToken:     valueOr(lookup, EnvDokployToken, ""),
+		ShutdownTimeout:  shutdownTimeout,
+		BackupStatusFile: strings.TrimSpace(valueOr(lookup, EnvBackupStatusFile, "")),
+		BackupMaxAge:     backupMaxAge,
+		LogLevel:         logLevel,
+		FeatureFlags:     flags,
+		RateLimit:        rateLimit,
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -222,6 +230,18 @@ func (c *Config) Validate() error {
 		return yerr.Newf(yerr.CodeConfig,
 			"%s %s is out of range (want between %s and %s)",
 			EnvShutdownTimeout, c.ShutdownTimeout, minShutdownTimeout, maxShutdownTimeout)
+	}
+
+	if c.BackupStatusFile != "" {
+		if !filepath.IsAbs(c.BackupStatusFile) {
+			return yerr.Newf(yerr.CodeConfig,
+				"%s must be an absolute path", EnvBackupStatusFile)
+		}
+	}
+	if c.BackupMaxAge < 0 {
+		return yerr.Newf(yerr.CodeConfig,
+			"%s must be a non-negative duration (zero disables the freshness check)",
+			EnvBackupMaxAge)
 	}
 
 	if c.Profile.IsStrict() {
@@ -299,6 +319,26 @@ func resolveLogLevel(lookup LookupFunc, fallback slog.Level) (slog.Level, error)
 		return 0, yerr.Newf(yerr.CodeConfig,
 			"invalid %s %q (want debug, info, warn, or error)", EnvLogLevel, raw)
 	}
+}
+
+// resolveBackupMaxAge parses YALLA_BACKUP_MAX_AGE as a Go duration. An unset
+// or empty value yields zero, which Validate accepts (zero disables the
+// freshness predicate the /healthz/backup probe reports). Negative
+// durations are rejected here so the caller sees the offending input
+// rather than discovering the violation in Validate.
+func resolveBackupMaxAge(lookup LookupFunc) (time.Duration, error) {
+	raw, ok := lookup(EnvBackupMaxAge)
+	raw = strings.TrimSpace(raw)
+	if !ok || raw == "" {
+		return 0, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, yerr.Newf(yerr.CodeConfig,
+			"invalid %s %q (want a Go duration such as 26h)",
+			EnvBackupMaxAge, raw)
+	}
+	return d, nil
 }
 
 // resolveShutdownTimeout parses YALLA_SHUTDOWN_TIMEOUT as a Go duration,

@@ -47,7 +47,7 @@ type cloneEnvironmentSuccessEnvelope struct {
 // for action environment.create.
 func cloneEnvironmentHandlerFor(id auth.Identity, authErr error, cloner EnvironmentCloner) http.Handler {
 	a := fakeAuthenticator{identity: id, err: authErr}
-	return NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, a, policy.NewEngine(),
+	return NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, nil, a, policy.NewEngine(),
 		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
 		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
 		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{},
@@ -268,7 +268,7 @@ func TestCloneEnvironmentMissingClonerIsInternalError(t *testing.T) {
 	t.Parallel()
 
 	a := fakeAuthenticator{identity: auth.Identity{Principal: orgPrincipal("usr_acme_owner", "org_acme", policy.RoleOwner), Method: auth.MethodSession}}
-	handler := NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, a, policy.NewEngine(),
+	handler := NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, nil, a, policy.NewEngine(),
 		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
 		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
 		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{},
@@ -309,7 +309,7 @@ func TestCloneEnvironmentUnauthenticatedReturns401(t *testing.T) {
 func TestCloneEnvironmentOpenAPIRouteIsRegistered(t *testing.T) {
 	t.Parallel()
 
-	table := newRouteTable(runtime.BuildInfo{Version: "1.0.0"}, nil, nil,
+	table := newRouteTable(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, nil,
 		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
 		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
 		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{},

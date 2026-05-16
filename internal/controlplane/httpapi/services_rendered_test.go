@@ -352,7 +352,7 @@ func TestGetServiceRenderedUnauthenticated(t *testing.T) {
 func TestGetServiceRenderedNoReaderConfigured(t *testing.T) {
 	t.Parallel()
 
-	handler := NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, authForSvcGet{}, policy.NewEngine(),
+	handler := NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, nil, authForSvcGet{}, policy.NewEngine(),
 		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
 		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
 		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{},
@@ -404,7 +404,7 @@ func TestGetServiceRenderedLabelsCarryNoSecrets(t *testing.T) {
 	// is fixed to canonicalServiceForGet's tenant, and this test wants
 	// a tenant that matches the seeded service's own org.
 	a := fakeAuthenticator{identity: authIdentity}
-	handler := NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, a, policy.NewEngine(),
+	handler := NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, nil, a, policy.NewEngine(),
 		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
 		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
 		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{},

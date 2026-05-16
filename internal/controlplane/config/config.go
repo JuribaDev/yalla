@@ -66,6 +66,19 @@ const (
 	// in-flight HTTP requests and release in-flight job leases during a
 	// graceful shutdown. Accepts any Go duration string (e.g. "15s", "1m").
 	EnvShutdownTimeout = "YALLA_SHUTDOWN_TIMEOUT"
+	// EnvBackupStatusFile is the absolute path of the file the operator's
+	// backup pipeline writes its last-success RFC3339 timestamp to. When
+	// set, the unauthenticated GET /healthz/backup probe reports the
+	// timestamp; when empty the probe reports "unconfigured". The file
+	// content is never logged, so an accidentally misconfigured pipeline
+	// that writes a secret instead of a timestamp cannot leak it through
+	// Yalla.
+	EnvBackupStatusFile = "YALLA_BACKUP_STATUS_FILE"
+	// EnvBackupMaxAge is the freshness threshold the GET /healthz/backup
+	// probe reports as max_age_seconds. A backup older than this is
+	// rendered as fresh=false. Accepts any Go duration string
+	// (e.g. "26h"); zero or unset disables the freshness predicate.
+	EnvBackupMaxAge = "YALLA_BACKUP_MAX_AGE"
 	// EnvLogLevel sets the structured log level: debug, info, warn, error.
 	EnvLogLevel = "YALLA_LOG_LEVEL"
 	// EnvFeatureFlags is a comma-separated list of feature flags. Each entry
@@ -172,6 +185,15 @@ type Config struct {
 	// accepting connections and drains in-flight requests within this
 	// window, and the worker releases in-flight job leases within it.
 	ShutdownTimeout time.Duration
+	// BackupStatusFile is the absolute path of the file the operator's
+	// backup pipeline writes its last-success RFC3339 timestamp to. An
+	// empty value disables the GET /healthz/backup probe — the endpoint
+	// still serves, but reports "unconfigured".
+	BackupStatusFile string
+	// BackupMaxAge is the freshness threshold reported through the GET
+	// /healthz/backup probe. Zero disables the freshness predicate; the
+	// endpoint still reports the age, but makes no claim about it.
+	BackupMaxAge time.Duration
 	// LogLevel is the resolved structured log level.
 	LogLevel slog.Level
 	// FeatureFlags maps flag names to their enabled state.
@@ -260,6 +282,8 @@ type RedactedConfig struct {
 	DokployBaseURL        string          `json:"dokploy_base_url"`
 	DokployToken          string          `json:"dokploy_token"`
 	ShutdownTimeout       string          `json:"shutdown_timeout"`
+	BackupStatusFile      string          `json:"backup_status_file"`
+	BackupMaxAge          string          `json:"backup_max_age"`
 	LogLevel              string          `json:"log_level"`
 	FeatureFlags          map[string]bool `json:"feature_flags"`
 	RateLimitEnabled      bool            `json:"rate_limit_enabled"`
@@ -292,6 +316,8 @@ func (c *Config) Redacted() RedactedConfig {
 		DokployBaseURL:        c.DokployBaseURL,
 		DokployToken:          redact(c.DokployToken),
 		ShutdownTimeout:       c.ShutdownTimeout.String(),
+		BackupStatusFile:      c.BackupStatusFile,
+		BackupMaxAge:          c.BackupMaxAge.String(),
 		LogLevel:              c.LogLevel.String(),
 		FeatureFlags:          flags,
 		RateLimitEnabled:      c.RateLimit.AnyEnabled(),
@@ -322,6 +348,8 @@ func (c *Config) LogValue() slog.Value {
 		slog.String("dokploy_base_url", r.DokployBaseURL),
 		slog.String("dokploy_token", r.DokployToken),
 		slog.String("shutdown_timeout", r.ShutdownTimeout),
+		slog.String("backup_status_file", r.BackupStatusFile),
+		slog.String("backup_max_age", r.BackupMaxAge),
 		slog.String("log_level", r.LogLevel),
 		slog.Bool("rate_limit_enabled", r.RateLimitEnabled),
 		slog.Group("feature_flags", anyAttrs(attrs)...),
@@ -351,8 +379,9 @@ func (c *Config) String() string {
 	}
 	sort.Strings(flags)
 	return fmt.Sprintf(
-		"config{profile:%s api_addr:%s public_url:%s database_url:%s signing_keys_configured:%d dokploy_base_url:%s dokploy_token:%s shutdown_timeout:%s log_level:%s rate_limit_enabled:%t feature_flags:[%s]}",
+		"config{profile:%s api_addr:%s public_url:%s database_url:%s signing_keys_configured:%d dokploy_base_url:%s dokploy_token:%s shutdown_timeout:%s backup_status_file:%s backup_max_age:%s log_level:%s rate_limit_enabled:%t feature_flags:[%s]}",
 		r.Profile, r.APIAddr, r.PublicURL, r.DatabaseURL, r.SigningKeysConfigured,
-		r.DokployBaseURL, r.DokployToken, r.ShutdownTimeout, r.LogLevel, r.RateLimitEnabled, strings.Join(flags, " "),
+		r.DokployBaseURL, r.DokployToken, r.ShutdownTimeout, r.BackupStatusFile, r.BackupMaxAge,
+		r.LogLevel, r.RateLimitEnabled, strings.Join(flags, " "),
 	)
 }

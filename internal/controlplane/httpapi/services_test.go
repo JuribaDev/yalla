@@ -98,7 +98,7 @@ func (authForSvcGet) Authenticate(_ context.Context, token string) (auth.Identit
 // fake; the test exercises only the GET-service vertical.
 func getServiceHandlerFor(t *testing.T, reader ServiceReader) http.Handler {
 	t.Helper()
-	return NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, authForSvcGet{}, policy.NewEngine(),
+	return NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, nil, authForSvcGet{}, policy.NewEngine(),
 		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
 		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
 		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{},
@@ -387,7 +387,7 @@ func TestGetServiceDoesNotLogBearerToken(t *testing.T) {
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logs, nil))
 	reader := fakeServiceReader{svc: canonicalServiceForGet}
-	handler := NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, authForSvcGet{}, policy.NewEngine(),
+	handler := NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, nil, authForSvcGet{}, policy.NewEngine(),
 		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
 		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
 		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{},
@@ -414,7 +414,7 @@ func TestGetServiceDoesNotLogBearerToken(t *testing.T) {
 func TestGetServiceOpenAPIRouteIsRegistered(t *testing.T) {
 	t.Parallel()
 
-	table := newRouteTable(runtime.BuildInfo{Version: "1.0.0"}, nil, nil,
+	table := newRouteTable(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, nil,
 		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
 		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
 		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{},

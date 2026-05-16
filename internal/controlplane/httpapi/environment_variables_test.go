@@ -115,7 +115,7 @@ type replaceEnvironmentVariablesSuccessEnvelope struct {
 // is wrapped in RequireAuth for action env.read.
 func listEnvironmentVariablesHandlerFor(id auth.Identity, authErr error, reader EnvironmentVariableReader) http.Handler {
 	a := fakeAuthenticator{identity: id, err: authErr}
-	return NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, a, policy.NewEngine(),
+	return NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, nil, a, policy.NewEngine(),
 		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
 		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
 		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{},
@@ -419,7 +419,7 @@ func TestListEnvironmentVariablesMissingReader(t *testing.T) {
 func TestListEnvironmentVariablesOpenAPIRouteIsRegistered(t *testing.T) {
 	t.Parallel()
 
-	table := newRouteTable(runtime.BuildInfo{Version: "1.0.0"}, nil, nil,
+	table := newRouteTable(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, nil,
 		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
 		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
 		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{},

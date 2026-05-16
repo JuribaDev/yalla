@@ -497,6 +497,123 @@ func TestRateLimitInvalidValuesAreRejected(t *testing.T) {
 	}
 }
 
+// TestBackupConfigDefaultsToUnconfigured proves a strict-profile config
+// without the optional YALLA_BACKUP_STATUS_FILE and YALLA_BACKUP_MAX_AGE
+// variables loads cleanly with empty backup state. The
+// GET /healthz/backup probe interprets the empty state as "unconfigured".
+func TestBackupConfigDefaultsToUnconfigured(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Load(MapLookup(strictEnv()))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.BackupStatusFile != "" {
+		t.Errorf("BackupStatusFile = %q, want empty (unconfigured)", cfg.BackupStatusFile)
+	}
+	if cfg.BackupMaxAge != 0 {
+		t.Errorf("BackupMaxAge = %v, want 0 (unconfigured)", cfg.BackupMaxAge)
+	}
+}
+
+func TestBackupConfigParsesAbsolutePathAndDuration(t *testing.T) {
+	t.Parallel()
+
+	env := strictEnv()
+	env[EnvBackupStatusFile] = "/var/lib/yalla/backup.status"
+	env[EnvBackupMaxAge] = "26h"
+
+	cfg, err := Load(MapLookup(env))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.BackupStatusFile != "/var/lib/yalla/backup.status" {
+		t.Errorf("BackupStatusFile = %q, want /var/lib/yalla/backup.status", cfg.BackupStatusFile)
+	}
+	if cfg.BackupMaxAge != 26*time.Hour {
+		t.Errorf("BackupMaxAge = %v, want 26h", cfg.BackupMaxAge)
+	}
+}
+
+func TestBackupConfigRejectsRelativePath(t *testing.T) {
+	t.Parallel()
+
+	env := strictEnv()
+	env[EnvBackupStatusFile] = "var/lib/yalla/backup.status" // relative
+
+	_, err := Load(MapLookup(env))
+	if err == nil {
+		t.Fatal("Load returned nil error for relative backup status path")
+	}
+	var ye *yerr.Error
+	if !stderrors.As(err, &ye) || ye.Code != yerr.CodeConfig {
+		t.Errorf("error code = %v, want CodeConfig", err)
+	}
+}
+
+func TestBackupConfigRejectsMalformedDuration(t *testing.T) {
+	t.Parallel()
+
+	env := strictEnv()
+	env[EnvBackupMaxAge] = "tomorrow"
+
+	_, err := Load(MapLookup(env))
+	if err == nil {
+		t.Fatal("Load returned nil error for malformed YALLA_BACKUP_MAX_AGE")
+	}
+	var ye *yerr.Error
+	if !stderrors.As(err, &ye) || ye.Code != yerr.CodeConfig {
+		t.Errorf("error code = %v, want CodeConfig", err)
+	}
+}
+
+func TestBackupConfigRejectsNegativeDuration(t *testing.T) {
+	t.Parallel()
+
+	env := strictEnv()
+	env[EnvBackupMaxAge] = "-1h"
+
+	_, err := Load(MapLookup(env))
+	if err == nil {
+		t.Fatal("Load returned nil error for negative YALLA_BACKUP_MAX_AGE")
+	}
+	var ye *yerr.Error
+	if !stderrors.As(err, &ye) || ye.Code != yerr.CodeConfig {
+		t.Errorf("error code = %v, want CodeConfig", err)
+	}
+}
+
+func TestBackupRedactedConfigSurfacesNonSecretFields(t *testing.T) {
+	t.Parallel()
+
+	env := strictEnv()
+	env[EnvBackupStatusFile] = "/var/lib/yalla/backup.status"
+	env[EnvBackupMaxAge] = "26h"
+
+	cfg, err := Load(MapLookup(env))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	r := cfg.Redacted()
+	if r.BackupStatusFile != "/var/lib/yalla/backup.status" {
+		t.Errorf("BackupStatusFile = %q, want /var/lib/yalla/backup.status (a non-secret operational path)",
+			r.BackupStatusFile)
+	}
+	if r.BackupMaxAge != "26h0m0s" {
+		t.Errorf("BackupMaxAge = %q, want 26h0m0s", r.BackupMaxAge)
+	}
+
+	var buf bytes.Buffer
+	slog.New(slog.NewJSONHandler(&buf, nil)).Info("snapshot", slog.Any("config", cfg))
+	if !strings.Contains(buf.String(), "backup_status_file") {
+		t.Errorf("LogValue snapshot missing backup_status_file: %s", buf.String())
+	}
+	if !strings.Contains(buf.String(), "backup_max_age") {
+		t.Errorf("LogValue snapshot missing backup_max_age: %s", buf.String())
+	}
+}
+
 // TestRateLimitRedactedConfigSurfacesEnabledFlag proves the redacted
 // projection (the log-safe view) exposes the enabled bit. Operators
 // should be able to see at a glance whether the limiter is on without

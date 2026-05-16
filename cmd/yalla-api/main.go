@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/auth"
+	"github.com/JuribaDev/yalla/internal/controlplane/backup"
 	"github.com/JuribaDev/yalla/internal/controlplane/config"
 	"github.com/JuribaDev/yalla/internal/controlplane/httpapi"
 	"github.com/JuribaDev/yalla/internal/controlplane/policy"
@@ -327,6 +328,31 @@ func main() {
 	// goroutine populates it once the migration check lands.
 	meta := runtime.NewMeta()
 
+	// Backup health reporter drives /healthz/backup. When the operator wires
+	// YALLA_BACKUP_STATUS_FILE, we read it on demand and surface the
+	// timestamp; when it is empty (the default for local/test profiles and
+	// for any operator who has not opted in) we install the Unconfigured
+	// reporter so the probe still serves with configured=false. The reporter
+	// never writes the file — the operator's backup pipeline owns that.
+	var backupReporter backup.Reporter
+	if cfg.BackupStatusFile != "" {
+		fileReporter, err := backup.NewFileReporter(cfg.BackupStatusFile, cfg.BackupMaxAge, nil)
+		if err != nil {
+			// CodeConfig errors from the backup constructor name the field
+			// but never echo a secret. Surface them at startup so a typo in
+			// the env variable is loud and recoverable rather than silently
+			// degrading the probe.
+			logger.Error("failed to initialize the backup health reporter", "error", err.Error())
+			os.Exit(1)
+		}
+		backupReporter = fileReporter
+		logger.Info("backup health reporter wired",
+			"path", cfg.BackupStatusFile,
+			"max_age", cfg.BackupMaxAge.String())
+	} else {
+		backupReporter = backup.Unconfigured()
+	}
+
 	// The rate limiter is wired inside the HTTP authorization middleware
 	// so the resolved principal (org id, API key id, auth method) is on
 	// the request context when the gate decides. A disabled or zero
@@ -345,7 +371,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              cfg.APIAddr,
-		Handler:           httpapi.NewHandler(build, readiness, meta, authenticator, engine, organizations, organizationService, organizationService, organizationService, members, membershipService, membershipService, membershipService, limits, limitsService, usage, auditEvents, orgVariables, orgVariableService, orgVariableService, orgVariableService, apiKeys, apiKeyService, apiKeyService, apiKeyService, apiKeyService, projects, projectService, projectService, projectService, projectService, projectGrants, projectGrantService, projectVariables, projectVariableService, projectEnvironments, environmentService, projectEnvironments, environmentService, environmentService, environmentService, environmentGrants, environmentGrantService, environmentVariables, environmentVariableService, environmentServices, serviceService, environmentServices, serviceService, serviceService, serviceService, serviceService, serviceService, serviceService, serviceVariables, serviceVariableService, deploymentService, deploymentReader, deploymentReader, deploymentService, deploymentService, breakGlassService, logger, httpRateLimiter),
+		Handler:           httpapi.NewHandler(build, readiness, meta, backupReporter, authenticator, engine, organizations, organizationService, organizationService, organizationService, members, membershipService, membershipService, membershipService, limits, limitsService, usage, auditEvents, orgVariables, orgVariableService, orgVariableService, orgVariableService, apiKeys, apiKeyService, apiKeyService, apiKeyService, apiKeyService, projects, projectService, projectService, projectService, projectService, projectGrants, projectGrantService, projectVariables, projectVariableService, projectEnvironments, environmentService, projectEnvironments, environmentService, environmentService, environmentService, environmentGrants, environmentGrantService, environmentVariables, environmentVariableService, environmentServices, serviceService, environmentServices, serviceService, serviceService, serviceService, serviceService, serviceService, serviceService, serviceVariables, serviceVariableService, deploymentService, deploymentReader, deploymentReader, deploymentService, deploymentService, breakGlassService, logger, httpRateLimiter),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

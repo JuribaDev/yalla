@@ -1,11 +1,13 @@
 package httpapi
 
 import (
+	"errors"
 	"net/http"
 	"sort"
 	"strings"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apienvelope"
+	"github.com/JuribaDev/yalla/internal/controlplane/backup"
 	"github.com/JuribaDev/yalla/internal/controlplane/openapi"
 	"github.com/JuribaDev/yalla/internal/controlplane/policy"
 	"github.com/JuribaDev/yalla/internal/controlplane/runtime"
@@ -76,6 +78,35 @@ type versionPayload struct {
 	MigrationVersion string `json:"migration_version"`
 }
 
+// backupHealthPayload is the data block of the GET /healthz/backup success
+// envelope. The endpoint is unauthenticated (operators and probes consume
+// it) and never reveals tenant data — only the operational backup
+// timestamp the operator's external pipeline wrote to the configured
+// status file.
+//
+// Field semantics:
+//   - Configured is true when an operator has wired YALLA_BACKUP_STATUS_FILE.
+//     When false, every remaining field is omitted and the operator sees an
+//     explicit "no backup integration is wired on this process" answer.
+//   - Fresh reports whether the most recent backup landed within the
+//     YALLA_BACKUP_MAX_AGE window. A zero MaxAge disables the predicate and
+//     Fresh is always true so operators can deploy the probe before
+//     committing to a threshold without flapping.
+//   - LastSuccessAt is the RFC3339 timestamp the operator's pipeline wrote
+//     to the status file. It is omitted when no successful backup has been
+//     recorded yet (a freshly provisioned environment).
+//   - AgeSeconds and MaxAgeSeconds project the durations as integers so
+//     scripts and Prometheus exporters do not have to parse Go's duration
+//     string format. Both are omitted when LastSuccessAt is omitted.
+type backupHealthPayload struct {
+	Configured    bool   `json:"configured"`
+	Fresh         bool   `json:"fresh"`
+	LastSuccessAt string `json:"last_success_at,omitempty"`
+	AgeSeconds    *int64 `json:"age_seconds,omitempty"`
+	MaxAgeSeconds *int64 `json:"max_age_seconds,omitempty"`
+	Detail        string `json:"detail,omitempty"`
+}
+
 // newRouteTable returns every API route paired with its OpenAPI metadata. The
 // /openapi.json route is intentionally absent — its handler is built from the
 // document these routes describe, so openAPIDocument folds it back in (see
@@ -143,7 +174,7 @@ type versionPayload struct {
 // table's metadata; a request that actually reaches a handler with a
 // nil dependency is reported as a typed internal error rather than a
 // misleading empty list or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter, environmentCloner EnvironmentCloner, environmentGrants EnvironmentGrantReader, environmentGrantReplacer EnvironmentGrantReplacer, environmentVariables EnvironmentVariableReader, environmentVariableReplacer EnvironmentVariableReplacer, environmentServices EnvironmentServiceReader, environmentServiceCreator EnvironmentServiceCreator, services ServiceReader, serviceUpdater ServiceUpdater, serviceDeleter ServiceDeleter, serviceRestorer ServiceRestorer, serviceRestarter ServiceRestarter, serviceStarter ServiceStarter, serviceStopper ServiceStopper, serviceVariables ServiceVariableReader, serviceVariableReplacer ServiceVariableReplacer, deploymentCreator DeploymentCreator, deploymentLister DeploymentLister, deploymentGetter DeploymentGetter, deploymentCanceler DeploymentCanceler, deploymentRollbacker DeploymentRollbacker, breakGlass BreakGlassController) []apiRoute {
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, backupReporter backup.Reporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter, environmentCloner EnvironmentCloner, environmentGrants EnvironmentGrantReader, environmentGrantReplacer EnvironmentGrantReplacer, environmentVariables EnvironmentVariableReader, environmentVariableReplacer EnvironmentVariableReplacer, environmentServices EnvironmentServiceReader, environmentServiceCreator EnvironmentServiceCreator, services ServiceReader, serviceUpdater ServiceUpdater, serviceDeleter ServiceDeleter, serviceRestorer ServiceRestorer, serviceRestarter ServiceRestarter, serviceStarter ServiceStarter, serviceStopper ServiceStopper, serviceVariables ServiceVariableReader, serviceVariableReplacer ServiceVariableReplacer, deploymentCreator DeploymentCreator, deploymentLister DeploymentLister, deploymentGetter DeploymentGetter, deploymentCanceler DeploymentCanceler, deploymentRollbacker DeploymentRollbacker, breakGlass BreakGlassController) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -174,6 +205,18 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 				SuccessDescription: "Every startup dependency check has passed; the data block reports each check.",
 			},
 			handler: readyzHandler(readiness),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodGet,
+				Path:               "/healthz/backup",
+				OperationID:        "getHealthzBackup",
+				Summary:            "Database backup health probe",
+				Description:        "Reports the timestamp of the most recent successful Yalla source-of-truth database backup, as written by the operator's backup pipeline to YALLA_BACKUP_STATUS_FILE. Returns 200 with configured=false when the integration is not wired on this process, 200 with the timestamp and freshness verdict when it is, and 503 with a yalla.error.v1 envelope when the status source is unreadable. Unauthenticated; never reveals tenant data.",
+				Tags:               []string{tagOperations},
+				SuccessDescription: "Backup status snapshot. Empty when configured=false; otherwise carries last_success_at (when a successful backup has been recorded) and the freshness verdict.",
+			},
+			handler: backupHealthHandler(backupReporter),
 		},
 		{
 			endpoint: openapi.Endpoint{
@@ -2138,6 +2181,89 @@ func readyzHandler(readiness runtime.ReadinessReporter) http.HandlerFunc {
 			yerr.New(yerr.CodeServer, "service is not ready").WithHint(hint))
 	}
 }
+
+// backupHealthHandler builds the GET /healthz/backup handler. The probe is
+// always served — a nil or unconfigured reporter renders a 200 envelope
+// with configured=false rather than a 404, so operators can deploy the
+// integration without changing the route table.
+//
+// Error path: a reporter that fails to read or parse its source returns a
+// non-sentinel error and the handler renders a 503 yalla.error.v1 envelope
+// (CodeUnavailable). The error message is the package-level redacted
+// string from internal/controlplane/backup — it names the configured path
+// but never echoes the file's content, so an accidentally-misconfigured
+// pipeline that wrote a secret to the status file cannot leak it through
+// the probe.
+//
+// Sentinel path: backup.ErrNoBackupRecorded (the file does not exist yet
+// because the first backup has not landed) renders a 200 envelope with
+// configured=true and the last_success_at field omitted — a freshly
+// provisioned environment is healthy, it just has no backup history yet.
+func backupHealthHandler(reporter backup.Reporter) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		if reporter == nil {
+			reporter = backup.Unconfigured()
+		}
+		status, err := reporter.Status(ctx)
+
+		// Sentinel: the source is wired but has no successful backup yet.
+		// Render 200 with a fresh=false verdict so a Prometheus alert wired
+		// to fresh==false fires immediately on a brand-new environment.
+		if errors.Is(err, backup.ErrNoBackupRecorded) {
+			payload := backupHealthPayload{
+				Configured: true,
+				// A configured-but-empty source is not fresh by definition.
+				// Operators expect their first backup; surface that here.
+				Fresh:  false,
+				Detail: "no successful backup recorded yet",
+			}
+			if status.MaxAge > 0 {
+				secs := int64(status.MaxAge.Seconds())
+				payload.MaxAgeSeconds = &secs
+			}
+			apienvelope.WriteData(w, http.StatusOK, requestID(r), payload)
+			return
+		}
+
+		if err != nil {
+			// Treat a context cancellation as a client-driven cancel; every
+			// other failure is a backend availability problem. The error's
+			// message is already redacted by the backup package — it names
+			// the path but never echoes the file's content.
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				apienvelope.WriteErrorStatus(w, 499, requestID(r),
+					yerr.New(yerr.CodeCanceled, "request canceled while reading backup status"))
+				return
+			}
+			apienvelope.WriteErrorStatus(w, http.StatusServiceUnavailable, requestID(r),
+				yerr.New(yerr.CodeUnavailable, "backup status is unavailable").
+					WithHint("the operator backup-status source is unreadable or malformed; check the pipeline that writes YALLA_BACKUP_STATUS_FILE"))
+			return
+		}
+
+		payload := backupHealthPayload{
+			Configured: status.Configured,
+			Fresh:      status.Fresh(),
+		}
+		if !status.LastSuccessAt.IsZero() {
+			payload.LastSuccessAt = status.LastSuccessAt.UTC().Format(rfc3339UTC)
+			age := int64(status.Age.Seconds())
+			payload.AgeSeconds = &age
+		}
+		if status.MaxAge > 0 {
+			secs := int64(status.MaxAge.Seconds())
+			payload.MaxAgeSeconds = &secs
+		}
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), payload)
+	}
+}
+
+// rfc3339UTC is the timestamp format the /healthz/backup probe emits. It is
+// time.RFC3339 with a Z suffix because Status.LastSuccessAt is forced to
+// UTC by the backup package, so the wire shape is stable across
+// deployment timezones.
+const rfc3339UTC = "2006-01-02T15:04:05Z"
 
 // pendingChecks returns the sorted names of every check that is not passing.
 // Check names are fixed, non-secret identifiers, so they are safe to surface

@@ -195,7 +195,7 @@ func (authForEnvGet) Authenticate(_ context.Context, token string) (auth.Identit
 // no-op fake; the test exercises only the GET-environment vertical.
 func getEnvironmentHandlerFor(t *testing.T, reader EnvironmentReader) http.Handler {
 	t.Helper()
-	return NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, authForEnvGet{}, policy.NewEngine(),
+	return NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, nil, authForEnvGet{}, policy.NewEngine(),
 		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
 		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
 		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{},
@@ -475,7 +475,7 @@ func TestGetEnvironmentDoesNotLogBearerToken(t *testing.T) {
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logs, nil))
 	reader := fakeEnvironmentReader{env: canonicalEnvForGet}
-	handler := NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, authForEnvGet{}, policy.NewEngine(),
+	handler := NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, nil, authForEnvGet{}, policy.NewEngine(),
 		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
 		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
 		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{},
@@ -508,7 +508,7 @@ func TestGetEnvironmentDoesNotLogBearerToken(t *testing.T) {
 func TestGetEnvironmentOpenAPIRouteIsRegistered(t *testing.T) {
 	t.Parallel()
 
-	table := newRouteTable(runtime.BuildInfo{Version: "1.0.0"}, nil, nil,
+	table := newRouteTable(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, nil,
 		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
 		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
 		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{},

@@ -57,7 +57,7 @@ type updateOrgVariablesSuccessEnvelope struct {
 // handler delegates to.
 func replaceOrgVariablesHandlerFor(id auth.Identity, authErr error, replacer OrganizationVariableReplacer) http.Handler {
 	a := fakeAuthenticator{identity: id, err: authErr}
-	return NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, a, policy.NewEngine(),
+	return NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, nil, a, policy.NewEngine(),
 		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
 		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
 		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{}, fakeOrgVariableReader{}, replacer, fakeOrgVariablePatcher{}, fakeOrgVariableDeleter{},
@@ -399,7 +399,7 @@ func TestReplaceOrgVariablesMissingReplacerIsTypedInternalError(t *testing.T) {
 	t.Parallel()
 	const orgID = "org_acme"
 	a := fakeAuthenticator{identity: orgVariableActorIdentity(orgID, "usr_ada")}
-	handler := NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, a, policy.NewEngine(),
+	handler := NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, nil, a, policy.NewEngine(),
 		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
 		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
 		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{}, fakeOrgVariableReader{}, nil, fakeOrgVariablePatcher{}, fakeOrgVariableDeleter{},
@@ -420,7 +420,7 @@ func TestReplaceOrgVariablesMissingReplacerIsTypedInternalError(t *testing.T) {
 func TestReplaceOrgVariablesRouteIsRegistered(t *testing.T) {
 	t.Parallel()
 	a := fakeAuthenticator{identity: orgVariableActorIdentity("org_acme", "usr_ada")}
-	handler := NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, a, policy.NewEngine(),
+	handler := NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, nil, a, policy.NewEngine(),
 		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
 		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
 		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{}, fakeOrgVariableReader{}, fakeOrgVariableReplacer{}, fakeOrgVariablePatcher{}, fakeOrgVariableDeleter{},
