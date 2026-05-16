@@ -7364,8 +7364,8 @@
       ],
       "type": "variables",
       "priority": 1,
-      "passes": false,
-      "notes": "Variable scope: environment."
+      "passes": true,
+      "notes": "Variable scope: environment. Encryption-at-rest seam landed (mirrors BE-0339 organization + BE-0340 project). Migration 0031 adds secret_provider/secret_key_id/secret_ciphertext columns + consistency CHECK + key-routing index. EnvironmentVariableService now requires a secrets.Provider and seals every is_secret=true item before Upsert. New integration suite environment_variable_secrets_at_rest_test.go pins Seal-at-rest, nonce rotation, demotion, CHECK schema drift, slog redaction, seal-failure surfaces Internal without plaintext leak. Wire surface, redaction, and audit counts-only contracts unchanged."
     },
     {
       "id": "BE-0342",

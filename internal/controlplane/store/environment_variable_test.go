@@ -22,18 +22,56 @@ import (
 // tenant's variables.
 
 // seedEnvironmentVariable inserts one environment_variables row through
-// the test pool. It builds the smallest column set the schema requires
-// (id, organization_id, environment_id, key, value, is_secret); the
+// the test pool. After migration 0031 the schema CHECK
+// environment_variables_secret_columns_consistent forbids an is_secret=true
+// row from carrying a non-empty plain `value` column — the secret bytes
+// must live behind (secret_provider, secret_key_id, secret_ciphertext)
+// instead. The helper plays the role of the plaintext provider: it
+// writes the supplied value into secret_ciphertext under the
+// "plaintext-v1"/"plaintext" wire identifiers when isSecret is true and
+// forces the plain `value` column to ” to satisfy the CHECK. The
 // bump_version and set_updated_at triggers from migrations 0011 / 0018
 // populate the rest.
 func seedEnvironmentVariable(t *testing.T, db *testutil.DB, id, organizationID, environmentID, key, value string, isSecret bool) {
 	t.Helper()
+	var (
+		plainValue string
+		provider   any
+		keyID      any
+		ciphertext any
+	)
+	if isSecret {
+		plainValue = ""
+		provider = "plaintext-v1"
+		keyID = "plaintext"
+		ciphertext = []byte(value)
+	} else {
+		plainValue = value
+		provider = nil
+		keyID = nil
+		ciphertext = nil
+	}
 	if _, err := db.Exec(context.Background(),
-		`INSERT INTO environment_variables (id, organization_id, environment_id, key, value, is_secret)
-		 VALUES ($1, $2, $3, $4, $5, $6)`,
-		id, organizationID, environmentID, key, value, isSecret); err != nil {
+		`INSERT INTO environment_variables (id, organization_id, environment_id, key, value, is_secret, secret_provider, secret_key_id, secret_ciphertext)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		id, organizationID, environmentID, key, plainValue, isSecret, provider, keyID, ciphertext); err != nil {
 		t.Fatalf("seed environment_variables: %v", err)
 	}
+}
+
+// revealEnvironmentVariableValue returns the plaintext payload of an
+// EnvironmentVariable. For non-secret rows the plain `value` column is
+// the literal; for secret rows the plaintext lives in
+// SecretCiphertext (the plaintext provider stores the bytes verbatim, so
+// returning them as a string round-trips a test fixture losslessly).
+// Pre-BE-0341 callers compared `got.Value` against the seeded literal
+// for secret rows; under the new encryption-at-rest invariant those
+// assertions must route through this helper.
+func revealEnvironmentVariableValue(v store.EnvironmentVariable) string {
+	if v.IsSecret {
+		return string(v.SecretCiphertext)
+	}
+	return v.Value
 }
 
 // TestEnvironmentVariableRepoListByEnvironmentReturnsDeterministicOrdering
@@ -86,8 +124,12 @@ func TestEnvironmentVariableRepoListByEnvironmentReturnsDeterministicOrdering(t 
 	// Value reaches the repository verbatim; redaction is the HTTP layer's
 	// job. Pin that contract here so a future regression that pre-redacts
 	// at persistence (which would break a round-trip write path) fails.
-	if got[0].Value != "postgres://user:hunter2@db.internal/yalla" {
-		t.Errorf("got[0].Value should round-trip the literal; got %q", got[0].Value)
+	// For a secret row the plaintext lives under SecretCiphertext after the
+	// BE-0341 encryption-at-rest seam landed; revealEnvironmentVariableValue
+	// returns the plaintext regardless of is_secret so the assertion stays
+	// shape-stable.
+	if revealEnvironmentVariableValue(got[0]) != "postgres://user:hunter2@db.internal/yalla" {
+		t.Errorf("got[0].Value should round-trip the literal; got %q", revealEnvironmentVariableValue(got[0]))
 	}
 }
 

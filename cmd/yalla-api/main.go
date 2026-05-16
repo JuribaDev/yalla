@@ -256,7 +256,7 @@ func main() {
 		logger.Error("failed to initialize the environment variable reader", "error", err.Error())
 		os.Exit(1)
 	}
-	environmentVariableService, err := store.NewEnvironmentVariableService(dataStore, store.NewEnvironmentRepository(), store.NewEnvironmentVariableRepository(), auditRepo)
+	environmentVariableService, err := store.NewEnvironmentVariableService(dataStore, store.NewEnvironmentRepository(), store.NewEnvironmentVariableRepository(), auditRepo, secretsProvider)
 	if err != nil {
 		logger.Error("failed to initialize the environment variable service", "error", err.Error())
 		os.Exit(1)
