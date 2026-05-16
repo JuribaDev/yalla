@@ -47,6 +47,39 @@ type Authenticator interface {
 	Authenticate(ctx context.Context, bearerToken string) (auth.Identity, error)
 }
 
+// authMethodCtxKey is an unexported key type so the auth.Method we attach
+// to the request context after authentication cannot collide with values
+// set by other packages. Downstream middleware (the rate-limit gate, in
+// particular) reads the method back so it can exempt internal-worker
+// callbacks without re-authenticating the request.
+type authMethodCtxKey struct{}
+
+// withAuthMethod returns a child context carrying the credential scheme
+// the request authenticated with. RequireAuth and RequireInternalWorker
+// both call it so every authenticated downstream handler can recover the
+// method without re-running the credential store.
+func withAuthMethod(ctx context.Context, method auth.Method) context.Context {
+	if method == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, authMethodCtxKey{}, method)
+}
+
+// AuthMethodFromContext returns the credential scheme the request
+// authenticated with, or ("", false) when no authenticator ran. It is the
+// only way downstream middleware can tell an internal-worker request from
+// a customer API-key or session request after auth has already resolved.
+func AuthMethodFromContext(ctx context.Context) (auth.Method, bool) {
+	if ctx == nil {
+		return "", false
+	}
+	m, ok := ctx.Value(authMethodCtxKey{}).(auth.Method)
+	if !ok || m == "" {
+		return "", false
+	}
+	return m, true
+}
+
 // ResourceResolver derives the policy.Resource an authenticated request acts
 // on from its path and query parameters. RequireAuth calls it after the
 // principal is resolved, so the authorization decision is made against the
@@ -82,8 +115,12 @@ func RequireAuth(a Authenticator, engine *policy.Engine, action policy.Action, r
 
 			// Attach the principal and enrich the request log record before
 			// the authorization decision, so a denied request is still
-			// attributable to its principal in the logs.
+			// attributable to its principal in the logs. The credential
+			// scheme rides along too so downstream middleware (the
+			// rate-limit gate in particular) can recognise an internal
+			// worker without re-running the credential store.
 			ctx := policy.WithPrincipal(r.Context(), id.Principal)
+			ctx = withAuthMethod(ctx, id.Method)
 			telemetry.SetOrgID(ctx, id.Principal.OrganizationID)
 			telemetry.SetPrincipalID(ctx, id.Principal.ID)
 			r = r.WithContext(ctx)
@@ -130,6 +167,7 @@ func RequireInternalWorker(a Authenticator) func(http.Handler) http.Handler {
 				return
 			}
 			ctx := policy.WithPrincipal(r.Context(), id.Principal)
+			ctx = withAuthMethod(ctx, id.Method)
 			telemetry.SetPrincipalID(ctx, id.Principal.ID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})

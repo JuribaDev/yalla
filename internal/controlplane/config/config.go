@@ -71,6 +71,43 @@ const (
 	// EnvFeatureFlags is a comma-separated list of feature flags. Each entry
 	// is either "name" (enabled) or "name=true" / "name=false".
 	EnvFeatureFlags = "YALLA_FEATURE_FLAGS"
+
+	// EnvRateLimitDisabled, when set to a truthy value ("1", "true", "yes",
+	// "on"), turns the inbound HTTP rate limiter off. The default is enabled.
+	// The flag exists for staging soak tests and local development where the
+	// extra layer would be noise; production processes leave it unset.
+	EnvRateLimitDisabled = "YALLA_RATE_LIMIT_DISABLED"
+	// EnvRateLimitOrgReadRPS sets the steady-state allowed read requests per
+	// second per organization. A non-positive value disables the read-side
+	// org bucket.
+	EnvRateLimitOrgReadRPS = "YALLA_RATE_LIMIT_ORG_READ_RPS"
+	// EnvRateLimitOrgReadBurst sets the org bucket's read burst capacity.
+	EnvRateLimitOrgReadBurst = "YALLA_RATE_LIMIT_ORG_READ_BURST"
+	// EnvRateLimitOrgWriteRPS sets the steady-state allowed mutating
+	// requests per second per organization (POST/PUT/PATCH/DELETE).
+	EnvRateLimitOrgWriteRPS = "YALLA_RATE_LIMIT_ORG_WRITE_RPS"
+	// EnvRateLimitOrgWriteBurst sets the org bucket's write burst capacity.
+	EnvRateLimitOrgWriteBurst = "YALLA_RATE_LIMIT_ORG_WRITE_BURST"
+	// EnvRateLimitKeyReadRPS sets the per-API-key read rate.
+	EnvRateLimitKeyReadRPS = "YALLA_RATE_LIMIT_KEY_READ_RPS"
+	// EnvRateLimitKeyReadBurst sets the per-API-key read burst.
+	EnvRateLimitKeyReadBurst = "YALLA_RATE_LIMIT_KEY_READ_BURST"
+	// EnvRateLimitKeyWriteRPS sets the per-API-key write rate.
+	EnvRateLimitKeyWriteRPS = "YALLA_RATE_LIMIT_KEY_WRITE_RPS"
+	// EnvRateLimitKeyWriteBurst sets the per-API-key write burst.
+	EnvRateLimitKeyWriteBurst = "YALLA_RATE_LIMIT_KEY_WRITE_BURST"
+	// EnvRateLimitIPReadRPS sets the per-IP read rate.
+	EnvRateLimitIPReadRPS = "YALLA_RATE_LIMIT_IP_READ_RPS"
+	// EnvRateLimitIPReadBurst sets the per-IP read burst.
+	EnvRateLimitIPReadBurst = "YALLA_RATE_LIMIT_IP_READ_BURST"
+	// EnvRateLimitIPWriteRPS sets the per-IP write rate.
+	EnvRateLimitIPWriteRPS = "YALLA_RATE_LIMIT_IP_WRITE_RPS"
+	// EnvRateLimitIPWriteBurst sets the per-IP write burst.
+	EnvRateLimitIPWriteBurst = "YALLA_RATE_LIMIT_IP_WRITE_BURST"
+	// EnvRateLimitIdleTTL is the duration after which an unused bucket is
+	// pruned from memory. A non-positive value applies the package default
+	// (five minutes).
+	EnvRateLimitIdleTTL = "YALLA_RATE_LIMIT_IDLE_TTL"
 )
 
 // Profile identifies the deployment environment a backend process runs in.
@@ -139,6 +176,56 @@ type Config struct {
 	LogLevel slog.Level
 	// FeatureFlags maps flag names to their enabled state.
 	FeatureFlags map[string]bool
+	// RateLimit carries the inbound HTTP rate-limit configuration.
+	// Disabled config disables the limiter entirely; otherwise the Org,
+	// Key, and IP specs control the three bucket dimensions.
+	RateLimit RateLimit
+}
+
+// RateLimit holds the resolved inbound HTTP rate-limit configuration. A
+// zero RateLimit value disables every dimension; production processes
+// pick non-zero values via the YALLA_RATE_LIMIT_* environment variables
+// or the per-profile defaults documented on load.go.
+type RateLimit struct {
+	// Disabled, when true, turns off the limiter for every dimension
+	// even if the Specs below carry positive values.
+	Disabled bool
+	// OrgReadRPS, OrgReadBurst, OrgWriteRPS, OrgWriteBurst control the
+	// per-organization bucket. A non-positive RPS or Burst disables the
+	// matching side.
+	OrgReadRPS    float64
+	OrgReadBurst  int
+	OrgWriteRPS   float64
+	OrgWriteBurst int
+	// KeyReadRPS / KeyWriteRPS / KeyReadBurst / KeyWriteBurst control
+	// the per-API-key (or per-session-principal) bucket.
+	KeyReadRPS    float64
+	KeyReadBurst  int
+	KeyWriteRPS   float64
+	KeyWriteBurst int
+	// IPReadRPS / IPWriteRPS / IPReadBurst / IPWriteBurst control the
+	// per-client-IP bucket. The IP bucket is the only one a public
+	// (unauthenticated) endpoint can fall back to.
+	IPReadRPS    float64
+	IPReadBurst  int
+	IPWriteRPS   float64
+	IPWriteBurst int
+	// IdleTTL is how long an unused bucket is retained before lazy
+	// eviction reclaims it. A non-positive value applies the package
+	// default.
+	IdleTTL time.Duration
+}
+
+// AnyEnabled reports whether the rate-limit configuration enables any
+// dimension. A Disabled config always returns false; a zero RateLimit
+// also returns false because every bucket spec is zero.
+func (r RateLimit) AnyEnabled() bool {
+	if r.Disabled {
+		return false
+	}
+	return r.OrgReadRPS > 0 || r.OrgWriteRPS > 0 ||
+		r.KeyReadRPS > 0 || r.KeyWriteRPS > 0 ||
+		r.IPReadRPS > 0 || r.IPWriteRPS > 0
 }
 
 // ActiveSigningKey returns the signing key currently used to mint new
@@ -175,6 +262,7 @@ type RedactedConfig struct {
 	ShutdownTimeout       string          `json:"shutdown_timeout"`
 	LogLevel              string          `json:"log_level"`
 	FeatureFlags          map[string]bool `json:"feature_flags"`
+	RateLimitEnabled      bool            `json:"rate_limit_enabled"`
 }
 
 // Redacted returns a credential-free projection of the config. Secret values
@@ -206,6 +294,7 @@ func (c *Config) Redacted() RedactedConfig {
 		ShutdownTimeout:       c.ShutdownTimeout.String(),
 		LogLevel:              c.LogLevel.String(),
 		FeatureFlags:          flags,
+		RateLimitEnabled:      c.RateLimit.AnyEnabled(),
 	}
 }
 
@@ -234,6 +323,7 @@ func (c *Config) LogValue() slog.Value {
 		slog.String("dokploy_token", r.DokployToken),
 		slog.String("shutdown_timeout", r.ShutdownTimeout),
 		slog.String("log_level", r.LogLevel),
+		slog.Bool("rate_limit_enabled", r.RateLimitEnabled),
 		slog.Group("feature_flags", anyAttrs(attrs)...),
 	)
 }
@@ -261,8 +351,8 @@ func (c *Config) String() string {
 	}
 	sort.Strings(flags)
 	return fmt.Sprintf(
-		"config{profile:%s api_addr:%s public_url:%s database_url:%s signing_keys_configured:%d dokploy_base_url:%s dokploy_token:%s shutdown_timeout:%s log_level:%s feature_flags:[%s]}",
+		"config{profile:%s api_addr:%s public_url:%s database_url:%s signing_keys_configured:%d dokploy_base_url:%s dokploy_token:%s shutdown_timeout:%s log_level:%s rate_limit_enabled:%t feature_flags:[%s]}",
 		r.Profile, r.APIAddr, r.PublicURL, r.DatabaseURL, r.SigningKeysConfigured,
-		r.DokployBaseURL, r.DokployToken, r.ShutdownTimeout, r.LogLevel, strings.Join(flags, " "),
+		r.DokployBaseURL, r.DokployToken, r.ShutdownTimeout, r.LogLevel, r.RateLimitEnabled, strings.Join(flags, " "),
 	)
 }

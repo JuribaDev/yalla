@@ -104,11 +104,20 @@ import (
 // than a misleading empty list or a silently dropped write — which suits
 // tests and tooling that only exercise the public surface.
 //
+// rateLimiter is the optional throughput gate wired between RequireAuth
+// and the route handler. A nil value installs a no-op wrapper, which suits
+// tests and embedders that exercise the routing surface without enforcing
+// any cap. The middleware runs INSIDE RequireAuth so the resolved
+// principal is on the request context when the limiter decides — that is
+// what lets the gate bill the org and key buckets for authenticated
+// requests while falling back to the IP bucket for public endpoints, and
+// what lets it recognise the internal-worker exemption.
+//
 // Routes come from the newRouteTable single source of truth: NewHandler
 // registers every entry on the mux and generates the OpenAPI document
 // (GET /openapi.json) from the same table, so a served route is always a
 // documented route.
-func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, authenticator Authenticator, engine *policy.Engine, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter, environmentCloner EnvironmentCloner, environmentGrants EnvironmentGrantReader, environmentGrantReplacer EnvironmentGrantReplacer, environmentVariables EnvironmentVariableReader, environmentVariableReplacer EnvironmentVariableReplacer, environmentServices EnvironmentServiceReader, breakGlass BreakGlassController, logger *slog.Logger) http.Handler {
+func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, authenticator Authenticator, engine *policy.Engine, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter, environmentCloner EnvironmentCloner, environmentGrants EnvironmentGrantReader, environmentGrantReplacer EnvironmentGrantReplacer, environmentVariables EnvironmentVariableReader, environmentVariableReplacer EnvironmentVariableReplacer, environmentServices EnvironmentServiceReader, breakGlass BreakGlassController, logger *slog.Logger, rateLimiter RateLimiter) http.Handler {
 	mux := http.NewServeMux()
 	build = build.Normalized()
 
@@ -137,8 +146,15 @@ func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter, me
 		},
 	})
 
+	rateLimit := RateLimit(rateLimiter, logger)
 	for _, rt := range table {
 		h := http.Handler(rt.handler)
+		// Rate limiting wraps the handler INSIDE the auth gate so the
+		// resolved principal (organization id, API key id, auth method)
+		// is on the request context when the limiter decides. A public
+		// endpoint runs the same wrapper, but with no principal on
+		// context the limiter falls back to the IP bucket alone.
+		h = rateLimit(h)
 		if rt.endpoint.RequiresAuth {
 			if authenticator == nil || engine == nil {
 				// A misconfigured handler must never serve an authenticated

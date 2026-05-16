@@ -83,6 +83,7 @@
 - New customer-data resource = full vertical (BE-0136 pattern, project_grants migration 0014, store/project_grant.go, httpapi/project_grants.go): one story is allowed to land the whole vertical when the resource has no foundation yet (no migration, no repo, no port, no handler, no wiring). The migration declares the table tenant-scoped at the database (composite (organization_id, project_id) FK -> projects with ON DELETE CASCADE, composite UNIQUE (organization_id, id) as the FK target for future scope-narrowing override tables, bigint version + bump_version trigger from 0011, set_updated_at trigger), CHECKs the enum-shaped columns to a closed set (principal_kind IN ('usr','sa'), role IN (six built-in roles)), and uses a UNIQUE index with COALESCE(env_id,'') / COALESCE(svc_id,'') so per-principal scope-tuple dedup works through NULLs (Postgres unique constraints treat NULLs as distinct by default until v15's NULLS NOT DISTINCT). The repository (ProjectGrantRepository) and reader adapter (ProjectGrantReader) follow OrganizationVariableReader exactly — repo accepts a Querier for reads, mutations need *Tx, reader composes the repo through Store.Read; cross-tenant queries return empty (no rows) at the SQL leg, but the LIST-FOR-PARENT shape (list grants OF a project) requires the reader to Get the project first inside the same transaction so a cross-tenant or unknown project_id surfaces as apierr.NotFound — never as an empty list, which would invite an agent to believe the project exists with no grants. The HTTP layer adds a new ProjectGrantReader port + handler + projection (projectGrantResource), and the route plugs into the existing projectIDResolver and policy.ActionProjectGrantsRead in routes.go's newRouteTable. EnvironmentID / ServiceID stay nullable pointers all the way from the schema to the wire so the (project | environment | service)-scoped distinction reaches an agent intact; the principal projects as a nested object Principal(id, kind) for the same reason the audit_event.actor and usage.limit endpoints do — one boolean (principal.kind == 'usr') instead of branching on coupled scalars. NewHandler signature gets ONE more positional port, which forces a sweep of every test file that constructs the production handler (a Python regex over 28 test files anchored on `fakeProjectRestorer{}, X)` plus manual edits to projects_restore_test.go and projects_delete_test.go whose end-of-call shape didn't match the dominant anchor; six single-line newRouteTable calls with all-nil args need a separate sweep to add one trailing nil). cmd/yalla-api wires *store.ProjectGrantReader at startup. The story implicitly delivers most of BE-0439's repository acceptance criteria (CRUD comes with the PUT story BE-0139 later) and BE-0440's tenant-isolation criteria for the list path.
 - Bare top-level lookup-by-id endpoint for a deep resource (BE-0154 pattern, GET /v1/environments/{environment_id}, store/environment.go GetByID + GetEnvironment, httpapi/environments.go): a customer-facing route that addresses a deep resource (env, service, deployment) by its global id WITHOUT carrying its parent ids in the path. Two load-bearing constraints: (1) the resolver builds policy.Resource{Scope: {OrganizationID = principal.home, <ResourceLevel>ID = path.id}} — pinning OrgID to the principal's home (NEVER the caller-supplied id) is the structural anti-spoof, and pinning the resource-level id is the only scope leg the path actually carries; (2) the resolver CANNOT pin the parent ids without a DB lookup, and the policy engine's Scope.covers() rule (internal/controlplane/policy/policy.go) requires every level the grant pins to match the resource — a grant with pinned ProjectID against a resource with empty ProjectID is structurally denied. Accepted design: middleware admits org-wide read roles + org-wide grants + (for CapRead actions) the support cross-tenant exception is suppressed because the resolver pins OrgID to principal.home; project-/env-/service-scoped grants are denied at the boundary by design, and grant-only principals must use the parent-scoped /v1/projects/{project_id}/environments instead. Document this in the route description, the resolver doc, and the handler doc — readers will misinterpret the structural deny as a bug otherwise. The store layer adds a tenant-scoped GetByID(ctx, q, organizationID, resourceID) on the existing repository (composite (organization_id, id) predicate so cross-tenant returns apierr.NotFound, never another tenant's row, never a 500 leaking the cause), and the existing reader struct grows a Get<Resource>(ctx, organizationID, resourceID) method that wraps GetByID inside Store.Read. The HTTP layer adds a NEW narrow port (distinct from the existing parent-scoped port — e.g. EnvironmentReader vs ProjectEnvironmentReader — so a handler change to one doesn't ripple through the other), a NEW resolver function (e.g. environmentIDResolver), and a NEW handler that REUSES the existing wire-shape projection (projectEnvironmentOf for environments) so the GET-by-id response is byte-identical to one element of the LIST response (modulo the wrapping object name). cmd/yalla-api/main.go passes the same *store.<Resource>Reader value twice — once for the parent-scoped port, once for the new bare-lookup port — because both methods live on the same store struct; no second startup wiring is needed. The contract tests cover the standard envelope: happy path, NotFound (cross-tenant + unknown both render as the same 404 — no oracle), 401 unauthenticated + invalid credentials (no token echo), 503 store outage (no raw cause leak), 500 nil-port wiring guard, envelope shape lock (asserts the documented field set against a generic decode so a future struct column added without updating the projection is caught), bearer-token never-logged guard (slog over a buffer), OpenAPI route registration, and TWO resolver unit tests (pins home org + path id; no panic with no principal on context). The matching policy matrix story (BE-0156 for environments, the structural template for service/deployment lookups) tests the deny — the deny matrix on the bare endpoint is part of the contract, not a gap.
 - environment.grants.write-on-bare-{environment_id}-resolver policy matrix (BE-0171, internal/controlplane/httpapi/environment_grants_put_policy_test.go) is the structural HYBRID of the project.grants.write matrix (BE-0141, projects_grants_put_policy_test.go) and the environment.grants.read matrix (BE-0168, environment_grants_policy_test.go): take BE-0141's CapAdmin role table + cross-tenant + request-body-leak-guard skeleton, swap action+resolver for the write env-grants endpoint, and re-pin every wire tie-in with BE-0168's no-ProjectID covers() denial pattern (project/env/service scoped principals ALL denied OutOfScope at this route — even on a grant naming the SAME env id — because the env-id resolver pins NO ProjectID leg and covers() is one-way). Load-bearing engine distinction from BE-0168: CapAdmin is OUTSIDE the support cross-tenant exception, so the engine_cross_tenant_deny_* parallel subtests MUST include the Support row for write actions and exclude it for read actions. Net-new fixtures in the put_policy file are only a route-specific replaceEnvironmentGrantsMatrixBody (no environment_id field per grant — the env is named by the path) + replaceEnvironmentGrantsRequestBodyLeak with distinctive needles; the canonical*EnvGrants* fixtures, fake*EnvironmentGrant* fakes, replaceEnvironmentGrantsHandlerFor / putEnvironmentGrants / decodeReplaceEnvironmentGrants, and orgPrincipal / decodeError are all reused verbatim from BE-0168 and BE-0169.
+- Inbound HTTP rate-limit pattern (BE-0035, internal/controlplane/ratelimit/limiter.go + internal/controlplane/httpapi/ratelimit.go + apierr.RateLimited + config.RateLimit): the limiter is an in-process multi-dimensional token-bucket gate (per-org, per-API-key, per-IP) with read/write-class specs derived from the HTTP method (GET/HEAD/OPTIONS = read, everything else = write). Three load-bearing rules: (1) the gate wraps every route INSIDE RequireAuth in server.go's per-route loop (`h = rateLimit(h); if RequiresAuth: h = RequireAuth(...)(h)`) so the resolved principal (org id, key id, auth method) is on the request context when the limiter decides — public endpoints fall back to the IP bucket alone; (2) the internal-worker exemption is wired through a new package-private context helper `withAuthMethod` / `AuthMethodFromContext` in middleware.go that BOTH RequireAuth and RequireInternalWorker stamp with id.Method, so the rate-limit gate can recognise auth.MethodInternalWorker and pass `Exempt=true` to the limiter without re-running the credential store; (3) the "first exhausted bucket wins" rule short-circuits downstream debits (org denied -> key & ip buckets untouched) so a single throttled tenant cannot drain a shared NAT'd IP bucket of every neighbour. Bucket map is sync.Mutex'd with lazy eviction on the request path (no background goroutine; pruning sweeps every IdleTTL); the freshly-created bucket MUST set lastUsed=now BEFORE the sweep runs so the sweep cannot reap the bucket it just inserted (initial zero-value lastUsed is older than any cutoff and was a real bug caught by tests). The 429 wire shape is the standard yalla.error.v1 envelope with apierr.RateLimited(scope, retry) attaching `scope` (bucket dimension name only — "organization" / "api_key" / "ip", NEVER the tenant id or key id or IP) and `retry_after` (integer seconds, clamped to >=1 because the wire Retry-After header cannot carry sub-second); the response also sets the matching `Retry-After: N` header. NewHandler grew ONE new trailing parameter (RateLimiter) — sweep all 64 NewHandler call sites in tests via a Node script that walks the source with depth-tracking parens and appends `, nil` before each closing `)`. Config plumbing: new YALLA_RATE_LIMIT_* env vars (ORG/KEY/IP × READ/WRITE × RPS/BURST + IDLE_TTL + DISABLED master switch) layered over per-profile defaults; ProfileTest defaults to Disabled=true so contract tests across the whole repo never accidentally trip the limiter. The limiter constructor takes a `func() time.Time` clock injection point so deterministic tests (`fixedClock.Advance(d)`) can drive refill behaviour without sleeping. Forward-applicable to any future throughput cap (per-resource, per-tenant-tier, per-route-specific) — extend Specs/Specs.For pairs rather than adding a new bucket dimension. Redaction backstops: the 429 envelope, the Retry-After header, the WARN log record on denial, and every rate-limit identifier flow through telemetry.LogAttrs / apienvelope's regex-based scrubber so a bearer-token in the Authorization header on a throttled request NEVER reaches a log file (TestRateLimitDenialLogsNoSecretValue is the regression pin).
 
 ## 2026-05-15 - BE-0103
 - What was implemented: GET /v1/organizations/{org_id}/audit-events, the
@@ -13897,4 +13898,157 @@
     still go ahead — but they are a worth-flagging signal that the
     test fixture factory drifted from the assertions in another
     story's tests. Not this story's scope to fix.
+---
+
+## 2026-05-16 - BE-0035
+- What was implemented: inbound HTTP rate-limit middleware for the Yalla
+  Control Plane API. Per-organization, per-API-key, and per-IP token
+  buckets; read- and write-class specs derived from HTTP method; internal
+  worker callbacks unconditionally exempt; 429 yalla.error.v1 envelope
+  with stable retry_after detail and integer Retry-After header; no
+  bucket-identity (org id, key id, IP) ever reaches the wire or the log
+  record.
+- Files added:
+  - internal/controlplane/ratelimit/limiter.go: the in-process
+    token-bucket limiter. Multi-dimensional with lazy eviction on the
+    request path (no background goroutine). Spec / Specs / Config /
+    Request / Decision are the public surface; Limiter.Check is the
+    only decision entry point. A nil *Limiter admits every request so
+    test harnesses can pass nil without rewiring. Initial bucket
+    lastUsed is set to now BEFORE the eviction sweep runs — the sweep
+    would otherwise reap the freshly-inserted bucket on its zero-value
+    timestamp (real bug caught by the unit tests).
+  - internal/controlplane/ratelimit/limiter_test.go: 14 unit tests
+    covering default fallbacks, allow-on-capacity, disabled-dimension
+    skip, empty-identity skip, internal-worker exemption, per-org
+    denial, per-key isolation, time-based refill, route-class spec
+    pick, the first-exhausted-bucket-wins rule, the integer Retry-After
+    floor, the nil-limiter zero-value passthrough, lazy eviction, and
+    concurrency safety (200 goroutines, burst=50, no over-grant).
+  - internal/controlplane/httpapi/ratelimit.go: the RateLimit
+    middleware + ClientIP helper + isMutatingMethod classifier. The
+    middleware reads the principal off the request context
+    (organization id, API key id), reads the auth method off the new
+    context helper (AuthMethodFromContext), and builds a
+    ratelimit.Request the limiter consumes. On denial: integer
+    Retry-After header, one WARN log record carrying only the bucket
+    dimension (never the bucket identity), and an
+    apierr.RateLimited(scope, retry) envelope. A nil limiter installs
+    a passthrough wrapper so construction stays uniform.
+  - internal/controlplane/httpapi/ratelimit_test.go: 13 contract tests
+    covering the allow path, the 429 envelope shape (stable code,
+    retry_after detail, Retry-After header), the integer-second floor,
+    the request-to-limiter conversion, the internal-worker exemption,
+    per-key isolation through the middleware, the nil-limiter no-op,
+    the log redaction backstop (no bearer-token / org-id / key-id / IP
+    in the WARN record), the header-vs-detail retry agreement, the
+    method-to-write-spec mapping, the ClientIP forwarding-header
+    preference order, and the AuthMethodFromContext roundtrip.
+- Files modified:
+  - internal/controlplane/apierr/apierr.go: added DetailKeyRetryAfter,
+    DetailKeyRateLimitScope, RateLimited(scope, retryAfter), and
+    RetryAfterOf(err) accessor. The constructor clamps a non-positive
+    retryAfter to one second, trims and defaults a blank scope, and
+    attaches both details so the wire-side regex redactor on the
+    envelope can still scrub a stray secret without losing the
+    structured retry metadata.
+  - internal/controlplane/apierr/apierr_test.go: added the
+    rate-limited row to the catalog round-trip table, plus four
+    targeted tests on the new constructor (scope + retry attach,
+    clamp + fallback, no-secret leakage, RetryAfterOf accessor).
+  - internal/controlplane/httpapi/middleware.go: new
+    authMethodCtxKey / withAuthMethod / AuthMethodFromContext helper;
+    RequireAuth and RequireInternalWorker both call withAuthMethod
+    after authenticating so the downstream rate-limit middleware can
+    detect the internal-worker exemption without re-running the
+    credential store.
+  - internal/controlplane/httpapi/server.go: NewHandler grew a
+    trailing rateLimiter RateLimiter parameter; the per-route wiring
+    loop now wraps each handler with RateLimit(rateLimiter, logger)
+    INSIDE the optional RequireAuth wrap, so the resolved principal
+    is on the request context when the limiter decides. A nil
+    limiter installs a no-op rate-limit wrapper.
+  - internal/controlplane/config/config.go: added the
+    YALLA_RATE_LIMIT_* env-name constants, the RateLimit struct, and
+    surfaced RateLimitEnabled (no secrets) on the redacted/log
+    projection.
+  - internal/controlplane/config/load.go: added per-profile rate-
+    limit defaults (production/staging conservative; local permissive;
+    test disabled so contract tests cannot trip the limiter), the
+    resolveRateLimit / validateRateLimit pair, and the small
+    resolveBool / resolveDuration / resolveFloat / resolveInt
+    primitives needed to parse the new env vars. Each bucket spec is
+    layered independently over the profile baseline so an operator
+    who overrides one knob keeps the rest of the baseline.
+  - internal/controlplane/config/config_test.go: added five tests for
+    the rate-limit config — per-profile defaults, env override
+    layering, the master disable switch, every invalid-value path,
+    and the redacted-projection check that the enabled bit appears in
+    the log-safe view.
+  - cmd/yalla-api/main.go: added the ratelimit import, constructed a
+    *ratelimit.Limiter at startup when cfg.RateLimit.AnyEnabled() (a
+    disabled config produces a nil RateLimiter and the middleware
+    short-circuits to a passthrough), and threaded the limiter as the
+    trailing NewHandler arg. The rateLimitConfigFromAppConfig adapter
+    at the bottom of main.go is a pure structural mapping from
+    config.RateLimit onto ratelimit.Config.
+  - 46 test files in internal/controlplane/httpapi/: a Node script
+    walked the source with depth-tracking parens to find each
+    NewHandler( call site (skipping the func definition) and
+    inserted a trailing nil before the closing ); 64 call sites
+    updated in one sweep.
+- Verification run:
+  - gofmt -w . (clean)
+  - go mod tidy (no changes)
+  - go vet ./... (clean)
+  - go test ./... (all packages green)
+  - go test -race ./... (all packages green)
+  - go build ./... (clean)
+  - goimports, golangci-lint, staticcheck, govulncheck not installed
+    in this environment; documented and skipped.
+- Remaining risks or follow-ups:
+  - The rate-limit defaults are in-process per replica: a multi-replica
+    deployment effectively raises the per-org cap by N. A distributed
+    limiter (Redis / Postgres-backed token bucket) is the natural
+    follow-up when replica count starts to matter; the Limiter port is
+    narrow (Check(req) Decision) so the swap is local to
+    httpapi.RateLimiter and the cmd/yalla-api wiring.
+  - The IP bucket trusts X-Forwarded-For / X-Real-IP without proxy
+    verification. Production deployments behind a known reverse proxy
+    can rely on this; deployments that expose the API directly should
+    set net.IP allowlists on the proxy or refuse the header. A
+    proxy-pin story is the natural follow-up.
+  - The route class dimension is currently a binary read/write split
+    derived from the HTTP method. A finer-grained classifier (admin
+    routes, billing routes, auth routes) is straightforward to bolt
+    on by extending Specs/Specs.For with named classes; defer until a
+    real workload signals the need.
+- Learnings for future iterations:
+  - Lazy bucket eviction needs a non-zero initial lastUsed on insert.
+    The sweep checks lastUsed.Before(cutoff); a zero-value lastUsed is
+    older than any cutoff and the sweep reaps the bucket that was just
+    inserted. The unit-test failure mode is "every request creates a
+    fresh bucket" — burst exhaustion never happens because each
+    request sees a full bucket — which is exactly what was observed
+    before the fix.
+  - The internal-worker exemption needs the auth method on the request
+    context, not just the principal. The principal alone cannot
+    distinguish "anonymous public endpoint" from "internal worker
+    callback" (both have empty Organization). Adding withAuthMethod to
+    RequireAuth AND RequireInternalWorker lets a downstream middleware
+    read the method without re-running the authenticator, which is the
+    right boundary for any future method-specific routing rule.
+  - When sweeping a large positional-parameter signature change like
+    NewHandler, a regex sweep that anchors on a unique nearby token
+    (the previous trailing identifier, here `breakGlassController{}`)
+    misses outliers and risks corrupting tests that span multiple
+    lines. A depth-tracking parenthesis walker in JavaScript runs in
+    one pass over every Go file, handles multi-line calls, and skips
+    the function definition cleanly — preferred over regex sweeps for
+    any future single-trailing-param addition.
+  - Per-profile config defaults are the right place to disable a new
+    enforcement layer for ProfileTest. Otherwise the new gate trips
+    every other contract test in the repo. The disable flag at the
+    profile level is invisible to operators (production still
+    enforces) and zero-config for test authors.
 ---

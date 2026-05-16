@@ -37,34 +37,61 @@ type profileDefaults struct {
 	logLevel        slog.Level
 	publicURL       string
 	shutdownTimeout time.Duration
+	rateLimit       RateLimit
 }
 
 // defaultsByProfile maps each profile to its baseline. Local is tuned for a
 // developer machine (verbose, loopback URL); test is quiet and binds an
 // ephemeral port; staging and production are conservative and supply no
 // secret defaults — strict profiles must be configured explicitly.
+//
+// The rate-limit defaults are tuned per profile: the test profile disables
+// the limiter so contract tests never accidentally trip it; local picks
+// permissive specs that still exercise the wiring; staging and production
+// pick conservative caps that protect the backend without throttling
+// legitimate scripted workloads. Operators may override any field via the
+// YALLA_RATE_LIMIT_* environment variables.
 var defaultsByProfile = map[Profile]profileDefaults{
 	ProfileLocal: {
 		apiAddr:         ":8080",
 		logLevel:        slog.LevelDebug,
 		publicURL:       "http://localhost:8080",
 		shutdownTimeout: 15 * time.Second,
+		rateLimit: RateLimit{
+			OrgReadRPS: 50, OrgReadBurst: 100, OrgWriteRPS: 20, OrgWriteBurst: 40,
+			KeyReadRPS: 25, KeyReadBurst: 50, KeyWriteRPS: 10, KeyWriteBurst: 20,
+			IPReadRPS: 50, IPReadBurst: 100, IPWriteRPS: 20, IPWriteBurst: 40,
+			IdleTTL: 5 * time.Minute,
+		},
 	},
 	ProfileTest: {
 		apiAddr:         "127.0.0.1:0",
 		logLevel:        slog.LevelWarn,
 		publicURL:       "http://127.0.0.1",
 		shutdownTimeout: 2 * time.Second,
+		rateLimit:       RateLimit{Disabled: true},
 	},
 	ProfileStaging: {
 		apiAddr:         ":8080",
 		logLevel:        slog.LevelInfo,
 		shutdownTimeout: 25 * time.Second,
+		rateLimit: RateLimit{
+			OrgReadRPS: 100, OrgReadBurst: 200, OrgWriteRPS: 30, OrgWriteBurst: 60,
+			KeyReadRPS: 50, KeyReadBurst: 100, KeyWriteRPS: 15, KeyWriteBurst: 30,
+			IPReadRPS: 60, IPReadBurst: 120, IPWriteRPS: 20, IPWriteBurst: 40,
+			IdleTTL: 5 * time.Minute,
+		},
 	},
 	ProfileProduction: {
 		apiAddr:         ":8080",
 		logLevel:        slog.LevelInfo,
 		shutdownTimeout: 25 * time.Second,
+		rateLimit: RateLimit{
+			OrgReadRPS: 100, OrgReadBurst: 200, OrgWriteRPS: 30, OrgWriteBurst: 60,
+			KeyReadRPS: 50, KeyReadBurst: 100, KeyWriteRPS: 15, KeyWriteBurst: 30,
+			IPReadRPS: 60, IPReadBurst: 120, IPWriteRPS: 20, IPWriteBurst: 40,
+			IdleTTL: 5 * time.Minute,
+		},
 	},
 }
 
@@ -120,6 +147,11 @@ func Load(lookup LookupFunc) (*Config, error) {
 		return nil, err
 	}
 
+	rateLimit, err := resolveRateLimit(lookup, defaults.rateLimit)
+	if err != nil {
+		return nil, err
+	}
+
 	cfg := &Config{
 		Profile:         profile,
 		APIAddr:         valueOr(lookup, EnvAPIAddr, defaults.apiAddr),
@@ -131,6 +163,7 @@ func Load(lookup LookupFunc) (*Config, error) {
 		ShutdownTimeout: shutdownTimeout,
 		LogLevel:        logLevel,
 		FeatureFlags:    flags,
+		RateLimit:       rateLimit,
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -400,4 +433,214 @@ func profileList() string {
 		names[i] = string(p)
 	}
 	return strings.Join(names, ", ")
+}
+
+// rateLimitMaxBurst caps the per-bucket burst capacity at a value large
+// enough for any plausible legitimate workload but small enough to keep
+// the limiter's memory footprint bounded. A misconfigured burst above
+// the cap is rejected so a typo cannot quietly disable rate limiting in
+// practice (a million-token bucket is indistinguishable from no limiter
+// for any sustained throughput a client could generate).
+const rateLimitMaxBurst = 100_000
+
+// rateLimitMaxRPS is the matching cap on the steady-state rate.
+const rateLimitMaxRPS = 10_000.0
+
+// rateLimitMinIdleTTL bounds the lazy-eviction TTL: a TTL shorter than
+// this would have the limiter constantly rebuilding buckets, defeating
+// the burst budget.
+const (
+	rateLimitMinIdleTTL = 10 * time.Second
+	rateLimitMaxIdleTTL = time.Hour
+)
+
+// resolveRateLimit layers the YALLA_RATE_LIMIT_* environment variables
+// over the profile defaults. Each spec field (rate, burst) is resolved
+// independently; missing values fall back to the profile default rather
+// than to zero, so an operator who only overrides one knob keeps the
+// rest of the profile baseline.
+//
+// The disable flag is the master switch: a truthy value overrides every
+// spec and turns the limiter off (the AnyEnabled accessor folds the
+// flag in).
+func resolveRateLimit(lookup LookupFunc, fallback RateLimit) (RateLimit, error) {
+	disabled, err := resolveBool(lookup, EnvRateLimitDisabled, fallback.Disabled)
+	if err != nil {
+		return RateLimit{}, err
+	}
+	idleTTL, err := resolveDuration(lookup, EnvRateLimitIdleTTL, fallback.IdleTTL)
+	if err != nil {
+		return RateLimit{}, err
+	}
+
+	out := RateLimit{
+		Disabled: disabled,
+		IdleTTL:  idleTTL,
+	}
+	specs := []struct {
+		env      string
+		fallback float64
+		target   *float64
+		isBurst  bool
+	}{
+		{EnvRateLimitOrgReadRPS, fallback.OrgReadRPS, &out.OrgReadRPS, false},
+		{EnvRateLimitOrgWriteRPS, fallback.OrgWriteRPS, &out.OrgWriteRPS, false},
+		{EnvRateLimitKeyReadRPS, fallback.KeyReadRPS, &out.KeyReadRPS, false},
+		{EnvRateLimitKeyWriteRPS, fallback.KeyWriteRPS, &out.KeyWriteRPS, false},
+		{EnvRateLimitIPReadRPS, fallback.IPReadRPS, &out.IPReadRPS, false},
+		{EnvRateLimitIPWriteRPS, fallback.IPWriteRPS, &out.IPWriteRPS, false},
+	}
+	for _, s := range specs {
+		v, err := resolveFloat(lookup, s.env, s.fallback)
+		if err != nil {
+			return RateLimit{}, err
+		}
+		*s.target = v
+	}
+	bursts := []struct {
+		env      string
+		fallback int
+		target   *int
+	}{
+		{EnvRateLimitOrgReadBurst, fallback.OrgReadBurst, &out.OrgReadBurst},
+		{EnvRateLimitOrgWriteBurst, fallback.OrgWriteBurst, &out.OrgWriteBurst},
+		{EnvRateLimitKeyReadBurst, fallback.KeyReadBurst, &out.KeyReadBurst},
+		{EnvRateLimitKeyWriteBurst, fallback.KeyWriteBurst, &out.KeyWriteBurst},
+		{EnvRateLimitIPReadBurst, fallback.IPReadBurst, &out.IPReadBurst},
+		{EnvRateLimitIPWriteBurst, fallback.IPWriteBurst, &out.IPWriteBurst},
+	}
+	for _, b := range bursts {
+		v, err := resolveInt(lookup, b.env, b.fallback)
+		if err != nil {
+			return RateLimit{}, err
+		}
+		*b.target = v
+	}
+
+	if err := validateRateLimit(out); err != nil {
+		return RateLimit{}, err
+	}
+	return out, nil
+}
+
+// validateRateLimit enforces the integer-range and ttl bounds on the
+// resolved RateLimit so a misconfigured value fails Load with a stable
+// CodeConfig error rather than silently disabling enforcement at
+// runtime. Zero values stay valid: they are the documented "disable
+// this dimension" sentinel.
+func validateRateLimit(r RateLimit) error {
+	type rateField struct {
+		env string
+		v   float64
+	}
+	for _, f := range []rateField{
+		{EnvRateLimitOrgReadRPS, r.OrgReadRPS},
+		{EnvRateLimitOrgWriteRPS, r.OrgWriteRPS},
+		{EnvRateLimitKeyReadRPS, r.KeyReadRPS},
+		{EnvRateLimitKeyWriteRPS, r.KeyWriteRPS},
+		{EnvRateLimitIPReadRPS, r.IPReadRPS},
+		{EnvRateLimitIPWriteRPS, r.IPWriteRPS},
+	} {
+		if f.v < 0 {
+			return yerr.Newf(yerr.CodeConfig, "%s must be non-negative", f.env)
+		}
+		if f.v > rateLimitMaxRPS {
+			return yerr.Newf(yerr.CodeConfig,
+				"%s is out of range (want between 0 and %g requests/second)", f.env, rateLimitMaxRPS)
+		}
+	}
+	type burstField struct {
+		env string
+		v   int
+	}
+	for _, f := range []burstField{
+		{EnvRateLimitOrgReadBurst, r.OrgReadBurst},
+		{EnvRateLimitOrgWriteBurst, r.OrgWriteBurst},
+		{EnvRateLimitKeyReadBurst, r.KeyReadBurst},
+		{EnvRateLimitKeyWriteBurst, r.KeyWriteBurst},
+		{EnvRateLimitIPReadBurst, r.IPReadBurst},
+		{EnvRateLimitIPWriteBurst, r.IPWriteBurst},
+	} {
+		if f.v < 0 {
+			return yerr.Newf(yerr.CodeConfig, "%s must be non-negative", f.env)
+		}
+		if f.v > rateLimitMaxBurst {
+			return yerr.Newf(yerr.CodeConfig,
+				"%s is out of range (want between 0 and %d)", f.env, rateLimitMaxBurst)
+		}
+	}
+	if r.IdleTTL != 0 && (r.IdleTTL < rateLimitMinIdleTTL || r.IdleTTL > rateLimitMaxIdleTTL) {
+		return yerr.Newf(yerr.CodeConfig,
+			"%s %s is out of range (want between %s and %s)",
+			EnvRateLimitIdleTTL, r.IdleTTL, rateLimitMinIdleTTL, rateLimitMaxIdleTTL)
+	}
+	return nil
+}
+
+// resolveBool parses a truthy/falsy env value with the documented
+// spellings ("1", "true", "yes", "on" vs "0", "false", "no", "off",
+// "") so an unset variable falls back deterministically.
+func resolveBool(lookup LookupFunc, key string, fallback bool) (bool, error) {
+	raw, ok := lookup(key)
+	raw = strings.TrimSpace(raw)
+	if !ok || raw == "" {
+		return fallback, nil
+	}
+	switch strings.ToLower(raw) {
+	case "1", "true", "yes", "on", "enabled":
+		return true, nil
+	case "0", "false", "no", "off", "disabled":
+		return false, nil
+	}
+	return false, yerr.Newf(yerr.CodeConfig,
+		"invalid %s %q (want a boolean such as true or false)", key, raw)
+}
+
+// resolveDuration parses a Go duration env value, falling back to the
+// supplied default when unset. The value itself is echoed because a
+// duration is not a secret.
+func resolveDuration(lookup LookupFunc, key string, fallback time.Duration) (time.Duration, error) {
+	raw, ok := lookup(key)
+	raw = strings.TrimSpace(raw)
+	if !ok || raw == "" {
+		return fallback, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, yerr.Newf(yerr.CodeConfig,
+			"invalid %s %q (want a Go duration such as 30s or 5m)", key, raw)
+	}
+	return d, nil
+}
+
+// resolveFloat parses a non-negative float env value, falling back to
+// the supplied default when unset.
+func resolveFloat(lookup LookupFunc, key string, fallback float64) (float64, error) {
+	raw, ok := lookup(key)
+	raw = strings.TrimSpace(raw)
+	if !ok || raw == "" {
+		return fallback, nil
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return 0, yerr.Newf(yerr.CodeConfig,
+			"invalid %s %q (want a non-negative number)", key, raw)
+	}
+	return v, nil
+}
+
+// resolveInt parses an int env value, falling back to the supplied
+// default when unset.
+func resolveInt(lookup LookupFunc, key string, fallback int) (int, error) {
+	raw, ok := lookup(key)
+	raw = strings.TrimSpace(raw)
+	if !ok || raw == "" {
+		return fallback, nil
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, yerr.Newf(yerr.CodeConfig,
+			"invalid %s %q (want an integer)", key, raw)
+	}
+	return v, nil
 }

@@ -374,3 +374,148 @@ func TestNilConfigSafety(t *testing.T) {
 		t.Errorf("nil config Validate should error")
 	}
 }
+
+// TestRateLimitProfileDefaults pins the per-profile baseline: production
+// and staging ship non-trivial limits; local is permissive; test disables
+// the limiter so contract tests cannot trip it.
+func TestRateLimitProfileDefaults(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		profile     string
+		wantEnabled bool
+	}{
+		{"local", true},
+		{"test", false},
+		{"staging", true},
+		{"production", true},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.profile, func(t *testing.T) {
+			t.Parallel()
+			env := strictEnv()
+			env[EnvProfile] = tc.profile
+			cfg, err := Load(MapLookup(env))
+			if err != nil {
+				t.Fatalf("Load %s: %v", tc.profile, err)
+			}
+			if got := cfg.RateLimit.AnyEnabled(); got != tc.wantEnabled {
+				t.Errorf("%s RateLimit.AnyEnabled = %t, want %t", tc.profile, got, tc.wantEnabled)
+			}
+		})
+	}
+}
+
+// TestRateLimitEnvOverridesLayer proves a YALLA_RATE_LIMIT_* override
+// replaces only the field it names; the rest of the profile baseline
+// continues to apply.
+func TestRateLimitEnvOverridesLayer(t *testing.T) {
+	t.Parallel()
+
+	env := strictEnv()
+	env[EnvRateLimitOrgReadRPS] = "5"
+	env[EnvRateLimitOrgReadBurst] = "10"
+	env[EnvRateLimitIdleTTL] = "30s"
+	cfg, err := Load(MapLookup(env))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.RateLimit.OrgReadRPS != 5 {
+		t.Errorf("OrgReadRPS = %v, want 5", cfg.RateLimit.OrgReadRPS)
+	}
+	if cfg.RateLimit.OrgReadBurst != 10 {
+		t.Errorf("OrgReadBurst = %d, want 10", cfg.RateLimit.OrgReadBurst)
+	}
+	if cfg.RateLimit.IdleTTL != 30*time.Second {
+		t.Errorf("IdleTTL = %s, want 30s", cfg.RateLimit.IdleTTL)
+	}
+	// Unset knobs keep the production baseline (Org write spec stays set).
+	if cfg.RateLimit.OrgWriteRPS == 0 {
+		t.Error("OrgWriteRPS = 0, want profile baseline to remain set")
+	}
+}
+
+// TestRateLimitDisableFlagTurnsLimiterOff proves the master disable
+// switch overrides every spec, even when the per-dimension values are
+// non-zero.
+func TestRateLimitDisableFlagTurnsLimiterOff(t *testing.T) {
+	t.Parallel()
+
+	env := strictEnv()
+	env[EnvRateLimitDisabled] = "true"
+	cfg, err := Load(MapLookup(env))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.RateLimit.AnyEnabled() {
+		t.Errorf("AnyEnabled = true with disable flag set")
+	}
+	if !cfg.RateLimit.Disabled {
+		t.Errorf("Disabled = false, want true")
+	}
+}
+
+// TestRateLimitInvalidValuesAreRejected proves the validator catches
+// negative rates, oversized bursts, malformed durations, and a
+// nonsense boolean — each surfaces a stable CodeConfig error.
+func TestRateLimitInvalidValuesAreRejected(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		key     string
+		value   string
+		wantSub string
+	}{
+		{"negative org RPS", EnvRateLimitOrgReadRPS, "-1", EnvRateLimitOrgReadRPS},
+		{"oversized burst", EnvRateLimitKeyReadBurst, "5000000", EnvRateLimitKeyReadBurst},
+		{"malformed duration", EnvRateLimitIdleTTL, "not-a-duration", EnvRateLimitIdleTTL},
+		{"too-short ttl", EnvRateLimitIdleTTL, "1ms", EnvRateLimitIdleTTL},
+		{"too-long ttl", EnvRateLimitIdleTTL, "2h", EnvRateLimitIdleTTL},
+		{"malformed disable", EnvRateLimitDisabled, "maybe", EnvRateLimitDisabled},
+		{"malformed int", EnvRateLimitIPReadBurst, "ten", EnvRateLimitIPReadBurst},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			env := strictEnv()
+			env[tc.key] = tc.value
+			_, err := Load(MapLookup(env))
+			if err == nil {
+				t.Fatalf("Load accepted invalid %s=%q", tc.key, tc.value)
+			}
+			var ye *yerr.Error
+			if !stderrors.As(err, &ye) || ye.Code != yerr.CodeConfig {
+				t.Errorf("error = %v, want CodeConfig", err)
+			}
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Errorf("error %q does not mention %q", err.Error(), tc.wantSub)
+			}
+		})
+	}
+}
+
+// TestRateLimitRedactedConfigSurfacesEnabledFlag proves the redacted
+// projection (the log-safe view) exposes the enabled bit. Operators
+// should be able to see at a glance whether the limiter is on without
+// reading the per-bucket values, and the enabled bit is not a secret.
+func TestRateLimitRedactedConfigSurfacesEnabledFlag(t *testing.T) {
+	t.Parallel()
+
+	env := strictEnv()
+	cfg, err := Load(MapLookup(env))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Redacted().RateLimitEnabled {
+		t.Error("RateLimitEnabled = false in redacted projection; want true for production defaults")
+	}
+
+	var buf bytes.Buffer
+	slog.New(slog.NewJSONHandler(&buf, nil)).Info("snapshot", slog.Any("config", cfg))
+	if !strings.Contains(buf.String(), "rate_limit_enabled") {
+		t.Errorf("LogValue snapshot missing rate_limit_enabled: %s", buf.String())
+	}
+}

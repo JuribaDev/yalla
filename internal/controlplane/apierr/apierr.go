@@ -36,9 +36,11 @@ package apierr
 
 import (
 	stderrors "errors"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apienvelope"
 	yerr "github.com/JuribaDev/yalla/internal/errors"
@@ -51,6 +53,20 @@ import (
 // rendered as a string so the wire shape stays JSON-friendly across clients
 // that lack a 64-bit numeric type.
 const DetailKeyCurrentVersion = "current_version"
+
+// DetailKeyRetryAfter is the stable details key carried on a rate-limited
+// 429 E_RATE_LIMITED (built by RateLimited): it tells the caller how many
+// whole seconds to wait before issuing the next attempt. The value is a
+// base-10 integer rendered as a string so the wire shape stays JSON-friendly
+// across clients that lack a 64-bit numeric type, and it mirrors the
+// integer value of the Retry-After response header the middleware sets.
+const DetailKeyRetryAfter = "retry_after"
+
+// DetailKeyRateLimitScope is the stable details key naming the limiter
+// bucket that throttled the request — "organization", "api_key", or "ip".
+// The bucket identity (org id, key id, IP address) is never echoed; only
+// the bucket dimension, so a 429 cannot leak who else shares the bucket.
+const DetailKeyRateLimitScope = "scope"
 
 // MessagePolicy classifies whether an error code's user-facing Message is
 // allowed to describe the specific failure.
@@ -382,6 +398,56 @@ func Invalid(message string) *yerr.Error {
 		message = "request is invalid"
 	}
 	return yerr.New(yerr.CodeInvalidInput, message)
+}
+
+// RateLimited builds an E_RATE_LIMITED error (HTTP 429) for a request that
+// exceeded a throughput cap on one of the limiter's buckets (organization,
+// API key, or IP). scope names the bucket dimension and is the only
+// identity-related value that reaches the wire; retryAfter is exposed both
+// as a structured DetailKeyRetryAfter detail (whole seconds) and as a hint,
+// and matches the integer the middleware writes into the Retry-After
+// response header.
+//
+// A blank scope is replaced by a generic "caller" label so the message
+// never lies about which bucket throttled the request, and a non-positive
+// retryAfter is clamped to one second so a client never sees a "retry in
+// 0 seconds" instruction it cannot act on.
+func RateLimited(scope string, retryAfter time.Duration) *yerr.Error {
+	scope = strings.TrimSpace(scope)
+	if scope == "" {
+		scope = "caller"
+	}
+	seconds := int64(math.Ceil(retryAfter.Seconds()))
+	if seconds < 1 {
+		seconds = 1
+	}
+	return yerr.Newf(yerr.CodeRateLimited, "rate limit exceeded for %s", scope).
+		WithHintf("retry after %d second(s)", seconds).
+		WithDetail(DetailKeyRateLimitScope, scope).
+		WithDetail(DetailKeyRetryAfter, strconv.FormatInt(seconds, 10))
+}
+
+// RetryAfterOf returns the integer retry_after seconds attached to err by
+// RateLimited. The second return is false when err is nil, not a typed
+// E_RATE_LIMITED, or carries no retry_after detail — so callers can switch
+// on presence and never act on a zero value as if it were a real delay.
+func RetryAfterOf(err error) (int64, bool) {
+	var ye *yerr.Error
+	if !stderrors.As(err, &ye) || ye == nil {
+		return 0, false
+	}
+	if ye.Code != yerr.CodeRateLimited {
+		return 0, false
+	}
+	raw, ok := ye.Details[DetailKeyRetryAfter]
+	if !ok || raw == "" {
+		return 0, false
+	}
+	v, parseErr := strconv.ParseInt(raw, 10, 64)
+	if parseErr != nil {
+		return 0, false
+	}
+	return v, true
 }
 
 // QuotaExceeded builds an E_QUOTA_EXCEEDED error (HTTP 429) for a request that

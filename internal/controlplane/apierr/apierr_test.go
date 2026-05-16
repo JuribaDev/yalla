@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apienvelope"
 	yerr "github.com/JuribaDev/yalla/internal/errors"
@@ -95,6 +96,7 @@ func TestConstructorsEmitCataloguedCodes(t *testing.T) {
 		{"invalid input", InvalidInput(FieldViolation{Field: "name", Reason: "required"}), yerr.CodeInvalidInput, 400},
 		{"invalid", Invalid(""), yerr.CodeInvalidInput, 400},
 		{"quota exceeded", QuotaExceeded("services", 5), yerr.CodeQuotaExceeded, 429},
+		{"rate limited", RateLimited("organization", 3*time.Second), yerr.CodeRateLimited, 429},
 		{"dokploy unavailable", DokployUnavailable(stderrors.New("x")), yerr.CodeServer, 502},
 		{"store unavailable", StoreUnavailable(stderrors.New("x")), yerr.CodeUnavailable, 503},
 		{"queue unavailable", QueueUnavailable(stderrors.New("x")), yerr.CodeUnavailable, 503},
@@ -451,5 +453,97 @@ func TestCurrentVersionOfHandlesUnrelatedErrors(t *testing.T) {
 	}
 	if _, ok := CurrentVersionOf(nil); ok {
 		t.Error("CurrentVersionOf must be false for nil")
+	}
+}
+
+// TestRateLimitedAttachesScopeAndRetryAfter proves the rate-limit error
+// carries the bucket name and a positive whole-second retry hint via both
+// the structured details map and a human hint. The bucket name is the only
+// identity-related value that may reach the wire; the bucket identity (a
+// specific org id, key id, or IP) never appears.
+func TestRateLimitedAttachesScopeAndRetryAfter(t *testing.T) {
+	t.Parallel()
+
+	err := RateLimited("organization", 2500*time.Millisecond)
+	if err.Code != yerr.CodeRateLimited {
+		t.Fatalf("Code = %q, want E_RATE_LIMITED", err.Code)
+	}
+	if !strings.Contains(err.Message, "organization") {
+		t.Errorf("Message = %q, want it to name the bucket scope", err.Message)
+	}
+	if got := err.Details[DetailKeyRateLimitScope]; got != "organization" {
+		t.Errorf("scope detail = %q, want organization", got)
+	}
+	// 2.5s rounds up to 3 whole seconds so a client never sees a sub-second
+	// instruction it cannot act on through an integer Retry-After header.
+	if got := err.Details[DetailKeyRetryAfter]; got != "3" {
+		t.Errorf("retry_after detail = %q, want 3", got)
+	}
+	if v, ok := RetryAfterOf(err); !ok || v != 3 {
+		t.Errorf("RetryAfterOf = (%d, %v), want (3, true)", v, ok)
+	}
+}
+
+// TestRateLimitedClampsNonPositiveRetryAfter proves a zero or negative
+// retry-after collapses to one second so the wire always carries an
+// actionable instruction. A blank scope falls back to a generic label.
+func TestRateLimitedClampsNonPositiveRetryAfter(t *testing.T) {
+	t.Parallel()
+
+	for _, d := range []time.Duration{0, -time.Second, -100 * time.Millisecond} {
+		err := RateLimited("", d)
+		if got := err.Details[DetailKeyRetryAfter]; got != "1" {
+			t.Errorf("RateLimited(%s) retry_after = %q, want 1", d, got)
+		}
+		if got := err.Details[DetailKeyRateLimitScope]; got != "caller" {
+			t.Errorf("RateLimited(empty scope) = %q, want caller", got)
+		}
+		if !strings.Contains(err.Message, "caller") {
+			t.Errorf("Message = %q, want it to name the generic fallback scope", err.Message)
+		}
+	}
+}
+
+// TestRateLimitedDoesNotEchoSecretScope proves the scope label is the only
+// identity-related value on the wire. The constructor strips whitespace
+// but otherwise places scope into the message verbatim, so the call site
+// is responsible for passing a bucket dimension ("organization", "api_key",
+// "ip") rather than a tenant id, an API key id, or an IP address. The
+// envelope's regex-based redaction still scrubs any header-style secret if
+// it ever reaches this layer.
+func TestRateLimitedDoesNotEchoSecretScope(t *testing.T) {
+	t.Parallel()
+
+	err := RateLimited("  api_key  ", time.Second)
+	if got := err.Details[DetailKeyRateLimitScope]; got != "api_key" {
+		t.Errorf("scope detail = %q, want trimmed api_key", got)
+	}
+	body := strings.Join([]string{
+		err.Message,
+		err.Hint,
+		err.Details[DetailKeyRateLimitScope],
+		err.Details[DetailKeyRetryAfter],
+	}, "|")
+	for _, leak := range []string{"Bearer", "Authorization:", "yk_"} {
+		if strings.Contains(body, leak) {
+			t.Errorf("RateLimited rendering leaked a credential-shaped token %q in %q", leak, body)
+		}
+	}
+}
+
+// TestRetryAfterOfHandlesUnrelatedErrors proves the recovery helper returns
+// false for a non-typed error, a typed error of a different code, and a
+// nil receiver — so callers can switch on it safely.
+func TestRetryAfterOfHandlesUnrelatedErrors(t *testing.T) {
+	t.Parallel()
+
+	if _, ok := RetryAfterOf(Conflict("plain")); ok {
+		t.Error("RetryAfterOf must be false for a non-rate-limited error")
+	}
+	if _, ok := RetryAfterOf(stderrors.New("boom")); ok {
+		t.Error("RetryAfterOf must be false for a non-typed error")
+	}
+	if _, ok := RetryAfterOf(nil); ok {
+		t.Error("RetryAfterOf must be false for nil")
 	}
 }

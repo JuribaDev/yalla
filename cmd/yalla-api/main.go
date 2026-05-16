@@ -16,6 +16,7 @@ import (
 	"github.com/JuribaDev/yalla/internal/controlplane/config"
 	"github.com/JuribaDev/yalla/internal/controlplane/httpapi"
 	"github.com/JuribaDev/yalla/internal/controlplane/policy"
+	"github.com/JuribaDev/yalla/internal/controlplane/ratelimit"
 	"github.com/JuribaDev/yalla/internal/controlplane/runtime"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
 )
@@ -277,9 +278,25 @@ func main() {
 	// goroutine populates it once the migration check lands.
 	meta := runtime.NewMeta()
 
+	// The rate limiter is wired inside the HTTP authorization middleware
+	// so the resolved principal (org id, API key id, auth method) is on
+	// the request context when the gate decides. A disabled or zero
+	// RateLimit config produces a nil limiter, which the httpapi
+	// middleware treats as a passthrough — so an operator can turn the
+	// limiter off without changing the wiring.
+	var httpRateLimiter httpapi.RateLimiter
+	if cfg.RateLimit.AnyEnabled() {
+		built, err := ratelimit.New(rateLimitConfigFromAppConfig(cfg.RateLimit))
+		if err != nil {
+			logger.Error("failed to initialize the rate limiter", "error", err.Error())
+			os.Exit(1)
+		}
+		httpRateLimiter = built
+	}
+
 	server := &http.Server{
 		Addr:              cfg.APIAddr,
-		Handler:           httpapi.NewHandler(build, readiness, meta, authenticator, engine, organizations, organizationService, organizationService, organizationService, members, membershipService, membershipService, membershipService, limits, limitsService, usage, auditEvents, orgVariables, orgVariableService, orgVariableService, orgVariableService, apiKeys, apiKeyService, apiKeyService, apiKeyService, apiKeyService, projects, projectService, projectService, projectService, projectService, projectGrants, projectGrantService, projectVariables, projectVariableService, projectEnvironments, environmentService, projectEnvironments, environmentService, environmentService, environmentService, environmentGrants, environmentGrantService, environmentVariables, environmentVariableService, environmentServices, breakGlassService, logger),
+		Handler:           httpapi.NewHandler(build, readiness, meta, authenticator, engine, organizations, organizationService, organizationService, organizationService, members, membershipService, membershipService, membershipService, limits, limitsService, usage, auditEvents, orgVariables, orgVariableService, orgVariableService, orgVariableService, apiKeys, apiKeyService, apiKeyService, apiKeyService, apiKeyService, projects, projectService, projectService, projectService, projectService, projectGrants, projectGrantService, projectVariables, projectVariableService, projectEnvironments, environmentService, projectEnvironments, environmentService, environmentService, environmentService, environmentGrants, environmentGrantService, environmentVariables, environmentVariableService, environmentServices, breakGlassService, logger, httpRateLimiter),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -357,3 +374,26 @@ func (noopQuotaReserver) Reserve(context.Context, *store.Tx, string, string) err
 type noopJobEnqueuer struct{}
 
 func (noopJobEnqueuer) Enqueue(context.Context, *store.Tx, string, string, string) error { return nil }
+
+// rateLimitConfigFromAppConfig adapts the resolved config.RateLimit
+// struct onto the ratelimit.Config the limiter consumes. The translation
+// is purely structural — Specs.Read/Write maps to the read- and write-
+// side fields on the application config — so the wire-level env vars
+// stay the single source of truth for operator-visible knobs.
+func rateLimitConfigFromAppConfig(r config.RateLimit) ratelimit.Config {
+	return ratelimit.Config{
+		Org: ratelimit.Specs{
+			Read:  ratelimit.Spec{Rate: r.OrgReadRPS, Burst: r.OrgReadBurst},
+			Write: ratelimit.Spec{Rate: r.OrgWriteRPS, Burst: r.OrgWriteBurst},
+		},
+		Key: ratelimit.Specs{
+			Read:  ratelimit.Spec{Rate: r.KeyReadRPS, Burst: r.KeyReadBurst},
+			Write: ratelimit.Spec{Rate: r.KeyWriteRPS, Burst: r.KeyWriteBurst},
+		},
+		IP: ratelimit.Specs{
+			Read:  ratelimit.Spec{Rate: r.IPReadRPS, Burst: r.IPReadBurst},
+			Write: ratelimit.Spec{Rate: r.IPWriteRPS, Burst: r.IPWriteBurst},
+		},
+		IdleTTL: r.IdleTTL,
+	}
+}

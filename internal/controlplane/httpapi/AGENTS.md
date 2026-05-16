@@ -230,3 +230,52 @@ tenant-scoped `Get` inside the same tx to disambiguate "row gone"
 (NotFound) from "row stale" (ConflictStale carrying the row's current
 version) — copy `classifyOrganizationConcurrencyMiss` /
 `classifyProjectConcurrencyMiss` verbatim for new resources.
+
+## Middleware chain order
+
+`NewHandler` wraps every route with two optional layers around the
+handler:
+
+```
+RequireAuth(...)        <- outer (only when endpoint.RequiresAuth)
+  └── RateLimit(...)    <- inner (always, no-op when limiter is nil)
+        └── handler
+```
+
+The rate-limit gate runs **inside** `RequireAuth` so the resolved
+principal (`policy.PrincipalFromContext`) and credential scheme
+(`AuthMethodFromContext`) are on the request context when the limiter
+decides — that is what lets the gate bill the org / API key buckets for
+an authenticated request, fall back to the IP bucket alone for a public
+endpoint, and recognise the `auth.MethodInternalWorker` exemption. A
+new middleware that needs the principal context should slot **inside**
+`RequireAuth` the same way; one that needs to short-circuit before
+authentication (request-size limits, host validation) should be wrapped
+**around** `RequireAuth` instead.
+
+## Auth method on the context
+
+Both `RequireAuth` and `RequireInternalWorker` stamp the request
+context with the credential scheme via `withAuthMethod(ctx, id.Method)`
+(declared in `middleware.go`); downstream middleware reads it back
+through `AuthMethodFromContext`. Use this when a downstream rule needs
+to distinguish API-key / session / internal-worker callers without
+re-running the authenticator — the rate-limit gate's internal-worker
+exemption is the canonical example. **Never** re-issue an
+`Authenticator.Authenticate` call from middleware just to recover the
+method; that would double the credential-store load and re-introduce
+the secret on a path the first authentication has already cleared.
+
+## Adding a positional parameter to NewHandler
+
+`NewHandler` is a single, large positional signature. When a new
+backend dependency must reach every route (a rate limiter, a request-
+audit sink, a feature-flag resolver), add it as a **trailing**
+parameter and sweep all call sites with a depth-tracking parenthesis
+walker (see the Node script noted in the BE-0035 progress entry).
+Trailing-only additions are safe to sweep automatically — a regex sweep
+that anchors on the previous last identifier risks corrupting
+multi-line calls and tests whose closing paren is several lines below
+the last argument. Pass `nil` from every call site that does not
+exercise the new dependency; the constructor must treat `nil` as a
+no-op so the construction path stays uniform for tests.
