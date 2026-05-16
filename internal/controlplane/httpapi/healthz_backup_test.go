@@ -383,7 +383,7 @@ func newHandlerWithBackup(reporter backup.Reporter) http.Handler {
 		fakeEnvironmentVariableReader{}, fakeEnvironmentVariableReplacer{},
 		fakeEnvironmentServiceReader{}, fakeEnvironmentServiceCreator{},
 		fakeServiceReader{}, fakeServiceUpdater{}, fakeServiceDeleter{}, fakeServiceRestorer{},
-		fakeServiceRestarter{}, fakeServiceStarter{}, fakeServiceStopper{}, fakeServiceLogReader{}, fakeServiceMetricsReader{}, fakeServiceDomainReader{}, fakeServiceVariableReader{}, fakeServiceVariableReplacer{},
+		fakeServiceRestarter{}, fakeServiceStarter{}, fakeServiceStopper{}, fakeServiceLogReader{}, fakeServiceMetricsReader{}, fakeServiceDomainReader{}, fakeServiceDomainCreator{}, fakeServiceVariableReader{}, fakeServiceVariableReplacer{},
 		fakeDeploymentCreator{}, fakeDeploymentLister{}, fakeDeploymentGetter{},
 		fakeDeploymentCanceler{}, fakeDeploymentRollbacker{},
 		fakeBreakGlassController{},

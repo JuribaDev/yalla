@@ -18295,3 +18295,207 @@ Learnings for future iterations:
     because the routing tuple's uniqueness lives at internet scope,
     not tenant scope.
 ---
+
+## 2026-05-16 - BE-0238 + BE-0239 + BE-0240
+- Implemented POST /v1/services/{service_id}/domains end-to-end:
+  full vertical create-domain endpoint plus contract tests and policy
+  matrix in one bundled commit, mirroring the BE-0235+0236+0237 GET
+  bundle pattern for the read sibling.
+- Files created:
+  - internal/controlplane/httpapi/service_domains_create_test.go (new):
+    fakeServiceDomainCreator test double, seedServiceDomainWire,
+    createServiceDomainHandlerFor / postServiceDomain helpers,
+    decodeCreateServiceDomain, principalForCreateDomain, and 12
+    contract tests (happy path, request-id propagation, validation
+    failure, malformed JSON, unauthenticated, authorization denied
+    via viewer role, cross-tenant 404, conflict redaction, unwired
+    creator, OpenAPI registration, store outage, defaults applied,
+    explicit https=false preserved).
+  - internal/controlplane/httpapi/service_domains_create_policy_test.go
+    (new): canonical fixtures (canonicalDomainMatrixServiceID /
+    DomainID / Hostname / Path / Project / Environment),
+    canonicalCreatedServiceDomain, canonicalCreateServiceDomainBody,
+    createServiceDomainDenyBodyLeak, and 4 matrix suites — full
+    role x tenant matrix (CapWrite splits Owner/Admin/Developer
+    allowed vs CI/Viewer/Support denied — CI's CapDeploy is NOT
+    CapWrite, the load-bearing distinction from
+    deployment.create), revoked/expired keys (Disabled overrides
+    Developer), wrong-organization principal (engine cross-tenant
+    deny for CapWrite — every role including Support denied via
+    ReasonDeniedCrossTenant), and full grant containment (sibling
+    project, env staging-vs-prod, service shielding parent /
+    sibling, org-level Admin allowed end-to-end on the wire, org-
+    level Viewer denied via NoCapability, project/env/service
+    grants denied OutOfScope on the bare-id route).
+- Files changed:
+  - internal/controlplane/store/service_domain.go: added
+    ServiceDomainRepository.Insert (caller-supplied id +
+    organization_id + service_id + hostname + path + port + https +
+    certificate_type, returns the persisted row with the trigger-
+    populated version + created_at + updated_at); typed UNIQUE
+    (hostname, path) conflict mapped through mapWriteError with a
+    stable customer-facing message ("a service domain with this
+    hostname and path already exists") that NEVER echoes the
+    submitted value; ServiceDomainService orchestrator with Create
+    method that runs parent-service existence check + in-tx
+    Authorize + Insert + AuditAppend in one Store.Write transaction;
+    CreateServiceDomainInput with the canonical Actor* / RequestID /
+    CorrelationID plumbing for the audit record;
+    validateCreateServiceDomainInput uses the shared
+    validate.Collector + validate.Domain (no wildcard allowed
+    until a future story resolves the per-org feature flag) + a
+    local validateServiceDomainPath (leading "/" required, control-
+    byte free, URL-parseable, MaxPathLen bound) + closed-set
+    certificate_type taxonomy (lets-encrypt, custom, none with
+    schema-default fallback); serviceDomainCreateAction = "domain.create"
+    constant + ServiceDomainCertificate{LetsEncrypt,Custom,None}
+    exported.
+  - internal/controlplane/httpapi/service_domains.go: added
+    errNoServiceDomainCreator typed-internal-error sentinel,
+    serviceDomainOf wire-projection helper (the future single
+    chokepoint for any new column added to store.ServiceDomain),
+    ServiceDomainCreator port interface,
+    createServiceDomainRequest (id / hostname / path / port /
+    https as *bool / certificate_type — body intentionally exposes
+    no org_id, project_id, environment_id, or service_id field —
+    HTTPS is a pointer so the absent-vs-explicit-false distinction
+    is observable at the seam), createServiceDomainPayload,
+    createServiceDomainHandler (strict DecodeJSON, Principal +
+    Telemetry context plumbed verbatim, defaults to https=true on
+    omitted pointer, 201 Created on success).
+  - internal/controlplane/httpapi/routes.go: registered POST
+    /v1/services/{service_id}/domains route entry with
+    OperationID="createServiceDomain", Tags=[tagServices],
+    RequiredAction=ActionDomainCreate (CapWrite), resolver=
+    serviceIDResolver, SuccessStatus=201; newRouteTable signature
+    extended with serviceDomainCreator ServiceDomainCreator (after
+    serviceDomainReader, before serviceVariables); routes.go doc
+    comment for "serviceDomainCreator backs POST /v1/services/
+    {service_id}/domains" added.
+  - internal/controlplane/httpapi/server.go: NewHandler signature +
+    forwarding call extended in lockstep with newRouteTable.
+  - cmd/yalla-api/main.go: NewServiceDomainService wired (composing
+    serviceAuthz + auditRepo, NO QuotaReserver / JobEnqueuer yet —
+    domains have no per-org quota and no dedicated provisioning
+    job; the worker's Dokploy reconciler will project the row as
+    part of the broader service-reconcile loop in a later story)
+    and passed through NewHandler after serviceDomainReader.
+  - 66 existing httpapi *_test.go files: NewHandler/newRouteTable
+    call sites updated to insert fakeServiceDomainCreator{} between
+    fakeServiceDomainReader{} and fakeServiceVariableReader{} via
+    a Python multi-pattern substitution (one literal substitution
+    `, fakeServiceVariableReader{}` ->
+    `, fakeServiceDomainCreator{}, fakeServiceVariableReader{}`
+    covered 66 files / 116 call sites cleanly; the one residual
+    edge case — service_variables_test.go line 117 where the
+    parameter name `reader` substitutes for the ServiceVariableReader
+    slot, leaving `fakeServiceDomainReader{}, reader,
+    fakeServiceVariableReplacer{}` — was patched with a targeted
+    Edit insertion).
+- Verification run:
+  - gofmt -w . (clean)
+  - go mod tidy (clean)
+  - go vet ./... (clean)
+  - go build ./... (clean)
+  - go test ./... -count=1: all packages OK
+  - go test -race ./... -count=1: all packages OK
+  - goimports not installed; documented as a skip rather than a
+    silent omission.
+- Results: BE-0238, BE-0239, BE-0240 pass; total passing 189/614.
+- Remaining risks / follow-ups:
+  - PATCH /v1/services/{service_id}/domains/{domain_id} (BE-0241+
+    0242+0243) and DELETE /v1/services/{service_id}/domains/
+    {domain_id} (BE-0244+0245+0246) are the natural next bundles —
+    same vertical, same serviceIDResolver, same CapWrite shape;
+    they will need a domain-by-id resolver leg or accept the same
+    bare-service-id resolver depending on the path shape, and they
+    will need If-Match / version validation against the new
+    bump_version trigger from migration 0023. The endpoint /
+    contract tests / policy matrix bundling pattern applies
+    structurally.
+  - Wildcard hostname support: validate.Domain rejects wildcards
+    when DomainOptions.AllowWildcard is false. A future story will
+    resolve the per-org feature flag at the httpapi layer (an
+    OrganizationFeatureFlagReader port lookup) and pass
+    AllowWildcard=true when the org has it AND the
+    wildcard-domain quota is available.
+  - The domain-create vertical does not enqueue a provisioning job
+    yet — the worker's Dokploy reconciler will project the row as
+    part of the broader service-reconcile loop. When the dedicated
+    domains-reconcile worker story lands, the orchestrator will
+    gain JobEnqueuer (and possibly QuotaReserver for wildcard /
+    custom-cert quotas) dependencies the same way ServiceService
+    did.
+  - The serviceDomainOf wire projection helper is now defined but
+    the existing listServiceDomainsHandler still inlines its
+    projection (BE-0235 vintage); a follow-up cleanup could
+    migrate the list handler to use the helper for the same
+    chokepoint guarantee, but doing it as part of THIS story
+    would have widened the diff into BE-0235's surface area and
+    that's not what this story is about. Leave for an orthogonal
+    cleanup.
+- **Learnings for future iterations:**
+  - The "endpoint impl + contract tests + policy matrix as one
+    commit" bundle is the right grain for service-scoped write
+    endpoints when the priority-2 implementation story is blocked
+    by a higher-priority priority-1 policy-matrix story that
+    depends on it. Single git commit, single PRD update marking
+    all three passing. This is the third instance of this pattern
+    (BE-0229+0230+0231 logs GET, BE-0232+0233+0234 metrics GET,
+    BE-0235+0236+0237 domains GET, now BE-0238+0239+0240 domains
+    POST) — established enough that it should be in the Codebase
+    Patterns section near the top.
+- Bare-id write endpoint on a deep resource (BE-0238+0239+0240 pattern,
+  POST /v1/services/{service_id}/domains, store/service_domain.go
+  ServiceDomainService + ServiceDomainRepository.Insert,
+  httpapi/service_domains.go ServiceDomainCreator port +
+  createServiceDomainRequest + createServiceDomainHandler,
+  routes.go POST /v1/services/{service_id}/domains entry,
+  server.go NewHandler + newRouteTable + cmd/yalla-api/main.go wiring,
+  service_domains_create_test.go contract suite +
+  service_domains_create_policy_test.go matrix): canonical shape for
+  ANY customer-facing write endpoint whose path addresses a deep
+  resource (service, environment, deployment) by a bare id WITHOUT
+  carrying its parent ids in the path AND whose mutation is
+  source-of-truth in Yalla's database (no immediate Dokploy
+  provisioning, no idempotency-key contract on the request body,
+  no quota — yet). Five load-bearing rules: (1) the resolver is
+  serviceIDResolver (same as the read sibling) so the policy
+  contract is structurally identical to the GET — same
+  ReasonAllowedByRole / ReasonDeniedNoCapability / cross-tenant
+  suppression — and the only axis that splits between read and
+  write at the matrix level is the capability tier; (2) the
+  HTTPS pointer-typed field on the request body is the canonical
+  way to make absent-vs-explicit-false observable at the seam
+  WITHOUT silently substituting a default — the handler resolves
+  the pointer to a bool and forwards it to the store layer, which
+  observes the request body's literal intent (a contract test pins
+  this verbatim and would catch a regression that silently
+  flipped an explicit false to the schema-side default);
+  (3) the store-level conflict message is anchored on yerr.CodeConflict
+  + non-empty Message ONLY (the stable string "a service domain
+  with this hostname and path already exists" is a contract but
+  the policy tests must NEVER assert substring containment for
+  the customer-facing prose — and the redaction-trust guard MUST
+  needle for the submitted hostname / path / submitted value, so
+  a regression that started echoing the input fails); (4) the
+  store-level orchestrator (ServiceDomainService) follows the
+  three-step minimal-deps shape — Get-parent (tenant-scoped) +
+  Authorize (defense-in-depth in same Tx) + Insert + AuditAppend
+  in one Store.Write — and intentionally does NOT take
+  QuotaReserver / JobEnqueuer dependencies until the worker /
+  quota stories land, mirroring the way ServiceService grew its
+  dependencies story-by-story; (5) the migration's UNIQUE
+  (hostname, path) is GLOBAL (not scoped by organization_id),
+  which is correct for a routable public address (two tenants
+  cannot both claim the same address) — the conflict path's
+  customer-facing message must NEVER echo the foreign hostname
+  on a duplicate-against-OTHER-tenant case (the constraint
+  rejects the insert with the same error shape as a same-tenant
+  duplicate, and the redaction policy renders neither). Forward-
+  applicable to every future service-scoped write endpoint on a
+  no-quota, no-provisioning-job sub-resource (service backups
+  metadata, service rendered-config attachments, etc.) where the
+  Dokploy reconciler will later project the row through a broader
+  service-reconcile pass rather than a dedicated provisioning job.
+---
