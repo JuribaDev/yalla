@@ -75,19 +75,24 @@ type listEnvironmentServicesPayload struct {
 // applies. CreatedAt and UpdatedAt are RFC 3339 timestamps with the
 // same semantics as every other dated resource the API surfaces;
 // Version is the database-owned optimistic-concurrency counter
-// callers will use as an If-Match precondition on PATCH and DELETE
-// once those endpoints land.
+// callers use as an If-Match precondition on PATCH and DELETE.
+// DeletionScheduledAt is the soft-delete marker added by migration
+// 0020 (mirroring projectEnvironment.deletion_scheduled_at from
+// migration 0016): omitted entirely on a live service and rendered as
+// an RFC 3339 timestamp on one already scheduled for teardown by
+// DELETE /v1/services/{service_id}.
 type environmentService struct {
-	ID             string    `json:"id"`
-	OrganizationID string    `json:"organization_id"`
-	ProjectID      string    `json:"project_id"`
-	EnvironmentID  string    `json:"environment_id"`
-	Slug           string    `json:"slug"`
-	DisplayName    string    `json:"display_name"`
-	Kind           string    `json:"kind"`
-	Version        int64     `json:"version"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID                  string    `json:"id"`
+	OrganizationID      string    `json:"organization_id"`
+	ProjectID           string    `json:"project_id"`
+	EnvironmentID       string    `json:"environment_id"`
+	Slug                string    `json:"slug"`
+	DisplayName         string    `json:"display_name"`
+	Kind                string    `json:"kind"`
+	Version             int64     `json:"version"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
+	DeletionScheduledAt *string   `json:"deletion_scheduled_at,omitempty"`
 }
 
 // environmentServiceOf projects a store.Service into the stable wire
@@ -95,9 +100,11 @@ type environmentService struct {
 // table itself carries no credential material — but the projection
 // remains the single chokepoint so a future column added to
 // store.Service is reviewed for its wire exposure here rather than
-// leaking by default.
+// leaking by default. A nil DeletionScheduledAt — a live service — is
+// omitted from the wire shape entirely, matching the
+// projectEnvironment.deletion_scheduled_at omitempty convention.
 func environmentServiceOf(s store.Service) environmentService {
-	return environmentService{
+	out := environmentService{
 		ID:             s.ID,
 		OrganizationID: s.OrganizationID,
 		ProjectID:      s.ProjectID,
@@ -109,6 +116,11 @@ func environmentServiceOf(s store.Service) environmentService {
 		CreatedAt:      s.CreatedAt,
 		UpdatedAt:      s.UpdatedAt,
 	}
+	if s.DeletionScheduledAt != nil {
+		scheduled := s.DeletionScheduledAt.UTC().Format(time.RFC3339Nano)
+		out.DeletionScheduledAt = &scheduled
+	}
+	return out
 }
 
 // listEnvironmentServicesHandler builds the GET

@@ -27,28 +27,36 @@ import (
 // trigger from migration 0011 on every UPDATE. Callers must not mutate
 // it; the trigger is the only writer.
 //
+// DeletionScheduledAt is the soft-delete marker added by migration
+// 0020 (mirroring environments.deletion_scheduled_at from 0016): NULL
+// means the service is live, a non-NULL value means it is scheduled
+// for teardown by a later worker job. The store-layer service refuses
+// a second scheduling request as a typed apierr.Conflict rather than
+// moving the timestamp.
+//
 // The struct carries no credential material — the services table
 // stores only structural identifiers, the kind taxonomy, and lifecycle
 // timestamps. Service-scoped variables, deployments, and other secret-
 // bearing resources live in their own dedicated migrations and are
 // redacted wherever they are handled.
 type Service struct {
-	ID             string
-	OrganizationID string
-	ProjectID      string
-	EnvironmentID  string
-	Slug           string
-	DisplayName    string
-	Kind           string
-	Version        int64
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID                  string
+	OrganizationID      string
+	ProjectID           string
+	EnvironmentID       string
+	Slug                string
+	DisplayName         string
+	Kind                string
+	Version             int64
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	DeletionScheduledAt *time.Time
 }
 
 // serviceColumns is the SELECT projection used by every read in this
 // repository. Keeping it as a single string keeps the column list in
 // lockstep with scanService.
-const serviceColumns = `id, organization_id, project_id, environment_id, slug, display_name, kind, version, created_at, updated_at`
+const serviceColumns = `id, organization_id, project_id, environment_id, slug, display_name, kind, version, created_at, updated_at, deletion_scheduled_at`
 
 // serviceListMaxRows caps how many rows a single ListByEnvironment
 // call returns. An unbounded query can never be issued by accident; an
@@ -274,10 +282,71 @@ func scanService(row scanRow) (Service, error) {
 		&s.Version,
 		&s.CreatedAt,
 		&s.UpdatedAt,
+		&s.DeletionScheduledAt,
 	); err != nil {
 		return Service{}, err
 	}
 	return s, nil
+}
+
+// ScheduleDeletion stamps deletion_scheduled_at = now() on the service
+// identified by (organizationID, serviceID) inside tx and returns the
+// persisted row, including the trigger-refreshed updated_at timestamp
+// and bumped version. It requires a *Tx — not a bare Querier — so a
+// service can never be marked for teardown outside the transaction
+// that also carries its audit record. The query is tenant scoped by
+// organization_id first, so a serviceID that belongs to another
+// organization simply does not match and is reported as NotFound — a
+// cross-tenant id can never schedule another organization's service
+// for teardown. The parent (project, environment) relationship is
+// preserved by construction: the UPDATE touches only
+// deletion_scheduled_at and never the composite (organization_id,
+// project_id, environment_id) tenant key.
+//
+// The UPDATE is unconditional in its predicate apart from the optional
+// version check: re-scheduling a service already scheduled for
+// deletion is a conflict the ServiceService detects with a prior read
+// inside the same transaction, not a not-found this repository can
+// distinguish (the repository must remain SQL-idempotent for
+// non-customer callers — workers, admin jobs — that need a stable
+// retry surface).
+//
+// ifMatchVersion enforces optimistic concurrency identically to
+// Update — a nil pointer disables the check, a non-nil pointer adds a
+// WHERE clause on the current version, and a stale view is reported
+// as a typed apierr.ConflictStale carrying the row's authoritative
+// version through classifyServiceConcurrencyMiss.
+func (r *ServiceRepository) ScheduleDeletion(ctx context.Context, tx *Tx, organizationID, serviceID string, ifMatchVersion *int64) (Service, error) {
+	if tx == nil {
+		return Service{}, apierr.Internal(errors.New("store: ServiceRepository.ScheduleDeletion called with a nil transaction"))
+	}
+	var row pgx.Row
+	if ifMatchVersion == nil {
+		row = tx.QueryRow(ctx,
+			`UPDATE services
+			    SET deletion_scheduled_at = now()
+			  WHERE organization_id = $1 AND id = $2
+			 RETURNING `+serviceColumns,
+			organizationID, serviceID)
+	} else {
+		row = tx.QueryRow(ctx,
+			`UPDATE services
+			    SET deletion_scheduled_at = now()
+			  WHERE organization_id = $1 AND id = $2 AND version = $3
+			 RETURNING `+serviceColumns,
+			organizationID, serviceID, *ifMatchVersion)
+	}
+	updated, err := scanService(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if ifMatchVersion == nil {
+			return Service{}, apierr.NotFound("service", serviceID)
+		}
+		return Service{}, classifyServiceConcurrencyMiss(ctx, tx, organizationID, serviceID, *ifMatchVersion)
+	}
+	if err != nil {
+		return Service{}, apierr.StoreUnavailable(err)
+	}
+	return updated, nil
 }
 
 // ServiceReader is the store-backed read adapter for the services

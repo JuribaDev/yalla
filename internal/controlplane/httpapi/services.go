@@ -30,6 +30,14 @@ var errNoServiceReader = errors.New("httpapi: no service reader configured")
 // the mutation.
 var errNoServiceUpdater = errors.New("httpapi: no service updater configured")
 
+// errNoServiceDeleter is returned when DELETE /v1/services/{service_id}
+// is reached without a ServiceDeleter wired into NewHandler. Like
+// errNoServiceUpdater it can only happen through a wiring error — a
+// programming mistake, not a client error — so the handler reports it
+// as a typed internal failure rather than silently failing to persist
+// the soft-delete.
+var errNoServiceDeleter = errors.New("httpapi: no service deleter configured")
+
 // ServiceReader is the narrow persistence port GET
 // /v1/services/{service_id} depends on. *store.ServiceReader satisfies
 // it in production; tests supply a fake. Keeping the dependency an
@@ -276,6 +284,111 @@ func updateServiceHandler(updater ServiceUpdater) http.HandlerFunc {
 
 		writeOrganizationETag(w, service.Version)
 		apienvelope.WriteData(w, http.StatusOK, requestID(r), updateServicePayload{
+			Service: environmentServiceOf(service),
+		})
+	}
+}
+
+// ServiceDeleter is the narrow persistence port DELETE
+// /v1/services/{service_id} depends on. *store.ServiceService satisfies
+// it in production; tests supply a fake. Like ServiceUpdater it is an
+// interface declared here so the handler stays unit-testable without a
+// real database — the concrete orchestrator (the desired-state
+// soft-delete stamp and the immutable audit record committed in one
+// transaction) lives in the store layer, mirroring EnvironmentDeleter
+// for the environment surface.
+type ServiceDeleter interface {
+	ScheduleDeletion(ctx context.Context, in store.DeleteServiceInput) (store.Service, error)
+}
+
+// deleteServicePayload is the data block of the DELETE
+// /v1/services/{service_id} success envelope: the service with its
+// deletion_scheduled_at stamp set, in the same stable wire shape the
+// other service endpoints return. It carries no credential material —
+// the services table itself stores no secrets; service-scoped variables
+// and other secrets live behind their own endpoints where the redaction
+// policy applies.
+type deleteServicePayload struct {
+	Service environmentService `json:"service"`
+}
+
+// deleteServiceHandler builds the DELETE /v1/services/{service_id}
+// handler. It schedules the service for teardown by stamping
+// deletion_scheduled_at in the source-of-truth database through the
+// ServiceDeleter port, then renders the persisted row in a stable
+// yalla.output.v1 envelope. The teardown is scheduled, not immediate:
+// the worker that retires the Dokploy object backing the service and
+// eventually removes the row and its audit log is a later worker story,
+// so the service and its audit trail still exist when this returns.
+//
+// RequireAuth gates the route on action service.delete before the
+// handler runs — authorized through serviceIDResolver against the
+// (principal home organization, {service_id}) resource the path
+// names — and attaches the resolved principal, so a request that
+// reaches the handler has already cleared the policy boundary.
+// service.delete is a CapWrite action, so the gate admits the
+// principal's organization-wide write roles (owner, admin, developer,
+// ci) and denies viewer, denies support (a support principal is
+// CapRead-only and cannot mutate even within its home tenant). The path
+// carries no parent project_id or environment_id, so the policy engine
+// cannot pin those legs of the resource scope at authorization time —
+// project-, environment-, and service-scoped grants are denied at the
+// boundary by the engine's covers() rule (a grant with a pinned
+// ProjectID cannot cover a resource with no ProjectID); principals
+// whose only access is a scoped grant must use a parent-scoped route to
+// address a service by its (project, environment, service) tuple.
+//
+// The handler never trusts a caller-supplied organization id: the store
+// call is built from principal.OrganizationID and
+// r.PathValue("service_id"), so a cross-tenant service_id reaches the
+// tenant-scoped repository query with the principal's home organization
+// id and is reported as a deterministic NotFound by the persistence
+// layer, never another tenant's row. A request that arrives with no
+// principal is a wiring error reported as a typed internal error; an
+// If-Match parse failure, a stale If-Match version, a not-found
+// {service_id}, a service whose deletion is already scheduled, and a
+// datastore outage each surface as their own typed status, never
+// disguised as one another. On success, the handler mirrors the row's
+// authoritative version into the ETag response header so the caller can
+// echo it back as the next If-Match precondition without re-reading the
+// row, and returns 202 Accepted — the scheduling is durable but the
+// destructive teardown is a later worker job.
+func deleteServiceHandler(deleter ServiceDeleter) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if deleter == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoServiceDeleter))
+			return
+		}
+
+		ifMatchVersion, ifMatchErr := parseIfMatchVersion(r)
+		if ifMatchErr != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(ifMatchErr))
+			return
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		service, err := deleter.ScheduleDeletion(r.Context(), store.DeleteServiceInput{
+			OrganizationID: p.OrganizationID,
+			ServiceID:      r.PathValue("service_id"),
+			IfMatchVersion: ifMatchVersion,
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		writeOrganizationETag(w, service.Version)
+		apienvelope.WriteData(w, http.StatusAccepted, requestID(r), deleteServicePayload{
 			Service: environmentServiceOf(service),
 		})
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
@@ -22,6 +23,7 @@ import (
 const (
 	serviceCreateAction = "service.create"
 	serviceUpdateAction = "service.update"
+	serviceDeleteAction = "service.delete"
 	serviceProvisionJob = "service.provision"
 	// serviceDisplayNameMaxLen bounds a human-authored service display
 	// name, in runes. It mirrors the environment / project display-name
@@ -578,4 +580,154 @@ func validateServiceKind(raw string) (string, *apierr.FieldViolation) {
 		Field:  "kind",
 		Reason: "must be one of \"application\", \"database\", or \"compose\"",
 	}
+}
+
+// DeleteServiceInput is the input to ServiceService.ScheduleDeletion.
+// OrganizationID identifies the tenant the service belongs to;
+// ServiceID names the service to schedule for teardown. The Actor* and
+// correlation fields describe the authenticated principal performing
+// the deletion and are recorded verbatim on the audit event. They are
+// plain strings so the store layer takes no build dependency on the
+// policy or telemetry packages — the httpapi handler, which already
+// holds the resolved principal and the request correlation, fills them
+// in.
+//
+// OrganizationID is sourced from the principal's home organization at
+// the HTTP boundary (never from the request body or path), so a
+// cross-tenant id cannot point the write at another tenant by
+// construction. ServiceID is sourced from the {service_id} PATH
+// parameter; the scheduling unit of work reads the current row under
+// (OrganizationID, ServiceID) before any mutation, so a cross-tenant
+// or unknown service_id surfaces as a deterministic apierr.NotFound
+// rather than a 500 or a silent success.
+//
+// IfMatchVersion is the optional optimistic-concurrency precondition:
+// when non-nil, the scheduling succeeds only if the row's current
+// version equals *IfMatchVersion at write time, otherwise it returns
+// a typed apierr.ConflictStale carrying the row's authoritative
+// version. The httpapi layer fills it from the request's If-Match
+// header. A nil pointer disables the check (next-write-wins, the
+// legacy behaviour). The pointer indirection is deliberate: it
+// distinguishes "caller did not supply a precondition" from "caller
+// supplied version 0", which is impossible by schema CHECK and must
+// not silently behave like the unchecked path.
+type DeleteServiceInput struct {
+	OrganizationID string
+	ServiceID      string
+	IfMatchVersion *int64
+	ActorID        string
+	ActorKind      string
+	ActorOrgID     string
+	RequestID      string
+	CorrelationID  string
+}
+
+// ScheduleDeletion schedules the service named by (in.OrganizationID,
+// in.ServiceID) for teardown, inside one transaction: read the current
+// row, optionally enforce the If-Match precondition, reject a service
+// already scheduled, stamp deletion_scheduled_at, append the audit
+// event. A blank OrganizationID or ServiceID is a typed validation
+// failure raised before the transaction is opened. A {service_id}
+// with no row inside the tenant is the typed NotFound the repository
+// produces, and a service whose deletion was already scheduled rolls
+// the whole transaction back as a typed Conflict — so an audit record
+// can never name a deletion that did not change the resource's state.
+//
+// Authorization for service.delete is enforced at the HTTP boundary
+// by RequireAuth against the (home organization, service_id) resource
+// the path names — the store layer never runs an in-transaction
+// Authorize for the delete path because the HTTP gate is
+// authoritative and the in-transaction Authorizer is reserved for
+// Create (the create-time race against grant changes during a quota
+// reservation).
+//
+// This is a soft, scheduled deletion: it records the intent and
+// stamps the timestamp. The destructive teardown — the worker that
+// retires the Dokploy object backing the service and eventually
+// removes the row and its audit log — is a later worker story, so the
+// service row and its audit trail still exist after this returns.
+func (svc *ServiceService) ScheduleDeletion(ctx context.Context, in DeleteServiceInput) (Service, error) {
+	organizationID := strings.TrimSpace(in.OrganizationID)
+	if organizationID == "" {
+		return Service{}, apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "organization_id",
+			Reason: "must not be blank",
+		})
+	}
+	serviceID := strings.TrimSpace(in.ServiceID)
+	if serviceID == "" {
+		return Service{}, apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "service_id",
+			Reason: "must not be blank",
+		})
+	}
+
+	// The audit record is filed under the actor's home organization —
+	// the tenant the principal authenticated into — while its resource
+	// id names the service that was scheduled for deletion. A missing
+	// actor organization is a wiring error (an authenticated request
+	// always carries one), not client input, so it is reported as
+	// Internal rather than a validation failure.
+	actorOrgID := strings.TrimSpace(in.ActorOrgID)
+	if actorOrgID == "" {
+		return Service{}, apierr.Internal(errors.New("store: ServiceService.ScheduleDeletion requires an actor organization for the audit record"))
+	}
+
+	event := AuditEvent{
+		OrganizationID: actorOrgID,
+		ActorID:        strings.TrimSpace(in.ActorID),
+		ActorKind:      strings.TrimSpace(in.ActorKind),
+		Action:         serviceDeleteAction,
+		ResourceKind:   string(domain.KindService),
+		ResourceID:     serviceID,
+		Decision:       AuditDecisionAllowed,
+		Reason:         "authorization granted for service.delete",
+		RequestID:      strings.TrimSpace(in.RequestID),
+		CorrelationID:  strings.TrimSpace(in.CorrelationID),
+	}
+
+	var scheduled Service
+	txErr := svc.store.Write(ctx, func(ctx context.Context, tx *Tx) error {
+		current, getErr := svc.services.GetByID(ctx, tx, organizationID, serviceID)
+		if getErr != nil {
+			return getErr
+		}
+		// The version pre-check surfaces a stale If-Match BEFORE the
+		// already-scheduled check, so the caller learns "your view of
+		// the version is stale" instead of an already-scheduled
+		// message that might race with a concurrent edit they did not
+		// see.
+		if in.IfMatchVersion != nil && current.Version != *in.IfMatchVersion {
+			return apierr.ConflictStale(current.Version)
+		}
+		if current.DeletionScheduledAt != nil {
+			// Scheduling teardown for a service already scheduled for
+			// teardown changes nothing: the caller's view of the
+			// resource lifecycle is stale, so it is a typed Conflict,
+			// not a silent success that would write a misleading audit
+			// record.
+			return apierr.Conflict("service deletion is already scheduled")
+		}
+		row, updErr := svc.services.ScheduleDeletion(ctx, tx, organizationID, serviceID, in.IfMatchVersion)
+		if updErr != nil {
+			return updErr
+		}
+		// deletion_scheduled_at is database-assigned (now()); record the
+		// resolved timestamp — a non-secret value — as audit context so
+		// the trail captures exactly when teardown was scheduled.
+		if row.DeletionScheduledAt != nil {
+			event.Metadata = map[string]string{
+				"deletion_scheduled_at": row.DeletionScheduledAt.UTC().Format(time.RFC3339Nano),
+			}
+		}
+		if _, audErr := svc.audit.Append(ctx, tx, event); audErr != nil {
+			return audErr
+		}
+		scheduled = row
+		return nil
+	})
+	if txErr != nil {
+		return Service{}, txErr
+	}
+	return scheduled, nil
 }

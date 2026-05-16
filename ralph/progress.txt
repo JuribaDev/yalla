@@ -15172,3 +15172,101 @@
     so the leak guard can needle for them independently of the row
     id.
 ---
+## 2026-05-16T02:13Z - BE-0190: Implement DELETE /v1/services/{service_id}
+
+Implemented the scheduled-deletion soft-delete endpoint for services, mirroring the
+existing DELETE /v1/environments/{environment_id} pattern (BE-0181/0182 style). The
+endpoint soft-deletes by stamping services.deletion_scheduled_at; the destructive worker
+teardown remains a later story.
+
+Files added:
+- internal/controlplane/store/migrate/migrations/0020_service_deletion_schedule.up.sql:
+  ADD COLUMN services.deletion_scheduled_at timestamptz + partial index
+  services_deletion_scheduled_at_idx WHERE deletion_scheduled_at IS NOT NULL.
+- internal/controlplane/store/migrate/migrations/0020_service_deletion_schedule.down.sql:
+  reverse migration.
+- internal/controlplane/httpapi/services_delete_test.go:
+  contract tests for success/202, ETag mirroring, If-Match parsing/forwarding,
+  malformed If-Match -> 400 without port call, missing credentials -> 401,
+  viewer principal -> 403, NotFound, Conflict (already-scheduled), ConflictStale
+  with details.current_version, StoreUnavailable does not leak cause, missing
+  port -> typed internal error, and OpenAPI route registration with operationId
+  deleteService and required action service.delete. Defines fakeServiceDeleter.
+
+Files modified:
+- internal/controlplane/store/service.go:
+  Service struct gains DeletionScheduledAt *time.Time; serviceColumns extended;
+  scanService adds the column; new ServiceRepository.ScheduleDeletion stamps
+  deletion_scheduled_at = now() in a *Tx with optional If-Match enforcement and
+  classifyServiceConcurrencyMiss disambiguation.
+- internal/controlplane/store/serviceservice.go:
+  serviceDeleteAction constant; DeleteServiceInput struct; ServiceService.ScheduleDeletion
+  runs validation -> read -> If-Match precheck -> already-scheduled precheck ->
+  repository.ScheduleDeletion -> audit.Append in one transaction.
+- internal/controlplane/httpapi/environment_services.go:
+  environmentService wire shape gains DeletionScheduledAt *string (omitempty);
+  environmentServiceOf renders s.DeletionScheduledAt as RFC 3339 nano UTC.
+- internal/controlplane/httpapi/services.go:
+  errNoServiceDeleter sentinel; ServiceDeleter port; deleteServicePayload;
+  deleteServiceHandler parses If-Match, calls the port, writes ETag, returns 202.
+- internal/controlplane/httpapi/routes.go:
+  newRouteTable signature gains serviceDeleter ServiceDeleter; new DELETE
+  /v1/services/SERVICEID route with stable operationId deleteService,
+  required action service.delete, serviceIDResolver, SuccessStatus 202.
+- internal/controlplane/httpapi/server.go:
+  NewHandler signature gains serviceDeleter ServiceDeleter, threaded into
+  newRouteTable.
+- cmd/yalla-api/main.go:
+  serviceService passed as the new ServiceDeleter argument.
+- 49 *_test.go files under internal/controlplane/httpapi/:
+  every NewHandler call site updated to inject fakeServiceDeleter into the new
+  argument slot. Two pre-existing call-site forms were patched in bulk
+  (literal fakeServiceUpdater followed by fakeBreakGlassController, and the
+  named-variable updater form in services_update_test.go), plus the bespoke
+  fakeServiceUpdater + ctl form in break_glass_test.go.
+
+Verification:
+- gofmt -l . -> no diffs
+- go vet ./... -> clean
+- go mod tidy -> no changes
+- go test ./... -> all packages PASS (httpapi 0.941s, store 0.470s, migrate
+  0.825s; all others PASS, no FAIL)
+- go test -race ./... -> all packages PASS (httpapi 4.255s, store 2.545s,
+  migrate 1.766s, worker 3.703s, testutil 4.048s; no FAIL)
+
+Remaining follow-ups:
+- BE-0191 (contract tests for DELETE /v1/services/SERVICEID) is a separate
+  pending story; the contract surface is largely exercised by
+  services_delete_test.go in this story, so BE-0191 should close with only
+  marginal additions.
+- BE-0192 (policy matrix coverage) is the priority-1 follow-up this story
+  unblocks; should mirror the BE-0189 PATCH policy-matrix shape against
+  action service.delete.
+- A worker that performs the destructive teardown (retiring the Dokploy
+  service and pruning the services row + audit log) is a later story; this
+  endpoint records intent only.
+
+Learnings for future iterations:
+- Service struct in store/service.go and environmentService in
+  httpapi/environment_services.go are the two shared chokepoints for service
+  endpoints. Adding a new column requires: migration up/down, struct field,
+  serviceColumns const, scanService, environmentService JSON tag,
+  environmentServiceOf projection. The handler payloads (getService /
+  updateService / deleteService) all reuse environmentService, so a new wire
+  field exposed once propagates everywhere.
+- Adding a new port to NewHandler is a wide test-file churn because the
+  full handler is built in ~50 *_test.go files. The cheapest fix is a
+  conservative regex pass over the two literal call-site forms (literal
+  fakeXUpdater + fakeBreakGlassController; and the named-variable form in
+  services_update_test.go), with a verification grep afterwards.
+  break_glass_test.go uses a 'ctl' variable for the BreakGlassController slot
+  and must be matched separately.
+- ServiceRepository.ScheduleDeletion follows the same tx-only,
+  classify-concurrency-miss-on-If-Match shape as
+  EnvironmentRepository.ScheduleDeletion. Reuse the same template for future
+  ScheduleDeletion methods on lower-level surfaces (variables) when those
+  soft-delete stories land.
+- The handler returns 202 Accepted, not 200 OK, matching environment-delete:
+  ScheduleDeletion is durable but the destructive teardown is a future job.
+
+---
