@@ -24067,3 +24067,49 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     `ssrf_test.go` is in `package validate_test` (it drives the public
     API surface, matching the existing `validate_test.go` shape).
 ---
+
+## 2026-05-16 23:55 - BE-0077
+- Added internal/controlplane/httpapi/api_keys_list_contract_test.go closing the
+  remaining contract criteria for GET /v1/organizations/{org_id}/api-keys that
+  api_keys_test.go (BE-0076) does not assert directly. Three tests:
+  TestListAPIKeysServerWritesResponseDataOnlyToResponseWriter (HTTP server
+  writes response data only through ResponseWriter — captureProcessOutput
+  proves stdout/stderr stay empty), TestListAPIKeysRequestLogRedactsBearerToken
+  (table-driven success + auth-failure subtests; per-request slog record never
+  carries the bearer credential and the response body never echoes it),
+  TestListAPIKeysErrorEnvelopeDoesNotLeakDependencyCause (apierr.StoreUnavailable
+  wrapped cause string and the bare datastore address never reach the wire
+  envelope).
+- Files changed: internal/controlplane/httpapi/api_keys_list_contract_test.go (new),
+  ralph/prd.json, ralph/progress.txt.
+- Verification run: gofmt -w .; go mod tidy; go vet ./...; go test ./...
+  (full suite); go test -race -count=1 ./internal/controlplane/httpapi/.
+- Results: all changes pass (-race included). goimports / golangci-lint /
+  staticcheck / govulncheck still not installed locally (documented in earlier
+  iterations).
+- Remaining risks / follow-ups: none for BE-0077. The next failing P2 contract
+  test stories are BE-0080 (POST api-keys), BE-0083 (GET api-keys/{key_id}),
+  BE-0086 (PATCH api-keys/{key_id}), BE-0089 (DELETE api-keys/{key_id}),
+  BE-0092 (POST api-keys/{key_id}/rotate).
+- **Learnings for future iterations:**
+  - api_keys_list_contract_test.go is a near-verbatim port of the BE-0062
+    members_list_contract_test.go template to the api-keys LIST endpoint.
+    The three-test shape (process-stream quarantine, bearer-redaction-in-log
+    table, dependency-cause-no-leak) ports unchanged — only the helper name
+    (listAPIKeysHandlerForWithLogger), the port slot (APIKeyReader, 21st
+    positional arg to NewHandler — replacing the existing fakeAPIKeyReader{}
+    slot), the HTTP method helper (getAPIKeys), the success envelope decoder
+    (decodeListAPIKeys), the role constant (policy.RoleAdmin because keys.read
+    is a CapAdmin action, NOT RoleViewer like members.read), the resource id
+    field (KeyID instead of UserID), and the contract-secret constant change.
+    The disabled-principal pattern still works for the auth-failure path —
+    RoleAdmin + Disabled=true returns 403, no need to switch to a
+    cross-tenant or viewer principal which would muddy the redaction signal
+    with a different deny reason.
+  - The NewHandler positional argument convention places the per-resource
+    Reader/Creator/Updater quartet in alphabetical resource order. For
+    api-keys the slots are (reader, creator, updater, revoker, rotator) at
+    positions 21-25. Swapping the reader slot is the only change vs. the
+    members template, which lives at positions 13-16 (reader, creator,
+    updater, remover).
+---
