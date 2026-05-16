@@ -22900,3 +22900,30 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     - The audit-event read predicate for service_variables Replace filters on resource_kind = svc / resource_id = {service_id} (domain.KindService). The BE-0341 progress note for "the audit read predicate must match how the service files the audit row" carried over verbatim: select by (organization_id, resource_id={service.ID}) and the row appears immediately.
     - Migration numbers are tracked sequentially: 0029 (org), 0030 (project), 0031 (env), 0032 (svc). Future at-rest seams for OTHER source-of-truth tables (webhook signing secrets, deployment-config secrets, backup-target credentials) take 0033+ and should reuse the same DO $$ guard / CHECK / partial index pattern.
 ---
+
+## 2026-05-16 - BE-0071
+- Implemented contract tests for PATCH /v1/organizations/{org_id}/members/{member_id}.
+- Added internal/controlplane/httpapi/members_update_contract_test.go (3 tests):
+  - TestUpdateMemberServerWritesResponseDataOnlyToResponseWriter — proves the HTTP server writes nothing to os.Stdout/os.Stderr on a served PATCH; the updated-member payload is carried by the http.ResponseWriter body alone; structured slog writer is the only sanctioned writer.
+  - TestUpdateMemberRequestLogRedactsBearerToken — two-leg subtest (success + authorization-failure) proving the bearer credential never reaches the structured request log or the response body. Disabled-principal leg uses a fakeMembershipUpdater whose UpdateMember would error if invoked, so the deny path is short-circuited at policy (any logged updater error cannot be the leak source).
+  - TestUpdateMemberErrorEnvelopeDoesNotLeakDependencyCause — pins that a StoreUnavailable wrapping "connection refused dialing 10.0.0.5:5432" surfaces as a 503 E_UNAVAILABLE with a stable generic message; the wrapped cause and the bare datastore address never reach the wire.
+- Files changed:
+  - internal/controlplane/httpapi/members_update_contract_test.go (NEW)
+  - ralph/prd.json (BE-0071 passes -> true)
+  - ralph/progress.txt (this entry)
+- Verification run:
+  - gofmt -l internal/controlplane/httpapi/members_update_contract_test.go -> clean
+  - go vet ./... -> exit 0, 0 lines of output
+  - go test -count=1 -run 'TestUpdateMember(ServerWritesResponseDataOnlyToResponseWriter|RequestLogRedactsBearerToken|ErrorEnvelopeDoesNotLeakDependencyCause)' ./internal/controlplane/httpapi/ -> ok 0.561s
+  - go test -count=1 ./internal/controlplane/httpapi/ -> ok 1.094s
+  - go test -race -count=1 ./internal/controlplane/httpapi/ -> ok 7.695s
+  - go test ./... -> exit 0 (all packages ok or cached)
+  - go test -race ./... -> exit 0 (all packages ok or cached)
+- Results: all green; no live Postgres required (httpapi handler tests are in-memory with fake ports).
+- Remaining risks or follow-ups: none for BE-0071. Sibling PATCH contract tests (api_keys PATCH, organizations PATCH, etc.) can follow the same 3-test recipe.
+- **Learnings for future iterations:**
+  - The mutating-endpoint contract-test triplet (server-only-writes-via-ResponseWriter, bearer-redaction-on-success-AND-deny, dependency-cause-does-not-leak) drops in mechanically for any PATCH endpoint that already has an *_update_test.go covering the rejection space; BE-0065 (POST members), BE-0068 (GET members), and BE-0071 (PATCH members) are three concrete instances of the same recipe.
+  - The deny-path leg in the redaction test MUST use a port fake that ERRORS if its method is invoked (e.g. fakeMembershipUpdater{err: stderrors.New("updater must not be called")}). This pins that authorization actually short-circuits before the store layer and rules out "the leak came from a fake-port error message" as a confounder when a future logging change tries to start logging dependency errors.
+  - The dependency-cause-does-not-leak test must assert BOTH the wrapped-error string AND a bare network address from that string. A future error wrapper that accidentally renders the apierror.Cause via %v but redacts the wrapper's own message would still leak the address; asserting on the address closes that hole.
+  - When the contract test asserts that os.Stdout/os.Stderr stay empty, the test MUST be sequential (no t.Parallel()) — captureProcessOutput swaps the global os.Stdout/os.Stderr pointers and parallel tests would race on those globals.
+---

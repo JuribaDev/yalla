@@ -2234,7 +2234,7 @@
       ],
       "type": "test-membership",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Contract coverage for PATCH /v1/organizations/{org_id}/members/{member_id}."
     },
     {
