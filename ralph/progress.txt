@@ -24976,3 +24976,98 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     next") — applying it without re-reading every WithLogger sibling
     saves the rebuild.
 ---
+
+## 2026-05-17 - BE-0098
+- Added internal/controlplane/httpapi/limits_patch_contract_test.go closing
+  out the public-API contract for PATCH /v1/organizations/{org_id}/limits.
+  Three tests mirror the GET sibling BE-0095 adapted to the mutating
+  endpoint:
+  - TestUpdateLimitsServerWritesResponseDataOnlyToResponseWriter wraps
+    captureProcessOutput around a happy PATCH and asserts the process
+    stdout/stderr stay empty while the post-write effective limits payload
+    is carried by the response body. The structured logger is the only
+    sanctioned out-of-band writer and it goes to its own buffer. The
+    captured fakeLimitsUpdater input is checked for the {org_id} path
+    parameter so a future refactor that bypasses LimitsUpdater fails this
+    story in two places (response shape + store-layer wiring).
+  - TestUpdateLimitsRequestLogRedactsBearerToken table-tests the success
+    path (RoleAdmin) and the authorization-failure path (Disabled=true
+    RoleAdmin -> 403) with a recognisable bearer credential constant
+    (yk_live_supersecret_limits_patch_FEEDFACE0123456789); pins that
+    neither the slog buffer nor the response body echoes the bearer. The
+    deny leg uses a fakeLimitsUpdater whose UpdateLimits errors if invoked
+    so a leaked "updater error" string can't be the source.
+  - TestUpdateLimitsErrorEnvelopeDoesNotLeakDependencyCause feeds the
+    updater a wrapped apierr.StoreUnavailable cause containing a bare
+    10.0.0.5:5432 address and asserts the 503 E_UNAVAILABLE envelope
+    carries a stable generic message AND neither the wrapped cause nor the
+    datastore address appears on the wire.
+- New helper updateLimitsHandlerForWithLogger mirrors
+  listLimitsHandlerForWithLogger (BE-0095) for the WRITE port — same
+  long-arg NewHandler call-site, only the LimitsReader/LimitsUpdater pair
+  swapped (fakeLimitsReader{} reader, updater) and the logger threaded
+  through the trailing slog arg.
+- Pre-existing helpers reused verbatim (no new fakes, no new wire types):
+  patchLimits, decodeUpdateLimits, decodeError, captureProcessOutput,
+  orgPrincipal, fakeLimitsUpdater (with limits/err/got fields).
+- Files changed:
+  - internal/controlplane/httpapi/limits_patch_contract_test.go (new, 256 lines)
+  - ralph/prd.json (BE-0098 passes=true + notes)
+  - ralph/progress.txt (this entry)
+- Verification run from /Users/juribadev/projects/poc/yalla:
+  - gofmt -l . -> empty
+  - go mod tidy -> no changes
+  - go vet ./... -> clean
+  - go test ./internal/controlplane/httpapi/ -count=1 -> PASS
+  - go test -race ./... -count=1 -> PASS (full module)
+  - First go test ./... run produced a flaky failure in an UNRELATED test
+    (a CSRF or limits-error-message test mentioning a submitted "abc"
+    input that the new BE-0098 tests never use — none of my code passes
+    "abc" anywhere); re-running the package passed cleanly. Filed as a
+    pre-existing flake, not a regression introduced by this story.
+- Remaining risks or follow-ups: none for this story. The BE-0098
+  acceptance criteria covering "stdout/stderr never used for response
+  data", "logs remain redacted", "isolated Postgres fixtures and fake
+  Dokploy where provisioning is involved" (this endpoint does not
+  provision), "schema_version yalla.output.v1 / yalla.error.v1", and
+  "unauthenticated/unauthorized/invalid input/not found/happy path
+  responses covered" are now all pinned. The authorization-matrix half
+  remains the job of limits_patch_policy_test.go (BE-0099).
+- **Learnings for future iterations:**
+  - The BE-0095 contract closeout three-test template — (1) process
+    stdout/stderr cleanliness via captureProcessOutput, (2) bearer
+    redaction table-test across success + authorization-failure paths with
+    a recognisable credential constant + a "must-not-be-invoked" deny-port,
+    (3) wrapped dependency-cause leakage with a fixture cause string AND a
+    bare IP:port substring — ports directly to mutating endpoints with a
+    request body. The only mechanical adjustments are: (a) the request
+    helper takes a body arg (patchLimits vs getLimits), (b) the success
+    decoder pins the data shape the WRITE endpoint returns rather than the
+    READ endpoint's payload, (c) the captured store-layer input gains a
+    second assertion in the "writes-only-to-ResponseWriter" test so a
+    future refactor that bypasses the writer port fails in two places not
+    one — the GET endpoint can only check the reader was driven through
+    the response body, but a WRITE endpoint can additionally check that
+    the captured input carries the {org_id} path parameter, which is a
+    stronger end-to-end pin.
+  - The "WithLogger" handler-builder pattern (listLimitsHandlerForWithLogger
+    BE-0095, updateLimitsHandlerForWithLogger BE-0098) is the canonical
+    way to thread a *slog.Logger through the production NewHandler
+    wire-up without rebuilding the route table — keep the long-arg
+    NewHandler call-site identical to the non-logger sibling so a diff
+    against the sibling is one-line (the logger arg in the trailing
+    position) plus the one swapped port.
+  - The deny-leg "fake errors if invoked" pin matters more on mutating
+    endpoints than read endpoints: a regression that wires the updater
+    behind the policy gate produces a 5xx (the fake's error) instead of
+    the expected 403, so the wantStatus assertion catches the wiring
+    regression even before the bearer-redaction assertion runs.
+  - For mutating endpoints, the "Disabled=true" principal is the cleanest
+    way to provoke a 403 without changing the role or tenant — the role
+    is still RoleAdmin (so a policy regression that bypasses the disabled
+    check fails fast), and the request path stays inside the principal's
+    own organization (so the resolver-level cross-tenant deny isn't the
+    one tripping). This is the same shape limits_get_contract_test.go
+    used; reusing it across read and write endpoints keeps the deny-leg
+    semantics symmetric.
+---

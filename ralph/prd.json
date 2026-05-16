@@ -2747,8 +2747,8 @@
       ],
       "type": "test-quota",
       "priority": 2,
-      "passes": false,
-      "notes": "Contract coverage for PATCH /v1/organizations/{org_id}/limits."
+      "passes": true,
+      "notes": "Contract closeout for PATCH /v1/organizations/{org_id}/limits added in internal/controlplane/httpapi/limits_patch_contract_test.go: three tests mirror the GET sibling BE-0095 adapted to the mutating endpoint. (1) TestUpdateLimitsServerWritesResponseDataOnlyToResponseWriter wraps captureProcessOutput around a happy PATCH and asserts the process stdout/stderr stay empty while the post-write effective limits payload is carried by the response body AND the captured updater input proves the {org_id} path parameter reached the store layer (so a future refactor that bypasses LimitsUpdater fails this story in two places). (2) TestUpdateLimitsRequestLogRedactsBearerToken table-tests the success path (RoleAdmin) and the authorization-failure path (Disabled=true RoleAdmin -> 403) with a recognisable bearer credential constant (yk_live_supersecret_limits_patch_FEEDFACE0123456789); pins that neither slog buffer nor response body echoes the bearer. The deny leg uses an updater whose UpdateLimits errors if invoked so a leaked 'updater error' string can't be the source. (3) TestUpdateLimitsErrorEnvelopeDoesNotLeakDependencyCause feeds the updater a wrapped apierr.StoreUnavailable cause containing a bare 10.0.0.5:5432 address and asserts the 503 E_UNAVAILABLE envelope carries a stable generic message AND neither the cause string nor the datastore address appears on the wire. New builder updateLimitsHandlerForWithLogger mirrors listLimitsHandlerForWithLogger for the WRITE port. No production code changed. go test ./..., go test -race ./..., go vet ./..., gofmt all clean."
     },
     {
       "id": "BE-0099",
