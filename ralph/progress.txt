@@ -113,6 +113,7 @@
 - BE-0309 postgres is the FIRST database-engine clone of the BE-0301/BE-0307 per-service-type renderer-subtype pattern (internal/controlplane/dokploy/renderer_database_postgres_test.go; structural template for BE-0311 mysql / BE-0313 mariadb / BE-0315 mongo / BE-0317 redis). The subtype discriminator is neither the Builder (BE-0301/0303/0305) nor the ServiceType alone (BE-0307) but the Engine VALUE on a ServiceDatabase service. Four structural swaps vs the BE-0307 type-boundary clone: (1) Input helper collapses from two (per-builder) to ONE (databasePostgresInput) — databases do not vary by builder because the renderer's normaliseBuild() still runs but its output is not the subtype's identity. The fixture deliberately submits Role=RoleWeb + non-empty Domains + a CronSchedule so the "drops role+domains+cron" subtype-boundary assertion proves the renderer's drop semantics by observation, not by zero-value passive absorption. (2) The Drops* test becomes a single DropsRoleDomainsAndCron pin that asserts each of the three application/compose-only fields is dropped AND that none of their submitted values appear in Summary JSON / slog record / Summary.String() (the customer-submitted hostname "db.acme.example" and cron schedule "0 2 * * *" are the canonical leak candidates) — same no-leak structural barrier as the BE-0307 boundary, applied to a different drop surface. (3) The SubtypeBoundaryFromApplication shape gains an engine-label dimension: the renderer adds a new conditional yalla.engine label only for ServiceDatabase services (mirroring how yalla.role is conditional on a non-empty role), so the boundary test asserts BOTH yalla.service-type (must be "database") AND yalla.engine (must be "postgres") on the postgres case AND that yalla.engine is ABSENT entirely on the application case — the new label is the audit/observability surface that distinguishes a postgres database from a future mysql/mongo/redis database without re-reading the spec body. (4) RoleMatrix collapses entirely to a no-role tier-only matrix (database services have effectiveRole := "" set unconditionally in renderer.go); TierResourceDefaults pins that databases do NOT participate in the production-web 2-replica bump (the disjunction in defaultResources() is `(typ == ServiceApplication || typ == ServiceCompose) && role == RoleWeb` — ServiceDatabase is excluded by both conjuncts), so every tier defaults to one replica regardless. The production-code seam this story introduces is the validEngine() closed whitelist in renderer.go: BE-0309 ships only EnginePostgres = "postgres"; BE-0311..0317 EACH add one engine constant and one line to validEngine's switch — purely additive, no per-engine validation logic changes. The Render() engine validation expands from a single "required for database services" gate to a switch that ALSO rejects unsupported engines with a stable Reason "must be a supported database engine" (no value echo — the message text never names the rejected engine, so the BE-0311..0317 stories that add engines do NOT need to change the message). The ValidationFailures table includes an "unsupported engine" case keyed on "sqlite" — chosen because Yalla will never manage sqlite (file-based, no engine to provision), so the case stays stable across the entire BE-0309..0317 family even as the whitelist grows. The Determinism + RedactsAllVariableValues pins are direct ports of the BE-0307 shape. database.golden in testdata/renderer/ needs the +yalla.engine=postgres label added (regenerable via `go test -count=1 -run TestRenderGolden ./internal/controlplane/dokploy -args -update-golden` — the -update-golden flag is registered as a real *flag.Bool via init() in internal/testutil/golden.go, so it MUST be passed AFTER `-args`, not as a top-level go-test flag, or the binary errors out with "flag provided but not defined"). The worker-side acceptance criteria (dokploy_refs atomic write, quota reservation-to-conversion, fake Dokploy create/update/deploy/poll/failure/retry/replay) all defer to the later database worker story per the BE-0301 deferral pattern. Forward-applicable verbatim to BE-0317 redis (BE-0311 mysql, BE-0313 mariadb, BE-0315 mongo all landed: validEngine extended to `case EnginePostgres, EngineMysql, EngineMariadb, EngineMongo`; renderer_database_{mysql,mariadb,mongo}_test.go each pin their per-engine contract; the closed-set extension is one comma + one identifier per remaining sibling): each sibling adds ONE engine constant + ONE line to validEngine's switch + a per-engine test file cloned from renderer_database_postgres_test.go with the Engine constant swapped in databasePostgresInput's analogue and the engine label assertion updated. NOT applicable to non-database service types or to subtypes whose discriminator is the Builder or the ServiceType.
 
 - Per-subtype quota dimension on the services Create unit of work (BE-0326 pattern, internal/controlplane/store/serviceservice.go ServiceService.Create + internal/controlplane/store/service_quota_applications_concurrent_test.go; structural template for BE-0327 compose_stacks, BE-0328 databases — every per-subtype dimension whose denominator is a SUBSET of the services table filtered by Kind): the create unit of work calls svc.quota.Reserve TWICE in the same *Tx for a service whose kind consumes a per-subtype dimension — first the existing QuotaResourceServices reservation (counts every service), then a conditional `if service.Kind == ServiceKindXxx { Reserve(QuotaResourceXxx) }` AFTER it and BEFORE the services.Insert. Order matters: the services reservation locks first so a tenant who exhausts the services dimension cannot acquire the per-subtype counter at all; the per-subtype reservation locks second so a tenant who exhausts ONLY the per-subtype dimension still gets a typed apierr.QuotaExceeded whose ExceededDetail.Resource names the per-subtype dimension specifically. Both reservations roll back together on any later failure (Insert, Enqueue, audit Append). Test pattern (clone of BE-0325): TWO quota_usage rows + TWO quota_policies seeded (per-subtype TIGHT at 5, services LOOSE at attempts*2 so the per-subtype dimension is the boundary that bites), assert detail.Resource == QuotaResourceXxx, assert BOTH active reservation tables == success count (because every winning Create reserved one of each). A second non-concurrent test exhausts the per-subtype dimension then proves a sibling-kind Create (compose / database for BE-0326) still succeeds — pins the per-subtype boundary as a regression barrier against a future refactor that drops the Kind guard. BE-0326 already lands the kind-guard inside ServiceService.Create at the same line where Reserve(services) returns nil; BE-0327 and BE-0328 each add ONE more conditional Reserve call right below the BE-0326 block (Kind == ServiceKindCompose / ServiceKindDatabase) and ONE more test file cloned from service_quota_applications_concurrent_test.go with the dimension constant + Kind constant + sibling-kind sanity-success cases swapped. NOT applicable to dimensions that span MULTIPLE service kinds with a non-trivial denominator (cpu_millicores / memory_mb / storage_gb — those count a numeric column on every kind and belong to a different per-numeric-resource pattern still to be designed).
+- Per-Kind quota facet on environments (BE-0330 pattern, internal/controlplane/store/environmentservice.go + migrate/migrations/0025_environment_kind.{up,down}.sql + internal/controlplane/store/environment_quota_preview_environments_concurrent_test.go): structural template for ANY future per-Kind environment quota dimension (analog of the BE-0326/0327/0328 services per-Kind dimensions, now ported to the environments table). The FIRST per-Kind environment story lands the seam: a `kind` text column on environments with NOT NULL DEFAULT 'standard' and a CHECK constraint mirroring the closed Go enum one-to-one; a partial index on (organization_id, project_id) WHERE kind = '<minority-kind>' for the future sweeper; a `Kind` field on Environment, CreateEnvironmentInput, and CloneEnvironmentInput; a validateEnvironmentKind helper that normalises blank to the default member so legacy callers stay green; a closed `EnvironmentKind*` const set; and a conditional Reserve(QuotaResource<KindFacet>) on BOTH EnvironmentService.Create AND EnvironmentService.Clone (environments are the only resource with two create-shape entrypoints, both must be gated together). Subsequent per-Kind environment quota stories ship test-only — the seam is in place after BE-0330. The Reserve gates run in the SAME *Tx as Reserve(QuotaResourceEnvironments) and the desired-state write, so a tenant that exhausts either dimension cannot half-write an environment row whose other dimension passed. The default-on-blank Go validator MUST match the SQL DEFAULT so the migration is forward-compatible with in-process callers that predate the Kind field.
 
 ## 2026-05-15 - BE-0103
 - What was implemented: GET /v1/organizations/{org_id}/audit-events, the
@@ -21239,4 +21240,167 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
   - The service_domains table has a (hostname, path) UNIQUE constraint cluster-wide. Concurrent tests MUST use unique hostnames per goroutine — otherwise rejections drift onto the UNIQUE conflict path and never exercise the quota row lock.
   - ServiceDomainService has no JobEnqueuer (the worker-driven domain reconcile lands in a later story), so no equivalent atomicJobs assertion is needed — unlike ServiceService which has both quota and jobs.
   - cmd/yalla-api/main.go reuses the existing `serviceQuota` no-op placeholder across the entire service-family family of services (ServiceService, ServiceDomainService). When a new *Service in that family gains a QuotaReserver dep, just pass `serviceQuota` — no new placeholder needed.
+---
+
+## 2026-05-16 — BE-0330 — Enforce quota for preview_environments
+- What was implemented: per-subtype "preview_environments" quota dimension on
+  the EnvironmentService.Create AND EnvironmentService.Clone unit of work.
+  Both Create paths now Reserve(QuotaResourcePreviewEnvironments) in the SAME
+  *Tx as the existing Reserve(QuotaResourceEnvironments) when the new
+  Kind field is EnvironmentKindPreview; EnvironmentKindStandard (and the
+  blank-defaulted-to-standard legacy path) skips the per-subtype Reserve.
+  The Kind taxonomy is the first per-Kind axis on environments (services
+  already has its analog), so this story also lands the persistent state
+  the Reserve gate consults — a new "kind" column on environments with a
+  closed CHECK constraint mirroring the Go enum one-to-one.
+
+- New persistence (migration 0025): environments.kind text NOT NULL
+  DEFAULT 'standard' CHECK (kind IN ('standard', 'preview')) plus a
+  partial index environments_preview_kind_idx ON (organization_id,
+  project_id) WHERE kind = 'preview' for the future preview teardown
+  sweeper. The default makes the migration safe to apply over a populated
+  table because every pre-BE-0330 row is a standard environment by
+  definition (preview environments did not exist before this migration),
+  and existing callers that do not set the column fall back to the
+  standard taxonomy member.
+
+- New Go API surface:
+  - Environment.Kind (string field on the source-of-truth struct)
+  - EnvironmentKindStandard / EnvironmentKindPreview constants
+  - CreateEnvironmentInput.Kind (caller-supplied; blank normalises to standard)
+  - CloneEnvironmentInput.Kind (caller-supplied; blank normalises to standard)
+  - validateEnvironmentKind helper (returns InvalidInput for unknown values
+    with a redacted-by-default violation that names only the field, never
+    the offending value)
+
+- Files changed:
+  - internal/controlplane/store/migrate/migrations/0025_environment_kind.up.sql (new)
+  - internal/controlplane/store/migrate/migrations/0025_environment_kind.down.sql (new)
+  - internal/controlplane/store/environment.go (+1 struct field, environmentColumns +kind,
+    scanEnvironment +&e.Kind, Insert SQL +kind column and $6 placeholder)
+  - internal/controlplane/store/environmentservice.go (+EnvironmentKind* constants,
+    +Kind on CreateEnvironmentInput and CloneEnvironmentInput, +validateEnvironmentKind,
+    +Kind population in validateCreateEnvironmentInput and validateCloneEnvironmentInput,
+    +cloneEnvironmentValidated.Kind, +conditional Reserve(preview_environments) on
+    EnvironmentService.Create and EnvironmentService.Clone, +Kind on the new-row
+    construction inside Clone)
+  - internal/controlplane/store/environment_quota_preview_environments_concurrent_test.go
+    (new, structural clone of BE-0328 databases test)
+  - ralph/prd.json (passes=true on BE-0330)
+  - ralph/progress.txt (this entry + new Codebase Patterns bullet for environment per-Kind quota)
+
+- Verification:
+  - gofmt -l on changed files: clean.
+  - go vet ./...: clean.
+  - go mod tidy: no changes.
+  - go build ./...: clean.
+  - go test ./... (no DB): PASS for all 32 packages.
+  - go test -race ./... (no DB): PASS for all packages.
+  - go test -run 'TestEnvironmentServiceCreate(RejectsParallelOversubscriptionForPreview|AppliesPreviewEnvironments)' ./internal/controlplane/store/... against postgres://yalla:yalla@127.0.0.1:5432/yalla: PASS.
+  - go test -race -run 'TestEnvironmentServiceCreate(RejectsParallelOversubscriptionForPreview|AppliesPreviewEnvironments)' ./internal/controlplane/store/... against the same DB: PASS.
+  - Local tooling status: goimports not installed (gofmt is sufficient since
+    imports are stable); golangci-lint / staticcheck / govulncheck not run
+    (not installed locally).
+
+- Pre-existing failure NOT introduced by BE-0330: when YALLA_TEST_DATABASE_URL
+  is set and the full store suite runs against a real Postgres,
+  TestEnvironmentServiceCreateRejectsCrossTenantProject fails with
+  E_INVALID_INPUT instead of E_NOT_FOUND. Verified by `git stash` of the
+  BE-0330 patches and re-running the same focused test on the base commit
+  3c9a01c5 — same failure. This is the testutil.Factory id-prefix vs
+  domain.Kind drift flagged in the BE-0324..BE-0327 progress entries and
+  the Codebase Patterns section; it is out of scope for BE-0330 and should
+  be addressed in a focused triage story.
+
+- BE-0330 acceptance-criteria coverage map:
+  - "Quota policy includes a preview_environments limit with plan default
+    and organization override support." -> the new concurrent test seeds a
+    plan-default policy for QuotaResourcePreviewEnvironments and exercises
+    the plan-default fallback end to end through Checker.Reserve; the
+    org-override path is already pinned by
+    store/quota_repository_test.go's TestQuotaRepositoryEffectiveLimitPrefersOrgOverride
+    (one repository test covers every dimension since the override is
+    resolved in SQL, not per-dimension code).
+  - "Mutations that consume preview_environments call the quota checker
+    inside the same DB transaction as the source-of-truth write." ->
+    EnvironmentService.Create and EnvironmentService.Clone now both call
+    svc.quota.Reserve(ctx, tx, ...) for QuotaResourcePreviewEnvironments
+    on the SAME *Tx as the environments-dimension Reserve and the
+    environments.Insert, gated on environment.Kind ==
+    EnvironmentKindPreview. The store.Write wrapper rolls back the
+    whole unit of work on any error, so a rejection on either dimension
+    leaves no half-written desired state.
+  - "Errors include current, reserved, requested, limit, and stable
+    E_QUOTA_EXCEEDED code." -> the concurrent test asserts every
+    rejection carries yerr.CodeQuotaExceeded with a recoverable
+    quota.ExceededDetail{Resource=preview_environments, Limit=5,
+    Requested=1, Reserved=5, Current=0} — the same envelope the
+    BE-0327/0328/0329 stories already pin for other dimensions.
+  - "Concurrent integration tests prove parallel requests cannot
+    oversubscribe the quota." -> 20 goroutines race to create
+    preview-kind environments against a hard limit of 5;
+    successes==5, rejections==15 (exact), and the assertion that
+    detail.Reserved == limit proves the quota_usage row lock
+    serialised all winners before any rejection observed the table.
+  - "All public responses use stable JSON envelopes with schema_version
+    yalla.output.v1 or yalla.error.v1." -> already pinned globally by
+    apienvelope/apienvelope_test.go; this story does not alter the
+    envelope contract. The Create endpoint that surfaces preview
+    creations is BE-08xx in the public API surface; today's story
+    closes the quota seam regardless of the endpoint shape.
+  - "Unit tests cover success, validation failure, authorization failure,
+    and not-found behavior." -> the existing environmentservice_test.go
+    covers the success / validation / authz / not-found paths for
+    EnvironmentService.Create and EnvironmentService.Clone (no changes
+    needed because the Kind field defaults to standard on blank, so the
+    existing tests still pin the legacy behaviour). The new
+    validateEnvironmentKind helper rejects unknown values with a
+    typed InvalidInput; the boundary test (TestEnvironmentServiceCreateAppliesPreviewEnvironmentsQuotaOnlyToPreviewKind)
+    additionally exercises the blank-defaults-to-standard normalisation
+    path end to end against a real database.
+  - "Integration tests run against isolated Postgres migrations and never
+    require a live Dokploy server unless explicitly marked external." ->
+    the new test uses testutil.RequireMigratedDB (the canonical isolated-
+    migration helper) and a recording fake JobEnqueuer; no Dokploy server
+    is touched. The test skips cleanly when YALLA_TEST_DATABASE_URL is
+    unset, matching the CI shape.
+  - "Secrets, tokens, API keys, cookies, and rendered environment variable
+    values are redacted in logs, errors, audit metadata, and test
+    output." -> the concurrent test's redaction guard asserts the
+    rejection message contains none of the caller-supplied slug, display
+    name, request id, correlation id, or environment id strings. The
+    audit.event metadata path is unchanged: only the slug and project_id
+    are recorded (both structural identifiers, neither secret),
+    matching the BE-0322/0327 redaction contract.
+
+- Learnings for future iterations:
+  - The "per-Kind quota facet on a service Create" pattern (BE-0326/0327/0328)
+    generalises to environments with one extra step: the environments
+    table has no Kind axis pre-BE-0330, so the first per-Kind environment
+    quota story (this one) ships the migration that adds the column +
+    CHECK constraint + partial index, plus the constant set + Kind
+    input + Kind validator + Kind on Insert. Every subsequent per-Kind
+    environment quota story can ship test-only (the seam is now in
+    place). The same pattern will repeat at the project layer when the
+    first per-Kind project quota lands.
+  - When a per-Kind axis is added to an existing table, the migration
+    MUST default the column so the migration is safe to apply over a
+    populated table AND so existing in-process callers that predate
+    the new field stay green. The Go validator must mirror that
+    default — blank-input-normalises-to-default — so the in-process
+    CallerInput is forward-compatible with the migration.
+  - The structural template from BE-0328 (databases) ports to BE-0330
+    (preview_environments) with three structural swaps: (1) the service
+    becomes EnvironmentService (with no Service repository in the
+    constructor — environments are the third hierarchy layer); (2) the
+    parent seed becomes organization + project only (no parent
+    environment); (3) the per-Kind enum becomes
+    EnvironmentKindPreview / EnvironmentKindStandard. Every other
+    structural element (atomicAuthorizer / atomicJobs / quota.Checker /
+    quotaRepo / Plan-default seeding / 20-goroutine race / redaction
+    guard / SumActiveReservations cross-check) ports verbatim. The
+    Clone path is the second seam to gate — environments are the only
+    table that has both Create and Clone create-shape paths, so BE-0330
+    is the first quota story that gates two unit-of-work entrypoints
+    instead of one.
 ---

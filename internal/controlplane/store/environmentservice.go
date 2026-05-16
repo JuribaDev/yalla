@@ -31,6 +31,28 @@ const (
 	environmentDisplayNameMaxLen = 200
 )
 
+// EnvironmentKind* enumerate the closed environment taxonomy the store
+// layer accepts. The match is exact and case-sensitive, mirroring the
+// database CHECK constraint added in migration 0025. Adding a new
+// taxonomy member is a new, higher-versioned migration plus a new
+// constant here — the closed set is the contract.
+//
+// EnvironmentKindStandard is the long-lived staging, production, and
+// ad-hoc named environments a project carries; it is the default a
+// blank Kind input normalises to so callers that predate BE-0330
+// keep landing in this member.
+//
+// EnvironmentKindPreview is the ephemeral, per-change-set instance the
+// preview API (POST /v1/projects/{project_id}/previews) creates
+// through the cloning workflow and the preview sweeper destroys when
+// the underlying change set goes away. Creating a preview environment
+// reserves the per-subtype 'preview_environments' quota dimension in
+// addition to the always-reserved 'environments' dimension.
+const (
+	EnvironmentKindStandard = "standard"
+	EnvironmentKindPreview  = "preview"
+)
+
 // CreateEnvironmentInput is the unvalidated input to
 // EnvironmentService.Create. OrganizationID, ProjectID, EnvironmentID,
 // Slug, and DisplayName are the caller-supplied resource fields; the
@@ -55,11 +77,23 @@ type CreateEnvironmentInput struct {
 	EnvironmentID  string
 	Slug           string
 	DisplayName    string
-	ActorID        string
-	ActorKind      string
-	ActorOrgID     string
-	RequestID      string
-	CorrelationID  string
+	// Kind names which taxonomy member the new environment belongs to —
+	// EnvironmentKindStandard for the long-lived staging / production /
+	// ad-hoc named environments a project carries, EnvironmentKindPreview
+	// for the ephemeral per-change-set instances the preview API creates
+	// through the cloning workflow. A blank Kind is normalised to
+	// EnvironmentKindStandard so existing callers that predate BE-0330 keep
+	// landing in the standard taxonomy member; an unknown value is rejected
+	// by validateEnvironmentKind before the transaction is ever opened.
+	// The validated value determines whether the create unit of work
+	// reserves the per-subtype 'preview_environments' quota dimension in
+	// addition to the always-reserved 'environments' dimension.
+	Kind          string
+	ActorID       string
+	ActorKind     string
+	ActorOrgID    string
+	RequestID     string
+	CorrelationID string
 }
 
 // UpdateEnvironmentInput is the unvalidated input to
@@ -177,11 +211,18 @@ type CloneEnvironmentInput struct {
 	NewEnvironmentID    string
 	NewSlug             string
 	NewDisplayName      string
-	ActorID             string
-	ActorKind           string
-	ActorOrgID          string
-	RequestID           string
-	CorrelationID       string
+	// Kind names which taxonomy member the cloned environment belongs to.
+	// See CreateEnvironmentInput.Kind for the full contract; the same
+	// normalisation, validation, and per-subtype quota gating apply to
+	// the clone path. A blank Kind defaults to EnvironmentKindStandard
+	// so callers that predate BE-0330 keep producing standard
+	// environments through Clone.
+	Kind          string
+	ActorID       string
+	ActorKind     string
+	ActorOrgID    string
+	RequestID     string
+	CorrelationID string
 }
 
 // EnvironmentService is the reference unit-of-work orchestrator for the
@@ -324,6 +365,19 @@ func (svc *EnvironmentService) Create(ctx context.Context, in CreateEnvironmentI
 		}
 		if err := svc.quota.Reserve(ctx, tx, environment.OrganizationID, string(QuotaResourceEnvironments)); err != nil {
 			return err
+		}
+		// Per-subtype quota: the "preview_environments" dimension counts
+		// ONLY environments whose Kind is EnvironmentKindPreview. Standard
+		// environments do not consume this dimension. The reservation
+		// runs in the SAME *Tx as the environments-dimension reservation
+		// and the desired-state write, so an organization that exhausts
+		// either dimension cannot half-write an environment row whose
+		// other dimension passed — every failure after this point rolls
+		// the whole unit of work back together.
+		if environment.Kind == EnvironmentKindPreview {
+			if err := svc.quota.Reserve(ctx, tx, environment.OrganizationID, string(QuotaResourcePreviewEnvironments)); err != nil {
+				return err
+			}
 		}
 		row, err := svc.environments.Insert(ctx, tx, environment)
 		if err != nil {
@@ -644,6 +698,18 @@ func (svc *EnvironmentService) Clone(ctx context.Context, in CloneEnvironmentInp
 		if err := svc.quota.Reserve(ctx, tx, validated.OrganizationID, string(QuotaResourceEnvironments)); err != nil {
 			return err
 		}
+		// Per-subtype quota: the "preview_environments" dimension counts
+		// ONLY environments whose Kind is EnvironmentKindPreview. Standard
+		// environments do not consume this dimension. The reservation runs
+		// in the SAME *Tx as the environments-dimension reservation and
+		// the desired-state write, so an organization that exhausts either
+		// dimension cannot half-write an environment row whose other
+		// dimension passed.
+		if validated.Kind == EnvironmentKindPreview {
+			if err := svc.quota.Reserve(ctx, tx, validated.OrganizationID, string(QuotaResourcePreviewEnvironments)); err != nil {
+				return err
+			}
+		}
 		// The new environment inherits the source's project_id by
 		// construction — the caller cannot reparent through this
 		// endpoint because the input carries no project_id field.
@@ -653,6 +719,7 @@ func (svc *EnvironmentService) Clone(ctx context.Context, in CloneEnvironmentInp
 			ProjectID:      source.ProjectID,
 			Slug:           validated.NewSlug,
 			DisplayName:    validated.NewDisplayName,
+			Kind:           validated.Kind,
 		}
 		row, insErr := svc.environments.Insert(ctx, tx, newRow)
 		if insErr != nil {
@@ -707,6 +774,7 @@ type cloneEnvironmentValidated struct {
 	NewEnvironmentID    string
 	NewSlug             string
 	NewDisplayName      string
+	Kind                string
 }
 
 // validateCloneEnvironmentInput checks in and returns the normalised
@@ -766,6 +834,11 @@ func validateCloneEnvironmentInput(in CloneEnvironmentInput) (cloneEnvironmentVa
 		violations = append(violations, *dnViolation)
 	}
 
+	kind, kindViolation := validateEnvironmentKind(in.Kind)
+	if kindViolation != nil {
+		violations = append(violations, *kindViolation)
+	}
+
 	if len(violations) > 0 {
 		return cloneEnvironmentValidated{}, apierr.InvalidInput(violations...)
 	}
@@ -775,6 +848,7 @@ func validateCloneEnvironmentInput(in CloneEnvironmentInput) (cloneEnvironmentVa
 		NewEnvironmentID:    newID,
 		NewSlug:             slug.String(),
 		NewDisplayName:      displayName,
+		Kind:                kind,
 	}, nil
 }
 
@@ -886,6 +960,11 @@ func validateCreateEnvironmentInput(in CreateEnvironmentInput) (Environment, err
 		violations = append(violations, *dnViolation)
 	}
 
+	kind, kindViolation := validateEnvironmentKind(in.Kind)
+	if kindViolation != nil {
+		violations = append(violations, *kindViolation)
+	}
+
 	if len(violations) > 0 {
 		return Environment{}, apierr.InvalidInput(violations...)
 	}
@@ -895,7 +974,33 @@ func validateCreateEnvironmentInput(in CreateEnvironmentInput) (Environment, err
 		ProjectID:      projectID,
 		Slug:           slug.String(),
 		DisplayName:    displayName,
+		Kind:           kind,
 	}, nil
+}
+
+// validateEnvironmentKind confines kind to the closed environment
+// taxonomy. The match is exact and case-sensitive, mirroring the
+// database CHECK constraint in migration 0025. A blank value is
+// normalised to EnvironmentKindStandard — every caller that predates
+// BE-0330 leaves Kind unset, and the standard member is the only
+// sensible default for a new environment, so blank-as-standard is the
+// shape that keeps existing callers green without making them carry
+// the new field. The returned violation names only the field, never
+// the offending value (an adversarial kind must not echo into the
+// response body).
+func validateEnvironmentKind(raw string) (string, *apierr.FieldViolation) {
+	kind := strings.TrimSpace(raw)
+	if kind == "" {
+		return EnvironmentKindStandard, nil
+	}
+	switch kind {
+	case EnvironmentKindStandard, EnvironmentKindPreview:
+		return kind, nil
+	}
+	return "", &apierr.FieldViolation{
+		Field:  "kind",
+		Reason: "must be one of \"standard\" or \"preview\"",
+	}
 }
 
 // validateEnvironmentDisplayName trims and validates a human-authored

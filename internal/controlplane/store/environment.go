@@ -41,6 +41,7 @@ type Environment struct {
 	ProjectID           string
 	Slug                string
 	DisplayName         string
+	Kind                string
 	Version             int64
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
@@ -50,7 +51,7 @@ type Environment struct {
 // environmentColumns is the SELECT projection used by every read in this
 // repository. Keeping it as a single string keeps the column list in
 // lockstep with scanEnvironment.
-const environmentColumns = `id, organization_id, project_id, slug, display_name, version, created_at, updated_at, deletion_scheduled_at`
+const environmentColumns = `id, organization_id, project_id, slug, display_name, kind, version, created_at, updated_at, deletion_scheduled_at`
 
 // environmentListMaxRows caps how many rows a single ListByProject call
 // returns. An unbounded query can never be issued by accident; an HTTP
@@ -90,10 +91,10 @@ func (r *EnvironmentRepository) Insert(ctx context.Context, tx *Tx, e Environmen
 		return Environment{}, apierr.Internal(errors.New("store: EnvironmentRepository.Insert called with a nil transaction"))
 	}
 	row := tx.QueryRow(ctx,
-		`INSERT INTO environments (id, organization_id, project_id, slug, display_name)
-		 VALUES ($1, $2, $3, $4, $5)
+		`INSERT INTO environments (id, organization_id, project_id, slug, display_name, kind)
+		 VALUES ($1, $2, $3, $4, $5, $6)
 		 RETURNING `+environmentColumns,
-		e.ID, e.OrganizationID, e.ProjectID, e.Slug, e.DisplayName)
+		e.ID, e.OrganizationID, e.ProjectID, e.Slug, e.DisplayName, e.Kind)
 	created, err := scanEnvironment(row)
 	if err != nil {
 		return Environment{}, mapWriteError(err, "an environment with this slug already exists in the project")
@@ -253,6 +254,7 @@ func scanEnvironment(row scanRow) (Environment, error) {
 		&e.ProjectID,
 		&e.Slug,
 		&e.DisplayName,
+		&e.Kind,
 		&e.Version,
 		&e.CreatedAt,
 		&e.UpdatedAt,

@@ -7155,8 +7155,8 @@
       ],
       "type": "quota-dimension",
       "priority": 1,
-      "passes": false,
-      "notes": "Quota dimension: preview_environments."
+      "passes": true,
+      "notes": "Quota dimension: preview_environments. Implemented per-subtype Reserve(QuotaResourcePreviewEnvironments) on EnvironmentService.Create and Clone gated on Kind==EnvironmentKindPreview; added environments.kind column (migration 0025) with closed CHECK constraint (standard, preview) and partial index for the preview sweeper; CreateEnvironmentInput / CloneEnvironmentInput carry a new Kind field that normalises blank to EnvironmentKindStandard via validateEnvironmentKind so legacy callers stay green. Concurrent integration test (20 goroutines vs hard limit 5, services-dimension loose) and per-subtype boundary test (preview-exhausted but standard succeeds, blank-Kind normalises to standard) pass under go test and go test -race against a real Postgres."
     },
     {
       "id": "BE-0331",
