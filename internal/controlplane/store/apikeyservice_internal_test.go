@@ -306,17 +306,19 @@ func TestNewAPIKeyServiceRejectsNilDependencies(t *testing.T) {
 	orgs := NewOrganizationRepository()
 	sas := NewServiceAccountRepository()
 	keys := NewAPIKeyRepository()
+	quota := nopQuotaReserver{}
 	audit := NewAuditRepository()
 
 	cases := []struct {
 		name string
 		call func() error
 	}{
-		{"nil store", func() error { _, err := NewAPIKeyService(nil, orgs, sas, keys, audit); return err }},
-		{"nil orgs", func() error { _, err := NewAPIKeyService(s, nil, sas, keys, audit); return err }},
-		{"nil service accounts", func() error { _, err := NewAPIKeyService(s, orgs, nil, keys, audit); return err }},
-		{"nil api keys", func() error { _, err := NewAPIKeyService(s, orgs, sas, nil, audit); return err }},
-		{"nil audit", func() error { _, err := NewAPIKeyService(s, orgs, sas, keys, nil); return err }},
+		{"nil store", func() error { _, err := NewAPIKeyService(nil, orgs, sas, keys, quota, audit); return err }},
+		{"nil orgs", func() error { _, err := NewAPIKeyService(s, nil, sas, keys, quota, audit); return err }},
+		{"nil service accounts", func() error { _, err := NewAPIKeyService(s, orgs, nil, keys, quota, audit); return err }},
+		{"nil api keys", func() error { _, err := NewAPIKeyService(s, orgs, sas, nil, quota, audit); return err }},
+		{"nil quota", func() error { _, err := NewAPIKeyService(s, orgs, sas, keys, nil, audit); return err }},
+		{"nil audit", func() error { _, err := NewAPIKeyService(s, orgs, sas, keys, quota, nil); return err }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -326,7 +328,7 @@ func TestNewAPIKeyServiceRejectsNilDependencies(t *testing.T) {
 			}
 		})
 	}
-	if _, err := NewAPIKeyService(s, orgs, sas, keys, audit); err != nil {
+	if _, err := NewAPIKeyService(s, orgs, sas, keys, quota, audit); err != nil {
 		t.Errorf("NewAPIKeyService(all set) error = %v, want nil", err)
 	}
 }

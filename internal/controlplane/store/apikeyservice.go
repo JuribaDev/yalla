@@ -203,18 +203,27 @@ type UpdateAPIKeyInput struct {
 //
 // It enqueues no provisioning job: an API key is pure Yalla identity with
 // no Dokploy object to mirror.
+//
+// The quota port reserves one unit on the QuotaResourceAPIKeys dimension
+// inside the same *Tx as the desired-state insert and the audit append, so
+// an organization that exhausts its api_keys limit can never half-write a
+// row whose reservation rolled back. The reservation runs AFTER the
+// existence checks so a 404 on the parent organization is never disguised
+// as a quota rejection, and BEFORE the Insert so a prefix collision can
+// never consume a reservation slot the row never reached.
 type APIKeyService struct {
 	store           *Store
 	orgs            *OrganizationRepository
 	serviceAccounts *ServiceAccountRepository
 	apiKeys         *APIKeyRepository
+	quota           QuotaReserver
 	audit           AuditAppender
 }
 
 // NewAPIKeyService wires an APIKeyService from its dependencies. It returns
 // a typed error if any dependency is nil, so a misconfigured service fails
 // at construction rather than on its first request.
-func NewAPIKeyService(s *Store, orgs *OrganizationRepository, serviceAccounts *ServiceAccountRepository, apiKeys *APIKeyRepository, audit AuditAppender) (*APIKeyService, error) {
+func NewAPIKeyService(s *Store, orgs *OrganizationRepository, serviceAccounts *ServiceAccountRepository, apiKeys *APIKeyRepository, quota QuotaReserver, audit AuditAppender) (*APIKeyService, error) {
 	switch {
 	case s == nil:
 		return nil, errors.New("store: nil store")
@@ -224,6 +233,8 @@ func NewAPIKeyService(s *Store, orgs *OrganizationRepository, serviceAccounts *S
 		return nil, errors.New("store: nil service account repository")
 	case apiKeys == nil:
 		return nil, errors.New("store: nil api key repository")
+	case quota == nil:
+		return nil, errors.New("store: nil quota reserver")
 	case audit == nil:
 		return nil, errors.New("store: nil audit appender")
 	}
@@ -232,6 +243,7 @@ func NewAPIKeyService(s *Store, orgs *OrganizationRepository, serviceAccounts *S
 		orgs:            orgs,
 		serviceAccounts: serviceAccounts,
 		apiKeys:         apiKeys,
+		quota:           quota,
 		audit:           audit,
 	}, nil
 }
@@ -291,6 +303,21 @@ func (svc *APIKeyService) Create(ctx context.Context, in CreateAPIKeyInput, now 
 			if _, getErr := svc.serviceAccounts.Get(ctx, tx, key.OrganizationID, key.ServiceAccountID); getErr != nil {
 				return getErr
 			}
+		}
+		// Reserve one unit on the api_keys quota dimension inside the same
+		// transaction as the desired-state insert and the audit append. The
+		// SELECT FOR UPDATE on the quota_usage counter row serialises
+		// concurrent reservers against one another, so the limit can never
+		// be over-allocated even under parallel mint requests. A rejection
+		// here surfaces as a typed apierr.QuotaExceeded whose
+		// ExceededDetail.Resource is "api_keys" — the wire-stable dimension
+		// label customers see on E_QUOTA_EXCEEDED. The reservation runs
+		// AFTER the existence checks (so a 404 on the org or the named
+		// service account is never disguised as a quota rejection) and
+		// BEFORE the Insert (so a prefix collision rolls the reservation
+		// back with the rest of the unit of work).
+		if err := svc.quota.Reserve(ctx, tx, key.OrganizationID, string(QuotaResourceAPIKeys)); err != nil {
+			return err
 		}
 		row, insErr := svc.apiKeys.Insert(ctx, tx, key)
 		if insErr != nil {

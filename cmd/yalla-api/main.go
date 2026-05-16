@@ -146,7 +146,14 @@ func main() {
 		logger.Error("failed to initialize the api key reader", "error", err.Error())
 		os.Exit(1)
 	}
-	apiKeyService, err := store.NewAPIKeyService(dataStore, orgRepo, serviceAccountRepo, apiKeyRepo, auditRepo)
+	// Defense-in-depth quota port for the api-key mint unit of work. The
+	// real adapter is quota.Checker; it lands with the cross-cutting
+	// api_keys quota plan-resolver story. Until then this placeholder
+	// never rejects, mirroring the project/environment/service wiring
+	// above so a misconfigured limit cannot block production traffic
+	// before the real plan resolver is wired.
+	apiKeysQuota := noopQuotaReserver{}
+	apiKeyService, err := store.NewAPIKeyService(dataStore, orgRepo, serviceAccountRepo, apiKeyRepo, apiKeysQuota, auditRepo)
 	if err != nil {
 		logger.Error("failed to initialize the api key service", "error", err.Error())
 		os.Exit(1)

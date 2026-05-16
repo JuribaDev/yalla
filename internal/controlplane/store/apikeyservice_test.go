@@ -28,6 +28,7 @@ func newAPIKeyService(t *testing.T, s *store.Store) *store.APIKeyService {
 		store.NewOrganizationRepository(),
 		store.NewServiceAccountRepository(),
 		store.NewAPIKeyRepository(),
+		&recordingQuota{},
 		store.NewAuditRepository(),
 	)
 	if err != nil {

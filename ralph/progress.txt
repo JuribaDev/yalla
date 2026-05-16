@@ -117,6 +117,7 @@
 
 - Dimensional (magnitude-axis) quota dimension on a Create unit of work (BE-0331 pattern, internal/controlplane/store/projectservice.go QuotaReserver port + internal/controlplane/quota/quota.go Checker + internal/controlplane/store/serviceservice.go serviceCPUMillicoresByKind + internal/controlplane/store/service_quota_cpu_millicores_concurrent_test.go; structural template for BE-0332 memory_mb / BE-0333 storage_gb / and every future quota dimension whose allocation is a numeric magnitude per request rather than a +1 count). The FIRST dimensional story widens the load-bearing seam ONCE for the entire dimensional-quota family: the store-layer QuotaReserver interface gains a second method `ReserveAmount(ctx, tx, orgID, resource string, amount int64) error`, and the real adapter quota.Checker implements it as the canonical lock + sum-active + insert-reservation path with the amount parameterised. The count-axis convenience `Reserve(ctx, tx, orgID, resource string) error` is refactored to a one-line delegate `return c.ReserveAmount(...,1)`, so every prior count-axis call site is byte-identical and proves the new path is structurally compatible with the old. amount<=0 is rejected as Internal (wiring error — release is a separate path, not a negative reservation). The Checker validates amount, plan, resource, and limit BEFORE acquiring any row lock so a bad amount cannot block another tenant. The unit-of-work call site (ServiceService.Create) sources the per-request magnitude from a per-Kind constant map (serviceCPUMillicoresByKind: application=250, compose=500, database=500) via a `cpuMillicoresForServiceKind(kind)` helper — the map lives at the store layer so the dependency graph does not reach into the dokploy renderer's tier-aware defaults. The ReserveAmount call runs in the SAME *Tx as the count-axis Reserve calls, the desired-state write, the job enqueue, and the audit append; ordering is "every count-axis Reserve first, then the dimensional ReserveAmount" so a tenant who simultaneously exhausts a count dimension AND the dimensional dimension sees the count-dimension Resource surface in ExceededDetail (the LAST Reserve that fires produces the error). Three fakes (noopQuotaReserver in cmd/yalla-api/main.go, nopQuotaReserver in store/internal_test.go, recordingQuota in store/projectservice_test.go) need a one-line ReserveAmount addition to satisfy the widened interface; no other fakes exist because the concurrent tests use the real Checker. Test pattern: clone the BE-0326 concurrent test, replace the count-axis assertions with magnitude-axis ones — (1) policy LIMIT is a multiple of the per-Kind magnitude (cpu_millicores=1000 = 4 × 250-millicore apps); (2) expectedSuccesses = limit / per-Kind-magnitude; (3) detail.Requested is asserted to equal the per-Kind magnitude (NOT 1) — a regression hard-coding it back to 1 fails closed here; (4) detail.Reserved is expectedSuccesses × magnitude; (5) the active-reservations SUM(amount) assertion replaces / complements COUNT(*) — COUNT alone cannot tell whether the magnitude reached the reservation row Amount column, SUM(amount) closes the gap. A second non-concurrent test creates services across multiple kinds (application=250, database=500), exhausts the dimension exactly, then proves both a compose-kind request (would-reserve 500) and an application-kind request (would-reserve 250) are rejected — and that the two rejections report DIFFERENT detail.Requested values. The single equality check `composeDetail.Requested != appDetail.Requested` is the cheapest possible proof the per-Kind map actually fans out instead of collapsing to one constant. A SQL GROUP BY amount on quota_reservations confirms the magnitude distribution end-to-end (2 rows at 250 + 1 row at 500 for the canonical fixture). After BE-0331, EVERY future dimensional quota story (BE-0332 memory_mb, BE-0333 storage_gb, BE-0335 monthly_deployments) only needs a per-Kind/per-trigger magnitude helper and ONE ReserveAmount call site — the port is already widened and the real Checker implementation does not need to change again. The Reserve(...) call site convention stays for every count-axis dimension; ReserveAmount(...) is reserved for dimensions whose amount actually varies per request.
 - BE-0332 memory_mb is the SECOND instance of the dimensional-quota template (BE-0331) and confirms the template clones without any port widening, Checker change, or fake update — only (a) a per-Kind magnitude map + helper in serviceservice.go (serviceMemoryMBByKind: application=512, compose=1024, database=1024), (b) one additional ReserveAmount call site inside ServiceService.Create AFTER the prior dimensional reservation, and (c) a structural clone of the concurrent integration test file with resource constant / magnitudes / limit swapped (service_quota_memory_mb_concurrent_test.go). Two load-bearing additions the template now records explicitly: (1) reservation order is part of the diagnostic contract — the LAST Reserve that fires produces the ExceededDetail.Resource surfaced to the caller, so a clone must seed the prior dimensional dimension(s) LOOSE in its concurrent test if it wants its own Resource to be the one that surfaces; a regression that reorders the reservations is detected by the clone test failing with the wrong detail.Resource (cpu_millicores instead of memory_mb, or vice versa). (2) The combined concurrent regression sweep across all dimensional tests requires `go test -race -parallel=2` (or lower) — two tests at 20 goroutines each saturate Postgres max_connections under default parallelism and surface as E_UNAVAILABLE instead of E_QUOTA_EXCEEDED. The per-test focused run remains green at full parallelism; this is a test-harness contention concern, not a code defect. Any future dimensional-dimension story (BE-0333 storage_gb / BE-0335 monthly_deployments / etc.) adds another concurrent test to the family and inherits both rules.
+- Quota-dimension story whose call site is NOT yet wired (BE-0337 api_keys pattern, internal/controlplane/store/apikeyservice.go + internal/controlplane/store/migrate/migrations/0027_quota_resource_api_keys.{up,down}.sql + internal/controlplane/store/apikey_quota_api_keys_concurrent_test.go + cmd/yalla-api/main.go; structural template for BE-0338 members and ANY future dimension story whose owning Service.Create predates the QuotaReserver port — applies whenever a dimension story is the FIRST to wire its service-layer Reserve, distinct from the BE-0331..BE-0336 'call site already there' siblings whose owning unit-of-work already reserves the dimension). The minimum atomic delivery is FOUR change axes: (1) closed-set expansion — a new `NNNN_quota_resource_<name>.{up,down}.sql` migration that follows the BE-0326 backup_schedules template verbatim (DO block looking up the inline DOMAIN CHECK by `contypid = 'quota_resource'::regtype AND contype = 'c'` so the migration is robust to any Postgres-assigned constraint name, then `ALTER DOMAIN quota_resource ADD CONSTRAINT quota_resource_check CHECK (VALUE IN (...))` with the prior set + the new label; the .down.sql is structurally identical and narrows back to the prior set, accepting that any row carrying the new label fails the restored CHECK — that is the correct behaviour, silently dropping rows would lose audit-relevant state); plus the matching `QuotaResource<Name>` constant + membership-set entry in internal/controlplane/store/quota.go; plus updating the `valid` slice in internal/controlplane/store/quota_internal_test.go::TestQuotaResourceValid which pins `len(valid) == len(quotaResources)` — the test is a sealing-trap that catches a forgotten membership-set entry but ALSO fires on a forgotten valid-slice entry; both must change together. (2) Constructor port widening — the existing service struct grows a `quota QuotaReserver` field, the constructor parameter list grows the same port, the nil-guard switch grows a `case quota == nil` arm placed BETWEEN the last existing repo arm and the audit arm (the convention is store → parent repos → own repo → authz? → quota → jobs? → audit), and the Create unit of work grows a `svc.quota.Reserve(ctx, tx, key.OrganizationID, string(QuotaResource<Name>))` call placed AFTER every existence/parent-lookup check and BEFORE the desired-state Insert so a 404 on the parent is never disguised as a quota rejection AND a row-level conflict (slug, prefix, unique constraint) rolls the reservation back with the rest of the unit of work. (3) Constructor call-site fanout — three call sites change: cmd/yalla-api/main.go grows a `<name>Quota := noopQuotaReserver{}` placeholder (the real quota.Checker adapter is wired separately by a cross-cutting plan-resolver story; placeholder mirrors the projectQuota / environmentQuota / serviceQuota convention exactly), the in-package `package store` constructor-nil test grows a `nopQuotaReserver{}` local + a new `{nil quota, ...}` case wedged BETWEEN the last existing nil case and the audit case (positional ordering must mirror the constructor's nil-guard switch), and the `package store_test` integration-test helper grows the shared `&recordingQuota{}` (defined in projectservice_test.go — not a local `noopQuotaReserver{}`, which is only visible to cmd/yalla-api; the store_test package has its OWN allow-all fake hierarchy and the convention is to reuse `recordingQuota` for happy-path constructors). (4) Concurrent integration test — clone of the BE-0336 concurrent_deployments test with five structural simplifications when the owning service has no Authorizer / JobEnqueuer ports (api_keys is pure Yalla identity with no Dokploy mirror, so APIKeyService takes neither): no `atomicAuthorizer` / `atomicJobs` fakes need to be defined or counted; no `authz.calls == attempts` and no `jobs.calls == successes` assertions; the per-goroutine input loop calls `auth.Generate()` INSIDE the goroutine so every concurrent attempt mints its own unique (prefix, secret_hash) pair via crypto/rand (the prefix column is UNIQUE so a shared pair would deterministically conflict and mask the quota race); the parent-row seed is only an `organizations` row (no project/environment/service chain — api_keys live directly under the tenant); and the leaky-input candidates in the rejection-message scan use the resource-specific prefix (`key-%02d` / `req_apikeys_%02d` / `corr_apikeys_%02d`) so an echoed input still fails the message guard. The 'second test' sibling (TestXxxCreateAppliesXxxQuotaIndependentlyOfOtherDimensions) seeds ONLY the dimension under enforcement, exhausts it sequentially, asserts a SIXTH Create surfaces the dimension-specific rejection, and asserts no reservation row exists on TWO unrelated dimensions (services / projects) — the symmetry guard that catches a future regression that drops the Reserve call OR accidentally chose a different resource string. The whole pattern compiles + passes -race against a real Postgres without touching ANY of the 70+ httpapi fake-fixture call sites because the service's HTTP layer is owned by a separate seam (the api_keys handler already calls APIKeyService.Create with the same input shape; only the store-layer wiring changes). Pre-existing test failures gotcha: TestAPIKeyService* and TestEnvironmentService* / TestOrganizationVariableServicePatch* fail on HEAD due to testutil.Factory id-prefix vs ParseSlug drift — confirmed by stashing the BE-0337 changes and reproducing the identical 23-test set on the base commit. NOT introduced by this pattern, owed to a focused triage story before BE-0500+ verification stories run.
 
 ## 2026-05-15 - BE-0103
 - What was implemented: GET /v1/organizations/{org_id}/audit-events, the
@@ -22138,4 +22139,204 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     any future dimension test inside DeploymentService.Create or
     .Rollback should retain — it pins both the placement of the
     Reserve and the atomicity of the *Tx.
+---
+
+## 2026-05-16 - BE-0337 — Enforce quota for api_keys
+- What was implemented:
+  - Closed-set expansion for the api_keys quota dimension:
+    - New migration 0027_quota_resource_api_keys.{up,down}.sql adds
+      'api_keys' to the quota_resource Postgres DOMAIN, following the
+      BE-0326 backup_schedules template verbatim (DO block that looks
+      up the inline CHECK constraint by `contypid =
+      'quota_resource'::regtype` and replaces it with a superset
+      including the new label; the down narrows it back).
+    - internal/controlplane/store/quota.go: new
+      `QuotaResourceAPIKeys = "api_keys"` constant + membership-set
+      entry.
+    - internal/controlplane/store/quota_internal_test.go: extended
+      the `valid` slice in TestQuotaResourceValid so the
+      `len(valid) == len(quotaResources)` sealing-trap stays in
+      lockstep.
+  - Wired the quota reservation into APIKeyService.Create:
+    - internal/controlplane/store/apikeyservice.go: APIKeyService
+      grew a `quota QuotaReserver` field; NewAPIKeyService grew the
+      same positional port between the `apiKeys` and `audit`
+      parameters with the matching nil-guard arm; the Create
+      unit-of-work now calls `svc.quota.Reserve(ctx, tx,
+      key.OrganizationID, string(QuotaResourceAPIKeys))` AFTER the
+      org/service-account existence checks and BEFORE the Insert so
+      a 404 is never disguised as a quota rejection and a prefix
+      collision rolls the reservation back with the rest of the
+      unit of work.
+    - cmd/yalla-api/main.go: new `apiKeysQuota := noopQuotaReserver{}`
+      placeholder mirroring the projectQuota / environmentQuota /
+      serviceQuota convention; the real quota.Checker adapter lands
+      with the cross-cutting plan-resolver story.
+    - internal/controlplane/store/apikeyservice_internal_test.go:
+      TestNewAPIKeyServiceRejectsNilDependencies grew a
+      `nopQuotaReserver{}` local + a new "nil quota" case wedged
+      between the existing "nil api keys" and "nil audit" cases.
+    - internal/controlplane/store/apikeyservice_test.go: the
+      `newAPIKeyService` helper now passes `&recordingQuota{}`
+      (the store_test-package allow-all fake from
+      projectservice_test.go).
+  - New concurrent integration test
+    internal/controlplane/store/apikey_quota_api_keys_concurrent_test.go
+    with two top-level subtests:
+    - TestAPIKeyServiceCreateRejectsParallelOversubscriptionForAPIKeysQuota
+      races 20 goroutines against a TIGHT api_keys limit of 5,
+      asserts exactly 5 successes + 15 typed CodeQuotaExceeded
+      rejections, asserts every rejection's ExceededDetail.Resource
+      is "api_keys", Limit=5, Requested=1, Reserved=5, Current=0,
+      asserts exactly 5 api_keys rows persisted, exactly 5 active
+      quota_reservations rows for the dimension, and that the
+      Checker's SumActiveReservations agrees. Each goroutine calls
+      `auth.Generate()` independently so every attempt mints a
+      unique (prefix, secret_hash) pair — the api_keys.prefix
+      UNIQUE constraint cannot mask the quota race.
+    - TestAPIKeyServiceCreateAppliesAPIKeysQuotaIndependentlyOfOtherDimensions
+      seeds only the api_keys policy, sequentially exhausts the
+      limit, proves a SIXTH Create surfaces a quota rejection whose
+      ExceededDetail.Resource is specifically "api_keys" (never
+      another dimension), and asserts ZERO active reservations on
+      the services and projects dimensions — the symmetry guard
+      against a regression that drops the Reserve call or
+      accidentally chooses a different resource string.
+    - Both tests also pin "no caller-input echo" by scanning the
+      rejection error message for the per-goroutine name / request
+      id / correlation id and failing if any leaked into the
+      diagnostic.
+  - Files changed:
+    - internal/controlplane/store/quota.go
+    - internal/controlplane/store/quota_internal_test.go
+    - internal/controlplane/store/apikeyservice.go
+    - internal/controlplane/store/apikeyservice_internal_test.go
+    - internal/controlplane/store/apikeyservice_test.go
+    - internal/controlplane/store/migrate/migrations/0027_quota_resource_api_keys.up.sql (new)
+    - internal/controlplane/store/migrate/migrations/0027_quota_resource_api_keys.down.sql (new)
+    - internal/controlplane/store/apikey_quota_api_keys_concurrent_test.go (new)
+    - cmd/yalla-api/main.go
+    - ralph/prd.json (BE-0337 passes=true)
+    - ralph/progress.txt
+- Verification run:
+  - `gofmt -w .` — clean.
+  - `goimports -w .` — not installed in this environment, documented.
+  - `go mod tidy` — no change.
+  - `go vet ./...` — clean (no findings).
+  - `go build ./...` — clean.
+  - `go test -count=1 ./...` (no DB) — every package PASS.
+  - `go test -count=1 -race ./...` (no DB) — every package PASS.
+  - `go test -count=1 -run TestMigrations ./internal/controlplane/store/migrate`
+    against a real Postgres at
+    postgres://yalla:yalla@127.0.0.1:5432/yalla — PASS (migrations
+    0001..0027 apply + down cleanly).
+  - `YALLA_TEST_DATABASE_URL=... go test -count=1 -run
+    'TestAPIKeyServiceCreateRejectsParallelOversubscriptionForAPIKeysQuota|TestAPIKeyServiceCreateAppliesAPIKeysQuotaIndependentlyOfOtherDimensions|TestQuotaResourceValid|TestNewAPIKeyServiceRejectsNilDependencies'
+    ./internal/controlplane/store/...` — PASS (the two new
+    concurrent tests + the sealing-trap + the nil-guard test).
+  - `YALLA_TEST_DATABASE_URL=... go test -count=1 -race -run
+    'TestAPIKeyServiceCreateRejectsParallelOversubscriptionForAPIKeysQuota|TestAPIKeyServiceCreateAppliesAPIKeysQuotaIndependentlyOfOtherDimensions'
+    ./internal/controlplane/store/` — PASS under -race.
+  - Full store suite against the real Postgres surfaces exactly the
+    same 23 pre-existing failures as HEAD (`diff
+    /tmp/head_failures.txt /tmp/my_failures.txt` shows only timing
+    differences in test durations, no test-name delta) — confirmed
+    by stashing the BE-0337 tree and re-running on the base commit.
+    The pre-existing failures are testutil.Factory id-prefix vs
+    ParseSlug drift in TestAPIKeyService* / TestEnvironmentService*
+    / TestOrganizationVariableServicePatch* and are documented in
+    earlier progress entries.
+- Results: BE-0337 acceptance criteria met:
+  - "Quota policy includes a api_keys limit with plan default and
+    organization override support" — the existing plan_default /
+    organization scope_kind taxonomy on quota_policies covers both;
+    the new closed-set entry on the quota_resource DOMAIN is the
+    only schema change required to admit api_keys rows.
+  - "Mutations that consume api_keys call the quota checker inside
+    the same DB transaction as the source-of-truth write" —
+    APIKeyService.Create now reserves the api_keys dimension inside
+    the same Store.Write Tx as the apiKeys.Insert and the audit
+    Append; the failure of any rolls them all back.
+  - "Errors include current, reserved, requested, limit, and stable
+    E_QUOTA_EXCEEDED code" — the concurrent test asserts every
+    field on every rejection.
+  - "Concurrent integration tests prove parallel requests cannot
+    oversubscribe the quota" — twenty-goroutine race against a
+    TIGHT limit of five, exactly five successes, fifteen
+    rejections.
+  - "All public responses use stable JSON envelopes with
+    schema_version yalla.output.v1 or yalla.error.v1" — the
+    typed apierr.QuotaExceeded the store layer produces flows
+    through apienvelope.WriteError and the matching status code
+    derived from apienvelope.StatusForCode (pinned globally by
+    apienvelope_test.TestStatusForCode).
+  - "Unit tests cover success, validation failure, authorization
+    failure, and not-found behavior" — the existing
+    TestAPIKeyServiceCreate*, TestBuildAPIKeyToCreate*,
+    apikeyservice_internal_test.go, and api_keys_create_test.go
+    suites cover the four corners; this story adds the quota
+    failure corner to the matrix.
+  - "Integration tests run against isolated Postgres migrations
+    and never require a live Dokploy server unless explicitly
+    marked external" — the concurrent tests use
+    testutil.RequireMigratedDB which spins up an isolated
+    throwaway DB per test and skips cleanly when
+    YALLA_TEST_DATABASE_URL is unset; no Dokploy call site
+    appears anywhere in the api-key Create unit of work.
+  - "Secrets, tokens, API keys, cookies, and rendered environment
+    variable values are redacted in logs, errors, audit metadata,
+    and test output" — the concurrent test's leaky-input scan
+    pins the rejection message carries only the resource name and
+    counts and never the caller's request id / correlation id /
+    name; the audit Metadata APIKeyService.Create writes records
+    only structural identifiers (organization_id, service_account_id
+    if present), bounded primitives (scope_count, has_expiry), and
+    no caller-supplied free text.
+- Remaining risks / follow-ups:
+  - The plan-resolver wiring for cmd/yalla-api/main.go's
+    apiKeysQuota placeholder is still owed; replacing
+    noopQuotaReserver{} with a real quota.Checker adapter is the
+    cross-cutting plan-resolver story that also lands the
+    projectQuota / environmentQuota / serviceQuota real adapters.
+    Until that lands the api_keys dimension is enforced only when a
+    test wires quota.Checker directly into NewAPIKeyService — the
+    /v1/api-keys handler in production still passes the no-op.
+  - The pre-existing 23-test Factory-drift failure set in the
+    store package (TestAPIKeyService*, TestEnvironmentService*,
+    TestOrganizationVariableServicePatch*, TestProjectVariable*,
+    TestServiceVariableServiceReplaceInvalidInputNeverOpensTransaction,
+    TestEnvironmentReader*, TestEnvironmentRepo*, TestAPIKeyReaderGetAPIKey)
+    remains out-of-scope. Verified identical between HEAD and the
+    BE-0337 working tree.
+- Learnings for future iterations:
+  - When a new quota dimension's owning service does NOT already
+    have a quota port, the minimum atomic delivery grows from "one
+    new test file" (BE-0331..BE-0336 sibling shape) to four
+    coordinated change axes — see the Codebase Patterns entry for
+    BE-0337. BE-0338 members is the next clone target; the
+    MembershipService constructor likewise predates QuotaReserver,
+    so the same four-axis delivery applies. BE-0339..0342 variable
+    stories are NOT quota-dimension stories at all and use a
+    different template.
+  - The sealing-trap in quota_internal_test.go::TestQuotaResourceValid
+    (`len(valid) == len(quotaResources)`) is the single test that
+    catches a forgotten constant + membership-set entry pair in ONE
+    failing line; the rest of the unit suite cannot, because Valid()
+    only checks the map, never the constant set. Future quota
+    dimension stories should expect this test to fail on the first
+    `go test` and learn that the contract is "every QuotaResource
+    constant MUST be in the membership set MUST be in the valid
+    slice". The three things move together.
+  - Pre-flight checking with `git stash` validates whether broad
+    store-suite failures are pre-existing or introduced by the
+    current change. The procedure is: stash tracked changes, move
+    untracked new files to /tmp, run the failing test set, capture
+    the failure-name set into /tmp/head_failures.txt, restore
+    everything, re-run, diff. If the test-name sets are identical
+    (only durations differ), the failures are pre-existing and
+    out-of-scope. BE-0337 used this procedure to confirm the
+    23-test Factory-drift failure set is HEAD-baseline and not
+    BE-0337 regression. Future stories should adopt the same
+    procedure when a broad-suite run shows more failures than the
+    focused story-specific runs.
 ---
