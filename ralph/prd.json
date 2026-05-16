@@ -6186,8 +6186,8 @@
       ],
       "type": "policy-jobs",
       "priority": 1,
-      "passes": false,
-      "notes": "Authorization coverage for POST /v1/jobs/{job_id}/retry."
+      "passes": true,
+      "notes": "Engine-only policy-matrix pin for action job.retry at internal/controlplane/policy/job_retry_policy_test.go. CapDeploy split (Owner/Admin/Developer/CI allow; Viewer/Support deny no_capability). Cross-tenant denies all six built-in roles including Support (CapDeploy outside Support cross-tenant exception). Bare-{job_id} owning-scope containment pinned at org/project/env/svc shapes. Wire endpoint POST /v1/jobs/{job_id}/retry (BE-0277) and contract tests (BE-0278) pending; engine pin remains the authority until they land."
     },
     {
       "id": "BE-0280",
