@@ -6870,7 +6870,7 @@
       ],
       "type": "provisioning-service-type",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Service type: mongo."
     },
     {

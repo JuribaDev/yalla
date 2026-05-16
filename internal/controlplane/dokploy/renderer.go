@@ -108,6 +108,8 @@ const (
 	EngineMysql = "mysql"
 	// EngineMariadb is the MariaDB managed engine.
 	EngineMariadb = "mariadb"
+	// EngineMongo is the MongoDB managed engine.
+	EngineMongo = "mongo"
 )
 
 // validEngine reports whether engine is a recognised managed database engine.
@@ -115,7 +117,7 @@ const (
 // BE-0311 mysql; BE-0313 mariadb; BE-0315 mongo; BE-0317 redis).
 func validEngine(engine string) bool {
 	switch engine {
-	case EnginePostgres, EngineMysql, EngineMariadb:
+	case EnginePostgres, EngineMysql, EngineMariadb, EngineMongo:
 		return true
 	default:
 		return false
