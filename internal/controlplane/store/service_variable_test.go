@@ -20,17 +20,52 @@ import (
 // checks at the reader, and that a cross-tenant service_id never
 // reveals another tenant's variables.
 
+// revealServiceVariableValue returns the literal plaintext value of v.
+// For non-secret rows it is just v.Value. For is_secret rows the literal
+// value lives in v.SecretCiphertext (the schema CHECK forces Value=""
+// for secret rows after BE-0342), so we return the ciphertext bytes
+// verbatim — every test in this package wires the Plaintext provider,
+// for which Seal(plaintext) is plaintext, so the equivalence holds
+// without dragging a live provider through every assertion.
+func revealServiceVariableValue(v store.ServiceVariable) string {
+	if v.IsSecret {
+		return string(v.SecretCiphertext)
+	}
+	return v.Value
+}
+
 // seedServiceVariable inserts one service_variables row through the
-// test pool. It builds the smallest column set the schema requires
-// (id, organization_id, service_id, key, value, is_secret); the
-// bump_version and set_updated_at triggers from migrations 0011 / 0021
-// populate the rest.
+// test pool. It builds the schema-required column set (id,
+// organization_id, service_id, key, value, is_secret) plus — for
+// is_secret = true rows — the encryption-at-rest tuple migration
+// 0032's CHECK constraint requires. The bump_version and
+// set_updated_at triggers from migrations 0011 / 0021 populate the
+// rest.
+//
+// For is_secret = true rows the helper stands in the secrets.Plaintext
+// provider's wire identifiers (plaintext-v1 / plaintext) so test
+// fixtures stay self-contained (no live provider dependency) and the
+// HTTP / audit redaction contract still holds — the wire layer never
+// projects the on-disk bytes for secret rows, so revealing the literal
+// here is only visible to test assertions.
 func seedServiceVariable(t *testing.T, db *testutil.DB, id, organizationID, serviceID, key, value string, isSecret bool) {
 	t.Helper()
+	plainValue := value
+	var (
+		provider   any
+		keyID      any
+		ciphertext any
+	)
+	if isSecret {
+		plainValue = ""
+		provider = "plaintext-v1"
+		keyID = "plaintext"
+		ciphertext = []byte(value)
+	}
 	if _, err := db.Exec(context.Background(),
-		`INSERT INTO service_variables (id, organization_id, service_id, key, value, is_secret)
-		 VALUES ($1, $2, $3, $4, $5, $6)`,
-		id, organizationID, serviceID, key, value, isSecret); err != nil {
+		`INSERT INTO service_variables (id, organization_id, service_id, key, value, is_secret, secret_provider, secret_key_id, secret_ciphertext)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		id, organizationID, serviceID, key, plainValue, isSecret, provider, keyID, ciphertext); err != nil {
 		t.Fatalf("seed service_variables: %v", err)
 	}
 }
@@ -86,8 +121,12 @@ func TestServiceVariableRepoListByServiceReturnsDeterministicOrdering(t *testing
 	// Value reaches the repository verbatim; redaction is the HTTP layer's
 	// job. Pin that contract here so a future regression that pre-redacts
 	// at persistence (which would break a round-trip write path) fails.
-	if got[0].Value != "postgres://user:hunter2@db.internal/yalla" {
-		t.Errorf("got[0].Value should round-trip the literal; got %q", got[0].Value)
+	// For is_secret = true rows the on-disk shape after BE-0342 forces
+	// Value="" and stores the literal in SecretCiphertext (the
+	// seedServiceVariable helper stands in the plaintext provider's wire
+	// identifiers), so the assertion goes through revealServiceVariableValue.
+	if revealServiceVariableValue(got[0]) != "postgres://user:hunter2@db.internal/yalla" {
+		t.Errorf("got[0] value should round-trip the literal; got %q", revealServiceVariableValue(got[0]))
 	}
 }
 

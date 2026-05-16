@@ -323,7 +323,7 @@ func main() {
 		logger.Error("failed to initialize the service variable reader", "error", err.Error())
 		os.Exit(1)
 	}
-	serviceVariableService, err := store.NewServiceVariableService(dataStore, store.NewServiceRepository(), store.NewServiceVariableRepository(), auditRepo)
+	serviceVariableService, err := store.NewServiceVariableService(dataStore, store.NewServiceRepository(), store.NewServiceVariableRepository(), auditRepo, secretsProvider)
 	if err != nil {
 		logger.Error("failed to initialize the service variable service", "error", err.Error())
 		os.Exit(1)

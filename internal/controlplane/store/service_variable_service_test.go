@@ -8,6 +8,7 @@ import (
 
 	yerr "github.com/JuribaDev/yalla/internal/errors"
 
+	"github.com/JuribaDev/yalla/internal/controlplane/secrets"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
 	"github.com/JuribaDev/yalla/internal/controlplane/testutil"
 )
@@ -26,12 +27,18 @@ import (
 // newServiceVariableService wires a ServiceVariableService from its
 // dependencies for tests. The constructor's port checks are exercised
 // by TestNewServiceVariableServiceRejectsNilDependencies below.
+//
+// The plaintext secrets provider is acceptable for tests that exercise
+// the lifecycle and audit surface; the BE-0342 encryption-at-rest tests
+// live in service_variable_secrets_at_rest_test.go and inject a real
+// AES-GCM provider when proving the on-disk seal contract.
 func newServiceVariableService(t *testing.T, s *store.Store, audit store.AuditAppender) *store.ServiceVariableService {
 	t.Helper()
 	svc, err := store.NewServiceVariableService(s,
 		store.NewServiceRepository(),
 		store.NewServiceVariableRepository(),
 		audit,
+		secrets.NewPlaintext(),
 	)
 	if err != nil {
 		t.Fatalf("NewServiceVariableService: %v", err)
@@ -75,8 +82,12 @@ func TestServiceVariableServiceReplaceInsertsFreshVariables(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("len = %d, want 2 (got %+v)", len(got), got)
 	}
-	// Deterministic (key ASC, id ASC) ordering.
-	if got[0].Key != "DATABASE_URL" || !got[0].IsSecret || got[0].Value != "postgres://user:pw@db/yalla" {
+	// Deterministic (key ASC, id ASC) ordering. For is_secret = true rows
+	// the on-disk shape after BE-0342 forces Value="" and stores the
+	// literal in SecretCiphertext, so the assertion goes through
+	// revealServiceVariableValue (the test wires the plaintext provider,
+	// for which Seal is the identity).
+	if got[0].Key != "DATABASE_URL" || !got[0].IsSecret || revealServiceVariableValue(got[0]) != "postgres://user:pw@db/yalla" {
 		t.Errorf("got[0] = %+v, want (DATABASE_URL, is_secret=true, plaintext)", got[0])
 	}
 	if got[1].Key != "REGION" || got[1].IsSecret || got[1].Value != "us-east-1" {
@@ -144,11 +155,14 @@ func TestServiceVariableServiceReplaceUpdatesExistingAndDeletesTheRest(t *testin
 	if len(got) != 2 {
 		t.Fatalf("len = %d, want 2 (got %+v)", len(got), got)
 	}
-	// (key ASC, id ASC): NEW comes before REGION lexicographically.
+	// (key ASC, id ASC): NEW comes before REGION lexicographically. For
+	// is_secret = true rows the on-disk shape after BE-0342 forces
+	// Value="" and stores the literal in SecretCiphertext, so the
+	// assertion goes through revealServiceVariableValue.
 	if got[0].Key != "NEW" || got[0].Value != "fresh" || got[0].IsSecret {
 		t.Errorf("got[0] = %+v, want (NEW, fresh, is_secret=false)", got[0])
 	}
-	if got[1].Key != "REGION" || got[1].Value != "us-west-2" || !got[1].IsSecret {
+	if got[1].Key != "REGION" || revealServiceVariableValue(got[1]) != "us-west-2" || !got[1].IsSecret {
 		t.Errorf("got[1] = %+v, want (REGION, us-west-2, is_secret=true)", got[1])
 	}
 	// REGION's id survived the conflict; its version bumped.
@@ -292,14 +306,16 @@ func TestServiceVariableServiceReplaceTenantIsolation(t *testing.T) {
 }
 
 // TestServiceVariableServiceReplaceInvalidInputNeverOpensTransaction
-// proves the validator catches a non-POSIX key BEFORE Store.Write
-// opens a transaction — so a malformed request can never partially
-// commit. The auditAppender deliberately fails on every Append; if a
-// transaction had opened, that failure would surface instead of the
-// validation failure.
+// proves the validation chokepoint: a non-POSIX key, a duplicate key, an
+// empty key, and a NUL byte in a value each surface as a typed
+// apierr.InvalidInput before any transaction is opened, so neither the
+// variables table nor the audit log carries an artefact of the rejected
+// request. The error must NEVER echo the submitted value — a secret
+// hidden in a malformed payload cannot leak through the validation
+// reason. BE-0342 makes that contract load-bearing because customer
+// secret values now flow through this surface.
 func TestServiceVariableServiceReplaceInvalidInputNeverOpensTransaction(t *testing.T) {
 	t.Parallel()
-
 	db := testutil.RequireMigratedDB(t)
 	s := newStore(t, db)
 	f := testutil.NewFactory(t)
@@ -308,31 +324,53 @@ func TestServiceVariableServiceReplaceInvalidInputNeverOpensTransaction(t *testi
 	org := seedOrg(t, db, f, "SvcVarInvalidAcme")
 	proj := seedProject(t, db, f, org, "Web")
 	env := seedEnvironment(t, db, f, proj, "Prod")
-	svc := seedService(t, db, f, env, "api")
-
-	// The audit appender is wired but it must NOT be reached — validation
-	// runs before Store.Write opens a transaction.
+	service := seedService(t, db, f, env, "api")
 	svcVarSvc := newServiceVariableService(t, s, store.NewAuditRepository())
 
-	_, err := svcVarSvc.Replace(ctx, store.ReplaceServiceVariablesInput{
-		OrganizationID: org.ID,
-		ServiceID:      svc.ID,
-		Variables: []store.ServiceVariableReplace{
-			{Key: "123bad", Value: "x"},
-		},
-		ActorID:    "usr_owner",
-		ActorKind:  "usr",
-		ActorOrgID: org.ID,
-	})
-	if err == nil {
-		t.Fatal("Replace(bad key) returned no error; want apierr.InvalidInput")
+	cases := []struct {
+		name      string
+		variables []store.ServiceVariableReplace
+	}{
+		{"non-posix key (digit prefix)", []store.ServiceVariableReplace{
+			{Key: "1BAD", Value: "x"},
+		}},
+		{"non-posix key (dash)", []store.ServiceVariableReplace{
+			{Key: "BAD-KEY", Value: "x"},
+		}},
+		{"duplicate key", []store.ServiceVariableReplace{
+			{Key: "DUPE", Value: "first-value-alpha"},
+			{Key: "DUPE", Value: "second-value-bravo"},
+		}},
+		{"empty key", []store.ServiceVariableReplace{
+			{Key: "", Value: "value-charlie"},
+		}},
+		{"NUL byte in value", []store.ServiceVariableReplace{
+			{Key: "GOOD", Value: "before-delta\x00after-echo"},
+		}},
 	}
-	var ye *yerr.Error
-	if !errors.As(err, &ye) || ye.Code != yerr.CodeInvalidInput {
-		t.Fatalf("err = %v (%T); want yerr CodeInvalidInput", err, err)
-	}
-	if !strings.Contains(err.Error(), "variables[0].key") {
-		t.Errorf("err.Error() = %q; want it to name variables[0].key", err.Error())
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := svcVarSvc.Replace(ctx, store.ReplaceServiceVariablesInput{
+				OrganizationID: org.ID,
+				ServiceID:      service.ID,
+				Variables:      tc.variables,
+				ActorID:        "usr_owner", ActorKind: "usr", ActorOrgID: org.ID,
+			})
+			if err == nil {
+				t.Fatalf("Replace(%s) returned no error; want InvalidInput", tc.name)
+			}
+			var ye *yerr.Error
+			if !errors.As(err, &ye) || ye.Code != yerr.CodeInvalidInput {
+				t.Errorf("Replace(%s) error = %v, want CodeInvalidInput", tc.name, err)
+			}
+			for _, item := range tc.variables {
+				if item.Value != "" && strings.Contains(err.Error(), item.Value) {
+					t.Errorf("validation error %q echoed the submitted value %q", err, item.Value)
+				}
+			}
+		})
 	}
 }
 
@@ -376,27 +414,34 @@ func TestServiceVariableServiceReplaceRejectsBlankActorOrg(t *testing.T) {
 // TestNewServiceVariableServiceRejectsNilDependencies proves the
 // constructor's port checks fail-fast: each nil dependency returns
 // an error at construction time, never silently degrades the
-// service at first request.
+// service at first request. The secrets provider is one of the
+// load-bearing dependencies — a misconfigured process that forgets
+// to wire a provider must not boot, since at-rest encryption is the
+// only barrier between the source-of-truth column and plaintext
+// secret values.
 func TestNewServiceVariableServiceRejectsNilDependencies(t *testing.T) {
 	t.Parallel()
 	s := &store.Store{}
+	plain := secrets.NewPlaintext()
 	cases := []struct {
 		name      string
 		store     *store.Store
 		services  *store.ServiceRepository
 		variables *store.ServiceVariableRepository
 		audit     store.AuditAppender
+		provider  secrets.Provider
 	}{
-		{"nil store", nil, store.NewServiceRepository(), store.NewServiceVariableRepository(), store.NewAuditRepository()},
-		{"nil services", s, nil, store.NewServiceVariableRepository(), store.NewAuditRepository()},
-		{"nil variables", s, store.NewServiceRepository(), nil, store.NewAuditRepository()},
-		{"nil audit", s, store.NewServiceRepository(), store.NewServiceVariableRepository(), nil},
+		{"nil store", nil, store.NewServiceRepository(), store.NewServiceVariableRepository(), store.NewAuditRepository(), plain},
+		{"nil services", s, nil, store.NewServiceVariableRepository(), store.NewAuditRepository(), plain},
+		{"nil variables", s, store.NewServiceRepository(), nil, store.NewAuditRepository(), plain},
+		{"nil audit", s, store.NewServiceRepository(), store.NewServiceVariableRepository(), nil, plain},
+		{"nil provider", s, store.NewServiceRepository(), store.NewServiceVariableRepository(), store.NewAuditRepository(), nil},
 	}
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if _, err := store.NewServiceVariableService(tc.store, tc.services, tc.variables, tc.audit); err == nil {
+			if _, err := store.NewServiceVariableService(tc.store, tc.services, tc.variables, tc.audit, tc.provider); err == nil {
 				t.Error("NewServiceVariableService returned no error; want a nil-dependency error")
 			}
 		})
