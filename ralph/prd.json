@@ -5236,7 +5236,7 @@
       ],
       "type": "endpoint-observability",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Endpoint belongs to the observability backend surface."
     },
     {
@@ -5255,7 +5255,7 @@
       ],
       "type": "test-observability",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Contract coverage for GET /v1/services/{service_id}/logs."
     },
     {
@@ -5274,7 +5274,7 @@
       ],
       "type": "policy-observability",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Authorization coverage for GET /v1/services/{service_id}/logs."
     },
     {

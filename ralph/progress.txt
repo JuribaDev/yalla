@@ -91,6 +91,8 @@
 - Bare-id route on a deployment (BE-0211+0212+0213 pattern, GET /v1/deployments/{deployment_id}, store/deployment.go DeploymentReader.GetServiceDeployment, httpapi/deployments.go DeploymentGetter port + deploymentIDResolver + getServiceDeploymentHandler + getServiceDeploymentPayload, routes.go GET /v1/deployments/{deployment_id} entry, server.go NewHandler DeploymentGetter parameter, cmd/yalla-api/main.go wires the SAME *store.DeploymentReader as BOTH DeploymentLister AND DeploymentGetter): canonical shape for ALL bare-id read endpoints on a Deployment-level deep resource. Two LOAD-BEARING structural differences from the environment / service bare-id routes (BE-0154 / its services sibling): (1) policy.Scope has NO DeploymentID leg — the Scope hierarchy stops at ServiceID (Organization -> Project -> Environment -> Service), so the resolver pins ONLY OrganizationID, NOT (org + DeploymentID) the way environmentIDResolver pins (org + EnvironmentID). The resource scope carries no inner leg at all, which makes the engine's covers() rule deny EVERY scoped grant (project/env/service) at the boundary via ReasonDeniedOutOfScope — even a service-scoped grant naming the deployment's actual parent service is denied, because covers() is one-way (a grant scope that pins ServiceID cannot cover a resource scope that does not). Principals whose only access is a scoped grant must use a parent-scoped route family to address a deployment. (2) The store-layer adapter intentionally skips the parent-prefetch the list adapter performs: DeploymentReader.GetServiceDeployment composes only DeploymentRepository.GetByID inside a short-lived Store.Read tx (no service prefetch), because the schema's composite foreign keys on the deployments table already guarantee (organization_id, project_id), (organization_id, environment_id), and (organization_id, service_id) cannot diverge across the deployment row — a tenant-scoped GetByID is itself a complete tenant-isolation check, and a prefetch would only duplicate the work of the schema. This is the load-bearing distinction from the list adapter ListServiceDeployments (which DOES prefetch the service to disambiguate "service missing" from "service has no deployments"). The wire shape (serviceDeployment + serviceDeploymentOf in service_deployments.go) is REUSED verbatim — an agent that listed deployments for a service does not re-parse a different shape to fetch one of them by id. Production wiring passes the same *store.DeploymentReader pointer twice (deploymentService, deploymentReader, deploymentReader, breakGlassService, ...): one concrete adapter satisfies BOTH the DeploymentLister AND DeploymentGetter port interfaces, so adding a second read port costs zero new constructors / dependencies. The contract test suite (deployments_get_test.go, 12 tests) and policy matrix (deployments_get_policy_test.go, 4 parent tests) follow the BE-0210 list-side template structure verbatim, with one structural extension in the grant-containment matrix: a service-scoped grant naming THIS deployment's actual parent service is also denied at the wire, because the bare-id resource scope has no ServiceID leg to match. Future bare-id read endpoints on deep resources whose Scope leg does not exist (deployments today; jobs / runs in later stories) should adopt this exact pattern.
 
 
+- Bare-id read endpoint on a deep resource with a worker-deferred upstream (BE-0229+0230+0231 pattern, GET /v1/services/{service_id}/logs, store/service_log_reader.go ServiceLogReader.ListLogs, httpapi/services_logs.go ServiceLogReader port + serviceLogLine/listServiceLogsPayload wire DTOs + parseServiceLogsLimit + listServiceLogsHandler, routes.go GET /v1/services/{service_id}/logs entry, server.go NewHandler + newRouteTable + cmd/yalla-api/main.go wiring, services_logs_test.go contract suite + services_logs_policy_test.go matrix): canonical shape for ANY observability read endpoint whose real upstream is the Dokploy worker (logs, metrics — BE-0232..0234 next; future events/traces) and whose true content adapter is deferred to a later worker story. Three load-bearing rules: (1) the store-level adapter (store.ServiceLogReader, the second instance of the typed-input-typed-output read adapter shape after store.ServiceReader.GetService) performs the tenant-scoped parent existence check inside a Store.Read transaction so a cross-tenant or unknown service_id surfaces as a deterministic apierr.NotFound at the persistence boundary — never disguised as an empty success and never disguised as a 500 — and then returns an empty Lines slice with the ServiceID populated; the real Dokploy log fetcher is wired in BE-0301+ alongside the provisioning worker, matching the noopJobEnqueuer pattern for placeholder upstreams; (2) the wire DTO is a closed tuple `(service_id, lines[]{occurred_at, stream, message})` with NO pointer-typed fields, NO embedded interfaces, and an empty lines slice that marshals as `[]` not `null` so an agent does not need to special-case the absent-vs-empty distinction; the occurred_at field is RFC3339-nanosecond UTC; the stream enum is the closed set {stdout, stderr, system} so an agent can branch on the value without escape-decoding it; (3) the ?limit= query parameter is clamped at the boundary via parseServiceLogsLimit (the second instance of the bounded-limit-query-parser shape after parseAuditEventLimit, range [1, 1000] default 100), and the error path never echoes the submitted value — only the classification and the accepted range — so a typo can never become a reflection-style content channel. The CapRead policy matrix shape is the structural sibling of services_get_policy_test.go (BE-0184) — all six built-in roles allow same-tenant via ReasonAllowedByRole, support is allowed cross-tenant via ReasonAllowedBySupport at the engine level (defence-in-depth — the customer-facing route cannot reach this branch because serviceIDResolver pins the resource to the principal's home org), every project-/env-/service-scoped grant is denied OutOfScope on the bare-service-id path via the engine's one-way covers() rule, and an org-level Viewer grant is ALLOWED end-to-end (the load-bearing distinction from services_start_policy_test.go where the same grant is denied because service.start is CapDeploy, not CapRead). Limit assertion subtlety pinned by tests: the no-echo check on the invalid-limit deny path must restrict to non-numeric submitted values because numeric out-of-range inputs may legitimately share digits with the accepted-range message ("0" is a substring of "1000" in the "must be between 1 and 1000" string) — only the non-numeric case (where caller-controlled byte content could realistically reach the response body) is asserted. Test-only nil-port test: a typed-nil ServiceLogReader is needed (a bare `nil` literal does not satisfy the interface positional argument), so `var nilReader ServiceLogReader` is the pattern. Port-arity sweep: dominant `fakeServiceStopper{}, fakeServiceVariableReader{}` -> `fakeServiceStopper{}, fakeServiceLogReader{}, fakeServiceVariableReader{}` across 63 test files (108 sites) plus a minor variant `fakeServiceStopper{}, reader, fakeServiceVariableReplacer{}` -> `fakeServiceStopper{}, fakeServiceLogReader{}, reader, fakeServiceVariableReplacer{}` in service_variables_test.go (the test injects a local fakeServiceVariableReader as `reader`, so the LogReader slot is the new positional argument); the `stopper, fakeServiceVariableReader{}` variant in services_stop_test.go is one of the 108 dominant sites. Forward-applicable to BE-0232+0233+0234 (GET /v1/services/{service_id}/metrics, metrics.read action — the OTHER CapRead observability endpoint on the same resolver), and to any future read endpoint whose true content adapter is the Dokploy worker (events, traces) — same vertical, same placeholder shape, same wire-contract guarantees while the real fetcher lands later. The OpenAPI `?limit=` query parameter today is documented only via the Description prose because openapi.Endpoint has no QueryParams field; a future BE story can add structured QueryParam metadata and the existing route entries (audit-events, logs) will switch over together.
+
 ## 2026-05-15 - BE-0103
 - What was implemented: GET /v1/organizations/{org_id}/audit-events, the
   organization-scoped audit-trail read endpoint — the first endpoint to
@@ -18029,4 +18031,84 @@ Learnings for future iterations:
     publishes 5432 even though docker inspect briefly shows the
     NetworkSettings.Ports map empty. nc -zv 127.0.0.1 5432 is the
     fastest confirmation.
+---
+
+## 2026-05-16 - BE-0229 + BE-0230 + BE-0231
+- Implemented GET /v1/services/{service_id}/logs end-to-end as the
+  first observability vertical (CapRead read endpoint on a bare
+  service-id, with the real Dokploy log-fetcher adapter deferred to
+  the service provisioning worker story BE-0301+):
+  - store.ServiceLogReader + ListServiceLogsInput + ServiceLogs +
+    ServiceLogLine: tenant-scoped GetByID inside Store.Read, returns
+    empty Lines with populated ServiceID for the placeholder content
+    side; NewServiceLogReader rejects a nil store at construction.
+  - httpapi.ServiceLogReader port + listServiceLogsHandler +
+    parseServiceLogsLimit ([1, 1000] default 100) + listServiceLogsPayload
+    wire DTO (service_id + lines[]{occurred_at, stream, message});
+    empty lines slice marshals as [] not null.
+  - Route entry on serviceIDResolver with action logs.read,
+    OperationID listServiceLogs, services tag, 200 OK (default), full
+    Description naming the cross-tenant behaviour, the support
+    cross-tenant exception not applying on this route by
+    construction, and the closed stream enum.
+  - Contract tests (services_logs_test.go): happy path, empty-lines-
+    marshal-as-[]-not-null, custom limit forwarded (min/max/middle),
+    invalid limit (zero/negative/non-numeric/over-ceiling) rejected
+    pre-reader, 401, 404, 503 with no driver-cause leak, cross-tenant
+    no-foreign-echo, nil-reader 500, and OpenAPI route presence.
+  - Policy matrix tests (services_logs_policy_test.go): CapRead role
+    gate (all six built-in roles ALLOW same-tenant), revoked/expired
+    keys 401 with no leak, cross-tenant 404 + engine-level
+    ReasonAllowedBySupport (defence-in-depth) + every non-support
+    role denied cross-tenant via ReasonDeniedCrossTenant, scoped
+    grants (project/env/service) all denied OutOfScope on the
+    bare-service-id route + sibling/staging/parent-secret
+    containment + cross-tenant scoped-key planted in foreign org
+    denied, org-level Viewer grant ALLOWED end-to-end (load-bearing
+    distinction from services_start_policy_test.go).
+  - Port-arity bumped across NewHandler / newRouteTable / cmd
+    wiring; 64 test files updated by a regex sweep — the dominant
+    pattern was `fakeServiceStopper{}, fakeServiceVariableReader{}`
+    -> `fakeServiceStopper{}, fakeServiceLogReader{}, fakeServiceVariableReader{}`,
+    plus a single variant `fakeServiceStopper{}, reader, fakeServiceVariableReplacer{}`
+    -> `fakeServiceStopper{}, fakeServiceLogReader{}, reader, fakeServiceVariableReplacer{}`
+    in service_variables_test.go where `reader` is the test's local
+    fakeServiceVariableReader. cmd/yalla-api/main.go grew a
+    NewServiceLogReader construction and threaded serviceLogReader
+    into the NewHandler call.
+- Files changed: internal/controlplane/store/service_log_reader.go (new),
+  internal/controlplane/httpapi/{services_logs.go (new),
+  services_logs_test.go (new), services_logs_policy_test.go (new),
+  routes.go, server.go, 64 sibling *_test.go files updated by
+  substitution}, cmd/yalla-api/main.go, ralph/prd.json, ralph/progress.txt.
+- Verification run: gofmt -w .; go mod tidy; go vet ./...;
+  go build ./...; go test ./...; go test -race -count=1
+  ./internal/controlplane/httpapi/... ./internal/controlplane/store/...
+- Results: gofmt clean, vet clean, build clean, tests pass with
+  race detector (httpapi 5.819s, store 2.183s, store/migrate
+  1.765s). Postgres-backed integration suites pass when
+  YALLA_TEST_DATABASE_URL is set; in this iteration the integration
+  paths skipped without a DSN, consistent with prior story runs.
+  goimports not installed in this environment; documented as a
+  skip rather than a silent omission.
+- Remaining risks / follow-ups:
+  - BE-0232..0234 (GET /v1/services/{service_id}/metrics trio) are
+    next in the observability surface — natural sibling pattern
+    (same resolver, same CapRead capability, same placeholder
+    upstream awaiting the worker adapter); reuse the
+    BE-0229+0230+0231 shape verbatim, swap action+resolver names
+    and wire DTO fields, and re-run the port-arity sweep.
+  - The placeholder ServiceLogReader returns an empty Lines slice
+    for every service that exists; the real Dokploy log fetcher
+    lands in BE-0301+ alongside the provisioning worker. The
+    HTTP-layer authorization gate, tenant boundary, and wire
+    contract are all production-grade — only the log CONTENT is a
+    deterministic empty slice.
+  - openapi.Endpoint has no QueryParams field today; the ?limit=
+    query parameter is documented only in the Description prose,
+    same as audit-events. A future structured QueryParams story
+    would let the route entry declare it explicitly; both routes
+    would migrate together.
+- **Learnings for future iterations:**
+- Bare-id read endpoint on a deep resource with a worker-deferred upstream (BE-0229+0230+0231 pattern, GET /v1/services/{service_id}/logs, store/service_log_reader.go ServiceLogReader.ListLogs, httpapi/services_logs.go ServiceLogReader port + serviceLogLine/listServiceLogsPayload wire DTOs + parseServiceLogsLimit + listServiceLogsHandler, routes.go GET /v1/services/{service_id}/logs entry, server.go NewHandler + newRouteTable + cmd/yalla-api/main.go wiring, services_logs_test.go contract suite + services_logs_policy_test.go matrix): canonical shape for ANY observability read endpoint whose real upstream is the Dokploy worker (logs, metrics — BE-0232..0234 next; future events/traces) and whose true content adapter is deferred to a later worker story. Three load-bearing rules: (1) the store-level adapter (store.ServiceLogReader, the second instance of the typed-input-typed-output read adapter shape after store.ServiceReader.GetService) performs the tenant-scoped parent existence check inside a Store.Read transaction so a cross-tenant or unknown service_id surfaces as a deterministic apierr.NotFound at the persistence boundary — never disguised as an empty success and never disguised as a 500 — and then returns an empty Lines slice with the ServiceID populated; the real Dokploy log fetcher is wired in BE-0301+ alongside the provisioning worker, matching the noopJobEnqueuer pattern for placeholder upstreams; (2) the wire DTO is a closed tuple `(service_id, lines[]{occurred_at, stream, message})` with NO pointer-typed fields, NO embedded interfaces, and an empty lines slice that marshals as `[]` not `null` so an agent does not need to special-case the absent-vs-empty distinction; the occurred_at field is RFC3339-nanosecond UTC; the stream enum is the closed set {stdout, stderr, system} so an agent can branch on the value without escape-decoding it; (3) the ?limit= query parameter is clamped at the boundary via parseServiceLogsLimit (the second instance of the bounded-limit-query-parser shape after parseAuditEventLimit, range [1, 1000] default 100), and the error path never echoes the submitted value — only the classification and the accepted range — so a typo can never become a reflection-style content channel. The CapRead policy matrix shape is the structural sibling of services_get_policy_test.go (BE-0184) — all six built-in roles allow same-tenant via ReasonAllowedByRole, support is allowed cross-tenant via ReasonAllowedBySupport at the engine level (defence-in-depth — the customer-facing route cannot reach this branch because serviceIDResolver pins the resource to the principal's home org), every project-/env-/service-scoped grant is denied OutOfScope on the bare-service-id path via the engine's one-way covers() rule, and an org-level Viewer grant is ALLOWED end-to-end (the load-bearing distinction from services_start_policy_test.go where the same grant is denied because service.start is CapDeploy, not CapRead). Limit assertion subtlety pinned by tests: the no-echo check on the invalid-limit deny path must restrict to non-numeric submitted values because numeric out-of-range inputs may legitimately share digits with the accepted-range message ("0" is a substring of "1000" in the "must be between 1 and 1000" string) — only the non-numeric case (where caller-controlled byte content could realistically reach the response body) is asserted. Test-only nil-port test: a typed-nil ServiceLogReader is needed (a bare `nil` literal does not satisfy the interface positional argument), so `var nilReader ServiceLogReader` is the pattern. Port-arity sweep: dominant `fakeServiceStopper{}, fakeServiceVariableReader{}` -> `fakeServiceStopper{}, fakeServiceLogReader{}, fakeServiceVariableReader{}` across 63 test files (108 sites) plus a minor variant `fakeServiceStopper{}, reader, fakeServiceVariableReplacer{}` -> `fakeServiceStopper{}, fakeServiceLogReader{}, reader, fakeServiceVariableReplacer{}` in service_variables_test.go (the test injects a local fakeServiceVariableReader as `reader`, so the LogReader slot is the new positional argument); the `stopper, fakeServiceVariableReader{}` variant in services_stop_test.go is one of the 108 dominant sites. Forward-applicable to BE-0232+0233+0234 (GET /v1/services/{service_id}/metrics, metrics.read action — the OTHER CapRead observability endpoint on the same resolver), and to any future read endpoint whose true content adapter is the Dokploy worker (events, traces) — same vertical, same placeholder shape, same wire-contract guarantees while the real fetcher lands later. The OpenAPI `?limit=` query parameter today is documented only via the Description prose because openapi.Endpoint has no QueryParams field; a future BE story can add structured QueryParam metadata and the existing route entries (audit-events, logs) will switch over together.
 ---
