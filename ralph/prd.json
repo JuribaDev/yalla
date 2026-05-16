@@ -1778,8 +1778,8 @@
       ],
       "type": "test-organization",
       "priority": 2,
-      "passes": false,
-      "notes": "Contract coverage for GET /v1/organizations."
+      "passes": true,
+      "notes": "Contract coverage for GET /v1/organizations closed by internal/controlplane/httpapi/organizations_contract_test.go — captures stdout/stderr isolation, bearer-token redaction on success + auth-failure log paths, and dependency-cause redaction in the 503 error envelope. The success/error envelopes, request_id propagation, OpenAPI registration, unauth/invalid-cred/disabled/not-found rejections, and tenant-isolation invariants are already pinned by organizations_test.go."
     },
     {
       "id": "BE-0048",
