@@ -5179,7 +5179,7 @@
       ],
       "type": "endpoint-operations",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Endpoint belongs to the operations backend surface."
     },
     {
@@ -5198,7 +5198,7 @@
       ],
       "type": "test-operations",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Contract coverage for POST /v1/services/{service_id}/start."
     },
     {
@@ -5217,7 +5217,7 @@
       ],
       "type": "policy-operations",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Authorization coverage for POST /v1/services/{service_id}/start."
     },
     {

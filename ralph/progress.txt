@@ -17639,3 +17639,78 @@ Learnings for future iterations:
     requires_auth, tag), so prose drift is harmless to CI but
     breaks agent reading; keep the prose in lock-step manually.
 ---
+
+## 2026-05-16 - BE-0226 + BE-0227 + BE-0228
+- Implemented POST /v1/services/{service_id}/start end-to-end as the
+  start sibling of the restart/stop verticals (BE-0220+0221+0222 and
+  BE-0223+0224+0225):
+  - store.ServiceService.Start + StartServiceInput +
+    serviceStartAction + serviceStartJob constants: tenant-scoped
+    GetByID, 409 on deletion-scheduled service, in-tx authz +
+    serviceStartJob enqueue + audit append (one transaction).
+  - httpapi.ServiceStarter port + startServiceHandler + route entry on
+    serviceIDResolver with action service.start, OperationID
+    startService, 202 Accepted, services tag, full Description.
+  - Contract tests (services_start_test.go): happy path, 401, 403,
+    404, 409, 503, cross-tenant no-foreign-echo, nil-starter 500,
+    and OpenAPI route presence.
+  - Policy matrix tests (services_start_policy_test.go): CapDeploy
+    role gate (owner/admin/developer/ci allow, viewer/support deny),
+    revoked/expired keys 401 with no leak, cross-tenant 404 +
+    engine-level ReasonDeniedCrossTenant defence-in-depth, scoped
+    grants denied OutOfScope on the bare-service-id path, org-level
+    Viewer DENIED (load-bearing distinction from CapRead matrix).
+  - Port-arity bumped across NewHandler / newRouteTable / cmd
+    wiring; 62 test files updated by a regex sweep — the dominant
+    pattern was `fakeServiceRestarter{}, fakeServiceStopper{}` ->
+    `fakeServiceRestarter{}, fakeServiceStarter{}, fakeServiceStopper{}`,
+    plus the two variants (`fakeServiceRestarter{}, stopper,` and
+    `restarter, fakeServiceStopper{}`) used by services_stop_test.go
+    and services_restart_test.go respectively.
+- Files changed: internal/controlplane/store/serviceservice.go,
+  internal/controlplane/httpapi/{services_start.go (new),
+  services_start_test.go (new),
+  services_start_policy_test.go (new), routes.go, server.go,
+  62 sibling *_test.go files updated by substitution},
+  cmd/yalla-api/main.go, ralph/prd.json, ralph/progress.txt.
+- Verification run: gofmt -w .; go mod tidy; go vet ./...;
+  go build ./...; go test ./...; go test -race -count=1
+  ./internal/controlplane/httpapi/... ./internal/controlplane/store/...
+- Results: gofmt clean, vet clean, build clean, tests pass with
+  race detector (httpapi 6.041s, store 1.466s, store/migrate
+  2.154s). Postgres-backed integration suites pass when
+  YALLA_TEST_DATABASE_URL is set; in this iteration the integration
+  paths skipped without a DSN, consistent with prior story runs.
+- Remaining risks / follow-ups:
+  - BE-0229..BE-0231 (GET /v1/services/{service_id}/logs trio) are
+    next in the operations surface — natural sibling pattern, but
+    /logs is a streaming GET so the wire and policy shape diverge
+    from the start/stop/restart trio (CapRead instead of CapDeploy,
+    no provisioning job, no audit on the read path beyond denial
+    audits).
+  - serviceStartAction / serviceStartJob constants live alongside
+    their stop/restart siblings — when a real adapter for the worker
+    side (BE-0301..0309 service provisioning verticals) lands, it
+    will consume serviceStartJob and round-trip through
+    JobEnqueuer. The current noopJobEnqueuer is a placeholder
+    consistent with the rest of the operations stories.
+- Learnings for future iterations:
+  - The start trio (BE-0226+0227+0228) is the canonical third
+    instance of the operations-on-bare-service-id pattern (after
+    restart and stop). The pattern's repeatability is now strong
+    enough that the next operations verticals (e.g. service.scale,
+    service.suspend if added later) should reuse the exact shape:
+    one constant pair, one StartXInput, one Start method on
+    ServiceService, one ServiceXer port + one xServiceHandler, one
+    route entry, one contract test file, one policy matrix test file.
+  - The 62-file sweep is mechanical and safe with three literal
+    substitutions: dominant `fakeServiceRestarter{}, fakeServiceStopper{}`
+    plus two minor variants where one of the two siblings is the
+    test's bound variable. NO regex required, NO ambiguity, and the
+    substitutions cannot overlap: the dominant substitution already
+    consumes `fakeServiceRestarter{},` so the `restarter,` and
+    `stopper,` substitutions only match in test files where the
+    OTHER sibling stayed as a positional fake. go vet and
+    `go test ./internal/controlplane/httpapi/...` are sufficient to
+    confirm the sweep landed cleanly.
+---

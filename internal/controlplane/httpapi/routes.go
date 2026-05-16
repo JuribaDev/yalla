@@ -137,12 +137,13 @@ type versionPayload struct {
 // deploymentCanceler backs POST /v1/deployments/{deployment_id}/cancel.
 // deploymentRollbacker backs POST /v1/services/{service_id}/rollback.
 // serviceRestarter backs POST /v1/services/{service_id}/restart.
+// serviceStarter backs POST /v1/services/{service_id}/start.
 // serviceStopper backs POST /v1/services/{service_id}/stop.
 // Any may be nil for tests and tooling that only inspect the route
 // table's metadata; a request that actually reaches a handler with a
 // nil dependency is reported as a typed internal error rather than a
 // misleading empty list or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter, environmentCloner EnvironmentCloner, environmentGrants EnvironmentGrantReader, environmentGrantReplacer EnvironmentGrantReplacer, environmentVariables EnvironmentVariableReader, environmentVariableReplacer EnvironmentVariableReplacer, environmentServices EnvironmentServiceReader, environmentServiceCreator EnvironmentServiceCreator, services ServiceReader, serviceUpdater ServiceUpdater, serviceDeleter ServiceDeleter, serviceRestorer ServiceRestorer, serviceRestarter ServiceRestarter, serviceStopper ServiceStopper, serviceVariables ServiceVariableReader, serviceVariableReplacer ServiceVariableReplacer, deploymentCreator DeploymentCreator, deploymentLister DeploymentLister, deploymentGetter DeploymentGetter, deploymentCanceler DeploymentCanceler, deploymentRollbacker DeploymentRollbacker, breakGlass BreakGlassController) []apiRoute {
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter, environmentCloner EnvironmentCloner, environmentGrants EnvironmentGrantReader, environmentGrantReplacer EnvironmentGrantReplacer, environmentVariables EnvironmentVariableReader, environmentVariableReplacer EnvironmentVariableReplacer, environmentServices EnvironmentServiceReader, environmentServiceCreator EnvironmentServiceCreator, services ServiceReader, serviceUpdater ServiceUpdater, serviceDeleter ServiceDeleter, serviceRestorer ServiceRestorer, serviceRestarter ServiceRestarter, serviceStarter ServiceStarter, serviceStopper ServiceStopper, serviceVariables ServiceVariableReader, serviceVariableReplacer ServiceVariableReplacer, deploymentCreator DeploymentCreator, deploymentLister DeploymentLister, deploymentGetter DeploymentGetter, deploymentCanceler DeploymentCanceler, deploymentRollbacker DeploymentRollbacker, breakGlass BreakGlassController) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -1362,6 +1363,41 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// boundary.
 			resolver: serviceIDResolver,
 			handler:  restartServiceHandler(serviceRestarter),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodPost,
+				Path:           "/v1/services/{service_id}/start",
+				OperationID:    "startService",
+				Summary:        "Start a service",
+				Description:    "Records customer intent to start the service named by the {service_id} path parameter and enqueues the durable provisioning job that mirrors the start into Dokploy. The start targets the entire service: the worker brings the already-persisted desired state back up — the service row's source, source_ref, and rendered environment do not change. The request body is empty: start is a fire-and-forget signal that carries no caller-supplied parameters. Action service.start is authorized against the (principal home organization, {service_id}) resource the path names before the handler runs: service.start is a CapDeploy action, so the gate admits the principal's organization-wide deploy roles (owner, admin, developer, ci) and denies viewer (CapRead only), denies support (CapRead+CapSupport — support is a deliberate cross-tenant READ exception, never a deploy one). The path carries no parent project_id or environment_id, so the policy engine cannot pin those legs of the resource scope at authorization time — project-, environment-, and service-scoped grants are denied at the boundary by the engine's covers() rule (a grant with a pinned ProjectID cannot cover a resource with no ProjectID); principals whose only access is a scoped grant must use a parent-scoped route to address a service by its (project, environment, service) tuple. A cross-tenant or unknown service_id reaches the persistence layer with the principal's home organization id and is rejected as a deterministic 404 by the tenant-scoped repository query, never revealing another tenant's service. A service already scheduled for deletion is a deterministic 409 — a start cannot land on a service whose teardown is queued. The provisioning job that mirrors the start into Dokploy and an immutable audit record naming the authenticated principal (Action 'service.start', Metadata carrying service_id / project_id / environment_id) commit in one transaction — a start audit record can never exist without its provisioning job. The response carries no credential material — the services table itself stores no secrets, and service-scoped variables live behind their own endpoints where the redaction policy applies.",
+				Tags:           []string{tagServices},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionServiceStart),
+				SuccessStatus:  http.StatusAccepted,
+				PathParams: []openapi.PathParam{{
+					Name:        "service_id",
+					Description: "The id of the service to start.",
+				}},
+				SuccessDescription: "The start was accepted and a provisioning job was enqueued.",
+			},
+			// serviceIDResolver authorizes action service.start against
+			// the (principal home organization, {service_id}) resource
+			// the path names. The path carries no parent project_id, so
+			// the resource scope pins only OrganizationID and ServiceID
+			// — project-, environment-, and service-scoped grants are
+			// denied at the policy boundary by design (the engine's
+			// covers() rule), forcing scoped-grant-only principals onto
+			// parent-scoped routes. service.start is a CapDeploy action
+			// and has no cross-tenant support exception — unlike CapRead
+			// actions, the support principal cannot start services in
+			// another tenant. The organization id is taken from the
+			// principal's home org (never the caller — there is no
+			// organization id in the request body), so a cross-tenant
+			// service_id still hits the tenant-scoped repository query
+			// and surfaces as a 404 at the persistence boundary.
+			resolver: serviceIDResolver,
+			handler:  startServiceHandler(serviceStarter),
 		},
 		{
 			endpoint: openapi.Endpoint{
