@@ -21187,3 +21187,27 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     organizations_get_contract_test.go pattern that reuses
     organizationsHandlerFor for the same reason.
 ---
+## 2026-05-16 — BE-0328 — Enforce quota for databases
+- Added per-subtype "databases" quota dimension to ServiceService.Create. When service.Kind == ServiceKindDatabase, Reserve(QuotaResourceDatabases) is called in the SAME *Tx as the existing Reserve(QuotaResourceServices) and the desired-state write — same shape and ordering as BE-0326 (applications) / BE-0327 (compose_stacks). Non-database kinds (application, compose) do not consume the databases dimension.
+- New integration test file: internal/controlplane/store/service_quota_databases_concurrent_test.go (two t.Parallel tests):
+  1. TestServiceServiceCreateRejectsParallelOversubscriptionForDatabasesQuota — 20 goroutines race to create database-kind services against a hard limit of 5; services-dimension limit seeded LOOSE at 40 so the rejection's ExceededDetail.Resource can only attribute to "databases". Asserts exactly 5 successes, 15 rejections with CodeQuotaExceeded, detail.Resource=="databases", detail.Limit=5, detail.Requested=1, detail.Reserved==5 (lock serialised), detail.Current==0; redaction guard proves the rejection message never carries slug/request_id/correlation_id/service_id; counts services rows ==5 and quota_reservations rows ==5 for both databases AND services dimensions; SumActiveReservations(databases) ==5; authorizer.calls==20 and jobs.calls==5 (quota fails before enqueue).
+  2. TestServiceServiceCreateAppliesDatabasesQuotaOnlyToDatabaseKind — fills databases dimension to limit, asserts a sixth database-kind create fails with detail.Resource=="databases", then proves application-kind AND compose-kind creates STILL succeed (per-subtype boundary). Final reservation counts: databases==5, services==7.
+- Files changed:
+  - internal/controlplane/store/serviceservice.go (+13 lines, the ServiceKindDatabase branch right after the ServiceKindCompose branch in Create)
+  - internal/controlplane/store/service_quota_databases_concurrent_test.go (new file, 583 lines)
+  - ralph/prd.json (passes=true on BE-0328)
+- Verification:
+  - gofmt -w on both files (idempotent — no formatting changes)
+  - go vet ./... — clean
+  - go mod tidy — no changes
+  - go test -run 'TestServiceServiceCreate.*Databases' ./internal/controlplane/store/... — PASS
+  - go test -race -run 'TestServiceServiceCreate.*Databases' ./internal/controlplane/store/... — PASS
+  - go test -race -run 'TestServiceService' ./internal/controlplane/store/... — PASS (all ServiceService tests including BE-0325/0326/0327 still green)
+- Pre-existing failures NOT introduced by this story (verified by running on git stash before my changes): TestEnvironmentServiceCreateUnknownProject, TestEnvironmentServiceCreateQuotaFailureRollsBack, TestEnvironmentServiceCreateEnqueueFailureRollsBack, TestServiceVariableServiceReplaceInvalidInputNeverOpensTransaction. These all fail on the unmodified HEAD (e473773f) for unrelated reasons (validation taxonomy changes upstream). Documenting here so a future iteration can pick them up under their own stories.
+- Local tooling status: goimports not installed (gofmt is sufficient since imports are stable); golangci-lint / staticcheck / govulncheck not run (not installed locally).
+- Remaining risks: none for the story. The pattern intentionally mirrors BE-0326/0327 verbatim so BE-0329..BE-0338 (the remaining per-dimension stories) can follow the same template.
+- Learnings for future iterations:
+  - The BE-0326/0327/0328 trio is now the canonical per-subtype quota-dimension template for the ServiceKind axis: identical seed shape (org/project/env + two quota_usage rows + two quota_policies rows), identical concurrent-oversub + per-subtype-boundary pair, only the Resource constant and Kind constant swap per story. The tight bound is ALWAYS the new dimension; the services-dimension bound stays LOOSE at attempts*2 (concurrent test) or limit*4 (boundary test) so the rejection can only attribute to the new per-subtype row. The boundary test fills the new dimension then proves BOTH other ServiceKind taxonomy members still succeed — pin both legs, not just one, because a future regression could drop the Kind guard for one sibling but not the other.
+  - macOS dev env quirk: TMPDIR is set to the project root in this shell, which makes `go vet ./...` and `go test ./...` fail with "directory prefix internal/... does not contain main module" until `export TMPDIR=/tmp/` is set. Always reset TMPDIR before running Go tooling from this shell. The ralph runner sets this automatically; local repro needs the unset.
+  - Postgres integration DSN for local runs: YALLA_TEST_DATABASE_URL=postgres://yalla:yalla@127.0.0.1:5432/yalla (docker-compose yalla-postgres-1 service, declared in docker-compose.yml header comment).
+---

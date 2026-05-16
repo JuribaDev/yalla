@@ -278,6 +278,20 @@ func (svc *ServiceService) Create(ctx context.Context, in CreateServiceInput) (S
 				return err
 			}
 		}
+		// Per-subtype quota: the "databases" dimension is the
+		// database-kind counterpart of the applications and
+		// compose_stacks dimensions — it counts ONLY services whose
+		// Kind is ServiceKindDatabase. Application and compose
+		// services do not consume it. The reservation runs in the
+		// SAME *Tx as the services-dimension reservation and the
+		// desired-state write, so a tenant that exhausts databases
+		// rolls back BOTH reservations with the rest of the unit of
+		// work.
+		if service.Kind == ServiceKindDatabase {
+			if err := svc.quota.Reserve(ctx, tx, service.OrganizationID, string(QuotaResourceDatabases)); err != nil {
+				return err
+			}
+		}
 		row, err := svc.services.Insert(ctx, tx, service)
 		if err != nil {
 			return err
