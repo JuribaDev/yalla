@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Tamper-resistance three-wall verification pattern (BE-0353, internal/controlplane/store/{audit_tamper_static_test.go, audit_test.go::TestAuditUpdateBlockedByDatabaseTriggerWithRestrictViolation} + internal/controlplane/store/migrate/audit_immutability_static_test.go + internal/controlplane/store/AGENTS.md "Tamper resistance" subsection; structural template for any future append-only-table story whose immutability is enforced at the database trigger AND the Go repository surface — security events, key-rotation history, billing-ledger entries, fraud alerts, anything where "the record cannot change after write" is a load-bearing contract). The pattern is THREE static-time guards plus ONE runtime probe so a weakening of any one layer is caught by another. Five load-bearing rules: (1) MIGRATION-shape pin (parse the .up.sql via embedded fs and assert four regex shapes: function declared with `ERRCODE = '<sqlstate-name>'`, trigger declared with `BEFORE UPDATE ON <table> FOR EACH ROW EXECUTE FUNCTION <fn>`, the `CREATE TABLE` parenthesised body extracted and scanned for any forbidden column declaration, the `.down.sql` drops both the table AND the function — DROP TABLE alone leaves the function orbiting unused). The column-scan strips `--`-prefixed lines BEFORE matching so an in-body comment like `-- intentionally no updated_at column` does not trip the probe; the matcher anchors on `^(?:\s|,)*<column>\s+[a-zA-Z]` so a bare token mentioned in prose elsewhere does not match. (2) Go-SURFACE pin (parse the implementation .go via the existing mustParseFile helper, walk file.Decls, collect every FuncDecl whose receiver is the named type, and assert the set is exactly the allowed names AND each name does not start with a known mutation-verb prefix `{Update,Delete,Patch,Replace,Modify,Truncate,Remove}` — the verb prefix is a SECOND filter so a future allowed-set drift that re-admits a mutation-shape name still fails); also pin the struct declaration has no mutation-timestamp field `{UpdatedAt,ModifiedAt,RevisedAt,LastModifiedAt}` — the SQL column absence is the migration's job, the Go field absence is the surface's job, both must hold. (3) DML-SCAN pin (walk every non-test `.go` in the owning package, find every `*ast.BasicLit` of `token.STRING` kind, unwrap raw-string and double-quoted shapes, normalise whitespace and case, and reject any literal that contains a forbidden DML substring against the target table; only the carved-out INSERT shape inside the repository's own file is allowed — every other shape is a regression flagged with `file:line: forbidden DML against <table>: "UPDATE <table>" in literal`). The case-insensitive uppercase normalisation handles lowercase shapes that snuck in via copy-paste; the whitespace normalisation handles multi-line literals like `UPDATE\n  audit_events\nSET ...`. Comments are NOT scanned — the rule targets executable code paths and a SQL example in a doc comment is fine. (4) RUNTIME-wire pin (insert a fixture row, attempt every UPDATE shape an operator might try — by id, by tenant id, table-wide without WHERE, partial-column-rewrite, verdict-reclassification — and assert each rejection surfaces a `*pgconn.PgError` with `pgErr.Code == "<sqlstate>"` AND `strings.Contains(pgErr.Message, "<canonical phrase>")` AND the row's columns are byte-identical to the original after the attempted UPDATE; PG's `restrict_violation` is SQLSTATE 23001 NOT 38000 — 38000 is external_routine_exception, an easy typo because both classes start with a 3, verify the actual wire code by running once and reading the failure). Also assert the error message does NOT echo any caller input — the trigger function is value-free by design and a future log path that interpolates the rejected payload would surface here as a redaction regression. (5) SELF-CHECK pin (drive each matcher with synthetic known-good AND known-bad inputs in subtests so a future over-tightening that false-positives on real production code AND a future under-tightening that misses a real regression are BOTH caught — the self-check is the only safety net against "I weakened my own analyser without noticing"). Six asymmetries worth knowing: (a) `audit_events` allows direct SQL `DELETE FROM ...` because the design requires ON DELETE CASCADE to work for tenant teardown — so the DML-scan flags DELETE FROM at the Go layer (no app-side delete) but the runtime test does NOT assert DELETE is blocked at the DB layer (it isn't). The migration AGENTS.md section documents this asymmetry so a future reader doesn't try to "fix" it. (b) The wire SQLSTATE for the migration's `RAISE EXCEPTION ... ERRCODE = 'restrict_violation'` is 23001 (class 23 integrity_constraint_violation) — PG remaps the symbolic name to a numeric code at trigger compile time, the SQL pins the name, the runtime test pins the code, both must stay synchronised. (c) Mutation-verb prefix detection deliberately EXCLUDES `Set` and `Get` — too broad to flag without false positives across unrelated repositories — and the closed verb set lives in `isMutationSurfaceMethodName` as a helper rather than inline so adding a new verb is a single change. (d) The struct-field forbidden list does NOT include `UpdatedBy` / `LastEditor` — those are actor-attribution fields, not mutation timestamps; the rule targets writes-to-the-record, not metadata about who touched it. (e) The migration column-scan strips `--` line comments before matching but does NOT strip `/* */` block comments — PG accepts both, but `audit_events.up.sql` uses `--` exclusively and the simpler scanner is enough; if a future migration mixes styles, extend the scanner with the same upper-vs-lower test pattern. (f) The runtime test reuses the existing `auditEventFixture` / `seedOrg` / `appendAudit` helpers from `audit_test.go` so the new test is ~150 lines of mostly cases-and-assertions; the wire-error assertions live in a `*pgconn.PgError` `errors.As` extraction (NOT a string match on err.Error()) so a future error-wrapping change at the pgx layer that preserves the typed error still surfaces the assertion.
 - Cryptographic-primitive rotation contract pin (BE-0351 pattern, internal/controlplane/secrets/{key_rotation_static_test.go, key_rotation_test.go} + internal/controlplane/store/migrate/secret_routing_idx_static_test.go + internal/controlplane/secrets/AGENTS.md "Key rotation" section; structural template for any future security-verification story over a long-lived cryptographic primitive that ships a rotation surface — JWT signing keys, webhook HMAC secrets, backup-target keys, mTLS issuance keys). Three load-bearing rules: (1) The cryptographic surface is pinned by a static AST analyser, not just by behavioural tests: parse the implementation file, locate the surface methods by name (`NewAESGCM`, `ActiveKeyID`, `KeyIDs`, `Open` for AESGCM), and assert each one's structural shape — `NewAESGCM` must take `[][]byte` (not a single key), `Open` must contain a range loop over the receiver's `keys` slice (not a single-key decrypt), `Open` must return the typed `ErrUnknownKey` identifier (not a string error). Behavioural tests catch the runtime regression but a static guard catches the silent refactor before the runtime test has a chance to fail. The self-check pins both directions of every analyser with synthetic regression sources. (2) The runtime test mirrors the operator runbook line-for-line as a three-phase rotation lifecycle: pre-rotation provider seals under k_old; mid-rotation provider boots with `[k_new, k_old]` and proves (a) old ciphertext still Opens via the retired key id, (b) new Seals reference the new active key id, (c) a fresh Seal under k_new does NOT decrypt under k_old's id (returns ErrInvalidCiphertext); re-seal step (the rotation worker's loop body) Opens under retired key then Seals under active and proves round-trip plaintext intact; post-retirement provider boots with `[k_new]` only and proves a row missed by the re-seal worker surfaces ErrUnknownKey (NOT ErrInvalidCiphertext, NOT a silent plaintext recovery). The runtime test reads as the runbook does so a future operator can compare the runbook against the executable contract. (3) The redacted-projection invariant is captured at runtime with a real `slog.NewJSONHandler` writing into a `bytes.Buffer`: `logger.LogAttrs(..., slog.Any("provider", provider))`, `json.Unmarshal` the result, assert `provider.master_keys == output.Sentinel`. The leak check substring-searches the JSON record for the FULL hex of every probe (k_old, k_new, plaintext, pre/mid ciphertext) — per-byte substring checks false-positive against the SHA-256-prefix key id (the 16-char id will collide with random 2-hex pairs in any 32-byte key at ~p=1/256 per byte). The same probes are checked against `fmt.Sprintf("%s", provider)` to pin the fmt.Stringer channel (panic messages). Both channels MUST also contain at least one accepted key id — the operator's only confirmation that a rotation took effect. (4) The store-layer routing index that the rotation worker depends on is pinned by a SEPARATE sealing trap in the migration package (the `migrations/` directory contains only .sql files — no Go package — so the trap lives in `internal/controlplane/store/migrate/secret_routing_idx_static_test.go` and reads each migration via `fs.ReadFile(embeddedMigrations, ...)`). The regex matcher tolerates harmless variations (`IF NOT EXISTS`, optional whitespace, multi-line) but pins the load-bearing parts: index name, table, column order `(secret_provider, secret_key_id)`, and `WHERE is_secret = true` partial-index predicate. A migration that drops the WHERE clause widens the index from "secret rows only" to "every row", which changes the index's purpose and breaks the worker's bounded lookup; the self-check exercises eight known-bad shapes to pin this. The `requiredVariableMigrations` slice is the canonical set of `*_variables` tables — adding a new variable table without adding it here silently reduces coverage.
 - Inbound-hostname domain-takeover guard, symmetric to the SSRF outbound-URL guard (BE-0350 pattern, internal/controlplane/validate/{domain_takeover.go, domain_takeover_static_test.go, domain_takeover_test.go, AGENTS.md} + network.go Domain() call site + fuzz_test.go FuzzDomain seeds; second worked port of the BE-0349 two-test SSRF template into the validate package, but for a STRUCTURALLY DIFFERENT threat: INBOUND hostnames the platform agrees to ROUTE traffic for, NOT outbound URLs the worker dereferences). Six load-bearing rules the new file added on top of the inherited BE-0349 template: (a) The takeover guard MUST live in a separate helper (`disallowedTakeoverHost`) and a separate static analyzer (`callsDisallowedTakeoverHost`) from the SSRF guard — they share the two-test template but check DISJOINT sets: a host that is legitimate to ATTACH (`myapp.example.com`) may still be illegitimate to FETCH if it resolves to a private IP, and vice versa. Reusing the SSRF helper would collapse both threat models into one, hiding which rejection class applies to which surface. (b) The guard's call site goes AT THE END of `Domain` (after the FQDN/label checks), not at the start. Single-label reserved names (`localhost`, `local`, `internal`, `lan`, etc.) and IPv6 literals (a single label after the `.` split) are rejected by the existing FQDN check BEFORE reaching the guard — so the test table for `TestDomainRejectsTakeoverTargets` restricts itself to inputs that actually pass through the helper today (IPv4 dotted literals, multi-label reserved exact-matches like `home.arpa`, suffix-match cases, shared-hosting eTLD bare forms). The single-label reserved names stay in `reservedTakeoverHostnames` as defence-in-depth (a future FQDN-check loosening must still trip the takeover guard) but the runtime regression table only asserts on what's actually reachable, so a missing call site is caught by a FAILING subtest rather than a silently-skipped one. Document the layering explicitly in the file's package-doc block AND in the test file's table-header comment, so the next reader doesn't add an unreachable case and then debug for an hour. (c) The reserved-name lists must DELIBERATELY EXCLUDE the RFC 2606 documentation-only suffixes (`.test`, `.example`, `.invalid`) from the SUFFIX walk while KEEPING them in the EXACT-MATCH map. Reason: those suffixes are not publicly routable so they cannot intercept real customer traffic — they are a squatting threat (bounded by the `service_domains` UNIQUE (hostname, path) constraint) rather than a takeover threat. The httpapi service-domains test fixtures across ~7 files (`api.canonical.example`, `domain-matrix-recognisable-needle.example`, etc.) use `.example` per RFC convention; adding `.example` to the suffix walk would break every one of those tests, and the cost is asymmetric: a real takeover defence would require migrating the fixtures whereas a softer squatting defence is bounded by the UNIQUE constraint and adds no value to either threat model. Document the omission AND the asymmetry in the helper's package-doc, the AGENTS.md section, and the test file's blocked-hosts table comment — so a future reader doesn't "fix" the omission and re-break the fixtures. (d) The wildcard interaction: `Domain` strips the leading `*.` BEFORE my helper sees the host. With wildcards enabled, `*.appspot.com` reduces to `appspot.com` which the exact-match map rejects — a wildcard makes the takeover STRICTLY WORSE (the bare suffix locks one routing entry, the wildcard locks every sub-tenant of that suffix) so the wildcard rejection is load-bearing and gets its own test (`TestDomainRejectsTakeoverTargetsForWildcard`). The helper ALSO defensively strips a leading `*.` itself so it remains correct for any future caller that passes the raw value. (e) The redaction backstop (`TestDomainTakeoverReasonsAreValueFree`) must plant the canary as a SUB-LABEL of a reserved-SUFFIX host (`canary + ".lan"`), NOT a reserved-EXACT-MATCH host (`canary + "appspot.com"` would not match the exact-match map). The suffix walk's `strings.HasSuffix(h, suffix)` reduces the entire host to the suffix-class reason without inspecting the canary — so a reason containing the canary proves the validator interpolated the value. The canary string itself MUST be picked to NOT collide with any word in the canonical reason set (no "domain", "namespace", "address", "literal", "hostname") — the BE-0343 redaction lesson is that substring redaction checks false-positive on stable classification phrases. (f) The FuzzDomain seed set added one entry per documented reject category PLUS an accept-branch re-derivation: `net.ParseIP(v) != nil` and `strings.HasSuffix(v, reservedSuffix)` MUST be false for every accepted host. The accept-branch re-derivation is what makes the fuzz target actually catch a regression of the takeover guard — without it, dropping the helper would let IPv4-literal seeds pass through to the accept branch without firing any assertion (the existing FQDN+label re-derivation accepts `8.8.8.8`). The reservedSuffixes slice in the fuzz target is a DUPLICATE of the package-private one — that is the cost of the validate_test (`_test` package) split: a future helper change must update BOTH lists or `TestDomainTakeoverListsAreCanonical` fires for the package list and the fuzz target silently accepts the dropped category. Document the duplication in the seed-loop comment.
 
@@ -24495,4 +24496,161 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
   - The fakeAPIKeyUpdater happy-leg in TestUpdateAPIKeyServerWritesResponseDataOnlyToResponseWriter must seed BOTH the request body's name AND the persisted store.APIKey's name to the same string ("Ada CLI v2"): the response body's name is the persisted projection, NOT the request body's input — the handler reads from the store after the update, and the store-layer's update returns the persisted row. A mismatch between the seed and the request body would silently pass the response-data-on-the-wire assertion (the response carries the seeded name, not the requested one) while hiding a regression where the handler started echoing input instead of projecting persisted state. Keep them identical so a future divergence is the regression the test is supposed to catch.
   - The `decodeError(t, rec, "E_UNAVAILABLE")` helper at middleware_test.go:60 enforces the typed error code on the envelope as a precondition; the contract test then layers on the substring assertions for the cause + IP literal. The two assertions are complementary: the typed code pins the API status; the substring scan pins the leak surface. Removing either would let the regression slip past (a code change to surface a 503 with a different label would fail decodeError; a code change to expose the cause string at 503 would fail the substring scan). The pair is the BE-0083 / BE-0080 closed pattern.
   - Sibling contract stories: a future scaffold that generates the contract-test skeleton from the endpoint metadata (verb, port name, success-envelope type, body-or-no-body) would eliminate the remaining BE-0089 (DELETE) and BE-0092 (POST rotate) hand-copies. For now, the four hand-written instances (LIST/CREATE/GET/PATCH) establish the closed pattern any future endpoint-family contract test must match. Test-file naming convention is locked: `${resource}_${verb}_contract_test.go` lives beside `${resource}_${verb}_test.go`; tests carry the prefix `Test${Verb}${Resource}` (e.g., `TestUpdateAPIKey...`); the recognisable secret carries the form `yk_live_supersecret_${resource}_${verb}_DEADBEEF0123456789`.
+---
+
+## 2026-05-17 - BE-0353
+- What was implemented: Security verification: audit log tamper resistance.
+  The store-layer immutability invariant on `audit_events` is now pinned
+  across three static-time walls plus one runtime wire probe — a future
+  regression at any layer is caught by another layer rather than a single
+  brittle test.
+  - internal/controlplane/store/migrate/audit_immutability_static_test.go
+    (new): four migration-shape pins driven against the embedded migration
+    FS (no Postgres). Asserts: (1) the function
+    `audit_events_reject_update()` is declared with
+    `ERRCODE = 'restrict_violation'` — the wire errcode the runtime test
+    pins on; (2) a trigger named `audit_events_no_update` exists with
+    shape `BEFORE UPDATE ON audit_events FOR EACH ROW EXECUTE FUNCTION
+    audit_events_reject_update()` — AFTER UPDATE or STATEMENT scope each
+    flagged independently; (3) the `CREATE TABLE audit_events` block has
+    no `updated_at` column (parses out the parenthesised body, strips
+    `--` line comments, scans column declarations anchored on
+    `^(?:\s|,)*updated_at\s+[a-zA-Z]` so a comment that mentions the
+    column name does not false-positive); (4) the `.down.sql` drops both
+    the table AND the function. Each matcher has a paired sub-test in
+    `TestAuditImmutabilityAnalyzerDetectsRegressions` driving synthetic
+    known-good and known-bad SQL — wrong errcode, wrong trigger timing,
+    added updated_at column, missing DROP. The self-check is the only
+    safety net against silently weakening the analyser itself.
+  - internal/controlplane/store/audit_tamper_static_test.go (new): three
+    Go-source pins driven by AST walks. (1)
+    `TestAuditRepositorySurfaceIsAppendOnly` parses `audit.go`, collects
+    every method declared on `AuditRepository` (pointer AND value
+    receivers), and asserts the set is exactly `{Append,
+    ListByOrganization}`; ALSO rejects any method name starting with a
+    mutation-verb prefix `{Update, Delete, Patch, Replace, Modify,
+    Truncate, Remove}` so a future drift that re-admits the verb-shape
+    name via a renamed allowed-set still fails. The two-direction check
+    is load-bearing — a method silently removed from the allowed set
+    also fails. (2) `TestAuditEventStructHasNoMutationTimestamp` finds
+    the `AuditEvent` struct declaration and rejects any field named
+    `UpdatedAt`/`ModifiedAt`/`RevisedAt`/`LastModifiedAt` — the SQL
+    column absence is the migration's job, the Go field absence is the
+    surface's job, both must hold or a future developer scans the
+    struct and "fills in" a column that doesn't exist on the wire. (3)
+    `TestNoStoreSourceTargetsAuditEventsWithMutatingDML` walks every
+    non-test `.go` in `internal/controlplane/store/`, unwraps every
+    `*ast.BasicLit` string-kind node, normalises whitespace and case,
+    and rejects any literal containing `UPDATE audit_events`,
+    `DELETE FROM audit_events`, `TRUNCATE [TABLE] audit_events`,
+    `ALTER TABLE audit_events`, or `DROP TABLE audit_events`. Only the
+    carved-out `INSERT INTO audit_events` shape in `audit.go` passes —
+    every other shape gets a `file:line: forbidden DML against
+    audit_events: "<pattern>" in literal` diagnostic. Comments are
+    NOT scanned — the rule targets executable code paths.
+    `TestAuditTamperStaticAnalyzerDetectsRegressions` is the self-check
+    with synthetic snippets for every analyser in both directions
+    (canonical Append + ListByOrganization passes; alias `Append2`
+    flagged; `Update` flagged; `UpdatedAt` field flagged; canonical
+    INSERT/SELECT passes; UPDATE/DELETE/TRUNCATE/ALTER/DROP each
+    flagged; lowercase + multi-line variants flagged; comment containing
+    forbidden shape NOT flagged; substring elsewhere NOT flagged).
+  - internal/controlplane/store/audit_test.go (modified): added
+    `TestAuditUpdateBlockedByDatabaseTriggerWithRestrictViolation` which
+    runs against a real migrated Postgres. Seeds one audit row, then
+    attempts five UPDATE shapes (by id, by organization_id, table-wide
+    with NO WHERE, metadata-rewrite, verdict-reclassification) and for
+    each asserts: `errors.As(err, &pgErr)` succeeds, `pgErr.Code ==
+    "23001"` (PG SQLSTATE for restrict_violation — NOT 38000 which is
+    external_routine_exception, easy typo because both start with 3),
+    `pgErr.Message` contains the canonical phrase
+    `audit_events is append-only: UPDATE is not permitted`,
+    `pgErr.Message` does NOT echo any caller input (id, org id, would-be
+    new values — the trigger is intentionally value-free so a future
+    log path that interpolates the rejected payload surfaces here as a
+    redaction regression). After every rejected attempt the row is
+    re-read through `repo.ListByOrganization` and every column —
+    `ID, OrganizationID, ActorID, ActorKind, Action, ResourceKind,
+    ResourceID, Decision, Reason, RequestID, CorrelationID, IPAddress,
+    UserAgent, Metadata (map equality), OccurredAt, CreatedAt` — is
+    asserted byte-identical via a new `assertAuditEventByteIdentical`
+    helper. The five-shape table catches a regression that changes the
+    trigger from FOR EACH ROW to FOR EACH STATEMENT (which would still
+    fire on per-row UPDATEs but silently allow the table-wide form).
+  - internal/controlplane/store/AGENTS.md (modified): added a
+    "Tamper resistance (BE-0353)" bullet under the "Audit log" section
+    that names the three static guards plus the runtime probe and
+    documents the asymmetry that DELETE is intentionally NOT blocked at
+    the DB layer (must stay reachable for `ON DELETE CASCADE` tenant
+    teardown) — the no-app-side-delete property is enforced by the Go
+    surface guard, not by a database trigger. A future reader does not
+    need to read four test files to understand the three-wall pattern.
+- Files changed:
+  - new: internal/controlplane/store/migrate/audit_immutability_static_test.go
+  - new: internal/controlplane/store/audit_tamper_static_test.go
+  - modified: internal/controlplane/store/audit_test.go
+  - modified: internal/controlplane/store/AGENTS.md
+  - modified: ralph/prd.json (BE-0353 → passes=true)
+  - modified: ralph/progress.txt (this entry + new Codebase Pattern)
+- Verification run:
+  - `gofmt -w` on all changed files (one auto-format normalisation on
+    audit_tamper_static_test.go's auditRepositorySurfaceAllowed map
+    indentation).
+  - `go vet ./...` — clean across the whole module.
+  - `go test ./internal/controlplane/store/migrate/ -count=1` — clean
+    (new sealing trap + self-check pass).
+  - `YALLA_TEST_DATABASE_URL=postgres://yalla:yalla@127.0.0.1:5432/yalla
+    go test -run 'TestAudit|TestAuditEvents|TestAuditTamper|TestAuditImmutability'
+    ./internal/controlplane/store/ ./internal/controlplane/store/migrate/
+    ./internal/controlplane/audit/ -count=1` — all green.
+  - With `-race` — all green.
+- Results: BE-0353 passes. The two pre-existing failures observed on the
+  full `go test ./internal/controlplane/store/` run
+  (`TestAPIKeyServiceCreateWithServiceAccountAndExpiry`,
+  `TestServiceQuotaDatabasesConcurrent`) reproduce identically on the
+  base commit when the working tree is stashed — they are the documented
+  pre-existing apikey-service-create / quota-concurrency failures from
+  the BE-0337/BE-0344 progress entries, NOT introduced by this story.
+- Remaining risks or follow-ups: none for the invariant itself. The
+  three-wall pattern is forward-applicable to any future append-only
+  table (security events, key-rotation history, billing-ledger entries,
+  fraud alerts) — see the Codebase Patterns entry above.
+- **Learnings for future iterations:**
+  - PG SQLSTATE for `RAISE EXCEPTION ... ERRCODE = 'restrict_violation'`
+    is 23001 (class 23 integrity_constraint_violation), NOT 38000 (which
+    is external_routine_exception). Both class numbers start with a 3
+    — easy typo. Run the test once against a real DB to read the actual
+    wire code before pinning it; do not infer from the symbolic name.
+  - When pinning a "no column with name X" rule on a CREATE TABLE body,
+    extract the parenthesised body FIRST and then scan column
+    declarations anchored on `^(?:\s|,)*<name>\s+[a-zA-Z]` — a bare
+    grep for the column name false-positives against `-- intentionally
+    no <name>` comments. Also strip `--` comment lines before scanning;
+    PG accepts both `--` and `/* */`, but a single migration usually
+    sticks to one style and the simpler scanner is enough.
+  - When pinning "this Go surface has exactly these methods", check
+    BOTH directions: a new method outside the allowed set AND a missing
+    method inside the allowed set are equally regressions. A
+    one-direction check passes vacuously when the type is empty.
+  - When pinning "no source file in this package issues DML against
+    table X", scan `*ast.BasicLit` STRING-kind nodes only — comments
+    are not BasicLit and should NOT be scanned (a doc-comment example
+    is fine). Normalise whitespace (multi-line literals) and case
+    (lowercase copy-paste) BEFORE the substring check; both are cheap
+    and remove false negatives that look like the analyser is broken
+    when it is actually correctly anchored.
+  - For "no-echo" assertions on a database error message, ensure the
+    error surface is `*pgconn.PgError` (via `errors.As`) and assert on
+    `pgErr.Message`, not on `err.Error()` — `err.Error()` includes
+    wrapping context that may legitimately include the caller's query
+    text (and would false-positive every probe). The pgx-typed surface
+    is the right level: the trigger's RAISE EXCEPTION text reaches
+    here verbatim and nothing else.
+  - The mutation-verb prefix set `{Update, Delete, Patch, Replace,
+    Modify, Truncate, Remove}` is the right shape for "this name looks
+    mutating." Deliberately EXCLUDE `Set` and `Get` — they are too
+    broad to flag without false positives across unrelated
+    repositories. The closed verb set lives in a helper rather than
+    inline so adding a new verb is a single change with a co-located
+    self-check case.
 ---

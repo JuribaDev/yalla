@@ -171,6 +171,26 @@ Postgres persistence for control-plane source-of-truth state.
   `ListByOrganization` loop (`pgx.Rows` satisfies `pgx.Row`). Audit rows are
   internal accounting, not domain resources — `newAuditID` mints their ids
   locally (`aud_<32hex>`), no `domain.Kind`.
+- **Tamper resistance** (BE-0353) is verified by THREE static guards plus a
+  runtime probe — adding any one in isolation is silently weakening:
+  (1) `migrate/audit_immutability_static_test.go` pins the migration shape
+  (the `audit_events_reject_update` function RAISEs `ERRCODE =
+  'restrict_violation'`; the `BEFORE UPDATE ... FOR EACH ROW` trigger
+  exists; the `CREATE TABLE audit_events` block has no `updated_at` column;
+  the down migration drops both table and function).
+  (2) `audit_tamper_static_test.go` pins the Go surface (`AuditRepository`
+  exposes exactly `{Append, ListByOrganization}`; `AuditEvent` has no
+  `UpdatedAt/ModifiedAt/RevisedAt/LastModifiedAt` field; no non-test `.go`
+  file in `store/` issues `UPDATE/DELETE/TRUNCATE/ALTER/DROP audit_events`
+  SQL — only the `INSERT INTO audit_events` carve-out in `audit.go` is
+  allowed).
+  (3) `audit_test.go::TestAuditUpdateBlockedByDatabaseTriggerWithRestrictViolation`
+  pins the wire shape (`SQLSTATE 23001` and the canonical message
+  `audit_events is append-only: UPDATE is not permitted`, plus a byte-
+  identical row snapshot after every rejected UPDATE shape — by id, by
+  org id, table-wide, metadata-rewrite, verdict-reclassification — and a
+  no-echo redaction probe so the trigger's wire surface stays value-free).
+  A future change that weakens any layer is caught by another.
 
 ## SQL injection resistance (`sql_injection_static_test.go`, `sql_injection_test.go`)
 
