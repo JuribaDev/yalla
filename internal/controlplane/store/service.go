@@ -177,6 +177,89 @@ func (r *ServiceRepository) GetByID(ctx context.Context, q Querier, organization
 	return s, nil
 }
 
+// Update rewrites a services row in place — slug and display_name are
+// the only updatable columns; kind is taxonomy and cannot be changed
+// once Dokploy has been told what to provision, and the parent
+// (organization_id, project_id, environment_id) tuple is structural
+// identity and cannot be reparented through this endpoint. The row's
+// version column is owned by the services_bump_version trigger from
+// migration 0011 — Update never writes it itself, the trigger bumps
+// it on every successful UPDATE.
+//
+// When ifMatchVersion is nil the predicate matches on (organization,
+// id) alone — next-write-wins. When ifMatchVersion is non-nil the
+// predicate also requires version = *ifMatchVersion, so a concurrent
+// writer landing between the caller's read and this write is rejected
+// as a typed apierr.ConflictStale carrying the row's authoritative
+// version. The disambiguation between "row missing" and "version
+// stale" runs through classifyServiceConcurrencyMiss so the caller
+// learns which precondition actually failed.
+//
+// A slug already taken by another service in the same environment
+// violates UNIQUE (environment_id, slug) and surfaces through
+// mapWriteError as a deterministic apierr.Conflict — never a 500
+// leaking the constraint name. The repository is tenant-scoped at the
+// SQL predicate: a cross-tenant (organization_id, service_id) tuple
+// matches no row even when a service with the same id exists in
+// another tenant, so the response is never an oracle that reveals
+// another organization's service ids.
+func (r *ServiceRepository) Update(ctx context.Context, tx *Tx, s Service, ifMatchVersion *int64) (Service, error) {
+	if tx == nil {
+		return Service{}, apierr.Internal(errors.New("store: ServiceRepository.Update called with a nil transaction"))
+	}
+	var row pgx.Row
+	if ifMatchVersion == nil {
+		row = tx.QueryRow(ctx,
+			`UPDATE services
+			    SET slug = $3, display_name = $4
+			  WHERE organization_id = $1 AND id = $2
+			 RETURNING `+serviceColumns,
+			s.OrganizationID, s.ID, s.Slug, s.DisplayName)
+	} else {
+		row = tx.QueryRow(ctx,
+			`UPDATE services
+			    SET slug = $3, display_name = $4
+			  WHERE organization_id = $1 AND id = $2 AND version = $5
+			 RETURNING `+serviceColumns,
+			s.OrganizationID, s.ID, s.Slug, s.DisplayName, *ifMatchVersion)
+	}
+	updated, err := scanService(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if ifMatchVersion == nil {
+			return Service{}, apierr.NotFound("service", s.ID)
+		}
+		return Service{}, classifyServiceConcurrencyMiss(ctx, tx, s.OrganizationID, s.ID, *ifMatchVersion)
+	}
+	if err != nil {
+		return Service{}, mapWriteError(err, "a service with this slug already exists in the environment")
+	}
+	return updated, nil
+}
+
+// classifyServiceConcurrencyMiss disambiguates the two reasons a
+// version-checked UPDATE matched no rows: the service was deleted
+// (rare, and reported as NotFound for parity with the unchecked path)
+// or the caller's view of the version is stale (reported as
+// apierr.ConflictStale carrying the row's authoritative version). The
+// read runs on the same *Tx as the failed write so the version it
+// reports is consistent with the predicate that just rejected.
+func classifyServiceConcurrencyMiss(ctx context.Context, tx *Tx, organizationID, serviceID string, ifMatchVersion int64) error {
+	r := NewServiceRepository()
+	current, err := r.GetByID(ctx, tx, organizationID, serviceID)
+	if err != nil {
+		return err
+	}
+	if current.Version == ifMatchVersion {
+		// The row was found AND its version matches the precondition,
+		// yet the version-checked UPDATE returned no rows — that is a
+		// driver-level anomaly the caller cannot recover from, so it
+		// is reported as Internal to surface as a 500 rather than
+		// silently disguising itself as a 404 or a stale-version 409.
+		return apierr.Internal(errors.New("store: ServiceRepository.Update saw the same version after a no-row UPDATE"))
+	}
+	return apierr.ConflictStale(current.Version)
+}
+
 // scanService scans one services row in serviceColumns order.
 func scanService(row scanRow) (Service, error) {
 	var s Service

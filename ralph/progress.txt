@@ -14839,3 +14839,225 @@
     same separation to every future contract-vs-matrix pair so
     cross-suite fakes can never coincidentally share state.
 ---
+
+## 2026-05-16 - BE-0187
+- What was implemented: PATCH /v1/services/{service_id} — the
+  partial-update endpoint for the bare top-level service id route,
+  the structural sibling of BE-0157 (PATCH /v1/environments/
+  {environment_id}). Lands the third level of CRUD on services after
+  BE-0181 (POST) and BE-0184 (GET-by-id), unblocking BE-0188 (the
+  dedicated contract-test story) and BE-0189 (the P=1 policy matrix).
+  - internal/controlplane/store/service.go: added
+    ServiceRepository.Update(ctx, tx, Service, *ifMatchVersion) plus
+    classifyServiceConcurrencyMiss. Update is tenant-scoped at the
+    SQL predicate (organization_id = $1 AND id = $2), supports the
+    optional optimistic-concurrency precondition (the second WHERE
+    leg version = $5 when ifMatchVersion != nil), and only writes
+    slug + display_name — kind and the parent project/environment
+    are structural identity and not mutable through this surface.
+    The services_bump_version trigger from migration 0011 owns the
+    version column. The concurrency-miss disambiguator runs a read
+    on the same *Tx to distinguish row-gone (NotFound) from
+    stale-version (ConflictStale with the row's authoritative
+    version), with a Internal-coded safety net if the read sees the
+    same version that just failed the WHERE.
+  - internal/controlplane/store/serviceservice.go: added
+    serviceUpdateAction = "service.update", UpdateServiceInput
+    (mirror of UpdateEnvironmentInput — OrganizationID, ServiceID,
+    *Slug, *DisplayName, *IfMatchVersion, ActorID, ActorKind,
+    ActorOrgID, RequestID, CorrelationID), serviceUpdate +
+    buildServiceUpdate (validates supplied fields, rejects an empty
+    patch as InvalidInput naming slug, records updated_fields in
+    submission order), and ServiceService.Update orchestrator. The
+    orchestrator runs validation BEFORE opening the transaction,
+    then composes — in one tx — Get-current → If-Match pre-check →
+    field application → repository Update → audit Append. The
+    in-transaction Authorize/Quota/JobEnqueue ports are NOT called
+    on the update path: the HTTP RequireAuth gate is authoritative
+    for CapWrite mutations (the in-tx Authorizer is reserved for
+    Create's create-time race against grant changes during quota
+    reservation). The audit record is filed under the actor's home
+    org, names the service_id as resource, records updated_fields
+    metadata, and never carries the submitted values.
+  - internal/controlplane/store/serviceservice_update_test.go (new):
+    11 isolated-Postgres integration tests covering happy path
+    (both fields, version bump, audit row with updated_fields,
+    parent identity preserved, in-tx ports NOT called), partial
+    patch (display_name only), empty patch rejected as
+    InvalidInput before tx, invalid slug rejected with no value
+    echo, unknown service_id → NotFound, cross-tenant service_id →
+    NotFound + target tenant's row intact, stale If-Match →
+    ConflictStale + no audit, slug collision rolls the tx back
+    with no audit, missing ActorOrgID → Internal, blank
+    OrganizationID → InvalidInput. Compile-time assertion that
+    *ServiceService satisfies the local serviceUpdaterForTest
+    interface (mirror of the httpapi ServiceUpdater port).
+  - internal/controlplane/httpapi/services.go: added the
+    errNoServiceUpdater sentinel, the ServiceUpdater port
+    (interface declared here so handlers stay unit-testable),
+    updateServiceRequest (strict-decoded JSON body with optional
+    *Slug + *DisplayName — body intentionally omits org/project/
+    environment/service ids), updateServicePayload (wraps the
+    same environmentService projection used by GET-by-id and
+    POST-create), and updateServiceHandler. The handler is thin —
+    PrincipalFromContext + nil-port guard + parseIfMatchVersion
+    + strict DecodeJSON + delegate via ServiceUpdater + render
+    yalla.output.v1 envelope. Adds telemetry + validate imports.
+    Mirrors the row's authoritative version into the ETag
+    response header so the caller can echo it back as the next
+    If-Match precondition without re-reading.
+  - internal/controlplane/httpapi/services_update_test.go (new):
+    13 contract tests using real NewHandler + real policy
+    engine + fake Authenticator + fake ServiceUpdater — happy
+    path (org/service_id/slug/display_name forwarded, ETag
+    mirrored, version 9 in envelope), partial body (omitted slug
+    stays nil), If-Match parsing matrix (7 cases:
+    canonical-strong, lenient-unquoted, wildcard rejected, weak
+    rejected, multi-value rejected, non-int rejected, zero
+    rejected), unknown body field (organization_id) rejected as
+    InvalidInput, malformed JSON → 400 E_INVALID_INPUT,
+    NotFound from store → 404 E_NOT_FOUND, ConflictStale → 409
+    E_CONFLICT, unauthenticated → 401 E_AUTH, viewer-forbidden
+    → 403 E_FORBIDDEN, store InvalidInput passes through as
+    400 E_INVALID_INPUT, missing-updater wiring → 500
+    E_INTERNAL, secret-shaped body field never leaks the value
+    into the error envelope, request_id echoes through the
+    success envelope and the store input, OpenAPI operation
+    registered (operationId=updateService, path=
+    /v1/services/{service_id}). Compile-time assertion that
+    *store.ServiceService satisfies the ServiceUpdater port. The
+    fake fakeServiceUpdater is defined in THIS file so it lives
+    next to the contract tests that use it; the type is package
+    scope so every other test file's NewHandler call site can
+    reference it as fakeServiceUpdater{}.
+  - internal/controlplane/httpapi/routes.go: added serviceUpdater
+    ServiceUpdater positional parameter at the tail of the
+    services group (between services ServiceReader and breakGlass
+    BreakGlassController), and registered the new apiRoute under
+    RequiresAuth=true, RequiredAction=
+    policy.ActionServiceUpdate, resolver=serviceIDResolver. The
+    OpenAPI Description doc is the verbatim BE-0157 (PATCH
+    environment) text adapted to services — same hierarchy
+    explainer, same If-Match precondition explainer, same
+    scoped-grant covers() explainer, same "no credential
+    material on the wire" explainer, plus the new "kind closed
+    Dokploy taxonomy / reparenting belongs to a different
+    endpoint" clause. The route's serviceIDResolver pins
+    OrganizationID and ServiceID only — so a cross-tenant
+    {service_id} is a 403 OutOfScope BEFORE the handler runs for
+    scoped-grant-only principals, and is a 404 at the persistence
+    boundary for org-wide principals.
+  - internal/controlplane/httpapi/server.go: added serviceUpdater
+    ServiceUpdater positional parameter to NewHandler and
+    threaded it through the newRouteTable call. Production
+    *store.ServiceService satisfies both the EnvironmentService-
+    Creator (POST) and the new ServiceUpdater port (PATCH) so the
+    single serviceService instance covers both positional slots.
+  - cmd/yalla-api/main.go: threaded serviceService as the new
+    ServiceUpdater positional argument to httpapi.NewHandler. The
+    production *store.ServiceService composes the same
+    repositories (project/environment/service) for both Create
+    (POST) and Update (PATCH), so a single constructor failure
+    surfaces uniformly across both endpoints.
+  - 47 contract/policy test files under internal/controlplane/
+    httpapi/: mechanically extended each NewHandler call to add
+    fakeServiceUpdater{} at the new positional slot (after
+    fakeServiceReader{} / reader and before
+    fakeBreakGlassController{} / ctl). 81 callsites updated via
+    automated substitution; three outliers patched by hand
+    (break_glass_test.go's ctl form, services_get_policy_test.go's
+    reader form, services_test.go's two reader forms — one of
+    which trails with logger,nil instead of nil,nil).
+- Files changed:
+  - internal/controlplane/store/service.go (Update + classifier)
+  - internal/controlplane/store/serviceservice.go (UpdateServiceInput,
+    serviceUpdate, buildServiceUpdate, ServiceService.Update,
+    serviceUpdateAction const)
+  - internal/controlplane/store/serviceservice_update_test.go (new)
+  - internal/controlplane/httpapi/services.go (errNoServiceUpdater,
+    ServiceUpdater port, updateServiceRequest, updateServicePayload,
+    updateServiceHandler; +telemetry +validate imports)
+  - internal/controlplane/httpapi/services_update_test.go (new)
+  - internal/controlplane/httpapi/routes.go (newRouteTable +1 param,
+    +1 route, +1 OpenAPI endpoint)
+  - internal/controlplane/httpapi/server.go (NewHandler +1 param,
+    threading)
+  - cmd/yalla-api/main.go (NewHandler call gets +1 serviceService
+    arg)
+  - 47 test files under internal/controlplane/httpapi/* (extended
+    NewHandler call sites with fakeServiceUpdater{})
+  - ralph/prd.json (BE-0187 passes=true)
+  - ralph/progress.txt (this entry)
+- Verification run from repository root:
+  - gofmt -l .                                  -> clean
+  - goimports                                   -> not installed
+    locally; CI will catch any import-order regressions
+  - go mod tidy                                 -> clean
+  - go vet ./...                                -> clean
+  - go test ./...                               -> pass (httpapi
+    1.223s, store 1.242s, quota 0.530s, worker 1.754s, full ok)
+  - go test -race ./...                         -> pass (httpapi
+    4.419s, store 2.171s, quota 1.434s, worker 2.543s, full ok)
+- Remaining risks / follow-ups:
+  - BE-0188 (dedicated contract tests for PATCH /v1/services/
+    {service_id}) is largely satisfied by the 13 tests in
+    services_update_test.go above; PRD treats it as a separate
+    story so the failing flag stands until a dedicated review
+    pass.
+  - BE-0189 (policy matrix for PATCH /v1/services/{service_id})
+    is the next free P=1 story, the direct sibling of BE-0159 and
+    BE-0186. It inherits this story's serviceIDResolver, the
+    ServiceUpdater port, the route registration, and the
+    fakeServiceUpdater test fake — all already in place.
+  - BE-0190 (DELETE /v1/services/{service_id}) and BE-0193 (POST
+    /v1/services/{service_id}/restore) are the next P=2 endpoint
+    stories on this surface; each will follow the same shape and
+    each unblocks its own P=1 policy story.
+- Learnings for future iterations:
+  - The PATCH-by-bare-id pattern from BE-0157 (PATCH
+    /v1/environments/{environment_id}) ports cleanly to services
+    with mechanical substitutions: environment→service everywhere
+    in the store and httpapi layers, ActionEnvironmentUpdate
+    →ActionServiceUpdate, environmentUpdateAction
+    →serviceUpdateAction, environmentIDResolver
+    →serviceIDResolver, EnvironmentUpdater→ServiceUpdater,
+    UpdateEnvironmentInput→UpdateServiceInput,
+    buildEnvironmentUpdate→buildServiceUpdate,
+    validateEnvironmentDisplayName→validateServiceDisplayName,
+    classifyEnvironmentConcurrencyMiss
+    →classifyServiceConcurrencyMiss. The fixture is canonical at
+    this point: the SAME pattern will repeat for DELETE (BE-0190)
+    and the POST sub-actions (restore, deployments, restart,
+    stop, start, rollback) — each just changes the action and
+    the in-flight state machine guard.
+  - The "thread a new positional port through NewHandler" pattern
+    now has a stable mechanical sweep:
+    1. add the port interface in the resource's httpapi file;
+    2. add the parameter to newRouteTable (between the resource's
+       previous port and breakGlass);
+    3. add the parameter to NewHandler and forward it to
+       newRouteTable;
+    4. add the wire call in cmd/yalla-api/main.go;
+    5. sweep every test file's NewHandler call to insert
+       fakeXxx{} at the new positional slot;
+    6. patch the outliers — variables in port positions (reader,
+       ctl, updater) and the rare trailing logger,nil callsite
+       (services_test.go line 398 in this story).
+    Step 5 is amenable to a literal-string replace on the unique
+    "..., fakeServiceReader{}, fakeBreakGlassController{}, ..."
+    suffix that anchors most call sites; the outliers must be
+    hand-patched because their port-position variable name
+    breaks the anchor. Run go vet ./... after the sweep — vet's
+    "not enough arguments in call to NewHandler" message names
+    the exact file:line:column for any remaining outlier.
+  - The store ServiceService's Update path deliberately skips the
+    in-transaction Authorize/Quota/JobEnqueue trio: those are
+    reserved for the Create-time race against grant changes that
+    can land between the HTTP authorize and the desired-state
+    write. PATCH is structurally simpler — the row already exists
+    and is tenant-scoped at the GetByID predicate, so the HTTP
+    RequireAuth gate is authoritative. This is the inverted-J
+    shape: Create runs all the in-tx checks; Update/Delete only
+    run the audit append; the test fixtures assert calls=0 on the
+    recording* fakes to make the difference observable.
+---

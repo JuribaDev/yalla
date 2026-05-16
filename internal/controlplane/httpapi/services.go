@@ -10,6 +10,8 @@ import (
 	"github.com/JuribaDev/yalla/internal/controlplane/domain"
 	"github.com/JuribaDev/yalla/internal/controlplane/policy"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
+	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
+	"github.com/JuribaDev/yalla/internal/controlplane/validate"
 )
 
 // errNoServiceReader is returned when GET /v1/services/{service_id} is
@@ -19,6 +21,14 @@ import (
 // as a typed internal failure rather than serving a misleading
 // not-found.
 var errNoServiceReader = errors.New("httpapi: no service reader configured")
+
+// errNoServiceUpdater is returned when PATCH /v1/services/{service_id}
+// is reached without a ServiceUpdater wired into NewHandler. Like
+// errNoServiceReader it can only happen through a wiring error — a
+// programming mistake, not a client error — so the handler reports it
+// as a typed internal failure rather than silently failing to persist
+// the mutation.
+var errNoServiceUpdater = errors.New("httpapi: no service updater configured")
 
 // ServiceReader is the narrow persistence port GET
 // /v1/services/{service_id} depends on. *store.ServiceReader satisfies
@@ -130,6 +140,143 @@ func getServiceHandler(reader ServiceReader) http.HandlerFunc {
 		}
 		apienvelope.WriteData(w, http.StatusOK, requestID(r), getServicePayload{
 			Service: environmentServiceOf(svc),
+		})
+	}
+}
+
+// ServiceUpdater is the narrow persistence port PATCH
+// /v1/services/{service_id} depends on. *store.ServiceService
+// satisfies it in production; tests supply a fake. The concrete
+// orchestrator (the desired-state UPDATE and the immutable audit
+// record committed in one transaction) lives in the store layer, so
+// the handler stays unit-testable without a real database — the same
+// shape EnvironmentUpdater carries for the environment surface.
+type ServiceUpdater interface {
+	Update(ctx context.Context, in store.UpdateServiceInput) (store.Service, error)
+}
+
+// updateServiceRequest is the decoded PATCH /v1/services/{service_id}
+// request body. Both fields are optional pointers: a nil pointer means
+// the caller did not include the field and it is left unchanged, which
+// is what makes the endpoint a partial update. The store layer
+// validates every supplied field before any database work and rejects
+// a patch that names no field at all — a mutation that changes
+// nothing is a client error, not a silent success. Neither field
+// carries credential material.
+//
+// The request body intentionally exposes no organization_id,
+// project_id, environment_id, or service_id field: the organization is
+// derived from the authenticated principal's home organization and the
+// service_id comes from the path, never from the body, so a caller
+// cannot point the mutation at another tenant's service even if the
+// strict decoder were bypassed. The parent project_id and
+// environment_id are not mutable through this endpoint: a service
+// belongs to exactly one (project, environment) for its lifetime, and
+// reparenting is a deliberate operation that would belong to a
+// separate endpoint behind a different action constant. Kind is closed
+// Dokploy taxonomy and cannot be changed once provisioning has been
+// told what to build.
+type updateServiceRequest struct {
+	Slug        *string `json:"slug"`
+	DisplayName *string `json:"display_name"`
+}
+
+// updateServicePayload is the data block of the PATCH
+// /v1/services/{service_id} success envelope: the service after the
+// update, in the same stable wire shape the other service endpoints
+// return. It carries no credential material — the services table
+// itself stores no secrets; service-scoped variables and other secrets
+// live behind their own endpoints where the redaction policy applies.
+type updateServicePayload struct {
+	Service environmentService `json:"service"`
+}
+
+// updateServiceHandler builds the PATCH /v1/services/{service_id}
+// handler. It decodes and delegates: the request body is strictly
+// decoded (oversized, malformed, or unknown-field bodies become a
+// typed 400 that never echoes the input), the If-Match header is
+// parsed as an optional optimistic-concurrency precondition, and then
+// the update-service unit of work — validate, read the current row,
+// apply the patch, write the row back, append the audit record, all
+// in one transaction — runs in the store layer through the
+// ServiceUpdater port.
+//
+// RequireAuth gates the route on action service.update before the
+// handler runs — authorized through serviceIDResolver against the
+// (principal home organization, {service_id}) resource the path
+// names — and attaches the resolved principal, so a request that
+// reaches the handler has already cleared the policy boundary.
+// service.update is a CapWrite action, so the gate admits the
+// principal's organization-wide write roles (owner, admin, developer,
+// ci) and denies viewer, denies support (a support principal is
+// CapRead-only and cannot mutate even within its home tenant). The
+// path carries no parent project_id or environment_id, so the policy
+// engine cannot pin those legs of the resource scope at authorization
+// time — project-, environment-, and service-scoped grants are denied
+// at the boundary by the engine's covers() rule (a grant with a
+// pinned ProjectID cannot cover a resource with no ProjectID);
+// principals whose only access is a scoped grant must use a
+// parent-scoped route to address a service by its (project,
+// environment, service) tuple.
+//
+// The handler never trusts a caller-supplied organization id: the
+// store call is built from principal.OrganizationID and
+// r.PathValue("service_id"), so a cross-tenant service_id reaches the
+// tenant-scoped repository query with the principal's home
+// organization id and is reported as a deterministic NotFound by the
+// persistence layer, never another tenant's row. A request that
+// arrives with no principal is a wiring error reported as a typed
+// internal error; a validation failure, a slug conflict, a not-found
+// {service_id}, a stale If-Match version, and a datastore outage each
+// surface as their own typed status, never disguised as one another.
+// On success, the handler mirrors the row's authoritative version
+// into the ETag response header so the caller can echo it back as the
+// next If-Match precondition without re-reading the row.
+func updateServiceHandler(updater ServiceUpdater) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if updater == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoServiceUpdater))
+			return
+		}
+
+		ifMatchVersion, ifMatchErr := parseIfMatchVersion(r)
+		if ifMatchErr != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(ifMatchErr))
+			return
+		}
+
+		var req updateServiceRequest
+		if err := validate.DecodeJSON(r.Body, &req, 0); err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		service, err := updater.Update(r.Context(), store.UpdateServiceInput{
+			OrganizationID: p.OrganizationID,
+			ServiceID:      r.PathValue("service_id"),
+			Slug:           req.Slug,
+			DisplayName:    req.DisplayName,
+			IfMatchVersion: ifMatchVersion,
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		writeOrganizationETag(w, service.Version)
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), updateServicePayload{
+			Service: environmentServiceOf(service),
 		})
 	}
 }

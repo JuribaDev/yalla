@@ -21,6 +21,7 @@ import (
 // the project service.
 const (
 	serviceCreateAction = "service.create"
+	serviceUpdateAction = "service.update"
 	serviceProvisionJob = "service.provision"
 	// serviceDisplayNameMaxLen bounds a human-authored service display
 	// name, in runes. It mirrors the environment / project display-name
@@ -332,6 +333,234 @@ func validateServiceDisplayName(raw string) (string, *apierr.FieldViolation) {
 		return "", &apierr.FieldViolation{Field: "display_name", Reason: "exceeds the maximum length"}
 	}
 	return displayName, nil
+}
+
+// UpdateServiceInput is the unvalidated input to ServiceService.Update.
+// OrganizationID identifies the tenant the service belongs to;
+// ServiceID names the service to update. Slug and DisplayName are
+// optional: a nil pointer means the caller did not include the field
+// and it is left unchanged, which is what makes the operation a
+// partial update. The Actor* and correlation fields describe the
+// authenticated principal performing the update and are recorded
+// verbatim on the audit event. They are plain strings so the store
+// layer takes no build dependency on the policy or telemetry packages
+// — the httpapi handler, which already holds the resolved principal
+// and the request correlation, fills them in.
+//
+// OrganizationID is sourced from the principal's home organization at
+// the HTTP boundary (never from the request body or path), so a
+// cross-tenant id cannot point the write at another tenant by
+// construction. ServiceID is sourced from the {service_id} PATH
+// parameter; the update unit of work reads the current row under
+// (OrganizationID, ServiceID) before any mutation, so a cross-tenant
+// or unknown service_id surfaces as a deterministic apierr.NotFound
+// rather than a 500 or a silent success.
+//
+// IfMatchVersion is the optional optimistic-concurrency precondition:
+// when non-nil, the update succeeds only if the row's current version
+// equals *IfMatchVersion at write time, otherwise it returns a typed
+// apierr.ConflictStale carrying the row's authoritative version. The
+// httpapi layer fills it from the request's If-Match header. A nil
+// pointer disables the check (next-write-wins, the legacy behaviour).
+// The pointer indirection is deliberate: it distinguishes "caller did
+// not supply a precondition" from "caller supplied version 0", which
+// is impossible by schema CHECK and must not silently behave like the
+// unchecked path.
+//
+// Kind, parent project_id, and parent environment_id are intentionally
+// NOT in this input: kind is closed Dokploy taxonomy and cannot be
+// changed once provisioning has been told what to build, and
+// reparenting a service onto another project or environment is a
+// separate, deliberate operation that would belong to a different
+// endpoint behind a different action constant — never a partial
+// update.
+type UpdateServiceInput struct {
+	OrganizationID string
+	ServiceID      string
+	Slug           *string
+	DisplayName    *string
+	IfMatchVersion *int64
+	ActorID        string
+	ActorKind      string
+	ActorOrgID     string
+	RequestID      string
+	CorrelationID  string
+}
+
+// serviceUpdate is the validated, normalised form of an
+// UpdateServiceInput produced by buildServiceUpdate. The fields are
+// pointers so an absent field (caller did not supply it) is
+// distinguishable from a deliberate zero value, and the fields slice
+// records — in caller-submission order, deduplicated by construction
+// — the stable wire names of the columns that the patch will write,
+// which is what the audit metadata records as updated_fields.
+type serviceUpdate struct {
+	slug        *string
+	displayName *string
+	fields      []string
+}
+
+// buildServiceUpdate validates every supplied field on in and returns
+// the normalised serviceUpdate it would persist, or a typed
+// apierr.InvalidInput naming every failed field (never echoing the
+// submitted values). A patch that names no updatable field is itself
+// a validation failure — a mutation that changes nothing is a client
+// error, not a silent success.
+func buildServiceUpdate(in UpdateServiceInput) (serviceUpdate, error) {
+	var (
+		change     serviceUpdate
+		violations []apierr.FieldViolation
+	)
+
+	if in.Slug != nil {
+		change.fields = append(change.fields, "slug")
+		slug, slugErr := domain.ParseSlug(*in.Slug)
+		if slugErr != nil {
+			violations = append(violations, apierr.FieldViolation{
+				Field:  "slug",
+				Reason: "must be a canonical slug",
+			})
+		} else {
+			normalized := slug.String()
+			change.slug = &normalized
+		}
+	}
+
+	if in.DisplayName != nil {
+		change.fields = append(change.fields, "display_name")
+		displayName, dnViolation := validateServiceDisplayName(*in.DisplayName)
+		if dnViolation != nil {
+			violations = append(violations, *dnViolation)
+		} else {
+			change.displayName = &displayName
+		}
+	}
+
+	if len(change.fields) == 0 {
+		violations = append(violations, apierr.FieldViolation{
+			Field:  "slug",
+			Reason: "at least one of slug or display_name must be provided",
+		})
+	}
+
+	if len(violations) > 0 {
+		return serviceUpdate{}, apierr.InvalidInput(violations...)
+	}
+	return change, nil
+}
+
+// Update validates in, then runs the update-service unit of work
+// inside one transaction: read the current row, optionally enforce the
+// If-Match precondition, apply the caller-supplied fields, write the
+// row back, append the immutable audit record. Validation of every
+// supplied field runs before the transaction is opened, so an invalid
+// request never touches the database. A patch that names no updatable
+// field is itself a validation failure — a mutation that changes
+// nothing is a client error, not a silent success. A blank
+// OrganizationID/ServiceID is a typed validation failure raised
+// before the transaction is opened. The repository is tenant scoped:
+// a cross-tenant {service_id} reaches the persistence layer with the
+// principal's home organization id and is reported as a typed
+// apierr.NotFound, never another tenant's row. A slug that collides
+// with another service in the same environment rolls the whole
+// transaction back as a typed Conflict, so a duplicate service and
+// an orphaned audit record are both impossible.
+//
+// Authorization for service.update is enforced at the HTTP boundary
+// by RequireAuth against the (home organization, service_id) resource
+// the path names — the store layer never runs an in-transaction
+// Authorize for the update path because the HTTP gate is
+// authoritative and the in-transaction Authorizer is reserved for
+// Create (the create-time race against grant changes during a quota
+// reservation).
+func (svc *ServiceService) Update(ctx context.Context, in UpdateServiceInput) (Service, error) {
+	organizationID := strings.TrimSpace(in.OrganizationID)
+	if organizationID == "" {
+		return Service{}, apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "organization_id",
+			Reason: "must not be blank",
+		})
+	}
+	serviceID := strings.TrimSpace(in.ServiceID)
+	if serviceID == "" {
+		return Service{}, apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "service_id",
+			Reason: "must not be blank",
+		})
+	}
+
+	change, err := buildServiceUpdate(in)
+	if err != nil {
+		return Service{}, err
+	}
+
+	// The audit record is filed under the actor's home organization —
+	// the tenant the principal authenticated into — while its resource
+	// id names the service that was updated. A missing actor
+	// organization is a wiring error (an authenticated request always
+	// carries one), not client input, so it is reported as Internal
+	// rather than a validation failure.
+	actorOrgID := strings.TrimSpace(in.ActorOrgID)
+	if actorOrgID == "" {
+		return Service{}, apierr.Internal(errors.New("store: ServiceService.Update requires an actor organization for the audit record"))
+	}
+
+	event := AuditEvent{
+		OrganizationID: actorOrgID,
+		ActorID:        strings.TrimSpace(in.ActorID),
+		ActorKind:      strings.TrimSpace(in.ActorKind),
+		Action:         serviceUpdateAction,
+		ResourceKind:   string(domain.KindService),
+		ResourceID:     serviceID,
+		Decision:       AuditDecisionAllowed,
+		Reason:         "authorization granted for service.update",
+		RequestID:      strings.TrimSpace(in.RequestID),
+		CorrelationID:  strings.TrimSpace(in.CorrelationID),
+		// updated_fields names which fields the patch changed — stable
+		// wire names, never the submitted values — so the audit trail
+		// records the shape of the mutation without carrying any input
+		// verbatim.
+		Metadata: map[string]string{"updated_fields": strings.Join(change.fields, ",")},
+	}
+
+	var updated Service
+	txErr := svc.store.Write(ctx, func(ctx context.Context, tx *Tx) error {
+		current, getErr := svc.services.GetByID(ctx, tx, organizationID, serviceID)
+		if getErr != nil {
+			return getErr
+		}
+		// A pre-check before the write surfaces the stale-version
+		// conflict against the row the caller actually targets — even
+		// when no other field on the patch happens to differ from the
+		// current row, in which case the version-checked UPDATE would
+		// itself succeed trivially without the trigger needing to fire.
+		// The repository still re-checks the version under WHERE so a
+		// concurrent writer landing between the read and the write is
+		// also rejected.
+		if in.IfMatchVersion != nil && current.Version != *in.IfMatchVersion {
+			return apierr.ConflictStale(current.Version)
+		}
+		desired := current
+		if change.slug != nil {
+			desired.Slug = *change.slug
+		}
+		if change.displayName != nil {
+			desired.DisplayName = *change.displayName
+		}
+		row, updErr := svc.services.Update(ctx, tx, desired, in.IfMatchVersion)
+		if updErr != nil {
+			return updErr
+		}
+		if _, audErr := svc.audit.Append(ctx, tx, event); audErr != nil {
+			return audErr
+		}
+		updated = row
+		return nil
+	})
+	if txErr != nil {
+		return Service{}, txErr
+	}
+	return updated, nil
 }
 
 // validateServiceKind confines kind to the closed Dokploy taxonomy.
