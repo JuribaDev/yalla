@@ -1721,7 +1721,7 @@
       ],
       "type": "test-auth",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Contract coverage for GET /v1/me/organizations."
     },
     {

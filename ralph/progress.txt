@@ -17764,3 +17764,127 @@ Learnings for future iterations:
   - The reconcile + migrateimport packages are the established pattern for "pure package with closed-set domain enum + validated config + boundary predicates". A new policy/lifecycle package should follow the same layout: doc.go (boundary), types-or-policy.go (closed sets + types), policy_test.go (boundary cases × every kind), AGENTS.md (wiring + invariants). The retention package is the third instance.
   - Strict-less-than vs >= comparison at the boundary matters: RestorableAt uses `<` at the upper bound and ReapableAt uses `>=` at the lower bound so the two predicates are mutually exclusive at the exact instant of transition — the row never reports as both restorable and reapable at the same nanosecond.
 ---
+
+## 2026-05-16 - BE-0044 Add contract tests for GET /v1/me/organizations
+- Implemented the public-API contract test file for GET /v1/me/organizations
+  as the structural sibling of BE-0041's me_contract_test.go for GET /v1/me:
+  - Created internal/controlplane/httpapi/me_organizations_contract_test.go
+    with three tests that close the remaining contract-checklist rows the
+    existing me_organizations_test.go does not assert directly:
+    - TestMeOrganizationsServerWritesResponseDataOnlyToResponseWriter:
+      reuses captureProcessOutput (defined in me_contract_test.go) to redirect
+      os.Stdout/os.Stderr around the served request, then asserts the HTTP
+      server wrote nothing to the process streams while the organization list
+      was carried by the response body. Pins the contract that response data
+      MUST go through the http.ResponseWriter alone; a future regression that
+      e.g. log.Println(payload) on the request path fails here.
+    - TestMeOrganizationsRequestLogRedactsBearerToken: table-driven over the
+      success path (owner principal) and the authorization-failure path
+      (disabled-owner -> 403 E_FORBIDDEN). For each, builds the production
+      handler via meHandlerWithLogger with a caller-owned slog.JSONHandler
+      sink, serves the request with a recognisable bearer credential
+      (meOrganizationsContractSecret), and asserts the credential never
+      appears in the log buffer NOR in the response body. Pins the contract
+      that Authorization headers are not logged and not echoed; a future
+      change that started logging request headers would fail here.
+    - TestMeOrganizationsErrorEnvelopeDoesNotLeakDependencyCause: serves the
+      request with a credential-store outage wrapped through
+      apierr.StoreUnavailable(errors.New("connection refused dialing
+      10.0.0.5:5432")), asserts the wire is 503 E_UNAVAILABLE with a
+      non-empty stable error.message AND that neither the wrapped cause
+      string nor the datastore address (10.0.0.5) appears in the response
+      body. Pins the contract that dependency-cause strings stay server-side
+      only.
+  - The file declares only one new symbol — meOrganizationsContractSecret —
+    and reuses meHandlerWithLogger (from me_contract_test.go),
+    captureProcessOutput (from me_contract_test.go), meHandlerFor (from
+    me_test.go), getMeOrganizations / decodeMeOrganizations (from
+    me_organizations_test.go), and decodeError (from server_test.go).
+    No production code changes were required; the existing handler wiring
+    for /v1/me/organizations already satisfies the contract — the new tests
+    pin it.
+- Files changed: internal/controlplane/httpapi/me_organizations_contract_test.go
+  (new), ralph/prd.json (BE-0044 passes=true), ralph/progress.txt.
+- Verification run: gofmt -l . (clean); go mod tidy (clean);
+  go vet ./... (clean); go test ./... (PASS; httpapi 0.881s);
+  go test -race -count=1 ./internal/controlplane/httpapi/... (PASS, 5.790s);
+  go test -race ./... (PASS, httpapi 5.667s, all other packages cached).
+- Results: All checks pass. goimports and golangci-lint not installed in
+  this environment (documented in prior iterations).
+- Remaining risks / follow-ups:
+  - The next batch of unpassed contract-test stories (BE-0047 GET
+    /v1/organizations, BE-0050 POST /v1/organizations, BE-0053 GET
+    /v1/organizations/{org_id}, BE-0056 PATCH, BE-0059 DELETE, BE-0062 GET
+    members, BE-0065 POST members, etc.) follow the same three-test
+    skeleton pinned here. Each one needs:
+      1. an XxxServerWritesResponseDataOnlyToResponseWriter test using
+         captureProcessOutput + a logger sink + a happy-path Identity that
+         exercises the route's success path,
+      2. an XxxRequestLogRedactsBearerToken table-driven test over the
+         success path AND an authorization-failure path that yields a
+         non-200 status while keeping the route reachable past auth (a
+         disabled-principal 403 is the canonical second case for read
+         routes; for routes guarded by a stricter capability — e.g.
+         org.update needing CapWrite — a viewer-role 403 works too),
+      3. an XxxErrorEnvelopeDoesNotLeakDependencyCause test using a
+         credential-store outage shape (apierr.StoreUnavailable wrapping a
+         recognisable host:port cause) injected through the route's
+         authenticator port, asserting 503 E_UNAVAILABLE and that neither
+         the cause string nor the address appears on the wire.
+    For routes with a request body or path params (POST/PATCH/DELETE on
+    /v1/organizations/{org_id}, etc.), the contract test should additionally
+    pin that the request body (especially any caller-supplied display_name)
+    is NOT echoed into log records — the existing me-route tests skip this
+    because /v1/me/organizations has no body or path param.
+  - meHandlerWithLogger in me_contract_test.go is the canonical handler
+    factory for log-sink-based contract tests on the /v1/me family. Stories
+    on a different resource family (organizations, projects, environments,
+    services) need a similar factory at their own scope — the natural place
+    is the same-family contract test file (organizations_contract_test.go
+    for BE-0047/0050/0053/0056/0059, members_contract_test.go for
+    BE-0062/0065/etc.). Each factory pins the positional-arg signature of
+    NewHandler at the moment the file was written; the port-arity sweep
+    pattern from BE-0226 applies if a new port is added later.
+- Learnings for future iterations:
+  - The me_contract_test.go pattern (BE-0041) is the canonical template
+    for "contract-coverage delta" stories that follow a happy-path test
+    file. The delta file's job is to pin the four rows of the
+    contract checklist that a happy-path file cannot easily prove without
+    distorting its own structure: (1) HTTP server writes only through the
+    ResponseWriter, NOT to stdout/stderr; (2) per-request log redacts the
+    bearer credential on both allow and deny paths; (3) error envelope does
+    not leak the wrapped cause; (4) (when applicable) request body fields
+    do not leak into logs. Tests (1), (2), (3) are the always-three. Test
+    (4) is conditional on the route having a request body.
+  - captureProcessOutput in me_contract_test.go is package-shared (lower-
+    case function name, package httpapi, file me_contract_test.go) and is
+    intentionally NOT renamed per resource family — every contract delta
+    test file in this package can call it directly. The "// Not parallel"
+    invariant on tests that use it is load-bearing: the helper swaps
+    package-global os.Stdout / os.Stderr, so a parallel sibling that
+    captures process output would race. Future contract-delta files must
+    keep their captureProcessOutput-using test outside any t.Parallel()
+    scope (the OTHER two tests in the same file are safe to parallelize).
+  - meHandlerWithLogger reuse is structural: every contract-delta file on
+    the /v1/me family can call the SAME factory regardless of which /v1/me
+    route is under test, because the /v1/me family is served by ONE
+    NewHandler — the route under test is selected by the request URL, not
+    the factory. The same pattern will hold for the next-up
+    /v1/organizations family: ONE handler factory per file is enough; the
+    request URL chooses the route.
+  - Bearer-token redaction is asserted on BOTH the request log AND the
+    response body. The body check is not redundant: an error path that
+    decided to echo the Authorization header into the envelope (a
+    not-uncommon "debug" misfeature in dev codebases) would fail the body
+    check independently of the logger configuration. Keep both anchors in
+    every redaction test in this contract series.
+  - apierr.StoreUnavailable(stderrors.New(cause)) is the canonical injected
+    failure for the dependency-cause leak test: it round-trips through the
+    real error renderer to produce 503 E_UNAVAILABLE on the wire while the
+    wrapped cause string stays in the typed error chain (visible to server
+    logs, invisible to the response). The cause string MUST embed an
+    address (host:port) so the test can anchor on the address independently
+    of the prose around it — a future renderer that decided to echo only
+    "connection refused" (no host) would still leak operational info, and
+    the address anchor catches that.
+---
