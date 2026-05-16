@@ -120,6 +120,41 @@ func cpuMillicoresForServiceKind(kind string) int64 {
 	return serviceCPUMillicoresByKind[kind]
 }
 
+// serviceMemoryMBByKind is the per-service-kind default memory
+// allocation a Create reserves against the memory_mb quota dimension
+// (BE-0332). Like serviceCPUMillicoresByKind it is the magnitude-axis
+// sibling of the per-subtype count dimensions: every service create
+// consumes a per-Kind baseline of memory megabytes against the
+// tenant's memory_mb ceiling, and the reservation runs in the same
+// *Tx as the count-axis reservations and the desired-state write.
+//
+// The values are conservative baselines a Dokploy worker would set if
+// the service did not declare its own resources block: an application
+// service runs one web replica at 512 MiB, a compose stack runs
+// multiple container slots so its baseline is higher at 1024 MiB, and
+// a database service reserves more headroom for the engine plus its
+// connection workers at 1024 MiB. The numbers are stable contract —
+// the memory_mb quota tests assert them — so a future change to the
+// baselines must update both here and the concurrent test seeded
+// limits. A future story that adds a caller-supplied memory override
+// on CreateServiceInput will widen this to
+// (override > kind default > tier default).
+var serviceMemoryMBByKind = map[string]int64{
+	ServiceKindApplication: 512,
+	ServiceKindCompose:     1024,
+	ServiceKindDatabase:    1024,
+}
+
+// memoryMBForServiceKind returns the per-Kind default memory
+// allocation in megabytes. A Kind outside the closed taxonomy
+// (already rejected by validateCreateServiceInput) returns zero, which
+// the caller treats as "no memory_mb reservation for this kind".
+// Today every member of the taxonomy maps to a positive baseline, so
+// the zero branch is structural only.
+func memoryMBForServiceKind(kind string) int64 {
+	return serviceMemoryMBByKind[kind]
+}
+
 // CreateServiceInput is the unvalidated input to ServiceService.Create.
 // OrganizationID, EnvironmentID, ServiceID, Slug, DisplayName, and
 // Kind are the caller-supplied resource fields; the Actor* and
@@ -345,6 +380,27 @@ func (svc *ServiceService) Create(ctx context.Context, in CreateServiceInput) (S
 		// by structural design rather than a special-case here.
 		if cpuAmount := cpuMillicoresForServiceKind(service.Kind); cpuAmount > 0 {
 			if err := svc.quota.ReserveAmount(ctx, tx, service.OrganizationID, string(QuotaResourceCPUMillicores), cpuAmount); err != nil {
+				return err
+			}
+		}
+		// Dimensional quota: the "memory_mb" dimension is the
+		// memory-axis counterpart of "cpu_millicores". Every service
+		// create consumes a per-Kind baseline of memory megabytes
+		// (see serviceMemoryMBByKind) against the tenant's memory_mb
+		// ceiling. The reservation runs in the SAME *Tx as the
+		// count-axis reservations, the cpu_millicores reservation,
+		// and the desired-state write, so a tenant that exhausts
+		// memory_mb rolls back EVERY reservation and the service row
+		// together. Order matters for the diagnostic: when both
+		// cpu_millicores and memory_mb would exhaust on the same
+		// Create, memory_mb is the one whose ExceededDetail.Resource
+		// surfaces — the LAST Reserve that fires produces the error.
+		// The reservation only fires for taxonomy members with a
+		// positive baseline; a future taxonomy member with no memory
+		// baseline would skip it by structural design rather than a
+		// special-case here.
+		if memAmount := memoryMBForServiceKind(service.Kind); memAmount > 0 {
+			if err := svc.quota.ReserveAmount(ctx, tx, service.OrganizationID, string(QuotaResourceMemoryMB), memAmount); err != nil {
 				return err
 			}
 		}

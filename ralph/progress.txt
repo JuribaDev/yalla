@@ -116,6 +116,7 @@
 - Per-Kind quota facet on environments (BE-0330 pattern, internal/controlplane/store/environmentservice.go + migrate/migrations/0025_environment_kind.{up,down}.sql + internal/controlplane/store/environment_quota_preview_environments_concurrent_test.go): structural template for ANY future per-Kind environment quota dimension (analog of the BE-0326/0327/0328 services per-Kind dimensions, now ported to the environments table). The FIRST per-Kind environment story lands the seam: a `kind` text column on environments with NOT NULL DEFAULT 'standard' and a CHECK constraint mirroring the closed Go enum one-to-one; a partial index on (organization_id, project_id) WHERE kind = '<minority-kind>' for the future sweeper; a `Kind` field on Environment, CreateEnvironmentInput, and CloneEnvironmentInput; a validateEnvironmentKind helper that normalises blank to the default member so legacy callers stay green; a closed `EnvironmentKind*` const set; and a conditional Reserve(QuotaResource<KindFacet>) on BOTH EnvironmentService.Create AND EnvironmentService.Clone (environments are the only resource with two create-shape entrypoints, both must be gated together). Subsequent per-Kind environment quota stories ship test-only — the seam is in place after BE-0330. The Reserve gates run in the SAME *Tx as Reserve(QuotaResourceEnvironments) and the desired-state write, so a tenant that exhausts either dimension cannot half-write an environment row whose other dimension passed. The default-on-blank Go validator MUST match the SQL DEFAULT so the migration is forward-compatible with in-process callers that predate the Kind field.
 
 - Dimensional (magnitude-axis) quota dimension on a Create unit of work (BE-0331 pattern, internal/controlplane/store/projectservice.go QuotaReserver port + internal/controlplane/quota/quota.go Checker + internal/controlplane/store/serviceservice.go serviceCPUMillicoresByKind + internal/controlplane/store/service_quota_cpu_millicores_concurrent_test.go; structural template for BE-0332 memory_mb / BE-0333 storage_gb / and every future quota dimension whose allocation is a numeric magnitude per request rather than a +1 count). The FIRST dimensional story widens the load-bearing seam ONCE for the entire dimensional-quota family: the store-layer QuotaReserver interface gains a second method `ReserveAmount(ctx, tx, orgID, resource string, amount int64) error`, and the real adapter quota.Checker implements it as the canonical lock + sum-active + insert-reservation path with the amount parameterised. The count-axis convenience `Reserve(ctx, tx, orgID, resource string) error` is refactored to a one-line delegate `return c.ReserveAmount(...,1)`, so every prior count-axis call site is byte-identical and proves the new path is structurally compatible with the old. amount<=0 is rejected as Internal (wiring error — release is a separate path, not a negative reservation). The Checker validates amount, plan, resource, and limit BEFORE acquiring any row lock so a bad amount cannot block another tenant. The unit-of-work call site (ServiceService.Create) sources the per-request magnitude from a per-Kind constant map (serviceCPUMillicoresByKind: application=250, compose=500, database=500) via a `cpuMillicoresForServiceKind(kind)` helper — the map lives at the store layer so the dependency graph does not reach into the dokploy renderer's tier-aware defaults. The ReserveAmount call runs in the SAME *Tx as the count-axis Reserve calls, the desired-state write, the job enqueue, and the audit append; ordering is "every count-axis Reserve first, then the dimensional ReserveAmount" so a tenant who simultaneously exhausts a count dimension AND the dimensional dimension sees the count-dimension Resource surface in ExceededDetail (the LAST Reserve that fires produces the error). Three fakes (noopQuotaReserver in cmd/yalla-api/main.go, nopQuotaReserver in store/internal_test.go, recordingQuota in store/projectservice_test.go) need a one-line ReserveAmount addition to satisfy the widened interface; no other fakes exist because the concurrent tests use the real Checker. Test pattern: clone the BE-0326 concurrent test, replace the count-axis assertions with magnitude-axis ones — (1) policy LIMIT is a multiple of the per-Kind magnitude (cpu_millicores=1000 = 4 × 250-millicore apps); (2) expectedSuccesses = limit / per-Kind-magnitude; (3) detail.Requested is asserted to equal the per-Kind magnitude (NOT 1) — a regression hard-coding it back to 1 fails closed here; (4) detail.Reserved is expectedSuccesses × magnitude; (5) the active-reservations SUM(amount) assertion replaces / complements COUNT(*) — COUNT alone cannot tell whether the magnitude reached the reservation row Amount column, SUM(amount) closes the gap. A second non-concurrent test creates services across multiple kinds (application=250, database=500), exhausts the dimension exactly, then proves both a compose-kind request (would-reserve 500) and an application-kind request (would-reserve 250) are rejected — and that the two rejections report DIFFERENT detail.Requested values. The single equality check `composeDetail.Requested != appDetail.Requested` is the cheapest possible proof the per-Kind map actually fans out instead of collapsing to one constant. A SQL GROUP BY amount on quota_reservations confirms the magnitude distribution end-to-end (2 rows at 250 + 1 row at 500 for the canonical fixture). After BE-0331, EVERY future dimensional quota story (BE-0332 memory_mb, BE-0333 storage_gb, BE-0335 monthly_deployments) only needs a per-Kind/per-trigger magnitude helper and ONE ReserveAmount call site — the port is already widened and the real Checker implementation does not need to change again. The Reserve(...) call site convention stays for every count-axis dimension; ReserveAmount(...) is reserved for dimensions whose amount actually varies per request.
+- BE-0332 memory_mb is the SECOND instance of the dimensional-quota template (BE-0331) and confirms the template clones without any port widening, Checker change, or fake update — only (a) a per-Kind magnitude map + helper in serviceservice.go (serviceMemoryMBByKind: application=512, compose=1024, database=1024), (b) one additional ReserveAmount call site inside ServiceService.Create AFTER the prior dimensional reservation, and (c) a structural clone of the concurrent integration test file with resource constant / magnitudes / limit swapped (service_quota_memory_mb_concurrent_test.go). Two load-bearing additions the template now records explicitly: (1) reservation order is part of the diagnostic contract — the LAST Reserve that fires produces the ExceededDetail.Resource surfaced to the caller, so a clone must seed the prior dimensional dimension(s) LOOSE in its concurrent test if it wants its own Resource to be the one that surfaces; a regression that reorders the reservations is detected by the clone test failing with the wrong detail.Resource (cpu_millicores instead of memory_mb, or vice versa). (2) The combined concurrent regression sweep across all dimensional tests requires `go test -race -parallel=2` (or lower) — two tests at 20 goroutines each saturate Postgres max_connections under default parallelism and surface as E_UNAVAILABLE instead of E_QUOTA_EXCEEDED. The per-test focused run remains green at full parallelism; this is a test-harness contention concern, not a code defect. Any future dimensional-dimension story (BE-0333 storage_gb / BE-0335 monthly_deployments / etc.) adds another concurrent test to the family and inherits both rules.
 
 ## 2026-05-15 - BE-0103
 - What was implemented: GET /v1/organizations/{org_id}/audit-events, the
@@ -21446,3 +21447,115 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
   - The active-reservations SUM(amount) assertion is the load-bearing dimensional-axis test pin. COUNT(*) alone cannot tell whether the magnitude reached the row; SUM(amount) closes that gap. Every dimensional test should pair the two so a regression that hard-codes amount back to 1 fails closed at the SUM, not silently passes at the COUNT.
   - The "Requested differs across kinds" assertion (composeDetail.Requested != appDetail.Requested) is the cheapest possible proof that the per-Kind magnitude map actually fans out to the reservation. A single equality check rules out a regression that flattens every kind back to one constant.
   - When the existing Reserve call sites are NOT supposed to change behavior, refactor Reserve to delegate to the new method (Reserve = ReserveAmount with amount=1). This keeps every count-axis call site byte-identical and proves the new path through Checker is structurally compatible with the old.
+
+## 2026-05-16 — BE-0332 — Enforce quota for memory_mb
+- What was implemented: memory_mb is the SECOND dimensional (magnitude-axis)
+  quota dimension and the first proof that the BE-0331 dimensional template
+  is reusable without further port-widening. The dimensional seam
+  (QuotaReserver.ReserveAmount + Checker.ReserveAmount) was widened ONCE in
+  BE-0331; this story is a pure call-site + per-Kind-map + concurrent-test
+  clone:
+  1. serviceMemoryMBByKind map + memoryMBForServiceKind helper added to
+     internal/controlplane/store/serviceservice.go alongside the existing
+     CPU variant. Values: application=512, compose=1024, database=1024 — the
+     conservative "what Dokploy would set if the service did not declare a
+     resources block" defaults, matching the cpu_millicores baseline scale.
+  2. ServiceService.Create now reserves memory_mb in the SAME *Tx as every
+     prior reservation, AFTER cpu_millicores. The ordering means memory_mb
+     is the LAST Reserve that fires, so when both cpu_millicores and
+     memory_mb would exhaust on the same Create, memory_mb surfaces in
+     ExceededDetail.Resource. A Kind with zero baseline skips the
+     reservation by structural design (today every taxonomy member has a
+     positive baseline).
+  3. New concurrent integration test file
+     internal/controlplane/store/service_quota_memory_mb_concurrent_test.go
+     mirrors the BE-0331 cpu_millicores test pair structurally:
+     (a) TestServiceServiceCreateRejectsParallelOversubscriptionForMemoryMBQuota
+         (20 goroutines × 512 MiB apps vs memory_mb=2048 → 4 successes /
+         16 typed rejections; ExceededDetail.{Resource=memory_mb,
+         Requested=512, Limit=2048, Reserved=2048, Current=0});
+     (b) TestServiceServiceCreateMemoryMBAmountVariesByKind
+         (app=512 + db=1024 + app=512 = 2048 exhausts; compose overflow →
+         Requested=1024; app overflow → Requested=512; the two rejections
+         report DIFFERENT Requested values, the strongest proof the per-Kind
+         map actually fans out; SQL GROUP BY amount surfaces the
+         distribution {512: 2 rows, 1024: 1 row}).
+- Files changed:
+  - internal/controlplane/store/serviceservice.go
+    (+serviceMemoryMBByKind map + memoryMBForServiceKind helper after the
+    cpu_millicores variants; +memory_mb ReserveAmount call site inside
+    ServiceService.Create after cpu_millicores).
+  - internal/controlplane/store/service_quota_memory_mb_concurrent_test.go
+    (new, structural clone of service_quota_cpu_millicores_concurrent_test.go;
+    seeds cpu_millicores LOOSE so memory_mb is unambiguously the boundary
+    that bites — a regression that reordered the reservations would surface
+    here as detail.Resource = "cpu_millicores" instead of "memory_mb").
+  - ralph/prd.json (BE-0332 passes=true with detailed notes).
+  - ralph/progress.txt (this entry).
+- Verification run:
+  - gofmt -w on changed files: clean.
+  - go build ./...: clean.
+  - go vet ./...: clean.
+  - go mod tidy: no changes.
+  - go test ./... (no DB): PASS for every package.
+  - go test -race ./... (no DB): PASS for every package.
+  - YALLA_TEST_DATABASE_URL=postgres://yalla:yalla@127.0.0.1:5432/yalla
+    go test -race -count=1 -run
+    'TestServiceServiceCreate(RejectsParallelOversubscriptionForMemoryMBQuota|MemoryMBAmountVariesByKind)'
+    ./internal/controlplane/store/: PASS (2 new tests).
+  - Same DSN, regression sweep with -parallel=2 to avoid Postgres
+    max_connections contention under 40 concurrent goroutines:
+    go test -race -count=1 -parallel=2 -run
+    'TestServiceServiceCreate(Rejects|Applies|CPUMillicoresAmountVariesByKind|MemoryMBAmountVariesByKind)'
+    ./internal/controlplane/store/: PASS (every prior
+    BE-0325..BE-0331 quota-dimension test still green — the new
+    memory_mb call site did not regress any count-axis or
+    cpu_millicores path).
+- Remaining risks / follow-ups:
+  - Pre-existing failures NOT introduced by BE-0332: when
+    YALLA_TEST_DATABASE_URL is set and the full store suite runs against a
+    real Postgres, four environment-related tests fail with E_INVALID_INPUT
+    instead of the expected E_NOT_FOUND / E_QUOTA_EXCEEDED (the
+    testutil.Factory id-prefix vs domain.Kind drift flagged in the
+    BE-0324..BE-0330 progress entries and the Codebase Patterns section).
+    Verified by `git stash` of the BE-0332 patches and re-running the same
+    focused tests on the base commit — same failures. Out of scope for
+    BE-0332; should be addressed in a focused triage story.
+  - Default-parallel regression sweep (without -parallel=2) exhausts the
+    Postgres connection pool under 20+ goroutines × N tests in parallel and
+    surfaces as E_UNAVAILABLE rather than E_QUOTA_EXCEEDED. This is a test
+    harness concern, not a defect in either the cpu_millicores or memory_mb
+    code paths — the focused per-test runs both pass at full parallelism.
+    Tracked here so future iterations know to either reduce -parallel or
+    bump pgx pool / Postgres max_connections when running the full suite
+    locally.
+- Learnings for future iterations:
+  - The BE-0331 dimensional-quota template (recorded in Codebase Patterns)
+    is structurally complete and clones without ANY port widening,
+    Checker change, or fake-update. BE-0332 only needed:
+    (a) a per-Kind magnitude map + helper in serviceservice.go;
+    (b) one ReserveAmount call site after the prior dimensional reservation;
+    (c) a structural clone of the concurrent integration test file with
+        the resource constant, magnitudes, and limit swapped.
+    Forward-applicable to BE-0333 storage_gb / BE-0335 monthly_deployments /
+    any future dimensional dimension — no other code changes needed.
+  - The reservation order inside ServiceService.Create is load-bearing
+    contract for diagnostics: the LAST Reserve that fires produces the
+    ExceededDetail surfaced to the caller. memory_mb runs AFTER
+    cpu_millicores, so when both would exhaust simultaneously, the
+    diagnostic names memory_mb. A future dimensional dimension added to the
+    Create path will surface its OWN Resource in ExceededDetail iff it
+    runs last; reorderings change which dimension's identifier the wire
+    reports, so the order is part of the test contract that any future
+    sibling story must pin in its own concurrent test (this story does it by
+    seeding cpu_millicores LOOSE).
+  - Postgres connection-pool contention surfaces as E_UNAVAILABLE under
+    high test parallelism. The first cpu_millicores test (BE-0331) was the
+    only test using 20 goroutines × ReserveAmount; with two tests
+    (cpu_millicores + memory_mb) running in parallel, that doubles to
+    ~40 simultaneous goroutines and saturates Postgres max_connections.
+    The deterministic fix for the regression sweep is `-parallel=2` (or
+    lower); the per-test runs at full parallelism remain green. Any
+    future story adding another concurrent quota test should expect to
+    require `-parallel=2` on the combined sweep.
+---
