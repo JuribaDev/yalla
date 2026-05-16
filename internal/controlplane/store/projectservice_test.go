@@ -43,6 +43,11 @@ func (q *recordingQuota) Reserve(_ context.Context, _ *store.Tx, _, _ string) er
 	return q.err
 }
 
+func (q *recordingQuota) ReserveAmount(_ context.Context, _ *store.Tx, _, _ string, _ int64) error {
+	q.calls++
+	return q.err
+}
+
 // recordingJobs is a fake JobEnqueuer that records call count and returns a
 // configured error.
 type recordingJobs struct {

@@ -129,24 +129,44 @@ func NewChecker(repo *store.QuotaRepository, plans PlanResolver, opts ...Option)
 }
 
 // Reserve enforces the organization's limit for one unit of resource and, when
-// there is headroom, records an active reservation inside tx. It satisfies the
-// store.QuotaReserver port.
+// there is headroom, records an active reservation inside tx. It is the
+// count-axis convenience wrapper around ReserveAmount with amount=1 — every
+// per-subtype counting dimension (projects, environments, services,
+// applications, compose_stacks, databases, domains, preview_environments,
+// service_accounts) reaches the same lock + sum + insert path through it.
+func (c *Checker) Reserve(ctx context.Context, tx *store.Tx, organizationID, resource string) error {
+	return c.ReserveAmount(ctx, tx, organizationID, resource, 1)
+}
+
+// ReserveAmount enforces the organization's limit for amount units of resource
+// and, when there is headroom, records an active reservation inside tx. It
+// satisfies the store.QuotaReserver port and is the dimensional path used by
+// magnitude quotas (cpu_millicores, memory_mb, storage_gb, monthly_deployments,
+// and other capacity bounds whose allocation is variable per request).
 //
-// The decision is: an organization may allocate one more unit of a resource
-// when current usage plus all active reservations plus this request stays
-// within the effective limit. For a hard-enforced limit Reserve locks the
-// tenant's usage counter row first, so a concurrent reserve for the same
-// tenant and resource blocks until this transaction settles and can never race
-// past the limit. A soft or metered limit is recorded but never rejected; a
-// disabled limit — and a resource with no policy configured at all — is allowed
-// without recording a reservation.
+// The decision is: an organization may allocate amount more units of a
+// resource when current usage plus all active reservations plus this request
+// stays within the effective limit. For a hard-enforced limit ReserveAmount
+// locks the tenant's usage counter row first, so a concurrent reserve for the
+// same tenant and resource blocks until this transaction settles and can
+// never race past the limit. A soft or metered limit is recorded but never
+// rejected; a disabled limit — and a resource with no policy configured at
+// all — is allowed without recording a reservation.
 //
 // An exhausted hard limit is returned as a typed apierr.QuotaExceeded error
 // (HTTP 429) whose hint names the current, reserved, requested, and limit
 // counts and whose wrapped cause is a recoverable ExceededDetail.
-func (c *Checker) Reserve(ctx context.Context, tx *store.Tx, organizationID, resource string) error {
+//
+// amount must be strictly positive. A zero or negative magnitude is a wiring
+// error (the call site asked for nothing or a negative allocation) and is
+// rejected as Internal — the right way to release a reservation is the
+// dedicated release path, not a negative ReserveAmount.
+func (c *Checker) ReserveAmount(ctx context.Context, tx *store.Tx, organizationID, resource string, amount int64) error {
 	if tx == nil {
-		return apierr.Internal(errors.New("quota: Reserve called with a nil transaction"))
+		return apierr.Internal(errors.New("quota: ReserveAmount called with a nil transaction"))
+	}
+	if amount <= 0 {
+		return apierr.Internal(fmt.Errorf("quota: ReserveAmount called with non-positive amount %d", amount))
 	}
 	orgID := strings.TrimSpace(organizationID)
 	if orgID == "" {
@@ -163,7 +183,7 @@ func (c *Checker) Reserve(ctx context.Context, tx *store.Tx, organizationID, res
 		})
 	}
 
-	const requested = int64(1)
+	requested := amount
 
 	plan, err := c.plans.Plan(ctx, tx, orgID)
 	if err != nil {

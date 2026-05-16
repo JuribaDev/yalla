@@ -257,6 +257,10 @@ type nopQuotaReserver struct{}
 
 func (nopQuotaReserver) Reserve(context.Context, *Tx, string, string) error { return nil }
 
+func (nopQuotaReserver) ReserveAmount(context.Context, *Tx, string, string, int64) error {
+	return nil
+}
+
 type nopJobEnqueuer struct{}
 
 func (nopJobEnqueuer) Enqueue(context.Context, *Tx, string, string, string) error { return nil }

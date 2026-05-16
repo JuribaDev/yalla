@@ -85,6 +85,41 @@ const (
 	ServiceKindCompose     = "compose"
 )
 
+// serviceCPUMillicoresByKind is the per-service-kind default CPU
+// allocation a Create reserves against the cpu_millicores quota
+// dimension (BE-0331). Each entry is the baseline allocation a service
+// of that kind consumes — a flat per-kind constant so the store layer
+// can resolve the magnitude without taking a build dependency on the
+// dokploy renderer's tier-aware defaults. A future story that adds a
+// caller-supplied CPU override on CreateServiceInput will widen this
+// to (override > kind default > tier default) and the validator will
+// gate the final number; today the per-kind baseline is the single
+// authoritative source for the reservation magnitude.
+//
+// The values are conservative baselines a Dokploy worker would set if
+// the service did not declare its own resources block: an application
+// service runs one web replica at 250m, a compose stack runs multiple
+// container slots so its baseline is higher, and a database service
+// reserves more headroom for the engine plus its connection workers.
+// The numbers are stable contract — the cpu_millicores quota tests
+// assert them — so a future change to the baselines must update both
+// here and the concurrent test seeded limits.
+var serviceCPUMillicoresByKind = map[string]int64{
+	ServiceKindApplication: 250,
+	ServiceKindCompose:     500,
+	ServiceKindDatabase:    500,
+}
+
+// cpuMillicoresForServiceKind returns the per-Kind default CPU
+// allocation in millicores. A Kind outside the closed taxonomy
+// (already rejected by validateCreateServiceInput) returns zero, which
+// the caller treats as "no cpu_millicores reservation for this kind".
+// Today every member of the taxonomy maps to a positive baseline, so
+// the zero branch is structural only.
+func cpuMillicoresForServiceKind(kind string) int64 {
+	return serviceCPUMillicoresByKind[kind]
+}
+
 // CreateServiceInput is the unvalidated input to ServiceService.Create.
 // OrganizationID, EnvironmentID, ServiceID, Slug, DisplayName, and
 // Kind are the caller-supplied resource fields; the Actor* and
@@ -289,6 +324,27 @@ func (svc *ServiceService) Create(ctx context.Context, in CreateServiceInput) (S
 		// work.
 		if service.Kind == ServiceKindDatabase {
 			if err := svc.quota.Reserve(ctx, tx, service.OrganizationID, string(QuotaResourceDatabases)); err != nil {
+				return err
+			}
+		}
+		// Dimensional quota: the "cpu_millicores" dimension is the
+		// magnitude-axis counterpart of the per-subtype count
+		// dimensions. Every service create consumes a per-Kind
+		// baseline of CPU millicores (see serviceCPUMillicoresByKind)
+		// against the tenant's cpu_millicores ceiling. The reservation
+		// runs in the SAME *Tx as the count-axis reservations and the
+		// desired-state write, so a tenant that exhausts cpu_millicores
+		// rolls back EVERY reservation and the service row together;
+		// the reservation order means the per-subtype dimension is the
+		// one whose ExceededDetail.Resource surfaces when both an
+		// applications/compose/databases and cpu_millicores would
+		// exhaust on the same Create — the LAST Reserve that fires
+		// produces the error. The cpu_millicores reservation only
+		// fires for taxonomy members with a positive baseline; a
+		// future taxonomy member with no CPU baseline would skip it
+		// by structural design rather than a special-case here.
+		if cpuAmount := cpuMillicoresForServiceKind(service.Kind); cpuAmount > 0 {
+			if err := svc.quota.ReserveAmount(ctx, tx, service.OrganizationID, string(QuotaResourceCPUMillicores), cpuAmount); err != nil {
 				return err
 			}
 		}

@@ -470,6 +470,10 @@ type noopQuotaReserver struct{}
 
 func (noopQuotaReserver) Reserve(context.Context, *store.Tx, string, string) error { return nil }
 
+func (noopQuotaReserver) ReserveAmount(context.Context, *store.Tx, string, string, int64) error {
+	return nil
+}
+
 // noopJobEnqueuer is a placeholder store.JobEnqueuer for the project
 // creation unit of work. The real adapter mints a durable provisioning job
 // row through store.JobRepository.Insert with a per-request idempotency key

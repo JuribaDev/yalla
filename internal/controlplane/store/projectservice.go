@@ -27,8 +27,24 @@ type Authorizer interface {
 // unit of work, so the reservation it records commits or rolls back atomically
 // with the resource it guards. An exhausted limit is returned as a typed
 // apierr.QuotaExceeded error.
+//
+// Reserve is the count-axis path used by every per-subtype dimension whose
+// allocation unit is one resource (projects, environments, services,
+// applications, compose_stacks, databases, domains, preview_environments,
+// service_accounts). ReserveAmount is the magnitude-axis path used by
+// dimensional dimensions whose allocation unit is variable per request
+// (cpu_millicores, memory_mb, storage_gb, and the other capacity bounds).
+// Reserve is equivalent to ReserveAmount with amount=1, and the real
+// quota.Checker implements it as a thin delegate so both axes share one
+// row-lock + sum-active-reservations + insert-reservation path.
 type QuotaReserver interface {
 	Reserve(ctx context.Context, tx *Tx, organizationID, resource string) error
+	// ReserveAmount reserves amount units of resource in the same *Tx as the
+	// surrounding unit of work. It is the dimensional-quota path: amount is
+	// the per-request magnitude (e.g. millicores of CPU, megabytes of memory,
+	// gigabytes of storage). amount must be strictly positive — a zero or
+	// negative magnitude is a wiring error and is rejected as Internal.
+	ReserveAmount(ctx context.Context, tx *Tx, organizationID, resource string, amount int64) error
 }
 
 // JobEnqueuer enqueues a durable provisioning job. The store layer depends
