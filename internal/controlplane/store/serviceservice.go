@@ -265,6 +265,19 @@ func (svc *ServiceService) Create(ctx context.Context, in CreateServiceInput) (S
 				return err
 			}
 		}
+		// Per-subtype quota: the "compose_stacks" dimension is the
+		// compose-kind counterpart of the applications dimension —
+		// it counts ONLY services whose Kind is ServiceKindCompose.
+		// Application and database services do not consume it. The
+		// reservation runs in the SAME *Tx as the services-dimension
+		// reservation and the desired-state write, so a tenant that
+		// exhausts compose_stacks rolls back BOTH reservations with
+		// the rest of the unit of work.
+		if service.Kind == ServiceKindCompose {
+			if err := svc.quota.Reserve(ctx, tx, service.OrganizationID, string(QuotaResourceComposeStacks)); err != nil {
+				return err
+			}
+		}
 		row, err := svc.services.Insert(ctx, tx, service)
 		if err != nil {
 			return err

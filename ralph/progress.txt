@@ -21045,3 +21045,63 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
   - The contract-secret constant is the redaction tripwire and must be a recognisable bearer-shape string (`yk_live_supersecret_<endpoint>_DEADBEEF0123456789`) so a future maintainer reading a redaction failure sees the leak source immediately; the suffix varies per endpoint so a cross-file grep names the leaking endpoint.
   - captureProcessOutput swaps os.Stdout/os.Stderr globally, so its test MUST NOT call t.Parallel — pin this with a comment ("Not parallel: captureProcessOutput swaps the global os.Stdout/os.Stderr") at the top of the test body, otherwise a future parallel-sweep refactor will silently break the swap.
 ---
+
+## 2026-05-16 - BE-0327
+- What was implemented: per-subtype "compose_stacks" quota dimension on
+  the services Create unit of work. ServiceService.Create now reserves
+  QuotaResourceComposeStacks in the SAME *Tx as the existing
+  QuotaResourceServices reservation when service.Kind ==
+  ServiceKindCompose. Application- and database-kind services do not
+  consume the compose_stacks dimension; non-compose kinds are
+  unaffected.
+- Files changed:
+  - internal/controlplane/store/serviceservice.go (one conditional
+    Reserve(compose_stacks) block inserted immediately after the
+    BE-0326 applications block, BEFORE services.Insert/Enqueue/Audit —
+    so any later failure rolls back both reservations together).
+  - internal/controlplane/store/service_quota_compose_stacks_concurrent_test.go
+    (new, two tests; structural clone of the BE-0326 applications-
+    dimension reference per the per-subtype-quota pattern documented
+    in ralph/progress.txt).
+- Verification run:
+  - gofmt -l on changed files: clean.
+  - go vet ./internal/controlplane/store/...: clean.
+  - go build ./...: clean.
+  - go test ./... (no race, no DB): PASS for all packages.
+  - go test -race -count=1 -run 'TestServiceServiceCreate(RejectsParallelOversubscriptionForComposeStacks|AppliesComposeStacksQuotaOnly)' ./internal/controlplane/store/... with YALLA_TEST_DATABASE_URL=postgres://yalla:yalla@127.0.0.1:5432/yalla: PASS (2 tests).
+- Pre-existing flake observed (NOT introduced by BE-0327): when
+  YALLA_TEST_DATABASE_URL is set and `go test -race ./...` runs the
+  FULL store package, several tests that pass their orgID/projectID
+  through testutil.Factory rather than domain.MustNewID(domain.KindXxx)
+  fail with "E_INVALID_INPUT: request validation failed". These
+  failures reproduce on the unchanged base commit 5d9c3f10 (verified
+  by `git stash` and re-running the same focused tests). They are out
+  of scope for BE-0327 and were already in the tree when BE-0326 was
+  merged. The previous BE-0326 commit's verification ran focused
+  integration tests with the DB rather than the full suite for the
+  same reason. The two BE-0327 tests use domain.MustNewID(...) for
+  every seeded id, mirroring the pattern documented in progress.txt,
+  and pass cleanly under -race + the real Postgres stack.
+- Remaining risks or follow-ups: none specific to BE-0327. The
+  pre-existing Factory-id flake should be addressed in a separate
+  story.
+- Learnings for future iterations:
+  - The per-subtype quota Reserve block uses an explicit equality
+    against the ServiceKind constant — `if service.Kind ==
+    ServiceKindCompose` — rather than a switch, to keep each
+    dimension's Reserve call its own grep-able anchor and so each
+    BE-032x story adds exactly one self-contained guard. BE-0328
+    (databases) will be the third such block immediately below this
+    one.
+  - The CONCURRENT test's services-dimension policy must be seeded
+    LOOSE at attempts*2 (here: 40 with attempts=20). If it is set
+    tight enough to ever bite first, the rejection's
+    ExceededDetail.Resource drifts onto "services" and the
+    per-subtype assertion `detail.Resource == "compose_stacks"`
+    silently fails the test instead of pinning the new dimension.
+  - The BOUNDARY test asserts both non-compose kinds (application and
+    database) still succeed after compose_stacks is exhausted. A
+    future regression that ever dropped the Kind guard would let an
+    application or database create reserve a compose_stacks row and
+    fail — this test would surface that as a defect.
+---
