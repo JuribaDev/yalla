@@ -7554,7 +7554,7 @@
       ],
       "type": "security-verification",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Security topic: secret encryption key rotation."
     },
     {
