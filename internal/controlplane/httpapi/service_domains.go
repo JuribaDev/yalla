@@ -33,6 +33,15 @@ var errNoServiceDomainReader = errors.New("httpapi: no service domain reader con
 // with no side effect.
 var errNoServiceDomainCreator = errors.New("httpapi: no service domain creator configured")
 
+// errNoServiceDomainUpdater is returned when PATCH
+// /v1/services/{service_id}/domains/{domain_id} is reached without a
+// ServiceDomainUpdater wired into NewHandler. Like
+// errNoServiceDomainCreator it can only happen through a wiring error
+// — a programming mistake, not a client error — so the handler reports
+// it as a typed internal failure rather than serving a misleading 2xx
+// with no side effect.
+var errNoServiceDomainUpdater = errors.New("httpapi: no service domain updater configured")
+
 // ServiceDomainReader is the narrow persistence port GET
 // /v1/services/{service_id}/domains depends on.
 // *store.ServiceDomainReader satisfies it in production; tests supply
@@ -354,6 +363,156 @@ func createServiceDomainHandler(creator ServiceDomainCreator) http.HandlerFunc {
 
 		apienvelope.WriteData(w, http.StatusCreated, requestID(r), createServiceDomainPayload{
 			Domain: serviceDomainOf(created),
+		})
+	}
+}
+
+// ServiceDomainUpdater is the narrow persistence port PATCH
+// /v1/services/{service_id}/domains/{domain_id} depends on.
+// *store.ServiceDomainService satisfies it in production; tests supply
+// a fake. Keeping the dependency an interface keeps the handler unit-
+// testable without a real database — the concrete orchestrator (the
+// row read / If-Match precondition / desired-state write / audit
+// append composition committed in one transaction) lives in the store
+// layer.
+//
+// The HTTP boundary is the authoritative authorization gate:
+// RequireAuth authorizes action domain.update against the (principal
+// home organization, {service_id}) resource the path names through
+// serviceIDResolver, so a request that reaches the updater has already
+// cleared the policy boundary. The store layer does not re-authorize
+// inside the same *Tx for the update path: domain.update is enforced
+// only at the HTTP boundary, matching service.update, project.update,
+// and the other CapWrite partial-update endpoints — the in-transaction
+// Authorizer is reserved for Create (the create-time race against
+// grant changes during a quota reservation).
+type ServiceDomainUpdater interface {
+	Update(ctx context.Context, in store.UpdateServiceDomainInput) (store.ServiceDomain, error)
+}
+
+// updateServiceDomainRequest is the decoded PATCH
+// /v1/services/{service_id}/domains/{domain_id} request body. Every
+// field is an optional pointer so the absent-vs-zero distinction is
+// preserved at the seam — an omitted hostname means "leave the
+// hostname alone", and an empty path means "fall back to the
+// schema-side default '/'". A patch that names no updatable field is
+// itself a 400 — a mutation that changes nothing is a client error,
+// not a silent success.
+//
+// The request body intentionally exposes no organization_id,
+// service_id, or id field: the organization is derived from the
+// authenticated principal's home organization, the service comes from
+// the {service_id} path parameter, and the domain id from the
+// {domain_id} path parameter — there is no caller-supplied parameter
+// in the body that could redirect the write at another tenant.
+type updateServiceDomainRequest struct {
+	Hostname        *string `json:"hostname"`
+	Path            *string `json:"path"`
+	Port            *int    `json:"port"`
+	HTTPS           *bool   `json:"https"`
+	CertificateType *string `json:"certificate_type"`
+}
+
+// updateServiceDomainPayload is the data block of the PATCH
+// /v1/services/{service_id}/domains/{domain_id} success envelope: the
+// domain after the update, in the same stable wire shape the other
+// service-domain endpoints return. It carries no credential material —
+// the service_domains table itself stores none; the certificate_type
+// column names the issuance behavior only.
+type updateServiceDomainPayload struct {
+	Domain serviceDomain `json:"domain"`
+}
+
+// updateServiceDomainHandler builds the PATCH
+// /v1/services/{service_id}/domains/{domain_id} handler. It decodes and
+// delegates: the request body is strictly decoded (oversized,
+// malformed, or unknown-field bodies become a typed 400 that never
+// echoes the input), the If-Match header is parsed as an optional
+// optimistic-concurrency precondition, and then the update-domain unit
+// of work — read the current row, apply the patch, write the row
+// back, append the audit record, all in one transaction — runs in the
+// store layer through the ServiceDomainUpdater port.
+//
+// RequireAuth gates the route on action domain.update before the
+// handler runs — authorized through serviceIDResolver against the
+// (principal home organization, {service_id}) resource the path
+// names — and attaches the resolved principal, so a request that
+// reaches the handler has already cleared the policy boundary.
+// domain.update is a CapWrite action, so the gate admits the
+// principal's organization-wide write roles (owner, admin, developer,
+// ci) and denies viewer (CapRead only), denies support (CapRead +
+// CapSupport — support is a deliberate cross-tenant READ exception,
+// never a write one). The path carries no parent project_id, so the
+// policy engine cannot pin the ProjectID leg of the resource scope at
+// authorization time — project-, environment-, and service-scoped
+// grants are denied at the boundary by the engine's covers() rule (a
+// grant scope that pins ProjectID cannot cover a resource scope that
+// does not); principals whose only access is a scoped grant must use
+// a parent-scoped route to address a service by its (project,
+// environment, service) tuple.
+//
+// The handler resolves the organization id from the authenticated
+// principal's home organization, the service id from the {service_id}
+// PATH parameter, and the domain id from the {domain_id} PATH
+// parameter — never from the request body — so the tenant boundary is
+// structural here: there is no caller input that could point the
+// write at another tenant. A cross-tenant service_id or domain_id
+// reaches the persistence layer with the principal's home
+// organization id and is rejected as a deterministic 404 by the
+// store-layer's tenant-scoped GetByID query, never disguised as a 200
+// or a 403 that would confirm the foreign row's existence. On
+// success, the handler mirrors the row's authoritative version into
+// the ETag response header so the caller can echo it back as the next
+// If-Match precondition without re-reading the row.
+func updateServiceDomainHandler(updater ServiceDomainUpdater) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if updater == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoServiceDomainUpdater))
+			return
+		}
+
+		ifMatchVersion, ifMatchErr := parseIfMatchVersion(r)
+		if ifMatchErr != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(ifMatchErr))
+			return
+		}
+
+		var req updateServiceDomainRequest
+		if err := validate.DecodeJSON(r.Body, &req, 0); err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		updated, err := updater.Update(r.Context(), store.UpdateServiceDomainInput{
+			OrganizationID:  p.OrganizationID,
+			ServiceID:       r.PathValue("service_id"),
+			DomainID:        r.PathValue("domain_id"),
+			Hostname:        req.Hostname,
+			Path:            req.Path,
+			Port:            req.Port,
+			HTTPS:           req.HTTPS,
+			CertificateType: req.CertificateType,
+			IfMatchVersion:  ifMatchVersion,
+			ActorID:         p.ID,
+			ActorKind:       string(p.Kind),
+			ActorOrgID:      p.OrganizationID,
+			RequestID:       correlation.RequestID,
+			CorrelationID:   correlation.CorrelationID,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		writeOrganizationETag(w, updated.Version)
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), updateServiceDomainPayload{
+			Domain: serviceDomainOf(updated),
 		})
 	}
 }

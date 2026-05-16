@@ -10,6 +10,7 @@ import (
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
 	"github.com/JuribaDev/yalla/internal/controlplane/domain"
 	"github.com/JuribaDev/yalla/internal/controlplane/validate"
+	"github.com/jackc/pgx/v5"
 )
 
 // ServiceDomain is a single service-scoped public-facing hostname route —
@@ -188,6 +189,107 @@ func (r *ServiceDomainRepository) Insert(ctx context.Context, tx *Tx, d ServiceD
 	return created, nil
 }
 
+// GetByID returns the service-domain row identified by (organizationID,
+// serviceID, domainID), or apierr.NotFound when no row matches the
+// tenant-scoped predicate. The query filters on organization_id first
+// so a cross-tenant or unknown (service_id, domain_id) tuple matches
+// no rows even when a domain with the same id exists in another
+// tenant — the response is never an oracle that confirms another
+// organization's domain ids. A raw driver error surfaces as the typed
+// apierr.StoreUnavailable.
+func (r *ServiceDomainRepository) GetByID(ctx context.Context, q Querier, organizationID, serviceID, domainID string) (ServiceDomain, error) {
+	row := q.QueryRow(ctx,
+		`SELECT `+serviceDomainColumns+`
+		   FROM service_domains
+		  WHERE organization_id = $1 AND service_id = $2 AND id = $3`,
+		organizationID, serviceID, domainID)
+	d, err := scanServiceDomain(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ServiceDomain{}, apierr.NotFound("service domain", domainID)
+	}
+	if err != nil {
+		return ServiceDomain{}, apierr.StoreUnavailable(err)
+	}
+	return d, nil
+}
+
+// Update rewrites a service_domains row in place — hostname, path,
+// port, https, and certificate_type are the updatable columns; the
+// parent (organization_id, service_id) tuple is structural identity
+// and cannot be reparented through this endpoint. The row's version
+// column is owned by the service_domains_bump_version trigger from
+// migration 0023 — Update never writes it itself, the trigger bumps
+// it on every successful UPDATE.
+//
+// When ifMatchVersion is nil the predicate matches on
+// (organization_id, service_id, id) alone — next-write-wins. When
+// ifMatchVersion is non-nil the predicate also requires
+// version = *ifMatchVersion, so a concurrent writer landing between
+// the caller's read and this write is rejected as a typed
+// apierr.ConflictStale carrying the row's authoritative version. The
+// disambiguation between "row missing" and "version stale" runs
+// through classifyServiceDomainConcurrencyMiss so the caller learns
+// which precondition actually failed.
+//
+// A (hostname, path) already taken by another service-domain row
+// anywhere in the cluster violates UNIQUE (hostname, path) and
+// surfaces through mapWriteError as a deterministic apierr.Conflict —
+// never a 500 leaking the constraint name. The repository is
+// tenant-scoped at the SQL predicate: a cross-tenant
+// (organization_id, service_id, id) tuple matches no row even when a
+// domain with the same id exists in another tenant.
+func (r *ServiceDomainRepository) Update(ctx context.Context, tx *Tx, d ServiceDomain, ifMatchVersion *int64) (ServiceDomain, error) {
+	if tx == nil {
+		return ServiceDomain{}, apierr.Internal(errors.New("store: ServiceDomainRepository.Update called with a nil transaction"))
+	}
+	var row pgx.Row
+	if ifMatchVersion == nil {
+		row = tx.QueryRow(ctx,
+			`UPDATE service_domains
+			    SET hostname = $4, path = $5, port = $6, https = $7, certificate_type = $8
+			  WHERE organization_id = $1 AND service_id = $2 AND id = $3
+			 RETURNING `+serviceDomainColumns,
+			d.OrganizationID, d.ServiceID, d.ID, d.Hostname, d.Path, d.Port, d.HTTPS, d.CertificateType)
+	} else {
+		row = tx.QueryRow(ctx,
+			`UPDATE service_domains
+			    SET hostname = $4, path = $5, port = $6, https = $7, certificate_type = $8
+			  WHERE organization_id = $1 AND service_id = $2 AND id = $3 AND version = $9
+			 RETURNING `+serviceDomainColumns,
+			d.OrganizationID, d.ServiceID, d.ID, d.Hostname, d.Path, d.Port, d.HTTPS, d.CertificateType, *ifMatchVersion)
+	}
+	updated, err := scanServiceDomain(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if ifMatchVersion == nil {
+			return ServiceDomain{}, apierr.NotFound("service domain", d.ID)
+		}
+		return ServiceDomain{}, classifyServiceDomainConcurrencyMiss(ctx, tx, d.OrganizationID, d.ServiceID, d.ID, *ifMatchVersion)
+	}
+	if err != nil {
+		return ServiceDomain{}, mapWriteError(err, "a service domain with this hostname and path already exists")
+	}
+	return updated, nil
+}
+
+// classifyServiceDomainConcurrencyMiss disambiguates the two reasons a
+// version-checked UPDATE matched no rows: the domain was deleted
+// (reported as NotFound for parity with the unchecked path) or the
+// caller's view of the version is stale (reported as
+// apierr.ConflictStale carrying the row's authoritative version). The
+// read runs on the same *Tx as the failed write so the version it
+// reports is consistent with the predicate that just rejected.
+func classifyServiceDomainConcurrencyMiss(ctx context.Context, tx *Tx, organizationID, serviceID, domainID string, ifMatchVersion int64) error {
+	r := NewServiceDomainRepository()
+	current, err := r.GetByID(ctx, tx, organizationID, serviceID, domainID)
+	if err != nil {
+		return err
+	}
+	if current.Version == ifMatchVersion {
+		return apierr.Internal(errors.New("store: ServiceDomainRepository.Update saw the same version after a no-row UPDATE"))
+	}
+	return apierr.ConflictStale(current.Version)
+}
+
 // ListServiceDomainsInput is the typed input shape
 // ServiceDomainReader.ListDomains accepts. OrganizationID is always
 // taken from the authenticated principal's home org at the httpapi
@@ -249,6 +351,12 @@ func (r *ServiceDomainReader) ListDomains(ctx context.Context, in ListServiceDom
 // store layer because the audit event is written from the same *Tx as
 // the desired-state row.
 const serviceDomainCreateAction = "domain.create"
+
+// serviceDomainUpdateAction is the immutable audit-event Action string
+// emitted when a service domain is updated. The constant lives in the
+// store layer because the audit event is written from the same *Tx as
+// the desired-state row.
+const serviceDomainUpdateAction = "domain.update"
 
 // serviceDomainCertificateType* enumerate the closed TLS-issuance
 // taxonomy the service_domains table's certificate_type CHECK confines.
@@ -559,4 +667,273 @@ func validateServiceDomainPath(c *validate.Collector, field, value string) {
 	if _, err := url.Parse("http://example.com" + value); err != nil {
 		c.Add(field, "must be a valid URL path")
 	}
+}
+
+// UpdateServiceDomainInput is the unvalidated input to
+// ServiceDomainService.Update. OrganizationID identifies the tenant
+// the domain belongs to; ServiceID names the parent service; DomainID
+// names the row to update. Hostname, Path, Port, HTTPS, and
+// CertificateType are optional pointers: a nil pointer means the
+// caller did not include the field and it is left unchanged, which is
+// what makes the operation a partial update. The Actor* and
+// correlation fields describe the authenticated principal performing
+// the update and are recorded verbatim on the audit event.
+//
+// OrganizationID is sourced from the principal's home organization at
+// the HTTP boundary (never from the request body or path), so a
+// cross-tenant id cannot point the write at another tenant by
+// construction. ServiceID and DomainID are sourced from the PATH
+// parameters; the update unit of work reads the current row under
+// (OrganizationID, ServiceID, DomainID) before any mutation, so a
+// cross-tenant or unknown tuple surfaces as a deterministic
+// apierr.NotFound rather than a 500 or a silent success.
+//
+// IfMatchVersion is the optional optimistic-concurrency precondition:
+// when non-nil, the update succeeds only if the row's current version
+// equals *IfMatchVersion at write time, otherwise it returns a typed
+// apierr.ConflictStale carrying the row's authoritative version. The
+// httpapi layer fills it from the request's If-Match header. A nil
+// pointer disables the check (next-write-wins). The pointer
+// indirection distinguishes "caller did not supply a precondition"
+// from "caller supplied version 0", which is impossible by schema
+// CHECK and must not silently behave like the unchecked path.
+//
+// Reparenting onto another service is intentionally NOT in this
+// input: a service domain belongs to exactly one service for its
+// lifetime, and reparenting is a deliberate operation that would
+// belong to a different endpoint behind a different action constant —
+// never a partial update.
+type UpdateServiceDomainInput struct {
+	OrganizationID  string
+	ServiceID       string
+	DomainID        string
+	Hostname        *string
+	Path            *string
+	Port            *int
+	HTTPS           *bool
+	CertificateType *string
+	IfMatchVersion  *int64
+	ActorID         string
+	ActorKind       string
+	ActorOrgID      string
+	RequestID       string
+	CorrelationID   string
+}
+
+// serviceDomainUpdate is the validated, normalised form of an
+// UpdateServiceDomainInput produced by buildServiceDomainUpdate. The
+// fields are pointers so an absent field (caller did not supply it) is
+// distinguishable from a deliberate zero value, and the fields slice
+// records — in caller-submission order, deduplicated by construction
+// — the stable wire names of the columns that the patch will write,
+// which is what the audit metadata records as updated_fields.
+type serviceDomainUpdate struct {
+	hostname        *string
+	path            *string
+	port            *int
+	https           *bool
+	certificateType *string
+	fields          []string
+}
+
+// buildServiceDomainUpdate validates every supplied field on in and
+// returns the normalised serviceDomainUpdate it would persist, or a
+// typed apierr.InvalidInput naming every failed field (never echoing
+// the submitted values). A patch that names no updatable field is
+// itself a validation failure — a mutation that changes nothing is a
+// client error, not a silent success.
+func buildServiceDomainUpdate(in UpdateServiceDomainInput) (serviceDomainUpdate, error) {
+	var (
+		change serviceDomainUpdate
+		c      = validate.New()
+	)
+
+	if in.Hostname != nil {
+		change.fields = append(change.fields, "hostname")
+		hostname := strings.ToLower(strings.TrimSpace(*in.Hostname))
+		preCount := len(c.Violations())
+		validate.Domain(c, "hostname", hostname, validate.DomainOptions{})
+		if len(c.Violations()) == preCount {
+			change.hostname = &hostname
+		}
+	}
+
+	if in.Path != nil {
+		change.fields = append(change.fields, "path")
+		path := strings.TrimSpace(*in.Path)
+		if path == "" {
+			path = serviceDomainDefaultPath
+		}
+		preCount := len(c.Violations())
+		validateServiceDomainPath(c, "path", path)
+		if len(c.Violations()) == preCount {
+			change.path = &path
+		}
+	}
+
+	if in.Port != nil {
+		change.fields = append(change.fields, "port")
+		if *in.Port < 1 || *in.Port > 65535 {
+			c.Add("port", "must be between 1 and 65535")
+		} else {
+			port := *in.Port
+			change.port = &port
+		}
+	}
+
+	if in.HTTPS != nil {
+		change.fields = append(change.fields, "https")
+		https := *in.HTTPS
+		change.https = &https
+	}
+
+	if in.CertificateType != nil {
+		change.fields = append(change.fields, "certificate_type")
+		certificateType := strings.TrimSpace(*in.CertificateType)
+		switch certificateType {
+		case ServiceDomainCertificateLetsEncrypt, ServiceDomainCertificateCustom, ServiceDomainCertificateNone:
+			change.certificateType = &certificateType
+		default:
+			c.Add("certificate_type", `must be one of "lets-encrypt", "custom", or "none"`)
+		}
+	}
+
+	if len(change.fields) == 0 {
+		c.Add("hostname", "at least one of hostname, path, port, https, or certificate_type must be provided")
+	}
+
+	if err := c.Err(); err != nil {
+		return serviceDomainUpdate{}, err
+	}
+	return change, nil
+}
+
+// Update validates in, then runs the update-domain unit of work inside
+// one transaction: read the current row under (OrganizationID,
+// ServiceID, DomainID), optionally enforce the If-Match precondition,
+// apply the caller-supplied fields, write the row back, append the
+// immutable audit record. Validation of every supplied field runs
+// before the transaction is opened, so an invalid request never
+// touches the database. A patch that names no updatable field is
+// itself a validation failure — a mutation that changes nothing is a
+// client error, not a silent success. A blank
+// OrganizationID/ServiceID/DomainID is a typed validation failure
+// raised before the transaction is opened. The repository is tenant
+// scoped: a cross-tenant {service_id} or {domain_id} reaches the
+// persistence layer with the principal's home organization id and is
+// reported as a typed apierr.NotFound, never another tenant's row. A
+// (hostname, path) tuple that collides with another row anywhere in
+// the cluster rolls the whole transaction back as a typed Conflict,
+// so a duplicate domain row and an orphaned audit record are both
+// impossible.
+//
+// Authorization for domain.update is enforced at the HTTP boundary by
+// RequireAuth against the (home organization, service_id) resource
+// the path names — the store layer never runs an in-transaction
+// Authorize for the update path because the HTTP gate is
+// authoritative and the in-transaction Authorizer is reserved for
+// Create (the create-time race against grant changes during a quota
+// reservation).
+func (svc *ServiceDomainService) Update(ctx context.Context, in UpdateServiceDomainInput) (ServiceDomain, error) {
+	organizationID := strings.TrimSpace(in.OrganizationID)
+	if organizationID == "" {
+		return ServiceDomain{}, apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "organization_id",
+			Reason: "must not be blank",
+		})
+	}
+	serviceID := strings.TrimSpace(in.ServiceID)
+	if serviceID == "" {
+		return ServiceDomain{}, apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "service_id",
+			Reason: "must not be blank",
+		})
+	}
+	domainID := strings.TrimSpace(in.DomainID)
+	if domainID == "" {
+		return ServiceDomain{}, apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "id",
+			Reason: "must not be blank",
+		})
+	}
+
+	change, err := buildServiceDomainUpdate(in)
+	if err != nil {
+		return ServiceDomain{}, err
+	}
+
+	actorOrgID := strings.TrimSpace(in.ActorOrgID)
+	if actorOrgID == "" {
+		return ServiceDomain{}, apierr.Internal(errors.New("store: ServiceDomainService.Update requires an actor organization for the audit record"))
+	}
+
+	event := AuditEvent{
+		OrganizationID: actorOrgID,
+		ActorID:        strings.TrimSpace(in.ActorID),
+		ActorKind:      strings.TrimSpace(in.ActorKind),
+		Action:         serviceDomainUpdateAction,
+		ResourceKind:   string(domain.KindServiceDomain),
+		ResourceID:     domainID,
+		Decision:       AuditDecisionAllowed,
+		Reason:         "authorization granted for domain.update",
+		RequestID:      strings.TrimSpace(in.RequestID),
+		CorrelationID:  strings.TrimSpace(in.CorrelationID),
+		// updated_fields names which fields the patch changed — stable
+		// wire names, never the submitted values — so the audit trail
+		// records the shape of the mutation without carrying any input
+		// verbatim. The service_id is recorded verbatim because it is a
+		// structural identifier, never secret material.
+		Metadata: map[string]string{
+			"service_id":     serviceID,
+			"updated_fields": strings.Join(change.fields, ","),
+		},
+	}
+
+	var updated ServiceDomain
+	txErr := svc.store.Write(ctx, func(ctx context.Context, tx *Tx) error {
+		current, getErr := svc.domains.GetByID(ctx, tx, organizationID, serviceID, domainID)
+		if getErr != nil {
+			return getErr
+		}
+		// A pre-check before the write surfaces the stale-version
+		// conflict against the row the caller actually targets — even
+		// when no other field on the patch happens to differ from the
+		// current row, in which case the version-checked UPDATE would
+		// itself succeed trivially without the trigger needing to fire.
+		// The repository still re-checks the version under WHERE so a
+		// concurrent writer landing between the read and the write is
+		// also rejected.
+		if in.IfMatchVersion != nil && current.Version != *in.IfMatchVersion {
+			return apierr.ConflictStale(current.Version)
+		}
+		desired := current
+		if change.hostname != nil {
+			desired.Hostname = *change.hostname
+		}
+		if change.path != nil {
+			desired.Path = *change.path
+		}
+		if change.port != nil {
+			desired.Port = *change.port
+		}
+		if change.https != nil {
+			desired.HTTPS = *change.https
+		}
+		if change.certificateType != nil {
+			desired.CertificateType = *change.certificateType
+		}
+		row, updErr := svc.domains.Update(ctx, tx, desired, in.IfMatchVersion)
+		if updErr != nil {
+			return updErr
+		}
+		if _, audErr := svc.audit.Append(ctx, tx, event); audErr != nil {
+			return audErr
+		}
+		updated = row
+		return nil
+	})
+	if txErr != nil {
+		return ServiceDomain{}, txErr
+	}
+	return updated, nil
 }

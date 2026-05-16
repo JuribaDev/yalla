@@ -18499,3 +18499,77 @@ Learnings for future iterations:
   Dokploy reconciler will later project the row through a broader
   service-reconcile pass rather than a dedicated provisioning job.
 ---
+
+## 2026-05-16 - BE-0241+0242+0243
+
+- Implemented PATCH /v1/services/{service_id}/domains/{domain_id}: store-layer
+  ServiceDomainService.Update orchestrator (Get-by-id + If-Match precheck +
+  validate+normalise partial-update fields + Update-with-trigger-bumped-version +
+  AuditAppend in one Store.Write), ServiceDomainRepository.GetByID and
+  Update methods, httpapi ServiceDomainUpdater port + thin handler (strict
+  DecodeJSON, optional If-Match precondition, partial-update *pointer*
+  fields, 200 OK with ETag mirroring authoritative version), PATCH route entry
+  with serviceIDResolver, full contract suite, and full role x tenant x grant
+  policy matrix.
+- Mirrors the BE-0238+0239+0240 (POST domains) bundle in shape; the
+  load-bearing differences are: (1) update has an If-Match
+  optimistic-concurrency precondition (mirrors service.update / environment.update /
+  project.update), (2) update has no in-tx Authorize call -- the HTTP gate is
+  authoritative for update paths just as it is for the other partial-update
+  endpoints, (3) the path carries a second param {domain_id} but the policy
+  resolver still pins only OrganizationID + ServiceID (the domain_id is just a
+  row id within the service authorization boundary).
+- Files added:
+  - internal/controlplane/httpapi/service_domains_update_test.go (BE-0242 contract)
+  - internal/controlplane/httpapi/service_domains_update_policy_test.go (BE-0243 policy matrix)
+- Files modified:
+  - internal/controlplane/store/service_domain.go (+377 lines: GetByID, Update, classifyServiceDomainConcurrencyMiss, UpdateServiceDomainInput, serviceDomainUpdate, buildServiceDomainUpdate, ServiceDomainService.Update, serviceDomainUpdateAction const, pgx import)
+  - internal/controlplane/httpapi/service_domains.go (+ServiceDomainUpdater port, updateServiceDomainRequest/Payload, updateServiceDomainHandler, errNoServiceDomainUpdater sentinel)
+  - internal/controlplane/httpapi/routes.go (PATCH /v1/services/{service_id}/domains/{domain_id} OpenAPI entry, serviceIDResolver, comment update)
+  - internal/controlplane/httpapi/server.go (NewHandler signature + newRouteTable call site)
+  - cmd/yalla-api/main.go (pass serviceDomainService as both creator and updater)
+  - 67 httpapi test files: mechanically inserted fakeServiceDomainUpdater{} after fakeServiceDomainCreator{} to match the new NewHandler/newRouteTable arity.
+  - internal/controlplane/httpapi/service_variables_test.go: also fixed the "reader" variable-name slot edge case (line 117).
+- Verification run:
+  - gofmt -w . / goimports -w . / go mod tidy -- clean
+  - go build ./... / go vet ./... -- clean
+  - go test -count=1 ./... -- all packages green
+  - go test -race -count=1 ./... -- all packages green
+  - YALLA_TEST_DATABASE_URL=postgres://yalla:yalla@127.0.0.1:5432/yalla go test -count=1 -run TestMigrations ./internal/controlplane/store/migrate/... -- green
+- Pre-existing -race-with-DB store failures in apikeyservice / organization_variable_patch /
+  environment_test / service_variable_service_test are NOT introduced by this story
+  (confirmed by git diff --stat HEAD -- internal/controlplane/store/ showing only
+  service_domain.go touched; the failing tests live in unrelated files). These are
+  the same pre-existing failures documented in the BE-0426 / BE-0103 progress notes
+  awaiting a focused triage story.
+
+- **Learnings for future iterations:**
+  - When adding a partial-update endpoint with If-Match: mirror the
+    services_update.go shape exactly -- parseIfMatchVersion BEFORE the JSON
+    decode (a malformed If-Match must fail before the body is even read),
+    writeOrganizationETag after the success path. Keep the Update orchestrator
+    HTTP-gate-authoritative: NO in-tx Authorize (that pattern is reserved for
+    Create paths racing against grant changes during a quota reservation).
+  - When adding a new persistence port across the NewHandler/newRouteTable
+    surface, the mechanical change spans ~67 test files. The cheap fix is a
+    targeted text replacement of "fakeServiceDomainCreator{}, fakeServiceVariableReader{}"
+    to "fakeServiceDomainCreator{}, fakeServiceDomainUpdater{}, fakeServiceVariableReader{}"
+    (one string, no regex, one Python pass). BUT watch for variable-name slot
+    cases: tests that thread a non-fake variable to ANY adjacent slot break the
+    pattern (in this story: service_variables_test.go threads its own `reader`
+    variable into the ServiceVariableReader slot). After the bulk pattern pass,
+    grep for "fakeServiceDomainCreator\\{\\},\\s*(\\w+),\\s*fakeServiceVariableReplacer\\{\\}"
+    where the captured group is NOT fakeServiceDomainUpdater, and patch
+    those one-offs by hand.
+  - Pointer-field partial updates ride the absent-vs-explicit-false seam: HTTPS
+    in the create body is a *bool so the handler can preserve the
+    schema-side default when absent; in the update body EVERY field is a
+    pointer so the store layer can tell "caller did not include this field"
+    from "caller included the zero value". The buildServiceDomainUpdate
+    helper records the wire-name of every supplied field in a `fields` slice
+    so the audit metadata records updated_fields=hostname,path,... -- never
+    the submitted values themselves.
+  - validate.Collector.Err() is the right idiom for "did this leg add a
+    violation?" -- snapshot pre/post and compare. Don't double-validate by
+    calling another collector method.
+---
