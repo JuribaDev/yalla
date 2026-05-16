@@ -20536,3 +20536,35 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     ctx_execute), and pipe their long output to /tmp/<name>.log so only
     the summary lines (exit code + ok/fail counters) flow into context.
 ---
+
+## 2026-05-16 — BE-0313 Provision mariadb services
+- Added `EngineMariadb = "mariadb"` constant to `internal/controlplane/dokploy/renderer.go` (DB engine const block) and extended the `validEngine()` whitelist switch from `EnginePostgres, EngineMysql` to `EnginePostgres, EngineMysql, EngineMariadb`. The doc comment on `validEngine` already enumerated `BE-0313 mariadb` as a future entry, so the change required no doc edits.
+- Created `internal/controlplane/dokploy/renderer_database_mariadb_test.go` as a structural clone of `renderer_database_mysql_test.go` (BE-0311), keeping the seven load-bearing pins per per-service-type renderer-subtype pattern (BE-0301 family):
+  1. Success identity (Type=database, Engine=mariadb, role/domains/cron dropped, yalla.engine label = "mariadb", yalla.role label absent).
+  2. Subtype boundary vs. application (mariadb stays mariadb; application stays application with empty engine and absent yalla.engine label).
+  3. DropsRoleDomainsAndCron with redaction-safe debug-surface assertions (Summary JSON / slog JSON / Summary.String() must not leak the submitted domain host or cron schedule).
+  4. ValidationFailures table covering organization.id / project.organization_id / tier / service.type / service.engine (missing + unsupported "sqlite") / service.variables[0].name / resources.cpu_millis; shared `leakyValues` slice asserts every submitted value is absent from `err.Error()` for every row. `mariadb` itself is excluded from `leakyValues` because it is the legitimate engine value on every base input, while `sqlite` remains a stable unsupported-engine fixture across the BE-0309..0317 family.
+  5. TierResourceDefaults proving mariadb never participates in the production-web 2-replica bump (one replica per tier for production/staging/preview).
+  6. RedactsAllVariableValues proving the verbatim secret (`sk-live-supersecret`) and the plain value (`off`) reach the worker via `RenderedSpec` but never appear in Summary JSON / slog record / Summary.String(); every variable summary value equals `output.Sentinel`.
+  7. Determinism (two `Render()` calls produce byte-equal JSON).
+- Files changed:
+  - `internal/controlplane/dokploy/renderer.go` (engine constant + whitelist).
+  - `internal/controlplane/dokploy/renderer_database_mariadb_test.go` (new test file, 18.2KB, 498 lines — same shape as BE-0311 mysql).
+  - `ralph/prd.json` (BE-0313 `passes: true`).
+- Verification run:
+  - `gofmt -w` and `gofmt -l .` → clean.
+  - `go vet ./...` → clean.
+  - `go mod tidy` → no-op (no dependency churn).
+  - `go test -run TestRenderDatabaseMariadb -count=1 ./internal/controlplane/dokploy/...` → ok 0.873s.
+  - `go test ./...` → all packages ok.
+  - `go test -race -count=1 ./internal/controlplane/dokploy/...` → ok 1.466s / 1.815s.
+  - `go test -race ./...` → all packages ok.
+  - `goimports` not installed locally (consistent with prior iterations); `gofmt` is sufficient.
+- Remaining risks or follow-ups:
+  - Durable provisioning worker / `dokploy_refs` write / quota-conversion seam for mariadb services lands with the worker story (paired with the broader BE-0319/0321 worker family per the codebase-patterns note). This pin is intentionally renderer-layer only and structurally enforces the AC1, AC5, AC6, AC7, AC8 halves of the BE-0313 acceptance contract today.
+  - BE-0315 (mongo) and BE-0317 (redis) will each clone this file, append their engine constant to `validEngine()`, and update the doc comment on the constant block. The `validEngine` doc comment already enumerates them as future entries, so the seam is ready.
+- Learnings for future iterations:
+  - When cloning the BE-0309..0317 database-engine-pin family, the only changes from the prior sibling are: (a) the engine constant referenced; (b) the engine string echoed in test names / comments; (c) the BE-####/cross-reference comment block. The `leakyValues` slice stays identical across siblings (specifically `sqlite` as the always-unsupported fixture) so a future engine addition does not accidentally collide with a leaked-value assertion in an earlier sibling. Do NOT add the current sibling's engine name to `leakyValues` — it is a legitimate input value, not a leaked value.
+  - The `validEngine` doc comment in `renderer.go` already lists every story id in the BE-0309..0317 family. Adding a new engine constant requires only: (i) the new `Engine* = "<name>"` const; (ii) appending it to the `case` arm in `validEngine`. No comment edit is needed.
+  - The `unsupported engine` validation case in every sibling sets `Service.Engine = "sqlite"` precisely because `sqlite` will never join the closed whitelist (Yalla does not manage embedded engines). This keeps the case stable as BE-0315/0317 land.
+---
