@@ -4362,7 +4362,7 @@
       ],
       "type": "policy-service",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Authorization coverage for POST /v1/environments/{environment_id}/services."
     },
     {

@@ -14423,3 +14423,116 @@
     use (created_at DESC, id DESC), so the contract is proven against
     the same shape repositories will adopt.
 ---
+## 2026-05-16 - BE-0183 - Add policy matrix coverage for POST /v1/environments/{environment_id}/services
+- What was implemented: Authorization-matrix tests for POST
+  /v1/environments/{environment_id}/services. Drives every built-in
+  role (owner/admin/developer/viewer/ci/support) through real
+  NewHandler + real policy.NewEngine() to prove CapWrite splits the
+  matrix (Owner/Admin/Developer allow via ReasonAllowedByRole;
+  Viewer/CI/Support deny via ReasonDeniedNoCapability — CI is
+  CapSelf+CapRead+CapDeploy, Support is CapSelf+CapRead+CapSupport,
+  neither holds CapWrite). Pins revoked/expired credentials as
+  Disabled-principal denials (underlying Owner role would otherwise
+  allow). Pins the wrong-organization principal: a same-tenant
+  resource on the wire (env_id alone never widens to another tenant)
+  surfaces as a 404 from the persistence layer, never 201 (no
+  foreign-environment commit) and never 403 (would confirm
+  existence); the engine cross-tenant clause is exercised separately
+  for every role including Support, all denied via
+  ReasonDeniedCrossTenant — CapWrite is OUTSIDE the support
+  cross-tenant exception, the load-bearing distinction from BE-0180.
+  Pins scoped-grant containment: every project-/environment-/service-
+  scoped grant is denied OutOfScope at this route because
+  environmentIDResolver pins NO ProjectID leg and the engine's
+  covers() rule is one-way (a grant scope that pins ProjectID cannot
+  cover a resource scope that does not), even when the grant names
+  the target environment's own project or own id; an org-level
+  Viewer grant (CapRead-only) is denied NoCapability while an
+  org-level Developer grant (CapWrite) is allowed end-to-end.
+- Files changed:
+  - internal/controlplane/httpapi/environment_services_create_policy_test.go
+    (new, ~770 lines): four test functions —
+    TestCreateEnvironmentServicePolicyMatrixRoles (table-driven six
+    roles, allow rows assert envelope + creator-input + actor-id;
+    deny rows assert 403, stable reason on the wire,
+    creator-never-runs, no body leak),
+    TestCreateEnvironmentServicePolicyRevokedAndExpiredKeys (Owner +
+    Disabled, the only thing in the way),
+    TestCreateEnvironmentServicePolicyWrongOrganizationPrincipal
+    (wire 404 with redacted foreign-org needle + engine cross-tenant
+    deny across all six roles including Support),
+    TestCreateEnvironmentServicePolicyGrantContainment (engine pins
+    against project / env / service resources for sibling-project,
+    production-isolation, parent-secret-shielding, then wires three
+    scoped-key denies + org-Viewer NoCapability deny + org-Developer
+    end-to-end allow). Adds three small fixture builders —
+    canonicalCreateServiceInput, canonicalCreatedService,
+    canonicalCreateServiceBody — and one needle helper
+    createServiceDenyBodyLeak; reuses the shared
+    createEnvironmentServiceHandlerFor / postEnvironmentService /
+    decodeCreateEnvironmentService /
+    fakeEnvironmentServiceCreator / orgPrincipal / decodeError
+    fixtures from BE-0181 and the wider httpapi suite — no new
+    scaffolding beyond fixture builders.
+  - ralph/prd.json: BE-0183.passes -> true.
+  - ralph/progress.txt: this entry.
+- Verification run: gofmt -w .; go mod tidy; go vet ./... (clean);
+  go test ./... (full suite passes); go test -race -count=1 ./...
+  (full suite passes with the race detector). Focused
+  -run='TestCreateEnvironmentServicePolicy' subset passes
+  independently in 0.55s.
+- Results: all checks green. goimports / golangci-lint / staticcheck
+  / govulncheck still not installed locally (documented in earlier
+  iterations); no Postgres-backed integration coverage required for
+  a policy-only test file.
+- Remaining risks / follow-ups:
+  - BE-0186 (policy matrix for GET /v1/services/{service_id}),
+    BE-0189 (PATCH), BE-0192 (DELETE), BE-0195 (POST .../restore),
+    BE-0198 (GET .../rendered), BE-0201 (GET .../variables), BE-0204
+    (PUT .../variables), BE-0207 (POST .../deployments), BE-0210
+    (GET .../deployments) are the remaining p=1 service-policy
+    stories. They differ from BE-0183 in resolver shape: a
+    {service_id}-rooted route resolves into a service resource (the
+    grant-containment matrix flips — a service-scoped grant at the
+    target service_id IS in scope; a project-scoped grant is in
+    scope by covers() one-way), and the cross-tenant property still
+    pivots on capability tier (CapRead admits Support, CapWrite/
+    CapDeploy do not).
+  - The endpoint behind this matrix exists (BE-0181); the
+    store-backed orchestrator's parent-environment existence check
+    has its own integration coverage. This story adds no new
+    runtime behavior — only assertions.
+- Learnings for future iterations:
+  - For an env-id-rooted CapWrite POST policy matrix, the BE-0153
+    pattern (POST /v1/projects/{project_id}/environments) is the
+    nearest parallel for the role-split and cross-tenant deny
+    structure, and BE-0180 (GET .../services) is the nearest parallel
+    for the env-id-resolver scoped-grant containment shape (no
+    ProjectID leg on the resource scope -> all scoped grants denied
+    OutOfScope, including the same-id env grant). Combine the two:
+    role split + capability deny tier from BE-0153, scoped-grant
+    OutOfScope shape from BE-0180. The load-bearing engine assertion
+    that distinguishes the two routes is that an org-level Viewer
+    grant is allowed for service.read (BE-0180) and denied
+    NoCapability for service.create (BE-0183) — the grant SCOPE is
+    sufficient in both, but the grant ROLE's capability set is not
+    for CapWrite. Pin both at the engine so a future catalog change
+    in either direction (downgrading service.create to CapRead,
+    upgrading service.read to CapWrite) fails before regressing a
+    real customer.
+  - The engine's cross-tenant clause is gated on
+    `required == CapRead || required == CapSupport`; for any
+    CapWrite/CapDeploy/CapAdmin/CapOwner action, the deny path
+    extends to Support too. Always pin the role-split deny and the
+    cross-tenant deny separately — they fail for different reasons
+    (NoCapability when same-tenant, CrossTenant when foreign-tenant)
+    and a regression in either branch should fail in exactly one
+    place.
+  - For env-id-resolver routes, the same-id env grant (a scoped
+    grant naming the very environment the path names) is STILL
+    denied OutOfScope because the grant scope pins ProjectID and the
+    resource scope does not — covers() is one-way. Pin this case
+    explicitly so a future relaxation that allowed env_X grants to
+    cover {EnvID=env_X} resource scopes would fail before it could
+    regress a real customer.
+---
