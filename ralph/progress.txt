@@ -18206,3 +18206,92 @@ Learnings for future iterations:
     query parameter is described in the operation's Description
     text only, matching the existing logs/audit-events shape.
 ---
+
+## 2026-05-16 - BE-0235 + BE-0236 + BE-0237
+- Implemented GET /v1/services/{service_id}/domains end-to-end:
+  endpoint, contract tests, and policy matrix in one bundled commit
+  mirroring the BE-0232+0233+0234 metrics-endpoint bundle.
+- Files created:
+  - internal/controlplane/store/migrate/migrations/0023_service_domains.{up,down}.sql
+  - internal/controlplane/store/service_domain.go (ServiceDomain row,
+    ServiceDomainRepository.ListByService, ServiceDomainReader.ListDomains)
+  - internal/controlplane/httpapi/service_domains.go (handler,
+    ServiceDomainReader port, wire DTOs)
+  - internal/controlplane/httpapi/service_domains_test.go (contract +
+    tenant-isolation; defines fakeServiceDomainReader test fake)
+  - internal/controlplane/httpapi/service_domains_policy_test.go (full
+    role x tenant x grant-scope policy matrix)
+- Files changed:
+  - internal/controlplane/domain/id.go: KindServiceDomain="sdom" added
+    to kinds map.
+  - internal/controlplane/httpapi/routes.go: route registration
+    /v1/services/{service_id}/domains GET; newRouteTable signature
+    extended with serviceDomainReader ServiceDomainReader (after
+    serviceMetricsReader, before serviceVariables).
+  - internal/controlplane/httpapi/server.go: NewHandler signature +
+    forwarding call extended in lockstep with newRouteTable.
+  - cmd/yalla-api/main.go: NewServiceDomainReader wired and passed
+    through NewHandler.
+  - 65 existing httpapi *_test.go files: NewHandler/newRouteTable
+    call sites updated to insert fakeServiceDomainReader{} between
+    fakeServiceMetricsReader{} and fakeServiceVariableReader{} (also
+    fixed the two special cases where logs_test passed
+    reader,nil,fakeServiceVariableReader{} and
+    service_variables_test passed
+    fakeServiceMetricsReader{},reader,fakeServiceVariableReplacer{}).
+- Verification run:
+  - gofmt -w . ; goimports -w . (clean)
+  - go mod tidy (clean)
+  - go vet ./... (clean)
+  - go test ./... -count=1: all packages OK
+  - go test -race ./... -count=1: all packages OK
+- Results: BE-0235, BE-0236, BE-0237 pass; total passing 186/614.
+- Remaining risks: none specific to this story. The migration adds
+  the service_domains table but no write path exists yet (BE-0238+
+  POST/PATCH/DELETE land later); the contract is intentionally
+  read-only for this slice.
+- **Learnings for future iterations:**
+  - The pattern "endpoint impl + contract tests + policy matrix as one
+    commit" — already established by the BE-0232+0233+0234 bundle for
+    service metrics — is the right grain for service-scoped read
+    endpoints when the priority-2 implementation story is blocked by
+    a higher-priority priority-1 policy-matrix story that depends on
+    it. Single git commit, single PRD update marking all three
+    passing.
+  - Wide signature changes (NewHandler / newRouteTable adding one
+    typed reader port) require updating ALL existing
+    *_test.go files in httpapi. The mechanical pattern is a sed
+    insertion of fakeNewReader{} between two adjacent fakes — search
+    for the existing adjacency string with a literal grep, then sed
+    -i '' on every match. Two special-case variants exist where a
+    test passes its primary reader as a bare `reader` variable: the
+    nearest-neighbour test (e.g. services_metrics_test for the
+    metrics endpoint, or services_logs_test for the logs endpoint)
+    passes its own port as `reader,` — those must be patched
+    explicitly because the literal-adjacency replacement does not
+    match. Greppable indicators: grep -rE
+    "fakeServicePrevReader\{\}, reader" and grep -rE
+    "reader, nil, fakeServiceNextReader" cover both shapes.
+  - Service-scoped read endpoints on a path of the form
+    /v1/services/{service_id}/<sub-resource> are the structural
+    metrics-endpoint twin: same serviceIDResolver, same CapRead
+    action (when read-only), same "support cross-tenant exception
+    suppressed at the resolver because resource scope is pinned to
+    principal home org", same "all six built-in roles allow via
+    ReasonAllowedByRole on same-tenant", same "all three scoped
+    grants denied at the boundary via ReasonDeniedOutOfScope". The
+    only domain-specific bits: action constant
+    (policy.ActionDomainRead instead of ActionMetricsRead), wire
+    DTO field shape, store-side existence check (real persistence
+    via ServiceRepository.GetByID instead of metrics's placeholder
+    no-op). For future stories BE-0247 (GET service backups),
+    BE-0264 (POST project previews), etc. this template applies
+    structurally.
+  - Migration 0023 design: a (hostname, path) tuple is a globally
+    unique routable address, so the UNIQUE constraint there is on
+    (hostname, path) ONLY — NOT scoped by organization_id or
+    service_id. This is different from service_variables (where
+    UNIQUE is per-service on (organization_id, service_id, key))
+    because the routing tuple's uniqueness lives at internet scope,
+    not tenant scope.
+---

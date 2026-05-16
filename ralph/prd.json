@@ -5350,7 +5350,7 @@
       ],
       "type": "endpoint-domain",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Endpoint belongs to the domain backend surface."
     },
     {
@@ -5369,7 +5369,7 @@
       ],
       "type": "test-domain",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Contract coverage for GET /v1/services/{service_id}/domains."
     },
     {
@@ -5388,7 +5388,7 @@
       ],
       "type": "policy-domain",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Authorization coverage for GET /v1/services/{service_id}/domains."
     },
     {

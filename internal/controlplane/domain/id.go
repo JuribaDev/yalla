@@ -119,6 +119,15 @@ const (
 	// non-guessable id so a per-row PATCH / DELETE story has an addressable
 	// resource later.
 	KindServiceVariable Kind = "svar"
+	// KindServiceDomain is one row in the service-scoped domains surface —
+	// a (hostname, path) tuple bound to a single service that routes
+	// public-internet traffic to the running Dokploy resource. Like
+	// KindServiceVariable, a domain is not a tenant root; the audit layer
+	// files domain mutations under the parent service's audit scope
+	// (resource_kind=svc), but a domain row carries its own stable,
+	// non-guessable id so per-row PATCH / DELETE stories have an
+	// addressable resource.
+	KindServiceDomain Kind = "sdom"
 )
 
 // kinds is the authoritative set of valid resource kinds. It backs Kind.Valid
@@ -139,6 +148,7 @@ var kinds = map[Kind]struct{}{
 	KindProjectVariable:      {},
 	KindEnvironmentVariable:  {},
 	KindServiceVariable:      {},
+	KindServiceDomain:        {},
 }
 
 // Valid reports whether k is one of the canonical resource kinds.
