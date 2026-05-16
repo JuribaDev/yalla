@@ -5749,8 +5749,8 @@
       ],
       "type": "endpoint-backup",
       "priority": 2,
-      "passes": false,
-      "notes": "Endpoint belongs to the backup backend surface."
+      "passes": true,
+      "notes": "Implemented PATCH /v1/services/{service_id}/backups/{backup_id}: ServiceBackupUpdater port, store.UpdateServiceBackupInput, ServiceBackupRepository.Update with optional If-Match precondition, classifyServiceBackupConcurrencyMiss, ServiceBackupService.Update orchestrator (row read / patch apply / desired-state write / audit append in one *Tx), action backup.update. status is intentionally NOT in the mutable set \u2014 the worker is the authority for transitions between Running and {Succeeded, Failed}. Mutable surface is the four customer-mutable columns (display_name, schedule, retention_count, enabled). audit metadata records only structural identifiers + updated_fields, never the caller-controlled free-text body. Bundled with BE-0257 and BE-0258 per the picker rule."
     },
     {
       "id": "BE-0257",
@@ -5768,8 +5768,8 @@
       ],
       "type": "test-backup",
       "priority": 2,
-      "passes": false,
-      "notes": "Contract coverage for PATCH /v1/services/{service_id}/backups/{backup_id}."
+      "passes": true,
+      "notes": "Contract suite service_backups_update_test.go: happy path with full plumbing assertions, absent-vs-explicit-false (Enabled), If-Match forward, malformed If-Match 400 (updater not reached), stale If-Match 409 with current_version detail, malformed/unknown-field body (status / organization_id / service_id / id smuggling rejected before updater), NotFound 404, InvalidInput 400, unauthenticated 401 (updater not reached), StoreUnavailable 5xx, no-principal Internal, nil-updater Internal, OpenAPI operation registered with backup.update action."
     },
     {
       "id": "BE-0258",
@@ -5787,8 +5787,8 @@
       ],
       "type": "policy-backup",
       "priority": 1,
-      "passes": false,
-      "notes": "Authorization coverage for PATCH /v1/services/{service_id}/backups/{backup_id}."
+      "passes": true,
+      "notes": "Policy matrix service_backups_update_policy_test.go: roles (owner/admin/developer allowed via ReasonAllowedByRole; ci/viewer/support denied via ReasonDeniedNoCapability \u2014 backup.update is CapWrite, NOT in the cross-tenant Support exception), revoked + expired credentials (deny via ReasonDeniedPrincipalDisabled, no body leak of principal/org/seeded backup data), wrong-org cross-tenant principal (wire 404 + engine cross-tenant deny pinned for all six roles via ReasonDeniedCrossTenant), grant containment (sibling project / env-grant-not-prod / service-grant containment; project/env/service grants denied OutOfScope at the wire; org-Admin allowed end-to-end; org-Viewer denied at engine via ReasonDeniedNoCapability)."
     },
     {
       "id": "BE-0259",

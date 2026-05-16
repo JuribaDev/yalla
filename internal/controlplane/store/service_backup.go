@@ -291,6 +291,13 @@ const serviceBackupCreateAction = "backup.create"
 // written from the same *Tx as the status flip the worker observes.
 const serviceBackupRunAction = "backup.run"
 
+// serviceBackupUpdateAction is the immutable audit-event Action
+// string emitted when a service backup policy is partially updated
+// through PATCH /v1/services/{service_id}/backups/{backup_id}. The
+// constant lives in the store layer because the audit event is
+// written from the same *Tx as the desired-state row update.
+const serviceBackupUpdateAction = "backup.update"
+
 // serviceBackupDefaultRetentionCount is the retention applied when the
 // caller does not supply one; the table's default is the same, so a
 // caller that omits retention takes the same value the schema would.
@@ -896,4 +903,346 @@ func (svc *ServiceBackupService) Run(ctx context.Context, in RunServiceBackupInp
 		return ServiceBackup{}, txErr
 	}
 	return triggered, nil
+}
+
+// Update writes a partial update to the service_backups row
+// identified by (b.OrganizationID, b.ServiceID, b.ID). The caller
+// supplies the desired row state on b — only the four
+// customer-mutable columns (display_name, schedule, retention_count,
+// enabled) are written; id, organization_id, service_id, status,
+// last_run_at, last_succeeded_at, version, created_at, and
+// updated_at are NOT writable here. status is intentionally not in
+// the mutable set: the worker is the authority for transitions
+// between Running and {Succeeded, Failed}, and the customer toggle
+// for "stop running this policy" is the enabled flag, not the
+// status enum. The row's version column is owned by the
+// service_backups_bump_version trigger from migration 0024 (the
+// trigger bumps it on every successful UPDATE), and updated_at is
+// refreshed by service_backups_set_updated_at; neither is written
+// from this method.
+//
+// When ifMatchVersion is nil the predicate ignores the version
+// column (next-write-wins); when it is non-nil the predicate ALSO
+// requires version = *ifMatchVersion so a concurrent writer landing
+// between the read and the write is rejected as
+// apierr.ConflictStale carrying the row's authoritative version.
+// The pointer indirection distinguishes "caller did not supply a
+// precondition" from "caller supplied version 0", which is
+// impossible by schema CHECK and must not silently behave like the
+// unchecked path. A no-row UPDATE classified by
+// classifyServiceBackupConcurrencyMiss disambiguates "row missing"
+// (apierr.NotFound) from "version stale" (apierr.ConflictStale).
+func (r *ServiceBackupRepository) Update(ctx context.Context, tx *Tx, b ServiceBackup, ifMatchVersion *int64) (ServiceBackup, error) {
+	if tx == nil {
+		return ServiceBackup{}, apierr.Internal(errors.New("store: ServiceBackupRepository.Update called with a nil transaction"))
+	}
+	var row pgx.Row
+	if ifMatchVersion == nil {
+		row = tx.QueryRow(ctx,
+			`UPDATE service_backups
+			    SET display_name    = $4,
+			        schedule        = $5,
+			        retention_count = $6,
+			        enabled         = $7
+			  WHERE organization_id = $1 AND service_id = $2 AND id = $3
+			 RETURNING `+serviceBackupColumns,
+			b.OrganizationID, b.ServiceID, b.ID, b.DisplayName, b.Schedule, b.RetentionCount, b.Enabled)
+	} else {
+		row = tx.QueryRow(ctx,
+			`UPDATE service_backups
+			    SET display_name    = $4,
+			        schedule        = $5,
+			        retention_count = $6,
+			        enabled         = $7
+			  WHERE organization_id = $1 AND service_id = $2 AND id = $3 AND version = $8
+			 RETURNING `+serviceBackupColumns,
+			b.OrganizationID, b.ServiceID, b.ID, b.DisplayName, b.Schedule, b.RetentionCount, b.Enabled, *ifMatchVersion)
+	}
+	updated, err := scanServiceBackup(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if ifMatchVersion == nil {
+			return ServiceBackup{}, apierr.NotFound("service backup", b.ID)
+		}
+		return ServiceBackup{}, classifyServiceBackupConcurrencyMiss(ctx, tx, b.OrganizationID, b.ServiceID, b.ID, *ifMatchVersion)
+	}
+	if err != nil {
+		return ServiceBackup{}, apierr.StoreUnavailable(err)
+	}
+	return updated, nil
+}
+
+// classifyServiceBackupConcurrencyMiss disambiguates the two reasons
+// a version-checked UPDATE matched no rows: the backup was deleted
+// between the caller's read and this write (reported as
+// apierr.NotFound), or the caller's view of the version is stale
+// (reported as apierr.ConflictStale carrying the row's authoritative
+// version). The read runs on the same *Tx as the failed write so
+// the version it observes is the one the UPDATE saw too. If the
+// version observed under the same predicate equals the caller's
+// supplied version, the no-row outcome is structurally impossible —
+// that branch reports an Internal error rather than silently
+// retrying.
+func classifyServiceBackupConcurrencyMiss(ctx context.Context, tx *Tx, organizationID, serviceID, backupID string, ifMatchVersion int64) error {
+	row := tx.QueryRow(ctx,
+		`SELECT version
+		   FROM service_backups
+		  WHERE organization_id = $1 AND service_id = $2 AND id = $3`,
+		organizationID, serviceID, backupID)
+	var current int64
+	if err := row.Scan(&current); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return apierr.NotFound("service backup", backupID)
+		}
+		return apierr.StoreUnavailable(err)
+	}
+	if current == ifMatchVersion {
+		return apierr.Internal(errors.New("store: ServiceBackupRepository.Update saw the same version after a no-row UPDATE"))
+	}
+	return apierr.ConflictStale(current)
+}
+
+// UpdateServiceBackupInput is the unvalidated input to
+// ServiceBackupService.Update. OrganizationID identifies the tenant
+// the backup belongs to; ServiceID names the parent service;
+// BackupID names the row to update. DisplayName, Schedule,
+// RetentionCount, and Enabled are optional pointers: a nil pointer
+// means the caller did not include the field and it is left
+// unchanged, which is what makes the operation a partial update.
+// Status is intentionally not in the mutable set: the worker is the
+// authority for transitions between Running and {Succeeded, Failed},
+// and the customer toggle for "stop running this policy" is the
+// Enabled flag, not the status enum. The Actor* and correlation
+// fields describe the authenticated principal performing the update
+// and are recorded verbatim on the audit event.
+//
+// OrganizationID is sourced from the principal's home organization
+// at the HTTP boundary (never from the request body or path), so a
+// cross-tenant id cannot point the write at another tenant by
+// construction. ServiceID and BackupID are sourced from the PATH
+// parameters; the update unit of work reads the current row under
+// (OrganizationID, ServiceID, BackupID) before any mutation, so a
+// cross-tenant or unknown tuple surfaces as a deterministic
+// apierr.NotFound rather than a 500 or a silent success.
+//
+// IfMatchVersion is the optional optimistic-concurrency precondition:
+// when non-nil, the update succeeds only if the row's current
+// version equals *IfMatchVersion at write time, otherwise it returns
+// a typed apierr.ConflictStale carrying the row's authoritative
+// version. The httpapi layer fills it from the request's If-Match
+// header. A nil pointer disables the check (next-write-wins). The
+// pointer indirection distinguishes "caller did not supply a
+// precondition" from "caller supplied version 0", which is
+// impossible by schema CHECK and must not silently behave like the
+// unchecked path.
+//
+// Reparenting onto another service is intentionally NOT in this
+// input: a backup policy belongs to exactly one service for its
+// lifetime, and reparenting is a deliberate operation that would
+// belong to a different endpoint behind a different action constant
+// — never a partial update.
+type UpdateServiceBackupInput struct {
+	OrganizationID string
+	ServiceID      string
+	BackupID       string
+	DisplayName    *string
+	Schedule       *string
+	RetentionCount *int
+	Enabled        *bool
+	IfMatchVersion *int64
+	ActorID        string
+	ActorKind      string
+	ActorOrgID     string
+	RequestID      string
+	CorrelationID  string
+}
+
+// serviceBackupUpdate is the validated, normalised form of an
+// UpdateServiceBackupInput produced by buildServiceBackupUpdate. The
+// fields are pointers so an absent field (caller did not supply it)
+// is distinguishable from a deliberate zero value, and the fields
+// slice records — in caller-submission order, deduplicated by
+// construction — the stable wire names of the columns that the patch
+// will write, which is what the audit metadata records as
+// updated_fields.
+type serviceBackupUpdate struct {
+	displayName    *string
+	schedule       *string
+	retentionCount *int
+	enabled        *bool
+	fields         []string
+}
+
+// buildServiceBackupUpdate validates every supplied field on in and
+// returns the normalised serviceBackupUpdate it would persist, or a
+// typed apierr.InvalidInput naming every failed field (never echoing
+// the submitted values). A patch that names no updatable field is
+// itself a validation failure — a mutation that changes nothing is a
+// client error, not a silent success.
+func buildServiceBackupUpdate(in UpdateServiceBackupInput) (serviceBackupUpdate, error) {
+	var (
+		change serviceBackupUpdate
+		c      = validate.New()
+	)
+
+	if in.DisplayName != nil {
+		change.fields = append(change.fields, "display_name")
+		displayName := strings.TrimSpace(*in.DisplayName)
+		preCount := len(c.Violations())
+		validateServiceBackupDisplayName(c, "display_name", displayName)
+		if len(c.Violations()) == preCount {
+			change.displayName = &displayName
+		}
+	}
+
+	if in.Schedule != nil {
+		change.fields = append(change.fields, "schedule")
+		schedule := strings.TrimSpace(*in.Schedule)
+		preCount := len(c.Violations())
+		validateServiceBackupSchedule(c, "schedule", schedule)
+		if len(c.Violations()) == preCount {
+			change.schedule = &schedule
+		}
+	}
+
+	if in.RetentionCount != nil {
+		change.fields = append(change.fields, "retention_count")
+		retention := *in.RetentionCount
+		if retention < serviceBackupRetentionMin || retention > serviceBackupRetentionMax {
+			c.Addf("retention_count", "must be between %d and %d", serviceBackupRetentionMin, serviceBackupRetentionMax)
+		} else {
+			change.retentionCount = &retention
+		}
+	}
+
+	if in.Enabled != nil {
+		change.fields = append(change.fields, "enabled")
+		enabled := *in.Enabled
+		change.enabled = &enabled
+	}
+
+	if len(change.fields) == 0 {
+		c.Add("display_name", "at least one of display_name, schedule, retention_count, or enabled must be provided")
+	}
+
+	if err := c.Err(); err != nil {
+		return serviceBackupUpdate{}, err
+	}
+	return change, nil
+}
+
+// Update validates in, then runs the update-backup unit of work
+// inside one transaction: read the current row under
+// (OrganizationID, ServiceID, BackupID), optionally enforce the
+// If-Match precondition, apply the caller-supplied fields, write
+// the row back, append the immutable audit record. Validation of
+// every supplied field runs before the transaction is opened, so an
+// invalid request never touches the database. A patch that names no
+// updatable field is itself a validation failure — a mutation that
+// changes nothing is a client error, not a silent success. A blank
+// OrganizationID/ServiceID/BackupID is a typed validation failure
+// raised before the transaction is opened. The repository is tenant
+// scoped: a cross-tenant {service_id} or {backup_id} reaches the
+// persistence layer with the principal's home organization id and
+// is reported as a typed apierr.NotFound, never another tenant's
+// row.
+//
+// Authorization for backup.update is enforced at the HTTP boundary
+// by RequireAuth against the (home organization, service_id)
+// resource the path names — the store layer never runs an
+// in-transaction Authorize for the update path because the HTTP
+// gate is authoritative and the in-transaction Authorizer is
+// reserved for Create (the create-time race against grant changes
+// during a quota reservation).
+func (svc *ServiceBackupService) Update(ctx context.Context, in UpdateServiceBackupInput) (ServiceBackup, error) {
+	c := validate.New()
+	organizationID := strings.TrimSpace(in.OrganizationID)
+	validate.ID(c, "organization_id", organizationID, domain.KindOrganization)
+	serviceID := strings.TrimSpace(in.ServiceID)
+	validate.ID(c, "service_id", serviceID, domain.KindService)
+	backupID := strings.TrimSpace(in.BackupID)
+	validate.ID(c, "id", backupID, domain.KindServiceBackup)
+	if err := c.Err(); err != nil {
+		return ServiceBackup{}, err
+	}
+
+	change, err := buildServiceBackupUpdate(in)
+	if err != nil {
+		return ServiceBackup{}, err
+	}
+
+	actorOrgID := strings.TrimSpace(in.ActorOrgID)
+	if actorOrgID == "" {
+		return ServiceBackup{}, apierr.Internal(errors.New("store: ServiceBackupService.Update requires an actor organization for the audit record"))
+	}
+
+	event := AuditEvent{
+		OrganizationID: actorOrgID,
+		ActorID:        strings.TrimSpace(in.ActorID),
+		ActorKind:      strings.TrimSpace(in.ActorKind),
+		Action:         serviceBackupUpdateAction,
+		ResourceKind:   string(domain.KindServiceBackup),
+		ResourceID:     backupID,
+		Decision:       AuditDecisionAllowed,
+		Reason:         "authorization granted for backup.update",
+		RequestID:      strings.TrimSpace(in.RequestID),
+		CorrelationID:  strings.TrimSpace(in.CorrelationID),
+		// updated_fields names which fields the patch changed —
+		// stable wire names, never the submitted values — so the
+		// audit trail records the shape of the mutation without
+		// carrying any input verbatim. The display_name and
+		// schedule are caller-controlled free text and the
+		// application layer cannot prove redaction-safe by
+		// construction, so neither is recorded as audit metadata.
+		// The service_id is recorded verbatim because it is a
+		// structural identifier, never secret material.
+		Metadata: map[string]string{
+			"service_id":     serviceID,
+			"updated_fields": strings.Join(change.fields, ","),
+		},
+	}
+
+	var updated ServiceBackup
+	txErr := svc.store.Write(ctx, func(ctx context.Context, tx *Tx) error {
+		current, getErr := svc.backups.GetByID(ctx, tx, organizationID, serviceID, backupID)
+		if getErr != nil {
+			return getErr
+		}
+		// A pre-check before the write surfaces the stale-version
+		// conflict against the row the caller actually targets —
+		// even when no other field on the patch happens to differ
+		// from the current row, in which case the version-checked
+		// UPDATE would itself succeed trivially without the trigger
+		// needing to fire. The repository still re-checks the
+		// version under WHERE so a concurrent writer landing
+		// between the read and the write is also rejected.
+		if in.IfMatchVersion != nil && current.Version != *in.IfMatchVersion {
+			return apierr.ConflictStale(current.Version)
+		}
+		desired := current
+		if change.displayName != nil {
+			desired.DisplayName = *change.displayName
+		}
+		if change.schedule != nil {
+			desired.Schedule = *change.schedule
+		}
+		if change.retentionCount != nil {
+			desired.RetentionCount = *change.retentionCount
+		}
+		if change.enabled != nil {
+			desired.Enabled = *change.enabled
+		}
+		row, updErr := svc.backups.Update(ctx, tx, desired, in.IfMatchVersion)
+		if updErr != nil {
+			return updErr
+		}
+		if _, audErr := svc.audit.Append(ctx, tx, event); audErr != nil {
+			return audErr
+		}
+		updated = row
+		return nil
+	})
+	if txErr != nil {
+		return ServiceBackup{}, txErr
+	}
+	return updated, nil
 }
