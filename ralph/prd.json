@@ -4647,8 +4647,8 @@
       ],
       "type": "policy-service",
       "priority": 1,
-      "passes": false,
-      "notes": "Authorization coverage for GET /v1/services/{service_id}/rendered."
+      "passes": true,
+      "notes": "Authorization coverage for GET /v1/services/{service_id}/rendered. Implemented internal/controlplane/httpapi/services_rendered_policy_test.go porting the BE-0186 services_get policy matrix to the /rendered route with distinct canonical fixtures (canonicalRenderedSvcForMatrix, renderedSvcDenyBodyLeak) and an allow-path assertion helper (assertRenderedAllowPath) that pins the rendered envelope schema, service projection, Dokploy-safe name, type, and the deterministic 4-label structural attribution. Reuses the existing serviceIDResolver fixtures (getServiceHandlerForIdentity) and rendered wire shapes (decodeRenderedServiceBody) from BE-0186 / BE-0196 \u2014 no production change. Verified gofmt, go vet ./..., go test ./..., go test -race ./..."
     },
     {
       "id": "BE-0199",

@@ -15630,3 +15630,107 @@ Learnings for future iterations:
   - The existing fakeServiceReader + getServiceHandlerFor + authForSvcGet + principalForSvcGet fixtures from services_test.go are reusable for ANY route built on the ServiceReader port — no new fakes were needed for /rendered.
   - When extending services with a new route, the route registration in routes.go is verbose but mechanical: the OpenAPI description repeats the authorization story, the cross-tenant story, and the no-credential-material story. The block immediately above /restore is the canonical structure to follow.
 ---
+
+## 2026-05-16 - BE-0198
+- Implemented: policy matrix coverage for GET /v1/services/{service_id}/rendered.
+  Adds internal/controlplane/httpapi/services_rendered_policy_test.go porting the
+  BE-0186 services_get_policy_test.go template to the /rendered route with four
+  tests:
+  - TestGetServiceRenderedPolicyMatrixRoles: every built-in role through the
+    production NewHandler + policy.NewEngine(). Owner/Admin/Developer/Viewer/CI
+    and same-tenant Support are all allowed via ReasonAllowedByRole (CapRead);
+    each case verifies the reader runs exactly once with the principal's home
+    org id and the path service_id, then asserts the rendered envelope through
+    assertRenderedAllowPath (schema_version yalla.output.v1, the service block
+    matching the canonical row, rendered.name = domain.DokployName(display,id),
+    rendered.type = dokploy.ServiceApplication for kind "application", and the
+    deterministic 4-label structural attribution
+    organization_id/project_id/environment_id/service_id).
+  - TestGetServiceRenderedPolicyRevokedAndExpiredKeys: a Disabled principal
+    (revoked/expired credential) is denied 403 E_FORBIDDEN with the stable
+    ReasonDeniedPrincipalDisabled message, the reader never runs (so the
+    rendered projection is never computed), and the body never echoes the
+    principal id, org, or the canonical service / parent project / env ids.
+  - TestGetServiceRenderedPolicyWrongOrganizationPrincipal: a cross-tenant
+    service_id surfaces as 404 E_NOT_FOUND through the persistence layer
+    (the reader is called with the attacker's home org id, never the victim's),
+    plus engine-level cross-tenant deny for every non-support role
+    (ReasonDeniedCrossTenant) and the support cross-tenant exception
+    (ReasonAllowedBySupport) — CapRead is INSIDE the support clause, so a
+    future catalog change above CapRead would fail this test before regressing
+    a real customer.
+  - TestGetServiceRenderedPolicyGrantContainment: ALL three scoped-key types
+    (project, env, service) are denied OutOfScope at the wire because
+    serviceIDResolver pins NO ProjectID leg and the engine's covers() is
+    one-way; the engine pins each containment property at its natural scope
+    (sibling-project deny, staging-not-implies-production, service-grant-
+    does-not-expose-parent-env), the org-level Viewer grant IS allowed
+    end-to-end via ReasonAllowedByGrant (and the rendered envelope is
+    pinned through assertRenderedAllowPath), and a project-scoped key planted
+    in a foreign home org is denied at the engine — a stolen key cannot
+    smuggle across tenants.
+- Files added:
+  - internal/controlplane/httpapi/services_rendered_policy_test.go (new)
+- Files changed:
+  - ralph/prd.json (BE-0198 -> passes:true)
+  - ralph/progress.txt (this entry)
+- Verification run:
+  - gofmt -w internal/controlplane/httpapi/services_rendered_policy_test.go
+  - go vet ./...                                -> clean
+  - go test -run TestGetServiceRenderedPolicy -count=1 ./internal/controlplane/httpapi/
+    -> pass (0.551s)
+  - go test ./...                               -> pass (httpapi 0.739s, full suite ok)
+  - go test -race ./...                         -> pass (httpapi 4.528s, full suite ok)
+  - go mod tidy                                 -> clean
+- Results: all green. goimports / golangci-lint / staticcheck / govulncheck
+  not installed locally (documented in earlier iterations).
+- Remaining risks / follow-ups:
+  - BE-0196 (the /rendered wire contract) landed in c00603df and is the
+    structural twin this matrix sits on top of. The next unblocked priority-1
+    policy-matrix stories are BE-0201 (GET /v1/services/{id}/variables) and
+    BE-0204 (PUT /v1/services/{id}/variables), each on a different vertical
+    (variables introduces redaction guards over secret plaintext, unlike
+    rendered which has none today).
+  - This file does not exercise the scoped-key route variant (a service-
+    scoped key hitting a future /v1/projects/{p}/environments/{e}/services/
+    {s}/rendered) because that endpoint does not yet exist; when it lands the
+    parent-scoped route will need its own matrix proving the project-scoped
+    grant DOES authorize through it. The engine half is already pinned here
+    (target-project viewer is ALLOWED via ReasonAllowedByGrant on a service
+    resource inside the parent project).
+- **Learnings for future iterations:**
+  - The rendered-projection allow-path assertion needs a chokepoint helper
+    (assertRenderedAllowPath here): the rendered envelope has FIVE pinned
+    properties — schema, the embedded service projection, the Dokploy-safe
+    name (domain.DokployName), the dokploy.ServiceType mapping, and the
+    deterministic 4-label structural attribution — and scattering them across
+    every allow-path test case in a matrix is brittle. A single helper called
+    from every allow path keeps the projection's wire contract pinned in one
+    place.
+  - domain.DokployName(display, domain.ID(id)) returns (string, error) — NOT
+    a single string. Allow-path matrix code that recomputes the canonical
+    name MUST handle the error; if it doesn't, vet catches it at the call
+    site as "cannot use svc.ID as domain.ID" (the helper takes domain.ID,
+    not string). The conversion is domain.ID(svc.ID) — the store carries
+    the id as a string, the domain layer holds it as a typed ID. This is
+    the same shape services_rendered_test.go's allow-path uses.
+  - The canonical-distinct-IDs pattern (from BE-0192 / BE-0195) extends
+    cleanly to /rendered: this file adds canonicalRenderedSvcForMatrix
+    (deliberately distinct ids "rendered-svc" slug, "Rendered Service Matrix v2"
+    display, "prj_svc_matrix_rendered_parent" / "env_svc_matrix_rendered_parent"
+    parents, plus a per-test canonical service id from domain.MustNewID).
+    Because the rendered handler runs domain.DokployName which calls
+    domain.ParseID on the service id, the fixture id MUST be canonical
+    (kind prefix + 26-char Crockford base32 from domain.MustNewID) — a
+    simple opaque string like "svc_matrix_rendered" would panic the
+    parser inside the allow-path projection. Production rows always carry
+    canonical ids (the store layer enforces this), so the fixture mirrors
+    production data. Same caveat applies to any future rendered-projection
+    matrix.
+  - The renderedSvcDenyBodyLeak needle takes the canonical service id as a
+    parameter rather than encoding it as a constant, because the id is
+    allocated per-test by domain.MustNewID. The other needles ("rendered-svc"
+    slug quoted, "Rendered Service Matrix v2" display quoted, the parent
+    project_id and environment_id) are constants — they identify the
+    canonical fixture across the matrix and are stable across runs.
+---
