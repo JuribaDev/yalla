@@ -4704,8 +4704,8 @@
       ],
       "type": "policy-variables",
       "priority": 1,
-      "passes": false,
-      "notes": "Authorization coverage for GET /v1/services/{service_id}/variables."
+      "passes": true,
+      "notes": "Authorization coverage for GET /v1/services/{service_id}/variables. Implemented internal/controlplane/httpapi/service_variables_policy_test.go porting the BE-0198 services_rendered policy matrix to the env.read action on serviceIDResolver (action env.read on the same bare-id resource shape: principal-home org + path service_id, no ProjectID leg). Adds a per-matrix canonical fixture (canonicalSvcVarsServiceID / canonicalServiceVariables / canonicalSvcVarsSecretPlaintext) plus svcVarsDenyBodyLeak \u2014 the secret-plaintext-anchored deny-path leak guard layered on top of the structural leak guard, mirroring environment_variables_policy_test.go (BE-0174) for the env-id route \u2014 and an allow-path assertion helper (assertSvcVarsAllowPath) that pins the listServiceVariables envelope schema, redaction chokepoint (secret values render as output.Sentinel), and the non-secret-verbatim contract. Reuses existing service-variables wire fixtures (listServiceVariablesHandlerFor, getServiceVariables, decodeListServiceVariables, fakeServiceVariableReader, seedServiceVariableWire) from service_variables_test.go and the shared orgPrincipal / decodeError helpers \u2014 no production change. Verified gofmt, go vet ./..., go test ./..., go test -race ./..."
     },
     {
       "id": "BE-0202",

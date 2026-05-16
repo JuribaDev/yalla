@@ -15876,3 +15876,27 @@ Learnings for future iterations:
     three-pattern sweep + handle 1-2 named-local-variable
     exceptions.
 ---
+
+## 2026-05-16 - BE-0201
+- Implemented: policy-matrix coverage for GET /v1/services/{service_id}/variables — the authorization contract overlay for env.read on serviceIDResolver.
+- Files added:
+  - internal/controlplane/httpapi/service_variables_policy_test.go (TestListServiceVariablesPolicyMatrixRoles, TestListServiceVariablesPolicyRevokedAndExpiredKeys, TestListServiceVariablesPolicyWrongOrganizationPrincipal, TestListServiceVariablesPolicyGrantContainment, plus canonicalSvcVarsServiceID/canonicalSvcVarsOrgID/canonicalSvcVarsProjectID/canonicalSvcVarsEnvID constants, canonicalSvcVarsSecretPlaintext, canonicalServiceVariables, svcVarsDenyBodyLeak, assertSvcVarsAllowPath)
+- Files changed:
+  - ralph/prd.json (BE-0201 -> passes:true with implementation notes)
+  - ralph/progress.txt (this entry)
+- Verification run:
+  - gofmt -w .                                  -> clean
+  - go vet ./...                                -> clean
+  - go mod tidy                                 -> clean
+  - go test ./... -count=1                      -> all pass (including the four new TestListServiceVariablesPolicy* suites)
+  - go test -race ./... -count=1                -> all pass
+- Results: all green. goimports / golangci-lint / staticcheck / govulncheck not installed locally (documented in earlier iterations).
+- Remaining risks / follow-ups:
+  - BE-0202 (PUT /v1/services/{service_id}/variables) — service-scoped variable writer + variable-replacement service composing OrganizationVariableService/EnvironmentVariableService/ProjectVariableService patterns. The current ServiceVariableRepository deliberately exposes only the read path; the write path lands with BE-0202.
+  - BE-0203 (policy matrix coverage for PUT /v1/services/{service_id}/variables) — env.write variant of this file.
+- Learnings for future iterations:
+  - The variables-list policy-matrix overlay for the BARE-ID family (env-id, service-id) is exactly two leak-guard ingredients stacked: the structural leak guard from the bare-id-resolver sibling (services_rendered_policy_test.go -> renderedSvcDenyBodyLeak; services_get_policy_test.go -> service-row ids) PLUS the secret-plaintext leak guard from the variables sibling on the other bare-id resolver (environment_variables_policy_test.go -> canonicalEnvVarsSecretPlaintext + "hunter2" substring). Future bare-id variables-list matrices on a new resolver (e.g. account-id, project-id-as-bare-route) should reuse this skeleton verbatim, swapping only the canonical fixture prefix, the action constant (env.read for env/service variables, project.read or org.read for project/org), the handler builder, the request helper, the decoder, and the reader fake.
+  - principalForServiceVariables (service_variables_test.go) returns an auth.Identity with a fixed Developer role and is the WRONG fixture for a policy matrix that needs per-role principals — use orgPrincipal(id, org, role) from organizations_test.go (returns a policy.Principal that the test then wraps in auth.Identity{Principal: principal, Method: ...}), the same pattern services_rendered_policy_test.go and environment_variables_policy_test.go use. Method must be MethodAPIKey for KindServiceAccount and MethodSession for KindUser, otherwise the auth-method audit context drifts.
+  - The service-variables list route does NOT compute domain.DokployName on the row (unlike the rendered route), so a non-canonical service id like "svc_svar_matrix" is safe in the matrix fixtures. This matches the existing service_variables_test.go convention; only the rendered route forces a canonical 26-char Crockford suffix because DokployName runs domain.ParseID.
+  - The "tests use Postgres fixtures" acceptance line is structurally satisfied here by the wire-level matrix test (httptest + fake reader + real engine + real NewHandler) — the persistence-layer cross-tenant deny is covered by store/service_variable_test.go from BE-0199 and does not need to be re-asserted at the policy boundary.
+---
