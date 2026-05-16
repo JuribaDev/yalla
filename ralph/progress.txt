@@ -21105,3 +21105,85 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     application or database create reserve a compose_stacks row and
     fail — this test would surface that as a defect.
 ---
+
+## 2026-05-16 - BE-0068
+- What was implemented: members_get_contract_test.go — the public-API
+  contract suite for GET /v1/organizations/{org_id}/members/{member_id}.
+  Where the sibling members_test.go proves the wire success envelope,
+  schema versions, request_id propagation, OpenAPI registration, all the
+  rejection paths (unauthenticated / invalid creds / disabled principal /
+  cross-tenant / not-found / dependency-failure), the
+  support-reads-another-tenant policy exception, and the
+  exact-path-parameter wiring invariant, this file closes the three
+  remaining contract-test criteria the existing suite does not assert
+  directly:
+  - TestGetMemberServerWritesResponseDataOnlyToResponseWriter: captures the
+    process os.Stdout/os.Stderr through the shared captureProcessOutput
+    helper and proves a served 200 writes nothing to the process streams —
+    response data flows only through the http.ResponseWriter, and the
+    structured logger remains the only sanctioned sink (its own buffer is
+    non-empty, but neither stream is).
+  - TestGetMemberRequestLogRedactsBearerToken: drives a real NewHandler +
+    real policy.NewEngine() request path with a caller-supplied
+    slog.JSONHandler logger and a recognisable bearer credential, on both
+    the success path (allowed viewer reading own org) and the
+    authorization-failure path (disabled principal — 403 ReasonDisabled).
+    Asserts the structured log buffer is non-empty AND never contains the
+    bearer credential AND the response body never echoes it. The deny path
+    uses a reader configured to fail-on-call (getErr set) to prove the
+    short-circuit happens at policy, not at the reader — so any leaked
+    secret can't come from a reader-error log record.
+  - TestGetMemberErrorEnvelopeDoesNotLeakDependencyCause: pins the
+    wrapped-cause contract a typed apierr.StoreUnavailable carries — the
+    503 envelope must use a stable generic message, never the wrapped
+    driver cause ("connection refused dialing 10.0.0.5:5432"), and never
+    the bare datastore address. members_test.go pins the typed-status half
+    (TestGetMemberReaderUnavailable); this test pins the on-the-wire
+    redaction half. Sibling-symmetric with the matching pin in
+    members_list_contract_test.go and organizations_get_contract_test.go.
+- Files changed:
+  - internal/controlplane/httpapi/members_get_contract_test.go (new file)
+  - ralph/prd.json (BE-0068 passes -> true)
+  - ralph/progress.txt (this entry)
+- Verification run:
+  - go vet ./... -> clean
+  - go test ./... -> all packages PASS
+  - go test -race ./internal/controlplane/httpapi/ -> PASS in 7.6s
+  - go test ./internal/controlplane/httpapi/ targeted runs of the three
+    new tests -> PASS in 0.56s
+- Results: All three new tests pass; the full module test suite remains
+  green; race detector clean on the touched package.
+- Remaining risks or follow-ups: none specific to BE-0068. The same
+  three-pin contract-suite template — captureProcessOutput / per-request
+  log redaction / wrapped-cause non-leak — is the load-bearing
+  contract-test structural twin for the rest of the membership-CRUD
+  contract stories (BE-0071 PATCH, BE-0074 DELETE) and for every other
+  GET-single-resource endpoint contract pin coming after this one.
+- **Learnings for future iterations:**
+  - The fakeMembershipReader's getErr field is the one consulted by
+    GetMember, not the err field (which is the ListMembers cousin). When
+    writing a fail-on-invoke deny-path reader for a GET-single-member
+    contract test, set getErr — setting err leaves GetMember happily
+    returning a 404 from the f.member.UserID == "" fallback (or the
+    seeded member, masking the assertion that the policy engine
+    short-circuited).
+  - getMemberHandlerForWithLogger is the new logger-injectable handler
+    factory for the GET single-member endpoint; it mirrors the convention
+    listMembersHandlerForWithLogger established for the list endpoint
+    (BE-0062) and getOrganizationHandlerForWithLogger established for the
+    GET single-organization endpoint (BE-0053). The pattern: identical
+    NewHandler call to the production wiring, but with the membership
+    reader as a parameter and the slog.Logger threaded through the
+    second-to-last argument. Reuse this template for every other
+    GET-single-resource contract pin (api-keys/{key_id},
+    audit-events/{event_id}, etc.) so the captureProcessOutput +
+    redaction + dependency-cause-non-leak triplet stays structurally
+    identical across endpoints.
+  - The dependency-cause-non-leak test does NOT need its own handler
+    factory: it can reuse listMembersHandlerFor (the no-logger sibling)
+    because NewHandler registers both routes (LIST and GET) against the
+    same MembershipReader port, so a getErr-configured fake handles the
+    GET path even though the helper is named for LIST. Mirrors the
+    organizations_get_contract_test.go pattern that reuses
+    organizationsHandlerFor for the same reason.
+---
