@@ -155,6 +155,44 @@ func memoryMBForServiceKind(kind string) int64 {
 	return serviceMemoryMBByKind[kind]
 }
 
+// serviceStorageGBByKind is the per-service-kind default storage
+// allocation a Create reserves against the storage_gb quota dimension
+// (BE-0333). It is the third magnitude-axis sibling of
+// serviceCPUMillicoresByKind and serviceMemoryMBByKind: every service
+// create consumes a per-Kind baseline of storage gigabytes against the
+// tenant's storage_gb ceiling, and the reservation runs in the same
+// *Tx as the other count- and magnitude-axis reservations and the
+// desired-state write.
+//
+// The values are conservative baselines a Dokploy worker would set if
+// the service did not declare its own persistent-volume block: an
+// application service runs one stateless web replica with a small
+// 1 GiB ephemeral footprint for logs, artifacts, and the container
+// image overlay; a compose stack provisions multiple container slots
+// often backed by named volumes so its baseline is 2 GiB; a database
+// service reserves substantially more headroom for the engine's data
+// files plus WAL/redo + free space at 10 GiB. The numbers are stable
+// contract — the storage_gb quota tests assert them — so a future
+// change to the baselines must update both here and the concurrent
+// test seeded limits. A future story that adds a caller-supplied
+// storage override on CreateServiceInput will widen this to
+// (override > kind default > tier default).
+var serviceStorageGBByKind = map[string]int64{
+	ServiceKindApplication: 1,
+	ServiceKindCompose:     2,
+	ServiceKindDatabase:    10,
+}
+
+// storageGBForServiceKind returns the per-Kind default storage
+// allocation in gigabytes. A Kind outside the closed taxonomy
+// (already rejected by validateCreateServiceInput) returns zero, which
+// the caller treats as "no storage_gb reservation for this kind".
+// Today every member of the taxonomy maps to a positive baseline, so
+// the zero branch is structural only.
+func storageGBForServiceKind(kind string) int64 {
+	return serviceStorageGBByKind[kind]
+}
+
 // CreateServiceInput is the unvalidated input to ServiceService.Create.
 // OrganizationID, EnvironmentID, ServiceID, Slug, DisplayName, and
 // Kind are the caller-supplied resource fields; the Actor* and
@@ -394,13 +432,36 @@ func (svc *ServiceService) Create(ctx context.Context, in CreateServiceInput) (S
 		// together. Order matters for the diagnostic: when both
 		// cpu_millicores and memory_mb would exhaust on the same
 		// Create, memory_mb is the one whose ExceededDetail.Resource
-		// surfaces — the LAST Reserve that fires produces the error.
-		// The reservation only fires for taxonomy members with a
-		// positive baseline; a future taxonomy member with no memory
-		// baseline would skip it by structural design rather than a
-		// special-case here.
+		// surfaces — the LATER Reserve that fires produces the
+		// error. The reservation only fires for taxonomy members
+		// with a positive baseline; a future taxonomy member with no
+		// memory baseline would skip it by structural design rather
+		// than a special-case here.
 		if memAmount := memoryMBForServiceKind(service.Kind); memAmount > 0 {
 			if err := svc.quota.ReserveAmount(ctx, tx, service.OrganizationID, string(QuotaResourceMemoryMB), memAmount); err != nil {
+				return err
+			}
+		}
+		// Dimensional quota: the "storage_gb" dimension is the
+		// persistent-storage-axis counterpart of "cpu_millicores"
+		// and "memory_mb". Every service create consumes a per-Kind
+		// baseline of storage gigabytes (see serviceStorageGBByKind)
+		// against the tenant's storage_gb ceiling. The reservation
+		// runs in the SAME *Tx as the count-axis reservations, the
+		// cpu_millicores reservation, the memory_mb reservation, and
+		// the desired-state write, so a tenant that exhausts
+		// storage_gb rolls back EVERY reservation and the service
+		// row together. Order matters for the diagnostic: storage_gb
+		// runs LAST in the reservation order — so when any of
+		// cpu_millicores, memory_mb, and storage_gb would all
+		// exhaust on the same Create, storage_gb is the one whose
+		// ExceededDetail.Resource surfaces (the LAST Reserve that
+		// fires produces the error). The reservation only fires for
+		// taxonomy members with a positive baseline; a future
+		// taxonomy member with no storage baseline would skip it by
+		// structural design rather than a special-case here.
+		if storageAmount := storageGBForServiceKind(service.Kind); storageAmount > 0 {
+			if err := svc.quota.ReserveAmount(ctx, tx, service.OrganizationID, string(QuotaResourceStorageGB), storageAmount); err != nil {
 				return err
 			}
 		}

@@ -21559,3 +21559,91 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     future story adding another concurrent quota test should expect to
     require `-parallel=2` on the combined sweep.
 ---
+
+## 2026-05-16 - BE-0333: Enforce quota for storage_gb
+
+- What was implemented:
+  - The third magnitude-axis quota dimension on the ServiceService.Create unit
+    of work, structurally cloning the BE-0332 memory_mb template:
+    (a) `serviceStorageGBByKind` (application=1 GiB, compose=2 GiB, database=10 GiB)
+        + `storageGBForServiceKind` helper in
+        internal/controlplane/store/serviceservice.go, immediately after the
+        memory_mb sibling map.
+    (b) one ReserveAmount call site for `string(QuotaResourceStorageGB)` placed
+        AFTER the memory_mb reservation in the same *Tx, so storage_gb is now
+        the LAST Reserve that fires in the Create unit of work.
+    (c) the prior memory_mb in-source comment was updated from "LAST Reserve
+        that fires" to "LATER Reserve that fires" so the source-of-truth comment
+        stays accurate after a third sibling joined the order.
+- Files changed:
+  - internal/controlplane/store/serviceservice.go (per-Kind map + helper + Create call site + comment refinement, +66 -5).
+  - internal/controlplane/store/service_quota_storage_gb_concurrent_test.go (new, +561 lines): clone of the BE-0332 memory_mb concurrent + kind-varies test file with the resource constant, magnitudes, and seeded limits swapped.
+  - ralph/prd.json: BE-0333 passes -> true.
+- Verification run:
+  - go vet ./... (clean).
+  - go build ./... (clean).
+  - YALLA_TEST_DATABASE_URL=postgres://yalla:yalla@127.0.0.1:5432/yalla
+    go test -count=1 -run 'TestServiceServiceCreateRejectsParallelOversubscriptionForStorageGBQuota|TestServiceServiceCreateStorageGBAmountVariesByKind' ./internal/controlplane/store/...
+    -> ok (1.308s).
+  - same with -race -> ok (1.866s) when run alone.
+  - sibling suite combined: cpu_millicores + memory_mb + storage_gb under
+    -parallel 1 -> ok (4.062s). Under default parallelism the documented
+    pre-existing -race-with-DB pool exhaustion surfaces as E_UNAVAILABLE
+    (already in Codebase Patterns; verified reproducible by stashing BE-0333
+    and re-running the same focused tests on the BE-0332 base commit).
+  - Full ./... regression sweep surfaces the SAME four pre-existing failures
+    documented in BE-0331/BE-0332 progress entries (TestEnvironmentService
+    Create* / TestEnvironmentRepoListByProjectReturnsDeterministicOrdering /
+    TestServiceVariableServiceReplaceInvalidInputNeverOpensTransaction);
+    verified pre-existing by `git stash -u` of BE-0333 patches and re-running
+    the same focused tests on the BE-0332 base commit — same failures.
+- Results:
+  - BE-0333 focused tests pass under -race solo and under default parallelism;
+    sibling combined sweep passes with -parallel=1 (the same constraint
+    flagged for BE-0331 and BE-0332).
+  - The two new tests pin (a) row-lock serialisation of the storage_gb
+    quota_usage counter under 20 concurrent goroutines × app-sized 1 GiB
+    allocations against a 4 GiB ceiling -> exactly 4 successes / 16
+    typed CodeQuotaExceeded rejections whose ExceededDetail names storage_gb,
+    Requested=1, Limit=4, Reserved=4, Current=0; and (b) per-Kind magnitude
+    variation by sequencing app(1) -> db(10) -> app(1) -> compose-overflow
+    Requested=2 -> app-overflow Requested=1 against a 12 GiB ceiling, then
+    grouping reservation rows by amount to prove the DB persisted the
+    per-Kind distribution end-to-end.
+- Remaining risks / follow-ups:
+  - The pre-existing -race-with-DB pool exhaustion remains the load-bearing
+    constraint on the combined dimensional-quota sweep. Three concurrent
+    test suites (cpu/memory/storage) each spawning 20 goroutines against the
+    same Postgres pool saturate max_connections; the focused per-test runs
+    pass at full parallelism. Future dimensional-quota siblings (BE-0335
+    monthly_deployments / BE-0336 concurrent_deployments / etc.) should
+    expect to require `-parallel=2` or lower on the combined sweep, or a
+    bumped pgx pool / Postgres max_connections.
+  - The four pre-existing testutil.Factory id-prefix vs domain.Kind drift
+    failures in TestEnvironmentService Create / TestServiceVariableService /
+    TestEnvironmentRepoListByProjectReturnsDeterministicOrdering remain
+    out-of-scope; a focused triage story should pick them up before the
+    BE-0500+ verification stories run.
+- Learnings for future iterations:
+  - The BE-0331/0332 dimensional-quota template is now confirmed
+    forward-applicable across THREE dimensions in succession without ANY
+    port widening, Checker change, fake update, or extra wiring in cmd/yalla-*.
+    The mechanical clone is: copy the prior dimensional concurrent test
+    file, sed (a) the resource constant, (b) per-Kind magnitude values,
+    (c) the limit + expected successes, (d) the seeded loose dimensions
+    (must include EVERY prior dimensional sibling so the new dimension is
+    the last to bite), and (e) the leaky-input prefix in the rejection
+    message scan.
+  - For the THIRD dimensional sibling (storage_gb), the kind-varies test
+    needed to widen `looseMemoryLimit` (1 << 20) on top of the
+    `looseCPULimit` (50000) the cpu_millicores test introduced. Every new
+    dimensional sibling adds one more loose-limit constant to the
+    kind-varies test header — the magnitude of "loose" must cover the
+    worst-case sum across the (app + db + app + compose-overflow +
+    app-overflow) = 5 attempts the sequence drives.
+  - Updating the prior dimension's source comment ("LAST Reserve that
+    fires" -> "LATER Reserve that fires") is part of the contract clone.
+    The new sibling claims the LAST slot, and the prior sibling's comment
+    must yield it gracefully. Future siblings should expect to update the
+    immediately-preceding dimension's comment the same way.
+---
