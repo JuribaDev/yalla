@@ -90,3 +90,58 @@ runtime base image), update the constants at the top of the test
 file AND the regression-fixture catalogue in the same edit. The
 package's existing `projectRoot` helper is reused so the test stays
 location-independent.
+
+## TLS and proxy header trust (BE-0356)
+
+`http_server_hardening_static_test.go` pins the operator-facing
+contract that (a) the API binary does not terminate TLS itself and
+(b) the rate limiter trusts only a closed set of forwarded-IP
+headers. Three real-file matchers run alongside one synthetic
+self-check (`TestHTTPServerHardeningStaticAnalyzerDetectsRegressions`):
+
+- **`cmd/yalla-api/main.go`** — `findAPITLSRegressions` walks the
+  AST and rejects: (1) any call whose selector name is in
+  `forbiddenAPITLSCallSelectors` (`ListenAndServeTLS`, `ServeTLS`),
+  regardless of receiver; (2) any `http.Server` composite literal
+  that omits a field from `requiredHTTPServerFields`
+  (`ReadHeaderTimeout` is the Slowloris guard) OR contains a field
+  from `forbiddenAPITLSStructFields` (`TLSConfig`, `TLSNextProto`);
+  (3) any assignment whose LHS selector is in
+  `forbiddenAPITLSStructFields` (the post-construction mutation
+  seam). The matcher uses the package-qualified type selector
+  `http.Server`, so unrelated structs in `main.go` are not scanned.
+- **`internal/controlplane/httpapi/ratelimit.go`** —
+  `findProxyHeaderTrustRegressions` runs two passes. The scoped
+  pass locates the `ClientIP` function by name and walks every
+  `*.Header.Get("...")` inside it; any literal not in
+  `allowedProxyHeaderLiterals` (`X-Forwarded-For`, `X-Real-IP`,
+  case-sensitive) is flagged. The scoped pass also asserts the
+  body references `RemoteAddr` so the fallback chain stays intact.
+  The file-wide pass walks every string literal in the file and
+  flags any whose lower-cased form is in
+  `forbiddenProxyHeaderLiterals` (RFC 7239 `Forwarded`,
+  `True-Client-IP`, `CF-Connecting-IP`, `Fastly-Client-IP`,
+  `X-Client-IP`, `X-Forwarded-{Host,Proto,Server,Port}`,
+  `X-Original-Forwarded-For`). If `ClientIP` is missing entirely
+  the matcher emits a single "missing function" hit so the gate
+  cannot pass silently when its target is removed.
+- **`SECURITY.md`** —
+  `TestHTTPServerHardeningSecurityDocumentsTLSAndProxyTrust` pins
+  the `## TLS Termination and Proxy Header Trust` heading, the
+  verification-gates table row, and the canonical substrings
+  (`TLS is terminated at the operator's reverse proxy`,
+  `ReadHeaderTimeout`, `X-Forwarded-For`, `X-Real-IP`, and the
+  test file path itself). The substrings carry the load-bearing
+  facts so a future reader does not have to open the test file to
+  learn the contract.
+
+When adding or removing a trusted forwarding header, update
+`allowedProxyHeaderLiterals` AND the `ClientIP` body AND the
+SECURITY.md section in the same edit. When adding or removing a
+required `http.Server` hardening field (e.g. a future
+`MaxHeaderBytes` cap), update `requiredHTTPServerFields` AND the
+`http.Server` construction in `cmd/yalla-api/main.go` AND the
+SECURITY.md "Slowloris guard" bullet in the same edit. The
+self-check sub-tests for each matcher MUST be extended with a
+fresh known-bad fixture in the same edit so over- and
+under-tightening of the analyser are both caught.

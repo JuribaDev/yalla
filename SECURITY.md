@@ -70,6 +70,7 @@ defined in `.github/workflows/ci.yml`:
 | Lint suite | `staticcheck ./...` and `golangci-lint run ./...` | CI `security` job | Every push and PR |
 | Dependency review | `actions/dependency-review-action` | CI on PRs | Every PR |
 | Container image hardening | `go test ./internal/release/... -run TestDockerfile` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| TLS and proxy header trust | `go test ./internal/release/... -run TestHTTPServerHardening` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Release config | `goreleaser check` and `goreleaser release --snapshot` | CI `goreleaser-check` job | Every push and PR |
 
 Before cutting a tag the maintainer additionally runs:
@@ -147,6 +148,65 @@ The local integration-test stack (`docker-compose.yml`) MUST pin
 the Postgres image to a major version tag (`postgres:16`, not
 `postgres` and not `postgres:latest`) and declare a `healthcheck`
 so the integration-test harness has a deterministic readiness gate.
+
+## TLS Termination and Proxy Header Trust
+
+The Yalla control-plane API binary (`cmd/yalla-api`) deliberately
+does NOT terminate TLS itself.
+**TLS is terminated at the operator's reverse proxy**
+(ingress controller, load balancer, or front-door proxy), which
+forwards the request to the API over an internal network. Keeping certificate material out of the API process
+narrows the secret surface, leverages the proxy's vetted cipher
+suite / HSTS / OCSP stapling defaults, and lets operators rotate
+certificates without an API restart. The posture is pinned by
+`internal/release/http_server_hardening_static_test.go`; a regression
+in any one of the following is caught at build time:
+
+- **No in-process TLS.** The API binary MUST NOT call
+  `ListenAndServeTLS` or `ServeTLS`, and the constructed
+  `*http.Server` MUST NOT set `TLSConfig` or `TLSNextProto`. Any
+  TLS-termination shape inside the binary is rejected.
+- **Slowloris guard.** Every `*http.Server` literal in the API
+  binary MUST set a positive `ReadHeaderTimeout`. The current value
+  is `10 * time.Second`. Removing the field, or initialising the
+  server with the zero value, is rejected.
+- **Closed-set proxy header trust.** The rate limiter resolves the
+  caller's identity through `ClientIP(r)` in
+  `internal/controlplane/httpapi/ratelimit.go`. The helper consults
+  only two forwarding headers:
+  - `X-Forwarded-For` — the **first hop only** is taken so a forged
+    tail entry cannot displace the real client.
+  - `X-Real-IP` as a fallback.
+  No other forwarded-* family header is honoured. RFC 7239
+  `Forwarded`, Akamai `True-Client-IP`, Cloudflare
+  `CF-Connecting-IP`, Fastly `Fastly-Client-IP`, `X-Client-IP`,
+  `X-Original-Forwarded-For`, and the meta-data variants
+  (`X-Forwarded-Host`, `X-Forwarded-Proto`, `X-Forwarded-Port`,
+  `X-Forwarded-Server`) are deliberately ignored. If the API is
+  ever reachable directly — a network misconfiguration, an internal
+  pivot, or a forgotten test fixture — an attacker who can reach it
+  must not be able to spoof their identity past the IP bucket by
+  sending one of those headers. The closed set is enforced by the
+  static analyser; adding a new header to the trust list requires
+  an explicit, reviewed change to the allow-list.
+
+### Operator expectations
+
+The reverse proxy MUST be configured to:
+
+1. **Strip inbound `X-Forwarded-*` and `X-Real-IP` headers** from
+   public traffic before setting its own. Otherwise an attacker
+   can pre-populate the header and the proxy will forward it
+   verbatim — the API will then trust the attacker-supplied value.
+2. **Set `X-Forwarded-For`** to the immediate downstream client's
+   IP address. The API only reads the first hop, so the proxy's
+   append-on-each-hop semantics are honoured.
+3. **Terminate TLS** with a modern cipher suite, an up-to-date
+   certificate, and HSTS where appropriate. The API never sees
+   the original ClientHello.
+4. **Use an internal network or loopback** to reach the API. The
+   API listener is HTTP-only and MUST NOT be exposed to the
+   public internet directly.
 
 ## Disclosure Timeline (Best Effort)
 
