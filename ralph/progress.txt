@@ -15061,3 +15061,114 @@
     run the audit append; the test fixtures assert calls=0 on the
     recording* fakes to make the difference observable.
 ---
+
+## 2026-05-16 - BE-0189
+- What was implemented: Authorization-matrix tests for PATCH
+  /v1/services/{service_id}. Drives every built-in role
+  (owner/admin/developer/viewer/ci/support) through real NewHandler +
+  real policy.NewEngine() to prove CapWrite splits the matrix
+  (Owner/Admin/Developer allow via ReasonAllowedByRole; Viewer/CI/
+  Support deny via ReasonDeniedNoCapability — Support is denied at
+  the role boundary because the engine cross-tenant exception is
+  CapRead/CapSupport-only, and CapWrite is OUTSIDE that exception);
+  pins revoked/expired credentials (Disabled principal denied even
+  with underlying Owner role); pins the wrong-organization principal:
+  a same-tenant resource on the wire (svc_id alone never widens to
+  another tenant) surfaces as a 404 from the persistence layer, never
+  200 (no foreign-tenant commit) and never 403 (would confirm
+  existence); the engine cross-tenant clause is exercised separately
+  for every role including Support, all denied via
+  ReasonDeniedCrossTenant — CapWrite is OUTSIDE the support
+  cross-tenant exception, the load-bearing distinction from BE-0186
+  (service.read matrix). Pins scoped-grant containment: every
+  project-/environment-/service-scoped grant is denied OutOfScope at
+  this route because serviceIDResolver pins NO ProjectID leg and the
+  engine's covers() rule is one-way (a grant scope that pins
+  ProjectID cannot cover a resource scope that does not), even when
+  the grant names the target service's own project, parent
+  environment, or own id; an org-level Viewer grant (CapRead-only) is
+  denied NoCapability while an org-level Admin grant (CapWrite) is
+  allowed end-to-end at the wire.
+- Files changed:
+  - internal/controlplane/httpapi/services_update_policy_test.go
+    (new, ~640 lines): four test functions —
+    TestUpdateServicePolicyMatrixRoles (table-driven six roles, allow
+    rows assert envelope + updater-input + actor-id; deny rows assert
+    403, stable reason on the wire, updater-never-runs, no body
+    leak), TestUpdateServicePolicyRevokedAndExpiredKeys (Disabled
+    principal denied with ReasonDeniedPrincipalDisabled — underlying
+    Owner role would otherwise allow; the only thing in the way is
+    Disabled),
+    TestUpdateServicePolicyWrongOrganizationPrincipal (wire 404 with
+    redacted foreign-org needle + engine cross-tenant deny across
+    all six roles including Support — CapWrite OUT of support
+    exception),
+    TestUpdateServicePolicyGrantContainment (engine pins against
+    project / env / service resources for sibling-project,
+    production-isolation, parent-secret-shielding, then wires three
+    scoped-key denies + org-Admin end-to-end allow + org-Viewer
+    NoCapability deny + cross-tenant key-planting deny). Adds two
+    small fixture builders — canonicalUpdateSvcForMatrix +
+    updateSvcDenyBodyLeak (with a deliberately recognisable display
+    name "Patch Service Renamed" so the leak guard catches a
+    handler that echoes the patch body after policy denial).
+- Verification run:
+  - gofmt -w .                                   -> no diff
+  - go mod tidy                                  -> clean
+  - go vet ./...                                 -> clean
+  - go test ./...                                -> pass (httpapi
+    0.641s, full suite ok)
+  - go test -race ./...                          -> pass (httpapi
+    4.263s, full suite ok)
+- Remaining risks / follow-ups:
+  - BE-0190 (DELETE /v1/services/{service_id}) is the next free P=2
+    endpoint story on the services surface; once it lands BE-0192
+    (the matching DELETE policy matrix) becomes implementable as the
+    structural sibling of THIS file with action service.delete and a
+    fakeServiceDeleter. BE-0193 (POST /v1/services/{service_id}/
+    restore) and BE-0196 (its policy matrix) follow the same shape,
+    then BE-0197 (GET .../rendered) etc.
+- Learnings for future iterations:
+  - The PATCH policy-matrix template ports cleanly between
+    environments_update_policy_test.go (BE-0159) and
+    services_update_policy_test.go (BE-0189) with mechanical
+    substitutions: ActionEnvironmentUpdate -> ActionServiceUpdate;
+    fakeEnvironmentUpdater -> fakeServiceUpdater; UpdateEnvironment
+    Input.EnvironmentID -> UpdateServiceInput.ServiceID;
+    updateEnvironmentHandlerFor -> updateServiceHandlerFor;
+    patchEnvironment -> patchService; environmentIDResolver doc ->
+    serviceIDResolver doc; canonicalUpdateEnvForMatrix ->
+    canonicalUpdateSvcForMatrix; updateEnvDenyBodyLeak ->
+    updateSvcDenyBodyLeak (PLUS one extra needle for the parent
+    environment_id, since service rows have one more level of
+    parent identity to leak); decodeUpdateEnvironment ->
+    decodeUpdateService; KindEnvironment -> KindService for the
+    on-route resource; the parent-scoped allow proof in grant
+    containment swaps "project resource" -> "service resource
+    nested inside the parent project's environment" because the
+    parent route for service.update operates on a service.
+  - The UpdateServiceInput captures use ServiceID (not
+    EnvironmentID), and the on-route resource Scope pins
+    OrganizationID + ServiceID (no ProjectID, no EnvironmentID) —
+    one fewer leg than the env route's resource scope and the same
+    shape as the get-service matrix's resourceOnRoute.
+  - Reused the existing updateServiceHandlerFor from
+    services_update_test.go directly — no need for a separate
+    "ForIdentity" helper as that factory already takes auth.Identity
+    as its first argument (unlike getServiceHandlerFor which baked
+    in a single principal and required getServiceHandlerForIdentity
+    in BE-0186). The contract suite's helper shape ("first arg is
+    identity") is the right default for any future
+    "<verb><Resource>HandlerFor" factory; minting a separate
+    "ForIdentity" variant should only be necessary when the contract
+    suite already chose the baked-in shape.
+  - Fixture id "svc_matrix_patch" is deliberately distinct from
+    canonicalGetSvcForMatrix's "svc_matrix_byid" and
+    canonicalUpdatedSvc's "svc_canonical_patch" — each matrix /
+    contract suite owns its own fixture id space so a future shared
+    fake cannot accidentally cross-pollinate state. The display
+    name "Patch Service Matrix v2" + patch body's
+    "Patch Service Renamed" are deliberately recognisable strings
+    so the leak guard can needle for them independently of the row
+    id.
+---
