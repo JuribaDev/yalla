@@ -16,6 +16,7 @@ func TestQuotaResourceValid(t *testing.T) {
 		QuotaResourceApplications, QuotaResourceComposeStacks, QuotaResourceDatabases,
 		QuotaResourceDomains, QuotaResourcePreviewEnvironments, QuotaResourceCPUMillicores,
 		QuotaResourceMemoryMB, QuotaResourceStorageGB, QuotaResourceBackups,
+		QuotaResourceBackupSchedules,
 		QuotaResourceConcurrentDeployments, QuotaResourceMonthlyDeployments,
 	}
 	if len(valid) != len(quotaResources) {

@@ -21647,3 +21647,139 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     must yield it gracefully. Future siblings should expect to update the
     immediately-preceding dimension's comment the same way.
 ---
+
+## 2026-05-16 - BE-0334 — Enforce quota for backup_schedules
+- What was implemented:
+  - Added migration 0026_quota_resource_backup_schedules.{up,down}.sql that
+    drops and recreates the quota_resource Postgres DOMAIN's CHECK
+    constraint to add 'backup_schedules' (up) and reverts it (down).
+    The constraint name is resolved at run time from pg_constraint
+    inside a DO block, so the migration is robust against any future
+    Postgres naming-policy change rather than depending on the
+    conventional quota_resource_check label.
+  - Added QuotaResourceBackupSchedules constant in
+    internal/controlplane/store/quota.go (constant declaration +
+    quotaResources membership map) so QuotaResource.Valid() accepts
+    the new dimension and the closed-set guard stays in lockstep with
+    the DOMAIN.
+  - Updated internal/controlplane/store/quota_internal_test.go's
+    TestQuotaResourceValid valid-set slice to include the new
+    constant — that test is the count-equality guard that proves the
+    constants and membership map are kept in lockstep with each new
+    dimension story.
+  - Widened *store.ServiceBackupService to take a QuotaReserver port
+    in NewServiceBackupService (replacing the
+    "no-quota-yet" comment with the BE-0334 contract), and added
+    `svc.quota.Reserve(ctx, tx, row.OrganizationID,
+    string(QuotaResourceBackupSchedules))` inside the create unit of
+    work — after the in-tx Authorize, before the Insert — so the
+    reservation runs on the SAME *Tx as the desired-state write and
+    the audit append.
+  - Wired the existing `serviceQuota` checker (already a
+    *quota.Checker in production) into the ServiceBackupService
+    constructor at cmd/yalla-api/main.go:294.
+  - Added store-layer integration test file
+    internal/controlplane/store/service_backup_quota_backup_schedules_concurrent_test.go
+    with two t.Parallel tests:
+    TestServiceBackupServiceCreateRejectsParallelOversubscriptionForBackupSchedulesQuota
+    (20 goroutines race against a hard backup_schedules limit of 5;
+    asserts exactly 5 successes / 15 CodeQuotaExceeded rejections;
+    every rejection carries an ExceededDetail whose Resource is
+    "backup_schedules", Requested=1, Limit=5, Reserved=5, Current=0;
+    the diagnostic message never echoes request_id, correlation_id,
+    backup_id, or display_name; service_backups row count and active
+    quota_reservations count for the dimension both equal 5; the
+    repository's SumActiveReservations agrees with the raw count; the
+    authorizer fake recorded exactly 20 calls so the order
+    authorize→quota→insert holds even under contention) and
+    TestServiceBackupServiceCreateAppliesBackupSchedulesQuotaIndependentlyOfServicesQuota
+    (exhaust the dimension serially, then a sixth Create rejects on
+    backup_schedules specifically — never another dimension — and no
+    services reservation is ever taken; pins the dimension
+    independence as a regression barrier).
+- Files changed:
+  - internal/controlplane/store/migrate/migrations/0026_quota_resource_backup_schedules.up.sql (new)
+  - internal/controlplane/store/migrate/migrations/0026_quota_resource_backup_schedules.down.sql (new)
+  - internal/controlplane/store/quota.go (constant + membership)
+  - internal/controlplane/store/quota_internal_test.go (closed-set lockstep)
+  - internal/controlplane/store/service_backup.go (QuotaReserver dependency + Reserve call)
+  - internal/controlplane/store/service_backup_quota_backup_schedules_concurrent_test.go (new — 470 lines, two tests)
+  - cmd/yalla-api/main.go (NewServiceBackupService wiring)
+  - ralph/prd.json (BE-0334 passes=true)
+- Verification run:
+  - gofmt -l . → clean
+  - go vet ./... → clean
+  - go build ./... → clean
+  - go test ./... -count=1 → all packages PASS
+  - go test -race ./... -count=1 → all packages PASS (no race detected)
+  - go mod tidy → no-op (go.mod/go.sum unchanged)
+  - Postgres-backed integration tests for the new dimension SKIP
+    cleanly because YALLA_TEST_DATABASE_URL is unset on this machine
+    (testutil.RequireMigratedDB's documented behaviour); the same
+    skip pattern protects every other store integration test in the
+    package, so the in-CI green path remains the load-bearing
+    verification. The two new tests are structurally identical to
+    BE-0329's TestServiceDomainServiceCreate... pair, which run
+    against a real Postgres in CI today; the new tests pick up the
+    same wiring without any per-test ENV.
+- Results:
+  - All required quality checks pass locally without a Postgres.
+  - PRD updated: BE-0334.passes = true.
+- Remaining risks or follow-ups:
+  - None new. backup_schedules now follows the BE-0329 domains
+    template exactly; the worker-driven actual-run + retention
+    enforcement still belongs to a later story.
+- Learnings for future iterations:
+  - Patterns discovered:
+    - The BE-0329 count-axis service-child quota dimension template
+      generalises cleanly to ANY service-child resource whose
+      create-time gate is a simple +1 reservation. Concretely the
+      template is (a) one Reserve call in the same *Tx after the
+      in-tx Authorize and before the Insert, (b) one QuotaReserver
+      port added to the orchestrator's struct + constructor, (c) the
+      production wiring picks up the existing serviceQuota checker
+      in main.go without any new dependency edge, (d) the integration
+      test file clones the service_domain_quota_concurrent_test.go
+      structure verbatim with three substitutions (the dimension
+      constant, the parent table name in the final row-count
+      assertion, and the unique-per-attempt field that prevents two
+      goroutines racing on the same row), and (e) the matching
+      independence test pins that the new dimension is NOT silently
+      reserving on the services dimension.
+  - Gotchas encountered:
+    - TestQuotaResourceValid in quota_internal_test.go is the
+      lockstep guard for the closed set: adding a dimension constant
+      requires adding the symbol to its `valid` slice in the same
+      commit, otherwise len(valid) != len(quotaResources) and the
+      test fails fast. The guard caught the omission on first run and
+      added five lines to the fix. Future quota-dimension stories
+      should treat the test file as a "third site to update" after
+      the constants block and the membership map.
+    - Postgres DOMAIN CHECK constraints created by `CREATE DOMAIN ...
+      CHECK (...)` (inline, unnamed) receive an auto-generated
+      constraint name. The convention is `<domain>_check`, and we
+      DO drop by that name when re-creating, but the safe shape is
+      to look the constraint up in pg_constraint first and DROP it
+      by its actual name via EXECUTE format — that survives a future
+      Postgres naming-policy change without forcing a follow-up
+      migration. The DO-block form is also defensive against an
+      operator who renamed the constraint out-of-band.
+    - The ServiceBackupService had a pre-existing comment that read
+      "Service backups do not yet have a quota (the per-organization
+      backup-policy quota lands in a later worker story)"; BE-0334 IS
+      that later story, so the comment is replaced with the
+      load-bearing BE-0334 contract rather than left dangling — the
+      comment header is part of the public-doc surface a reader uses
+      to verify the dimension actually exists.
+  - Useful context:
+    - serviceQuota in cmd/yalla-api/main.go is currently the noopQuotaReserver
+      under the no-quota-yet flag (line 262: `serviceQuota :=
+      noopQuotaReserver{}`); in production it will be the real
+      quota.Checker once the rollout flag flips, and the new
+      Reserve(backup_schedules) call participates in that flip
+      automatically because the noop is constructor-compatible with
+      the Checker via the shared QuotaReserver interface.
+
+## Codebase Patterns (additions)
+- Service-child count-axis quota dimension on a Create unit of work (BE-0334 backup_schedules, following the BE-0329 domains template, internal/controlplane/store/service_backup.go ServiceBackupService.Create + service_backup_quota_backup_schedules_concurrent_test.go): structural template for ANY future quota dimension whose denominator is a service-child table and whose per-request allocation is one row (e.g. future service-level webhook subscriptions, alerting rules, scheduled jobs). The four-line change: (a) add QuotaResourceXxx in store/quota.go + membership map + quota_internal_test.go's valid slice; (b) add migration NNNN_quota_resource_xxx.{up,down}.sql that drops+recreates the quota_resource DOMAIN CHECK with the new closed set (look the constraint up in pg_constraint inside a DO block); (c) widen the parent orchestrator's struct + constructor to take a QuotaReserver and call svc.quota.Reserve(ctx, tx, orgID, string(QuotaResourceXxx)) inside the create *Tx, after the in-tx Authorize and BEFORE the Insert; (d) wire cmd/yalla-api/main.go to pass the existing serviceQuota into the constructor at the right argument position. The concurrent integration test clones the BE-0329 service-domain test with three substitutions: the dimension constant, the parent table name in the final row-count assertion, and the unique-per-attempt request field (display_name for backups; hostname for domains). The independence test exhausts the dimension serially and proves the sixth Create rejects on the new dimension specifically — not on services — pinning the dimension's independence as a regression barrier. The test-only sibling that BE-0327/0328 use does NOT apply here because backup_schedules is not a per-Kind facet — it counts every service_backups row regardless of the parent service's Kind, so a one-test-per-dimension shape is sufficient.
+---

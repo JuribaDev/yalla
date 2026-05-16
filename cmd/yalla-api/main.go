@@ -291,7 +291,7 @@ func main() {
 		logger.Error("failed to initialize the service backup reader", "error", err.Error())
 		os.Exit(1)
 	}
-	serviceBackupService, err := store.NewServiceBackupService(dataStore, store.NewServiceRepository(), store.NewServiceBackupRepository(), serviceAuthz, auditRepo)
+	serviceBackupService, err := store.NewServiceBackupService(dataStore, store.NewServiceRepository(), store.NewServiceBackupRepository(), serviceAuthz, serviceQuota, auditRepo)
 	if err != nil {
 		logger.Error("failed to initialize the service backup service", "error", err.Error())
 		os.Exit(1)

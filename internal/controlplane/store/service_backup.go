@@ -394,19 +394,22 @@ type CreateServiceBackupInput struct {
 // write — it runs on the same *Tx as the write so the in-transaction
 // policy view sees exactly the state the row commits against.
 //
-// Service backups do not yet have a quota (the per-organization
-// backup-policy quota lands in a later worker story) and do not yet
-// enqueue a provisioning job — the backup row is the source of truth,
-// and the Dokploy reconciler will project it as part of the broader
-// service-reconcile loop. When the dedicated worker story lands, the
-// orchestrator will gain JobEnqueuer and QuotaReserver dependencies
-// the same way ServiceService did, alongside the worker's contract
-// tests.
+// Service backups consume the "backup_schedules" quota dimension
+// (BE-0334): every Create reserves one unit on the QuotaReserver in
+// the SAME transaction as the authorization check, the desired-state
+// write, and the audit append, so an organization that exhausts the
+// dimension cannot half-write a backup row whose quota reservation
+// rolled back. The worker-driven backup execution (the actual run +
+// retention enforcement against Dokploy / object storage) lands in
+// a later story; this dimension is the desired-state cap that bounds
+// how many backup-policy rows a tenant can persist before any of that
+// runs.
 type ServiceBackupService struct {
 	store    *Store
 	services *ServiceRepository
 	backups  *ServiceBackupRepository
 	authz    Authorizer
+	quota    QuotaReserver
 	audit    AuditAppender
 }
 
@@ -414,7 +417,7 @@ type ServiceBackupService struct {
 // dependencies. It returns a typed error if any dependency is nil, so
 // a misconfigured service fails at construction rather than on its
 // first request.
-func NewServiceBackupService(s *Store, services *ServiceRepository, backups *ServiceBackupRepository, authz Authorizer, audit AuditAppender) (*ServiceBackupService, error) {
+func NewServiceBackupService(s *Store, services *ServiceRepository, backups *ServiceBackupRepository, authz Authorizer, quota QuotaReserver, audit AuditAppender) (*ServiceBackupService, error) {
 	switch {
 	case s == nil:
 		return nil, errors.New("store: nil store")
@@ -424,6 +427,8 @@ func NewServiceBackupService(s *Store, services *ServiceRepository, backups *Ser
 		return nil, errors.New("store: nil service backup repository")
 	case authz == nil:
 		return nil, errors.New("store: nil authorizer")
+	case quota == nil:
+		return nil, errors.New("store: nil quota reserver")
 	case audit == nil:
 		return nil, errors.New("store: nil audit appender")
 	}
@@ -432,6 +437,7 @@ func NewServiceBackupService(s *Store, services *ServiceRepository, backups *Ser
 		services: services,
 		backups:  backups,
 		authz:    authz,
+		quota:    quota,
 		audit:    audit,
 	}, nil
 }
@@ -490,6 +496,18 @@ func (svc *ServiceBackupService) Create(ctx context.Context, in CreateServiceBac
 		// so a grant change that landed between the HTTP authorize
 		// and this point still cannot let the write through.
 		if err := svc.authz.Authorize(ctx, tx, serviceBackupCreateAction, row.OrganizationID); err != nil {
+			return err
+		}
+		// Quota reservation (BE-0334): reserve one unit on the
+		// "backup_schedules" dimension before the Insert. The
+		// reservation runs inside the same *Tx as the Insert and the
+		// audit append, so a rejected reservation rolls the whole
+		// unit of work back and a tenant whose dimension is exhausted
+		// never persists a backup-policy row. The Checker locks the
+		// tenant's usage counter row FOR UPDATE for hard-enforced
+		// limits, so concurrent Creates serialise on the counter and
+		// can never over-allocate.
+		if err := svc.quota.Reserve(ctx, tx, row.OrganizationID, string(QuotaResourceBackupSchedules)); err != nil {
 			return err
 		}
 		inserted, err := svc.backups.Insert(ctx, tx, row)

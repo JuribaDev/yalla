@@ -32,6 +32,7 @@ const (
 	QuotaResourceMemoryMB              QuotaResource = "memory_mb"
 	QuotaResourceStorageGB             QuotaResource = "storage_gb"
 	QuotaResourceBackups               QuotaResource = "backups"
+	QuotaResourceBackupSchedules       QuotaResource = "backup_schedules"
 	QuotaResourceConcurrentDeployments QuotaResource = "concurrent_deployments"
 	QuotaResourceMonthlyDeployments    QuotaResource = "monthly_deployments"
 )
@@ -50,6 +51,7 @@ var quotaResources = map[QuotaResource]struct{}{
 	QuotaResourceMemoryMB:              {},
 	QuotaResourceStorageGB:             {},
 	QuotaResourceBackups:               {},
+	QuotaResourceBackupSchedules:       {},
 	QuotaResourceConcurrentDeployments: {},
 	QuotaResourceMonthlyDeployments:    {},
 }
