@@ -72,6 +72,7 @@ defined in `.github/workflows/ci.yml`:
 | Container image hardening | `go test ./internal/release/... -run TestDockerfile` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | TLS and proxy header trust | `go test ./internal/release/... -run TestHTTPServerHardening` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Admin endpoint isolation | `go test ./internal/release/... -run TestAdminEndpointIsolation` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| Support access review | `go test ./internal/release/... -run TestSupportAccessReview` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Release config | `goreleaser check` and `goreleaser release --snapshot` | CI `goreleaser-check` job | Every push and PR |
 
 Before cutting a tag the maintainer additionally runs:
@@ -275,6 +276,95 @@ production replica from inside the cluster, or by exporting metrics
 through the OpenTelemetry pipeline that already ships from
 `internal/controlplane/telemetry`. The default-mux surface is not
 the right transport for any of those.
+
+## Support Access Review
+
+Yalla support staff occasionally need to reach into a customer
+organization to triage an incident the customer cannot debug from
+the outside. The mechanism is the time-bounded **break-glass
+session** orchestrated by `store.BreakGlassService` and exposed at
+`POST/GET/DELETE /v1/organizations/{org_id}/break-glass`. Every
+elevated-access decision lands on the immutable audit trail with
+a stable metadata key so reviewers, alerting, and dashboards can
+discover the cross-tenant access. The posture is pinned by
+`internal/release/support_access_review_static_test.go` (BE-0358);
+the gate rejects any of the following shapes at build time:
+
+- **Audit elevation on every mutation.** Both
+  `BreakGlassService.StartSession` and `BreakGlassService.Revoke`
+  MUST append an `AuditEvent` whose `Metadata` map carries the
+  key `breakGlassElevatedAccessKey` (the literal string
+  `elevated_access`). The session row and the audit row are
+  committed in the same `Store.Write` transaction; a session
+  without its audit trail or an audit row without its session
+  cannot exist. The matcher walks both methods on the
+  `*BreakGlassService` receiver and rejects any required method
+  whose body omits the audit-event stamp or whose method is
+  renamed away.
+- **Reason and user-agent scrubbing.** The operator-authored
+  `reason` and the request's `User-Agent` reach the audit row
+  through the store-layer redactor built by `output.NewRedactor`,
+  so secrets a careless operator pasted into the reason field are
+  scrubbed before persistence. The runtime evidence lives in
+  `internal/controlplane/store/break_glass_internal_test.go`
+  (`TestBuildSessionToCreateRedactsReasonValue`); the static gate
+  asserts each load-bearing method references `svc.redactor` at
+  least once so the redactor seam cannot drift.
+- **Access-only — no customer credential mint.** The store-layer
+  break-glass unit of work in
+  `internal/controlplane/store/break_glass_service.go` MUST NOT
+  reference any credential-minting collaborator
+  (`APIKeyService`, `APIKeyRepository`, `APIKeyCreator`,
+  `APIKeyRotator`, `APIKeyIssuer`, `IssueKey`, `MintKey`,
+  `RotateKey`, `NewAPIKey`, `ServiceAccountKey`,
+  `ServiceAccountKeys`). Break-glass records that a support
+  principal reached into the target tenant; the policy engine
+  continues to deny anything the principal's role does not
+  authorize. The runtime evidence is
+  `httpapi.TestSupportPrincipalCannotMintAPIKeys`.
+- **Capability binding stays on `CapSupport`.**
+  `internal/controlplane/policy/catalog.go` MUST bind
+  `ActionAdminBreakGlass` to `CapSupport` in `defaultActionCatalog`
+  AND `builtinRoleCaps` MUST grant `CapSupport` to `RoleSupport`
+  only. The engine's cross-tenant exception clause is
+  `roleCaps.has(CapSupport) && (required == CapRead || required
+  == CapSupport)`; demoting the action out of `CapSupport` would
+  silently lock support out, while widening `CapSupport` to
+  another role would silently grant cross-tenant access to roles
+  that have no support remit. The matcher walks both
+  package-level maps and reports either drift.
+- **Wire shape always advertises elevation.** The HTTP renderer
+  `breakGlassSessionResourceOf` in
+  `internal/controlplane/httpapi/break_glass.go` MUST hard-code
+  `ElevatedAccess: true` in every projected
+  `breakGlassSessionResource{...}` literal. A regression that
+  omitted the field, projected it from the row, or made it
+  conditional would silently strip the review signal from every
+  list/get/start/revoke response.
+
+Operators reviewing support access in production should:
+
+1. Filter the audit log for events whose `metadata.elevated_access`
+   equals `"true"`. Both `admin.break_glass.start` and
+   `admin.break_glass.revoke` are captured, with the
+   `target_organization_id`, `break_glass_session_id`,
+   `expires_at`, and `ttl_seconds` ride-alongs.
+2. Cross-reference the session id back to the durable
+   `break_glass_sessions` row via the
+   `GET /v1/organizations/{org_id}/break-glass` and
+   `GET /v1/organizations/{org_id}/break-glass/{session_id}`
+   endpoints — both return the wire shape with
+   `elevated_access: true` and `active` computed against the
+   current clock.
+3. Terminate any session whose review reveals an unauthorized
+   reach via `DELETE /v1/organizations/{org_id}/break-glass/
+   {session_id}`. The revoke also lands an
+   `elevated_access=true` audit row.
+
+The break-glass mechanism is access-only and never mints customer
+credentials, so a compromised support principal can be reviewed
+and revoked through the audit trail without rotating customer API
+keys.
 
 ## Disclosure Timeline (Best Effort)
 

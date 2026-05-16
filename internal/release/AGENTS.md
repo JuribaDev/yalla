@@ -220,3 +220,101 @@ extended with a fresh known-bad fixture in the same edit so over-
 and under-tightening of the analyser are both caught. The
 `adminProductionFiles` helper sorts its output so a regression in
 ANY production file in scope produces a deterministic diagnostic.
+
+## Support access review (BE-0358)
+
+`support_access_review_static_test.go` pins the operator-facing
+contract that every break-glass mutation lands on the immutable
+audit trail with `metadata.elevated_access == "true"`, that the
+unit of work is access-only (no credential mint), that the policy
+catalog keeps `admin.break_glass` bound to `CapSupport` and
+grants `CapSupport` to `RoleSupport` only, and that the HTTP
+renderer always advertises elevation. Five real-file matchers
+run alongside one synthetic self-check
+(`TestSupportAccessReviewStaticAnalyzerDetectsRegressions`):
+
+- **`internal/controlplane/store/break_glass_service.go`** —
+  `findSupportAuditElevationRegressions` walks every FuncDecl
+  whose receiver is `*BreakGlassService` and indexes the
+  required-method set (`supportRequiredMethodNames` =
+  `StartSession`, `Revoke`). A missing required method is a
+  named diagnostic; a present method whose body has no
+  `AuditEvent{...}` literal containing
+  `Metadata: map[string]string{breakGlassElevatedAccessKey: ...}`
+  is rejected. `supportKeyIsElevatedAccess` accepts EITHER the
+  package-private identifier `breakGlassElevatedAccessKey` OR the
+  bare string literal `"elevated_access"` — both land on the same
+  dashboard column. When adding a new break-glass mutation method
+  (e.g. a future `ExtendSession`), append the method name to
+  `supportRequiredMethodNames` in the same edit.
+- **`internal/controlplane/store/break_glass_service.go`** —
+  `findSupportRedactorRegressions` walks the same required-method
+  set and asserts each method body contains at least one
+  selector expression rooted at the conventional receiver alias
+  `svc` (`supportServiceReceiverName`) with `Sel.Name ==
+  "redactor"` (`supportRedactorFieldName`). The runtime evidence
+  lives in `internal/controlplane/store/break_glass_internal_test.go`
+  (`TestBuildSessionToCreateRedactsReasonValue`); the static gate
+  catches a regression that silently drops the redactor seam. The
+  matcher relies on the receiver alias being uniform; the
+  store-layer convention is `svc` everywhere in the file.
+- **`internal/controlplane/store/break_glass_service.go`** —
+  `findSupportCredMintRegressions` walks every `*ast.Ident` in
+  the file and rejects any name in
+  `forbiddenCredMintIdentifiers` (`APIKeyService`,
+  `APIKeyRepository`, `APIKeyCreator`, `APIKeyRotator`,
+  `APIKeyIssuer`, `IssueKey`, `MintKey`, `RotateKey`,
+  `NewAPIKey`, `ServiceAccountKey`, `ServiceAccountKeys`).
+  The scan is file-wide and case-sensitive: every credential-
+  bearing surface in this `store` package is one of those
+  identifiers, so the closed set covers the threat model
+  completely today. A future credential type should either join
+  the list (if break-glass must stay away from it) or be
+  reviewed.
+- **`internal/controlplane/policy/catalog.go`** —
+  `findSupportPolicyCatalogRegressions` runs two passes. Pass 1
+  walks the `defaultActionCatalog` map literal (located by name
+  via `supportFindMapLiteral`) and asserts the entry
+  `ActionAdminBreakGlass: CapSupport` is present and unaltered.
+  Pass 2 walks the `builtinRoleCaps` map literal and asserts
+  `CapSupport` (located as an argument to the `newCapSet(...)`
+  call) appears ONLY in `RoleSupport`'s row AND that
+  `RoleSupport`'s row DOES include `CapSupport`. Either drift
+  silently routes support access through a different engine
+  clause. `supportFindMapLiteral` returns nil if the variable is
+  missing or its initialiser is not a map literal; the matcher
+  emits a named diagnostic in that case so a rename forces an
+  explicit update.
+- **`internal/controlplane/httpapi/break_glass.go`** —
+  `findSupportElevatedAccessProjectionRegressions` locates the
+  package-level `breakGlassSessionResourceOf` function and walks
+  its body. The matcher requires at least one
+  `breakGlassSessionResource{...}` composite literal whose
+  `ElevatedAccess` key-value pair has the literal identifier
+  `true` as its value. A missing function, a literal that omits
+  the field entirely, a `false` literal, and a value projected
+  from the row (e.g. `s.ElevatedAccess`) are all rejected — the
+  client uses this flag to decide whether to display the
+  "elevated" banner and a row-sourced value would be untrusted.
+- **`SECURITY.md`** —
+  `TestSupportAccessReviewSecurityDocumented` pins the
+  `## Support Access Review` heading, the verification-gates
+  table row, and the canonical substrings (`elevated_access`,
+  `admin.break_glass`, `CapSupport`, `output.NewRedactor`, and
+  the test file path itself). The substrings carry the load-
+  bearing facts so a future reader does not have to open the
+  test file to learn the contract.
+
+When adding a new break-glass mutation method, update
+`supportRequiredMethodNames` AND add the method to
+`break_glass_service.go` with the audit-event stamp AND extend
+the self-check fixture catalogue with a fresh known-bad case in
+the same edit. When changing the audit-metadata key name, update
+`supportElevatedAccessKeyIdent` AND
+`supportElevatedAccessKeyLiteral` AND the SECURITY.md substring
+list in the same edit — analytics, alerting, and the review
+endpoints all branch on the exact key. When adding a new
+credential type to the `store` package, decide whether
+break-glass must stay away from it and (if so) extend
+`forbiddenCredMintIdentifiers` in the same edit; otherwise
+document why the new surface is access-only.

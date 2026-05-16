@@ -25321,3 +25321,211 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     — the dual representation (test file as authority, doc as
     explanation) is the BE-0356 contract and it scales.
 ---
+
+## 2026-05-17 - BE-0358
+- What was implemented:
+  - Security verification: support access review. Pinned the
+    operator-facing contract that every break-glass mutation
+    lands on the immutable audit trail with
+    metadata.elevated_access="true", that the store-layer unit of
+    work is access-only (no credential mint), that the policy
+    catalog keeps admin.break_glass bound to CapSupport and grants
+    CapSupport to RoleSupport only, and that the HTTP renderer
+    always advertises elevation. Static-only matchers — runtime
+    coverage already exists in
+    internal/controlplane/store/break_glass*_test.go (Postgres,
+    audit metadata, redactor) and
+    internal/controlplane/httpapi/break_glass_test.go (success,
+    validation failure, authorization failure, not-found,
+    conflict, "support cannot mint api keys").
+  - New static-pin test file
+    internal/release/support_access_review_static_test.go
+    (single-test-file variant of the BE-0344 pattern, SEVENTH
+    instance after BE-0352..BE-0357; FIRST instance to pin
+    invariants spanning THREE production packages —
+    internal/controlplane/store, internal/controlplane/policy,
+    and internal/controlplane/httpapi — rather than a single
+    target file or directory). Six test functions share the
+    TestSupportAccessReview prefix so
+    -run TestSupportAccessReview selects the family cleanly:
+      - TestSupportAccessReviewAuditElevation — walks
+        break_glass_service.go for *BreakGlassService receiver
+        methods named StartSession and Revoke and proves each
+        body contains an AuditEvent{...} composite literal whose
+        Metadata map literal carries the elevated-access key
+        (accepts either the package-private constant identifier
+        breakGlassElevatedAccessKey OR the bare string literal
+        "elevated_access"). A renamed-away required method is a
+        named "required method missing" diagnostic.
+      - TestSupportAccessReviewReasonRedaction — proves each
+        required method body contains at least one selector
+        expression `svc.redactor`, so the reason/user-agent
+        scrubbing seam cannot drift. Pairs with the existing
+        TestBuildSessionToCreateRedactsReasonValue runtime test.
+      - TestSupportAccessReviewNoCredentialMint — walks every
+        *ast.Ident in break_glass_service.go and rejects any
+        name in forbiddenCredMintIdentifiers (APIKeyService,
+        APIKeyRepository, APIKeyCreator, APIKeyRotator,
+        APIKeyIssuer, IssueKey, MintKey, RotateKey, NewAPIKey,
+        ServiceAccountKey, ServiceAccountKeys). Break-glass is
+        access-only; the runtime evidence is
+        httpapi.TestSupportPrincipalCannotMintAPIKeys.
+      - TestSupportAccessReviewPolicyCatalogBinding — two-pass
+        walk over policy/catalog.go: pass 1 asserts
+        defaultActionCatalog binds ActionAdminBreakGlass to
+        CapSupport (drift to CapRead/CapOwner is a named
+        diagnostic); pass 2 asserts CapSupport appears as an
+        argument to newCapSet(...) ONLY in RoleSupport's row of
+        builtinRoleCaps AND that RoleSupport's row DOES include
+        CapSupport. Either drift silently routes support access
+        through a different engine clause.
+      - TestSupportAccessReviewElevatedAccessProjection — locates
+        the package-level breakGlassSessionResourceOf function in
+        httpapi/break_glass.go and asserts every returned
+        breakGlassSessionResource{...} literal carries
+        ElevatedAccess: true exactly (literal identifier `true`).
+        A missing function, an omitted field, false, or a value
+        projected from the row are all rejected.
+      - TestSupportAccessReviewSecurityDocumented — pins the
+        SECURITY.md heading "## Support Access Review", the
+        canonical substrings (elevated_access,
+        admin.break_glass, CapSupport, output.NewRedactor,
+        and the test file path), and the verification-gates
+        table row.
+      - TestSupportAccessReviewStaticAnalyzerDetectsRegressions
+        — synthetic known-bad/known-good self-check for each of
+        the five real-file matchers; 18 sub-tests in total.
+  - SECURITY.md: added "## Support Access Review" section
+    (above the disclosure timeline) documenting the audit-
+    elevation invariant, the reason/user-agent scrubbing seam,
+    the access-only posture, the CapSupport binding, the wire-
+    shape always-advertises-elevation rule, and the operator
+    workflow for reviewing/terminating active sessions. Added
+    a new verification-gates table row keyed on
+    `go test ./internal/release/... -run TestSupportAccessReview`.
+  - internal/release/AGENTS.md: added a "Support access review
+    (BE-0358)" subsection documenting all five real-file
+    matchers, the closed forbidden-identifier set, the renamed-
+    method failure mode, the receiver-alias dependency, and
+    the "update bottom" rules (where to update what when adding
+    a new break-glass mutation method, a new audit-metadata
+    key, or a new credential type to the store package).
+- Files changed:
+  - internal/release/support_access_review_static_test.go (new,
+    ~900 lines): six-test pattern with one synthetic self-check
+    sub-tree.
+  - SECURITY.md: new "## Support Access Review" section above the
+    disclosure timeline AND a new row in the Required
+    Verification Gates table keyed on
+    `go test ./internal/release/... -run TestSupportAccessReview`.
+  - internal/release/AGENTS.md: added a "Support access review
+    (BE-0358)" subsection that documents the five real-file
+    matchers and the update-bottom maintenance rules.
+  - ralph/prd.json: BE-0358.passes = true.
+  - ralph/progress.txt: this entry.
+- Verification run:
+  - gofmt -w .
+  - go mod tidy (no changes)
+  - go vet ./... (clean)
+  - go test ./... (full module green — release 0.423s,
+    no FAIL anywhere)
+  - go test -race ./... (full module green — release 1.413s,
+    no FAIL anywhere)
+  - go test -race ./internal/release/... ./internal/controlplane/store/...
+    ./internal/controlplane/httpapi/... ./internal/controlplane/policy/...
+    -run "TestSupportAccessReview|TestBreakGlass|..." (all green;
+    release 1.426s, store 2.997s, httpapi 2.794s, policy 1.733s).
+- Results: all required checks pass. goimports/golangci-lint/
+  staticcheck/govulncheck still not installed locally
+  (documented in earlier iterations).
+- Remaining risks / follow-ups: None for BE-0358 itself. The
+  next priority-1 security-verification story BE-0359 (log
+  redaction fuzzing) is now unblocked. The BE-0344 single-test-
+  file variant has now landed SEVEN times (BE-0352 audit
+  tamper, BE-0353 dependency scan, BE-0354 govulncheck wiring,
+  BE-0355 container hardening, BE-0356 TLS + proxy header
+  trust, BE-0357 admin endpoint isolation, now BE-0358 support
+  access review). BE-0358 is the FIRST instance to pin
+  invariants spanning three production packages in a single
+  static file (store + policy + httpapi), confirming the
+  template scales to multi-package contracts.
+- **Learnings for future iterations:**
+  - Multi-package static gates: when an invariant spans three
+    production packages whose drift is meaningful in different
+    ways (audit shape in store, capability binding in policy,
+    wire-shape projection in httpapi), it is still cleanest to
+    house the gate as ONE static-pin file in internal/release.
+    The per-package AGENTS.md update points back to a single
+    test file and a single SECURITY.md section, so a future
+    contributor changing any of the three files learns where
+    to look without grepping across release/{*/static_test.go}.
+    The parseSupportFile helper takes the relative path so the
+    same helper serves all three target files; the matchers
+    take (*token.FileSet, *ast.File) so position diagnostics
+    line up with the file under review.
+  - Position-table correctness pitfall: an early draft of this
+    test had separate `parseSupportFile` and `supportFileSet`
+    helpers that each parsed the file into a DIFFERENT
+    token.FileSet. The AST nodes carry token.Pos values that
+    are only meaningful against the fset that parsed them;
+    calling `fset.Position(node.Pos())` against a different
+    fset returns "-" or a wildly wrong position. Future
+    multi-file static gates should return (fset, file)
+    together from one helper, OR thread a single fset through
+    every parse call, OR re-parse the file each matcher
+    invokes (slower but isolated). The "two helpers" shape is
+    the trap.
+  - Matcher self-check fixture-counting precision: when the
+    matcher walks every *ast.Ident in the file (as
+    findSupportCredMintRegressions does), an identifier
+    appearing at BOTH a type declaration AND a value-position
+    reference (e.g. `type APIKeyService struct{}` plus
+    `*APIKeyService` field type) counts TWICE. The synthetic
+    self-check wantHits MUST mirror this; otherwise the
+    self-check passes accidentally because it under-counts.
+    The fix is to either explicitly call out the dual-counting
+    in the fixture's comment (the convention used here) or to
+    fold both decl- and ref-position hits into a single
+    diagnostic via a per-identifier "seen" set (rejected here
+    because it would mask a genuine "declared but unused"
+    regression).
+  - Closed-set forbidden-identifier scans for "access-only"
+    invariants: the credential-mint forbidden set is curated
+    to the credential-bearing types in the local store
+    package. A naive design would forbid imports of an
+    "apikey" sub-package, but that breaks down inside a
+    single-package store layer where APIKeyService is just
+    another type in the same package. File-wide
+    identifier-name scanning is the right shape for "this
+    package must not reach for these named types"; the closed
+    set documents the threat model and the AGENTS.md
+    "extending this set" rule keeps it honest.
+  - AGENTS.md subsection ordering: append every new
+    security-verification subsection at the BOTTOM of the
+    sequence (after the previous story's update-bottom
+    rules). The chronological ordering means a contributor
+    looking up the most recent template instance finds it at
+    the bottom of the file without scrolling past unrelated
+    older subsections.
+  - SECURITY.md substring choice: the test pins
+    output.NewRedactor (the actual constructor) rather than
+    output.Redactor (a bare type name) in the
+    requiredSupportSecuritySubstrings list because the
+    constructor is what the store-layer service actually
+    calls. Pinning the constructor catches a regression that
+    swaps to a different constructor (a hypothetical
+    output.NewNoopRedactor would be a quiet downgrade); the
+    bare type name would match a passing reference and miss
+    the swap.
+  - The runtime evidence story for a static gate: where the
+    invariant is "this method ALWAYS does X", the static gate
+    is necessary (a runtime test cannot prove the property
+    for every future call site) and SUFFICIENT (the runtime
+    test confirms X works once). The pre-existing
+    break_glass_test.go family already covers the "X works"
+    runtime evidence, so BE-0358 is a static-only delivery.
+    The threat-model comment block in the test file
+    explicitly cross-references the runtime tests by name so
+    a future reviewer learns where the runtime evidence
+    lives without having to discover it.
+---
