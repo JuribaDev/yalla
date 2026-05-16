@@ -15610,3 +15610,23 @@ Learnings for future iterations:
     them, so the same builder can be reused by a future scoped-route
     matrix in the same file family.
 ---
+
+## 2026-05-16 - BE-0196
+- Implemented GET /v1/services/{service_id}/rendered: the deterministic identity projection of one service.
+- Files added:
+  - internal/controlplane/httpapi/services_rendered.go (renderedLabel, renderedService, renderedServicePayload, renderedServiceType, renderServiceLabels, getServiceRenderedHandler)
+  - internal/controlplane/httpapi/services_rendered_test.go (happy path, kind-mapping subtests, not-found, store-unavailable, unauthenticated, no-reader-configured wiring error, labels-carry-no-secrets)
+- Files changed:
+  - internal/controlplane/httpapi/routes.go (registered the new route with the same serviceIDResolver as GET /v1/services/{service_id}; long OpenAPI description documenting the deterministic identity layer scope, the forward-compatible 'rendered' block, the policy contract, and the no-credential-material guarantee)
+- The endpoint reuses the existing ServiceReader port (the same port GET /v1/services/{service_id} depends on); no new persistence ports were needed. The 'rendered' block carries the canonical Docker-safe Dokploy resource name (domain.DokployName(svc.DisplayName, svc.ID)), the Dokploy service type mapped from the row's kind, and the structural identity labels (yalla.organization_id, yalla.project_id, yalla.environment_id, yalla.service_id). Merged environment-variable values, build settings, resource limits, and requested domains are deliberately out of scope today — their source-of-truth tables are scheduled into later stories — and the projection is forward-compatible (only new fields are added later).
+- Authorization: action service.read at the (principal home organization, {service_id}) resource via serviceIDResolver, same as GET /v1/services/{service_id}. Policy matrix coverage will land separately as BE-0198.
+- Verification: gofmt -w; go mod tidy; go vet ./...; go test ./... -count=1; go test -race ./... -count=1. All green.
+- Remaining risks / follow-ups:
+  - BE-0197 (contract tests for /rendered) — this story already adds extensive contract tests but the dedicated BE-0197 story may still want additional coverage (e.g. boundary cases for kind taxonomy expansion, ETag semantics if added).
+  - BE-0198 (policy matrix coverage for /rendered) — will follow the services_get_policy_test.go pattern.
+  - Future stories must extend the 'rendered' block as service-level variables, build, domains, and resource-limit migrations land (BE-0199+ and beyond).
+- Learnings for future iterations:
+  - domain.DokployName runs domain.ParseID on the resource id; tests that exercise rendered/Dokploy-name paths MUST use canonical IDs (domain.MustNewID(domain.KindService).String()), not the simple opaque strings shared with non-rendering tests (canonicalServiceForGet). Production rows always carry canonical IDs because the store layer enforces this, so a canonical fixture mirrors production data.
+  - The existing fakeServiceReader + getServiceHandlerFor + authForSvcGet + principalForSvcGet fixtures from services_test.go are reusable for ANY route built on the ServiceReader port — no new fakes were needed for /rendered.
+  - When extending services with a new route, the route registration in routes.go is verbose but mechanical: the OpenAPI description repeats the authorization story, the cross-tenant story, and the no-credential-material story. The block immediately above /restore is the canonical structure to follow.
+---

@@ -1047,6 +1047,37 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 		},
 		{
 			endpoint: openapi.Endpoint{
+				Method:         http.MethodGet,
+				Path:           "/v1/services/{service_id}/rendered",
+				OperationID:    "getServiceRendered",
+				Summary:        "Get a service's rendered desired-state preview",
+				Description:    "Returns the rendered desired-state PREVIEW for the service named by the {service_id} path parameter — the deterministic projection of how the source-of-truth row reaches the worker (Dokploy resource name, Dokploy service type, and structural identity labels) — so an agent can verify what the control plane will hand to provisioning before any mutation runs. The renderer is the identity layer today: the Dokploy resource name is the canonical Docker-safe '<slug>-<dokploy-id>' deterministic from the row's display_name and id, the service type mirrors the row's closed kind taxonomy ('application', 'database', or 'compose'), and the labels carry only Yalla-canonical hierarchy ids (yalla.organization_id, yalla.project_id, yalla.environment_id, yalla.service_id) the worker stamps onto every provisioned Dokploy object. The merged environment-variable set, build settings, resource limits, and requested domains live in their own per-level tables and are scheduled into later stories; the public projection deliberately carries no values for them today and the 'rendered' block is forward-compatible (only new fields are added later). Action service.read is authorized against the (principal home organization, {service_id}) resource the path names before the handler runs: a CapRead action gated by the principal's organization-wide read roles (owner, admin, developer, viewer, ci). The support principal's deliberate cross-tenant read exception does NOT apply through this endpoint because the resource scope is pinned to the principal's home organization, not the path service's tenant; support cross-tenant reads remain available through endpoints whose path carries an {org_id}. The path carries no parent project_id, so the policy engine cannot pin the ProjectID leg of the resource scope at authorization time — project-, environment-, and service-scoped grants are denied at the boundary because the engine asks whether the grant scope (which pins ProjectID) covers the resource scope (which does not), never the reverse; principals whose only access is a scoped grant must use a parent-scoped route to address a service by its (project, environment, service) tuple. The handler reads from the principal's home organization id only — it never trusts a caller-supplied organization id — so a cross-tenant service_id reaches the persistence layer with the principal's home organization id and is rejected as a deterministic 404 by the tenant-scoped GetByID query, never revealing another tenant's service. The response carries no credential material — the services table itself stores no secrets, the rendered projection contains only structural identifiers and the deterministic Dokploy resource name derived from the row's display_name and id, and service-scoped variables (rendered values verbatim) live behind their own /variables endpoints where the per-route redaction policy applies; rendered values never appear in this endpoint's payload.",
+				Tags:           []string{tagServices},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionServiceRead),
+				PathParams: []openapi.PathParam{{
+					Name:        "service_id",
+					Description: "The id of the service to render.",
+				}},
+				SuccessDescription: "The rendered desired-state preview of the requested service.",
+			},
+			// serviceIDResolver authorizes action service.read against
+			// the (principal home organization, {service_id}) resource
+			// the path names, not merely the principal's home
+			// organization. The organization id is taken from the
+			// principal's home org (never the caller), so a cross-tenant
+			// service_id still hits the tenant-scoped GetByID query and
+			// surfaces as a 404 at the persistence boundary. The path
+			// carries no parent project_id, so the resource scope pins
+			// only OrganizationID and ServiceID — project-, environment-,
+			// and service-scoped grants are denied at the policy boundary
+			// by design (the engine's covers() rule), forcing
+			// scoped-grant-only principals onto parent-scoped routes.
+			resolver: serviceIDResolver,
+			handler:  getServiceRenderedHandler(services),
+		},
+		{
+			endpoint: openapi.Endpoint{
 				Method:         http.MethodPost,
 				Path:           "/v1/organizations/{org_id}/break-glass",
 				OperationID:    "startBreakGlassSession",
