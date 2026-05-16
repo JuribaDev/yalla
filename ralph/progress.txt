@@ -19596,3 +19596,89 @@ Searchable terms for follow-up: members_list, members_get, members_create, membe
 
 Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakGlass, break_glass, break-glass, session_id, canonicalAdminBreakGlassProjectID, canonicalAdminBreakGlassSiblingID, sa_admin_break_glass_revoked, sa_admin_break_glass_expired, sa_proj_support_break_glass, sa_proj_support_sibling_break_glass, sa_proj_admin_break_glass, sa_env_staging_support_break_glass, sa_env_prod_support_break_glass, sa_env_staging_admin_to_prod_break_glass, sa_env_prod_admin_break_glass, sa_svc_support_break_glass, sa_svc_admin_break_glass, sa_org_break_glass_support, sa_stolen_break_glass, TestAdminBreakGlassPolicyMatrixRoles, TestAdminBreakGlassPolicyRevokedAndExpiredKeys, TestAdminBreakGlassPolicyWrongOrganizationPrincipal, TestAdminBreakGlassPolicyProjectGrantContainment, TestAdminBreakGlassPolicyEnvironmentGrantContainment, TestAdminBreakGlassPolicyServiceGrantContainment, TestAdminBreakGlassPolicyOrgGrantCapabilityMatrix, TestAdminBreakGlassPolicyForeignHomeOrgGrant, CapSupport, ReasonAllowedBySupport, ReasonAllowedByRole, ReasonAllowedByGrant, ReasonDeniedNoCapability, ReasonDeniedCrossTenant, ReasonDeniedOutOfScope, ReasonDeniedPrincipalDisabled, BE-0285, BE-0288, BE-0291, BE-0294, BE-0300, admin.read, admin.import, admin.reconcile, admin.break_glass.
 ---
+
+## 2026-05-16 - BE-0300
+- What was implemented: endpoint-pinned engine-only policy matrix for
+  DELETE /v1/admin/break-glass/{session_id}, the wire-endpoint twin of
+  BE-0297's action-level admin.break_glass coverage. The wire endpoint
+  has not landed yet; this file pins the authorization contract the
+  destructive session-terminate verb must satisfy at the engine seam
+  regardless of when the wire endpoint surfaces, mirroring the BE-0285
+  / BE-0288 endpoint-twin precedent for admin.reconcile.
+- Files changed:
+  - internal/controlplane/policy/admin_break_glass_endpoint_policy_test.go
+    (new, ~580 lines): structurally parallel to
+    admin_break_glass_policy_test.go (BE-0297) but state-independent.
+    Eight t.Parallel tests cover (1) the six-row per-role matrix
+    (Owner / Admin / Developer / CI / Viewer = ReasonDeniedNoCapability,
+    Support = ReasonAllowedByRole) — the CapSupport "one-row allow"
+    photo-negative shape, (2) Disabled-principal short-circuit
+    (ReasonDeniedPrincipalDisabled) for revoked + expired keys under
+    RoleSupport so the disabled deny is load-bearing against an
+    otherwise-allowed role, (3) the cross-tenant matrix flipping
+    Support DENY -> ALLOW (ReasonAllowedBySupport) — the CapSupport
+    cross-tenant exception clause `roleCaps.has(CapSupport) &&
+    (required == CapRead || required == CapSupport)` is the structural
+    barrier against an asymmetric regression that left BE-0297's
+    session-creation matrix intact while flipping terminate to deny,
+    (4) project-grant containment (ReasonDeniedOutOfScope for Support
+    on target + sibling project + ReasonDeniedNoCapability for Admin
+    on target project), (5) env-grant containment (staging + prod
+    Support both DeniedOutOfScope against org-rooted resource +
+    staging-to-prod env.write defence-in-depth + prod Admin
+    DeniedNoCapability), (6) service-grant containment (Support
+    DeniedOutOfScope + service Admin denies parent env.write and
+    sibling service.update + service Admin DeniedNoCapability on
+    admin.break_glass), (7) org-grant capability matrix (only RoleSupport
+    grant allows ReasonAllowedByGrant; every other built-in role
+    DeniedNoCapability — the engine pin against a CapAdmin / CapOwner
+    catalog drift that would silently let every customer Owner end
+    an active Yalla-support session), (8) foreign-home-org-grant
+    cross-tenant guard (stolen scoped key cannot drive terminate
+    against the principal's home tenant; CapSupport's cross-tenant
+    exception is gated on the PRINCIPAL'S role caps, not on a grant's).
+  - ralph/prd.json: BE-0300 passes flipped true.
+- Verification run: gofmt -l . (clean); go vet ./...; go mod tidy
+  (no changes); go test -count=1 ./internal/controlplane/policy/...;
+  go test -race -count=1 ./internal/controlplane/policy/...;
+  go test -count=1 ./...; go test -race -count=1 ./... — all green.
+  goimports / golangci-lint / staticcheck / govulncheck still not
+  installed locally (documented in earlier iterations).
+- Remaining risks / follow-ups:
+  - The wire endpoint DELETE /v1/admin/break-glass/{session_id} itself
+    is still not landed; this engine-pin file is the structural
+    barrier for whoever lands the wire endpoint and will need to be
+    accompanied by the wire-level contract test, audit-event check
+    (cross-tenant support session terminate audit trail), and
+    request-body / path-leak guard then. The BE-0291 / BE-0294 wire-
+    endpoint stories already passed and follow the canonical admin-
+    endpoint shape — clone that template when the terminate wire
+    story lands.
+- **Learnings for future iterations:**
+  - The endpoint-pinned twin pattern (BE-0288 originally for
+    admin.reconcile, now BE-0300 for admin.break_glass) is a clean
+    clone of the action-level file at the engine seam: every
+    canonical id and ServiceAccount id is renamed with an "endpoint"
+    suffix deliberately distinct from the action-level file's ids so
+    a future shared helper cannot couple the two matrices' state.
+    The header docstring frames the engine pin around the SPECIFIC
+    endpoint's failure mode — for a destructive verb (terminate /
+    reconcile / cancel) the framing is "asymmetric regression
+    leaving the symmetric create path intact while flipping the
+    destructive path", because that is the exact regression shape an
+    endpoint-pinned twin guards against that an action-level pin
+    alone would miss.
+  - For destructive admin verbs reached at /v1/admin/... whose
+    resolver materialises the target organization from a stored row
+    (the loaded break-glass session) rather than a path leg, the
+    engine resource is always Resource{Kind: KindOrganization,
+    Scope: {OrganizationID: org}}; the path's session_id never
+    reaches the engine. The grant-containment matrix therefore looks
+    structurally identical to the create-verb's matrix at the engine
+    seam — same projection, same Resource shape, same one-way
+    covers() rule — and the differentiator is the framing of why
+    each row matters for THIS verb (e.g. "terminate widens the
+    incident-response DoS surface to anyone with CapSupport via a
+    project-scoped key" vs "create widens the elevated-session-mint
+    surface to anyone with CapSupport via a project-scoped key").
+---
