@@ -2576,7 +2576,7 @@
       ],
       "type": "test-api-key",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Contract coverage for DELETE /v1/organizations/{org_id}/api-keys/{key_id}."
     },
     {

@@ -24654,3 +24654,55 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     inline so adding a new verb is a single change with a co-located
     self-check case.
 ---
+
+## 2026-05-17 - BE-0089
+- Added internal/controlplane/httpapi/api_keys_delete_contract_test.go: a
+  structural twin of api_keys_get_contract_test.go (BE-0083) and
+  api_keys_update_contract_test.go (BE-0086), adapted to the api-keys DELETE
+  request shape ({org_id} + {key_id} path parameters, no body, APIKeyRevoker
+  port through the same NewHandler wiring).
+- Three tests pin the wire contract that api_keys_delete_test.go (BE-0088)
+  does not assert directly: (a) the HTTP server writes response data only
+  through the http.ResponseWriter — captureProcessOutput swap, both stdout
+  and stderr must stay empty while the revoked api_key payload (including
+  the resolved revoked_at stamp) rides on the response body; (b) the
+  per-request structured log redacts the bearer credential on the happy
+  path AND the disabled-principal deny-leg (sentinel-error fakeAPIKeyRevoker
+  proves the deny short-circuits at policy so any logged "revoker error"
+  cannot be the leak source); (c) the error envelope built from a wrapped
+  store-outage cause never leaks the full cause string OR the bare datastore
+  address onto the wire.
+- Added the per-endpoint helper revokeAPIKeyHandlerForWithLogger that wires
+  the full NewHandler surface with a caller-supplied APIKeyRevoker and
+  *slog.Logger, mirroring updateAPIKeyHandlerForWithLogger and
+  listAPIKeysHandlerForWithLogger.
+- Files changed:
+  - internal/controlplane/httpapi/api_keys_delete_contract_test.go (new)
+  - ralph/prd.json (BE-0089 passes: true)
+  - ralph/progress.txt (this entry)
+- Verification: gofmt clean; go vet ./... clean; go mod tidy clean;
+  go test ./internal/controlplane/httpapi/ PASS;
+  go test -race ./internal/controlplane/httpapi/ -run TestRevokeAPIKey... PASS;
+  go test ./... PASS.
+- Remaining risks / follow-ups: none specific to this story. Next sibling
+  contract-test story is BE-0092 (POST /v1/organizations/{org_id}/api-keys/{key_id}/rotate).
+- Learnings for future iterations:
+  - The fakeAPIKeyRevoker has a single `err` field (not split into get/update
+    flavours like fakeAPIKeyReader's getErr) so the deny-leg sentinel error
+    uses the same field as the store-outage forwarding cases — both legs
+    must use distinct sentinel/typed errors so a test that accidentally
+    flips happy/deny gives a unique signal rather than silently passing.
+  - The DELETE endpoint, like PATCH and GET, returns a 200 success envelope
+    carrying the post-revocation row (revoked_at non-nil); the contract
+    test pins revoked_at == revokedAt.Format(time.RFC3339Nano) as the
+    "data must be carried by the response body" probe rather than the name
+    or scopes, because revoked_at is the only field that materially changes
+    on this endpoint.
+  - DELETE has no request body and no query params, so the "validation
+    failure" criterion in the acceptance list is covered by
+    api_keys_delete_test.go via apierr.InvalidInput forwarding from the
+    store layer (a malformed id surfaces as a typed 400). There is no
+    request-body-level rejection to assert in the contract test — the
+    helper text in the file header documents this explicitly so a future
+    reader does not look for one.
+---
