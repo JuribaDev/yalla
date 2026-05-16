@@ -2405,8 +2405,8 @@
       ],
       "type": "test-api-key",
       "priority": 2,
-      "passes": false,
-      "notes": "Contract coverage for POST /v1/organizations/{org_id}/api-keys."
+      "passes": true,
+      "notes": "Contract coverage for POST /v1/organizations/{org_id}/api-keys landed via internal/controlplane/httpapi/api_keys_create_contract_test.go — pins (1) HTTP server writes response data only via ResponseWriter (no stdout/stderr), (2) per-request log redacted on both happy and disabled-principal authorization-failure paths, (3) error envelope does not leak wrapped StoreUnavailable cause/datastore address. Structural twin of members_create_contract_test.go (BE-0065) and api_keys_list_contract_test.go (BE-0077) adapted to APIKeyCreator port + createAPIKeyPayload data block."
     },
     {
       "id": "BE-0081",

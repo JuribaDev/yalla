@@ -24113,3 +24113,29 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     members template, which lives at positions 13-16 (reader, creator,
     updater, remover).
 ---
+
+## 2026-05-16 - BE-0080
+- Added api-keys CREATE public-API contract test file mirroring the BE-0077 list_contract pattern (which itself mirrors the BE-0065 members_create_contract twin), adapted to the POST /v1/organizations/{org_id}/api-keys request shape (APIKeyCreator port, createAPIKeyPayload response data block, RoleOwner-gated keys.manage action).
+- Three contract pins land in internal/controlplane/httpapi/api_keys_create_contract_test.go:
+  - TestCreateAPIKeyServerWritesResponseDataOnlyToResponseWriter — captureProcessOutput around postAPIKey proves a served 201 writes nothing to process stdout/stderr and the persisted api_key payload (key_id + name) lives on the response body; structured logger sink stays the only sanctioned writer.
+  - TestCreateAPIKeyRequestLogRedactsBearerToken — success path + authorization-failure path (Disabled principal) both prove the bearer credential never lands in the slog JSON record nor in the response body; deny path uses a creator that errors if invoked to prove policy short-circuits before the creator.
+  - TestCreateAPIKeyErrorEnvelopeDoesNotLeakDependencyCause — apierr.StoreUnavailable(connection refused dialing 10.0.0.5:5432) surfaces as 503 E_UNAVAILABLE with a stable generic message; the bare cause string AND the 10.0.0.5 datastore address are pinned absent from the wire body.
+- New helper createAPIKeyHandlerForWithLogger threads a caller-supplied *slog.Logger into NewHandler, mirroring listAPIKeysHandlerForWithLogger (BE-0077) and addMemberHandlerForWithLogger (BE-0065). All other helpers (postAPIKey, decodeCreateAPIKey, createAPIKeyHandlerFor, fakeAPIKeyCreator, seedAPIKey, captureProcessOutput, decodeError, orgPrincipal) already exist from api_keys_create_test.go / api_keys_test.go / me_contract_test.go / middleware_test.go / organizations_test.go.
+- Files changed:
+  - internal/controlplane/httpapi/api_keys_create_contract_test.go (new, ~226 lines)
+  - ralph/prd.json (BE-0080 passes: true)
+  - ralph/progress.txt (this entry)
+- Verification run:
+  - gofmt -l . → clean
+  - go mod tidy → clean
+  - go vet ./... → clean
+  - go test -run 'TestCreateAPIKey(ServerWritesResponseDataOnlyToResponseWriter|RequestLogRedactsBearerToken|ErrorEnvelopeDoesNotLeakDependencyCause)' ./internal/controlplane/httpapi/ → ok 0.585s (3 tests, 4 sub-cases)
+  - go test ./... → all packages ok
+  - go test -race ./... → all packages ok, no data races
+  - goimports not installed locally; documented per the established convention.
+- Remaining risks or follow-ups: none for BE-0080. Sibling stories BE-0083/0086/0089/0092 (GET/PATCH/DELETE/rotate api-key contract tests) and BE-0095/0098/0101 (limits/usage contract tests) follow the same three-pin template; the createAPIKeyHandlerForWithLogger logger-threading helper is the singular new construct this story introduces.
+- **Learnings for future iterations:**
+  - The httpapi contract-test family has a stable three-pin shape: (1) ServerWritesResponseDataOnlyToResponseWriter using captureProcessOutput, (2) RequestLogRedactsBearerToken table-driven across success + disabled-principal authz-deny path, (3) ErrorEnvelopeDoesNotLeakDependencyCause asserting both the wrapped cause string and the bare datastore address. Authorization-failure path uses an explicit "must not be called" port stub so any logged port error proves a leak rather than a deny short-circuit.
+  - The "WithLogger" handler-builder per endpoint is a deliberate parallel construct, NOT a generalised helper — each endpoint already has its own *HandlerFor builder, so the contract-test file adds a *HandlerForWithLogger sibling with one extra parameter threaded into the second-to-last NewHandler argument. Mechanical clone per endpoint family.
+  - When a contract test is the TWIN of an existing one, the doc-block citing what the unit test in the same family already proves (api_keys_create_test.go in this case) is load-bearing: future readers and future iterations identify the residual contract surface from that explicit exclusion list, not from the test names alone.
+---
