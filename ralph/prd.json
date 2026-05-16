@@ -7060,8 +7060,8 @@
       ],
       "type": "quota-dimension",
       "priority": 1,
-      "passes": false,
-      "notes": "Quota dimension: services."
+      "passes": true,
+      "notes": "Quota dimension: services. BE-0325 services quota concurrent integration test added at internal/controlplane/store/service_quota_concurrent_test.go \u2014 clone of the BE-0324 structural template, covers AC4 (parallel requests cannot oversubscribe the services dimension); the other ACs are pinned by the existing serviceservice path (in-tx quota.Reserve at serviceservice.go:250 with QuotaResourceServices), envelope tests, and the redaction assertions inside the new test."
     },
     {
       "id": "BE-0326",
