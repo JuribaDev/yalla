@@ -23907,3 +23907,48 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     a future contributor cannot weaken one believing the other
     covers the threat.
 ---
+
+## 2026-05-16 23:45 - BE-0074
+- Added internal/controlplane/httpapi/members_delete_contract_test.go closing the
+  remaining contract criteria for DELETE /v1/organizations/{org_id}/members/{member_id}
+  that members_delete_test.go (BE-0073) does not assert directly. Three tests:
+  TestRemoveMemberServerWritesResponseDataOnlyToResponseWriter (HTTP server writes
+  response data only through ResponseWriter — captureProcessOutput proves
+  stdout/stderr stay empty), TestRemoveMemberRequestLogRedactsBearerToken
+  (table-driven success + auth-failure subtests; per-request slog record never
+  carries the bearer credential and the response body never echoes it),
+  TestRemoveMemberErrorEnvelopeDoesNotLeakDependencyCause (apierr.StoreUnavailable
+  wrapped cause string and the bare datastore address never reach the wire
+  envelope).
+- Files changed: internal/controlplane/httpapi/members_delete_contract_test.go (new),
+  ralph/prd.json, ralph/progress.txt.
+- Verification run: gofmt -w .; go mod tidy; go vet ./...; go test ./...
+  (full suite); go test -race ./internal/controlplane/httpapi/ -count=1;
+  go test -race -count=1 -run 'TestRemoveMember' ./internal/controlplane/httpapi/.
+- Results: all my changes pass (-race included). goimports / golangci-lint /
+  staticcheck / govulncheck still not installed locally (documented in
+  earlier iterations).
+- Remaining risks / follow-ups: none for BE-0074. The next failing P2 contract
+  test stories are BE-0077 (GET api-keys), BE-0080 (POST api-keys), BE-0083
+  (GET api-keys/{key_id}), BE-0086 (PATCH api-keys/{key_id}), BE-0089
+  (DELETE api-keys/{key_id}), BE-0092 (POST api-keys/{key_id}/rotate).
+- **Learnings for future iterations:**
+  - The members_delete_contract_test.go is a clean port of the BE-0071
+    members_update_contract_test.go template to a body-less DELETE on a
+    bare-{id}-resolver child resource. The three-test shape (process-stream
+    quarantine, bearer-redaction-in-log table, dependency-cause-no-leak)
+    ports verbatim — only the helper name (removeMemberHandlerForWithLogger),
+    the port slot (MembershipRemover, 14th positional arg to NewHandler), the
+    HTTP method helper (deleteMember instead of patchMember), the success
+    envelope decoder (decodeRemoveMember instead of decodeUpdateMember), and
+    the absence of a request body change. Future contract-test stories on
+    body-less DELETE endpoints with a {parent_id}+{id} path should reuse this
+    exact shape — the seven-fake row that mentions every port stays in the
+    same order regardless of which port the test is exercising.
+  - DELETE-on-resource-row tests do NOT need an "unknown field" or
+    "malformed body" subtest in the redaction table because the request
+    carries no body at all — there is nothing for the JSON decoder to read.
+    The disabled-principal path is the canonical second leg of the redaction
+    table for body-less endpoints (deny-at-policy short-circuit, remover
+    never invoked, log + body still redacted).
+---

@@ -2291,7 +2291,7 @@
       ],
       "type": "test-membership",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Contract coverage for DELETE /v1/organizations/{org_id}/members/{member_id}."
     },
     {
