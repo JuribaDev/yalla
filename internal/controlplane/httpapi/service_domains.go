@@ -42,6 +42,16 @@ var errNoServiceDomainCreator = errors.New("httpapi: no service domain creator c
 // with no side effect.
 var errNoServiceDomainUpdater = errors.New("httpapi: no service domain updater configured")
 
+// errNoServiceDomainDeleter is returned when DELETE
+// /v1/services/{service_id}/domains/{domain_id} is reached without a
+// ServiceDomainDeleter wired into NewHandler. Like
+// errNoServiceDomainUpdater it can only happen through a wiring error
+// — a programming mistake, not a client error — so the handler reports
+// it as a typed internal failure rather than serving a misleading 2xx
+// (a 200 OK echoing the deleted snapshot when no row was actually
+// removed would be the worst possible signal for an agent).
+var errNoServiceDomainDeleter = errors.New("httpapi: no service domain deleter configured")
+
 // ServiceDomainReader is the narrow persistence port GET
 // /v1/services/{service_id}/domains depends on.
 // *store.ServiceDomainReader satisfies it in production; tests supply
@@ -513,6 +523,126 @@ func updateServiceDomainHandler(updater ServiceDomainUpdater) http.HandlerFunc {
 		writeOrganizationETag(w, updated.Version)
 		apienvelope.WriteData(w, http.StatusOK, requestID(r), updateServiceDomainPayload{
 			Domain: serviceDomainOf(updated),
+		})
+	}
+}
+
+// ServiceDomainDeleter is the narrow persistence port DELETE
+// /v1/services/{service_id}/domains/{domain_id} depends on.
+// *store.ServiceDomainService satisfies it in production; tests supply
+// a fake. Keeping the dependency an interface keeps the handler unit-
+// testable without a real database — the concrete orchestrator (the
+// tenant-scoped DELETE / optional If-Match precondition / audit append
+// composition committed in one transaction) lives in the store layer.
+//
+// The HTTP boundary is the authoritative authorization gate:
+// RequireAuth authorizes action domain.delete against the (principal
+// home organization, {service_id}) resource the path names through
+// serviceIDResolver, so a request that reaches the deleter has already
+// cleared the policy boundary. The store layer does not re-authorize
+// inside the same *Tx for the delete path: domain.delete is enforced
+// only at the HTTP boundary, matching service.delete, project.delete,
+// and the other CapWrite endpoints — the in-transaction Authorizer is
+// reserved for Create (the create-time race against grant changes
+// during a quota reservation).
+type ServiceDomainDeleter interface {
+	Delete(ctx context.Context, in store.DeleteServiceDomainInput) (store.ServiceDomain, error)
+}
+
+// deleteServiceDomainPayload is the data block of the DELETE
+// /v1/services/{service_id}/domains/{domain_id} success envelope: the
+// domain row as it stood at the moment of removal, in the same stable
+// wire shape every other service-domain endpoint returns. It carries
+// no credential material — the service_domains table itself stores
+// none; the certificate_type column names the issuance behavior only.
+// The row is gone from the database by the time this body reaches the
+// wire; an audit trail of the deletion lives independently of the row.
+type deleteServiceDomainPayload struct {
+	Domain serviceDomain `json:"domain"`
+}
+
+// deleteServiceDomainHandler builds the DELETE
+// /v1/services/{service_id}/domains/{domain_id} handler. It delegates
+// to the ServiceDomainDeleter port the tenant-scoped delete + audit
+// unit of work, then projects the deleted snapshot onto the wire. The
+// optional If-Match header is parsed as an optimistic-concurrency
+// precondition before the deleter runs.
+//
+// RequireAuth gates the route on action domain.delete before the
+// handler runs — authorized through serviceIDResolver against the
+// (principal home organization, {service_id}) resource the path
+// names — and attaches the resolved principal, so a request that
+// reaches the handler has already cleared the policy boundary.
+// domain.delete is a CapWrite action, so the gate admits the
+// principal's organization-wide write roles (owner, admin, developer,
+// ci) and denies viewer (CapRead only), denies support (CapRead +
+// CapSupport — support is a deliberate cross-tenant READ exception,
+// never a write one). The path carries no parent project_id, so the
+// policy engine cannot pin the ProjectID leg of the resource scope at
+// authorization time — project-, environment-, and service-scoped
+// grants are denied at the boundary by the engine's covers() rule (a
+// grant scope that pins ProjectID cannot cover a resource scope that
+// does not); principals whose only access is a scoped grant must use
+// a parent-scoped route to address a service by its (project,
+// environment, service) tuple.
+//
+// The handler resolves the organization id from the authenticated
+// principal's home organization, the service id from the {service_id}
+// PATH parameter, and the domain id from the {domain_id} PATH
+// parameter — never from the request body (a DELETE has none) — so
+// the tenant boundary is structural here: there is no caller input
+// that could point the delete at another tenant. A cross-tenant
+// service_id or domain_id reaches the persistence layer with the
+// principal's home organization id and is rejected as a deterministic
+// 404 by the store-layer's tenant-scoped DELETE predicate, never
+// disguised as a 200 or a 403 that would confirm the foreign row's
+// existence.
+//
+// The response is 200 OK carrying the deleted domain as a snapshot —
+// agents can confirm what was destroyed without re-reading. The row
+// is gone from the database by the time this body reaches the wire;
+// an audit trail of the deletion lives independently of the row. A
+// 204 No Content was deliberately not chosen: a body-bearing success
+// keeps the wire contract uniform with every other service-domain
+// endpoint and prevents agents from special-casing the no-body code
+// path.
+func deleteServiceDomainHandler(deleter ServiceDomainDeleter) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if deleter == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoServiceDomainDeleter))
+			return
+		}
+
+		ifMatchVersion, ifMatchErr := parseIfMatchVersion(r)
+		if ifMatchErr != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(ifMatchErr))
+			return
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		deleted, err := deleter.Delete(r.Context(), store.DeleteServiceDomainInput{
+			OrganizationID: p.OrganizationID,
+			ServiceID:      r.PathValue("service_id"),
+			DomainID:       r.PathValue("domain_id"),
+			IfMatchVersion: ifMatchVersion,
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), deleteServiceDomainPayload{
+			Domain: serviceDomainOf(deleted),
 		})
 	}
 }

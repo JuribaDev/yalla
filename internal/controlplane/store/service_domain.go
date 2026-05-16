@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -290,6 +291,62 @@ func classifyServiceDomainConcurrencyMiss(ctx context.Context, tx *Tx, organizat
 	return apierr.ConflictStale(current.Version)
 }
 
+// DeleteByID removes the service_domains row identified by
+// (organizationID, serviceID, domainID) and returns the deleted row as
+// it stood at the moment of removal so the caller can render it onto
+// the wire and the audit record can name the row that was destroyed.
+// service_domains has no soft-delete column — a public-facing route is
+// a routing artefact, not a continuing audit-trail tie that must
+// outlive the resource, so the row is removed outright. The delete is
+// tenant scoped: the predicate filters on organization_id first so a
+// cross-tenant or unknown (service_id, domain_id) tuple matches no
+// rows even when a domain with the same id exists in another tenant,
+// and the response is never an oracle that confirms another
+// organization's domain ids.
+//
+// When ifMatchVersion is nil the predicate matches on
+// (organization_id, service_id, id) alone — next-write-wins. When it
+// is non-nil the predicate ALSO requires version = *ifMatchVersion so
+// a concurrent writer landing between the caller's read and this
+// delete is rejected with a typed apierr.ConflictStale carrying the
+// row's authoritative version. The pointer indirection distinguishes
+// "caller did not supply a precondition" from "caller supplied
+// version 0", which is impossible by schema CHECK and must not
+// silently behave like the unchecked path. A no-row delete with a
+// non-nil precondition disambiguates through classifyServiceDomain
+// ConcurrencyMiss into either NotFound (row really is gone) or
+// ConflictStale (version moved under the caller's feet).
+func (r *ServiceDomainRepository) DeleteByID(ctx context.Context, tx *Tx, organizationID, serviceID, domainID string, ifMatchVersion *int64) (ServiceDomain, error) {
+	if tx == nil {
+		return ServiceDomain{}, apierr.Internal(errors.New("store: ServiceDomainRepository.DeleteByID called with a nil transaction"))
+	}
+	var row pgx.Row
+	if ifMatchVersion == nil {
+		row = tx.QueryRow(ctx,
+			`DELETE FROM service_domains
+			  WHERE organization_id = $1 AND service_id = $2 AND id = $3
+			 RETURNING `+serviceDomainColumns,
+			organizationID, serviceID, domainID)
+	} else {
+		row = tx.QueryRow(ctx,
+			`DELETE FROM service_domains
+			  WHERE organization_id = $1 AND service_id = $2 AND id = $3 AND version = $4
+			 RETURNING `+serviceDomainColumns,
+			organizationID, serviceID, domainID, *ifMatchVersion)
+	}
+	deleted, err := scanServiceDomain(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if ifMatchVersion == nil {
+			return ServiceDomain{}, apierr.NotFound("service domain", domainID)
+		}
+		return ServiceDomain{}, classifyServiceDomainConcurrencyMiss(ctx, tx, organizationID, serviceID, domainID, *ifMatchVersion)
+	}
+	if err != nil {
+		return ServiceDomain{}, apierr.StoreUnavailable(err)
+	}
+	return deleted, nil
+}
+
 // ListServiceDomainsInput is the typed input shape
 // ServiceDomainReader.ListDomains accepts. OrganizationID is always
 // taken from the authenticated principal's home org at the httpapi
@@ -357,6 +414,12 @@ const serviceDomainCreateAction = "domain.create"
 // store layer because the audit event is written from the same *Tx as
 // the desired-state row.
 const serviceDomainUpdateAction = "domain.update"
+
+// serviceDomainDeleteAction is the immutable audit-event Action string
+// emitted when a service domain is deleted. The constant lives in the
+// store layer because the audit event is written from the same *Tx as
+// the desired-state row.
+const serviceDomainDeleteAction = "domain.delete"
 
 // serviceDomainCertificateType* enumerate the closed TLS-issuance
 // taxonomy the service_domains table's certificate_type CHECK confines.
@@ -936,4 +999,156 @@ func (svc *ServiceDomainService) Update(ctx context.Context, in UpdateServiceDom
 		return ServiceDomain{}, txErr
 	}
 	return updated, nil
+}
+
+// DeleteServiceDomainInput is the typed input shape
+// ServiceDomainService.Delete accepts. OrganizationID identifies the
+// tenant the domain belongs to and is always taken from the
+// authenticated principal's home org at the httpapi layer (never from
+// caller-controlled request input). ServiceID and DomainID name the
+// service_domains row to remove and are always taken from path
+// parameters at the httpapi layer.
+//
+// IfMatchVersion is the optional optimistic-concurrency precondition:
+// when non-nil, the delete succeeds only if the row's current version
+// equals *IfMatchVersion at write time, otherwise it returns a typed
+// apierr.ConflictStale carrying the row's authoritative version. The
+// httpapi layer fills it from the request's If-Match header. A nil
+// pointer disables the check (next-write-wins). The pointer
+// indirection distinguishes "caller did not supply a precondition"
+// from "caller supplied version 0", which is impossible by schema
+// CHECK and must not silently behave like the unchecked path.
+//
+// A DELETE has no body, so no mutable-field shape lives on this
+// struct — the only path-parameter validation the service performs is
+// that none of OrganizationID, ServiceID, or DomainID is blank. The
+// Actor* and correlation fields describe the authenticated principal
+// performing the deletion and are recorded verbatim on the audit
+// event; they are plain strings so the store layer takes no build
+// dependency on the policy or telemetry packages — the httpapi
+// handler, which already holds the resolved principal and the request
+// correlation, fills them in.
+type DeleteServiceDomainInput struct {
+	OrganizationID string
+	ServiceID      string
+	DomainID       string
+	IfMatchVersion *int64
+	ActorID        string
+	ActorKind      string
+	ActorOrgID     string
+	RequestID      string
+	CorrelationID  string
+}
+
+// Delete runs the delete-domain unit of work inside one transaction:
+// remove the service_domains row identified by (OrganizationID,
+// ServiceID, DomainID), optionally enforce the If-Match precondition,
+// and append the immutable audit record. Validation of the input
+// shape (path identifiers, actor org) runs before the transaction is
+// opened, so an obviously invalid request never touches the database.
+//
+// service_domains has no soft-delete column — a public-facing
+// hostname route is a routing artefact, not a continuing audit-trail
+// tie that must outlive the resource, so the row is removed outright.
+// The returned snapshot is the row exactly as it stood at the moment
+// of removal so the caller can confirm what was deleted. The HTTP
+// layer projects the snapshot through the same wire-shape every other
+// service-domain endpoint uses; the row carries no credential
+// material (the certificate_type column names the issuance behavior
+// only — the actual certificate material is held by the worker /
+// Dokploy layer and never round-trips through this table).
+//
+// Tenant scoping is enforced at the persistence layer: the DELETE
+// predicate filters on organization_id first, so a cross-tenant or
+// unknown {service_id, domain_id} tuple matches no rows and the
+// service surfaces it as a deterministic apierr.NotFound. The audit
+// record is rolled back with the missed delete so an audit trail can
+// never name a deletion that did not happen. Any database constraint
+// violation rolls the whole transaction back as a typed
+// apierr.Conflict.
+//
+// Authorization for domain.delete is enforced at the HTTP boundary by
+// RequireAuth against the (home organization, service_id) resource
+// the path names — the store layer never runs an in-transaction
+// Authorize for the delete path because the HTTP gate is
+// authoritative and the in-transaction Authorizer is reserved for
+// Create (the create-time race against grant changes during a quota
+// reservation).
+//
+// The audit event is filed under the actor's home organization (the
+// tenant the principal authenticated into) with
+// resource_kind=service_domain and resource_id={domain_id}. Metadata
+// records the structural identifiers (service_id, hostname, path,
+// certificate_type) verbatim — none carries secret material, so they
+// are safe to record as audit context — and never includes any
+// caller-supplied request-body field (a DELETE has none).
+func (svc *ServiceDomainService) Delete(ctx context.Context, in DeleteServiceDomainInput) (ServiceDomain, error) {
+	organizationID := strings.TrimSpace(in.OrganizationID)
+	if organizationID == "" {
+		return ServiceDomain{}, apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "organization_id",
+			Reason: "must not be blank",
+		})
+	}
+	serviceID := strings.TrimSpace(in.ServiceID)
+	if serviceID == "" {
+		return ServiceDomain{}, apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "service_id",
+			Reason: "must not be blank",
+		})
+	}
+	domainID := strings.TrimSpace(in.DomainID)
+	if domainID == "" {
+		return ServiceDomain{}, apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "id",
+			Reason: "must not be blank",
+		})
+	}
+
+	actorOrgID := strings.TrimSpace(in.ActorOrgID)
+	if actorOrgID == "" {
+		return ServiceDomain{}, apierr.Internal(errors.New("store: ServiceDomainService.Delete requires an actor organization for the audit record"))
+	}
+
+	var deleted ServiceDomain
+	if txErr := svc.store.Write(ctx, func(ctx context.Context, tx *Tx) error {
+		row, delErr := svc.domains.DeleteByID(ctx, tx, organizationID, serviceID, domainID, in.IfMatchVersion)
+		if delErr != nil {
+			return delErr
+		}
+
+		event := AuditEvent{
+			OrganizationID: actorOrgID,
+			ActorID:        strings.TrimSpace(in.ActorID),
+			ActorKind:      strings.TrimSpace(in.ActorKind),
+			Action:         serviceDomainDeleteAction,
+			ResourceKind:   string(domain.KindServiceDomain),
+			ResourceID:     row.ID,
+			Decision:       AuditDecisionAllowed,
+			Reason:         "authorization granted for domain.delete",
+			RequestID:      strings.TrimSpace(in.RequestID),
+			CorrelationID:  strings.TrimSpace(in.CorrelationID),
+			// The service_id, hostname, path, and certificate_type are
+			// structural identifiers / routing metadata / closed-taxonomy
+			// enums — none carries secret material — so they are safe to
+			// record verbatim as audit context. The deleted row's
+			// version is the row's last authoritative version before
+			// removal; useful for forensics and idempotency analysis.
+			Metadata: map[string]string{
+				"service_id":       row.ServiceID,
+				"hostname":         row.Hostname,
+				"path":             row.Path,
+				"certificate_type": row.CertificateType,
+				"version":          strconv.FormatInt(row.Version, 10),
+			},
+		}
+		if _, audErr := svc.audit.Append(ctx, tx, event); audErr != nil {
+			return audErr
+		}
+		deleted = row
+		return nil
+	}); txErr != nil {
+		return ServiceDomain{}, txErr
+	}
+	return deleted, nil
 }

@@ -1,5 +1,7 @@
 ## Codebase Patterns
 
+- Hard DELETE endpoint on a versioned bare-{id}-resolver child resource (BE-0244 pattern, DELETE /v1/services/{service_id}/domains/{domain_id}, store/service_domain.go ServiceDomainRepository.DeleteByID with optional If-Match + classifyServiceDomainConcurrencyMiss reuse, store/service_domain.go ServiceDomainService.Delete orchestrator (no in-tx Authorize — reserved for Create; structural-identifier-only audit metadata; no caller-body fields because a DELETE has none), httpapi/service_domains.go ServiceDomainDeleter port + deleteServiceDomainHandler (parseIfMatchVersion + 200 OK + snapshot payload — never 204, keeps wire shape uniform with the other service-domain endpoints), httpapi/routes.go DELETE entry with serviceIDResolver, contract suite at service_domains_delete_test.go, policy matrix at service_domains_delete_policy_test.go): canonical shape for any future bare-{id} DELETE on a versioned child where the row is removed outright (no soft-delete column, no scheduled-deletion stamp — the resource is a routing artefact, not a continuing audit-trail tie). The "deleter MUST never run on any deny path" assertion is the destructive-op counterpart of the updater-not-reached invariant — more load-bearing for DELETE because a row destroyed in the background while the wire reports 403 is the worst possible failure mode. Mechanically clonable from the PATCH twin (BE-0241+0242+0243) by s/Update/Delete/ + s/update/delete/ + s/Patcher/Deleter/ + action swap.
+- Port-arity sweep tooling (BE-0244 mechanical refinement of the BE-0175 ALL-FOUR-FORMS rule): when bumping NewHandler's arity by one positional port, the cleanest mechanical sweep across every test's NewHandler call site is `perl -i -pe 's/fakePREVIOUS\{\},/fakePREVIOUS{}, fakeNEW{},/g' $(grep -rl 'fakePREVIOUS{}' internal/controlplane/httpapi/)` keyed on the IMMEDIATELY PRECEDING fake type literal. BE-0244 sweep updated 69 test files in one pass. The single non-literal call site (a `var, fakeService...` pattern where the previous port is bound to a local variable rather than the bare struct literal) is fixed by hand with one extra perl. Then `go build ./...` confirms the arity matches end-to-end; the new fake type itself is declared once in the new test file (here: fakeServiceDomainDeleter in service_domains_delete_test.go) and is visible to every test file in the same package.
 - Repository tenant-isolation for a tenant-root table (BE-0426 pattern, internal/controlplane/store/organization_tenant_isolation_test.go; structural template for BE-0428/0430/0432/0434/0436 and every future tenant-root-table isolation story): the strongest isolation guarantee in the codebase lives on the row-id-keyed tenant root (organizations) and the proof shape is "byte-identical snapshot of the OTHER tenant across every mutation path the repository exposes". Skeleton: one Go test file per table, one t.Parallel test per (mutation × leg) — Get returns-only-named-tenant + Get unknown-id-is-NotFound (cross-tenant + missing render the same yerr.CodeNotFound — no oracle); Update only-touches-named-tenant (snapshot orgB, Update orgA, re-read orgB, assert byte-identical across slug, display_name, version, updated_at, deletion_scheduled_at; assert orgA's update DID land so a no-op repository can't pass trivially); Update-with-mismatched-If-Match also-does-not-touch-orgB (catches "fall back to unconditional UPDATE on stale" regressions); ScheduleDeletion only-touches-named-tenant (stamp on orgA, orgB byte-identical incl. DeletionScheduledAt == nil); Get-of-soft-deleted-tenant-does-not-mask-other (soft-delete is per-row, not SQL-level hide; the scheduled row is still readable and orgB unchanged); Insert enforces-global-slug-uniqueness (typed yerr.CodeConflict + non-empty user-facing Message; first row's slug unchanged; second row's id is yerr.CodeNotFound on follow-up Get — the failed Insert lands no row). Three load-bearing rules: (1) anchor on BOTH version (trigger-bumped on every UPDATE so a missing WHERE bumps every row) AND updated_at (trigger-refreshed; same property) — either one catches a WHERE-less UPDATE independently of the other, keep both; (2) the "stale-If-Match" leg is structurally distinct from the "successful update" leg and exercises the conflict-detection path which historically falls back to extra reads/writes that could leak across tenants; (3) Insert conflict-message assertions anchor on yerr.CodeConflict + non-empty Message ONLY, never on a substring (the static "an organization with this slug already exists" message is a stable contract but story-specific prose checks are brittle). Tenant-root tables have NO ListByParent method at this layer (no parent to scope by) — the "list queries don't leak total counts" acceptance criterion is vacuously satisfied for tenant-root tables; the corresponding proof for /v1/me/organizations lives in membership tests. Document this absence in the test file's package-doc comment so a future reader does not look for a missing test. CHILD-TABLE variant (BE-0428+ for users/memberships/projects/environments/services/api_keys/etc.) extends this skeleton with one additional leg: a cross-tenant parent_id probe — passing org A's parent_id (project_id, etc.) alongside org B's organization_id must render NotFound, NEVER A's row, NEVER a 500 leaking the cause. Use docker compose up -d postgres + YALLA_TEST_DATABASE_URL=postgres://yalla:yalla@127.0.0.1:5432/yalla go test -race -count=1 -run 'TestXxxRepository' to verify; the suite skips cleanly when the env var is unset, so CI without Postgres remains green. Known pre-existing -race-with-DB failures in environment-service / api-key-service Create paths and organization_variable_patch audit metadata are NOT introduced by this pattern (confirmed by stashing the new test file and re-running each failing case); a focused triage story should pick them up before BE-0500+ verification stories run.
 - Operator-driven health probe (BE-0039 pattern, internal/controlplane/backup/{doc.go, AGENTS.md, health.go, health_test.go} + httpapi/routes.go GET /healthz/backup + docs/operations/backup-restore.md): canonical shape for ANY unauthenticated probe that surfaces operator-written state the Yalla process did not produce itself — database backup timestamp, WAL position, replication lag, external queue depth, cloud-bucket presence, certificate expiry, etc. Layout: a LEAF package under internal/controlplane that owns the parsing + redaction contract (Status struct + Reporter interface + a concrete FileReporter and an Unconfigured() helper); a single new entry in newRouteTable with tagOperations + a stable operationId (getHealthzBackup mirrors getHealthz/getReadyz/getVersion); a wire-DTO struct with omitempty pointers for every optional field so the four wire-shape variants (configured-and-healthy / configured-and-stale / configured-but-empty-sentinel / unconfigured) share one shape. Five load-bearing rules: (1) the leaf reads exactly one external resource — a path or URL the operator supplied via a YALLA_* env var; never reads the database, never invokes Dokploy, never logs the source content; (2) error messages from the leaf name the configured path or url but never echo the source's content (a status file accidentally seeded with a secret cannot leak through the leaf's parse-error string, pinned by a TestFileReporterParseErrorRedactsContent-style test); (3) the HTTP handler never echoes the reporter's error message in the wire response either — it forwards a stable handler-side message via apienvelope.WriteErrorStatus(yerr.CodeUnavailable, ...) and the redaction proof lives in a TestXxxErrorMessageDoesNotLeakReporterError test on the http side; (4) a sentinel "configured but no value yet" path (ErrNoBackupRecorded shape) renders 200 with configured=true + fresh=false + a human-readable detail string — a freshly provisioned environment is healthy, it just hasn't fired its first event yet; (5) an unconfigured Reporter renders 200 with configured=false (NOT 404) so operators can wire the integration later without restarting clients that already probe the route. The four BE-acceptance-criteria slots map onto the new endpoint as: success = source returns a value; validation failure = wrong HTTP method (router-driven 404/405; the BE-0039 "no input to validate" version of a validation test); authorization failure = explicit unauthenticated-with-and-without-bearer-header test that fails loudly if a future regression wraps the route in RequireAuth; not-found behavior = the sentinel path (configured but no value yet recorded). Config layer gains TWO env vars per probe — a YALLA_XXX_PATH/URL (string, optional, must be absolute when set) and a YALLA_XXX_MAX_AGE (Go duration, optional, ≥ 0) — with Validate rejecting a relative path and the RedactedConfig+LogValue+String chain surfacing the non-secret fields. NewHandler grows ONE positional port (Reporter backup.Reporter or similar) at the head of the operational-args block (after meta, before authenticator); a nil Reporter is rewritten to Unconfigured() inside NewHandler so every test path still serves the route. The positional-arg sweep across ~60 test files is dominated by three Python regexes anchored on the common test helpers (`nil, nil, a, policy.NewEngine()` literal-a, `nil, nil, AuthIdent{}, policy.NewEngine()` struct-literal-auth, multi-line `nil, nil, a,\n\t\tpolicy.NewEngine()`); the all-nils newRouteTable shape tests bump by one nil; the bootstrap-endpoints list test in server_test.go adds the new path. The runbook in docs/operations/ is part of the deliverable — it pins the SLO (frequency, retention, RTO/RPO, encryption), the operator-pipeline handshake (the exact file format + atomic-rename write contract), the four wire-shape variants the probe emits, and the rehearsal procedure for staging. Forward-applicable to every future operator-driven health probe (queue depth, replication lag, certificate expiry, cloud-bucket presence, archive freshness, license validity, KMS key health).
 - Cross-cutting policy package = retention-shaped leaf (BE-0038 pattern, internal/controlplane/retention/{doc.go, AGENTS.md, policy.go, policy_test.go}, third instance of the pure-package layout after reconcile and migrateimport): canonical shape for ANY cross-cutting authority over a closed-set domain enum + a validated config + boundary-style predicates — retention windows, rate-limit tiers, idempotency horizons, audit-redaction policies, plan-limit ladders, etc. Layout: doc.go (boundary + the invariants the predicates encode), policy.go (closed-set ResourceKind + a Window struct of just-durations + an immutable Policy value with a private map; DefaultPolicy() returning the production values + NewPolicy(map) that validates every kind is present and every Window passes validate() + copies the input map so caller mutation cannot tamper with a live Policy + Window/Restorable/RestorableAt/RestoreDeadline/RemainingRestore/ReapableAt/ReapDeadline/AllowsSlugReuse predicates over (kind, stampedAt, now)), policy_test.go (every kind × every transition + boundary case + zero-value-Policy safety + NewPolicy validation table + caller-mutation defense + cross-predicate coherence (restorable → held → reapable monotone) + closed-set guard via AllKinds()), AGENTS.md (boundary + invariants). Three load-bearing rules: (1) the boundary comparisons MUST be strict-less-than at the upper bound of RestorableAt and `>=` at the lower bound of ReapableAt so the two predicates are mutually exclusive at the exact instant of transition (a row never reports as both restorable and reapable at the same nanosecond); (2) the package is a LEAF — it imports only std-lib (time, fmt, sort, errors-only-from-tests) and is imported by store/httpapi/worker, so its predicates are cheap to call from anywhere without dragging a database or network dependency along; never let retention import apierr/store/audit; (3) "soft delete where safe" in the BE-0038 description is a real qualifier — memberships do not get a soft-delete column because role_version invalidates sessions at the auth layer and audit_events outlives the resource via the organization-level cascade, so KindMembership.SoftDeleteColumn() returns "" and Policy.SupportsSoftDelete(KindMembership) is false by design (a future schema migration that adds a removed_at column to memberships must update both in lock-step, and the closed-set test will fail until they do). Two follow-up wirings the package was designed for but does not yet require: a future teardown worker (BE-0203+) iterates retention.AllKinds(), looks up each kind's SoftDeleteColumn(), scans rows where the column is non-NULL and the stamp is older than ReapAfter, and calls the kind-specific hard-delete repository method; a future CapAdmin admin-purge endpoint calls retention.Policy.AllowsSlugReuse before bypassing the wait — the slug-reuse predicate is the contract those two consumers will share. Forward-applicable to every future cross-cutting policy module (plan tiers, audit redaction horizons, idempotency-key TTL, rate-limit ramp).
@@ -18572,4 +18574,141 @@ Learnings for future iterations:
   - validate.Collector.Err() is the right idiom for "did this leg add a
     violation?" -- snapshot pre/post and compare. Don't double-validate by
     calling another collector method.
+---
+
+## 2026-05-16 - BE-0244 + BE-0245 + BE-0246
+- Implemented DELETE /v1/services/{service_id}/domains/{domain_id}: store-layer
+  Delete (BE-0244), HTTP-layer handler + route + wiring (BE-0244),
+  contract suite (BE-0245), and policy matrix (BE-0246).
+- Mirrors the BE-0241+0242+0243 (PATCH domains) bundle in shape; the picker
+  rule applied — BE-0246 is P=1 but its endpoint surface did not exist,
+  so the picker bundled the missing BE-0244 + BE-0245 + BE-0246 into one
+  iteration. The DELETE is a hard delete (no soft-delete column, no
+  scheduled-deletion stamp): service domains are routing artefacts, not
+  continuing audit-trail ties that must outlive the resource. The audit
+  trail of the deletion lives independently of the row, as for the org-
+  variables DELETE pattern.
+- Files changed:
+  - internal/controlplane/store/service_domain.go (+~190 lines:
+    serviceDomainDeleteAction const, DeleteByID repository method with
+    optional If-Match precondition reusing classifyServiceDomain
+    ConcurrencyMiss, DeleteServiceDomainInput type,
+    ServiceDomainService.Delete orchestrator filing
+    domain.delete audit with structural-identifier metadata only;
+    strconv import added)
+  - internal/controlplane/httpapi/service_domains.go (+~120 lines:
+    errNoServiceDomainDeleter sentinel, ServiceDomainDeleter port,
+    deleteServiceDomainPayload, deleteServiceDomainHandler with
+    If-Match precondition support, 200 OK + snapshot in payload to
+    keep wire shape uniform with the other service-domain endpoints)
+  - internal/controlplane/httpapi/server.go (NewHandler signature
+    bumped by one port; forward to newRouteTable updated)
+  - internal/controlplane/httpapi/routes.go (newRouteTable signature
+    bumped by one port; DELETE /v1/services/{service_id}/domains/
+    {domain_id} OpenAPI entry registered with serviceIDResolver,
+    RequiredAction string(policy.ActionDomainDelete), domain_id
+    PathParam; head comment block extended to document
+    serviceDomainDeleter)
+  - cmd/yalla-api/main.go (NewHandler call site bumped: serviceDomain
+    Service passed once more as the deleter, matching its existing
+    role as Creator and Updater)
+  - internal/controlplane/httpapi/service_domains_delete_test.go (new
+    BE-0245 contract suite: fakeServiceDomainDeleter capture-input
+    test double, deleteServiceDomainHandlerFor, deleteServiceDomain
+    and deleteServiceDomainWithIfMatch helpers; tests cover happy
+    path, If-Match forward + malformed 400 + stale 409, not found,
+    invalid input, unauthenticated 401 + no-run, store unavailable
+    5xx, no-principal-on-context 5xx, nil-deleter 5xx, OpenAPI
+    operation registration, request_id propagation)
+  - internal/controlplane/httpapi/service_domains_delete_policy_test.go
+    (new BE-0246 policy matrix: roles matrix (owner/admin/developer
+    allow via ReasonAllowedByRole; ci/viewer/support deny via
+    ReasonDeniedNoCapability), revoked/expired keys deny via
+    ReasonDeniedPrincipalDisabled, wrong-organization 404 +
+    cross-tenant engine deny including support (CapWrite is OUTSIDE
+    the engine's cross-tenant exception), grant-containment for
+    project / env / service / org-level scopes — wire-level proof
+    that scoped grants are denied at the bare-id boundary by
+    covers()'s one-way rule, plus the structurally load-bearing
+    "deleter MUST never run on any deny path" assertion (a destructive
+    op committed in the background while the wire reports 403 is the
+    worst possible failure mode for DELETE))
+  - Test files with NewHandler call sites: 69 files updated by
+    perl regex to insert `fakeServiceDomainDeleter{},` after every
+    `fakeServiceDomainUpdater{},` — plus the one non-literal case in
+    service_domains_update_test.go (`updater, fakeServiceVariable
+    Reader{}` → `updater, fakeServiceDomainDeleter{},
+    fakeServiceVariableReader{}`). The fakeServiceDomainDeleter type
+    is declared in the new service_domains_delete_test.go and is
+    visible to every test file in the httpapi package.
+- Verification run:
+  - gofmt -w . (one file normalized: service_domains_delete_test.go)
+  - go vet ./... clean
+  - go test ./... all passing (httpapi 1.287s, store 0.421s)
+  - go test -race ./... all passing, no race reports
+  - goimports / golangci-lint / staticcheck / govulncheck: not
+    installed in this environment, documented; skipped per the
+    "tool not installed" exception.
+- Results: BE-0244, BE-0245, BE-0246 pass; total passing 195/614.
+- Remaining risks / follow-ups:
+  - The next service-domains story bundle should be the per-service
+    quota story (wildcard / custom-cert per-organization quota) when
+    it lands; today's DELETE neither reserves nor releases quota
+    because no domain quota exists yet. When the quota story lands,
+    the orchestrator gains a QuotaReleaser dependency the same way
+    ServiceService did, alongside the worker's reconcile coverage.
+  - The DELETE vertical does not enqueue a provisioning job — the
+    domain row removal IS the source-of-truth mutation; the
+    Dokploy reconciler will tear down the routing rule as part of
+    the broader service-reconcile loop once that worker lands.
+  - service domain backend surface is now complete on the
+    /v1/services/{service_id}/domains/* tree (GET, POST, PATCH, DELETE
+    all wired with contract + policy coverage). The next P=1 story
+    after this bundle is BE-0247 (GET /v1/services/{service_id}/backups)
+    — a fresh backup vertical that will need its own store layer.
+- **Learnings for future iterations:**
+  - Picker rule reaffirmed: when a P=1 policy-matrix story names an
+    endpoint whose contract surface (handler / port arity / OpenAPI
+    registration) doesn't exist yet, bundle endpoint + contract +
+    policy into one iteration. Today's BE-0246 (P=1 policy) named
+    DELETE service-domain — but the handler did not exist, so BE-0244
+    + BE-0245 had to land first. This is the same rule from the
+    BE-0175 vs BE-0177 precedent.
+  - Port-arity sweep tooling: when bumping NewHandler's arity by one
+    port, the cleanest mechanical fix for every test's NewHandler
+    call site is a perl -i -pe regex insertion keyed on the IMMEDIATELY
+    PRECEDING fake type literal (here:
+    `fakeServiceDomainUpdater{},` → `fakeServiceDomainUpdater{},
+    fakeServiceDomainDeleter{},`). 69 files updated in one sweep.
+    Watch for the ONE non-literal pattern (e.g.,
+    `fakeServiceDomainCreator{}, updater, fakeService...`) — fix that
+    file by hand. This is a cleaner version of the BE-0175 ALL-FOUR-
+    FORMS rule.
+  - The hard-delete-with-If-Match-and-snapshot pattern: a DELETE on a
+    versioned bare-{id}-resolver resource is a structural sibling of
+    its PATCH twin. It reuses the parent service's serviceIDResolver,
+    parses the If-Match header through the SAME parseIfMatchVersion
+    helper, calls into classifyServiceDomainConcurrencyMiss on the
+    no-row + version-checked path (so a NotFound vs ConflictStale is
+    deterministic), and returns 200 OK with a snapshot of the deleted
+    row in the payload — never 204, because a body-bearing success
+    keeps the wire shape uniform with every other service-domain
+    endpoint and prevents agents from special-casing the no-body
+    code path. The store-layer Delete orchestrator omits the in-tx
+    Authorize (the in-tx Authorize is reserved for Create's
+    quota-reservation race) and records only structural-identifier
+    metadata (service_id, hostname, path, certificate_type, version)
+    on the audit event — never any caller-supplied request-body
+    field (a DELETE has none) and never any secret material (the
+    table itself stores none).
+  - Policy-matrix file structure is now mechanically clonable across
+    CapWrite-on-bare-{id}-resolver endpoints: the BE-0243 PATCH file
+    became the BE-0246 DELETE file by s/Update/Delete/ + s/update/
+    delete/ + s/Patcher/Deleter/ + s/patcher/deleter/, plus action
+    swap (ActionDomainUpdate → ActionDomainDelete). The needles and
+    deny-leak guard are renamed to avoid colliding with the PATCH
+    file's constants in the same package. The "deleter MUST never
+    run on any deny path" assertion is the destructive-op
+    counterpart of the "updater MUST never run on any deny path"
+    invariant — same structure, more load-bearing reason.
 ---
