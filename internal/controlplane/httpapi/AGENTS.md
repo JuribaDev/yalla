@@ -5,6 +5,54 @@ the route table, the OpenAPI document, the auth/idempotency middleware, and
 thin per-endpoint handlers. Business logic lives in the focused control-plane
 service packages — handlers only decode, delegate, and render.
 
+## CORS stance
+
+The Yalla control-plane API serves non-browser callers (CLI, agents,
+CI) authenticated by Bearer tokens or session cookies. It deliberately
+does NOT enable CORS — no production code path in this package emits
+any `Access-Control-*` response header, on any route, for any request
+shape. Threat model: a browser script loaded from an attacker-
+controlled origin attempts to read API responses or perform a
+credentialed cross-origin request against the API. Without
+`Access-Control-Allow-Origin` in the response, the browser's same-
+origin policy refuses to surface the response body to the script; for a
+credentialed request, the absence of approval makes the browser refuse
+the preflight, so the unsafe request never reaches the server. A 405
+or 404 with no `Access-Control-*` header is the canonical "deny"
+shape for a preflight.
+
+The two-test backstop:
+
+1. `cors_static_test.go` (`TestCORSHeadersAreNotEmittedByProductionCode`,
+   BE-0347) walks every non-test `.go` file in this package and
+   rejects any string literal whose value matches (case-insensitive)
+   the `Access-Control-` prefix — necessary and sufficient to catch
+   every IANA-registered CORS header. The companion
+   `TestCORSStaticAnalyzerDetectsRegressions` synthesizes known-bad
+   and known-good snippets to prove the analyzer fires on the bad
+   shapes (every CORS approval header used as a `Set`/`Add` key,
+   `Header()[name]` map assignment, `const` declaration that names a
+   CORS header) and stays silent on innocuous occurrences
+   (`Content-Type`, `Authorization`, the request-side `Origin` read,
+   prose comments mentioning CORS).
+2. `cors_test.go` proves the invariant end-to-end through
+   `NewHandler`. It drives the public-surface routes (`/healthz`,
+   `/version`, `/readyz`, `/healthz/backup`, `/openapi.json`),
+   preflight `OPTIONS` against a registered POST path with attacker-
+   style `Origin` + `Access-Control-Request-Method` headers, the
+   authenticated 201 happy path, the unauthenticated 401 path, and
+   the 404 envelope path. Every test asserts no response header
+   begins with the `Access-Control-` prefix; one test additionally
+   pins the determinism invariant — two GETs with and without
+   `Origin` return the same header set (modulo `Date` /
+   `X-Request-Id` / `X-Correlation-Id`).
+
+When adding a new handler or middleware: NEVER write
+`Access-Control-*` from a per-handler shortcut. If a future browser
+surface needs CORS, wire one explicit middleware seam — its allowlist
+is the policy, the per-handler write is forbidden. The static
+analyzer will fail the build on a per-handler regression.
+
 ## Request body size limits
 
 Every handler that touches `r.Body` MUST do so through one of the

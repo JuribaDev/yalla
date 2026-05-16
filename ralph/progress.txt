@@ -23597,3 +23597,181 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     branch in the assertion documents the equivalence class without
     locking the test to a specific path.
 ---
+
+## 2026-05-16 - BE-0347 (Security verification: CORS policy)
+- What was implemented:
+  Two-test security-verification pair pinning the "no production code path
+  in internal/controlplane/httpapi emits any Access-Control-* response
+  header" invariant. Threat model: the Yalla control-plane API serves
+  non-browser callers (CLI, agents, CI) authenticated by Bearer tokens or
+  session cookies. A browser script loaded from an attacker-controlled
+  origin must NOT be able to read API responses or perform a credentialed
+  cross-origin request against the API — the same-origin policy is the
+  load-bearing browser-side defense. With no Access-Control-Allow-Origin
+  in any response, the browser refuses to surface the body to the script;
+  with no Access-Control-Allow-Methods/-Headers on the preflight, the
+  browser refuses the preflight and the unsafe request never reaches the
+  server. Documented in the new "CORS stance" section at the top of
+  internal/controlplane/httpapi/AGENTS.md.
+
+  (1) internal/controlplane/httpapi/cors_static_test.go (new, ~290 lines):
+      - TestCORSHeadersAreNotEmittedByProductionCode walks every non-test
+        .go file in the httpapi package (reusing the
+        nonTestHTTPAPISourceFiles + mustParseHTTPAPIFile helpers from the
+        BE-0345 body-size analyzer — the BE-0344/0345/0346 two-test
+        template ports verbatim again) and emits one diagnostic per
+        string literal whose unquoted value matches (case-insensitive)
+        the "Access-Control-" prefix. The prefix match is necessary and
+        sufficient: the Fetch standard defines exactly eight CORS request
+        and response headers, all sharing the prefix
+        (Allow-Credentials/-Headers/-Methods/-Origin,
+        Expose-Headers, Max-Age, Request-Headers/-Method), so the rule
+        catches the entire surface — including any future vendor
+        extension — with one structural check.
+      - TestCORSStaticAnalyzerDetectsRegressions is the self-check
+        (the load-bearing "tests fail when the control is removed"
+        criterion). 16 synthetic cases pin both directions: every
+        Access-Control-* header used as a Header().Set/.Add key is a
+        hit (one case per IANA header), Header()[name]=... map
+        assignment with a CORS literal is a hit, a const declaration
+        that names a CORS header is a hit, lower-case access-control-
+        is a hit (case-insensitive), and the known-good shapes
+        (Content-Type, Authorization, ETag, Origin request-header read,
+        prose comments mentioning CORS) all clear with zero hits.
+        Parsed via parser.ParseFile with parser.ParseComments so the
+        prose-comment fixture is exercised end-to-end.
+      - findCORSHeaderLiterals is the analyzer body. It walks the AST
+        for *ast.BasicLit STRING nodes, strconv.Unquote each value,
+        case-insensitive prefix-checks against "access-control-", and
+        sorts diagnostics for deterministic output across parallel
+        parses.
+
+  (2) internal/controlplane/httpapi/cors_test.go (new, ~270 lines): the
+      runtime end-to-end pair drives the production NewHandler route
+      table (via the existing newTestHandler helper from server_test.go)
+      against six request shapes. The shared assertNoCORSHeaders helper
+      fails on any response-header key starting (case-insensitive) with
+      "Access-Control-". The corsHeaderHolder interface + recorderShim
+      lets one test re-use the assertion over two already-captured
+      header maps without replaying the requests.
+      - TestCORSPublicRoutesEmitNoApprovalHeaders: GET on /healthz,
+        /version, /readyz, /healthz/backup, /openapi.json, each with
+        AND without an Origin: https://evil.example request header. 10
+        subtests, all green.
+      - TestCORSPreflightOptionsReceivesNoApproval: OPTIONS preflight
+        with Origin, Access-Control-Request-Method, and
+        Access-Control-Request-Headers against /v1/organizations (a
+        path with a registered POST → Go 1.22 mux returns 405),
+        /healthz (a path with a registered GET → 405), and
+        /missing-deliberately (no registered route → 404 envelope).
+        Status code is deliberately not asserted — the load-bearing
+        property is the header absence.
+      - TestCORSOriginHeaderDoesNotInfluenceResponse pins the
+        determinism invariant: two GETs to /healthz, one with Origin,
+        one without, return the same response-header key set and the
+        same values for every key except Date, X-Request-Id, and
+        X-Correlation-Id (necessarily per-request). A regression that
+        reflected Origin into Access-Control-Allow-Origin would visibly
+        diverge the two header sets even if it returned the same body.
+      - TestCORSUnauthenticatedRequestHasNoApproval: POST
+        /v1/organizations with no Authorization header and
+        Origin: https://evil.example through createOrganizationHandlerFor
+        with an auth.Identity{} (the zero-value path that drives the 401
+        E_AUTH envelope). Status = 401, no Access-Control-* headers.
+      - TestCORSAuthenticatedRequestHasNoApproval: POST
+        /v1/organizations with a valid session token and Origin header,
+        through a Principal with policy.RoleOwner. Status = 201
+        yalla.output.v1, no Access-Control-* headers — the worst-case
+        cross-origin outcome (a script that already has credentials
+        reads the result of an authorised mutation) is structurally
+        impossible without an Allow-Origin header.
+      - TestCORSNotFoundEnvelopeHasNoApprovalHeaders: GET
+        /v1/this-route-does-not-exist with Origin → 404
+        yalla.error.v1 envelope, no Access-Control-* headers. Closes
+        the route-enumeration vector: a browser script cannot probe
+        the API's route table by reading discriminating 404 bodies.
+
+  (3) internal/controlplane/httpapi/AGENTS.md — added a new "CORS
+      stance" section above "Request body size limits". Documents the
+      threat model, the deny-by-default rationale (the API surface is
+      non-browser-only by design; a future browser surface will be
+      wired through one explicit middleware seam, never per-handler),
+      the two-test backstop pointer, and the rule that the static
+      analyzer fails the build on any per-handler regression.
+- Files changed:
+  internal/controlplane/httpapi/cors_static_test.go (new, ~290 lines),
+  internal/controlplane/httpapi/cors_test.go (new, ~270 lines),
+  internal/controlplane/httpapi/AGENTS.md (added "CORS stance" section
+  above "Request body size limits"),
+  ralph/prd.json (BE-0347 passes=true).
+- Verification run:
+  - gofmt -l on the new files (clean)
+  - go vet ./... (clean — full module)
+  - go test -count=1 -run TestCORS ./internal/controlplane/httpapi/
+    (green — all 6 new tests + 16 self-check subtests pass)
+  - go test -count=1 ./internal/controlplane/httpapi/ (green — full
+    package, no regression in adjacent tests)
+  - go test -count=1 ./... (green — full module, 39 packages)
+  - go test -race -count=1 ./... (green — full module race-clean,
+    httpapi 12.518s including the new tests)
+  - go mod tidy (no changes — no new dependencies)
+- Remaining risks / follow-ups: none. The acceptance criteria
+  (control documented in AGENTS.md, tests fail if control is removed
+  per the self-check fixture, no live Dokploy required, stable
+  yalla.error.v1 envelope on the 401/404 paths, full
+  success/validation/auth/notfound coverage, secrets/cookies/Origin
+  values never echoed in error envelopes) are all met. goimports and
+  golangci-lint/staticcheck/govulncheck are not installed in this
+  environment — documented per the BE-0344..0346 pattern.
+- **Learnings for future iterations:**
+  - The BE-0344..0346 two-test template ports verbatim to a
+    headers-emission invariant: walk the same non-test .go files, scan
+    a structural property (here: any string literal in the
+    Access-Control- namespace), emit one diagnostic per hit, pair with
+    a synthetic regression-detector self-check, and document the rule
+    in the package AGENTS.md. The triad is stable across four
+    consecutive security verifications now (BE-0344 SQL parameter-
+    isation, BE-0345 body size, BE-0346 JSON hardening, BE-0347 CORS).
+    The scope of the structural property changes per story — a calling
+    convention, a function-body shape, an interface contract, a
+    namespace prefix — but the file/test layout is constant. The
+    next "security verification: X" story can adopt the template
+    directly: cors_static_test.go + cors_test.go + AGENTS.md section
+    is the mechanical clone.
+  - For a "no production code does X" invariant where X is a
+    namespace prefix (CORS, future Vary-Origin schemes, future
+    Set-Cookie attribute namespaces), the simplest analyzer is the
+    string-literal scan with strconv.Unquote + case-insensitive prefix
+    match. It catches every IANA-registered surface in the family
+    with one rule and stays robust to vendor extensions under the
+    same namespace. The same pattern would work for, e.g., "no
+    production code names a Server- or X-Powered-By header"
+    (fingerprint suppression), "no production code emits a
+    Set-Cookie with SameSite=None" (cookie hardening), or "no
+    production code references a deprecated header namespace".
+  - The runtime-test pattern doubles its leverage when the deny is
+    structural: assertNoCORSHeaders is shared across six tests
+    covering five HTTP statuses (200, 201, 401, 404, 405). The
+    underlying property is "deny by absence" — there is no positive
+    "ok" header to emit, just the absence of any approval header —
+    which is rarer in security testing than the typical "X is
+    present and X is correct" shape. The corsHeaderHolder interface
+    + recorderShim is the trick that lets the determinism test re-use
+    the same assertion logic on two already-captured headers without
+    replaying requests through a recorder shim.
+  - newTestHandler from server_test.go is the canonical way to mount
+    the full route table for a cross-route runtime test in this
+    package (vs createOrganizationHandlerFor for a single-handler
+    test). It already wires every fake the constructor needs, so
+    adding a new cross-route runtime test does NOT require touching
+    its long positional argument list. New cross-route security
+    tests should reach for newTestHandler first.
+  - Go 1.22 ServeMux returns 405 (not 404) for an OPTIONS request to
+    a path that has methods registered (here: GET /healthz or POST
+    /v1/organizations); only paths with no registered method at all
+    return 404. The notFoundRecorder in server.go intercepts only the
+    404 case to write a yalla.error.v1 envelope; for 405, the default
+    plain-text body is served. The CORS preflight test asserts
+    header-absence only, not status code, so both paths are covered
+    without forking the test on routing details.
+---
