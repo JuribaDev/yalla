@@ -15270,3 +15270,128 @@ Learnings for future iterations:
   ScheduleDeletion is durable but the destructive teardown is a future job.
 
 ---
+
+## 2026-05-16 - BE-0192
+- Implemented: policy matrix coverage for DELETE /v1/services/{service_id}.
+  Adds internal/controlplane/httpapi/services_delete_policy_test.go with four
+  tests:
+  - TestDeleteServicePolicyMatrixRoles: every built-in role through the
+    production NewHandler + policy.NewEngine(). Owner/Admin/Developer allow
+    via ReasonAllowedByRole (202 Accepted, deleter reached with the
+    principal's home org id, the path service_id, the principal id, and
+    nil If-Match; the rendered envelope carries the canonical soft-deleted
+    row including a non-empty deletion_scheduled_at RFC 3339 string).
+    Viewer/CI/Support deny via ReasonDeniedNoCapability (403 E_FORBIDDEN,
+    deleter never reached, deny body never echoes the canonical row or
+    parent ids). The engine verdict is pinned alongside the wire verdict.
+  - TestDeleteServicePolicyRevokedAndExpiredKeys: a Disabled
+    Owner-credentialled service-account principal is denied via
+    ReasonDeniedPrincipalDisabled - the deleter never runs and the body
+    never echoes the principal id, the organization, or the canonical
+    service.
+  - TestDeleteServicePolicyWrongOrganizationPrincipal: an attacker in
+    org_attacker hitting DELETE /v1/services/{svc_victim} reaches the fake
+    deleter with (org_attacker, svc_victim_delete) and a NotFound is
+    surfaced as 404 E_NOT_FOUND with no foreign-org leak in the body. The
+    engine-level cross-tenant matrix pins ReasonDeniedCrossTenant for every
+    role INCLUDING Support, since service.delete is CapWrite and OUTSIDE
+    the engine's CapSupport-and-(CapRead-or-CapSupport) exception.
+  - TestDeleteServicePolicyGrantContainment: every scoped grant
+    (project / env / service) on the bare service-id route is denied
+    OutOfScope at the engine - covers() is one-way and serviceIDResolver
+    pins NO ProjectID. The parent-scoped containment is pinned at its
+    natural scopes (sibling project deny on a service resource in the
+    sibling project; staging-scoped grant allowed at staging but denied at
+    production; service grant allowed at granted svc but denied at sibling
+    and denied at env.write on parent env). Three wire tie-ins (project-,
+    env-, service-scoped keys) confirm 403 + deleter-never-ran + no body
+    leak. An org-level Admin grant is allowed end-to-end (202 with the
+    canonical row and deletion_scheduled_at set); an org-level Viewer
+    grant is denied via ReasonDeniedNoCapability - the load-bearing
+    distinction from the service.read grant matrix. A project-scoped key
+    planted in a foreign home org is denied at the engine: a scoped key's
+    home org must match the grant scope's org or the engine refuses to
+    consider the grant.
+- Files changed:
+  - internal/controlplane/httpapi/services_delete_policy_test.go (new)
+  - ralph/prd.json (BE-0192 -> passes:true)
+- Verification run:
+  - gofmt -w internal/controlplane/httpapi/services_delete_policy_test.go
+  - go vet ./...
+  - go test -run TestDeleteServicePolicy -count=1 ./internal/controlplane/httpapi/
+  - go test ./...
+  - go test -race ./...
+  - go mod tidy (clean)
+- Results: all green. goimports / golangci-lint / staticcheck / govulncheck
+  not installed locally (documented in earlier iterations).
+- Remaining risks / follow-ups:
+  - BE-0190 (DELETE wire contract) landed in df4c5c15 and is the structural
+    twin this matrix sits on top of. The next unblocked policy-matrix
+    stories at priority 1 are BE-0195 (POST /v1/services/{id}/restore),
+    BE-0198 (GET /v1/services/{id}/rendered), and BE-0201 / BE-0204 (GET
+    and PUT /v1/services/{id}/variables) - each is a structural twin of an
+    existing service-id route matrix.
+  - This file does not exercise the scoped-key route variant (a service-
+    scoped key hitting a future /v1/projects/{p}/environments/{e}/services/
+    {s} parent-scoped DELETE). When that variant ships, its matrix will
+    inherit the engine cross-tenant deny pinned here.
+- **Learnings for future iterations:**
+  - **Pattern: service-id-route DELETE matrix = service-id-route UPDATE
+    matrix with three load-bearing edits.** The BE-0189 (PATCH service
+    policy matrix) template is the structural twin for BE-0192 (DELETE
+    service policy matrix), and the diff is small and mechanical because
+    both routes share serviceIDResolver, the CapWrite capability class,
+    and the "scoped grants denied OutOfScope" engine property. The three
+    edits are: (1) action constant - ActionServiceUpdate -> ActionServiceDelete
+    everywhere; (2) request shape - drop the JSON body (deleteService
+    helper sends nil, the handler accepts an empty body), drop the
+    DisplayName needle from the deny-body-leak guard, drop the DisplayName
+    capture assertion on the allow path, and assert captured.IfMatchVersion
+    is nil because the helper sends no If-Match header; (3) wire shape -
+    success is 202 Accepted (not 200 OK), the success envelope projects
+    DeletionScheduledAt as *string in the wire (environment_services.go:95
+    json:"deletion_scheduled_at,omitempty"), so the allow-path wire check
+    additionally asserts payload.Data.Service.DeletionScheduledAt is
+    non-nil and non-empty. The catalog assertions (CapWrite, no support
+    cross-tenant exception, ReasonAllowedByRole/NoCapability/OutOfScope/
+    AllowedByGrant), the cross-tenant engine-level matrix, the
+    project/env/service grant containment pyramid, and the org-level
+    Admin allow vs org-level Viewer deny distinction reuse the BE-0189
+    structure verbatim. Future bare-id mutating routes (clone, restore,
+    cancel, restart, rollback) on the {service_id} family will follow
+    this same pattern.
+  - **Pattern: canonical fixtures across same-resource matrices must use
+    deliberately distinct identifiers.** services_test.go has
+    canonicalServiceForGet; services_delete_test.go (the wire contract)
+    has canonicalDeletedSvc; services_get_policy_test.go has
+    canonicalGetSvcForMatrix; services_update_policy_test.go has
+    canonicalUpdateSvcForMatrix; this story adds canonicalDeleteSvcForMatrix
+    (id "svc_matrix_delete", slug "delete-svc", display "Delete Service
+    Matrix v2", parent ids "prj_svc_matrix_del_parent" /
+    "env_svc_matrix_del_parent"). The distinct ids let the deny-body-leak
+    guards needle for each matrix's fixture without false-positive overlap
+    with siblings, and they keep matrices from accidentally sharing
+    fixture state through a future shared fake. Anti-pattern: reusing
+    canonicalDeletedSvc here would couple the matrix's deny-leak guards
+    to the contract suite's fixture and fail spuriously when either side
+    bumped a slug or display name.
+  - **Pattern: the soft-delete deleter return-value contract is "soft-
+    deleted row with DeletionScheduledAt stamped".** The matrix's
+    canonical fixture sets DeletionScheduledAt explicitly (not via the
+    seedServiceWire helper, which builds an active row without
+    DeletionScheduledAt). The allow-path wire assertion checks that
+    payload.Data.Service.DeletionScheduledAt is non-nil and non-empty
+    after the projection through environmentServiceOf, which projects
+    the time pointer to *string RFC 3339 with json:"deletion_scheduled_at,
+    omitempty". A future regression that dropped DeletionScheduledAt from
+    the projection or that the deleter forgot to stamp would fail here.
+  - **Pattern: DELETE has no body, so the deny-body-leak guard is shorter
+    by one field family.** services_update_policy_test.go's
+    updateSvcDenyBodyLeak needles for both the canonical row AND the
+    caller-supplied display_name patch literal; DELETE has no body, so
+    deleteSvcDenyBodyLeak only needs the canonical row needles (id, slug,
+    display, parent ids). The services table carries no credential
+    material at all, so there is still no secret plaintext to anchor;
+    the deny guard's job is structural existence-leak prevention, not
+    secret redaction.
+---
