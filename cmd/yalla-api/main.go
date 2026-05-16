@@ -104,7 +104,16 @@ func main() {
 		logger.Error("failed to initialize the membership reader", "error", err.Error())
 		os.Exit(1)
 	}
-	membershipService, err := store.NewMembershipService(dataStore, orgRepo, membershipRepo, auditRepo)
+	// Defense-in-depth ports for the add-member unit of work. The HTTP
+	// RequireAuth middleware authorizes action members.manage before the
+	// handler is reached; the in-transaction QuotaReserver is the
+	// dimension-level guard whose real adapter is quota.Checker — it lands
+	// with the cross-cutting members quota plan-resolver story. Until then
+	// this placeholder never rejects, mirroring the api_keys / project /
+	// environment / service wiring so a misconfigured limit cannot block
+	// production traffic before the real plan resolver is wired.
+	membersQuota := noopQuotaReserver{}
+	membershipService, err := store.NewMembershipService(dataStore, orgRepo, membershipRepo, membersQuota, auditRepo)
 	if err != nil {
 		logger.Error("failed to initialize the membership service", "error", err.Error())
 		os.Exit(1)

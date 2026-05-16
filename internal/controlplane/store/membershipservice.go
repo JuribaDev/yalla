@@ -101,31 +101,43 @@ type RemoveMembershipInput struct {
 // MembershipService is the unit-of-work orchestrator for adding members to an
 // organization, updating their role, and removing them. Add composes — in a
 // fixed order, inside one transaction — the existence checks for the
-// organization and the user, the desired-state write (the memberships row),
-// and the immutable audit record. UpdateMember composes — in a fixed order,
-// inside one transaction — the existence check for the (organization, user)
-// membership, the role update (which atomically bumps role_version), and the
-// immutable audit record. Remove composes — in a fixed order, inside one
-// transaction — the existence check for the (organization, user) membership,
-// the DELETE of the memberships row, and the immutable audit record. Because
-// every step shares the *Tx opened by Store.Write, a failure in any rolls
-// the others back: a member is never persisted, re-roled, or removed without
-// its audit event, and an audit event is never written for a mutation that
-// did not happen.
+// organization and the user, the quota reservation on the members dimension,
+// the desired-state write (the memberships row), and the immutable audit
+// record. UpdateMember composes — in a fixed order, inside one transaction
+// — the existence check for the (organization, user) membership, the role
+// update (which atomically bumps role_version), and the immutable audit
+// record. Remove composes — in a fixed order, inside one transaction — the
+// existence check for the (organization, user) membership, the DELETE of the
+// memberships row, and the immutable audit record. Because every step shares
+// the *Tx opened by Store.Write, a failure in any rolls the others back: a
+// member is never persisted, re-roled, or removed without its audit event,
+// and an audit event is never written for a mutation that did not happen.
 //
 // It enqueues no provisioning job: a membership is a Yalla-source-of-truth
 // concept; Dokploy has no notion of who is a member of a tenant.
+//
+// The quota port reserves one unit on the QuotaResourceMembers dimension
+// inside the same *Tx as the desired-state insert and the audit append, so
+// an organization that exhausts its members limit can never half-write a
+// memberships row whose reservation rolled back. The reservation runs AFTER
+// the organization and user existence checks so a 404 on either is never
+// disguised as a quota rejection, and BEFORE the Insert so a duplicate
+// (organization_id, user_id) UNIQUE-constraint conflict rolls the
+// reservation back with the rest of the unit of work. UpdateMember and
+// Remove do not consume quota — re-roling and removing a member are not new
+// allocations against the dimension.
 type MembershipService struct {
 	store       *Store
 	orgs        *OrganizationRepository
 	memberships *MembershipRepository
+	quota       QuotaReserver
 	audit       AuditAppender
 }
 
 // NewMembershipService wires a MembershipService from its dependencies. It
 // returns a typed error if any dependency is nil, so a misconfigured service
 // fails at construction rather than on its first request.
-func NewMembershipService(s *Store, orgs *OrganizationRepository, memberships *MembershipRepository, audit AuditAppender) (*MembershipService, error) {
+func NewMembershipService(s *Store, orgs *OrganizationRepository, memberships *MembershipRepository, quota QuotaReserver, audit AuditAppender) (*MembershipService, error) {
 	switch {
 	case s == nil:
 		return nil, errors.New("store: nil store")
@@ -133,10 +145,12 @@ func NewMembershipService(s *Store, orgs *OrganizationRepository, memberships *M
 		return nil, errors.New("store: nil organization repository")
 	case memberships == nil:
 		return nil, errors.New("store: nil membership repository")
+	case quota == nil:
+		return nil, errors.New("store: nil quota reserver")
 	case audit == nil:
 		return nil, errors.New("store: nil audit appender")
 	}
-	return &MembershipService{store: s, orgs: orgs, memberships: memberships, audit: audit}, nil
+	return &MembershipService{store: s, orgs: orgs, memberships: memberships, quota: quota, audit: audit}, nil
 }
 
 // Add validates in, then runs the add-membership unit of work inside one
@@ -196,6 +210,21 @@ func (svc *MembershipService) Add(ctx context.Context, in AddMembershipInput) (O
 		}
 		if !exists {
 			return apierr.NotFound("user", userID)
+		}
+		// Reserve one unit on the members quota dimension inside the same
+		// transaction as the desired-state insert and the audit append. The
+		// SELECT FOR UPDATE on the quota_usage counter row serialises
+		// concurrent reservers against one another, so the limit can never
+		// be over-allocated even under parallel add requests. A rejection
+		// here surfaces as a typed apierr.QuotaExceeded whose
+		// ExceededDetail.Resource is "members" — the wire-stable dimension
+		// label customers see on E_QUOTA_EXCEEDED. The reservation runs
+		// AFTER the organization and user existence checks (so a 404 on
+		// either is never disguised as a quota rejection) and BEFORE the
+		// Insert (so a duplicate (organization_id, user_id) UNIQUE conflict
+		// rolls the reservation back with the rest of the unit of work).
+		if err := svc.quota.Reserve(ctx, tx, organizationID, string(QuotaResourceMembers)); err != nil {
+			return err
 		}
 		row, insErr := svc.memberships.Insert(ctx, tx, organizationID, userID, role)
 		if insErr != nil {

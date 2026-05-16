@@ -194,6 +194,7 @@ func TestNewMembershipServiceRejectsNilDependencies(t *testing.T) {
 
 	orgs := NewOrganizationRepository()
 	memberships := NewMembershipRepository()
+	quota := nopQuotaReserver{}
 	audit := NewAuditRepository()
 
 	cases := []struct {
@@ -201,18 +202,20 @@ func TestNewMembershipServiceRejectsNilDependencies(t *testing.T) {
 		store       *Store
 		orgs        *OrganizationRepository
 		memberships *MembershipRepository
+		quota       QuotaReserver
 		audit       AuditAppender
 	}{
-		{"nil store", nil, orgs, memberships, audit},
-		{"nil orgs", &Store{}, nil, memberships, audit},
-		{"nil memberships", &Store{}, orgs, nil, audit},
-		{"nil audit", &Store{}, orgs, memberships, nil},
+		{"nil store", nil, orgs, memberships, quota, audit},
+		{"nil orgs", &Store{}, nil, memberships, quota, audit},
+		{"nil memberships", &Store{}, orgs, nil, quota, audit},
+		{"nil quota", &Store{}, orgs, memberships, nil, audit},
+		{"nil audit", &Store{}, orgs, memberships, quota, nil},
 	}
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if _, err := NewMembershipService(tc.store, tc.orgs, tc.memberships, tc.audit); err == nil {
+			if _, err := NewMembershipService(tc.store, tc.orgs, tc.memberships, tc.quota, tc.audit); err == nil {
 				t.Fatal("NewMembershipService returned nil error, want a typed construction error")
 			}
 		})

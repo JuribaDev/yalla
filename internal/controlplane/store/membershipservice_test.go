@@ -25,6 +25,7 @@ func newMembershipService(t *testing.T, s *store.Store) *store.MembershipService
 		s,
 		store.NewOrganizationRepository(),
 		store.NewMembershipRepository(),
+		&recordingQuota{},
 		store.NewAuditRepository(),
 	)
 	if err != nil {

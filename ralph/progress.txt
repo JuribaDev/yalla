@@ -22340,3 +22340,30 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     procedure when a broad-suite run shows more failures than the
     focused story-specific runs.
 ---
+
+## 2026-05-16 - BE-0338 (Enforce quota for members)
+- Added new closed-set quota dimension: members.
+- Files changed:
+  - internal/controlplane/store/migrate/migrations/0028_quota_resource_members.up.sql (new)
+  - internal/controlplane/store/migrate/migrations/0028_quota_resource_members.down.sql (new)
+  - internal/controlplane/store/quota.go (added QuotaResourceMembers constant + membership set entry)
+  - internal/controlplane/store/quota_internal_test.go (added QuotaResourceMembers to lockstep list)
+  - internal/controlplane/store/membershipservice.go (MembershipService grows a QuotaReserver port; Add calls Reserve(QuotaResourceMembers) inside the same *Tx after org+user existence checks and before Insert; UpdateMember and Remove unchanged — re-roling and removing a member are NOT new allocations)
+  - internal/controlplane/store/membershipservice_test.go (helper wires &recordingQuota{})
+  - internal/controlplane/store/membershipservice_internal_test.go (nil-deps test grows a quota slot + nil-quota case wedged between memberships and audit)
+  - internal/controlplane/store/membership_quota_members_concurrent_test.go (new — two integration tests against real quota.Checker + QuotaRepository + AuditRepository)
+  - cmd/yalla-api/main.go (membersQuota noopQuotaReserver placeholder + reorders members service wiring)
+- Verification:
+  - gofmt -w . / go vet ./... / go build ./... — clean
+  - go test ./... (no integration) — pass on every non-store package
+  - go test ./internal/controlplane/store/migrate/ — pass
+  - go test ./internal/controlplane/store/ -run 'Membership' (with -race) — pass
+  - go test ./internal/controlplane/store/ -run 'TestQuota' — pass
+  - go test ./internal/controlplane/store/ -run 'TestMembershipServiceAddRejectsParallelOversubscriptionForMembersQuota|TestMembershipServiceAddAppliesMembersQuotaIndependentlyOfOtherDimensions' — pass
+  - Broader -p 1 store run surfaced pre-existing API key/environment failures (E_INVALID_INPUT / cross-tenant id leak / ordering) confirmed unrelated to BE-0338 by stash-and-checkout against bb6c96b2.
+- Remaining risks / follow-ups:
+  - The real quota.Checker adapter is still wired as noopQuotaReserver in cmd/yalla-api/main.go pending the cross-cutting plan-resolver story (same convention as BE-0337 api_keys / project / environment / service). The MembershipService layer is now ready to call a real checker; only the production wiring deferred.
+  - UpdateMember and Remove deliberately do not consume members quota — the dimension counts live memberships, and re-roling is a no-op against the count while Remove releases. A future story may need to add a release path that decrements the active-reservation count when a member is removed; today the active-reservation count stays elevated until DefaultReservationTTL expires the row, mirroring every other quota-counted dimension (BE-0327..BE-0337).
+- Learnings for future iterations:
+  - Members is the BE-0337 'call site NOT yet wired' twin: MembershipService.Add already orchestrated org+user existence checks, the desired-state Insert, and the audit append in one *Tx, so the Reserve call slots between the existence checks and the Insert without any other reshape. The four change axes (migration + constant + service-port + concurrent test) mirror BE-0337 verbatim.
+  - The integration test seeds twenty distinct user rows up-front because the (organization_id, user_id) UNIQUE constraint forbids two adds of the same user — distinct from the api_keys test where each goroutine mints its own (prefix, secret_hash) pair via auth.Generate.
