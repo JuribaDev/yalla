@@ -19391,3 +19391,47 @@ Learnings for future iterations:
     pins the authorization contract; the wire layer pins the wire
     behaviour including the 404-vs-403 ladder).
 ---
+
+## 2026-05-16 - BE-0062
+- Implemented: contract tests for GET /v1/organizations/{org_id}/members. New
+  file internal/controlplane/httpapi/members_list_contract_test.go pins the
+  three remaining public-API contract criteria that members_test.go (BE-0061)
+  does not assert directly: (1) the HTTP server writes response data only
+  through the http.ResponseWriter and never to the process stdout/stderr;
+  (2) the per-request structured log is redacted of the bearer credential on
+  the success owner-viewer path AND the disabled-principal 403
+  authorization-failure path, and the response body never echoes the
+  credential either; (3) an apierr.StoreUnavailable wrapping a host:port
+  cause surfaces as 503 E_UNAVAILABLE with a stable generic message — the
+  wrapped cause and bare datastore address remain server-side only.
+- Files changed:
+  - internal/controlplane/httpapi/members_list_contract_test.go (new, 232 lines)
+  - ralph/prd.json (BE-0062 passes=true, notes updated)
+  - ralph/progress.txt (this entry)
+- Verification:
+  - gofmt -w . (clean; gofmt -l . returns empty)
+  - go mod tidy (no changes)
+  - go vet ./... (clean)
+  - go test ./internal/controlplane/httpapi/ -run 'TestListMembers(Server|RequestLogRedacts|ErrorEnvelopeDoesNotLeak)' -count=1 -v -> 3 functions / 4 leaves PASS (the table-driven test contributes 2 subtest leaves: success_path, authorization_failure_path)
+  - go test ./... -count=1 -> ALL 37 packages PASS
+  - go test -race ./... -count=1 -> ALL 37 packages PASS
+  - goimports / golangci-lint / staticcheck / govulncheck still not installed locally (documented in earlier iterations)
+- Results: PRD story BE-0062 set to passes:true. 391 stories remain pending.
+- Remaining risks or follow-ups: none specific to this story. The structural
+  twin pattern continues to scale linearly: BE-0065 (POST
+  /v1/organizations/{org_id}/members contract) is the next clone, twin of
+  organizations_create_contract_test.go (BE-0050) adapted to the
+  MembershipCreator port + {org_id} path parameter + 201 status. BE-0068
+  (members GET single contract) is the twin of organizations_get_contract_test.go
+  (BE-0053) adapted to the MembershipReader.GetMember path + {member_id}
+  second-path-parameter.
+- **Learnings for future iterations:**
+  - **Sub-collection list-shape contract clones (resource_name_list_contract_test.go) follow the same recipe as organizations_contract_test.go, adapted on three dimensions only.** (1) Path: the GET URL gains an {org_id} (or future {project_id}, {environment_id}, {service_id}) prefix, so the rec-getter is parameterised — `getMembers(handler, orgID, token)` instead of `getOrganizations(handler, token)`. (2) Reader port: swap OrganizationReader -> MembershipReader in both the with-logger helper signature and the dependency-leak test, and pass `reader` into the MembershipReader slot of NewHandler (between fakeOrganizationDeleter and fakeMembershipCreator) instead of into the OrganizationReader slot. (3) Success payload shape: the body assertion shifts from `env.Data.Organizations[0].OrganizationID` to `env.Data.Members[0].UserID` — the decode helper (decodeListMembers) does the schema_version/ok/request_id pinning, so the contract-test body assertion is just one canonical field from the data block.
+  - **The disabled-principal authorization-failure path for sub-collection lists keeps the principal IN the path-parameter tenant.** A disabled principal in the SAME organization as `{org_id}` denies with `ReasonDeniedPrincipalDisabled`, not `ReasonDeniedCrossTenant`. The contract test's redaction proof MUST land on the disabled-principal row (same-tenant) rather than the cross-tenant row because the cross-tenant deny path's `ReasonDeniedCrossTenant` message intentionally does NOT echo the cross-tenant id (proven by `TestListMembersCrossTenantIsForbidden`'s `org_victim` check in members_test.go), so it satisfies the redaction proof trivially — landing the redaction check on cross-tenant would NOT exercise the harder property (a same-tenant deny that DOES carry the principal id in the message but still has no header leakage). The disabled-principal row carries the user id of the revoked credential in the deny reason, so the redaction proof actually has something to lose; the test pins the contract that the BEARER credential is what gets redacted, not the principal id (the principal id is non-secret server state and is permitted in the message).
+  - **The MembershipReader slot in NewHandler is the 11th positional argument** (after the four organization slots: reader, creator, updater, deleter). Counting it wrong puts the membership reader into one of the org slots and the contract test would silently fail in a confusing way — the NewHandler signature in server.go documents the positional order as: Organization{Reader,Creator,Updater,Deleter}, Membership{Reader,Creator,Updater,Remover}, Limits{Reader,Updater}, .... A future clone for limits/api-keys/projects sub-collections must place its reader in the correct slot — count from server.go's parameter list, not from any other test file's call site (the call site comments may be stale).
+  - **Per-endpoint bearer-secret naming continues to expand.** The slug for THIS endpoint is `members_list` (not `members` and not `members_get`): the family slug is `members` and the verb slug is `list`/`get`/`create`/`update`/`delete`. So the constant name is `listMembersContractSecret` (verb-leading, matching the handler function `listMembersHandler`) and the secret value is `yk_live_supersecret_members_list_DEADBEEF0123456789`. Future clones MUST follow this verb-leading convention: `getMemberContractSecret = "yk_..._members_get_..."` for BE-0068, `createMemberContractSecret = "yk_..._members_create_..."` for BE-0065, etc. A grep for `yk_live_supersecret_members_` across the package proves no two endpoints share a secret string, so a leak across endpoint tests would be detectable by grep alone.
+  - **The handler-with-logger helper-function name follows the SAME verb-leading convention.** `listMembersHandlerForWithLogger` (mirroring `listMembersHandlerFor` in members_test.go) — NOT `membersHandlerForWithLogger`, which would be ambiguous given that the members family has list, get, create, update, and delete endpoints. The contract test for the members list endpoint creates a NEW with-logger helper; it does NOT reuse `listMembersHandlerFor` (which lacks the logger parameter) because the redaction proof needs to inspect the structured log. The non-logger variant `listMembersHandlerFor` IS reused in the dependency-leak test (`TestListMembersErrorEnvelopeDoesNotLeakDependencyCause`) because that test does not inspect the log — it inspects the response body only.
+  - **File naming: `<family>_<verb>_contract_test.go` for sub-collection lists**, matching the existing organizations contract family but with an explicit verb segment because the members family already has multiple per-verb test files (members_create_*_test.go, members_get_policy_test.go, members_update_*_test.go, members_delete_*_test.go). The list contract test would otherwise collide on the file naming with future BE-0068 (members single-get contract). So this file is `members_list_contract_test.go`, and BE-0068 will be `members_get_contract_test.go`. The organizations family's `organizations_contract_test.go` (with no verb segment) is the historical exception — for list-shape it was the only contract test in the family until BE-0050 added `organizations_create_contract_test.go`; cloning the historical exception name verbatim for members would have shadowed the family pattern.
+
+Searchable terms for follow-up: members_list, members_get, members_create, members_update, members_delete, listMembersHandlerForWithLogger, listMembersContractSecret, getMemberContractSecret, createMemberContractSecret, updateMemberContractSecret, deleteMemberContractSecret, MembershipReader, MembershipCreator, MembershipUpdater, MembershipRemover, NewHandler-positional-slot, sub-collection, verb-leading, organizationIDResolver, ReasonDeniedPrincipalDisabled, ReasonDeniedCrossTenant, captureProcessOutput, decodeListMembers, decodeGetMember, decodeError, fakeMembershipReader, orgPrincipal.
+---
