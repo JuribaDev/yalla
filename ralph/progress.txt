@@ -122,6 +122,8 @@
 
 - Pure N-scope inheritance resolver (BE-0343 pattern, internal/controlplane/variables/{doc.go, resolver.go, resolver_test.go, AGENTS.md}; structural template for any future hierarchy-aware merge engine over org/project/env/service — feature-flag inheritance, domain-config inheritance, rate-limit inheritance). Five load-bearing rules: (1) The resolver package owns NO I/O — it defines a scope-agnostic ScopedVariable input shape and a Resolver that operates purely on in-memory tuples. The caller fetches inputs through the per-scope *Reader adapters (internal/controlplane/store) and converts store types into the resolver's input shape. This decouples the merge contract from persistence and lets unit tests use hand-built fixtures without a fake DB. (2) Collect ALL field violations across ALL scopes in one pass and return them as one apierr.InvalidInput; do NOT short-circuit on the first violation — that is hostile to the agent contract. Field paths anchor on <scope>.variables[<index>].<field> and NEVER echo the submitted value. (3) Customer-input failures (invalid name, duplicate within scope, secret downgrade without opt-in) -> apierr.FieldViolation -> apierr.InvalidInput (HTTP 400). Server-side failures (Open ErrUnknownKey / wrapped ErrInvalidCiphertext / provider id mismatch) -> apierr.Internal with a wrapped cause for server-side logging (HTTP 500). The classification is load-bearing: customer-input means "fix your request"; Internal means "retry or escalate". (4) Three redaction views: (a) Resolved/Rendered are internal-only and carry verbatim plaintext for renderer/worker consumption; (b) LogValue redacts value and ciphertext at the slog boundary as defence-in-depth against stray slog captures; (c) Explained projects every value to output.Sentinel for customer-facing JSON envelopes, audit metadata, and operator diagnostics. Tests prove no error message, JSON marshal, or slog line contains source plaintext or ciphertext. (5) Closed-set Options.AllowSecretDowngrade opt-in: secret -> non-secret at a higher scope is REJECTED by default (apierr.InvalidInput); the opt-in path MUST be backed by a caller-emitted audit event recording the override. The asymmetry between upgrade (always allowed) and downgrade (rejected by default) is the safe direction — upgrading the classification strengthens the posture, downgrading weakens it. Two test-fixture gotchas the pattern documents: (a) whole-error redaction tests must choose fixture values that cannot collide with stable reason phrases (the first BE-0343 iteration used "duplicate" as a fixture value AND as part of the rejection reason — false positive); use distinctive suffixes like "fixture-value-one-zzy" to anchor the redaction invariant. (b) Tests against the Plaintext provider must use different strings for the plaintext-leak assertion and the ciphertext-leak assertion — Plaintext.Seal returns the input verbatim, so using the same string for both would tautology-pass under Plaintext but fail to catch a real leak under AESGCM. NOT applicable to the dokploy renderer's mergeVariables (renderer.go) — that path is intentionally separate because the renderer's Variable input is the deterministic spec, not the at-rest seal tuple, and it ALSO validates tier/role invariants. A future refactor could unify the two but is a distinct story (it changes the renderer's input contract).
 
+- Security-verification two-test pattern, httpapi port (BE-0345 pattern, internal/controlplane/httpapi/{body_size_static_test.go, body_size_test.go, AGENTS.md}; SECOND worked instance of the BE-0344 two-test template — confirms the template ports cleanly across packages and surfaces the httpapi-specific knobs). Four httpapi-flavoured rules the store-flavoured BE-0344 entry does NOT capture: (a) the static analyzer's receiver-name allowlist (`r`, `req`, `request`) is what makes `<*http.Request>.Body` distinguishable from unrelated `<*http.Response>.Body` / `<mail.Message>.Body` selectors in the same package — the convention is uniform (`r` everywhere in httpapi today) so the `req`/`request` aliases are defensive against future rename; document the convention in the analyzer's package doc. (b) the allowed-shape set is a small closed set: validate.DecodeJSON arg, io.LimitReader arg, `BinaryExpr` nil compare (either side), `AssignStmt` LHS, and `CallExpr` with zero args whose method is `.Close()` (the `len(call.Args) == 0` check on Close is what keeps `.Close(someArg)` from accidentally passing — io.Closer.Close takes no args by definition). Each shape lives in its own `markAllowedIn<Kind>` helper so adding a new allowed shape is a single function, not a branching edit on a monolith. (c) the regression self-check covers BOTH known-bad AND known-good synthetic snippets — without the positive cases a future change that over-tightens the analyzer would slip past silently. (d) the runtime test reuses the existing `createOrganizationHandlerFor` / `postOrganizations` / `decodeError` helpers from `organizations_create_test.go`; the entire 4-case end-to-end test is ~120 lines because the handler-wiring helpers already exist for every mutating endpoint. New security-verification runtime tests in httpapi should look for an existing handler-builder in the same package before adding a new one. Acceptance criteria "Unit tests cover success, validation failure, authorization failure, and not-found behavior" maps onto body-size as: success = valid in-cap body decodes (201 yalla.output.v1), validation failure = over-cap body returns 400 E_INVALID_INPUT with "exceeds the maximum allowed size" message, authorization failure = oversized body from an unauthenticated caller is 401 E_AUTH (auth middleware runs before body decode), not-found-style = empty body is 400 E_INVALID_INPUT "must not be empty" (nothing to decode is the symbolic lower edge). All four assertions also pin the no-body-reflection invariant (the error message must NOT echo the submitted body — a 64-byte slice of the padding is the regression probe). Sibling BE-0346..BE-0363 security-verification stories continue to follow the BE-0344+BE-0345 template; the package that owns the invariant determines whether the analyzer scans store SQL or httpapi handlers or worker job inputs etc., but the two-test pair shape, the regression self-check shape, and the AGENTS.md section shape are identical.
+
 - Security-verification two-test pattern (BE-0344 pattern, internal/controlplane/store/{sql_injection_static_test.go, sql_injection_test.go, AGENTS.md}; structural template for BE-0345..BE-0363 sibling security-verification stories and ANY future "this invariant must hold for every call site of a typed surface" verification — request body size, JSON parser hardening, log-redaction fuzzing, environment-variable redaction, audit tamper resistance, etc.). The shape is two complementary tests landing in the package that owns the invariant: (1) a STATIC AST analyzer test that walks every non-test .go file in the package and rejects any source-level shape that re-opens the invariant — runs without a database, fails the build for any regression, and includes a self-check sub-test that parses synthetic bad source snippets and asserts the analyzer reports the expected violations (the self-check satisfies the "tests fail when the control is removed" criterion independently of whether production code happens to be clean today; a future weakening of the analyzer that lets a real regression slip past would itself fail this test). (2) a RUNTIME integration test that runs against an isolated Postgres (testutil.RequireMigratedDB), feeds a canonical attack/probe corpus through every relevant input position, asserts each call returns through the typed error surface (NotFound, InvalidInput, Conflict — never E_UNAVAILABLE, which is the store's mapping for raw driver errors and the load-bearing negative assertion because a control bypass would surface there), AND asserts a post-loop integrity probe (row counts byte-identical to baseline, seeded fixtures readable byte-identical) — plus a verbatim round-trip test that proves the invariant boundary actually IS the pgx parameter binder by inserting each payload as a free-text column value and reading it back byte-identical. Four load-bearing rules: (a) the static analyzer accepts only compile-time-constant expressions (string literals, const-bound identifiers including function-local consts, parenthesised wrappers, +-concatenations of those) — var declarations are rejected because var is mutable and a safe value today could be reassigned to caller input later; the const/var distinction is the language guarantee that makes the rule load-bearing; (b) the analyzer encodes structural exemptions ONLY by receiver type + method name (e.g. *Tx Querier wrappers), never by file path or line number, so the allowlist cannot drift; (c) the runtime payload corpus deliberately omits inputs that fail at a lower protocol layer (NUL bytes for SQL injection — pgx rejects NUL in a text parameter before it reaches the server, surfacing as E_UNAVAILABLE for reasons unrelated to the invariant) so the load-bearing E_UNAVAILABLE negative assertion stays clean; document the exclusion explicitly in the test file's package-doc block; (d) the SQL-keyword scan in the analyzer is case-SENSITIVE and anchors on uppercase keywords — the codebase writes SQL uppercase, so case sensitivity costs nothing and eliminates prose false positives like "transition from %s to %s" or "returning the value"; the regex requires \S (not \w) after UPDATE/FROM so Sprintf templates like "UPDATE %s SET …" still match (% is not a word char). The package's AGENTS.md gets a new section above the existing patterns documenting the threat model, the two-test invariant, the structural exemption, and the deliberate corpus exclusions — so a future developer can find the rule without re-reading the test files. Pre-existing -race failures on the full package run (recordingAuthorizer races, Postgres max_connections saturation at 20×N goroutines) are not regressions; -race -run filtered to the new tests is clean. NOT applicable to verification stories whose invariant is a runtime contract with NO static analog (e.g. log redaction fuzzing, idempotency replay, chaos tests for timeouts) — those follow a single-test runtime-only shape; the two-test pattern applies when the invariant is also a source-code rule.
 ## 2026-05-15 - BE-0103
 - What was implemented: GET /v1/organizations/{org_id}/audit-events, the
@@ -23370,4 +23372,157 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
       The Codebase Patterns section already
       documents this; -race -run filtered to the
       new BE-0344 tests is race-clean.
+---
+
+## 2026-05-16 - BE-0345 (Security verification: request body size limits)
+- What was implemented:
+  Two-test security-verification pair proving every HTTP handler reads
+  `r.Body` only through a size-bounded shape (`validate.DecodeJSON`,
+  `io.LimitReader`-then-bounded-`io.ReadAll`, nil compare, `.Close()`,
+  or LHS restore). Threat model and contract are documented in the new
+  "Request body size limits" section at the top of
+  `internal/controlplane/httpapi/AGENTS.md`.
+  (1) internal/controlplane/httpapi/body_size_static_test.go — the
+      static AST analyzer (`TestRequestBodyAccessIsAlwaysSizeBounded`)
+      walks every non-test .go file in the httpapi package, collects
+      every `<r|req|request>.Body` selector position, then marks the
+      allowed ones in a second AST pass (validate.DecodeJSON arg,
+      io.LimitReader arg, BinaryExpr nil-compare on either side,
+      AssignStmt LHS, and `.Close()` CallExpr with zero args). Any
+      unmarked position is reported with file:line and a remediation
+      hint. The companion
+      `TestRequestBodyStaticAnalyzerDetectsRegressions` parses 11
+      synthetic snippets (8 known-bad: json.NewDecoder, unbounded
+      io.ReadAll, bufio.NewReader, struct-capture, return-up-the-stack,
+      rebind-to-local-then-read, io.Copy without LimitReader, type
+      assertion; 3 known-good: validate.DecodeJSON, the canonical
+      idempotency LimitReader-then-NopCloser wrap, nil compare) and
+      asserts each is flagged or cleared as expected. Both tests run
+      without a database.
+  (2) internal/controlplane/httpapi/body_size_test.go — the runtime
+      end-to-end pair drives `POST /v1/organizations` through the
+      production `NewHandler` wiring with fakes. Four tests:
+      `TestRequestBodyLimitOversizedBodyIsRejected` posts a 1 MiB+1B
+      payload and asserts 400 / yalla.error.v1 / E_INVALID_INPUT /
+      canonical "exceeds the maximum allowed size" message / no body
+      reflection (load-bearing); `TestRequestBodyLimitValidBodyIsAccepted`
+      posts a small valid body and asserts 201 with the
+      yalla.output.v1 envelope (the symmetric positive test that
+      catches an over-tightened cap); `TestRequestBodyLimitDoesNotBypassAuth`
+      posts an oversized body with no credential and asserts 401
+      E_AUTH (the cap is not a probe surface for unauthenticated
+      callers — auth runs first); `TestRequestBodyLimitMissingBodyIsValidationError`
+      posts an empty body and asserts 400 E_INVALID_INPUT with the
+      canonical "must not be empty" message.
+  (3) internal/controlplane/httpapi/AGENTS.md — added a new top-level
+      "Request body size limits" section above "Adding an endpoint"
+      that documents the threat model, the five allowed shapes, the
+      static analyzer + runtime test pair, and the rule for adding
+      new handlers and middleware. The rule for middleware copies
+      the `idempotency.readAndRestoreBody` shape because the
+      analyzer structurally recognises that wrap.
+- Files changed:
+  internal/controlplane/httpapi/body_size_static_test.go (new, ~370 lines),
+  internal/controlplane/httpapi/body_size_test.go (new, ~150 lines),
+  internal/controlplane/httpapi/AGENTS.md (added "Request body size
+  limits" section above "Adding an endpoint"),
+  ralph/prd.json (BE-0345 passes=true).
+- Verification run:
+  - gofmt -l on the new files (clean)
+  - go vet ./... (clean — full module)
+  - go test ./internal/controlplane/httpapi/ -count=1 (green;
+    YALLA_TEST_DATABASE_URL set on a second run for the integration
+    tests that need it, also green)
+  - go test ./... -count=1 (green; full module green)
+  - go test -race -run TestRequestBody
+    ./internal/controlplane/httpapi/ -count=1 (race-clean for the
+    new tests in isolation)
+- Results: BE-0345 passes.
+- Remaining risks or follow-ups:
+  None for body size itself. The static analyzer is a per-file walk
+  and stays cheap as the package grows. Sibling BE-0346..BE-0363
+  security-verification stories continue to follow the BE-0344
+  two-test template (threat model + static AST + runtime probe +
+  AGENTS section); the BE-0345 pair is the second worked example
+  and confirms the template is portable across packages (BE-0344
+  landed in `store`, BE-0345 lands in `httpapi` — same shape, same
+  parts, the analyzer's allowed/forbidden sets are the only piece
+  that changes per topic).
+- Learnings for future iterations:
+  - Patterns discovered:
+    - The two-test pattern from BE-0344 ports cleanly to httpapi.
+      The static-analyzer half is built around the SAME two-pass
+      AST design: pass 1 collects every selector position of
+      interest (`<receiver>.Body` for httpapi, `.Exec/.Query/.QueryRow`
+      args for store), pass 2 marks the positions that appear
+      inside one of the allowed shapes, and a final pass diagnoses
+      the unmarked ones. The diagnostic carries file:line and a
+      remediation hint so the failure tells the next developer
+      what to do, not just that they broke something.
+    - For an httpapi-style analyzer, the receiver-name allowlist
+      (`r`, `req`, `request`) is what distinguishes
+      `<*http.Request>.Body` from unrelated `<*http.Response>.Body`
+      / `<*mail.Message>.Body` selectors. The package-doc on the
+      analyzer documents the convention so a future rename has a
+      single place to update.
+    - The allowed-shape set for body access has a deliberately
+      narrow tail: `BinaryExpr` (nil compare), `AssignStmt` (LHS
+      restore), `CallExpr` (validate.DecodeJSON arg, io.LimitReader
+      arg, `.Close()` zero-arg method call). Each is checked by a
+      separate `markAllowedIn<Kind>` helper so adding a new
+      allowed shape in the future is a single function, not a
+      branching edit on a monolith.
+    - The runtime test reuses the existing
+      `createOrganizationHandlerFor` / `postOrganizations` /
+      `decodeError` helpers from `organizations_create_test.go` —
+      the entire end-to-end test is ~120 lines because the
+      handler-wiring helpers already exist for every mutating
+      endpoint. New security-verification runtime tests should
+      look for an existing handler-builder in the same package
+      before adding a new one.
+    - Acceptance criteria "Unit tests cover success, validation
+      failure, authorization failure, and not-found behavior" maps
+      cleanly to body-size: success = valid in-cap body decodes,
+      validation failure = over-cap body returns 400, authorization
+      failure = auth runs before body decode, not-found = empty
+      body is "must not be empty" 400. The not-found mapping is
+      symbolic (no row to find — no body to decode) but matches
+      the spirit of the criterion.
+  - Gotchas encountered:
+    - First pass at the analyzer used
+      `map[token.Pos]ast.Expr` for both `bodies` and `allowed`,
+      then `go vet` flagged the helper signatures because I
+      declared `allowed := map[token.Pos]bool{}` in the caller and
+      `map[token.Pos]ast.Expr` in the helpers. Fix: pick one type
+      and keep it consistent — `map[token.Pos]bool` is plenty
+      because the helpers only mark presence; the actual ast.Expr
+      stays in the `bodies` map for diagnostics.
+    - The receiver-name filter (`r`/`req`/`request`) is essential.
+      Without it, the analyzer would walk a `bytes.Buffer.Body`
+      or `http.Response.Body` field elsewhere in the package and
+      spuriously flag it. The codebase convention is uniform (`r`
+      everywhere in httpapi today), so the `req`/`request`
+      aliases are defensive — but cheap to leave in for future
+      rename robustness.
+    - `r.Body = io.NopCloser(...)` on the LHS of an `AssignStmt`
+      is structurally allowed (LHS assign), but a RHS reference
+      like `body := r.Body` is NOT — the Body selector still sits
+      in the bodies map AND is not on the LHS, so the analyzer
+      flags it. This is exactly right: rebinding the body to a
+      local for a later unbounded read is the indirect form of
+      the same vulnerability as a direct unbounded read. The
+      synthetic regression case `"rebinding r.Body to a local on
+      the RHS is unsafe"` pins this.
+    - `r.Body.Close()` is allowed (CallExpr where the receiver of
+      `.Close` is a `<r>.Body` selector, with zero args). The
+      structural check on `len(call.Args) == 0` is what keeps
+      this from accidentally allowing `.Close(someArg)` —
+      `io.Closer.Close()` takes no args by definition, so the
+      zero-args check is correct and tight.
+    - The runtime test's "no body reflection" assertion uses a
+      64-byte slice of the padding (`pad[:64]`) — a single `x` on
+      its own is benign, but a long run of it in the response
+      would indicate the body was reflected. The 64-byte prefix
+      is the minimum that cannot collide with any legitimate
+      error string.
 ---

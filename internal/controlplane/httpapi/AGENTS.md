@@ -5,6 +5,49 @@ the route table, the OpenAPI document, the auth/idempotency middleware, and
 thin per-endpoint handlers. Business logic lives in the focused control-plane
 service packages — handlers only decode, delegate, and render.
 
+## Request body size limits
+
+Every handler that touches `r.Body` MUST do so through one of the
+deliberately narrow size-bounded shapes. An unbounded read lets an attacker
+OOM the API with a single request, monopolise a request-handling goroutine
+with a slow-loris stream, or trigger a panic deep in `encoding/json`. The
+allowed shapes are:
+
+1. `validate.DecodeJSON(r.Body, &dst, 0)` — the canonical body decoder. It
+   caps the read at `validate.DefaultMaxBodyBytes` (1 MiB) and surfaces an
+   oversized body as a typed `apierr.Invalid` (HTTP 400, `E_INVALID_INPUT`)
+   with the fixed-string message `"request body exceeds the maximum allowed
+   size"`. Every mutating handler (`POST`, `PUT`, `PATCH`, `DELETE` with a
+   body) uses this exact shape.
+2. `io.LimitReader(r.Body, <cap+1>)` followed by `io.ReadAll` on the
+   limited reader — the explicit bounded-wrap shape used by the
+   idempotency middleware in `idempotency.go` to hash the request body
+   before dispatching the wrapped handler. The `<cap+1>` trick lets the
+   middleware distinguish "exactly at cap" from "over cap".
+3. Nil checks (`r.Body == nil`/`!= nil`), `r.Body.Close()`, and LHS
+   assignments (`r.Body = io.NopCloser(...)` to restore after buffering).
+
+`json.NewDecoder(r.Body)`, unbounded `io.ReadAll(r.Body)`,
+`bufio.NewReader(r.Body)`, returning `r.Body` from a function, capturing
+`r.Body` in a struct, type-asserting it, or rebinding it to a local for
+later unbounded reads is forbidden. The static analyzer
+`TestRequestBodyAccessIsAlwaysSizeBounded`
+(`body_size_static_test.go`, BE-0345) parses every non-test file in the
+package, scans `*http.Request`-named selectors (`r`/`req`/`request`), and
+fails the build on the file:line of any access outside the allowed shapes;
+the companion `TestRequestBodyStaticAnalyzerDetectsRegressions` synthesizes
+known-bad and known-good snippets to prove the analyzer fires on the bad
+shapes and stays silent on the good ones. The runtime test
+`body_size_test.go` proves the cap end-to-end through `NewHandler` against
+`POST /v1/organizations`.
+
+When adding a new handler that reads a body, ALWAYS go through
+`validate.DecodeJSON` — never a bespoke decoder. When adding a new
+middleware that needs to inspect the body, copy the
+`io.LimitReader`+`io.ReadAll`+`io.NopCloser`-restore shape from
+`idempotency.readAndRestoreBody`; the static analyzer recognises that
+shape and a new middleware that does not will fail the build.
+
 ## Adding an endpoint
 
 1. Add an `apiRoute` to `newRouteTable` in `routes.go`. It pairs an
