@@ -14721,3 +14721,121 @@
     sweep mechanics for every future "+1 port at the tail of an
     existing group" story.
 ---
+## 2026-05-16 - BE-0186
+- What was implemented: Authorization-matrix tests for GET
+  /v1/services/{service_id}. Drives every built-in role
+  (owner/admin/developer/viewer/ci/support) through real NewHandler +
+  real policy.NewEngine() to prove CapRead admits every role on a
+  same-tenant resource via ReasonAllowedByRole; revoked/expired keys
+  (auth.Disabled=true principal) are denied 403 E_FORBIDDEN even
+  though the underlying role is Owner; a wrong-organization principal
+  on the wire surfaces as a 404 (the reader is called with the
+  attacker's home org id + the foreign service_id, the production
+  tenant-scoped GetByID query rejects it), and the engine cross-
+  tenant clause is exercised separately for every role —
+  ReasonDeniedCrossTenant for owner/admin/developer/viewer/ci,
+  ReasonAllowedBySupport for support (CapRead IS inside the support
+  cross-tenant exception). Pins scoped-grant containment: every
+  project-/environment-/service-scoped grant is denied OutOfScope at
+  this route because serviceIDResolver pins NO ProjectID leg and the
+  engine's covers() rule is one-way (a grant scope that pins
+  ProjectID cannot cover a resource scope that does not), even when
+  the grant names the target service's own project, own environment,
+  or own id; an org-level Viewer grant (CapRead-only) is allowed
+  end-to-end via ReasonAllowedByGrant.
+- Files changed:
+  - added: internal/controlplane/httpapi/services_get_policy_test.go
+    (~570 lines): four test functions —
+    TestGetServicePolicyMatrixRoles (table-driven six roles, each
+    asserts the engine verdict reaches ReasonAllowedByRole, the
+    reader receives the principal's home org id + the path
+    service_id, and the response is a 200 yalla.output.v1 envelope
+    projecting svc.ID/Slug/DisplayName/Kind/OrganizationID/
+    ProjectID/EnvironmentID/Version verbatim),
+    TestGetServicePolicyRevokedAndExpiredKeys (two cases — revoked /
+    expired — both Disabled, both denied 403 with the stable
+    ReasonDeniedPrincipalDisabled message, reader-never-runs, no
+    principal-id/org/canonical-service leak in the denied body),
+    TestGetServicePolicyWrongOrganizationPrincipal (wire 404 +
+    reader called with attacker's own home org + redacted
+    victim-org needle + engine cross-tenant deny across all five
+    non-support roles + engine support-allow), and
+    TestGetServicePolicyGrantContainment (engine pins for
+    sibling-project, staging-vs-production env containment, and
+    service grant not exposing parent env / unrelated services;
+    then wires three scoped-key denies on the wire — project-,
+    env-, and service-scoped, the latter naming THIS service's own
+    id — plus an org-level Viewer grant end-to-end allow path).
+    Adds two small fixtures — canonicalGetSvcForMatrix and
+    getSvcDenyBodyLeak — plus a per-test identity-injected handler
+    helper getServiceHandlerForIdentity (the contract-test helper
+    getServiceHandlerFor bakes in authForSvcGet{} with a single
+    canonical principal and is unsuitable for a matrix).
+  - modified: ralph/prd.json (BE-0186 passes=true)
+  - modified: ralph/progress.txt (this entry)
+- Verification run from repository root:
+  - gofmt -w internal/controlplane/httpapi/services_get_policy_test.go -> ok
+  - gofmt -l . (full repo)                                              -> clean
+  - go mod tidy                                                         -> no diff
+  - go vet ./...                                                        -> clean
+  - go test ./internal/controlplane/httpapi/ -run TestGetServicePolicy -count=1 -> ok (0.565s)
+  - go test ./... -count=1                                              -> ok (all packages green)
+  - go test -race ./internal/controlplane/httpapi/ -count=1             -> ok (3.886s)
+  - go test -race ./... -count=1                                        -> ok (all packages green under race)
+  - goimports / golangci-lint / staticcheck / govulncheck               -> not installed (documented by earlier iterations)
+- Results: all checks green. No Postgres-backed integration coverage
+  required for a policy-only test file (the persistence-layer
+  tenant-scoping guarantees are pinned by the store/service_test.go
+  integration suite shipped under BE-0184, and this file deliberately
+  relies on a fake ServiceReader so the contract under test is the
+  HTTP/policy boundary, not the SQL filter).
+- Remaining risks / follow-ups:
+  - BE-0189 (policy matrix for PATCH /v1/services/{service_id}),
+    BE-0192 (DELETE), BE-0195 (POST .../restore), BE-0198
+    (GET .../rendered), BE-0201 (GET .../variables), BE-0204
+    (PUT .../variables), BE-0207 (POST .../deployments), BE-0210
+    (GET .../deployments) and the rest of the BE-0213+ chain remain
+    blocked on their matching P=2 endpoint stories (PATCH service,
+    DELETE service, etc.) — the picker rule "P=1 policy-matrix story
+    sitting on a P=2 endpoint story" still holds; the next free P=1
+    is BE-0189 once the PATCH endpoint lands.
+- Learnings for future iterations:
+  - The environments_get_policy_test.go template (env-id bare
+    resolver + CapRead action) ports cleanly to services_get_policy_
+    test.go with mechanical substitutions: ActionEnvironmentRead ->
+    ActionServiceRead; fakeEnvironmentReader ->
+    fakeServiceReader (with gotEnvID -> gotSvcID); getEnvironment ->
+    getService; decodeGetEnvironmentBody -> decodeGetServiceBody;
+    domain.KindEnvironment -> domain.KindService;
+    canonicalGetEnvForMatrix -> canonicalGetSvcForMatrix (extra
+    EnvironmentID column to seed); getEnvDenyBodyLeak ->
+    getSvcDenyBodyLeak (widen the leak needles from "env + parent
+    project" to "service + parent project + parent environment");
+    getEnvironmentByIDHandlerForIdentity ->
+    getServiceHandlerForIdentity (one extra positional port at the
+    services slot of NewHandler). The grant-containment test gains
+    one extra fixture — a service-level grant naming THIS service's
+    own id — to pin the "service-level grants do not expose
+    parent-level secrets or unrelated services" acceptance criterion
+    on the wire (the env-id template only needed an env-level grant
+    on the SAME env id; the service-id route needs the deeper
+    fixture to lock down the entire bare-id family).
+  - The structural pattern "bare-id resolver + CapRead +
+    serviceIDResolver / environmentIDResolver pins NO ProjectID" now
+    has TWO matrix instances (environments_get_policy_test.go and
+    services_get_policy_test.go). The next bare-id matrix that
+    lands (PATCH service, DELETE service, anything on
+    /v1/deployments/{deployment_id}, etc.) is the third instance and
+    should consider consolidating the shared sequence into a single
+    helper or generator — the file structure is verbatim except for
+    the action constant, the resource kind, the reader type, the
+    leak needles, and the projection field list.
+  - canonicalServiceForGet (services_test.go) and
+    canonicalGetSvcForMatrix (this file) deliberately use different
+    ids/slugs so a future shared fake state could not bleed across
+    the contract suite and the matrix suite. This is the same
+    fixture-isolation discipline canonicalEnvForGet vs
+    canonicalGetEnvForMatrix follows for environments — apply the
+    same separation to every future contract-vs-matrix pair so
+    cross-suite fakes can never coincidentally share state.
+---

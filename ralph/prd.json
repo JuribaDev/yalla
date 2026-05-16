@@ -4419,7 +4419,7 @@
       ],
       "type": "policy-service",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Authorization coverage for GET /v1/services/{service_id}."
     },
     {
