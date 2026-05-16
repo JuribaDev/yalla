@@ -349,6 +349,65 @@ func (r *ServiceRepository) ScheduleDeletion(ctx context.Context, tx *Tx, organi
 	return updated, nil
 }
 
+// Restore clears deletion_scheduled_at on the service identified by
+// (organizationID, serviceID) inside tx and returns the persisted row,
+// including the trigger-refreshed updated_at timestamp and bumped
+// version. It requires a *Tx — not a bare Querier — so a service can
+// never be restored outside the transaction that also carries its
+// audit record. The query is tenant scoped by organization_id first,
+// so a serviceID that belongs to another organization simply does not
+// match and is reported as NotFound — a cross-tenant id can never
+// restore another organization's service. The parent (project,
+// environment) relationship is preserved by construction: the UPDATE
+// touches only deletion_scheduled_at and never the composite
+// (organization_id, project_id, environment_id) tenant key.
+//
+// The UPDATE is unconditional in its predicate apart from the optional
+// version check: restoring a service that was never scheduled for
+// deletion is a conflict the ServiceService detects with a prior read
+// inside the same transaction, not a not-found this repository can
+// distinguish (the repository must remain SQL-idempotent for
+// non-customer callers — workers, admin jobs — that need a stable
+// retry surface).
+//
+// ifMatchVersion enforces optimistic concurrency identically to
+// Update — a nil pointer disables the check, a non-nil pointer adds a
+// WHERE clause on the current version, and a stale view is reported
+// as a typed apierr.ConflictStale carrying the row's authoritative
+// version through classifyServiceConcurrencyMiss.
+func (r *ServiceRepository) Restore(ctx context.Context, tx *Tx, organizationID, serviceID string, ifMatchVersion *int64) (Service, error) {
+	if tx == nil {
+		return Service{}, apierr.Internal(errors.New("store: ServiceRepository.Restore called with a nil transaction"))
+	}
+	var row pgx.Row
+	if ifMatchVersion == nil {
+		row = tx.QueryRow(ctx,
+			`UPDATE services
+			    SET deletion_scheduled_at = NULL
+			  WHERE organization_id = $1 AND id = $2
+			 RETURNING `+serviceColumns,
+			organizationID, serviceID)
+	} else {
+		row = tx.QueryRow(ctx,
+			`UPDATE services
+			    SET deletion_scheduled_at = NULL
+			  WHERE organization_id = $1 AND id = $2 AND version = $3
+			 RETURNING `+serviceColumns,
+			organizationID, serviceID, *ifMatchVersion)
+	}
+	updated, err := scanService(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if ifMatchVersion == nil {
+			return Service{}, apierr.NotFound("service", serviceID)
+		}
+		return Service{}, classifyServiceConcurrencyMiss(ctx, tx, organizationID, serviceID, *ifMatchVersion)
+	}
+	if err != nil {
+		return Service{}, apierr.StoreUnavailable(err)
+	}
+	return updated, nil
+}
+
 // ServiceReader is the store-backed read adapter for the services
 // surface: the persistence surface the httpapi layer needs to render
 // GET /v1/environments/{environment_id}/services. It mirrors

@@ -21,10 +21,11 @@ import (
 // (Authorizer, QuotaReserver, JobEnqueuer, AuditAppender) declared on
 // the project service.
 const (
-	serviceCreateAction = "service.create"
-	serviceUpdateAction = "service.update"
-	serviceDeleteAction = "service.delete"
-	serviceProvisionJob = "service.provision"
+	serviceCreateAction  = "service.create"
+	serviceUpdateAction  = "service.update"
+	serviceDeleteAction  = "service.delete"
+	serviceRestoreAction = "service.restore"
+	serviceProvisionJob  = "service.provision"
 	// serviceDisplayNameMaxLen bounds a human-authored service display
 	// name, in runes. It mirrors the environment / project display-name
 	// bounds and exists so an unbounded string can never reach the
@@ -730,4 +731,157 @@ func (svc *ServiceService) ScheduleDeletion(ctx context.Context, in DeleteServic
 		return Service{}, txErr
 	}
 	return scheduled, nil
+}
+
+// RestoreServiceInput is the input to ServiceService.Restore.
+// OrganizationID identifies the tenant the service belongs to;
+// ServiceID names the service to restore from soft-deletion. The
+// Actor* and correlation fields describe the authenticated principal
+// performing the restore and are recorded verbatim on the audit
+// event. They are plain strings so the store layer takes no build
+// dependency on the policy or telemetry packages — the httpapi
+// handler, which already holds the resolved principal and the request
+// correlation, fills them in.
+//
+// OrganizationID is sourced from the principal's home organization at
+// the HTTP boundary (never from the request body or path), so a
+// cross-tenant id cannot point the write at another tenant by
+// construction. ServiceID is sourced from the {service_id} PATH
+// parameter; the restore unit of work reads the current row under
+// (OrganizationID, ServiceID) before any mutation, so a cross-tenant
+// or unknown service_id surfaces as a deterministic apierr.NotFound
+// rather than a 500 or a silent success.
+//
+// IfMatchVersion is the optional optimistic-concurrency precondition:
+// when non-nil, the restore succeeds only if the row's current
+// version equals *IfMatchVersion at write time, otherwise it returns
+// a typed apierr.ConflictStale carrying the row's authoritative
+// version. The httpapi layer fills it from the request's If-Match
+// header. A nil pointer disables the check (next-write-wins, the
+// legacy behaviour). The pointer indirection is deliberate: it
+// distinguishes "caller did not supply a precondition" from "caller
+// supplied version 0", which is impossible by schema CHECK and must
+// not silently behave like the unchecked path.
+type RestoreServiceInput struct {
+	OrganizationID string
+	ServiceID      string
+	IfMatchVersion *int64
+	ActorID        string
+	ActorKind      string
+	ActorOrgID     string
+	RequestID      string
+	CorrelationID  string
+}
+
+// Restore clears the deletion_scheduled_at stamp on the service named
+// by (in.OrganizationID, in.ServiceID) inside one transaction: read
+// the current row, optionally enforce the If-Match precondition,
+// reject a service that is not currently scheduled for deletion,
+// clear the stamp, append the audit event. A blank OrganizationID or
+// ServiceID is a typed validation failure raised before the
+// transaction is opened. A {service_id} with no row inside the
+// tenant is the typed NotFound the repository produces, and a
+// service whose deletion was never scheduled rolls the whole
+// transaction back as a typed Conflict — so an audit record can
+// never name a restore that did not change the resource's state.
+//
+// Authorization for service.restore is enforced at the HTTP boundary
+// by RequireAuth against the (home organization, service_id) resource
+// the path names — the store layer never runs an in-transaction
+// Authorize for the restore path because the HTTP gate is
+// authoritative and the in-transaction Authorizer is reserved for
+// Create (the create-time race against grant changes during a quota
+// reservation).
+//
+// Restore is the inverse of ScheduleDeletion: it clears the
+// soft-delete stamp so the service is live again. The destructive
+// teardown the scheduled deletion would have caused has not yet
+// run — it is a later worker story that watches
+// deletion_scheduled_at — so restoring before teardown returns the
+// service to live state with its environments, services, and audit
+// trail intact.
+func (svc *ServiceService) Restore(ctx context.Context, in RestoreServiceInput) (Service, error) {
+	organizationID := strings.TrimSpace(in.OrganizationID)
+	if organizationID == "" {
+		return Service{}, apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "organization_id",
+			Reason: "must not be blank",
+		})
+	}
+	serviceID := strings.TrimSpace(in.ServiceID)
+	if serviceID == "" {
+		return Service{}, apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "service_id",
+			Reason: "must not be blank",
+		})
+	}
+
+	// The audit record is filed under the actor's home organization —
+	// the tenant the principal authenticated into — while its resource
+	// id names the service that was restored. A missing actor
+	// organization is a wiring error (an authenticated request always
+	// carries one), not client input, so it is reported as Internal
+	// rather than a validation failure.
+	actorOrgID := strings.TrimSpace(in.ActorOrgID)
+	if actorOrgID == "" {
+		return Service{}, apierr.Internal(errors.New("store: ServiceService.Restore requires an actor organization for the audit record"))
+	}
+
+	event := AuditEvent{
+		OrganizationID: actorOrgID,
+		ActorID:        strings.TrimSpace(in.ActorID),
+		ActorKind:      strings.TrimSpace(in.ActorKind),
+		Action:         serviceRestoreAction,
+		ResourceKind:   string(domain.KindService),
+		ResourceID:     serviceID,
+		Decision:       AuditDecisionAllowed,
+		Reason:         "authorization granted for service.restore",
+		RequestID:      strings.TrimSpace(in.RequestID),
+		CorrelationID:  strings.TrimSpace(in.CorrelationID),
+	}
+
+	var restored Service
+	txErr := svc.store.Write(ctx, func(ctx context.Context, tx *Tx) error {
+		current, getErr := svc.services.GetByID(ctx, tx, organizationID, serviceID)
+		if getErr != nil {
+			return getErr
+		}
+		// The version pre-check surfaces a stale If-Match BEFORE the
+		// not-scheduled check, so the caller learns "your view of the
+		// version is stale" instead of a not-scheduled message that
+		// might race with a concurrent restore they did not see.
+		if in.IfMatchVersion != nil && current.Version != *in.IfMatchVersion {
+			return apierr.ConflictStale(current.Version)
+		}
+		if current.DeletionScheduledAt == nil {
+			// Restoring a service that was never scheduled for deletion
+			// changes nothing: the caller's view of the resource
+			// lifecycle is stale, so it is a typed Conflict, not a
+			// silent success that would write a misleading audit
+			// record.
+			return apierr.Conflict("service is not scheduled for deletion")
+		}
+		// Record the deletion_scheduled_at the restore cleared as
+		// audit context — a non-secret timestamp — so the trail
+		// captures what state the resource was in BEFORE the restore.
+		// It is captured from the current row, not the input, so a
+		// caller cannot inject arbitrary metadata through the audit
+		// field.
+		event.Metadata = map[string]string{
+			"deletion_scheduled_at": current.DeletionScheduledAt.UTC().Format(time.RFC3339Nano),
+		}
+		row, updErr := svc.services.Restore(ctx, tx, organizationID, serviceID, in.IfMatchVersion)
+		if updErr != nil {
+			return updErr
+		}
+		if _, audErr := svc.audit.Append(ctx, tx, event); audErr != nil {
+			return audErr
+		}
+		restored = row
+		return nil
+	})
+	if txErr != nil {
+		return Service{}, txErr
+	}
+	return restored, nil
 }

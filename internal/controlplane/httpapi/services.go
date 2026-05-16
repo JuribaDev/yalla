@@ -38,6 +38,14 @@ var errNoServiceUpdater = errors.New("httpapi: no service updater configured")
 // the soft-delete.
 var errNoServiceDeleter = errors.New("httpapi: no service deleter configured")
 
+// errNoServiceRestorer is returned when POST
+// /v1/services/{service_id}/restore is reached without a
+// ServiceRestorer wired into NewHandler. Like errNoServiceDeleter it
+// can only happen through a wiring error — a programming mistake, not
+// a client error — so the handler reports it as a typed internal
+// failure rather than silently failing to persist the restore.
+var errNoServiceRestorer = errors.New("httpapi: no service restorer configured")
+
 // ServiceReader is the narrow persistence port GET
 // /v1/services/{service_id} depends on. *store.ServiceReader satisfies
 // it in production; tests supply a fake. Keeping the dependency an
@@ -389,6 +397,111 @@ func deleteServiceHandler(deleter ServiceDeleter) http.HandlerFunc {
 
 		writeOrganizationETag(w, service.Version)
 		apienvelope.WriteData(w, http.StatusAccepted, requestID(r), deleteServicePayload{
+			Service: environmentServiceOf(service),
+		})
+	}
+}
+
+// ServiceRestorer is the narrow persistence port POST
+// /v1/services/{service_id}/restore depends on. *store.ServiceService
+// satisfies it in production; tests supply a fake. Like ServiceDeleter
+// it is an interface declared here so the handler stays unit-testable
+// without a real database — the concrete orchestrator (the
+// deletion_scheduled_at clear and the immutable audit record committed
+// in one transaction) lives in the store layer, mirroring
+// ProjectRestorer for the project surface.
+type ServiceRestorer interface {
+	Restore(ctx context.Context, in store.RestoreServiceInput) (store.Service, error)
+}
+
+// restoreServicePayload is the data block of the POST
+// /v1/services/{service_id}/restore success envelope: the service
+// with its deletion_scheduled_at stamp cleared, in the same stable
+// wire shape the other service endpoints return. It carries no
+// credential material — the services table itself stores no secrets;
+// service-scoped variables and other secrets live behind their own
+// endpoints where the redaction policy applies.
+type restoreServicePayload struct {
+	Service environmentService `json:"service"`
+}
+
+// restoreServiceHandler builds the POST /v1/services/{service_id}/restore
+// handler. It clears the service's deletion_scheduled_at stamp in the
+// source-of-truth database through the ServiceRestorer port, then
+// renders the persisted row in a stable yalla.output.v1 envelope.
+// Restore is the inverse of the DELETE /v1/services/{service_id}
+// soft-delete: it returns a service to live state before the
+// worker-driven destructive teardown runs, so the service and its
+// audit trail are recovered intact.
+//
+// RequireAuth gates the route on action service.restore before the
+// handler runs — authorized through serviceIDResolver against the
+// (principal home organization, {service_id}) resource the path
+// names — and attaches the resolved principal, so a request that
+// reaches the handler has already cleared the policy boundary.
+// service.restore is a CapWrite action, so the gate admits the
+// principal's organization-wide write roles (owner, admin, developer,
+// ci) and denies viewer, denies support (a support principal is
+// CapRead-only and cannot mutate even within its home tenant). The
+// path carries no parent project_id or environment_id, so the policy
+// engine cannot pin those legs of the resource scope at authorization
+// time — project-, environment-, and service-scoped grants are denied
+// at the boundary by the engine's covers() rule (a grant with a
+// pinned ProjectID cannot cover a resource with no ProjectID);
+// principals whose only access is a scoped grant must use a
+// parent-scoped route to address a service by its (project,
+// environment, service) tuple.
+//
+// The handler never trusts a caller-supplied organization id: the
+// store call is built from principal.OrganizationID and
+// r.PathValue("service_id"), so a cross-tenant service_id reaches the
+// tenant-scoped repository query with the principal's home
+// organization id and is reported as a deterministic NotFound by the
+// persistence layer, never another tenant's row. A request that
+// arrives with no principal is a wiring error reported as a typed
+// internal error; an If-Match parse failure, a stale If-Match
+// version, a not-found {service_id}, a service that is not scheduled
+// for deletion, and a datastore outage each surface as their own
+// typed status, never disguised as one another. On success, the
+// handler mirrors the row's authoritative version into the ETag
+// response header so the caller can echo it back as the next
+// If-Match precondition without re-reading the row.
+func restoreServiceHandler(restorer ServiceRestorer) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if restorer == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoServiceRestorer))
+			return
+		}
+
+		ifMatchVersion, ifMatchErr := parseIfMatchVersion(r)
+		if ifMatchErr != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(ifMatchErr))
+			return
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		service, err := restorer.Restore(r.Context(), store.RestoreServiceInput{
+			OrganizationID: p.OrganizationID,
+			ServiceID:      r.PathValue("service_id"),
+			IfMatchVersion: ifMatchVersion,
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		writeOrganizationETag(w, service.Version)
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), restoreServicePayload{
 			Service: environmentServiceOf(service),
 		})
 	}

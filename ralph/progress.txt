@@ -15395,3 +15395,97 @@ Learnings for future iterations:
     the deny guard's job is structural existence-leak prevention, not
     secret redaction.
 ---
+
+## 2026-05-16 - BE-0193
+- Implemented POST /v1/services/{service_id}/restore — the inverse of the
+  BE-0190 DELETE soft-delete that clears deletion_scheduled_at and returns
+  the service to live state, structurally mirroring the BE-0123 project
+  restore pattern.
+- internal/controlplane/store/service.go: added ServiceRepository.Restore
+  (SQL twin of ProjectRepository.Restore). UPDATE services SET
+  deletion_scheduled_at = NULL WHERE organization_id=$1 AND id=$2 [AND
+  version=$3]; pgx.ErrNoRows -> apierr.NotFound for the unchecked path,
+  classifyServiceConcurrencyMiss for a stale If-Match. Tenant-scoped at the
+  predicate so a cross-tenant id can never restore another tenant's row.
+- internal/controlplane/store/serviceservice.go: added serviceRestoreAction
+  ("service.restore") to the catalog block, RestoreServiceInput type
+  (mirrors DeleteServiceInput shape verbatim), and ServiceService.Restore
+  orchestrator. In one tx: services.GetByID -> ConflictStale if If-Match
+  mismatches -> Conflict("service is not scheduled for deletion") if
+  DeletionScheduledAt is nil -> capture prior deletion_scheduled_at from
+  the CURRENT row (not input — prevents caller-injected audit metadata)
+  -> services.Restore -> audit.Append. No in-tx Authorize call: the HTTP
+  boundary is authoritative for CapWrite restore.
+- internal/controlplane/httpapi/services.go: added ServiceRestorer
+  interface, restoreServicePayload, restoreServiceHandler, and
+  errNoServiceRestorer wiring guard. The handler is the structural twin
+  of restoreProjectHandler — parses If-Match via the shared
+  parseIfMatchVersion, sources OrganizationID from the principal's home
+  org (never the caller), threads the actor identity + correlation, mirrors
+  row.Version into the ETag response header via writeOrganizationETag,
+  returns 200 OK.
+- internal/controlplane/httpapi/routes.go: appended the new route after
+  the DELETE /v1/services/{service_id} block, gated on
+  policy.ActionServiceRestore via serviceIDResolver. Updated the
+  newRouteTable doc paragraph and added serviceRestorer ServiceRestorer
+  to the signature.
+- internal/controlplane/httpapi/server.go: NewHandler signature gets the
+  new serviceRestorer ServiceRestorer positional port between
+  serviceDeleter and breakGlass, and threads it into newRouteTable.
+- cmd/yalla-api/main.go: passes serviceService a SECOND additional time
+  (it satisfies ServiceRestorer through the newly added Restore method) —
+  same singleton-orchestrator wiring as ServiceUpdater/ServiceDeleter.
+- Test sweep: 50 existing test files updated to add fakeServiceRestorer{}
+  in the appropriate slot of every NewHandler / newRouteTable call. The
+  sweep used a single python replace targeting
+  "fakeServiceDeleter{}, fakeBreakGlassController{}" ->
+  "fakeServiceDeleter{}, fakeServiceRestorer{}, fakeBreakGlassController{}"
+  plus the local "deleter, fakeBreakGlassController{}" case in
+  services_delete_test.go. break_glass_test.go uses a "ctl" local var so it
+  needed a separate one-line edit.
+- internal/controlplane/httpapi/services_restore_test.go (new): contract
+  tests covering happy path (200 OK, yalla.output.v1 envelope, ETag header,
+  cleared deletion_scheduled_at, forwarded principal/path/actor), If-Match
+  forwarded, malformed If-Match rejected as 400, unauthenticated 401,
+  CapRead-only viewer 403, NotFound 404, NotScheduled 409, ConflictStale
+  409, StoreUnavailable 503, MissingRestorer wiring 500, and OpenAPI
+  operation registration (operation_id=restoreService,
+  required_action=policy.ActionServiceRestore).
+- internal/controlplane/store/service_restore_test.go (new): integration
+  tests over a migrated Postgres covering: ServiceRepository.Restore
+  happy-path, cross-tenant tenant scoping (orgA cannot restore orgB's
+  service, orgB's row preserved), nil-tx guard; ServiceService.Restore
+  happy-path with audit row commit + version bump, NotScheduled rolls
+  back the audit row, NotFound surfaces deterministically, cross-tenant
+  Restore is NotFound, stale-If-Match returns ConflictStale with
+  details.current_version, blank input -> InvalidInput, blank actor org
+  -> Internal.
+- Verification: gofmt -w ., go vet ./... (clean), go test ./...
+  (all packages pass), go test -race ./... (all packages pass).
+- Remaining risks: none for BE-0193. The contract tests (BE-0194) and
+  policy matrix (BE-0195) follow as siblings — the public envelope and
+  action constant are now locked.
+- **Learnings for future iterations:**
+  - Reusing serviceService as the singleton orchestrator that satisfies
+    ServiceUpdater + ServiceDeleter + ServiceRestorer is the pattern —
+    one *store.ServiceService instance per process, three positional ports.
+  - Adding a CapWrite "inverse-of-soft-delete" sub-action endpoint to a
+    deep resource that already has the soft-delete in place is now a
+    pure-mechanical sweep: copy the project restore vertical, swap kinds,
+    register the route, sweep the test files. The audit metadata convention
+    is "capture deletion_scheduled_at from the source row read inside the
+    same tx, NOT from the input" — a load-bearing anti-spoof guarantee
+    documented under BE-0123 that applies verbatim here.
+  - The order inside the orchestrator is fixed: GetByID -> If-Match
+    pre-check -> not-scheduled guard -> capture audit metadata from the
+    CURRENT row -> repo.Restore -> audit.Append. The If-Match check
+    precedes the not-scheduled check so the caller learns "your view is
+    stale" rather than racing against a concurrent edit they did not see.
+  - When adding a positional port to NewHandler/newRouteTable, the test
+    file sweep is mechanical: ~50 files need the new fake inserted in the
+    same slot, plus one-off variants where a test uses a local var name
+    (like "deleter" in services_delete_test.go or "ctl" in
+    break_glass_test.go) instead of the {} fake literal. A python
+    string-replace covers ~99% of sites; the remaining ones surface
+    immediately via go vet.
+---
