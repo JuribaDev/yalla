@@ -1,6 +1,7 @@
 ## Codebase Patterns
 - Per-service-type renderer-subtype contract pin (BE-0301 pattern, internal/controlplane/dokploy/renderer_application_git_test.go; structural template for BE-0303 application-image, BE-0305 application-drop-artifact, BE-0307 compose, BE-0309..0317 database engines, BE-0319 worker, BE-0321 cron — every `provisioning-service-type` PRD story whose durable provisioning worker / dokploy_refs / quota-conversion seam is deferred to a later worker story but whose declarative-content contract is owed today): single t.Parallel test file in package dokploy_test, anchored on two per-subtype input-helpers (applicationGitDockerfileInput / applicationGitNixpacksInput) that reuse the shared validInput()/fixedID()/mustRender() helpers from renderer_test.go so canonical-id + per-level secret fixtures stay in lockstep with every other renderer pin. Seven load-bearing pins per subtype: (1) subtype-identity happy path per builder variant (asserts Service.Type, Build.Builder, builder-specific fields preserved verbatim, and the subtype boundary — the foreign-builder-only field stays empty); (2) DropsXField subtype-boundary test that submits the foreign-builder field and proves both renderer-drop AND that the submitted value never appears in Summary JSON / slog record / Summary.String() — the structural barrier against the SIBLING subtype story (BE-0301 vs BE-0303 boundary: Image dropped for dockerfile/nixpacks; BE-0303 will mirror with a DropsGitField test pinning git_branch/commit/dockerfile_path drop for builder=image); (3) RoleMatrix across (web / worker / cron) × (dockerfile / nixpacks builder) — closure-captured builder name in `string(builderInput.Build.Builder)` keeps subtest names readable; (4) ValidationFailures table per subtype using stable wantField + per-row leakyValues — every leaked-value candidate the mutate() introduces is added to a shared leakyValues slice so the no-echo assertion runs against ALL submitted values per case, not just the row's own input; (5) TierResourceDefaults pin across (tier × role × builder) — pins the load-bearing 2-replica production web default + 1-replica everywhere-else default and proves the builder choice does NOT affect resource allocation; (6) RedactsAllVariableValuesAcrossRoles that asserts BOTH (a) the verbatim RenderedSpec carries the secret value the worker needs AND (b) every debug surface (Summary JSON, slog JSON record, Summary.String()) shows output.Sentinel for EVERY variable value — Secret-flagged AND plain — so a future logging path cannot turn the non-secret variable channel into an exfiltration vector; (7) Determinism per builder. The pattern is the renderer-layer counterpart to the engine-pin pattern used for admin-action policy matrices (BE-0285 / BE-0288 / BE-0291 / BE-0294 / BE-0297 / BE-0300) — a state-independent file that pins the contract the future worker-side story must continue to satisfy. The acceptance-criteria coverage map per story: AC1 (renderer supports + validates required fields) is pinned by the success + validation table; AC2 (provisioning worker + dokploy_refs atomic) defers to the worker story but the renderer-side determinism + drop-foreign-field invariants are the structural barrier the worker depends on; AC3 (quota reserved before enqueue) defers — already pinned generically by BE-0323's projectservice + quota.Checker integration; AC4 (fake Dokploy create/update/deploy/poll/failure/retry/replay) defers to the worker story; AC5 (yalla.output.v1 / yalla.error.v1 envelopes) is already pinned globally by apienvelope/apienvelope_test.go — the renderer file just confirms apierr.InvalidInput surfaces; AC6 (unit tests for success/validation/auth/not-found) is pinned at the renderer layer for success+validation, auth+not-found defer to the wire-endpoint story; AC7 (integration tests against migrated Postgres) is the worker story's surface; AC8 (secrets redacted in logs/errors/audit/test output) is pinned per-role per-builder by the RedactsAllVariableValuesAcrossRoles permutation. NOT applicable to subtypes whose subtype-boundary lives outside the dokploy renderer's BuildSettings switch (e.g. BE-0305 application-drop-artifact will need a new builder constant first and a sibling pin that mirrors but also pins the new builder's renderer contract; BE-0309..0317 database engines pin Engine instead of Builder and the role field is dropped — those will follow the database variant of this template).
 - BE-0303 application-image confirms the inverted-boundary clone of the BE-0301 pattern (internal/controlplane/dokploy/renderer_application_image_test.go): a single-builder subtype (Builder == BuilderImage) collapses the BE-0301 builderCase outer loop to a single role-only loop, swaps DropsImageField for DropsGitFields (submits leaky dockerfile_path + git_branch + git_commit and asserts every one is dropped AND never appears in Summary JSON / slog record / Summary.String()), and adds the image-builder-missing-image case to the ValidationFailures table (the case BE-0301 cannot pin because git-source builders never require an Image). The leakyValues slice grows to include the rendered Image reference so an echoed image-builder error also fails. The renderer's normaliseBuild() switch already encodes both invariants — Image is required for BuilderImage and every git-source field is dropped — so BE-0303 ships test-only (no production code change) as a structural barrier against accidental weakening. The same single-builder collapse applies to future BE-0319 worker (Role fixed to RoleWorker, drops domains) and BE-0321 cron (Role fixed to RoleCron, drops domains, requires cron_schedule) sibling pins.
+- BE-0319 worker is the FIRST role-axis clone of the BE-0301 pattern (internal/controlplane/dokploy/renderer_worker_test.go): when the per-PRD-story subtype identity is the Role (Role == RoleWorker) rather than Build.Builder, Service.Type, or Service.Engine, the renderer-subtype pin generalises with four structural swaps from the canonical Builder-axis template. (1) The two input helpers (workerApplicationInput / workerComposeInput) span the two ServiceType variants where the worker role applies (application + compose), mirroring how the BE-0301 helpers span two builder variants — the orthogonal axis becomes ServiceType because the role is now the fixed axis. Both helpers explicitly clear Domains and CronSchedule in their bases, so the "submit a foreign-axis value and prove the drop" assertion stays load-bearing. (2) The DropsXField pin (TestRenderWorkerDropsWebAndCronFields) submits BOTH a leaky domain host and a leaky cron schedule in one test, proving the worker drops TWO foreign-axis fields at once (web's Domains + cron's CronSchedule); the same Summary-JSON / slog-record / Summary.String() redaction sweep used by BE-0303 catches leaks of either value. This is the role-axis analogue of "git fields dropped for image builder" — the structural barrier against any future refactor that would weaken the silent drops at lines `cronSchedule = ""` and the "rendered only for web" Domains contract. (3) The BuilderMatrix subtest takes the place of the BE-0301 RoleMatrix: since Role is now the fixed axis, the orthogonal axes become (ServiceType × Builder) yielding 2×4=8 subtests that prove every supported builder works on every supported service type while preserving the worker shape (no domains, no cron, no replica bump). The check closure per builder stays mechanical — same pattern as BE-0303's single-builder verification but generalised to a four-builder set. (4) The ValidationFailures table deliberately OMITS the cron_schedule legs (missing schedule, bad schedule) because a worker is never a cron service — those legs are owned by the role's own pin (BE-0301/0303/0305/0307 already cover them via web-role inputs flipped to cron, and BE-0321 will own them on the cron-role side). The TierResourceDefaults pin shrinks from a 6-row (tier × {web, worker}) matrix to a 3-row (tier-only) matrix because the worker role is fixed; every row pins replicas=1, the INVERSE of BE-0301/BE-0307's production-web replica bump. Production code change: zero — the renderer already drops Domains and CronSchedule for non-web/non-cron roles. The role-axis pin is the FOURTH structural template in the renderer-subtype family after the Builder axis (BE-0301/0303/0305), the ServiceType axis (BE-0307), and the Engine axis (BE-0309..0317). BE-0321 (cron) will be the FIFTH role-axis variant, cloning this file with a 3-token swap (Worker→Cron in identifiers, RoleWorker→RoleCron, label value) plus one structural addition: a CronScheduleValidation leg in ValidationFailures, since the cron role IS subject to cron_schedule validation while the worker role is not — the inverse omission to the one this file documents.
 - BE-0307 compose is the FIRST type-boundary clone of the BE-0301 pattern (internal/controlplane/dokploy/renderer_compose_test.go): when the per-PRD-story subtype identity is the ServiceType ITSELF (Service.Type == ServiceCompose) rather than the Build.Builder, the seven-pin template is preserved with three structural swaps. (1) Input helpers (composeDockerfileInput / composeNixpacksInput) carry the SAME two git builders as application-git — the boundary is NOT what the builder is — and the only difference vs applicationGit*Input is `in.Service.Type = dokploy.ServiceCompose`. (2) The Drops* test becomes a SubtypeBoundaryFromApplication test that renders BOTH composeDockerfileInput() AND applicationGitDockerfileInput() side-by-side and asserts each rendered Service.Type matches its input verbatim — neither is silently coerced — AND that the `yalla.service-type` label in spec.Service.Labels reflects the same value, because that label is the audit/observability surface a downstream consumer queries to distinguish a compose stack from a single-container application without re-reading the spec body; an alternate seam-coverage shape preserves the structural barrier when there is no foreign-builder-only field to drop. (3) The ValidationFailures table expands to cover EVERY builder's failure path that the subtype can reach — compose may use any of dockerfile/nixpacks/image/drop-artifact, so BE-0307's table includes BOTH the image-builder-missing-image case (from BE-0303) AND the drop-artifact-builder-missing-artifact-url case (from BE-0305) PLUS the bad-builder case — the leakyValues slice grows to carry the rendered Image AND ArtifactURL references so any echo from those branches fails too. The RoleMatrix / TierResourceDefaults / Redaction / Determinism pins keep the seven-pin shape intact, but RoleMatrix and the per-test invariants assert `Service.Type == ServiceCompose && Image == "" && ArtifactURL == "" && Engine == ""` (engine is database-only — that is the OTHER per-type seam BE-0309..0317 will pin). The load-bearing production-web 2-replica default participates here too: defaultResources() in renderer.go gates the bump on `(typ == ServiceApplication || typ == ServiceCompose)`, so TestRenderComposeTierResourceDefaults pins the compose half of that disjunction directly — a future regression that narrowed the disjunction to ServiceApplication-only would flip this pin. Forward-applicable to ANY future per-service-type subtype whose differentiator is the ServiceType itself (currently only compose vs application; future "function" / "edge" / similar would clone this template); NOT applicable to the BE-0309..0317 database engines, which pin Engine instead of either ServiceType or Builder, drop the role field entirely (effectiveRole := "" for ServiceDatabase in renderer.go:351), and need a database variant whose RoleMatrix collapses to a single (no-role) case and whose Engine-required + Image-dropped invariants supersede the Build.Builder switch's normalisation. The test-only-no-prod-code-change shape from BE-0303 is preserved — BE-0307 ships purely as a structural barrier against accidental weakening of the renderer's existing service-type discrimination.
 - Real-quota concurrent oversubscription integration test (BE-0323 pattern, internal/controlplane/store/project_quota_concurrent_test.go; structural template for BE-0324..0338 — every other quota-dimension PRD story that needs to prove "parallel requests cannot oversubscribe the quota" against the dimension's owning Service.Create call): one Go test, t.Parallel, against testutil.RequireMigratedDB; wires a REAL *quota.Checker over a REAL *store.QuotaRepository + quota.StaticPlanResolver, and a REAL *store.<Resource>Service + REAL *store.AuditRepository, with the only fakes being the Authorizer and JobEnqueuer (recordingAuthorizer / recordingJobs from projectservice_test.go) which always succeed because their failure-path stories are covered elsewhere. Six load-bearing rules: (1) pre-seed quota_usage with used_value=0 for (org, dimension) BEFORE the race so the SELECT FOR UPDATE inside Checker.LockUsage acquires an existing row rather than racing inserts — the lock contract under test is row-lock serialisation, not row-creation; (2) seed quota_policies as scope_kind='plan_default' (not 'organization' override) so the plan-default fallback path inside QuotaRepository.EffectiveLimit is the one exercised — the org-override path has its own dedicated repository test (TestQuotaRepositoryEffectiveLimitPrefersOrgOverride); (3) launch attempts > limit goroutines (BE-0323 uses 20 attempts / limit 5 — 4:1 ratio gives a comfortable margin against any future pool-size or scheduling change without inflating runtime past ~0.5s); each goroutine generates its OWN canonical resource id via domain.MustNewID + a unique canonical slug fmt.Sprintf("p-%02d", i) so a slug conflict cannot disguise itself as a quota rejection; (4) assert successes == limit AND rejections == attempts - limit exactly, NOT >= / <= — the lock contract guarantees an exact split, and a "successes >= limit / <= attempts" range would silently let a regression through; (5) for EVERY rejection, assert all five ExceededDetail fields (Resource, Limit, Requested=1, Reserved==limit, Current==0) because at the moment the lock yields to a losing transaction every winning reservation is already committed — anything less than Reserved==limit means the lock did not serialise — and assert the diagnostic string never echoes any caller input (the i-indexed slug, display name, request id, or correlation id) so a future logging path cannot turn the error into a content channel; (6) post-race assertions cover three independent surfaces of the same invariant: raw count of projects rows for the org (must equal limit), raw count of active quota_reservations rows for the dimension (must equal limit), AND quotaRepo.SumActiveReservations through Store.Read (must equal limit) — the third surface catches a future regression where the table content diverges from the repository's view. Fake-call assertions pin step order at the unit-of-work level: authz.calls == attempts (every transaction reaches authorization) but jobs.calls == limit (rejected transactions never reach the JobEnqueuer because quota fails first and rolls back the whole tx). The dimension constant comes from the public store.QuotaResource* surface (BE-0323 uses store.QuotaResourceProjects) so a future rename surfaces as a compile error rather than a flaky test. NOT applicable to quota dimensions whose enforcement seam lives outside the *Service.Create unit of work (e.g. cpu_millicores / memory_mb / storage_gb where the dimension is summed across child resources — those need a different shape that exercises the dimension's actual enforcement gate). The CapDeploy concurrent_deployments dimension is the load-bearing precedent for "summed across rows" enforcement (DeploymentService.Create at deployment_service.go:209+691) and would clone this template by swapping the Service + dimension while keeping the six rules intact.
 - Endpoint-pinned twin of an action-level engine-only policy matrix (BE-0288 pattern, internal/controlplane/policy/admin_dokploy_reconcile_endpoint_policy_test.go, sibling of BE-0285's admin_reconcile_policy_test.go): when two PRD stories cover two distinct WIRE ENDPOINTS that share the SAME action constant (admin.reconcile here — GET /v1/admin/dokploy/drift + POST /v1/admin/dokploy/reconcile), each story gets its own engine-only matrix file, structurally parallel but state-independent. Three load-bearing rules: (1) every canonical id (project / sibling / service-account principal) is renamed with the endpoint-distinguishing suffix so a future shared helper cannot accidentally couple the two matrices — BE-0288 uses canonicalAdminReconcileEndpointProjectID / canonicalAdminReconcileEndpointSiblingID and ServiceAccount IDs suffixed `_reconcile_endpoint`, deliberately distinct from BE-0285's `_reconcile` suffix; (2) docstrings frame the engine pin around the SPECIFIC endpoint's failure mode — BE-0285's file frames the action as "the contract admin.reconcile must satisfy regardless of which endpoint surfaces it" (action-level), BE-0288's file frames it as "the engine contract specifically for the mutating reconcile verb where an asymmetric regression that left listing intact but downgraded mutation capability cannot ship without flipping one of these expectations" (endpoint-level); (3) the test surface is structurally identical seven-function shape (Roles / Revoked&Expired / WrongOrg / Project / Env / Service / OrgGrant / ForeignHomeOrg) and verdict matrix is byte-identical to the action-level twin — the point of the duplication is endpoint-specific regression coverage, not behavioural difference at the engine seam. Applicable to any future PRD story pair where the wire endpoint differs but the policy action is shared (currently unique to admin.reconcile in BE-0285+0288; future similar pairs would clone this template). NOT applicable when two endpoints have distinct action constants — those follow the BE-0279/0282 sibling-action template instead, where the differentiator is the action's capability not the endpoint's role.
@@ -20633,4 +20634,140 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
   - The full BE-0309..0317 database-engine renderer family (5 engines) is now closed at the renderer layer. Each sibling was a 3-line + 1-file extension: one engine constant in the const block, one identifier in the validEngine() switch case list, and one ~498-line test file cloned from the previous engine with a 3-token swap (constant reference, engine string, BE-#### cross-refs). The mechanical clone shape — captured in the BE-0309 Codebase Patterns bullet — held across all five engines without a single special-case deviation.
   - The "unsupported engine" sentinel `"sqlite"` remains the canonical unsupported-engine value across the entire family because Yalla will never manage SQLite (it has no client/server boundary to provision). Any future engine added beyond this family should keep "sqlite" as the sentinel rather than introducing a new one.
   - The `validEngine` doc comment in renderer.go originally enumerated all five engines as future entries (BE-0311 mysql; BE-0313 mariadb; BE-0315 mongo; BE-0317 redis). With BE-0317 landed, every named future engine is now resident in the whitelist — a future cleanup pass could remove the per-story enumeration from the doc comment without changing behavior, but it is left as-is to preserve the audit trail of how the closed set was assembled.
+---
+## 2026-05-16 — BE-0319 Provision worker services
+- First role-axis renderer subtype pin. Unlike the prior per-service-type
+  family (BE-0301..0317) — whose subtype identity is Build.Builder
+  (BE-0301/0303/0305), ServiceType (BE-0307), or Engine (BE-0309..0317) —
+  BE-0319's subtype identity is Role itself: Role=RoleWorker fixed across
+  two ServiceType variants {ServiceApplication, ServiceCompose}. The
+  worker is the FIRST renderer pin whose subtype boundary is "drops
+  fields the sibling roles preserve" (Domains for web, CronSchedule for
+  cron) rather than "preserves fields the sibling subtypes can't carry".
+- New file:
+  `internal/controlplane/dokploy/renderer_worker_test.go`
+  (package dokploy_test, ~640 lines). Reuses the shared validInput() /
+  fixedID() / fixedOtherOrg / mustRender() / yerrAs() helpers from
+  renderer_test.go so the canonical-id and per-level secret fixtures
+  stay in lockstep with every other renderer pin.
+- Two input helpers:
+  * workerApplicationInput() — Type=ServiceApplication, Role=RoleWorker,
+    Domains=nil, CronSchedule="", BuilderDockerfile with git refs.
+  * workerComposeInput() — Type=ServiceCompose, Role=RoleWorker,
+    Domains=nil, CronSchedule="", BuilderDockerfile with git refs.
+- Nine load-bearing pins:
+  1. WorkerApplicationSuccess — type/role identity, Domains empty,
+     CronSchedule empty, Engine empty, yalla.role label = "worker".
+  2. WorkerComposeSuccess — same shape on the compose variant; the type
+     is the lone diff vs (1) which keeps the two variants honest.
+  3. DropsWebAndCronFields — submits a leaky host
+     ("worker-leak.example") and a leaky cron schedule ("13 13 * * 5")
+     to BOTH worker variants; asserts renderer drops them AND the
+     submitted values never appear in Summary JSON / slog record /
+     Summary.String(). The same redaction-safe debug-surface sweep used
+     by BE-0303 (Image-builder drops git fields) and BE-0309..0317
+     (database engines drop role/domains/cron).
+  4. SubtypeBoundaryFromWebAndCron — table covers worker/web/cron across
+     application+compose; pins (role identity preserved) × (domains
+     count) × (cron schedule) × (yalla.role label faithful). The cron
+     row uses an inline-mutated applicationGitDockerfileInput() to keep
+     the test self-contained without adding a sixth shared helper.
+  5. BuilderMatrix — every (service-type × builder) combination renders
+     as a worker (no domains, no cron schedule) with builder-specific
+     build settings preserved/normalised. 8 subtests total
+     (2 types × 4 builders). The drop-artifact builder uses a unique
+     leaky artifact URL host so a future regression that smuggles a
+     web/cron field into a worker drop-artifact spec is caught.
+  6. ValidationFailures — table with 10 cases anchored on stable
+     wantField paths + a leakyValues slice that asserts every submitted
+     value is absent from `err.Error()` for every row. Includes the
+     image-builder-missing-image and drop-artifact-missing-artifact-url
+     cases because a worker may use any of the four supported builders
+     (single-role-collapse mirrors single-builder-collapse). The cron
+     row is intentionally OMITTED from the table — a worker is never a
+     cron service, so the cron_schedule validation legs are out of
+     scope for this story (they're pinned by BE-0301/0303/0305/0307).
+  7. TierResourceDefaults — 6 subtests (3 tiers × 2 types). Every row
+     pins replicas=1: workers never get the production-web 2-replica
+     bump. The inverse of the BE-0301/BE-0307 production-web replica
+     contract.
+  8. RedactsAllVariableValues — variable redaction across both worker
+     variants. RenderedSpec still carries the verbatim secret (the
+     provisioner needs it) but every debug surface shows the sentinel.
+  9. Deterministic — byte-equal RenderedSpec across two Render() calls
+     for each variant.
+- Production code changes: NONE. The renderer already drops Domains for
+  non-web and CronSchedule for non-cron (the `else { cronSchedule = "" }`
+  branch in renderer.go and the type-level "empty for non-web services"
+  contract on RenderedService.Domains). This story is the structural
+  barrier that pins those silent drops so a future refactor cannot
+  weaken them.
+- Files changed:
+  * `internal/controlplane/dokploy/renderer_worker_test.go` (new).
+  * `ralph/prd.json` (BE-0319 `passes: true` + notes).
+  * `ralph/progress.txt` (this entry + new Codebase Patterns bullet).
+- Verification run:
+  * `gofmt -l .` → clean (the new file was formatted with `gofmt -w`).
+  * `go vet ./...` → clean.
+  * `go mod tidy` → no-op (no dependency churn).
+  * `go test -count=1 -run TestRenderWorker
+    ./internal/controlplane/dokploy/...` → ok 0.393s
+    (28 subtests, all pass).
+  * `go test -count=1 ./...` → every package PASS.
+  * `go test -race -count=1 ./...` → every package PASS.
+  * `goimports` / `golangci-lint` / `staticcheck` / `govulncheck` still
+    not installed locally (consistent with prior iterations).
+- Remaining risks / follow-ups:
+  * The worker-side acceptance criteria for BE-0319 (dokploy_refs atomic
+    write after Dokploy ensure, quota reservation-to-conversion, fake
+    Dokploy create/update/deploy/poll/failure/retry/replay) continue to
+    defer to the later worker story per the BE-0301 deferral pattern.
+    The renderer-side contract pinned by this story is the structural
+    barrier the worker depends on (Role=RoleWorker preserved, Domains
+    and CronSchedule dropped, label surfaced, replica bump withheld,
+    byte-stable determinism, redaction proven).
+  * BE-0321 (cron) is the next sibling. Its subtype identity is
+    Role=RoleCron, the inverse drop axis (preserves CronSchedule that a
+    worker drops, drops Domains like a worker). It will clone this
+    file's shape with a 3-token swap (Worker→Cron in identifiers, role
+    constant, label value) plus one structural addition: a
+    CronScheduleValidation table leg (missing + bad-shape), since the
+    cron role IS subject to cron_schedule validation while the worker
+    role is not.
+- Learnings for future iterations:
+  * The role-axis subtype pin pattern is the FOURTH structural template
+    for the per-subtype renderer pin family, after the Builder axis
+    (BE-0301/0303/0305), the ServiceType axis (BE-0307), and the Engine
+    axis (BE-0309..0317). Captured in the new Codebase Patterns bullet
+    below.
+  * The "submit a foreign-axis value and prove the renderer drops it
+    AND no debug surface leaks it" assertion shape — first established
+    by BE-0303 (git fields dropped for image builder) — generalises
+    cleanly to the role axis. The worker pin submits a domain and a
+    cron schedule (two foreign-axis values at once) and the same
+    Summary-JSON / slog-record / Summary.String() sweep catches both.
+    Future role pins should follow the same shape: submit every value
+    a sibling role WOULD preserve, prove the renderer drops it, and
+    prove no surface leaks the submitted value.
+  * The "no production code change" outcome held: every renderer code
+    path the worker pin exercises already existed before BE-0319. This
+    is the FIFTH consecutive story whose production-code surface is
+    test-only (BE-0303, BE-0305, BE-0307, BE-0311, BE-0313, BE-0315,
+    BE-0317 each shipped 1-3 lines of production code; BE-0319 ships
+    zero). The pattern is now well-established: a per-subtype
+    renderer pin is a structural barrier, not a behavior change.
+  * The BuilderMatrix subtest count (8 = 2 types × 4 builders) is the
+    Cartesian product of the role-fixed subtype's two orthogonal axes.
+    Future role pins (BE-0321 cron) will have the same subtest count
+    because the same two axes apply to cron services. If a future role
+    pin's BuilderMatrix needs to fail a builder (e.g., a hypothetical
+    BuilderImage incompatibility for cron), the table-driven shape lets
+    that be one case-table mutation rather than a structural refactor.
+  * The ValidationFailures cron_schedule omission is deliberate and
+    documented inline. A worker is never a cron service, so the cron
+    validation legs would be either dead-code (cron_schedule field
+    absent on worker input) or require flipping the role mid-test
+    (which would defeat the worker pin). The cron_schedule validation
+    legs are covered by BE-0301/0303/0305/0307 (web role with cron
+    role mutation); BE-0321 will own them on the cron-role side.
 ---

@@ -6946,8 +6946,8 @@
       ],
       "type": "provisioning-service-type",
       "priority": 1,
-      "passes": false,
-      "notes": "Service type: worker."
+      "passes": true,
+      "notes": "Renderer-side contract for worker services pinned by internal/controlplane/dokploy/renderer_worker_test.go: Role=RoleWorker fixed across ServiceApplication+ServiceCompose via workerApplicationInput()/workerComposeInput() helpers. Nine pins: Worker{Application,Compose}Success, DropsWebAndCronFields (leak-safe domain+cron drop), SubtypeBoundaryFromWebAndCron, BuilderMatrix (2 types x 4 builders), ValidationFailures, TierResourceDefaults (no 2-replica bump), RedactsAllVariableValues, Deterministic. Single-role collapse mirrors BE-0303 single-builder collapse: zero production code change. Worker-side dokploy_refs atomic write, quota conversion, and fake Dokploy create/update/deploy/poll/failure/retry/replay defer to a later worker story per the BE-0301 deferral pattern."
     },
     {
       "id": "BE-0320",
