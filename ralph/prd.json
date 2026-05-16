@@ -6756,8 +6756,8 @@
       ],
       "type": "provisioning-service-type",
       "priority": 1,
-      "passes": false,
-      "notes": "Service type: postgres."
+      "passes": true,
+      "notes": "Service type: postgres. Renderer-side contract pinned at internal/controlplane/dokploy/renderer_database_postgres_test.go: subtype identity (Type=ServiceDatabase + Engine=EnginePostgres), application/compose subtype boundary (yalla.engine label distinguishes engines, yalla.service-type stays database), drops role+domains+cron-schedule, validation including missing-engine and unsupported-engine (sqlite) cases with no value echo, tier resource defaults (database services do not participate in the production-web 2-replica bump), secrets redaction across Summary JSON / slog record / Summary.String, and byte-stable determinism. Production code is additive: EnginePostgres constant, validEngine() whitelist gate in Render(), and a new yalla.engine label emitted by renderLabels() for ServiceDatabase services (database.golden refreshed accordingly). Worker-side dokploy_refs atomic write, fake Dokploy create/update/deploy/poll/failure/retry/replay, and quota reservation-to-conversion flow defer to the later database worker story per the BE-0301 deferral pattern. The validEngine whitelist is the production-code seam BE-0311 mysql / BE-0313 mariadb / BE-0315 mongo / BE-0317 redis each extend by one constant."
     },
     {
       "id": "BE-0310",

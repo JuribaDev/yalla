@@ -20,6 +20,10 @@
     "domains": null,
     "labels": [
       {
+        "key": "yalla.engine",
+        "value": "postgres"
+      },
+      {
         "key": "yalla.environment",
         "value": "env_0000000000000000000000000c"
       },

@@ -97,6 +97,27 @@ const (
 	BuilderDropArtifact = "drop-artifact"
 )
 
+// Database engine identifiers select which managed database engine a
+// ServiceDatabase service provisions. The set is closed and authoritative;
+// Yalla rejects any unknown engine value at the renderer seam so an invalid
+// engine never reaches the worker or Dokploy.
+const (
+	// EnginePostgres is the PostgreSQL managed engine.
+	EnginePostgres = "postgres"
+)
+
+// validEngine reports whether engine is a recognised managed database engine.
+// New engines join the closed set per their PRD story (BE-0309 postgres;
+// BE-0311 mysql; BE-0313 mariadb; BE-0315 mongo; BE-0317 redis).
+func validEngine(engine string) bool {
+	switch engine {
+	case EnginePostgres:
+		return true
+	default:
+		return false
+	}
+}
+
 // VariableSource identifies which level of the hierarchy contributed a
 // variable's effective value after precedence merging.
 type VariableSource string
@@ -336,11 +357,19 @@ func (*Renderer) Render(in RenderInput) (RenderedSpec, error) {
 		})
 	}
 	engine := strings.TrimSpace(in.Service.Engine)
-	if in.Service.Type == ServiceDatabase && engine == "" {
-		v = append(v, apierr.FieldViolation{
-			Field:  "service.engine",
-			Reason: "required for database services",
-		})
+	if in.Service.Type == ServiceDatabase {
+		switch {
+		case engine == "":
+			v = append(v, apierr.FieldViolation{
+				Field:  "service.engine",
+				Reason: "required for database services",
+			})
+		case !validEngine(engine):
+			v = append(v, apierr.FieldViolation{
+				Field:  "service.engine",
+				Reason: "must be a supported database engine",
+			})
+		}
 	}
 
 	// Service role. It applies to application and compose services and is
@@ -414,7 +443,7 @@ func (*Renderer) Render(in RenderInput) (RenderedSpec, error) {
 		Resources:    resources,
 		Build:        build,
 		Domains:      domains,
-		Labels:       renderLabels(in, effectiveRole),
+		Labels:       renderLabels(in, effectiveRole, engine),
 	}
 	if in.Service.Type == ServiceDatabase {
 		svc.Engine = engine
@@ -667,7 +696,11 @@ func resolveDomains(violations *[]apierr.FieldViolation, in []DomainSpec) []Rend
 // renderLabels builds the deterministic label set attached to the Dokploy
 // service. The Yalla IDs are not secrets — they are self-describing kind-tagged
 // tokens — so embedding them as labels is safe and aids tenant attribution.
-func renderLabels(in RenderInput, role ServiceRole) []Label {
+//
+// engine is surfaced as yalla.engine only for ServiceDatabase services so
+// downstream audit/observability consumers can distinguish a postgres database
+// from a mysql/mongo/redis/... database without re-reading the spec body.
+func renderLabels(in RenderInput, role ServiceRole, engine string) []Label {
 	labels := []Label{
 		{Key: "yalla.organization", Value: in.Organization.ID.String()},
 		{Key: "yalla.project", Value: in.Project.ID.String()},
@@ -679,6 +712,9 @@ func renderLabels(in RenderInput, role ServiceRole) []Label {
 	}
 	if role != "" {
 		labels = append(labels, Label{Key: "yalla.role", Value: string(role)})
+	}
+	if in.Service.Type == ServiceDatabase && engine != "" {
+		labels = append(labels, Label{Key: "yalla.engine", Value: engine})
 	}
 	sort.Slice(labels, func(i, j int) bool { return labels[i].Key < labels[j].Key })
 	return labels
