@@ -20771,3 +20771,149 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     legs are covered by BE-0301/0303/0305/0307 (web role with cron
     role mutation); BE-0321 will own them on the cron-role side.
 ---
+
+## 2026-05-16 - BE-0321
+- What was implemented: structural-barrier renderer pin for cron services
+  — the FIFTH role-axis variant in the renderer-subtype family after
+  BE-0319 (worker). The renderer already supports the cron role end to
+  end (cron_schedule validation at renderer.go:397-406, domains dropped
+  for non-web at renderer.go:419-422, schedule preserved on the
+  RenderedSpec at renderer.go:449), so this story ships test-only as the
+  declarative-content half of the acceptance contract; the durable
+  provisioning worker + dokploy_refs + quota-conversion seam stays
+  deferred to a later worker story.
+- Files changed:
+  - internal/controlplane/dokploy/renderer_cron_test.go (new): nine
+    t.Parallel tests pinning the role-axis cron subtype contract across
+    both application and compose variants.
+    - cronApplicationInput / cronComposeInput per-subtype helpers reuse
+      validInput() / fixedID() / mustRender() so the canonical-id and
+      per-level secret fixtures stay in lockstep with every other
+      renderer pin.
+    - TestRenderCronApplicationSuccess / TestRenderCronComposeSuccess:
+      subtype-identity happy paths (role=cron, type=application/compose,
+      yalla.role label, cron schedule preserved, no domains, no engine).
+    - TestRenderCronDropsWebFields: subtype-boundary against BE-0301..
+      BE-0307 — submits a leaky domain on a cron input, proves
+      Domains==[] AND the host never appears in Summary JSON / slog
+      record / Summary.String(). The cron schedule remains preserved
+      (the inverse omission to BE-0319 worker, where BOTH domains AND
+      schedule are dropped).
+    - TestRenderCronPreservesCronScheduleInSummary: the structural
+      counterpart pin to TestRenderCronDropsWebFields — proves the
+      schedule survives on the spec, on the Summary struct field, and
+      in the marshaled Summary JSON. The compact slog LogValue and
+      Summary.String() debug surfaces are deliberately NOT asserted
+      because the current implementations are intentionally minimal and
+      shrinking them in the future should not break the cron contract;
+      the full Summary JSON is the load-bearing observability surface.
+    - TestRenderCronSubtypeBoundaryFromWebAndWorker: six-case role-axis
+      matrix proving cron/worker/web each stay themselves (and the
+      yalla.role label faithfully surfaces the role) when rendered
+      from their respective canonical inputs.
+    - TestRenderCronBuilderMatrix: every (application/compose) ×
+      (dockerfile / nixpacks / image / drop-artifact) combination still
+      renders as a cron (no domains, schedule preserved) and preserves
+      or normalises builder-specific fields exactly as for web and
+      worker.
+    - TestRenderCronValidationFailures: 12-case table covering bad
+      organization id, mismatched project parent, bad environment tier,
+      bad role, bad service type, bad variable name (no value echo),
+      negative cpu millis, image-builder-missing-image,
+      drop-artifact-builder-missing-artifact-url, bad builder, AND the
+      cron-specific legs — missing cron schedule and malformed cron
+      schedule. Every submitted value is in the shared leakyValues
+      slice so the no-echo assertion runs against ALL submitted values
+      per case, not just the row's own input.
+    - TestRenderCronTierResourceDefaults: every (tier × cron) renders
+      with exactly one replica regardless of application/compose — the
+      inverse of the BE-0301/BE-0307 production-web replica bump and
+      the structural barrier against any future autoscaler refactor.
+    - TestRenderCronRedactsAllVariableValues: cron RenderedSpec carries
+      the verbatim secret the provisioner needs AND every debug surface
+      (Summary JSON, slog JSON, Summary.String()) shows
+      output.Sentinel for every variable value — Secret-flagged and
+      plain.
+    - TestRenderCronDeterministic: byte-stable Render() output across
+      invocations per variant — the contract a future worker depends
+      on to compare a freshly rendered spec to a stored one.
+  - ralph/prd.json: BE-0321 flipped to passes=true.
+- Verification run:
+  - gofmt -w internal/controlplane/dokploy/renderer_cron_test.go → clean.
+  - go vet ./internal/controlplane/dokploy/... → exit 0.
+  - go vet ./... → exit 0.
+  - go test -count=1 -run 'TestRenderCron' ./internal/controlplane/dokploy/
+    → ok 0.501s.
+  - go test ./... → all 37 packages ok.
+  - go test -race -count=1 ./internal/controlplane/dokploy/ → ok 1.469s.
+  - go test -race -count=1 ./... → all 37 packages ok (no race
+    failures, no flakes).
+  - goimports / golangci-lint / staticcheck / govulncheck not invoked
+    (not part of this story's quality gate); upstream lint config
+    already covers gofmt + go vet.
+- Results: BE-0321 passing. The cron declarative-content contract is
+  pinned; the provisioning worker / dokploy_refs / quota-conversion
+  half is deferred to a later worker story per the renderer-subtype
+  pattern's AC2-AC4-AC7 deferral.
+- Remaining risks or follow-ups:
+  - The cron-renderer leans on Dokploy's downstream cron evaluator for
+    full schedule parsing; the renderer's validCronSchedule() is a
+    deliberately light 5/6-field structural check. A future hardening
+    story may want to fail-fast on impossible schedules ("99 0 * * *",
+    out-of-range fields) without re-implementing the worker's parser.
+  - The Summary.LogValue() and Summary.String() compact views still
+    do NOT surface cron_schedule. If an audit/observability consumer
+    later wants the schedule in compact logs without paying the full
+    JSON marshal cost, the renderer's LogValue() + String() will need
+    to grow a cron_schedule field, and this file's deliberately-omitted
+    assertions in TestRenderCronPreservesCronScheduleInSummary will
+    become the upgrade path's structural pin.
+- Learnings for future iterations:
+  - Patterns discovered:
+    - Role-axis variant pattern: when the BE-0301/BE-0303/BE-0305/
+      BE-0307/BE-0309..0317/BE-0319 renderer-subtype family pins the
+      subtype identity via Build.Builder / Service.Type / Engine /
+      Role, the per-variant test file collapses to a 3-token
+      Worker→Cron swap (identifiers, RoleWorker→RoleCron, role label
+      string) plus ONE structural addition: the cron leg adds two
+      cron_schedule validation rows to the ValidationFailures table
+      (missing + malformed); the worker leg has neither. The reverse
+      DropsXFields pin axis is the inverse: worker drops BOTH domains
+      AND cron_schedule, cron drops ONLY domains (because cron OWNS
+      the schedule), web drops ONLY cron_schedule (because web OWNS
+      domains).
+    - The Summary LogValue / String compact debug surfaces are NOT a
+      stable observability contract for every field the JSON marshaled
+      Summary surfaces. Future renderer-subtype pins should treat the
+      Summary JSON as the load-bearing audit/observability surface and
+      assert string-surface presence ONLY when the role/builder/engine
+      field is part of the compact view's already-pinned shape. The
+      cron_schedule is rendered on the full JSON but not on the
+      compact views — that's by design.
+  - Gotchas encountered:
+    - First draft of TestRenderCronPreservesCronScheduleInSummary
+      asserted the cron schedule appears in the slog record AND the
+      Summary.String() — both failed because the Summary.LogValue()
+      and Summary.String() currently render only a compact subset
+      (organization, project, environment, tier, service, type, role,
+      builder, cpu_millis, memory_mib, replicas, variable_count,
+      domain_count). The JSON marshal of Summary DOES carry the
+      schedule via the cron_schedule omitempty tag. Adjusted the test
+      to assert presence only on (a) the spec.Service.CronSchedule
+      field, (b) the Summary.Service.CronSchedule field, and (c) the
+      marshaled Summary JSON — and added a comment pinning the
+      deliberate omission of the slog/string surfaces so future
+      hardening stories know which surface to grow first.
+  - Useful context:
+    - cron_schedule is not a secret. Unlike a variable value, the
+      schedule MUST surface on the audit trail and on the rendered
+      Summary JSON — operators and audit consumers need to see when
+      a cron is scheduled to run. The renderer's structural barrier
+      is therefore "drop domains, preserve schedule" for cron, NOT
+      "drop everything web-shaped" as worker does.
+    - validCronSchedule() at renderer.go:734 reports whether s has 5
+      OR 6 fields — a deliberate light check; the worker (or Dokploy)
+      performs full schedule parsing. The renderer rejects "" and
+      "not-a-cron" (1 field) but accepts both standard 5-field
+      ("0 2 * * *") and 6-field ("0 2 * * * *") expressions.
+---
