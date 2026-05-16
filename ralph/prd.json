@@ -7402,8 +7402,8 @@
       ],
       "type": "variables",
       "priority": 1,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Implemented internal/controlplane/variables: pure resolver merging organization/project/environment/service ScopedVariable inputs under precedence service > environment > project > organization, decrypting sealed rows through secrets.Provider, recording per-key Contribution chains, and rejecting secret downgrade unless Options.AllowSecretDowngrade is set. ScopedVariable / Rendered / Resolved redact value and ciphertext at the slog boundary; Explained projects values to output.Sentinel. Unit tests cover precedence, downgrade reject + opt-in, upgrade, duplicate-within-scope, invalid name, Open failure -> apierr.Internal (no plaintext echo), provider mismatch -> apierr.Internal wrapping secrets.ErrUnsupportedProvider, slog and Explain redaction, deep-copy independence, and the four golden scenarios production/staging/preview/service-specific. Acceptance criteria: 'public response envelopes' (N/A; library not endpoint), 'integration tests against isolated Postgres' (N/A; pure library \u2014 per-scope Reader stores already cover the tenant-isolation invariants of the inputs). gofmt/build/vet clean; go test ./... PASS; go test -race ./internal/controlplane/variables PASS. goimports/golangci-lint/staticcheck/govulncheck not installed locally."
     },
     {
       "id": "BE-0344",

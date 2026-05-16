@@ -120,6 +120,7 @@
 - BE-0332 memory_mb is the SECOND instance of the dimensional-quota template (BE-0331) and confirms the template clones without any port widening, Checker change, or fake update — only (a) a per-Kind magnitude map + helper in serviceservice.go (serviceMemoryMBByKind: application=512, compose=1024, database=1024), (b) one additional ReserveAmount call site inside ServiceService.Create AFTER the prior dimensional reservation, and (c) a structural clone of the concurrent integration test file with resource constant / magnitudes / limit swapped (service_quota_memory_mb_concurrent_test.go). Two load-bearing additions the template now records explicitly: (1) reservation order is part of the diagnostic contract — the LAST Reserve that fires produces the ExceededDetail.Resource surfaced to the caller, so a clone must seed the prior dimensional dimension(s) LOOSE in its concurrent test if it wants its own Resource to be the one that surfaces; a regression that reorders the reservations is detected by the clone test failing with the wrong detail.Resource (cpu_millicores instead of memory_mb, or vice versa). (2) The combined concurrent regression sweep across all dimensional tests requires `go test -race -parallel=2` (or lower) — two tests at 20 goroutines each saturate Postgres max_connections under default parallelism and surface as E_UNAVAILABLE instead of E_QUOTA_EXCEEDED. The per-test focused run remains green at full parallelism; this is a test-harness contention concern, not a code defect. Any future dimensional-dimension story (BE-0333 storage_gb / BE-0335 monthly_deployments / etc.) adds another concurrent test to the family and inherits both rules.
 - Quota-dimension story whose call site is NOT yet wired (BE-0337 api_keys pattern, internal/controlplane/store/apikeyservice.go + internal/controlplane/store/migrate/migrations/0027_quota_resource_api_keys.{up,down}.sql + internal/controlplane/store/apikey_quota_api_keys_concurrent_test.go + cmd/yalla-api/main.go; structural template for BE-0338 members and ANY future dimension story whose owning Service.Create predates the QuotaReserver port — applies whenever a dimension story is the FIRST to wire its service-layer Reserve, distinct from the BE-0331..BE-0336 'call site already there' siblings whose owning unit-of-work already reserves the dimension). The minimum atomic delivery is FOUR change axes: (1) closed-set expansion — a new `NNNN_quota_resource_<name>.{up,down}.sql` migration that follows the BE-0326 backup_schedules template verbatim (DO block looking up the inline DOMAIN CHECK by `contypid = 'quota_resource'::regtype AND contype = 'c'` so the migration is robust to any Postgres-assigned constraint name, then `ALTER DOMAIN quota_resource ADD CONSTRAINT quota_resource_check CHECK (VALUE IN (...))` with the prior set + the new label; the .down.sql is structurally identical and narrows back to the prior set, accepting that any row carrying the new label fails the restored CHECK — that is the correct behaviour, silently dropping rows would lose audit-relevant state); plus the matching `QuotaResource<Name>` constant + membership-set entry in internal/controlplane/store/quota.go; plus updating the `valid` slice in internal/controlplane/store/quota_internal_test.go::TestQuotaResourceValid which pins `len(valid) == len(quotaResources)` — the test is a sealing-trap that catches a forgotten membership-set entry but ALSO fires on a forgotten valid-slice entry; both must change together. (2) Constructor port widening — the existing service struct grows a `quota QuotaReserver` field, the constructor parameter list grows the same port, the nil-guard switch grows a `case quota == nil` arm placed BETWEEN the last existing repo arm and the audit arm (the convention is store → parent repos → own repo → authz? → quota → jobs? → audit), and the Create unit of work grows a `svc.quota.Reserve(ctx, tx, key.OrganizationID, string(QuotaResource<Name>))` call placed AFTER every existence/parent-lookup check and BEFORE the desired-state Insert so a 404 on the parent is never disguised as a quota rejection AND a row-level conflict (slug, prefix, unique constraint) rolls the reservation back with the rest of the unit of work. (3) Constructor call-site fanout — three call sites change: cmd/yalla-api/main.go grows a `<name>Quota := noopQuotaReserver{}` placeholder (the real quota.Checker adapter is wired separately by a cross-cutting plan-resolver story; placeholder mirrors the projectQuota / environmentQuota / serviceQuota convention exactly), the in-package `package store` constructor-nil test grows a `nopQuotaReserver{}` local + a new `{nil quota, ...}` case wedged BETWEEN the last existing nil case and the audit case (positional ordering must mirror the constructor's nil-guard switch), and the `package store_test` integration-test helper grows the shared `&recordingQuota{}` (defined in projectservice_test.go — not a local `noopQuotaReserver{}`, which is only visible to cmd/yalla-api; the store_test package has its OWN allow-all fake hierarchy and the convention is to reuse `recordingQuota` for happy-path constructors). (4) Concurrent integration test — clone of the BE-0336 concurrent_deployments test with five structural simplifications when the owning service has no Authorizer / JobEnqueuer ports (api_keys is pure Yalla identity with no Dokploy mirror, so APIKeyService takes neither): no `atomicAuthorizer` / `atomicJobs` fakes need to be defined or counted; no `authz.calls == attempts` and no `jobs.calls == successes` assertions; the per-goroutine input loop calls `auth.Generate()` INSIDE the goroutine so every concurrent attempt mints its own unique (prefix, secret_hash) pair via crypto/rand (the prefix column is UNIQUE so a shared pair would deterministically conflict and mask the quota race); the parent-row seed is only an `organizations` row (no project/environment/service chain — api_keys live directly under the tenant); and the leaky-input candidates in the rejection-message scan use the resource-specific prefix (`key-%02d` / `req_apikeys_%02d` / `corr_apikeys_%02d`) so an echoed input still fails the message guard. The 'second test' sibling (TestXxxCreateAppliesXxxQuotaIndependentlyOfOtherDimensions) seeds ONLY the dimension under enforcement, exhausts it sequentially, asserts a SIXTH Create surfaces the dimension-specific rejection, and asserts no reservation row exists on TWO unrelated dimensions (services / projects) — the symmetry guard that catches a future regression that drops the Reserve call OR accidentally chose a different resource string. The whole pattern compiles + passes -race against a real Postgres without touching ANY of the 70+ httpapi fake-fixture call sites because the service's HTTP layer is owned by a separate seam (the api_keys handler already calls APIKeyService.Create with the same input shape; only the store-layer wiring changes). Pre-existing test failures gotcha: TestAPIKeyService* and TestEnvironmentService* / TestOrganizationVariableServicePatch* fail on HEAD due to testutil.Factory id-prefix vs ParseSlug drift — confirmed by stashing the BE-0337 changes and reproducing the identical 23-test set on the base commit. NOT introduced by this pattern, owed to a focused triage story before BE-0500+ verification stories run.
 
+- Pure N-scope inheritance resolver (BE-0343 pattern, internal/controlplane/variables/{doc.go, resolver.go, resolver_test.go, AGENTS.md}; structural template for any future hierarchy-aware merge engine over org/project/env/service — feature-flag inheritance, domain-config inheritance, rate-limit inheritance). Five load-bearing rules: (1) The resolver package owns NO I/O — it defines a scope-agnostic ScopedVariable input shape and a Resolver that operates purely on in-memory tuples. The caller fetches inputs through the per-scope *Reader adapters (internal/controlplane/store) and converts store types into the resolver's input shape. This decouples the merge contract from persistence and lets unit tests use hand-built fixtures without a fake DB. (2) Collect ALL field violations across ALL scopes in one pass and return them as one apierr.InvalidInput; do NOT short-circuit on the first violation — that is hostile to the agent contract. Field paths anchor on <scope>.variables[<index>].<field> and NEVER echo the submitted value. (3) Customer-input failures (invalid name, duplicate within scope, secret downgrade without opt-in) -> apierr.FieldViolation -> apierr.InvalidInput (HTTP 400). Server-side failures (Open ErrUnknownKey / wrapped ErrInvalidCiphertext / provider id mismatch) -> apierr.Internal with a wrapped cause for server-side logging (HTTP 500). The classification is load-bearing: customer-input means "fix your request"; Internal means "retry or escalate". (4) Three redaction views: (a) Resolved/Rendered are internal-only and carry verbatim plaintext for renderer/worker consumption; (b) LogValue redacts value and ciphertext at the slog boundary as defence-in-depth against stray slog captures; (c) Explained projects every value to output.Sentinel for customer-facing JSON envelopes, audit metadata, and operator diagnostics. Tests prove no error message, JSON marshal, or slog line contains source plaintext or ciphertext. (5) Closed-set Options.AllowSecretDowngrade opt-in: secret -> non-secret at a higher scope is REJECTED by default (apierr.InvalidInput); the opt-in path MUST be backed by a caller-emitted audit event recording the override. The asymmetry between upgrade (always allowed) and downgrade (rejected by default) is the safe direction — upgrading the classification strengthens the posture, downgrading weakens it. Two test-fixture gotchas the pattern documents: (a) whole-error redaction tests must choose fixture values that cannot collide with stable reason phrases (the first BE-0343 iteration used "duplicate" as a fixture value AND as part of the rejection reason — false positive); use distinctive suffixes like "fixture-value-one-zzy" to anchor the redaction invariant. (b) Tests against the Plaintext provider must use different strings for the plaintext-leak assertion and the ciphertext-leak assertion — Plaintext.Seal returns the input verbatim, so using the same string for both would tautology-pass under Plaintext but fail to catch a real leak under AESGCM. NOT applicable to the dokploy renderer's mergeVariables (renderer.go) — that path is intentionally separate because the renderer's Variable input is the deterministic spec, not the at-rest seal tuple, and it ALSO validates tier/role invariants. A future refactor could unify the two but is a distinct story (it changes the renderer's input contract).
 ## 2026-05-15 - BE-0103
 - What was implemented: GET /v1/organizations/{org_id}/audit-events, the
   organization-scoped audit-trail read endpoint — the first endpoint to
@@ -22926,4 +22927,218 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
   - The deny-path leg in the redaction test MUST use a port fake that ERRORS if its method is invoked (e.g. fakeMembershipUpdater{err: stderrors.New("updater must not be called")}). This pins that authorization actually short-circuits before the store layer and rules out "the leak came from a fake-port error message" as a confounder when a future logging change tries to start logging dependency errors.
   - The dependency-cause-does-not-leak test must assert BOTH the wrapped-error string AND a bare network address from that string. A future error wrapper that accidentally renders the apierror.Cause via %v but redacts the wrapper's own message would still leak the address; asserting on the address closes that hole.
   - When the contract test asserts that os.Stdout/os.Stderr stay empty, the test MUST be sequential (no t.Parallel()) — captureProcessOutput swaps the global os.Stdout/os.Stderr pointers and parallel tests would race on those globals.
+---
+## 2026-05-16 - BE-0343
+- Implemented internal/controlplane/variables (new package): pure variable
+  inheritance resolver that merges the four hierarchy scopes
+  (organization, project, environment, service) under the Dokploy-
+  compatible precedence service > environment > project > organization,
+  Opens sealed values through a secrets.Provider, records per-key
+  Contribution chains for explain output, and rejects accidental
+  secret downgrade unless Options.AllowSecretDowngrade is explicitly
+  set. The resolver is scope-agnostic: it does NOT import the store
+  package — it consumes a ScopedVariable input shape so the same
+  resolver works against store types, a future cache layer, or
+  admin export tools without changing the merge contract.
+- Files added:
+  - internal/controlplane/variables/doc.go — package docs explaining
+    the precedence rule, the downgrade-vs-upgrade asymmetry, the
+    redaction posture, and why Resolved/Rendered carry plaintext (for
+    internal renderer consumption) while Explained projects every
+    value to output.Sentinel.
+  - internal/controlplane/variables/resolver.go — Resolver, Source,
+    ScopedVariable, ResolveInput, Options, Rendered, Contribution,
+    Resolved, ExplainedVariable, Explained. Resolve() collects all
+    field violations across all four scopes into one
+    apierr.InvalidInput so a customer can fix every problem in one
+    round trip; server-side failures (Open ErrUnknownKey / wrapped
+    ErrInvalidCiphertext / provider id mismatch) surface as
+    apierr.Internal with wrapped causes and NEVER echo plaintext or
+    ciphertext. ScopedVariable.LogValue, Rendered.LogValue, and
+    Resolved.LogValue redact value+ciphertext at the slog boundary
+    as defence-in-depth.
+  - internal/controlplane/variables/resolver_test.go — 17 tests:
+    nil/empty-id constructor rejection; empty-input zero-vars
+    Resolved; one precedence test per scope-pair (service > all,
+    env > project, project > org); coexistence of different keys
+    across scopes; secret-downgrade rejected by default with field
+    path anchored on the offending scope and no plaintext leak;
+    downgrade allowed via Options.AllowSecretDowngrade; secret
+    upgrade always allowed; duplicate-within-scope rejected;
+    invalid name rejected (two distinct invalid shapes); broken
+    Open provider returning secrets.ErrUnknownKey surfaces as
+    apierr.Internal with the wrapped cause preserved and no
+    plaintext echo; mismatched provider id surfaces as
+    apierr.Internal wrapping secrets.ErrUnsupportedProvider with
+    no ciphertext echo; secret round-trip through Plaintext
+    provider returns the original plaintext on Resolved.Value;
+    slog/Rendered/ScopedVariable/Resolved LogValue redaction tests
+    proving plaintext and ciphertext never reach the JSON slog
+    handler; Explain redaction test asserting every value is
+    output.Sentinel and JSON marshal output contains none of the
+    source plaintext strings; Explain deep-copy independence proof;
+    pure-function/context-free demonstration; whole-error
+    redaction across collected violations; ciphertext-bytes
+    redaction across the Open-failure error chain. The
+    TestResolveGoldenScenarios table-driven test pins the full
+    contract against four realistic shapes (production, staging,
+    preview, service-specific-overrides), comparing both
+    Rendered entries (Key/Value/IsSecret/Source/SourceID) and
+    the full Contribution chains key-by-key.
+  - internal/controlplane/variables/AGENTS.md — package agent
+    contract documenting the precedence rule, downgrade-vs-upgrade
+    asymmetry, server-side-vs-customer-input error classification,
+    redaction posture, "what does NOT live here" boundary (no I/O,
+    no HTTP wire shape, no Dokploy provisioning), and the
+    "when adding a new field" checklist that requires updating
+    LogValue redaction in the same edit.
+- ralph/prd.json: BE-0343 passes=true with notes describing the
+  implementation and the N/A acceptance criteria (public envelopes,
+  Postgres integration) which are caller-layer concerns the pure
+  resolver does not own.
+- Verification run:
+  - TMPDIR=/tmp gofmt -l . — clean (gofmt -w only touched
+    internal/controlplane/variables/resolver_test.go to reorder
+    imports).
+  - TMPDIR=/tmp go mod tidy — clean (no new deps).
+  - TMPDIR=/tmp go build ./... — clean.
+  - TMPDIR=/tmp go vet ./... — clean.
+  - TMPDIR=/tmp go test ./... — PASS across all 39 test packages.
+  - TMPDIR=/tmp go test -race ./internal/controlplane/variables/
+    ./internal/controlplane/dokploy/ ./internal/controlplane/secrets/
+    ./internal/controlplane/apierr/ ./internal/controlplane/apienvelope/
+    — PASS.
+  - goimports / golangci-lint / staticcheck / govulncheck — not
+    installed in this environment (documented in prior progress
+    entries).
+- Remaining risks / follow-ups:
+  - The resolver is pure and never imports store. The next
+    consumer story (Dokploy renderer worker reaching for plaintext
+    values during provisioning, or a customer-facing
+    /v1/services/{id}/variables/effective explain endpoint) is the
+    seam that wires real ScopedVariable conversion from the four
+    per-scope Reader adapters. That conversion is a 4-function
+    mapping each store-layer Variable struct field-for-field onto
+    ScopedVariable (Key -> Key, Value/SecretCiphertext/SecretKeyID/
+    SecretProvider -> verbatim, ID -> ResourceID); it should land
+    with the first consumer rather than in this story.
+  - When the customer-facing explain endpoint lands, the
+    Options.AllowSecretDowngrade opt-in MUST be backed by an
+    audit event recording the override. The AGENTS.md notes this
+    explicitly.
+  - The Dokploy renderer (internal/controlplane/dokploy/renderer.go)
+    still has its OWN mergeVariables that operates on the
+    plaintext-only Variable shape. This is intentional: the
+    dokploy renderer's pass also enforces tier/role invariants,
+    domain rendering, and resource limits, and its Variable shape
+    is the deterministic spec input — not the at-rest seal tuple.
+    A future refactor could route the renderer through this
+    resolver to deduplicate the merge logic, but that is a
+    distinct story (it changes the renderer's input contract).
+- **Learnings for future iterations:**
+  - Patterns discovered:
+    - Cross-cutting **pure merge package** (variables pattern,
+      internal/controlplane/variables/{doc.go, resolver.go,
+      resolver_test.go, AGENTS.md}; structural template for any
+      future N-scope precedence merger over the same-shape
+      hierarchy — for example a future "feature flags inheritance
+      resolver" or "domain configuration inheritance resolver"
+      that walks the same org/project/env/service tiers).
+      Five load-bearing rules:
+      (1) The merge package owns NO I/O. It defines a scope-
+      agnostic input shape (ScopedVariable) and a Resolver that
+      operates purely on the in-memory tuple. The caller is
+      responsible for fetching the inputs through the per-scope
+      Reader adapters and for converting the store types into the
+      input shape. This decouples the merge contract from
+      persistence and lets the same resolver be exercised in
+      unit tests with hand-built fixtures (no fake DB needed).
+      (2) The merge package collects ALL field violations across
+      ALL scopes in one pass and returns them as a single
+      apierr.InvalidInput. The customer should be able to fix
+      every problem in one round trip; short-circuiting on the
+      first violation is hostile to the agent contract.
+      (3) Customer-input failures (invalid name, duplicate within
+      scope, secret downgrade without opt-in) surface as
+      apierr.FieldViolation with stable indexed field paths
+      (<scope>.variables[<index>].key) that NEVER echo the
+      submitted value. Server-side failures (Open ErrUnknownKey
+      / wrapped ErrInvalidCiphertext / provider id mismatch)
+      surface as apierr.Internal with a wrapped cause that is
+      preserved for server-side logging and NEVER echoes
+      plaintext or ciphertext bytes. The classification matters
+      for the HTTP status code (400 vs 500) and for the audit
+      semantics: a Customer-Input failure is not an incident, a
+      Server-Side failure is.
+      (4) Three redaction views, one for each consumer surface:
+      (a) Resolved/Rendered are internal-only and carry verbatim
+      plaintext for renderer/worker consumption; (b) LogValue
+      methods redact value and ciphertext at the slog boundary
+      so stray slog captures cannot leak; (c) Explained projects
+      every value to output.Sentinel and preserves the
+      Contribution chain for customer-facing JSON envelopes,
+      audit metadata, and operator diagnostics. Tests prove no
+      error message, JSON marshal output, or slog line contains
+      the source plaintext or ciphertext bytes.
+      (5) Closed-set Options.AllowSecretDowngrade opt-in: the
+      asymmetry between upgrade (always allowed) and downgrade
+      (rejected by default) is the safe direction. The opt-in
+      MUST be wired by the caller alongside an audit event
+      recording the override. The AGENTS.md notes this
+      explicitly so a future caller cannot accidentally enable
+      the opt-in without the audit hook.
+  - Gotchas encountered:
+    - When writing whole-error redaction tests, choose fixture
+      values that cannot collide with stable reason phrases. The
+      first iteration used "duplicate" as a fixture value AND
+      "duplicate variable name within this scope" as the
+      stable rejection reason; the redaction check correctly
+      flagged "duplicate" as appearing in the error chain but it
+      was a false positive (the word came from the reason
+      text, not from the customer-submitted value). Distinctive
+      suffixes (e.g. "fixture-value-one-zzy") prevent the
+      collision and keep the redaction invariant load-bearing.
+    - The Plaintext provider's Seal returns the input bytes
+      verbatim as ciphertext. Tests that assert the ciphertext
+      bytes do not leak must avoid using the same string as
+      both plaintext and assertion target — they would tautology-
+      pass under Plaintext but tautology-fail under AESGCM. Use
+      a separate, distinctive string for the ciphertext-leak
+      assertion (e.g. "ciphertext-bytes-do-not-leak").
+    - Pure merge engines should not accept a context.Context.
+      The first design draft had Resolve(ctx, ...) but the
+      resolver performs no I/O, so a context parameter is
+      misleading: it suggests cancellation/timeout semantics
+      that do not exist. The final shape is Resolve(in, opts);
+      the caller's higher-level orchestration layer is the
+      right place to observe ctx cancellation.
+  - Useful context:
+    - The existing dokploy renderer (renderer.go) has its OWN
+      mergeVariables that operates on the plaintext-only
+      Variable shape and performs the same precedence merge
+      while ALSO validating tier/role invariants. The two
+      paths are intentionally separate: the renderer's input
+      contract is the deterministic spec, NOT the at-rest seal
+      tuple. The variables resolver covers the at-rest seam
+      and the explain output; a future refactor could unify
+      them but is out of scope here.
+    - secrets.Plaintext.Seal returns the input bytes verbatim.
+      This makes Plaintext the right provider for unit tests
+      that need to round-trip a secret value without paying
+      for AESGCM key setup, but it also means tests written
+      against Plaintext alone do not exercise the
+      authenticated-decryption invariant. AESGCM-specific
+      contract tests already live in
+      internal/controlplane/secrets/aesgcm_test.go.
+    - The resolver's Open path errors are server-side
+      (apierr.Internal) even though they happen mid-merge.
+      This is the correct classification: a sealed row whose
+      provider id mismatches the runtime provider, or whose
+      ciphertext fails authentication, is an operational /
+      configuration / tampering signal — NOT a customer-input
+      problem. The customer cannot fix it by changing their
+      request. Surfacing it as Internal preserves the
+      Anthropic-tier "deterministic error code" contract:
+      Internal means retry or escalate to support, never
+      reword the request.
 ---
