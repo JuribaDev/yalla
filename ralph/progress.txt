@@ -23526,3 +23526,74 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
       is the minimum that cannot collide with any legitimate
       error string.
 ---
+
+## 2026-05-16 - BE-0346 - Security verification: JSON parser hardening
+- Implemented the BE-0344/BE-0345 two-test pattern for the JSON parser
+  hardening control. The control is "validate.DecodeJSON keeps four
+  load-bearing hardenings: &limitedReader{} wrap, DisallowUnknownFields(),
+  dec.More() trailing-data check, decodeError(...) body-free error path".
+- New files:
+  - internal/controlplane/validate/json_static_test.go — AST analyser that
+    parses validate/json.go, finds DecodeJSON, and emits a build-time
+    failure listing each hardening that is missing. Self-check fixture
+    feeds known-bad sources (one missing hardening per case + one with all
+    four missing) and one known-good canonical source, both directions
+    pinned by the regression detector.
+  - internal/controlplane/httpapi/json_hardening_test.go — end-to-end
+    runtime tests through NewHandler against POST /v1/organizations
+    proving unknown-field rejection, trailing-data rejection, malformed
+    JSON rejection, wrong-type rejection, and auth-runs-before-decode
+    invariant. Each test plants a sentinel and asserts the error response
+    never echoes it (body-echo / secret-leak backstop).
+- Updated internal/controlplane/validate/AGENTS.md with the four hardening
+  invariants, the two-test backstop pointer, and a "do not weaken — add a
+  new typed decoder" instruction so future contributors find the rule
+  without re-reading the test files.
+- Verification:
+  - go vet ./... — clean
+  - go test ./... — all 39 packages pass
+  - go test -race ./... — all 39 packages pass
+  - gofmt -w . — clean
+  - go mod tidy — no changes (no new dependencies)
+- Remaining risks / follow-ups: none. The acceptance criteria (control
+  documented, tests fail if control is removed, body-free error envelope,
+  no live Dokploy, stable yalla.error.v1 envelope, full success/validation/
+  auth/notfound coverage) are all met. The runtime tests in
+  httpapi/json_hardening_test.go run without Postgres and complement the
+  unit-level coverage already in validate_test.go::TestDecodeJSON.
+- **Learnings for future iterations:**
+  - The BE-0344 two-test template ports verbatim to a single-function
+    invariant ("DecodeJSON keeps its hardenings") just as it did to a
+    package-scoped invariant ("no SQL string concatenation") and to a
+    file-scoped invariant ("no unbounded r.Body access"). The shape is
+    "scan an AST scope -> emit one diagnostic per missing structural
+    feature -> regression-self-check synthesises known-bad + known-good
+    sources -> AGENTS.md captures the rule". The scope shrinks per story
+    but the test/self-check/AGENTS triad is constant.
+  - When the analyser target is a single function body (not a whole
+    package or a whole file), use ast.Inspect inside the FuncDecl. The
+    function-scoped scan is simpler than the file-scoped one: no
+    receiver-name allowlist, no allowed-shape pass, just a set of named
+    booleans flipped when each load-bearing call is observed.
+  - Pin the AST shape for `&limitedReader{...}` with isAddressOfLimitedReader
+    (a UnaryExpr with token.AND wrapping a CompositeLit whose Type is the
+    expected Ident). This is the load-bearing check that prevents
+    "json.NewDecoder(r)" from silently slipping back in — the analyser
+    requires both the function call AND the wrap-shape on its single arg.
+  - Method receiver names on .DisallowUnknownFields() and .More() are
+    deliberately NOT pinned. The runtime test would catch a missing call
+    too, but the static analyser is the build-time backstop: keeping it
+    syntactic and rename-tolerant is the right trade-off — a future
+    refactor that renames `dec` to `d` should not trip the build.
+  - The runtime tests in httpapi/json_hardening_test.go each plant a
+    distinctive sentinel token in a different position of the malformed
+    body and assert the FULL response body does not contain it (not just
+    env.Error.Message). encoding/json's verbose errors can quote bytes in
+    multiple shapes; checking the rendered envelope as a string is a
+    stronger backstop than checking individual envelope fields.
+  - For the malformed-JSON case we accept either the "not valid JSON" or
+    "truncated or not valid JSON" branch because an unterminated body can
+    race either path depending on the io.Reader read pattern. The two-of
+    branch in the assertion documents the equivalence class without
+    locking the test to a specific path.
+---

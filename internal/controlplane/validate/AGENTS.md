@@ -26,3 +26,38 @@ of feature flags or quota.
   and re-derives the accept invariants — mirror that for new validators.
 - `DecodeJSON` is the strict JSON body decoder: size-capped, unknown-field- and
   trailing-data-rejecting, and every failure is a body-free `apierr.Invalid`.
+
+## JSON parser hardening invariants (BE-0346)
+
+`DecodeJSON` is the single canonical decoder every mutating HTTP handler
+funnels through (BE-0345 already rejects any handler that bypasses it). The
+function's body MUST keep four AST-shaped hardenings — losing any one of
+them re-opens a real attack surface:
+
+1. `json.NewDecoder(&limitedReader{...})` — the reader is wrapped in the
+   explicit byte-cap reader BEFORE the decoder sees it (OOM/slow-loris
+   defence).
+2. `<dec>.DisallowUnknownFields()` — rejects extra keys (mass-assignment /
+   schema-confusion / hidden-field smuggling defence).
+3. `<dec>.More()` — after `Decode`, asserts the stream is exhausted (JSON
+   smuggling defence; a body like `{"a":1}{"b":2}` lets a proxy/WAF see
+   one value while the API acts on another).
+4. `decodeError(...)` — every failure flows through this fixed-message
+   renderer; raw `encoding/json` errors that quote the submitted bytes
+   never reach the response (secret-leak / body-echo defence).
+
+The static analyser `TestDecodeJSONKeepsAllHardenings`
+(`json_static_test.go`) parses `json.go`, locates `DecodeJSON`, and emits
+a build-time failure listing each hardening that is missing; the companion
+`TestDecodeJSONHardeningStaticAnalyzerDetectsRegressions` synthesises
+known-bad and known-good DecodeJSON variants to prove the analyser fires
+on the bad shapes and stays silent on the good one. The runtime backstop
+lives in `internal/controlplane/httpapi/json_hardening_test.go` and proves
+the hardenings hold end-to-end through `NewHandler` (unknown field,
+trailing data, malformed JSON, wrong-typed field, auth-before-decode).
+
+When changing `DecodeJSON`, run the validate package tests AND the httpapi
+package tests. The hardenings are not optional and not negotiable: if a
+caller cannot live with one of them, add a NEW typed decoder beside
+`DecodeJSON` (and a new analyser companion that pins its hardenings) —
+never weaken the canonical one.
