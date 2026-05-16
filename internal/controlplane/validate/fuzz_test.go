@@ -2,6 +2,7 @@ package validate_test
 
 import (
 	stderrors "errors"
+	"net"
 	"strings"
 	"testing"
 	"unicode"
@@ -108,9 +109,35 @@ func FuzzPath(f *testing.F) {
 }
 
 // FuzzDomain asserts Domain never panics and, with wildcards disabled, only
-// accepts a fully-qualified hostname of two or more valid DNS labels.
+// accepts a fully-qualified hostname of two or more valid DNS labels that is
+// NOT in the domain-takeover blocklist (BE-0350). The seeds include each
+// IPv4-literal form, the multi-label reserved special-use name `home.arpa`,
+// each shared-hosting eTLD bare form, and each reserved suffix, so a fuzzer
+// that drops a category from `disallowedTakeoverHost` fails the next replay
+// (the accept-branch `net.ParseIP` / reserved-suffix re-derivation below
+// proves the takeover invariants hold for every accepted host).
 func FuzzDomain(f *testing.F) {
 	for _, s := range fuzzSeeds {
+		f.Add(s)
+	}
+	for _, s := range []string{
+		// IPv4 literals — survive the FQDN/label check, must be caught by
+		// the takeover guard.
+		"1.2.3.4", "127.0.0.1", "8.8.8.8", "192.168.1.1",
+		// Multi-label reserved exact-match (RFC 6761).
+		"home.arpa",
+		// Reserved suffix forms (RFC 2606 documentation suffixes
+		// .test/.example/.invalid are intentionally omitted — see
+		// `reservedTakeoverHostSuffixes` doc).
+		"printer.local", "consul.service.internal", "router.home",
+		"edge.home.arpa", "server.lan", "api.localhost",
+		// Shared-hosting eTLD bare forms.
+		"appspot.com", "azurewebsites.net", "cloudfront.net",
+		"firebaseapp.com", "github.io", "gitlab.io", "herokuapp.com",
+		"netlify.app", "pages.dev", "vercel.app", "web.app",
+		// Wildcard forms with a reserved tail.
+		"*.appspot.com", "*.vercel.app", "*.home.arpa",
+	} {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, input string) {
@@ -143,6 +170,24 @@ func FuzzDomain(f *testing.F) {
 				if !((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-') {
 					t.Fatalf("Domain accepted an invalid label character in %q", input)
 				}
+			}
+		}
+		// Re-derive the takeover invariants: any accepted host MUST NOT
+		// parse as an IP literal and MUST NOT end in one of the
+		// documented reserved suffixes. A regression that drops the
+		// takeover guard from Domain trips here on the next replay of an
+		// IPv4-literal or reserved-suffix seed.
+		if ip := net.ParseIP(v); ip != nil {
+			t.Fatalf("Domain accepted an IP-literal host %q", input)
+		}
+		reservedSuffixes := []string{
+			".localhost", ".localdomain", ".local",
+			".internal", ".intranet", ".private",
+			".corp", ".home", ".home.arpa", ".lan",
+		}
+		for _, suffix := range reservedSuffixes {
+			if strings.HasSuffix(v, suffix) {
+				t.Fatalf("Domain accepted a reserved-suffix host %q (suffix %q)", input, suffix)
 			}
 		}
 	})

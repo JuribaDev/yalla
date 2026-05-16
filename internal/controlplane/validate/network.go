@@ -109,6 +109,15 @@ func Domain(c *Collector, field, value string, opts DomainOptions) {
 			return
 		}
 	}
+	// Domain-takeover prevention (BE-0350): reject hostnames that are
+	// structurally illegitimate as a customer-attached service domain —
+	// IP-literal forms that survive the FQDN/label checks (dotted IPv4),
+	// reserved special-use TLDs / labels (RFC 6761 / RFC 2606), and
+	// shared-hosting eTLDs whose ownership cannot legitimately transfer
+	// to a single tenant. See domain_takeover.go for the threat model.
+	if reason, blocked := disallowedTakeoverHost(v); blocked {
+		c.Add(field, reason)
+	}
 }
 
 // validDNSLabel reports whether label is a valid single DNS label: 1..

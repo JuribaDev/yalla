@@ -140,3 +140,121 @@ sets are sealed by name — dropping a documented entry fails
 `TestSSRFHostnameListsAreCanonical`. Adding a new classification string
 also requires updating `canonicalSSRFReasons` in `ssrf_test.go` so the
 value-free invariant covers it.
+
+## Domain-takeover prevention (BE-0350)
+
+The Yalla Control Plane stores customer-attached hostnames in the
+`service_domains` table behind a UNIQUE (hostname, path) constraint
+that spans every tenant. The FIRST tenant to land a row owns the
+routing for that hostname in the entire cluster — and that uniqueness
+is the exact lever a domain-takeover attack pulls. The validator-layer
+defence is `disallowedTakeoverHost` in `domain_takeover.go`. The single
+public customer-domain validator — `Domain` in `network.go` — MUST
+funnel its final, stripped hostname through that helper before
+returning. The helper rejects:
+
+1. **IP-literal hostnames** (`net.ParseIP` parses the host) in any
+   form. Customer hostnames must be hostnames, never IP addresses — a
+   public CA will not issue a TLS certificate for an arbitrary IP the
+   platform does not authoritatively own, and a customer claiming a
+   raw IP literal could siphon any Host-header request that happens to
+   target that literal. The symmetric SSRF guard in `ssrf.go` blocks
+   IP-literal OUTBOUND targets; this guard is the symmetric INBOUND
+   wall for hostnames the platform agrees to ROUTE traffic for.
+2. **Exact-match reserved hostnames**: RFC 6761 / RFC 2606 special-use
+   labels (`localhost`, `localdomain`, `local`, `internal`,
+   `intranet`, `private`, `corp`, `home`, `home.arpa`, `lan`, `test`,
+   `example`, `invalid`) and the bare form of common shared-hosting
+   eTLDs (`appspot.com`, `azurewebsites.net`, `cloudfront.net`,
+   `elasticbeanstalk.com`, `firebaseapp.com`, `github.io`,
+   `gitlab.io`, `herokuapp.com`, `netlify.app`, `pages.dev`,
+   `vercel.app`, `web.app`). Sub-tenants under a shared-hosting eTLD
+   (`myapp.appspot.com`) are perfectly legitimate; only the bare
+   suffix is reserved.
+3. **Hostname suffixes** (with a leading dot to prevent over-match):
+   `.localhost`, `.localdomain`, `.local`, `.internal`, `.intranet`,
+   `.private`, `.corp`, `.home`, `.home.arpa`, `.lan`. The RFC 2606
+   documentation-only suffixes (`.test`, `.example`, `.invalid`) are
+   intentionally NOT in the suffix list: they are not publicly
+   routable and cannot intercept real customer traffic, so they are a
+   squatting concern (bounded by the UNIQUE constraint) rather than a
+   takeover threat. They remain in the exact-match map as
+   defence-in-depth for the bare-label form. This omission also
+   keeps every existing `.example` test fixture across the httpapi
+   package valid.
+
+Reasons are a closed set of value-free classification strings — see
+`canonicalTakeoverReasons` in `domain_takeover_test.go`. The reason
+text NEVER quotes the submitted host or any other input, so a
+hostname whose label embeds an internal name cannot leak through the
+rejection error.
+
+**Layered defence required.** This package is pure: it performs no
+DNS lookups and cannot independently prove that a customer actually
+owns the hostname they attach. Ownership PROOF (HTTP-01 / DNS-01 /
+ALPN-01 challenge, or an external pre-shared verification record) is
+a runtime concern that belongs to the certificate-issuance and
+routing-attach worker — NOT this layer. The validator rejects every
+shape the parser can prove is structurally illegitimate; the runtime
+catches the rest.
+
+The two-test pattern (BE-0344, BE-0345, BE-0346, BE-0349) applies
+here. The static analyser
+`TestDomainTakeoverGuardIsCalledFromDomainValidator`
+(`domain_takeover_static_test.go`) parses `network.go`, locates
+`Domain`, and asserts the body contains at least one call to
+`disallowedTakeoverHost`. A future change that splits `Domain` and
+forgets the takeover call fails the build BEFORE the regression can
+ship. The companion
+`TestDomainTakeoverGuardStaticAnalyzerDetectsRegressions` self-checks
+the analyser against synthetic known-bad / known-good fixtures —
+including a look-alike-but-wrong helper-name fixture that ensures the
+analyser pins the exact identifier (so "I rewrote my own takeover
+check" can't silently substitute). The reserved-name lists themselves
+are sealed by `TestDomainTakeoverListsAreCanonical`, which fails the
+build if a documented entry is dropped or a suffix entry loses its
+leading dot.
+
+The runtime backstop lives in `domain_takeover_test.go`:
+`TestDomainRejectsTakeoverTargets` walks each IPv4 literal, each
+shared-hosting eTLD bare form, each multi-label reserved exact-match
+(`home.arpa`), and each reserved suffix and proves the helper rejects
+them with a canonical reason from the closed set;
+`TestDomainAcceptsPublicHosts` keeps the positive direction honest
+(an analyser-satisfying no-op that rejected every host would still
+fail these — including `myapp.appspot.com` and `acme.github.io`,
+which are sub-tenants under a reserved eTLD and must STAY accepted);
+`TestDomainRejectsTakeoverTargetsForWildcard` proves the same
+rejection holds when wildcards are enabled (a wildcard makes takeover
+strictly worse — the bare suffix locks one routing entry, the
+wildcard locks every sub-tenant of that suffix);
+`TestDomainTakeoverReasonsAreValueFree` plants a secret canary as a
+sub-label of a reserved-suffix host, proves the reason is one of the
+canonical classification strings, and proves neither the canary nor
+the inner host appears in the reason; and
+`TestDomainTakeoverEmptyHostKeepsExistingDiagnostic` pins the
+order-of-precedence so `Domain("")` keeps returning the existing
+"must not be blank" diagnostic. The fuzz target `FuzzDomain`
+re-derives the takeover invariants in its accept branch (any
+accepted host MUST NOT parse as an IP literal and MUST NOT end in a
+reserved suffix) and is seeded with one host per documented
+forbidden category.
+
+Why this is distinct from `disallowedSSRFHost`: SSRF is about
+OUTBOUND URLs the worker dereferences (where an IP literal targets
+an internal address). Domain-takeover is about INBOUND hostnames the
+platform agrees to route traffic for (where an IP literal is a
+non-domain and a shared-hosting eTLD is a public namespace nobody
+should single-handedly claim). The two helpers share the BE-0344
+two-test template shape but live in separate files and check
+disjoint sets — a hostname that is legitimate to attach (e.g.
+`myapp.example.com`) may still be illegitimate to fetch as a URL if
+it resolves to a private IP, and vice versa.
+
+When changing `disallowedTakeoverHost`, run the validate package
+tests (`go test ./internal/controlplane/validate/...`). The
+hostname/suffix sets are sealed by name — dropping a documented
+entry fails `TestDomainTakeoverListsAreCanonical`. Adding a new
+classification string also requires updating
+`canonicalTakeoverReasons` in `domain_takeover_test.go` so the
+value-free invariant covers it.

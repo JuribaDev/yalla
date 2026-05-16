@@ -1,4 +1,6 @@
 ## Codebase Patterns
+- Inbound-hostname domain-takeover guard, symmetric to the SSRF outbound-URL guard (BE-0350 pattern, internal/controlplane/validate/{domain_takeover.go, domain_takeover_static_test.go, domain_takeover_test.go, AGENTS.md} + network.go Domain() call site + fuzz_test.go FuzzDomain seeds; second worked port of the BE-0349 two-test SSRF template into the validate package, but for a STRUCTURALLY DIFFERENT threat: INBOUND hostnames the platform agrees to ROUTE traffic for, NOT outbound URLs the worker dereferences). Six load-bearing rules the new file added on top of the inherited BE-0349 template: (a) The takeover guard MUST live in a separate helper (`disallowedTakeoverHost`) and a separate static analyzer (`callsDisallowedTakeoverHost`) from the SSRF guard — they share the two-test template but check DISJOINT sets: a host that is legitimate to ATTACH (`myapp.example.com`) may still be illegitimate to FETCH if it resolves to a private IP, and vice versa. Reusing the SSRF helper would collapse both threat models into one, hiding which rejection class applies to which surface. (b) The guard's call site goes AT THE END of `Domain` (after the FQDN/label checks), not at the start. Single-label reserved names (`localhost`, `local`, `internal`, `lan`, etc.) and IPv6 literals (a single label after the `.` split) are rejected by the existing FQDN check BEFORE reaching the guard — so the test table for `TestDomainRejectsTakeoverTargets` restricts itself to inputs that actually pass through the helper today (IPv4 dotted literals, multi-label reserved exact-matches like `home.arpa`, suffix-match cases, shared-hosting eTLD bare forms). The single-label reserved names stay in `reservedTakeoverHostnames` as defence-in-depth (a future FQDN-check loosening must still trip the takeover guard) but the runtime regression table only asserts on what's actually reachable, so a missing call site is caught by a FAILING subtest rather than a silently-skipped one. Document the layering explicitly in the file's package-doc block AND in the test file's table-header comment, so the next reader doesn't add an unreachable case and then debug for an hour. (c) The reserved-name lists must DELIBERATELY EXCLUDE the RFC 2606 documentation-only suffixes (`.test`, `.example`, `.invalid`) from the SUFFIX walk while KEEPING them in the EXACT-MATCH map. Reason: those suffixes are not publicly routable so they cannot intercept real customer traffic — they are a squatting threat (bounded by the `service_domains` UNIQUE (hostname, path) constraint) rather than a takeover threat. The httpapi service-domains test fixtures across ~7 files (`api.canonical.example`, `domain-matrix-recognisable-needle.example`, etc.) use `.example` per RFC convention; adding `.example` to the suffix walk would break every one of those tests, and the cost is asymmetric: a real takeover defence would require migrating the fixtures whereas a softer squatting defence is bounded by the UNIQUE constraint and adds no value to either threat model. Document the omission AND the asymmetry in the helper's package-doc, the AGENTS.md section, and the test file's blocked-hosts table comment — so a future reader doesn't "fix" the omission and re-break the fixtures. (d) The wildcard interaction: `Domain` strips the leading `*.` BEFORE my helper sees the host. With wildcards enabled, `*.appspot.com` reduces to `appspot.com` which the exact-match map rejects — a wildcard makes the takeover STRICTLY WORSE (the bare suffix locks one routing entry, the wildcard locks every sub-tenant of that suffix) so the wildcard rejection is load-bearing and gets its own test (`TestDomainRejectsTakeoverTargetsForWildcard`). The helper ALSO defensively strips a leading `*.` itself so it remains correct for any future caller that passes the raw value. (e) The redaction backstop (`TestDomainTakeoverReasonsAreValueFree`) must plant the canary as a SUB-LABEL of a reserved-SUFFIX host (`canary + ".lan"`), NOT a reserved-EXACT-MATCH host (`canary + "appspot.com"` would not match the exact-match map). The suffix walk's `strings.HasSuffix(h, suffix)` reduces the entire host to the suffix-class reason without inspecting the canary — so a reason containing the canary proves the validator interpolated the value. The canary string itself MUST be picked to NOT collide with any word in the canonical reason set (no "domain", "namespace", "address", "literal", "hostname") — the BE-0343 redaction lesson is that substring redaction checks false-positive on stable classification phrases. (f) The FuzzDomain seed set added one entry per documented reject category PLUS an accept-branch re-derivation: `net.ParseIP(v) != nil` and `strings.HasSuffix(v, reservedSuffix)` MUST be false for every accepted host. The accept-branch re-derivation is what makes the fuzz target actually catch a regression of the takeover guard — without it, dropping the helper would let IPv4-literal seeds pass through to the accept branch without firing any assertion (the existing FQDN+label re-derivation accepts `8.8.8.8`). The reservedSuffixes slice in the fuzz target is a DUPLICATE of the package-private one — that is the cost of the validate_test (`_test` package) split: a future helper change must update BOTH lists or `TestDomainTakeoverListsAreCanonical` fires for the package list and the fuzz target silently accepts the dropped category. Document the duplication in the seed-loop comment.
+
 - Security-verification SSRF blocklist pattern, validate-port instance (BE-0349 pattern, internal/controlplane/validate/{ssrf.go, ssrf_static_test.go, ssrf_test.go, fuzz_test.go, AGENTS.md}; SIXTH worked instance of the BE-0344 two-test template and FIRST in the validate package — confirms the template scales to "this pure validator MUST funnel its parsed host through a named blocklist helper" invariants in addition to single-function-hardening (BE-0346), per-call-site predicate scans (BE-0344/0345/0347), and absence-of-API scans (BE-0348). Six SSRF-flavoured rules this instance surfaces that the earlier five do NOT capture: (a) The analyzer is a per-function call-presence scan rather than a per-call-site scan or absence-of-API scan: each of {URL, GitRepoURL} is parsed via findFuncDecl, its body walked with ast.Inspect, and the predicate "calls disallowedSSRFHost by exact identifier" must hold. Exact-identifier matching is the load-bearing rule — a synthetic "calls disallowedHost (look-alike)" fixture is in the self-check so a future refactor that renames the helper inside one validator (but not the other) fails the static guard; substring or prefix matching here would mask the regression. (b) The reason text is a closed set, NOT a templated string with the host interpolated. Nine canonical reasons (8 IP-range classifications + 1 hostname classification) live in package-private constants emitted by ipReason / disallowedSSRFHost. The runtime test pins the set via canonicalSSRFReasons + isCanonicalSSRFReason and asserts every rejection is set-membership equal — strictly stronger than substring redaction checks, because words like "localhost" / "metadata" / "loopback" / "private" appear in the classification text BY DESIGN and would false-positive a substring "host did not appear in reason" guard. The BE-0343 redaction-fixture-collision pattern (choose canary values that don't collide with stable reason phrases) is the predecessor; the closed-set assertion is the next-strongest form. (c) Reject IP literals via net.ParseIP first, then hostnames; the order matters because an IP literal can never be made safe by downstream DNS, so the unconditional-reject decision happens before any hostname rule applies. The IP classifier uses Go stdlib's IsUnspecified / IsLoopback / IsLinkLocalUnicast / IsLinkLocalMulticast / IsMulticast / IsPrivate as the first cut, then adds the four IPv4 ranges stdlib does NOT classify (CGNAT 100.64/10, benchmark 198.18/15, limited broadcast 255.255.255.255 — 169.254/16 is already covered by IsLinkLocalUnicast). Whitelisting IsPrivate alone would miss the cloud-metadata range (169.254.169.254 is link-local, not private). (d) Hostname forbidden set is asymmetric: an exact-match map (forbiddenSSRFHostnames) for {localhost, ip6-localhost, ip6-loopback, metadata, metadata.google.internal, metadata.aws.internal, 169.254.169.254} and a leading-dot suffix list (forbiddenSSRFHostSuffixes) for {.localhost, .internal, .local, .localdomain}. The leading dot on suffixes is required — a bare ".local" suffix without the dot would false-positive on "flocal.example.com". TestSSRFHostnameListsAreCanonical is a sealing-trap pinning required entries AND the leading-dot invariant; dropping any documented entry fails the build. (e) GitRepoURL has THREE entry shapes (https:// / ssh:// / scp-like git@host:path) and the SSRF check must fire on ALL THREE: the analyzer pins the presence of ONE disallowedSSRFHost call in the function body, but the runtime test exercises each shape independently (https loopback, ssh link-local v6, scp .internal, etc.) so a future split that drops the call from the scp branch alone — analyzer still happy because the https branch still has it — surfaces in the runtime table. The lesson: presence-of-call analyzers are necessary but not sufficient; per-shape runtime coverage is the second wall. (f) IPv6 literals in URL form MUST use the bracketed `[fd00::1]` shape because url.Parse with a colon-bearing v6 address outside brackets parses the colons as port separators; the runtime test fixtures call this out explicitly. The disallowedSSRFHost helper strips one set of surrounding brackets so it accepts BOTH the URL-extracted (already unbracketed) form AND a literal bracketed form a caller might supply directly. Layered defence is explicit in AGENTS.md: this is the PURE validator layer (no DNS) and a second wall in the HTTP/git client at fetch time is REQUIRED to catch DNS-rebinding (a public name resolving to an internal IP at fetch time). The validator is the first wall; the runtime resolved-IP re-check is a separate story.
 - Security-verification two-test pattern, httpapi-port cookie/CSRF instance (BE-0348 pattern, internal/controlplane/httpapi/{csrf_static_test.go, csrf_test.go, AGENTS.md}; FIFTH worked instance of the BE-0344 template and THIRD in httpapi after BE-0345 body size and BE-0347 CORS — confirms the template scales to "this surface must NOT use a named stdlib API family AND must NOT emit a named wire header" invariants in addition to single-function-hardening (BE-0346) and per-call-site predicate scans (BE-0344/BE-0345/BE-0347)). Five httpapi-flavoured rules this instance surfaces that the earlier four do NOT capture: (a) The CSRF stance is a TWO-prong analyzer (string literal scan + SelectorExpr scan) rather than the single-prong scans BE-0344..BE-0347 used, because cookie usage can enter production code through two structurally unrelated paths — the wire-level header literal (`w.Header().Set("Set-Cookie", ...)`) or the typed net/http API (`http.SetCookie(w, c)`) — and either alone is a cookie surface. The two prongs are kept in ONE analyzer function (`findCookieAPIUsages`) with a single AST walk that switches on `*ast.BasicLit` vs `*ast.SelectorExpr` per node, NOT two separate walks, so a regression that combines both shapes (the canonical `http.SetCookie(w, &http.Cookie{Name:"session"})` shape) produces three deterministic diagnostics in one pass. The self-check covers each prong AND the combined shape so a future change that disables one prong fails fast. (b) The selector set is asymmetric: `{SetCookie, AddCookie, CookieJar, Cookies}` are flagged on ANY X (because user-defined identifiers with these names would themselves be cookie regressions camouflaged behind friendly names), but `Cookie` alone is flagged ONLY when X is the bare `http` ident — because `.Cookie` matches too many user struct fields to flag unconditionally. The asymmetry is the load-bearing false-positive guard: a synthetic `type fixture struct{ Cookie string }; return f.Cookie` must pass cleanly while `&http.Cookie{Name:"session"}` must fail. The self-check has both fixtures wired explicitly so the asymmetry can't drift. (c) The forbidden cookie header set is exact-match (case-insensitive) over `{cookie, set-cookie, cookie2, set-cookie2}` rather than the prefix-match shape BE-0347 used for `access-control-`. Exact match is correct here because the bare word "cookie" appears in unrelated header names (no IANA cookie header outside this set exists today) — a prefix match would false-positive on imaginary `cookie-policy`/`cookie-jar` extensions. The four-element set is the complete RFC 6265 + obsolete RFC 2965 surface; a future extension would be a deliberate retrofit reviewed against the threat model. (d) The runtime test pattern reuses `corsHeaderHolder` and `recorderShim` from BE-0347's cors_test.go directly — both helpers were already package-private, so the CSRF runtime test gets the determinism-comparison shape "two requests with/without an attacker header return the same response header key set" for free. Future security-verification stories in this package that need the same shape (e.g. "the X-Forwarded-For header does not influence the response" or "the Host header does not influence the response") should reuse `corsHeaderHolder` rather than declaring a third interface — the CORS interface is the canonical "{ Header() http.Header }" surface for header-emission invariants. (e) Cookie-sentinel redaction backstop: every runtime test plants a globally-unique sentinel (`session=yalla-csrf-sentinel-9f3c2a7e-do-not-echo`) in the request Cookie header and asserts both the sentinel string AND its bare value never appear in the response body. The bare-value check is the load-bearing one — a regression that logged the Cookie header into an error message would likely strip the `session=` prefix when JSON-encoding, leaving only the bare value, so checking ONLY the prefixed form would silently miss the redaction failure. The sentinel-not-echoed assertion ports verbatim to any future security-verification story whose threat model includes "this request header value must not be reflected in the response" (Cookie, Authorization, X-Api-Key, Range, If-Match, etc.).
 
@@ -24138,4 +24140,173 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
   - The httpapi contract-test family has a stable three-pin shape: (1) ServerWritesResponseDataOnlyToResponseWriter using captureProcessOutput, (2) RequestLogRedactsBearerToken table-driven across success + disabled-principal authz-deny path, (3) ErrorEnvelopeDoesNotLeakDependencyCause asserting both the wrapped cause string and the bare datastore address. Authorization-failure path uses an explicit "must not be called" port stub so any logged port error proves a leak rather than a deny short-circuit.
   - The "WithLogger" handler-builder per endpoint is a deliberate parallel construct, NOT a generalised helper — each endpoint already has its own *HandlerFor builder, so the contract-test file adds a *HandlerForWithLogger sibling with one extra parameter threaded into the second-to-last NewHandler argument. Mechanical clone per endpoint family.
   - When a contract test is the TWIN of an existing one, the doc-block citing what the unit test in the same family already proves (api_keys_create_test.go in this case) is load-bearing: future readers and future iterations identify the residual contract surface from that explicit exclusion list, not from the test names alone.
+---
+
+## 2026-05-17 - BE-0350 (Security verification: domain takeover prevention)
+- What was implemented:
+  Added the `disallowedTakeoverHost` helper (internal/controlplane/validate/
+  domain_takeover.go) that rejects customer-supplied service-domain
+  hostnames whose shape is structurally illegitimate as a public-facing
+  domain: any IPv4 dotted literal (`net.ParseIP` parses the host), any
+  exact-match RFC 6761 / RFC 2606 special-use label or shared-hosting eTLD
+  bare form (`localhost`/`local`/`internal`/`lan`/`home.arpa`/...,
+  `appspot.com`/`azurewebsites.net`/`cloudfront.net`/`elasticbeanstalk.com`/
+  `firebaseapp.com`/`github.io`/`gitlab.io`/`herokuapp.com`/`netlify.app`/
+  `pages.dev`/`vercel.app`/`web.app`), and any hostname ending in the
+  closed set of reserved internal suffixes
+  {.localhost, .localdomain, .local, .internal, .intranet, .private,
+  .corp, .home, .home.arpa, .lan}. The helper is pure (no DNS), emits one
+  of three canonical value-free classification reasons ("must not be an IP
+  address literal — register a hostname instead", "must not be a reserved
+  or shared-hosting domain", "must not target a reserved or internal-use
+  namespace"), and is wired into `validate.Domain` at the end of the
+  function (after the FQDN/label-shape checks already in place). RFC 2606
+  documentation-only suffixes (`.test`, `.example`, `.invalid`) are
+  DELIBERATELY EXCLUDED from the suffix walk while staying in the
+  exact-match map: those names cannot intercept real customer traffic
+  (only squat, which the `service_domains` UNIQUE constraint already
+  bounds) and the omission keeps every existing httpapi test fixture
+  using `.example` valid.
+
+  Added a static analyzer (`domain_takeover_static_test.go`) that walks
+  `Domain` in network.go with ast.Inspect and asserts a call to the exact
+  identifier `disallowedTakeoverHost`; self-checks against known-good,
+  known-missing, and look-alike-but-wrong fixtures keep both directions
+  honest. A sealing-trap (`TestDomainTakeoverListsAreCanonical`) pins
+  the required exact-match and suffix entries and the leading-dot
+  invariant on every suffix entry.
+
+  Runtime tests (`domain_takeover_test.go`) drive every blocked IPv4
+  literal, the `home.arpa` exact-match, every reserved suffix host, every
+  shared-hosting eTLD bare form, and every public-host accept case
+  through `Domain`, prove every rejection is a member of the closed
+  `canonicalTakeoverReasons` set, and prove every legitimate registrable
+  hostname (`example.com`, `myapp.appspot.com`, `acme.github.io`,
+  `flocal.example.com`) keeps validating. Additional tests cover the
+  wildcard interaction (a wildcard form like `*.appspot.com` strips to
+  the bare eTLD and rejects with the same canonical reason — a wildcard
+  makes takeover STRICTLY WORSE), the redaction backstop (a planted
+  secret canary as a sub-label of a reserved-suffix host never appears
+  in the reason or the wrapped error), and the order-of-precedence
+  (`Domain("")` keeps the existing "must not be blank" diagnostic).
+
+  Seeded `FuzzDomain` with one input per documented forbidden category
+  and added an accept-branch re-derivation (`net.ParseIP(v) != nil` and
+  reserved-suffix HasSuffix) that fires on any future regression that
+  drops the takeover guard from Domain. Added a "Domain-takeover
+  prevention (BE-0350)" section to internal/controlplane/validate/
+  AGENTS.md documenting the threat model, the closed reason set, the
+  layered-defence requirement (ownership PROOF lives in the
+  certificate-issuance / routing-attach worker, NOT in this package),
+  the deliberate `.test`/`.example`/`.invalid` exclusion, the
+  distinction from `disallowedSSRFHost` (inbound vs outbound), and the
+  maintenance contract for adding a new classification.
+
+- Files changed:
+  internal/controlplane/validate/domain_takeover.go (new),
+  internal/controlplane/validate/domain_takeover_static_test.go (new),
+  internal/controlplane/validate/domain_takeover_test.go (new),
+  internal/controlplane/validate/network.go (Domain now calls
+  disallowedTakeoverHost at the end),
+  internal/controlplane/validate/fuzz_test.go (added domain-takeover
+  seeds and accept-branch re-derivation; imported "net"),
+  internal/controlplane/validate/AGENTS.md (added "Domain-takeover
+  prevention (BE-0350)" section after the SSRF section),
+  ralph/prd.json (BE-0350 passes=true),
+  ralph/progress.txt (this entry + a new Codebase Patterns entry).
+
+- Verification run:
+  - gofmt -w internal/controlplane/validate/ (clean)
+  - go vet ./... (clean)
+  - go test -count=1 ./internal/controlplane/validate/... → ok 0.549s
+    (all new and existing validate tests pass — TestDomain,
+    TestDomainRejectsTakeoverTargets, TestDomainAcceptsPublicHosts,
+    TestDomainRejectsTakeoverTargetsForWildcard,
+    TestDomainTakeoverReasonsAreValueFree,
+    TestDomainTakeoverEmptyHostKeepsExistingDiagnostic,
+    TestDomainTakeoverGuardIsCalledFromDomainValidator,
+    TestDomainTakeoverGuardStaticAnalyzerDetectsRegressions,
+    TestDomainTakeoverListsAreCanonical)
+  - go test -count=1 ./... → all packages ok (httpapi service-domains
+    fixtures using `.example` keep validating because `.example` is
+    deliberately excluded from the suffix walk)
+  - go test -count=1 -race ./internal/controlplane/validate/...
+    ./internal/controlplane/httpapi/... → ok, no data races
+  - go mod tidy → clean
+  - goimports not installed locally; documented per established convention.
+
+- Remaining risks or follow-ups: none for BE-0350. The ownership-PROOF
+  runtime wall (HTTP-01 / DNS-01 / ALPN-01 challenge against the
+  resolved hostname) is the layered-defence story for the
+  certificate-issuance and routing-attach worker — explicitly out of
+  scope here, AGENTS.md flags the boundary. Sibling security-
+  verification stories BE-0351..BE-0363 follow the BE-0344/0345/0346/0349/
+  0350 two-test pattern (helper + static-analysis test + runtime test +
+  AGENTS.md section + fuzz seeds where applicable); each picks the
+  package that owns the invariant.
+
+- Learnings for future iterations:
+  - Two-test template ports cleanly across SSRF (outbound URLs) and
+    domain-takeover (inbound hostnames), but the threat models are
+    structurally distinct and MUST live in separate helpers / analysers
+    — `disallowedSSRFHost` and `disallowedTakeoverHost` share a shape
+    but check disjoint sets. A host legitimate to attach
+    (`myapp.example.com`) may still be illegitimate to fetch (resolves
+    to a private IP), and vice versa. Reusing the SSRF helper would
+    collapse the threat models and hide which class applies to which
+    surface.
+  - The takeover guard's call site in `Domain` goes AT THE END (after
+    the FQDN/label checks), not at the start. Single-label reserved
+    names (`localhost`, `local`, `internal`, `lan`, `test`, `example`,
+    `invalid`) and IPv6 literals (single label after `.` split) are
+    rejected by the existing FQDN check BEFORE reaching the guard, so
+    the runtime test table MUST restrict itself to inputs that pass
+    through the helper today (IPv4 dotted literals, multi-label reserved
+    exact-matches like `home.arpa`, suffix-match cases, shared-hosting
+    eTLD bare forms). The unreachable single-label entries stay in the
+    map as defence-in-depth — a future FQDN-check loosening must still
+    trip the takeover guard — but the runtime regression table only
+    asserts on what's actually reachable so a missing call site is
+    caught by a FAILING subtest rather than a silently-skipped one.
+  - The reserved-name lists MUST exclude `.test`/`.example`/`.invalid`
+    from the SUFFIX walk while keeping them in the EXACT-MATCH map.
+    Those names are not publicly routable (they cannot intercept real
+    customer traffic) so they are a squatting threat — already bounded
+    by the `service_domains` UNIQUE constraint — rather than a takeover
+    threat. The httpapi test fixtures across ~7 files use `.example` per
+    RFC convention; adding `.example` to the suffix walk would break
+    every one of them with no real takeover-defence benefit. Document
+    the omission AND the asymmetry in the helper's package-doc, the
+    AGENTS.md section, and the test file's blocked-hosts table comment.
+  - The wildcard interaction is load-bearing: with wildcards enabled,
+    `*.appspot.com` strips to `appspot.com` which the takeover guard
+    rejects — a wildcard makes takeover STRICTLY WORSE (the bare suffix
+    locks one routing entry, the wildcard locks every sub-tenant of
+    that suffix) so the wildcard rejection gets its own dedicated test.
+    The helper ALSO defensively strips a leading `*.` itself so it
+    remains correct for any future caller that passes the raw value.
+  - The redaction backstop MUST plant the canary as a sub-label of a
+    reserved-SUFFIX host (e.g. `canary + ".lan"`), not a reserved-
+    exact-match host (where the canary would not appear in the matched
+    host at all). The suffix walk's `strings.HasSuffix(h, suffix)`
+    reduces the entire host to the suffix-class reason without
+    inspecting the canary, so a reason containing the canary proves
+    the validator interpolated the value. The canary string must be
+    picked to NOT collide with any word in the canonical reason set
+    (no "domain", "namespace", "address", "literal", "hostname") —
+    BE-0343 already flagged that substring redaction checks false-
+    positive on stable classification phrases.
+  - The FuzzDomain accept-branch re-derivation (`net.ParseIP(v) != nil`
+    and reserved-suffix HasSuffix) is what makes the fuzz target
+    actually catch a regression of the takeover guard. Without it,
+    dropping the helper would let IPv4-literal seeds pass through to
+    the accept branch without firing any assertion (the existing
+    FQDN+label re-derivation accepts `8.8.8.8` because each `8` is a
+    valid DNS label). The reservedSuffixes slice in the fuzz target is
+    a deliberate DUPLICATE of the package-private one — that is the
+    cost of the `_test` package split: a future helper change must
+    update BOTH lists or `TestDomainTakeoverListsAreCanonical` fires
+    for the package list and the fuzz target silently accepts the
+    dropped category. Document the duplication in the seed-loop
+    comment.
 ---
