@@ -65,12 +65,24 @@ type CreateDeploymentInput struct {
 // fixed order, inside one transaction opened by Store.Write — a
 // tenant-scoped parent-service existence check, an idempotency
 // short-circuit, an in-transaction authorization check, a quota
-// reservation against the concurrent_deployments resource, the
+// reservation against the concurrent_deployments resource, a quota
+// reservation against the monthly_deployments resource, the
 // deployment row write, the provisioning-job enqueue, and the
 // immutable audit record. Because every step shares the *Tx, a failure
 // in any of them rolls the others back: a partial create and an
 // orphaned audit record are both impossible, and the deployment row
 // can never exist without its provisioning job.
+//
+// The two deployment quota dimensions are layered intentionally:
+// concurrent_deployments is the narrow-window in-flight ceiling
+// (TTL-bound active reservations that naturally release as the
+// owning job settles) and is reserved first; monthly_deployments
+// is the broader billing-period ceiling that accumulates per
+// deployment request and is reserved second. Reserving the narrow
+// dimension before the broad one means a tenant exhausting both at
+// once observes the concurrent_deployments rejection first — the
+// dimension whose remediation is "wait for in-flight jobs to
+// finish" rather than "wait for the next billing period".
 //
 // The httpapi RequireAuth middleware is the authoritative
 // authorization gate for action deployment.create (service-scoped via
@@ -207,6 +219,18 @@ func (svc *DeploymentService) Create(ctx context.Context, in CreateDeploymentInp
 			return err
 		}
 		if err := svc.quota.Reserve(ctx, tx, deployment.OrganizationID, string(QuotaResourceConcurrentDeployments)); err != nil {
+			return err
+		}
+		// monthly_deployments is reserved AFTER concurrent_deployments
+		// so a tenant simultaneously exhausting both dimensions
+		// surfaces the concurrent_deployments rejection first —
+		// remediating that is "wait for in-flight jobs to finish",
+		// while monthly_deployments is "wait for the next billing
+		// period". Both Reserve calls share the *Tx with the desired-
+		// state write below, so a rejection on either rolls the
+		// entire unit of work back: no half-written deployment row,
+		// no orphaned reservation.
+		if err := svc.quota.Reserve(ctx, tx, deployment.OrganizationID, string(QuotaResourceMonthlyDeployments)); err != nil {
 			return err
 		}
 		row, err := svc.deployments.Insert(ctx, tx, deployment)
@@ -577,13 +601,22 @@ type RollbackDeploymentInput struct {
 // the desired-state write), confirm the target deployment exists under
 // the SAME (organization, service) and is in the terminal 'succeeded'
 // status, reserve quota against the concurrent_deployments resource,
-// insert a new deployment whose source / source_ref are copied
-// verbatim from the target row, enqueue the provisioning job that
-// mirrors the rollback into Dokploy, and append the immutable audit
-// record. Because every step shares the *Tx, a failure in any of them
-// rolls the others back: a partial rollback and an orphaned audit row
-// are both impossible, and the rollback deployment row can never exist
+// reserve quota against the monthly_deployments resource, insert a
+// new deployment whose source / source_ref are copied verbatim from
+// the target row, enqueue the provisioning job that mirrors the
+// rollback into Dokploy, and append the immutable audit record.
+// Because every step shares the *Tx, a failure in any of them rolls
+// the others back: a partial rollback and an orphaned audit row are
+// both impossible, and the rollback deployment row can never exist
 // without its provisioning job.
+//
+// A rollback consumes the SAME two deployment quota dimensions as a
+// forward Create: every rollback emits a new deployment row and a
+// new provisioning job, so the tenant's concurrent_deployments and
+// monthly_deployments counters are charged identically — there is
+// no "rollbacks are free" hidden bypass that would let a tenant
+// circumvent monthly_deployments by spamming rollbacks instead of
+// Creates.
 //
 // The parent-service Get is tenant-scoped — it filters by
 // organization_id first — so a cross-tenant or unknown service_id
@@ -689,6 +722,19 @@ func (svc *DeploymentService) Rollback(ctx context.Context, in RollbackDeploymen
 		deployment.SourceRef = target.SourceRef
 
 		if err := svc.quota.Reserve(ctx, tx, deployment.OrganizationID, string(QuotaResourceConcurrentDeployments)); err != nil {
+			return err
+		}
+		// monthly_deployments is reserved AFTER concurrent_deployments
+		// for the same reason as Create: a tenant exhausting both
+		// dimensions at once observes the concurrent_deployments
+		// rejection first (remediable by waiting for in-flight jobs),
+		// while monthly_deployments would only be hit if the tenant
+		// has additionally exhausted the billing-period ceiling. The
+		// Reserve runs on the same *Tx as the desired-state write and
+		// the audit append, so a rejection rolls the entire rollback
+		// unit of work back: no half-written deployment row, no
+		// orphaned reservation.
+		if err := svc.quota.Reserve(ctx, tx, deployment.OrganizationID, string(QuotaResourceMonthlyDeployments)); err != nil {
 			return err
 		}
 		row, err := svc.deployments.Insert(ctx, tx, deployment)

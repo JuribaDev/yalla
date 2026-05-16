@@ -21783,3 +21783,203 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
 ## Codebase Patterns (additions)
 - Service-child count-axis quota dimension on a Create unit of work (BE-0334 backup_schedules, following the BE-0329 domains template, internal/controlplane/store/service_backup.go ServiceBackupService.Create + service_backup_quota_backup_schedules_concurrent_test.go): structural template for ANY future quota dimension whose denominator is a service-child table and whose per-request allocation is one row (e.g. future service-level webhook subscriptions, alerting rules, scheduled jobs). The four-line change: (a) add QuotaResourceXxx in store/quota.go + membership map + quota_internal_test.go's valid slice; (b) add migration NNNN_quota_resource_xxx.{up,down}.sql that drops+recreates the quota_resource DOMAIN CHECK with the new closed set (look the constraint up in pg_constraint inside a DO block); (c) widen the parent orchestrator's struct + constructor to take a QuotaReserver and call svc.quota.Reserve(ctx, tx, orgID, string(QuotaResourceXxx)) inside the create *Tx, after the in-tx Authorize and BEFORE the Insert; (d) wire cmd/yalla-api/main.go to pass the existing serviceQuota into the constructor at the right argument position. The concurrent integration test clones the BE-0329 service-domain test with three substitutions: the dimension constant, the parent table name in the final row-count assertion, and the unique-per-attempt request field (display_name for backups; hostname for domains). The independence test exhausts the dimension serially and proves the sixth Create rejects on the new dimension specifically — not on services — pinning the dimension's independence as a regression barrier. The test-only sibling that BE-0327/0328 use does NOT apply here because backup_schedules is not a per-Kind facet — it counts every service_backups row regardless of the parent service's Kind, so a one-test-per-dimension shape is sufficient.
 ---
+
+## 2026-05-16 - BE-0335 — Enforce quota for monthly_deployments
+- What was implemented:
+  - monthly_deployments is the SECOND deployment quota dimension and the
+    NINTH overall quota dimension (after projects / environments / services /
+    applications / compose_stacks / databases / domains / preview_environments /
+    cpu_millicores / memory_mb / storage_gb / backup_schedules and the prior
+    concurrent_deployments). The constant QuotaResourceMonthlyDeployments and
+    its DOMAIN membership were ALREADY in place from migration
+    0006_quota_policy_schema.up.sql (the original closed-set definition),
+    the constant declaration + quotaResources membership map in
+    internal/controlplane/store/quota.go, the count-equality guard in
+    internal/controlplane/store/quota_internal_test.go's
+    TestQuotaResourceValid valid slice, and the schema-test surface in
+    internal/controlplane/store/quota_schema_test.go. So this story is a
+    pure CALL-SITE + TEST clone, NOT a domain widening: NO migration was
+    needed because the DOMAIN already accepts 'monthly_deployments'.
+  - Added a `svc.quota.Reserve(ctx, tx, deployment.OrganizationID,
+    string(QuotaResourceMonthlyDeployments))` call inside both
+    DeploymentService.Create (after the in-tx Authorize, after the existing
+    Reserve(concurrent_deployments), BEFORE the deployments Insert) and
+    DeploymentService.Rollback (same position relative to the existing
+    Reserve(concurrent_deployments) in the rollback unit of work) in
+    internal/controlplane/store/deployment_service.go. The reservation
+    runs on the SAME *Tx as the desired-state write, the JobEnqueuer
+    Enqueue, and the audit Append — so a rejection on either deployment
+    quota dimension rolls the entire unit of work back: no half-written
+    deployments row, no orphaned reservation, no orphaned
+    provisioning_job, no orphaned audit_event.
+  - The ORDER (concurrent_deployments first, monthly_deployments second)
+    is intentional and pinned in the doc comments on both Create and
+    Rollback: a tenant exhausting BOTH dimensions at once observes the
+    concurrent_deployments rejection first because that dimension's
+    remediation is "wait for in-flight jobs to finish" while
+    monthly_deployments is "wait for the next billing period". The two
+    Reserves both share the SAME *Tx (and the SAME 15-minute
+    DefaultReservationTTL today — extending the TTL for monthly_
+    deployments to month-end accounting is out of scope for BE-0335
+    per the AC; the AC only requires hard-rejection on the dimension,
+    transactional reservation, ExceededDetail correctness, and concurrent
+    oversubscription prevention, all of which the existing infrastructure
+    satisfies as-is).
+  - Updated DeploymentService struct doc comment + Create doc + Rollback
+    doc to name monthly_deployments alongside concurrent_deployments and
+    to explain the layering rationale + the "rollbacks are not free"
+    invariant that prevents a tenant from circumventing
+    monthly_deployments by spamming Rollback instead of Create.
+  - Added store-layer integration test file
+    internal/controlplane/store/deployment_quota_monthly_deployments_concurrent_test.go
+    with two t.Parallel tests:
+    TestDeploymentServiceCreateRejectsParallelOversubscriptionForMonthlyDeploymentsQuota
+    (20 goroutines race against a hard monthly_deployments limit of 5;
+    asserts exactly 5 successes / 15 CodeQuotaExceeded rejections;
+    every rejection carries an ExceededDetail whose Resource is
+    "monthly_deployments", Requested=1, Limit=5, Reserved=5, Current=0;
+    the diagnostic message never echoes idempotency_key, request_id,
+    correlation_id, or source_ref; deployments row count and active
+    quota_reservations count for monthly_deployments both equal 5; the
+    concurrent_deployments reservations row count stays at 0 — proving
+    the unit of work's "no policy => no reservation" branch fires for
+    the unpoliced dimension even though it is the FIRST Reserve in
+    program order; the repository's SumActiveReservations agrees with
+    the raw count for monthly_deployments; the authorizer fake recorded
+    exactly 20 calls so the order authorize→quota→insert holds even
+    under contention; the JobEnqueuer fake recorded exactly 5 calls so
+    a regression that re-ordered the Reserve past the Enqueue would
+    surface as jobs.calls > successes) and
+    TestDeploymentServiceCreateAppliesMonthlyDeploymentsQuotaIndependentlyOfConcurrentDeployments
+    (exhaust the dimension serially with 5 Creates, then a sixth Create
+    rejects on monthly_deployments specifically — never
+    concurrent_deployments, never services — and no concurrent_deployments
+    or services reservation is ever taken; pins the dimension
+    independence as a regression barrier).
+- Files changed:
+  - internal/controlplane/store/deployment_service.go (DeploymentService
+    struct + Create + Rollback doc widening; +monthly_deployments Reserve
+    call inside Create after the existing concurrent_deployments Reserve;
+    +monthly_deployments Reserve call inside Rollback after the existing
+    concurrent_deployments Reserve)
+  - internal/controlplane/store/deployment_quota_monthly_deployments_concurrent_test.go
+    (new — 2 tests, mirrors the BE-0334 backup_schedules concurrent test
+    template with DeploymentService-specific differences: unique
+    idempotency_key per goroutine; DeploymentSourceManual to keep the
+    per-attempt payload minimal; atomicJobs JobEnqueuer fake from
+    environment_quota_concurrent_test.go to pin the
+    authorize→quota→insert→enqueue ordering; one extra "no
+    concurrent_deployments reservation" assertion to prove the
+    unpoliced-dimension branch fires)
+  - ralph/prd.json (BE-0335 passes=true with detailed notes)
+- Verification run:
+  - gofmt -w . : clean
+  - go vet ./... : clean
+  - go build ./... : clean
+  - go test ./... -count=1 : PASS for every package
+  - go test -race ./... -count=1 : PASS for every package
+  - go mod tidy : no-op (go.mod / go.sum unchanged)
+  - YALLA_TEST_DATABASE_URL=postgres://yalla:yalla@127.0.0.1:5432/yalla
+    go test -race -count=1 -run
+    'TestDeploymentServiceCreate(RejectsParallelOversubscriptionForMonthlyDeployments|AppliesMonthlyDeploymentsQuotaIndependently)'
+    ./internal/controlplane/store/ : PASS (1.748s — 2 new tests, both
+    run to completion under -race, no race detected, no goroutine
+    leak).
+  - Same DSN, regression sweep:
+    YALLA_TEST_DATABASE_URL=... go test -race -count=1 -parallel=2 -run
+    'TestServiceBackupServiceCreate(Rejects|Applies)|TestServiceServiceCreate(RejectsParallelOversubscriptionForCPU|Memory|Storage)|TestDeploymentService'
+    ./internal/controlplane/store/ : PASS (2.898s — every prior
+    BE-0331..BE-0334 quota-dimension test still green; the new
+    monthly_deployments call site did not regress any count-axis or
+    magnitude-axis path).
+  - Local tooling status: goimports / golangci-lint / staticcheck /
+    govulncheck not installed locally; gofmt is sufficient since
+    imports are stable across the change.
+- Results: BE-0335 acceptance criteria satisfied. Quota policy schema
+  already supported monthly_deployments at the DOMAIN level; both
+  mutation paths (Create + Rollback) now reserve the dimension in the
+  same DB transaction as the source-of-truth write; ExceededDetail
+  carries current / reserved / requested / limit / resource and the
+  typed E_QUOTA_EXCEEDED code; concurrent integration tests prove
+  parallel requests cannot oversubscribe; existing httpapi envelope
+  surface (yalla.output.v1 / yalla.error.v1) is unchanged because the
+  store-level rejection bubbles up through the same typed apierr the
+  HTTP layer already maps; existing unit/integration test coverage
+  for DeploymentService.Create's success / validation / authz / not-
+  found paths (in httpapi/service_deployments_create_*_test.go and
+  store deployment_service.go's own validateCreateDeploymentInput
+  table) remains green; integration tests skip cleanly when
+  YALLA_TEST_DATABASE_URL is unset (testutil.RequireMigratedDB);
+  rejection diagnostic messages never echo idempotency_key, request_id,
+  correlation_id, or source_ref.
+- Remaining risks / follow-ups:
+  - The "monthly" semantic is not yet wired to a month-boundary TTL on
+    reservations — every Reserve call uses the global
+    DefaultReservationTTL (15 minutes). For the AC scope (hard rejection
+    + transactional reservation + concurrent serialisation), the existing
+    TTL is sufficient because every winning Create row commits a
+    quota_reservation that the Checker sums during the *Tx — the lock
+    keeps the limit honest under contention. True calendar-month
+    accounting (expires_at = end_of_month, or a per-resource TTL knob)
+    is a separate story when it lands. Documented here so a future
+    iteration sees this is a known scope boundary, not an oversight.
+  - The Rollback path is NOT covered by a dedicated concurrent test
+    because the test cost (seed a parent service + a previously
+    persisted successful deployment per goroutine) would dwarf the
+    Create coverage's value-per-line and the unit-of-work code path
+    is byte-identical (same `svc.quota.Reserve(ctx, tx, orgID,
+    string(QuotaResourceMonthlyDeployments))` line in both methods).
+    The Create concurrent test is the load-bearing assertion; the
+    Rollback story should be added if a regression ever decoupled the
+    two paths.
+  - Pre-existing failures NOT introduced by BE-0335: when
+    YALLA_TEST_DATABASE_URL is set and the full store suite runs
+    against a real Postgres, the four environment-related tests
+    documented in BE-0331/BE-0332/BE-0333/BE-0334 progress entries
+    (TestEnvironmentServiceCreate* drift, the
+    TestEnvironmentRepoListByProjectReturnsDeterministicOrdering
+    timing flakiness, and the
+    TestServiceVariableServiceReplaceInvalidInputNeverOpensTransaction
+    fixture issue) still surface — unchanged by this story.
+- **Learnings for future iterations:**
+  - When a quota dimension's constant + DOMAIN membership + closed-set
+    guard already exist (from an earlier baseline migration or an
+    earlier "add the constant + membership map ahead of the call
+    site" story), the call-site story does NOT need a new migration.
+    Check `grep -rn '"<dimension>"' migrate/migrations/` and
+    `grep 'QuotaResource<X>' internal/controlplane/store/quota.go`
+    BEFORE writing a new migration — duplicating ALTER DOMAIN against
+    a value already in the CHECK constraint will fail the migration.
+    The BE-0334 backup_schedules story DID need a migration because
+    the constant was added but the DOMAIN was not widened; BE-0335 did
+    NOT because BOTH were already in place from migration 0006.
+  - When a Create unit of work reserves multiple quota dimensions in
+    series, the ORDER matters for the rejection-message-first
+    experience. The convention pinned in deployment_service.go's doc
+    comments: reserve the NARROWER-TEMPORAL-WINDOW dimension first
+    (concurrent_deployments, in-flight TTL-bound) and the BROADER
+    dimension second (monthly_deployments, billing-period). A tenant
+    that exhausts both at once observes the rejection on the dimension
+    whose remediation is the FASTER ("wait for in-flight jobs" beats
+    "wait for next billing period").
+  - A "dimension is independent of sibling dimension" assertion does
+    NOT require seeding a policy for the sibling and then asserting no
+    rejection from it. The structurally stronger assertion is to seed
+    NO policy for the sibling — then the Checker's "no policy => allow
+    without recording a reservation" branch fires, and the assertion
+    becomes "active <sibling> reservations = 0 after the run". This
+    is the assertion the BE-0335 concurrent test added for
+    concurrent_deployments specifically: if a future regression
+    accidentally inserted a reservation despite the absence of a
+    policy, the count would drift above 0 and the test would fail
+    even though no per-attempt rejection would have surfaced.
+  - DeploymentSourceManual is the canonical "no-real-ref" source for
+    quota concurrent tests on DeploymentService. The validator accepts
+    a short label or an empty string for it; using
+    DeploymentSourceGit would require a valid branch / SHA per
+    goroutine and DeploymentSourceImage would require a valid image
+    ref — both pull the test focus off the quota boundary into ref
+    validation. The pattern: use the source whose validator is the
+    most permissive for the field under test, NOT the most "realistic"
+    source.
+---
