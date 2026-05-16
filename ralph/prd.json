@@ -7041,8 +7041,8 @@
       ],
       "type": "quota-dimension",
       "priority": 1,
-      "passes": false,
-      "notes": "Quota dimension: environments."
+      "passes": true,
+      "notes": "Real-quota concurrent oversubscription integration test at internal/controlplane/store/environment_quota_concurrent_test.go \u2014 first BE-0323-pattern clone (environments dimension). Wires real *store.EnvironmentService over real *quota.Checker/*store.QuotaRepository/quota.StaticPlanResolver/*store.AuditRepository; uses local race-safe atomicAuthorizer/atomicJobs (shared recordingAuthorizer/recordingJobs use plain int counters whose -race-with-DB failure is a pre-existing triage item documented in progress.txt). 20 goroutines \u00d7 limit=5 \u2192 exactly 5 successes, 15 E_QUOTA_EXCEEDED rejections carrying ExceededDetail{Resource=environments,Limit=5,Requested=1,Reserved=5,Current=0}; environments table row count, active quota_reservations count, and QuotaRepository.SumActiveReservations through Store.Read all == 5; authz.calls==20, jobs.calls==5 pins authorize\u2192quota.Reserve\u2192write\u2192jobs.Enqueue step order at the unit-of-work level. Pre-existing factory id-prefix bug surfaced (testutil.Factory.Project uses 'prj_' but domain.KindProject is 'proj'); test bypasses with raw SQL + domain.MustNewID like seedDomainOrg. gofmt, go vet ./..., go test ./..., go test -race ./..., and focused -race against live Postgres all pass."
     },
     {
       "id": "BE-0325",
