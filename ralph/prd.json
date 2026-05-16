@@ -5635,8 +5635,8 @@
       ],
       "type": "endpoint-backup",
       "priority": 2,
-      "passes": false,
-      "notes": "Endpoint belongs to the backup backend surface."
+      "passes": true,
+      "notes": "Endpoint implemented end to end: ServiceBackupCreator port (internal/controlplane/httpapi/service_backups.go), createServiceBackupHandler + decoder + registered POST /v1/services/{service_id}/backups in routes.go through serviceIDResolver for action backup.create (CapWrite). Store-layer unit of work: store.ServiceBackupService.Create reads parent service (tenant-scoped 404 on miss) -> in-tx Authorize -> Insert -> audit append, all in one Tx; ServiceBackupRepository.Insert maps duplicate-id via mapWriteError to typed Conflict. validateCreateServiceBackupInput runs before any DB work (kebab-ID via domain.KindServiceBackup, display_name/schedule control-char + length bounds, retention_count 1..365 with schema-side default 7, status pinned to ServiceBackupStatusPending so customer-facing create cannot forge succeeded). Wired in cmd/yalla-api/main.go. Wire shape: createServiceBackupPayload echoes the row via serviceBackupOf (same yalla.output.v1 contract as the list endpoint)."
     },
     {
       "id": "BE-0251",
@@ -5654,8 +5654,8 @@
       ],
       "type": "test-backup",
       "priority": 2,
-      "passes": false,
-      "notes": "Contract coverage for POST /v1/services/{service_id}/backups."
+      "passes": true,
+      "notes": "Contract coverage in internal/controlplane/httpapi/service_backups_create_test.go: success (Developer role plumbing principal home org id, path service id, actor id to the creator; pending status; empty last_run_at/last_succeeded_at), enabled-default-true and explicit-enabled-false at the pointer seam, request_id propagation, validation failure (E_INVALID_INPUT through creator-returned apierr.InvalidInput), strict-decode unknown-field rejection before creator runs, unauthenticated (E_AUTH 401), authorization denied (viewer 403 before creator runs), cross-tenant service_id surfacing as 404 with principal's home org id forwarded, duplicate-id Conflict (409), store-unavailable (503), nil-creator wiring guard (500 typed Internal)."
     },
     {
       "id": "BE-0252",
@@ -5673,8 +5673,8 @@
       ],
       "type": "policy-backup",
       "priority": 1,
-      "passes": false,
-      "notes": "Authorization coverage for POST /v1/services/{service_id}/backups."
+      "passes": true,
+      "notes": "Policy-matrix coverage in internal/controlplane/httpapi/service_backups_create_policy_test.go mirrors service_domains_create_policy_test.go (BE-0240): six-role CapWrite split (owner/admin/developer allowed by role; ci/viewer/support denied via ReasonDeniedNoCapability \u2014 load-bearing CI distinction from backup.run CapDeploy), revoked + expired credentials (Disabled principal denied via ReasonDeniedPrincipalDisabled), wrong-org cross-tenant principal (404 NotFound via tenant-scoped existence check + engine cross-tenant deny pinned for every role including support \u2014 CapWrite is OUTSIDE the support cross-tenant exception), grant containment (sibling-project deny, env-grant does not imply prod, service-grant shields parent env and unrelated siblings; project/env/service-scoped grants denied at the wire via ReasonDeniedOutOfScope due to one-way covers() rule; org-scoped Admin grant allowed end-to-end; org-scoped Viewer denied at the engine via ReasonDeniedNoCapability \u2014 load-bearing CapRead/CapWrite distinction). All public responses use yalla.output.v1 / yerr.* error envelopes; the deny-leak guard pins that no caller-supplied body field or seeded backup row data leaks through any deny path."
     },
     {
       "id": "BE-0253",

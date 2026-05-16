@@ -291,6 +291,11 @@ func main() {
 		logger.Error("failed to initialize the service backup reader", "error", err.Error())
 		os.Exit(1)
 	}
+	serviceBackupService, err := store.NewServiceBackupService(dataStore, store.NewServiceRepository(), store.NewServiceBackupRepository(), serviceAuthz, auditRepo)
+	if err != nil {
+		logger.Error("failed to initialize the service backup service", "error", err.Error())
+		os.Exit(1)
+	}
 	serviceVariables, err := store.NewServiceVariableReader(dataStore)
 	if err != nil {
 		logger.Error("failed to initialize the service variable reader", "error", err.Error())
@@ -396,7 +401,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              cfg.APIAddr,
-		Handler:           httpapi.NewHandler(build, readiness, meta, backupReporter, authenticator, engine, organizations, organizationService, organizationService, organizationService, members, membershipService, membershipService, membershipService, limits, limitsService, usage, auditEvents, orgVariables, orgVariableService, orgVariableService, orgVariableService, apiKeys, apiKeyService, apiKeyService, apiKeyService, apiKeyService, projects, projectService, projectService, projectService, projectService, projectGrants, projectGrantService, projectVariables, projectVariableService, projectEnvironments, environmentService, projectEnvironments, environmentService, environmentService, environmentService, environmentGrants, environmentGrantService, environmentVariables, environmentVariableService, environmentServices, serviceService, environmentServices, serviceService, serviceService, serviceService, serviceService, serviceService, serviceService, serviceLogReader, serviceMetricsReader, serviceDomainReader, serviceDomainService, serviceDomainService, serviceDomainService, serviceBackupReader, serviceVariables, serviceVariableService, deploymentService, deploymentReader, deploymentReader, deploymentService, deploymentService, breakGlassService, logger, httpRateLimiter),
+		Handler:           httpapi.NewHandler(build, readiness, meta, backupReporter, authenticator, engine, organizations, organizationService, organizationService, organizationService, members, membershipService, membershipService, membershipService, limits, limitsService, usage, auditEvents, orgVariables, orgVariableService, orgVariableService, orgVariableService, apiKeys, apiKeyService, apiKeyService, apiKeyService, apiKeyService, projects, projectService, projectService, projectService, projectService, projectGrants, projectGrantService, projectVariables, projectVariableService, projectEnvironments, environmentService, projectEnvironments, environmentService, environmentService, environmentService, environmentGrants, environmentGrantService, environmentVariables, environmentVariableService, environmentServices, serviceService, environmentServices, serviceService, serviceService, serviceService, serviceService, serviceService, serviceService, serviceLogReader, serviceMetricsReader, serviceDomainReader, serviceDomainService, serviceDomainService, serviceDomainService, serviceBackupReader, serviceBackupService, serviceVariables, serviceVariableService, deploymentService, deploymentReader, deploymentReader, deploymentService, deploymentService, breakGlassService, logger, httpRateLimiter),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

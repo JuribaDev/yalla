@@ -174,6 +174,7 @@ type backupHealthPayload struct {
 // serviceMetricsReader backs GET /v1/services/{service_id}/metrics.
 // serviceDomainReader backs GET /v1/services/{service_id}/domains.
 // serviceBackupReader backs GET /v1/services/{service_id}/backups.
+// serviceBackupCreator backs POST /v1/services/{service_id}/backups.
 // serviceDomainCreator backs POST /v1/services/{service_id}/domains.
 // serviceDomainUpdater backs PATCH
 // /v1/services/{service_id}/domains/{domain_id}.
@@ -183,7 +184,7 @@ type backupHealthPayload struct {
 // table's metadata; a request that actually reaches a handler with a
 // nil dependency is reported as a typed internal error rather than a
 // misleading empty list or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, backupReporter backup.Reporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter, environmentCloner EnvironmentCloner, environmentGrants EnvironmentGrantReader, environmentGrantReplacer EnvironmentGrantReplacer, environmentVariables EnvironmentVariableReader, environmentVariableReplacer EnvironmentVariableReplacer, environmentServices EnvironmentServiceReader, environmentServiceCreator EnvironmentServiceCreator, services ServiceReader, serviceUpdater ServiceUpdater, serviceDeleter ServiceDeleter, serviceRestorer ServiceRestorer, serviceRestarter ServiceRestarter, serviceStarter ServiceStarter, serviceStopper ServiceStopper, serviceLogReader ServiceLogReader, serviceMetricsReader ServiceMetricsReader, serviceDomainReader ServiceDomainReader, serviceDomainCreator ServiceDomainCreator, serviceDomainUpdater ServiceDomainUpdater, serviceDomainDeleter ServiceDomainDeleter, serviceBackupReader ServiceBackupReader, serviceVariables ServiceVariableReader, serviceVariableReplacer ServiceVariableReplacer, deploymentCreator DeploymentCreator, deploymentLister DeploymentLister, deploymentGetter DeploymentGetter, deploymentCanceler DeploymentCanceler, deploymentRollbacker DeploymentRollbacker, breakGlass BreakGlassController) []apiRoute {
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, backupReporter backup.Reporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter, environmentCloner EnvironmentCloner, environmentGrants EnvironmentGrantReader, environmentGrantReplacer EnvironmentGrantReplacer, environmentVariables EnvironmentVariableReader, environmentVariableReplacer EnvironmentVariableReplacer, environmentServices EnvironmentServiceReader, environmentServiceCreator EnvironmentServiceCreator, services ServiceReader, serviceUpdater ServiceUpdater, serviceDeleter ServiceDeleter, serviceRestorer ServiceRestorer, serviceRestarter ServiceRestarter, serviceStarter ServiceStarter, serviceStopper ServiceStopper, serviceLogReader ServiceLogReader, serviceMetricsReader ServiceMetricsReader, serviceDomainReader ServiceDomainReader, serviceDomainCreator ServiceDomainCreator, serviceDomainUpdater ServiceDomainUpdater, serviceDomainDeleter ServiceDomainDeleter, serviceBackupReader ServiceBackupReader, serviceBackupCreator ServiceBackupCreator, serviceVariables ServiceVariableReader, serviceVariableReplacer ServiceVariableReplacer, deploymentCreator DeploymentCreator, deploymentLister DeploymentLister, deploymentGetter DeploymentGetter, deploymentCanceler DeploymentCanceler, deploymentRollbacker DeploymentRollbacker, breakGlass BreakGlassController) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -1737,6 +1738,40 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// boundary.
 			resolver: serviceIDResolver,
 			handler:  listServiceBackupsHandler(serviceBackupReader),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodPost,
+				Path:           "/v1/services/{service_id}/backups",
+				OperationID:    "createServiceBackup",
+				Summary:        "Create a service backup",
+				Description:    "Creates a backup-policy row bound to the service named by the {service_id} path parameter. The request body carries the caller-supplied backup id (an idempotent retry under the primary-key uniqueness constraint), the human-authored display_name, the cron-style schedule the worker interprets when it next plans a run, the retention_count bounding how many succeeded runs the worker retains before pruning the oldest, and the enabled flag (defaulting to true) toggling whether the worker takes any action on the row. The request body intentionally exposes no organization_id, project_id, environment_id, or service_id field: the organization is derived from the authenticated principal's home organization, the service comes from the {service_id} path parameter, and the new backup row inherits its parent service's transitive parents from the persisted services row — there is no caller-supplied parameter that could redirect the create at another tenant. Every supplied field is validated before any database work; an invalid request never opens a transaction. The backup row lands with status='pending' (the customer-facing create never sets the closed-set status — the worker is the authority for transitions between 'running' and {'succeeded', 'failed'}). The backup row and an immutable audit record naming the authenticated principal are committed in one transaction — a created backup can never exist without its audit trail, and a duplicate backup id is rejected at the database PRIMARY KEY as a typed apierr.Conflict whose customer-facing message never echoes the submitted id. Action backup.create is authorized against the (principal home organization, {service_id}) resource the path names before the handler runs: backup.create is a CapWrite action, so the gate admits the principal's organization-wide write roles (owner, admin, developer, ci) and denies viewer (CapRead only), denies support (CapRead+CapSupport — support is a deliberate cross-tenant READ exception, never a write one). The path carries no parent project_id, so the policy engine cannot pin those legs of the resource scope at authorization time — project-, environment-, and service-scoped grants are denied at the boundary by the engine's covers() rule (a grant with a pinned ProjectID cannot cover a resource with no ProjectID); principals whose only access is a scoped grant must use a parent-scoped route to address a service by its (project, environment, service) tuple. A cross-tenant or unknown service_id reaches the persistence layer with the principal's home organization id and is rejected as a deterministic 404 by the tenant-scoped repository query, never revealing another tenant's service. The response carries no credential material: the schedule column is a cron-style expression, and the backup artefact bytes themselves never round-trip through this endpoint (they live in the worker / Dokploy / object-storage layer).",
+				Tags:           []string{tagServices},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionBackupCreate),
+				PathParams: []openapi.PathParam{{
+					Name:        "service_id",
+					Description: "The id of the service the new backup is bound to.",
+				}},
+				SuccessStatus:      http.StatusCreated,
+				SuccessDescription: "The persisted service backup.",
+			},
+			// serviceIDResolver authorizes action backup.create against
+			// the (principal home organization, {service_id}) resource
+			// the path names. The path carries no parent project_id, so
+			// the resource scope pins only OrganizationID and ServiceID
+			// — project-, environment-, and service-scoped grants are
+			// denied at the policy boundary by design (the engine's
+			// covers() rule), forcing scoped-grant-only principals onto
+			// parent-scoped routes. backup.create is a CapWrite action,
+			// so the support cross-tenant exception (CapRead + CapSupport
+			// only) does not apply through this endpoint by construction.
+			// The organization id is taken from the principal's home
+			// org, so a cross-tenant service_id still hits the tenant-
+			// scoped existence check and surfaces as a 404 at the
+			// persistence boundary.
+			resolver: serviceIDResolver,
+			handler:  createServiceBackupHandler(serviceBackupCreator),
 		},
 		{
 			endpoint: openapi.Endpoint{

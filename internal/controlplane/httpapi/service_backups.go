@@ -9,6 +9,8 @@ import (
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
 	"github.com/JuribaDev/yalla/internal/controlplane/policy"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
+	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
+	"github.com/JuribaDev/yalla/internal/controlplane/validate"
 )
 
 // errNoServiceBackupReader is returned when GET
@@ -21,6 +23,15 @@ import (
 // service exists with no backup rows when in fact no backup source is
 // configured).
 var errNoServiceBackupReader = errors.New("httpapi: no service backup reader configured")
+
+// errNoServiceBackupCreator is returned when POST
+// /v1/services/{service_id}/backups is reached without a
+// ServiceBackupCreator wired into NewHandler. Like
+// errNoServiceBackupReader it can only happen through a wiring error
+// — a programming mistake, not a client error — so the handler
+// reports it as a typed internal failure rather than serving a
+// misleading 2xx with no side effect.
+var errNoServiceBackupCreator = errors.New("httpapi: no service backup creator configured")
 
 // ServiceBackupReader is the narrow persistence port GET
 // /v1/services/{service_id}/backups depends on.
@@ -195,5 +206,170 @@ func serviceBackupOf(b store.ServiceBackup) serviceBackup {
 		Version:         b.Version,
 		CreatedAt:       b.CreatedAt.UTC().Format(rfc3339Nano),
 		UpdatedAt:       b.UpdatedAt.UTC().Format(rfc3339Nano),
+	}
+}
+
+// ServiceBackupCreator is the narrow persistence port POST
+// /v1/services/{service_id}/backups depends on.
+// *store.ServiceBackupService satisfies it in production; tests supply
+// a fake. Keeping the dependency an interface keeps the handler unit-
+// testable without a real database — the concrete orchestrator (the
+// parent-service existence check / in-transaction authorize /
+// desired-state write / audit append composition committed in one
+// transaction) lives in the store layer.
+//
+// The HTTP boundary is the authoritative authorization gate:
+// RequireAuth authorizes action backup.create against the (principal
+// home organization, {service_id}) resource the path names through
+// serviceIDResolver, so a request that reaches the creator has already
+// cleared the policy boundary. The store layer still re-authorizes
+// inside the same *Tx as the desired-state write — defense-in-depth
+// against a grant change that landed between the HTTP authorize and
+// the backup row write.
+type ServiceBackupCreator interface {
+	Create(ctx context.Context, in store.CreateServiceBackupInput) (store.ServiceBackup, error)
+}
+
+// createServiceBackupRequest is the decoded POST
+// /v1/services/{service_id}/backups request body. ID is the caller-
+// supplied canonical backup id — the agent contract mints ids client-
+// side so a retried POST is structurally idempotent under the primary-
+// key uniqueness constraint rather than depending on a header. The
+// display_name is a human-authored label; schedule is a cron-style
+// expression the worker interprets when it next plans a run;
+// retention_count bounds how many succeeded runs the worker retains
+// before pruning the oldest; enabled toggles whether the worker takes
+// any action on the row.
+//
+// The request body intentionally exposes no organization_id,
+// project_id, environment_id, or service_id field: the organization is
+// derived from the authenticated principal's home organization, the
+// service comes from the {service_id} path parameter, and the new
+// backup row inherits its parent service's transitive parents from
+// the persisted services row — there is no caller-supplied parameter
+// that could redirect the create at another tenant, another project,
+// or another environment.
+//
+// Enabled is a pointer so the absent-vs-explicit-false distinction is
+// visible at this seam: an omitted field defaults to true (the most
+// common case — a backup policy is created to run), an explicit
+// `false` rides through to the store layer unchanged. RetentionCount
+// at zero takes the schema-side default. The store layer validates
+// every field before any database work, so an invalid request never
+// opens a transaction — and the request body never carries credential
+// material (the actual backup artefact bytes live in the worker /
+// Dokploy / object-storage layer and never round-trip through this
+// endpoint).
+type createServiceBackupRequest struct {
+	ID             string `json:"id"`
+	DisplayName    string `json:"display_name"`
+	Schedule       string `json:"schedule"`
+	RetentionCount int    `json:"retention_count"`
+	Enabled        *bool  `json:"enabled"`
+}
+
+// createServiceBackupPayload is the data block of the POST
+// /v1/services/{service_id}/backups success envelope: the backup
+// that was created, in the same stable wire shape GET
+// /v1/services/{service_id}/backups returns. It carries no credential
+// material — a service_backups row stores none (the actual backup
+// artefact bytes live in the worker / Dokploy / object-storage layer
+// and never round-trip through this endpoint).
+type createServiceBackupPayload struct {
+	Backup serviceBackup `json:"backup"`
+}
+
+// createServiceBackupHandler builds the POST
+// /v1/services/{service_id}/backups handler. It decodes and delegates:
+// the request body is strictly decoded (oversized, malformed, or
+// unknown-field bodies become a typed 400 that never echoes the
+// input), then the create-backup unit of work — re-authorize, write
+// the backup row, append the audit record, all in one transaction —
+// runs in the store layer through the ServiceBackupCreator port.
+//
+// RequireAuth gates the route on action backup.create through
+// serviceIDResolver before the handler runs and attaches the resolved
+// principal, so a request that reaches the handler with no principal
+// is a wiring error reported as a typed internal error.
+// backup.create is a CapWrite action evaluated against the (principal
+// home organization, {service_id}) resource, so the gate admits the
+// principal's organization-wide write roles (owner, admin, developer,
+// ci) and denies viewer (CapRead only), denies support (CapRead+
+// CapSupport — support is a deliberate cross-tenant READ exception,
+// never a write one). The path carries no parent project_id, so the
+// policy engine cannot pin the ProjectID leg of the resource scope at
+// authorization time — project-, environment-, and service-scoped
+// grants are denied at the boundary by the engine's covers() rule (a
+// grant scope that pins ProjectID cannot cover a resource scope that
+// does not); principals whose only access is a scoped grant must use
+// a parent-scoped route to address a service by its (project,
+// environment, service) tuple.
+//
+// The handler resolves the organization id from the authenticated
+// principal's home organization and the service id from the
+// {service_id} PATH parameter — never from the request body — so the
+// tenant boundary is structural here: there is no caller input that
+// could point the write at another tenant. A cross-tenant service_id
+// reaches the persistence layer with the principal's home
+// organization id and is rejected as a deterministic 404 by the
+// store-layer's tenant-scoped service existence check (the same
+// property GET /v1/services/{service_id}/backups inherits), never
+// disguised as a 200 or a 403 that would confirm the foreign
+// service's existence. The principal and the request correlation
+// identifiers are passed to the creator so the audit record names
+// the actor; a validation failure, a duplicate-id conflict, a denied
+// in-tx authorize, and a datastore outage each surface as their own
+// typed status, never disguised as one another.
+func createServiceBackupHandler(creator ServiceBackupCreator) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if creator == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoServiceBackupCreator))
+			return
+		}
+
+		var req createServiceBackupRequest
+		if err := validate.DecodeJSON(r.Body, &req, 0); err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		// Enabled is a pointer so the absent-vs-explicit-false
+		// distinction is visible at this seam: an omitted field
+		// defaults to true (the most common case — a backup policy is
+		// created to run), an explicit `false` rides through to the
+		// store layer unchanged.
+		enabled := true
+		if req.Enabled != nil {
+			enabled = *req.Enabled
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		created, err := creator.Create(r.Context(), store.CreateServiceBackupInput{
+			OrganizationID: p.OrganizationID,
+			ServiceID:      r.PathValue("service_id"),
+			BackupID:       req.ID,
+			DisplayName:    req.DisplayName,
+			Schedule:       req.Schedule,
+			RetentionCount: req.RetentionCount,
+			Enabled:        enabled,
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		apienvelope.WriteData(w, http.StatusCreated, requestID(r), createServiceBackupPayload{
+			Backup: serviceBackupOf(created),
+		})
 	}
 }
