@@ -5,6 +5,72 @@ the route table, the OpenAPI document, the auth/idempotency middleware, and
 thin per-endpoint handlers. Business logic lives in the focused control-plane
 service packages — handlers only decode, delegate, and render.
 
+## CSRF stance for browser sessions
+
+The Yalla control-plane API authenticates exclusively through the
+`Authorization: Bearer <token>` header — API keys, internal-worker
+credentials, and human-session HS256 JWTs (see
+`internal/controlplane/auth/authenticator.go`). It does NOT issue
+session cookies, does NOT accept cookies as credentials, and does
+NOT maintain any ambient browser state. Threat model: a browser
+script loaded from an attacker-controlled origin attempts to forge a
+credentialed cross-origin request (a `<form action="https://api.yalla">`
+submit, an `<img src=...>` GET, a `fetch(url, {credentials:
+"include"})`, a top-level navigation that lands on a destructive
+endpoint). The defence is the absence of ambient credentials:
+browsers do not auto-attach `Authorization` headers across origins,
+and there is no API-issued cookie for the browser to attach. Any
+such cross-origin request reaches the server with no `Authorization`
+header and is rejected as 401 `E_AUTH`. The [CORS stance](#cors-stance)
+below is the orthogonal browser-side defence (the script cannot read
+the response); the CSRF stance is the server-side defence (even if a
+browser surfaced the response, the request itself fails because no
+ambient credential rides it).
+
+The two-test backstop:
+
+1. `csrf_static_test.go` (`TestCookieAPIIsNotUsedByProductionCode`,
+   BE-0348) walks every non-test `.go` file in this package and
+   rejects (a) any string literal whose case-insensitive value is one
+   of the HTTP cookie header names `Cookie`, `Set-Cookie`, `Cookie2`,
+   or `Set-Cookie2`, and (b) any selector expression naming a
+   `net/http` cookie API symbol (`SetCookie`, `AddCookie`,
+   `CookieJar`, `Cookies`, or `http.Cookie`). The companion
+   `TestCSRFStaticAnalyzerDetectsRegressions` synthesizes known-bad
+   and known-good snippets to prove the analyzer fires on the bad
+   shapes (every cookie header literal, every cookie API selector,
+   the `http.Cookie` struct constructor) and stays silent on
+   innocuous occurrences (`Content-Type`, `Authorization`, an
+   `Origin` read, prose comments mentioning cookies, a user-package
+   field named `Cookie` that is not `http.Cookie`).
+2. `csrf_test.go` proves the invariant end-to-end through
+   `NewHandler`. It drives the public-surface routes (`/healthz`,
+   `/version`, `/readyz`, `/healthz/backup`, `/openapi.json`) both
+   with and without an attacker-style `Cookie` request header, the
+   authenticated 201 happy path with a planted `Cookie`, the 400
+   validation-failure path, the 401 unauthenticated path, the 404
+   not-found path, and the cookie-only credential path (a request
+   with no `Authorization` header but a `Cookie: session=<jwt>` /
+   `Cookie: authorization=Bearer <jwt>` value is denied 401 — the
+   cookie is NEVER honored as a credential). Every test asserts the
+   response carries no `Set-Cookie` / `Set-Cookie2` header and the
+   request cookie sentinel is never echoed in the response body
+   (redaction backstop). One test additionally pins the determinism
+   invariant — two GETs to `/healthz` with and without `Cookie`
+   return the same response-header key set.
+
+When adding a new handler or middleware: NEVER write a `Set-Cookie`
+header, NEVER read a `Cookie` header as a credential, and NEVER add
+a `http.SetCookie`/`http.Cookie`/`r.AddCookie`/`r.Cookies()` call.
+If a future surface genuinely requires browser sessions, the retrofit
+is NOT a per-handler cookie write: introduce a dedicated subpackage
+that owns cookie issuance and verification, wire one explicit
+middleware seam through `NewHandler`, adopt a double-submit-cookie or
+SameSite=Strict cookie scheme with a per-request synchronizer token,
+and relax the analyzer's per-package scope only after the new threat
+model has been reviewed. The static analyzer will fail the build on
+any per-handler cookie regression.
+
 ## CORS stance
 
 The Yalla control-plane API serves non-browser callers (CLI, agents,
