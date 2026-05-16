@@ -133,11 +133,13 @@ type versionPayload struct {
 // serviceVariables backs GET /v1/services/{service_id}/variables.
 // deploymentCreator backs POST /v1/services/{service_id}/deployments.
 // deploymentLister backs GET /v1/services/{service_id}/deployments.
+// deploymentGetter backs GET /v1/deployments/{deployment_id}.
+// deploymentCanceler backs POST /v1/deployments/{deployment_id}/cancel.
 // Any may be nil for tests and tooling that only inspect the route
 // table's metadata; a request that actually reaches a handler with a
 // nil dependency is reported as a typed internal error rather than a
 // misleading empty list or a silently dropped write.
-func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter, environmentCloner EnvironmentCloner, environmentGrants EnvironmentGrantReader, environmentGrantReplacer EnvironmentGrantReplacer, environmentVariables EnvironmentVariableReader, environmentVariableReplacer EnvironmentVariableReplacer, environmentServices EnvironmentServiceReader, environmentServiceCreator EnvironmentServiceCreator, services ServiceReader, serviceUpdater ServiceUpdater, serviceDeleter ServiceDeleter, serviceRestorer ServiceRestorer, serviceVariables ServiceVariableReader, serviceVariableReplacer ServiceVariableReplacer, deploymentCreator DeploymentCreator, deploymentLister DeploymentLister, deploymentGetter DeploymentGetter, breakGlass BreakGlassController) []apiRoute {
+func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter, meta runtime.MetaReporter, orgs OrganizationReader, creator OrganizationCreator, updater OrganizationUpdater, deleter OrganizationDeleter, members MembershipReader, memberCreator MembershipCreator, memberUpdater MembershipUpdater, memberRemover MembershipRemover, limits LimitsReader, limitsUpdater LimitsUpdater, usage UsageReader, auditEvents AuditEventReader, orgVariables OrganizationVariableReader, orgVariableReplacer OrganizationVariableReplacer, orgVariablePatcher OrganizationVariablePatcher, orgVariableDeleter OrganizationVariableDeleter, apiKeys APIKeyReader, apiKeyCreator APIKeyCreator, apiKeyUpdater APIKeyUpdater, apiKeyRevoker APIKeyRevoker, apiKeyRotator APIKeyRotator, projects ProjectReader, projectCreator ProjectCreator, projectUpdater ProjectUpdater, projectDeleter ProjectDeleter, projectRestorer ProjectRestorer, projectGrants ProjectGrantReader, projectGrantReplacer ProjectGrantReplacer, projectVariables ProjectVariableReader, projectVariableReplacer ProjectVariableReplacer, projectEnvironments ProjectEnvironmentReader, environmentCreator EnvironmentCreator, environmentReader EnvironmentReader, environmentUpdater EnvironmentUpdater, environmentDeleter EnvironmentDeleter, environmentCloner EnvironmentCloner, environmentGrants EnvironmentGrantReader, environmentGrantReplacer EnvironmentGrantReplacer, environmentVariables EnvironmentVariableReader, environmentVariableReplacer EnvironmentVariableReplacer, environmentServices EnvironmentServiceReader, environmentServiceCreator EnvironmentServiceCreator, services ServiceReader, serviceUpdater ServiceUpdater, serviceDeleter ServiceDeleter, serviceRestorer ServiceRestorer, serviceVariables ServiceVariableReader, serviceVariableReplacer ServiceVariableReplacer, deploymentCreator DeploymentCreator, deploymentLister DeploymentLister, deploymentGetter DeploymentGetter, deploymentCanceler DeploymentCanceler, breakGlass BreakGlassController) []apiRoute {
 	build = build.Normalized()
 
 	return []apiRoute{
@@ -1243,6 +1245,42 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// deployment.
 			resolver: deploymentIDResolver,
 			handler:  getServiceDeploymentHandler(deploymentGetter),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodPost,
+				Path:           "/v1/deployments/{deployment_id}/cancel",
+				OperationID:    "cancelServiceDeployment",
+				Summary:        "Cancel a service deployment",
+				Description:    "Transitions the deployment named by the {deployment_id} path parameter from a non-terminal lifecycle status ('queued' or 'running') to the terminal 'cancelled' status, stamping finished_at in the same UPDATE so the database lifecycle-consistency CHECK remains satisfied. The cancellation is durable: the desired-state row update and an immutable audit record naming the authenticated principal are committed in one transaction, so a cancelled deployment can never exist without its audit trail. The worker observes the cancelled status to stop any in-flight Dokploy provisioning in a later worker story; the cancellation through this endpoint is the customer's authoritative intent, recorded against the source-of-truth row. Action deployment.cancel is authorized against the (principal home organization) Deployment resource before the handler runs: deployment.cancel is a CapDeploy action, so the gate admits the principal's organization-wide deploy roles (owner, admin, developer, ci) and denies viewer (CapRead only), denies support (CapRead+CapSupport — support is a deliberate cross-tenant READ exception, never a deploy one). The bare path carries only the deployment_id (the policy.Scope hierarchy stops at ServiceID, so the deployment_id itself is not a scope leg), so project-, environment-, and service-scoped grants are denied at the boundary by the engine's covers() rule (a grant with a pinned ProjectID cannot cover a resource with no ProjectID); principals whose only access is a scoped grant must use a parent-scoped route family to address a deployment by its (project, environment, service, deployment) tuple. A cross-tenant or unknown deployment_id reaches the persistence layer with the principal's home organization id and is rejected as a deterministic 404 by the tenant-scoped repository query, never disguised as a 200 with another tenant's data and never as a 403 that would confirm existence. The optional If-Match request header carries the row's optimistic-concurrency version (a strong ETag of the form \"<n>\"); a stale version is rejected as a deterministic 409 carrying the row's authoritative version under details.current_version. A deployment already in a terminal lifecycle status (succeeded, failed, cancelled, or rolled_back) is rejected as a deterministic 409 — never a silent success that would emit a duplicate audit event for an already-cancelled row. The request body is empty. The response carries no credential material — the deployments table itself stores no secrets, the source reference is the customer-supplied value the worker mirrors verbatim into Dokploy, and the worker-written error_message on a failed deployment is run through the output redactor before persistence so tokens, API keys, and rendered environment variable values can never reach the column. The response mirrors the row's new version into the ETag response header so the caller can echo it back as the next If-Match precondition without re-reading the row.",
+				Tags:           []string{tagDeployments},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionDeploymentCancel),
+				PathParams: []openapi.PathParam{{
+					Name:        "deployment_id",
+					Description: "The id of the deployment to cancel.",
+				}},
+				SuccessDescription: "The deployment row with its lifecycle status transitioned to 'cancelled'.",
+			},
+			// deploymentIDResolver authorizes action deployment.cancel
+			// against the (principal home organization) Deployment
+			// resource. The policy.Scope hierarchy stops at ServiceID,
+			// so the deployment_id from the path is NOT a scope leg;
+			// the resolver pins only OrganizationID, and the engine's
+			// covers() rule denies every project-, environment-, and
+			// service-scoped grant at the boundary (the grant pins a
+			// leg the resource leaves empty) — forcing scoped-grant-
+			// only principals onto a parent-scoped route.
+			// deployment.cancel is a CapDeploy action, so there is no
+			// cross-tenant support exception — a support principal
+			// cannot cancel another tenant's deployment, and even
+			// same-tenant support is denied (CapRead-only, never
+			// CapDeploy). A cross-tenant deployment_id reaches the
+			// tenant-scoped repository query and surfaces as a 404 at
+			// the persistence boundary, never another tenant's
+			// deployment.
+			resolver: deploymentIDResolver,
+			handler:  cancelServiceDeploymentHandler(deploymentCanceler),
 		},
 		{
 			endpoint: openapi.Endpoint{

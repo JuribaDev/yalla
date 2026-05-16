@@ -259,6 +259,79 @@ func (r *DeploymentRepository) FindByIdempotencyKey(ctx context.Context, q Queri
 	return d, true, nil
 }
 
+// Cancel transitions the deployment named by (organizationID,
+// deploymentID) from a non-terminal lifecycle status ('queued' or
+// 'running') to the terminal 'cancelled' status, stamping finished_at
+// in the same UPDATE so the deployments_finished_consistent CHECK is
+// satisfied at the database. The transition is tenant-scoped at the
+// SQL predicate (organization_id is non-optional) so a cross-tenant or
+// unknown deployment_id matches no row — never another tenant's
+// deployment. The bump_version trigger from migration 0011 increments
+// the row's version on the same UPDATE, so the returned row carries
+// the authoritative post-cancel version the HTTP layer mirrors back
+// into the ETag response header.
+//
+// expectedVersion is the optional optimistic-concurrency precondition
+// (the strong ETag the caller carried in If-Match parsed by the
+// httpapi layer). A nil pointer means "no precondition"; a non-nil
+// pointer narrows the predicate by version. A mismatch is reported as
+// a typed apierr.ConflictStale carrying the row's authoritative
+// current version under details.current_version, so the caller can
+// retry without an extra GET. A terminal-status row (an already
+// cancelled, succeeded, failed, or rolled-back deployment) is rejected
+// as a deterministic apierr.Conflict — never a silent success that
+// would emit a duplicate audit event for an already-cancelled row, and
+// never as a 500 leaking the CHECK constraint name. The disambiguation
+// happens through a tenant-scoped GetByID on the same Querier, so the
+// (not-found / stale / terminal) decision uses the SAME view of the
+// row the UPDATE just observed — a concurrent writer cannot let two
+// branches of the classification disagree.
+//
+// The method requires a *Tx (not a bare Querier) so a cancellation can
+// never be persisted outside the transaction that also carries its
+// immutable audit record — a partial cancel and an orphaned audit row
+// are both impossible.
+func (r *DeploymentRepository) Cancel(ctx context.Context, tx *Tx, organizationID, deploymentID string, expectedVersion *int64) (Deployment, error) {
+	if tx == nil {
+		return Deployment{}, apierr.Internal(errors.New("store: DeploymentRepository.Cancel called with a nil transaction"))
+	}
+
+	const updateBase = `UPDATE deployments
+		   SET status = 'cancelled',
+		       finished_at = now()
+		 WHERE organization_id = $1
+		   AND id = $2
+		   AND status IN ('queued', 'running')`
+	const updateReturning = ` RETURNING ` + deploymentColumns
+
+	var row pgx.Row
+	if expectedVersion == nil {
+		row = tx.QueryRow(ctx, updateBase+updateReturning, organizationID, deploymentID)
+	} else {
+		row = tx.QueryRow(ctx, updateBase+` AND version = $3`+updateReturning,
+			organizationID, deploymentID, *expectedVersion)
+	}
+	d, err := scanDeployment(row)
+	if err == nil {
+		return d, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return Deployment{}, apierr.StoreUnavailable(err)
+	}
+
+	// Zero-row UPDATE: disambiguate not-found vs stale-version vs
+	// already-terminal against the SAME *Tx, so the classification
+	// observes the row the UPDATE just saw.
+	current, getErr := r.GetByID(ctx, tx, organizationID, deploymentID)
+	if getErr != nil {
+		return Deployment{}, getErr
+	}
+	if expectedVersion != nil && current.Version != *expectedVersion {
+		return Deployment{}, apierr.ConflictStale(current.Version)
+	}
+	return Deployment{}, apierr.Conflict("the deployment is in a terminal state and cannot be cancelled")
+}
+
 // ListByService returns every deployment owned by (organizationID,
 // serviceID), in reverse chronological order (created_at DESC, id DESC
 // as a tiebreaker), so an agent observing the response sees a stable
@@ -397,6 +470,13 @@ func (r *DeploymentReader) GetServiceDeployment(ctx context.Context, organizatio
 // audit reader can correlate the audit event back to the API surface
 // that produced it without a translation table.
 const deploymentCreateAction = "deployment.create"
+
+// deploymentCancelAction is the action recorded on the audit event
+// emitted by every deployment cancel. It matches the wire-level action
+// constant the policy engine authorizes (deployment.cancel), so an
+// audit reader can correlate the audit event back to the API surface
+// that produced it without a translation table.
+const deploymentCancelAction = "deployment.cancel"
 
 // deploymentProvisionJob is the job_type the worker observes when
 // claiming a deployment provisioning job. Like deploymentCreateAction

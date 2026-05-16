@@ -16813,3 +16813,198 @@ Learnings for future iterations:
     posture: every scoped grant denied at the boundary, every
     same-org role / org-level grant allowed.
 ---
+
+## 2026-05-16 - BE-0214 + BE-0215 + BE-0216
+- What was implemented: POST /v1/deployments/{deployment_id}/cancel,
+  the customer-facing route that transitions a non-terminal deployment
+  to the terminal 'cancelled' status. Bundled with its full contract
+  surface (httpapi unit/contract tests + the OpenAPI route assertion)
+  and its full authorization matrix (engine and wire-level policy
+  proofs).
+- Files changed:
+  - internal/controlplane/store/deployment.go: new
+    DeploymentRepository.Cancel(ctx, *Tx, organizationID, deploymentID,
+    expectedVersion *int64) (Deployment, error). The cancel runs as a
+    single atomic UPDATE whose WHERE clause is tenant-scoped at the
+    SQL predicate (organization_id is non-optional), narrows by status
+    IN ('queued','running') so a terminal row is structurally
+    impossible to overwrite, and narrows by version when an If-Match
+    precondition is present. finished_at is stamped to now() in the
+    same UPDATE so the deployments_finished_consistent CHECK is
+    satisfied at the database (the bump_version trigger from migration
+    0011 increments version on the same UPDATE). A zero-row UPDATE
+    runs a tenant-scoped GetByID against the same *Tx to disambiguate
+    (not-found / stale / terminal) — the classification observes the
+    same row the UPDATE just saw, so a concurrent writer cannot let
+    two branches of the result disagree. A new deploymentCancelAction
+    constant carries the audit-event Action name in lockstep with the
+    wire-level policy action.
+  - internal/controlplane/store/deployment_service.go: new
+    DeploymentService.Cancel + CancelDeploymentInput. The unit of
+    work composes — inside one Store.Write transaction — a tenant-
+    scoped parent-deployment existence check (a cross-tenant or
+    unknown deployment_id surfaces as apierr.NotFound, never an
+    oracle), defense-in-depth Authorize against the deployment's
+    organization on the same *Tx (a grant change that landed between
+    the HTTP authorize and the cancel write still cannot let the
+    write through), the atomic Repository.Cancel transition (with
+    optional If-Match precondition), and the immutable audit record
+    naming the authenticated principal. Audit metadata records only
+    structural identifiers (service_id, environment_id, project_id)
+    plus a previous_status entry — the idempotency_key is opaque
+    caller input and is deliberately NOT projected onto the audit
+    metadata.
+  - internal/controlplane/httpapi/deployments.go: new
+    DeploymentCanceler port + cancelServiceDeploymentHandler +
+    cancelServiceDeploymentPayload + errNoDeploymentCanceler. The
+    handler parses If-Match through the shared parseIfMatchVersion
+    helper (a malformed/weak/wildcard value is a typed 400 before the
+    canceler runs), pins OrganizationID from the principal's home
+    org (never from the path/body, so a cross-tenant deployment_id
+    surfaces as 404 at the persistence boundary), forwards the actor
+    identity and request-correlation through to the store layer, and
+    on success mirrors deployment.Version into the ETag response
+    header through the shared writeOrganizationETag helper. A nil
+    canceler reaching the handler is reported as a typed internal
+    error (defense-in-depth against a wiring regression).
+  - internal/controlplane/httpapi/routes.go: registers POST
+    /v1/deployments/{deployment_id}/cancel under deploymentIDResolver
+    (the SAME resolver the GET route uses — the resource scope pins
+    only OrganizationID because the policy.Scope hierarchy stops at
+    ServiceID, so the deployment_id itself is NOT a scope leg). The
+    required action is policy.ActionDeploymentCancel; the tag is
+    tagDeployments. The OpenAPI Description pins the full
+    authorization contract (CapDeploy role matrix, scoped-grant
+    containment, cross-tenant 404 surface, If-Match semantics,
+    terminal-state 409, empty body, redaction posture). newRouteTable
+    grows one positional port — deploymentCanceler — slotted between
+    deploymentGetter and breakGlass.
+  - internal/controlplane/httpapi/server.go: NewHandler grows the same
+    one positional port and forwards it to newRouteTable verbatim.
+  - cmd/yalla-api/main.go: the single concrete *store.DeploymentService
+    satisfies the DeploymentCreator AND DeploymentCanceler ports
+    together, so wiring is one extra "deploymentService," argument
+    threaded into the NewHandler call.
+  - internal/controlplane/httpapi/deployments_cancel_test.go (new,
+    ~14 cases): contract surface — happy path renders 200 + yalla.
+    output.v1 envelope + ETag mirror + terminal-cancelled projection
+    with finished_at populated; If-Match forwarding (strong-ETag);
+    malformed/wildcard If-Match → typed 400 before the canceler runs;
+    unauthenticated → 401, no canceler call; viewer (CapRead only) →
+    403 by the RequireAuth gate; store NotFound → 404; store
+    Conflict (terminal state) → 409; store ConflictStale → 409 with
+    details.current_version; store StoreUnavailable → 503 with no
+    pgx-cause leak; cross-tenant path id pinning (OrganizationID is
+    the principal's home org, never the path id); missing canceler
+    wiring → 500; OpenAPI route registration (operation id +
+    required action + deployments tag + RequiresAuth).
+  - internal/controlplane/httpapi/deployments_cancel_policy_test.go
+    (new): the cancel-specific authorization matrix.
+      * Role matrix: Owner/Admin/Developer/CI hold CapDeploy and the
+        canceler is reached with the principal's home org and the
+        path deployment id; Viewer (CapRead only) and Support
+        (CapRead+CapSupport, no CapDeploy) are denied at the engine
+        via ReasonDeniedNoCapability and the canceler never runs.
+      * Revoked / expired keys: never reach the canceler; no leak of
+        principal id, org, or canonical row data.
+      * Cross-tenant: a same-org Owner principal hitting a
+        cross-tenant deployment_id surfaces as 404 at the persistence
+        boundary (the resource scope is the principal's own home org)
+        and the deny body never echoes the foreign org id. Engine
+        defence-in-depth at a hypothetical foreign-org resource scope
+        denies EVERY role including Support via
+        ReasonDeniedCrossTenant — CapDeploy is OUTSIDE the engine's
+        `CapSupport && (CapRead || CapSupport)` exception, the
+        load-bearing distinction from deployment.read.
+      * Grant containment: project-, environment-, and service-scoped
+        grants are denied at the bare-id route via
+        ReasonDeniedOutOfScope (the deploymentIDResolver pins NO
+        ProjectID/EnvironmentID/ServiceID, and covers() is one-way).
+        The PRD containment properties (sibling project / staging-vs-
+        production / service-grant shielding parent secrets) are
+        pinned at their natural scopes. An organization-level Admin
+        grant is allowed end-to-end via ReasonAllowedByGrant. An
+        organization-level Viewer grant — which IS allowed by the
+        read matrix — is DENIED here via ReasonDeniedNoCapability:
+        Viewer holds CapRead, not CapDeploy. This deliberately makes
+        a future regression that downgrades deployment.cancel from
+        CapDeploy to CapRead fail at this test, blocking the silent
+        "every viewer key can cancel any deployment" outcome.
+  - 60 existing test files (mechanical sweep): every NewHandler call
+    grew one positional arg `fakeDeploymentCanceler{}` between
+    fakeDeploymentGetter{} and fakeBreakGlassController{}, including
+    the all-nils OpenAPI-shape route-table tests. A single anchor
+    `fakeDeploymentGetter{}, fakeBreakGlassController{}` -> `fakeDeploymentGetter{},
+    fakeDeploymentCanceler{}, fakeBreakGlassController{}` matched 98
+    sites across 57 files. Two outliers — the helper-shaped
+    `getter, fakeBreakGlassController{}` in deployments_get_test.go
+    and the break-glass-specific `..., fakeDeploymentGetter{}, ctl, nil, nil)`
+    in break_glass_test.go — needed targeted edits.
+- Verification: gofmt -w . (clean); go vet ./... (clean); go test
+  ./... (all passing); go test -race ./... (all passing); golangci-
+  lint run ./... (0 issues).
+- Remaining risks or follow-ups:
+  - Cancellation propagation to Dokploy: the cancel endpoint commits
+    the customer-intent state transition and the audit trail but does
+    NOT enqueue a separate "cancel" job for the worker. The existing
+    provisioning_jobs row created by POST /v1/services/{service_id}/
+    deployments will be observed by the worker; when the worker
+    notices status=cancelled on the deployment row it should abort.
+    A later worker story will define the explicit cancel-job
+    contract; the policy and audit surface is in place today.
+  - Store-layer integration tests for DeploymentRepository.Cancel and
+    DeploymentService.Cancel were not added in this story, mirroring
+    the precedent set by BE-0205+0206+0207 (the create story added
+    none either — the store layer for the deployments surface has no
+    test files yet). A follow-up story can backfill the
+    isolated-Postgres integration suite covering: tenant isolation on
+    Cancel; CHECK-driven rejection of (queued|running) → cancelled
+    when concurrent state writes race the UPDATE; If-Match version
+    narrowing; deployments_finished_consistent satisfaction. The
+    HTTP-layer fake-driven contract + policy matrix tests cover the
+    behavior the public API exposes today.
+- Learnings for future iterations:
+  - The cancel endpoint follows the GET deployment route's resolver
+    rather than the create deployment route's. The GET route is the
+    structural sibling of cancel — both bare-id, both deploymentID
+    resolver, same Org-only pinning — because the policy.Scope
+    hierarchy stops at ServiceID and the deployment_id is not a leg.
+    The CapDeploy vs CapRead capability difference produces a
+    *different* role/grant matrix on the same resolver, with two
+    load-bearing distinctions worth pinning explicitly in the matrix
+    test: (a) Support cross-tenant is OUTSIDE the engine's CapDeploy
+    exception (CapDeploy denies even support cross-tenant, unlike
+    CapRead which allows support cross-tenant); (b) org-level Viewer
+    grant is DENIED for CapDeploy (Viewer holds CapRead only) — the
+    test asserts this denial explicitly so a future catalog change
+    that downgraded deployment.cancel to CapRead would fail at this
+    test, never silently widen authorization.
+  - Atomic state transition via UPDATE-WHERE-status-IN-non-terminal
+    is the right shape for a one-way lifecycle transition: the WHERE
+    clause does the terminal-state check at the DB, and a zero-row
+    UPDATE plus a same-tx Get classifies (not-found / stale /
+    terminal) without a separate SELECT-before-UPDATE that would
+    introduce a TOCTOU window. Using SQL now() for finished_at avoids
+    threading a time.Time parameter through the orchestrator.
+  - Cancel deliberately does NOT idempotency-key its requests. A
+    one-way state transition cannot be re-applied without changing
+    semantics: a second cancel against an already-cancelled row would
+    silently emit a duplicate audit event for the same lifecycle
+    change. Returning a deterministic 409 keeps the audit log honest
+    and matches the response a stale-version conflict would produce.
+  - The 60-test-file mechanical sweep anchors uniformly on
+    `fakeDeploymentGetter{}, fakeBreakGlassController{}` because every
+    NewHandler call site uses the same trailing port group. The two
+    helper-shaped construction sites (`getter, fakeBreakGlassController{}`
+    and `..., ctl, nil, nil)` for break glass) need explicit single
+    edits — `grep -L "fakeDeploymentCanceler" | grep -l
+    "fakeDeploymentGetter"` after the sweep finds them. Future
+    positional-port additions in the deployments group can reuse the
+    same anchor.
+  - The OpenAPI Description for the cancel endpoint pins the full
+    authorization contract verbatim against the route (CapDeploy
+    matrix, scoped-grant containment, cross-tenant 404 surface,
+    If-Match semantics, terminal-state 409, empty body, redaction
+    posture). Future agent integrations read this Description to
+    discover the contract without parsing test files.
+---

@@ -381,3 +381,146 @@ func validateCreateDeploymentInput(in CreateDeploymentInput) (Deployment, error)
 		CorrelationID:  strings.TrimSpace(in.CorrelationID),
 	}, nil
 }
+
+// CancelDeploymentInput is the unvalidated input to
+// DeploymentService.Cancel. OrganizationID is sourced from the
+// authenticated principal's home organization at the HTTP boundary,
+// never from a caller-supplied body or path organization id — so a
+// cross-tenant deployment_id is structurally impossible to direct at
+// another tenant. DeploymentID names the deployment to cancel.
+// IfMatchVersion is the optional optimistic-concurrency precondition
+// (the strong ETag the caller carried in If-Match parsed by the
+// httpapi layer); a nil pointer means "no precondition".
+//
+// The Actor* and correlation fields describe the authenticated
+// principal performing the cancel and are recorded verbatim on the
+// audit event. They are plain strings so the store layer takes no
+// build dependency on the policy or telemetry packages — the httpapi
+// handler, which already holds the resolved principal and the request
+// correlation, fills them in.
+type CancelDeploymentInput struct {
+	OrganizationID string
+	DeploymentID   string
+	IfMatchVersion *int64
+	ActorID        string
+	ActorKind      string
+	ActorOrgID     string
+	RequestID      string
+	CorrelationID  string
+}
+
+// Cancel validates in, then runs the cancel-deployment unit of work
+// inside one transaction: fetch the deployment under (OrganizationID,
+// DeploymentID) so a cross-tenant or unknown id surfaces as the typed
+// apierr.NotFound the repository produces, re-authorize action
+// deployment.cancel against the deployment's organization on the same
+// *Tx (defense-in-depth against a grant change that landed between
+// the HTTP authorize and the cancel write), atomically transition the
+// row from a non-terminal status to 'cancelled' (rejecting a
+// terminal-state row as a deterministic 409 and a stale If-Match
+// version as a deterministic 409 carrying the row's authoritative
+// version), and append an immutable audit record naming the
+// authenticated principal. Because every step shares the *Tx, a
+// failure in any of them rolls the others back: a partial cancel and
+// an orphaned audit row are both impossible.
+//
+// The HTTP RequireAuth middleware is the authoritative authorization
+// gate for action deployment.cancel (deployment-id-scoped via
+// deploymentIDResolver, which pins only OrganizationID on the resource
+// because the policy.Scope hierarchy stops at ServiceID). The
+// store-layer Authorize call is defense-in-depth: it runs on the same
+// *Tx as the cancel write so the in-transaction policy view sees
+// exactly the state the row commits against.
+//
+// Idempotency: this method does NOT idempotency-key cancel requests.
+// Cancellation is a one-way state transition (the deployment becomes
+// terminal-cancelled and can never re-enter the lifecycle), so a
+// second cancel against the same deployment is a deterministic 409 —
+// never a silent success that would emit a duplicate audit event for
+// an already-cancelled row.
+func (svc *DeploymentService) Cancel(ctx context.Context, in CancelDeploymentInput) (Deployment, error) {
+	orgID := strings.TrimSpace(in.OrganizationID)
+	deploymentID := strings.TrimSpace(in.DeploymentID)
+	actorID := strings.TrimSpace(in.ActorID)
+	actorOrgID := strings.TrimSpace(in.ActorOrgID)
+
+	violations := validate.New()
+	if id, err := domain.ParseID(orgID); err != nil || id.Kind() != domain.KindOrganization {
+		violations.Add("organization_id", "must be a non-empty organization id")
+	}
+	if id, err := domain.ParseID(deploymentID); err != nil || id.Kind() != domain.KindDeployment {
+		violations.Add("deployment_id", "must be a non-empty deployment id")
+	}
+	if actorID == "" {
+		violations.Add("actor_id", "must not be blank")
+	}
+	if err := violations.Err(); err != nil {
+		return Deployment{}, err
+	}
+	if actorOrgID == "" {
+		return Deployment{}, apierr.Internal(errors.New("store: DeploymentService.Cancel requires an actor organization for the audit record"))
+	}
+
+	var cancelled Deployment
+	txErr := svc.store.Write(ctx, func(ctx context.Context, tx *Tx) error {
+		// Tenant-scoped existence check first: a cross-tenant or
+		// unknown deployment_id surfaces as the typed apierr.NotFound
+		// the repository produces, never a 500 or a silent success.
+		// The lookup runs on the same *Tx so the in-transaction view
+		// is the one the UPDATE will observe.
+		current, getErr := svc.deployments.GetByID(ctx, tx, orgID, deploymentID)
+		if getErr != nil {
+			return getErr
+		}
+
+		// Defense-in-depth: the HTTP RequireAuth middleware already
+		// authorized action deployment.cancel against the (home org,
+		// deployment_id) resource the path names. The in-transaction
+		// Authorize is a redundant check whose real adapter reads
+		// grant rows from the same *Tx as the desired-state write —
+		// so a grant change that landed between the HTTP authorize
+		// and this point still cannot let the write through.
+		if err := svc.authz.Authorize(ctx, tx, deploymentCancelAction, current.OrganizationID); err != nil {
+			return err
+		}
+
+		row, cancelErr := svc.deployments.Cancel(ctx, tx, orgID, deploymentID, in.IfMatchVersion)
+		if cancelErr != nil {
+			return cancelErr
+		}
+
+		event := AuditEvent{
+			OrganizationID: actorOrgID,
+			ActorID:        actorID,
+			ActorKind:      strings.TrimSpace(in.ActorKind),
+			Action:         deploymentCancelAction,
+			ResourceKind:   string(domain.KindDeployment),
+			ResourceID:     row.ID,
+			Decision:       AuditDecisionAllowed,
+			Reason:         "authorization granted for deployment.cancel",
+			RequestID:      strings.TrimSpace(in.RequestID),
+			CorrelationID:  strings.TrimSpace(in.CorrelationID),
+			// Structural identifiers and the previous lifecycle status
+			// are safe to record verbatim. The deployment's
+			// idempotency key is opaque caller input and is NOT
+			// projected onto audit metadata — a future support reader
+			// sees the deployment id, not the caller's deduplication
+			// token.
+			Metadata: map[string]string{
+				"service_id":      row.ServiceID,
+				"environment_id":  row.EnvironmentID,
+				"project_id":      row.ProjectID,
+				"previous_status": string(current.Status),
+			},
+		}
+		if _, err := svc.audit.Append(ctx, tx, event); err != nil {
+			return err
+		}
+		cancelled = row
+		return nil
+	})
+	if txErr != nil {
+		return Deployment{}, txErr
+	}
+	return cancelled, nil
+}
