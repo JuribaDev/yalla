@@ -24706,3 +24706,87 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     helper text in the file header documents this explicitly so a future
     reader does not look for one.
 ---
+
+## 2026-05-17 - BE-0092
+- Added internal/controlplane/httpapi/api_keys_rotate_contract_test.go:
+  the fifth structural twin in the api-keys contract-test family (after
+  list BE-0077, create BE-0080, get BE-0083, update BE-0086, delete
+  BE-0089), adapted to the api-keys rotate request shape ({org_id} +
+  {key_id} path parameters, no body, APIKeyRotator port through the same
+  NewHandler wiring).
+- Four tests pin the wire contract that api_keys_rotate_test.go
+  (BE-0091) does not assert directly: (a) the HTTP server writes
+  response data only through the http.ResponseWriter — captureProcessOutput
+  swap, both stdout and stderr must stay empty while the rotated api_key
+  payload (NEW prefix) AND the freshly-minted plaintext token ride on
+  the response body; (b) the per-request structured log redacts the
+  inbound bearer credential on the happy path AND the disabled-principal
+  deny-leg (sentinel-error fakeAPIKeyRotator proves the deny short-circuits
+  at policy so any logged "rotator error" cannot be the leak source);
+  (c) ROTATE-UNIQUE — the per-request structured log redacts the OUTBOUND
+  plaintext token the handler mints into env.Data.Token; the test
+  extracts the actual minted token from the response envelope so a
+  future change to auth.Generate (alphabet/length) is automatically
+  respected and there is no hardcoded shape the assertion would silently
+  miss; (d) the error envelope built from a wrapped store-outage cause
+  never leaks the full cause string OR the bare datastore address onto
+  the wire.
+- Added the per-endpoint helper rotateAPIKeyHandlerForWithLogger that
+  wires the full NewHandler surface with a caller-supplied APIKeyRotator
+  and *slog.Logger, mirroring revokeAPIKeyHandlerForWithLogger and
+  updateAPIKeyHandlerForWithLogger.
+- Files changed:
+  - internal/controlplane/httpapi/api_keys_rotate_contract_test.go (new)
+  - ralph/prd.json (BE-0092 passes: true)
+  - ralph/progress.txt (this entry)
+- Verification: gofmt clean; go vet ./... clean; go mod tidy clean;
+  go test -run 'TestRotateAPIKey(ServerWritesResponseDataOnlyToResponseWriter|RequestLogRedactsBearerToken|RequestLogRedactsPlaintextToken|ErrorEnvelopeDoesNotLeakDependencyCause)' ./internal/controlplane/httpapi/ PASS;
+  go test ./internal/controlplane/httpapi/ PASS (1.070s);
+  go test -race -run 'TestRotateAPIKey' ./internal/controlplane/httpapi/ PASS (1.666s);
+  go test ./... PASS (exit=0).
+  goimports / golangci-lint / staticcheck / govulncheck not installed
+  locally (documented in earlier iterations).
+- Remaining risks / follow-ups: none specific to this story. The
+  api-keys contract-test family is now COMPLETE at five members (list,
+  create, get, update, delete, rotate — 6 endpoints in the public API,
+  5 with contract tests, 1 — `me` — has its own twin in
+  me_contract_test.go which is the source of the captureProcessOutput
+  helper). Next sibling contract-test stories are BE-0095..0101
+  (organization limits/usage) and BE-0104 (audit-events).
+- Learnings for future iterations:
+  - The api-keys rotate endpoint has TWO secrets on the wire, not one:
+    (a) the inbound Authorization bearer credential, and (b) the OUTBOUND
+    plaintext token the handler mints into env.Data.Token. Every other
+    api-keys endpoint is single-secret (inbound only). The contract-test
+    template therefore needs a fourth probe — "the outbound plaintext
+    must not leak into the structured log" — that is not present in the
+    delete/update/get/list twins. The right shape is to extract the
+    minted token from the decoded response envelope rather than pin a
+    hardcoded value, because the handler calls auth.Generate (random
+    alphabet, random length on future change) — pinning a literal would
+    tautology-pass under any future generator weakening that the log
+    redaction was supposed to catch. The Create endpoint is the only
+    other dual-secret api-keys endpoint and its existing contract test
+    file should be audited next iteration for the same dual-redaction
+    probe (if it is missing, that is a follow-up story-shaped gap).
+  - The fakeAPIKeyRotator's `key` field is what the handler renders
+    back to env.Data.APIKey — but env.Data.Token is minted by the
+    handler from auth.Generate, NOT by the fake. So a test that seeds
+    `persisted.Prefix = "yk_new_prefix_after_rotate"` will see exactly
+    that prefix in env.Data.APIKey.Prefix, but env.Data.Token will be a
+    different random value entirely — it will NOT start with the
+    seeded prefix because the seeded prefix is for the fake's row, not
+    the handler's minted credential. This asymmetry is intentional and
+    is what the rotate test for the "prefix forwarded to rotator
+    matches the token's lookup id" assertion in api_keys_rotate_test.go
+    captures; the contract test does not need to re-assert that, only
+    that BOTH fields land in the response body and NEITHER leaks
+    elsewhere.
+  - The "deny-leg sentinel error must not be the leak source" pattern
+    from BE-0086/BE-0089 ports verbatim: the disabled-principal request
+    is routed through fakeAPIKeyRotator{err: stderrors.New("rotator
+    must not be called")}, and the deny-leg assertion is "the bearer
+    token never reaches the log AND the response body" — the sentinel
+    proves the deny short-circuits at policy, so any logged "rotator
+    error" cannot mask the real source of a credential leak.
+---
