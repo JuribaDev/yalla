@@ -6908,8 +6908,8 @@
       ],
       "type": "provisioning-service-type",
       "priority": 1,
-      "passes": false,
-      "notes": "Service type: redis."
+      "passes": true,
+      "notes": "Renderer-side contract pinned: EngineRedis constant + validEngine whitelist extension (closes the BE-0309..0317 database-engine family) + renderer_database_redis_test.go cloned from mongo (7 load-bearing pins: success identity with yalla.engine=redis label, subtype boundary vs application, drops role/domains/cron with redaction-safe debug-surface sweep, validation failures table with stable Field paths and no value echo, tier resource defaults with no production-web bump, secrets redaction with verbatim worker delivery + sentinel summary, byte-stable determinism). Worker-side acceptance criteria (dokploy_refs atomic write, quota conversion, fake-Dokploy create/update/deploy/poll/failure/retry/replay) defer to a later database worker story by design."
     },
     {
       "id": "BE-0318",

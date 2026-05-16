@@ -20601,3 +20601,36 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
   - The order of engine constants in the renderer's const block tracks the order they were added (postgres, mysql, mariadb, mongo). This order is incidental — neither the renderer behavior nor any test depends on it — but it keeps the const block readable and matches the chronological landing order so the git blame story is self-explanatory.
 ---
 
+
+## 2026-05-16 — BE-0317 Provision redis services
+- Closed the BE-0309..0317 database-engine family. Added `EngineRedis = "redis"` constant to `internal/controlplane/dokploy/renderer.go` (DB engine const block) and extended the `validEngine()` whitelist switch from `EnginePostgres, EngineMysql, EngineMariadb, EngineMongo` to include `EngineRedis`. The doc comment on `validEngine` already enumerated `BE-0317 redis` as a future entry, so no doc edit was needed.
+- Created `internal/controlplane/dokploy/renderer_database_redis_test.go` as a structural clone of `renderer_database_mongo_test.go` (BE-0315). The swap was entirely mechanical: `EngineMongo` → `EngineRedis`, `databaseMongoInput` → `databaseRedisInput`, `mongo` → `redis` in test names/comments, BE-#### cross-refs updated to reflect that BE-0317 is the FIFTH and final entry (no future siblings remain). The seven load-bearing pins are preserved verbatim:
+  1. Success identity (Type=database, Engine=redis, role/domains/cron dropped, yalla.engine label = "redis", yalla.role label absent).
+  2. Subtype boundary vs. application (redis stays redis; application stays application with empty engine and absent yalla.engine label).
+  3. Drops role/domains/cron with the populated-input → dropped-output assertion AND a redaction-safe debug-surface sweep (summary JSON / slog record / Summary.String() must not leak "db.acme.example" or "0 2 * * *").
+  4. Validation failures table (8 cases): bad organization id, mismatched project parent, bad tier, bad service type, missing engine, unsupported engine ("sqlite" remains the canonical unsupported-engine sentinel across the BE-0309..0317 family), bad variable name, negative cpu millis. No submitted value is ever echoed into the rendered error (validates the "must be a supported database engine" Reason text never names the rejected engine).
+  5. Tier resource defaults (no production-web 2-replica bump because effectiveRole == "" for database services).
+  6. Secrets redaction (verbatim secret reaches worker via RenderedSpec.Service.Variables; every debug surface shows `output.Sentinel`).
+  7. Determinism (two `Render()` calls produce byte-equal JSON).
+- Files changed:
+  - `internal/controlplane/dokploy/renderer.go` (engine constant + whitelist switch extension).
+  - `internal/controlplane/dokploy/renderer_database_redis_test.go` (new test file, ~498 lines — same shape as BE-0315 mongo).
+  - `ralph/prd.json` (BE-0317 `passes: true`).
+  - `ralph/progress.txt` (this entry).
+- Verification run:
+  - `gofmt -l .` → clean.
+  - `go vet ./...` → clean.
+  - `go mod tidy` → no-op (no dependency churn).
+  - `go test -count=1 -run TestRenderDatabaseRedis ./internal/controlplane/dokploy/...` → ok 0.501s (7 tests, all green).
+  - `go test ./...` → 37 packages ok, 0 fail.
+  - `go test -race ./...` → all green.
+  - goimports / golangci-lint / staticcheck / govulncheck still not installed locally (documented in earlier iterations).
+- Results: All required checks pass. No live Dokploy server is touched. The renderer-side contract pinned by this story is the structural barrier the worker depends on (Engine preserved verbatim, label surfaced, application/compose-only fields dropped, byte-stable determinism, redaction proven).
+- Remaining risks / follow-ups:
+  - The worker-side acceptance criteria for BE-0317 (dokploy_refs atomic write after Dokploy ensure, quota reservation-to-conversion, fake Dokploy create/update/deploy/poll/failure/retry/replay) continue to defer to the later database worker story per the BE-0301 deferral pattern.
+  - BE-0317 closes the BE-0309..0317 database-engine family. The closed validEngine() set is now `{postgres, mysql, mariadb, mongo, redis}` — every future managed engine would require a new PRD story to extend the whitelist.
+- Learnings for future iterations:
+  - The full BE-0309..0317 database-engine renderer family (5 engines) is now closed at the renderer layer. Each sibling was a 3-line + 1-file extension: one engine constant in the const block, one identifier in the validEngine() switch case list, and one ~498-line test file cloned from the previous engine with a 3-token swap (constant reference, engine string, BE-#### cross-refs). The mechanical clone shape — captured in the BE-0309 Codebase Patterns bullet — held across all five engines without a single special-case deviation.
+  - The "unsupported engine" sentinel `"sqlite"` remains the canonical unsupported-engine value across the entire family because Yalla will never manage SQLite (it has no client/server boundary to provision). Any future engine added beyond this family should keep "sqlite" as the sentinel rather than introducing a new one.
+  - The `validEngine` doc comment in renderer.go originally enumerated all five engines as future entries (BE-0311 mysql; BE-0313 mariadb; BE-0315 mongo; BE-0317 redis). With BE-0317 landed, every named future engine is now resident in the whitelist — a future cleanup pass could remove the per-story enumeration from the doc comment without changing behavior, but it is left as-is to preserve the audit trail of how the closed set was assembled.
+---
