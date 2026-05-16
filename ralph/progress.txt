@@ -107,7 +107,7 @@
 
 - Verb-on-child-resource endpoint pattern (BE-0253+0254+0255, POST /v1/services/{service_id}/backups/{backup_id}/run; sibling of the services_restart verb-on-parent shape, but adds a tenant-scoped child existence check; clonable for any future "trigger an action on a worker-driven child resource" endpoint — backup PATCH/DELETE, future preview-run, future deployment-retry triggers): the store-layer composition is the canonical run-unit-of-work shape — XxxRepository.GetByID (composite (org, parent, child_id) read; pgx.ErrNoRows -> apierr.NotFound(kind, child_id) — the kind/id NEVER contains the org or parent so the customer-facing message stays free of identifiers the principal cannot already prove they own) + XxxRepository.MarkPending (UPDATE...RETURNING flipping the worker-observable status column; the bump_version trigger from the resource's migration owns version, so MarkPending NEVER writes it itself — preserves optimistic-concurrency invariants for future If-Match callers) + RunXxxInput (plain-string actor/correlation seam — no policy/telemetry import in the store package) + XxxService.Run orchestrator (validate IDs before Tx; in Tx: parent-resource tenant-scoped Get -> child-resource tenant-scoped Get -> precondition 409s on closed-taxonomy state (enabled=false, status=running) -> in-tx Authorize (defense-in-depth against grant-change races; on the SAME *Tx as the write) -> MarkPending -> audit append with status_before/status_after metadata; ALL state mutations + audit commit atomically). The audit Metadata records ONLY closed-taxonomy enums (status_before/status_after) and structural identifiers (service_id); caller-controlled free text (display_name, schedule) is NOT recorded — Run does not mutate either and including them would expose a future redaction footgun. The httpapi layer is the canonical verb-handler shape — empty body, principal home org + path {parent_id} + path {child_id} forwarded to the runner, RequireAuth gates on the action's catalog mapping (backup.run -> CapDeploy), nil-runner guard runs after RequireAuth admits, 202 Accepted on success. Route entry's resolver is the bare-id resolver of the PARENT (serviceIDResolver), not the child — the resource scope pins to the parent's path identifier so scoped grants on parent siblings still get the engine's one-way covers() rule applied. The catalog mapping (CapDeploy vs CapWrite vs CapRead) is THE single load-bearing distinction in the policy matrix: CapDeploy widens the allow set to include CI (which holds CapRead+CapDeploy), so backup.run is allowed for CI keys even though backup.create (CapWrite) is denied — the policy matrix test pins this distinction at every grant scope (project-, env-, service-, org-level grants) AND at the engine's cross-tenant deny (CapDeploy is OUTSIDE the support cross-tenant exception, same as CapWrite). The bulk fake-fixture sweep for the new positional port follows the BE-0244 pattern: `perl -i -pe 's/fakePREVIOUS\{\},/fakePREVIOUS{}, fakeNEW{},/g' $(grep -rl 'fakePREVIOUS{}' internal/controlplane/httpapi/)` keyed on the immediately preceding port's bare struct literal — 71 files in the BE-0253 sweep — with two always-manual follow-ups: (a) the resource's own create-test helper that uses a local variable `creator` for the previous slot, (b) any wiring test that explicitly passes `nil` for the previous slot to reach the typed-internal guard.
 
-- BE-0309 postgres is the FIRST database-engine clone of the BE-0301/BE-0307 per-service-type renderer-subtype pattern (internal/controlplane/dokploy/renderer_database_postgres_test.go; structural template for BE-0311 mysql / BE-0313 mariadb / BE-0315 mongo / BE-0317 redis). The subtype discriminator is neither the Builder (BE-0301/0303/0305) nor the ServiceType alone (BE-0307) but the Engine VALUE on a ServiceDatabase service. Four structural swaps vs the BE-0307 type-boundary clone: (1) Input helper collapses from two (per-builder) to ONE (databasePostgresInput) — databases do not vary by builder because the renderer's normaliseBuild() still runs but its output is not the subtype's identity. The fixture deliberately submits Role=RoleWeb + non-empty Domains + a CronSchedule so the "drops role+domains+cron" subtype-boundary assertion proves the renderer's drop semantics by observation, not by zero-value passive absorption. (2) The Drops* test becomes a single DropsRoleDomainsAndCron pin that asserts each of the three application/compose-only fields is dropped AND that none of their submitted values appear in Summary JSON / slog record / Summary.String() (the customer-submitted hostname "db.acme.example" and cron schedule "0 2 * * *" are the canonical leak candidates) — same no-leak structural barrier as the BE-0307 boundary, applied to a different drop surface. (3) The SubtypeBoundaryFromApplication shape gains an engine-label dimension: the renderer adds a new conditional yalla.engine label only for ServiceDatabase services (mirroring how yalla.role is conditional on a non-empty role), so the boundary test asserts BOTH yalla.service-type (must be "database") AND yalla.engine (must be "postgres") on the postgres case AND that yalla.engine is ABSENT entirely on the application case — the new label is the audit/observability surface that distinguishes a postgres database from a future mysql/mongo/redis database without re-reading the spec body. (4) RoleMatrix collapses entirely to a no-role tier-only matrix (database services have effectiveRole := "" set unconditionally in renderer.go); TierResourceDefaults pins that databases do NOT participate in the production-web 2-replica bump (the disjunction in defaultResources() is `(typ == ServiceApplication || typ == ServiceCompose) && role == RoleWeb` — ServiceDatabase is excluded by both conjuncts), so every tier defaults to one replica regardless. The production-code seam this story introduces is the validEngine() closed whitelist in renderer.go: BE-0309 ships only EnginePostgres = "postgres"; BE-0311..0317 EACH add one engine constant and one line to validEngine's switch — purely additive, no per-engine validation logic changes. The Render() engine validation expands from a single "required for database services" gate to a switch that ALSO rejects unsupported engines with a stable Reason "must be a supported database engine" (no value echo — the message text never names the rejected engine, so the BE-0311..0317 stories that add engines do NOT need to change the message). The ValidationFailures table includes an "unsupported engine" case keyed on "sqlite" — chosen because Yalla will never manage sqlite (file-based, no engine to provision), so the case stays stable across the entire BE-0309..0317 family even as the whitelist grows. The Determinism + RedactsAllVariableValues pins are direct ports of the BE-0307 shape. database.golden in testdata/renderer/ needs the +yalla.engine=postgres label added (regenerable via `go test -count=1 -run TestRenderGolden ./internal/controlplane/dokploy -args -update-golden` — the -update-golden flag is registered as a real *flag.Bool via init() in internal/testutil/golden.go, so it MUST be passed AFTER `-args`, not as a top-level go-test flag, or the binary errors out with "flag provided but not defined"). The worker-side acceptance criteria (dokploy_refs atomic write, quota reservation-to-conversion, fake Dokploy create/update/deploy/poll/failure/retry/replay) all defer to the later database worker story per the BE-0301 deferral pattern. Forward-applicable verbatim to BE-0311 mysql / BE-0313 mariadb / BE-0315 mongo / BE-0317 redis: each sibling adds ONE engine constant + ONE line to validEngine's switch + a per-engine test file cloned from renderer_database_postgres_test.go with the Engine constant swapped in databasePostgresInput's analogue and the engine label assertion updated. NOT applicable to non-database service types or to subtypes whose discriminator is the Builder or the ServiceType.
+- BE-0309 postgres is the FIRST database-engine clone of the BE-0301/BE-0307 per-service-type renderer-subtype pattern (internal/controlplane/dokploy/renderer_database_postgres_test.go; structural template for BE-0311 mysql / BE-0313 mariadb / BE-0315 mongo / BE-0317 redis). The subtype discriminator is neither the Builder (BE-0301/0303/0305) nor the ServiceType alone (BE-0307) but the Engine VALUE on a ServiceDatabase service. Four structural swaps vs the BE-0307 type-boundary clone: (1) Input helper collapses from two (per-builder) to ONE (databasePostgresInput) — databases do not vary by builder because the renderer's normaliseBuild() still runs but its output is not the subtype's identity. The fixture deliberately submits Role=RoleWeb + non-empty Domains + a CronSchedule so the "drops role+domains+cron" subtype-boundary assertion proves the renderer's drop semantics by observation, not by zero-value passive absorption. (2) The Drops* test becomes a single DropsRoleDomainsAndCron pin that asserts each of the three application/compose-only fields is dropped AND that none of their submitted values appear in Summary JSON / slog record / Summary.String() (the customer-submitted hostname "db.acme.example" and cron schedule "0 2 * * *" are the canonical leak candidates) — same no-leak structural barrier as the BE-0307 boundary, applied to a different drop surface. (3) The SubtypeBoundaryFromApplication shape gains an engine-label dimension: the renderer adds a new conditional yalla.engine label only for ServiceDatabase services (mirroring how yalla.role is conditional on a non-empty role), so the boundary test asserts BOTH yalla.service-type (must be "database") AND yalla.engine (must be "postgres") on the postgres case AND that yalla.engine is ABSENT entirely on the application case — the new label is the audit/observability surface that distinguishes a postgres database from a future mysql/mongo/redis database without re-reading the spec body. (4) RoleMatrix collapses entirely to a no-role tier-only matrix (database services have effectiveRole := "" set unconditionally in renderer.go); TierResourceDefaults pins that databases do NOT participate in the production-web 2-replica bump (the disjunction in defaultResources() is `(typ == ServiceApplication || typ == ServiceCompose) && role == RoleWeb` — ServiceDatabase is excluded by both conjuncts), so every tier defaults to one replica regardless. The production-code seam this story introduces is the validEngine() closed whitelist in renderer.go: BE-0309 ships only EnginePostgres = "postgres"; BE-0311..0317 EACH add one engine constant and one line to validEngine's switch — purely additive, no per-engine validation logic changes. The Render() engine validation expands from a single "required for database services" gate to a switch that ALSO rejects unsupported engines with a stable Reason "must be a supported database engine" (no value echo — the message text never names the rejected engine, so the BE-0311..0317 stories that add engines do NOT need to change the message). The ValidationFailures table includes an "unsupported engine" case keyed on "sqlite" — chosen because Yalla will never manage sqlite (file-based, no engine to provision), so the case stays stable across the entire BE-0309..0317 family even as the whitelist grows. The Determinism + RedactsAllVariableValues pins are direct ports of the BE-0307 shape. database.golden in testdata/renderer/ needs the +yalla.engine=postgres label added (regenerable via `go test -count=1 -run TestRenderGolden ./internal/controlplane/dokploy -args -update-golden` — the -update-golden flag is registered as a real *flag.Bool via init() in internal/testutil/golden.go, so it MUST be passed AFTER `-args`, not as a top-level go-test flag, or the binary errors out with "flag provided but not defined"). The worker-side acceptance criteria (dokploy_refs atomic write, quota reservation-to-conversion, fake Dokploy create/update/deploy/poll/failure/retry/replay) all defer to the later database worker story per the BE-0301 deferral pattern. Forward-applicable verbatim to BE-0313 mariadb / BE-0315 mongo / BE-0317 redis (BE-0311 mysql landed: validEngine extended to `case EnginePostgres, EngineMysql`; renderer_database_mysql_test.go pins the mysql contract; the closed-set extension is one comma + one identifier per remaining sibling): each sibling adds ONE engine constant + ONE line to validEngine's switch + a per-engine test file cloned from renderer_database_postgres_test.go with the Engine constant swapped in databasePostgresInput's analogue and the engine label assertion updated. NOT applicable to non-database service types or to subtypes whose discriminator is the Builder or the ServiceType.
 
 ## 2026-05-15 - BE-0103
 - What was implemented: GET /v1/organizations/{org_id}/audit-events, the
@@ -20429,4 +20429,110 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     language=shell is the same known limitation BE-0291/0294/0297
     progress entries document. Use Bash directly for `go build`,
     `go test`, `go vet` against this repository.
+---
+
+
+## 2026-05-16 - BE-0311
+- What was implemented: per-engine renderer-subtype contract pin for the
+  "mysql" managed database engine — the second clone (after BE-0309
+  postgres) of the BE-0301/BE-0307/BE-0309 per-service-type renderer
+  pattern. Discriminator is the Engine value on a ServiceDatabase service;
+  closed validEngine() whitelist gains one constant + one switch arm.
+- Files changed:
+  - internal/controlplane/dokploy/renderer.go: added EngineMysql constant
+    and extended validEngine's switch from `case EnginePostgres` to
+    `case EnginePostgres, EngineMysql`. Single seam, purely additive,
+    no per-engine validation logic changes — exactly the extension shape
+    BE-0309 set up for the BE-0311..0317 family.
+  - internal/controlplane/dokploy/renderer_database_mysql_test.go (new):
+    structural clone of renderer_database_postgres_test.go with the
+    engine constant swapped — TestRenderDatabaseMysqlSuccess (asserts
+    Service.Engine==EngineMysql verbatim AND yalla.engine label=="mysql"
+    AND role/domains/cron dropped), TestRenderDatabaseMysqlSubtypeBoundaryFromApplication
+    (mysql-stays-mysql vs application-stays-application — engine label
+    PRESENT on mysql case, ABSENT on application case),
+    TestRenderDatabaseMysqlDropsRoleDomainsAndCron (the three
+    application/compose-only fields are dropped AND none leak into
+    Summary JSON / slog record / Summary.String()),
+    TestRenderDatabaseMysqlValidationFailures (8-case table including
+    the database-specific missing-engine and unsupported-engine "sqlite"
+    cases — "sqlite" stays the unsupported-engine sentinel across the
+    BE-0309..0317 family because Yalla will never manage it),
+    TestRenderDatabaseMysqlTierResourceDefaults (no 2-replica
+    production-web bump for database services because effectiveRole==""),
+    TestRenderDatabaseMysqlRedactsAllVariableValues (verbatim secret
+    reaches the worker but every debug surface shows output.Sentinel),
+    TestRenderDatabaseMysqlDeterministic.
+  - ralph/prd.json: BE-0311.passes flipped false -> true.
+  - ralph/progress.txt: appended this entry + the Codebase Patterns
+    one-line update on the existing BE-0309 entry showing mysql is now
+    the second resident of the validEngine whitelist.
+- Verification run:
+  - gofmt -l . (empty diff)
+  - go mod tidy (no changes)
+  - go vet ./... (clean)
+  - go test -count=1 -run 'DatabaseMysql|DatabasePostgres' ./internal/controlplane/dokploy (ok)
+  - go test ./... (37 packages ok, 0 fail, 5 no-tests)
+  - go test -race ./... (37 packages ok, 0 fail)
+- Results: all green. goimports / golangci-lint / staticcheck / govulncheck
+  remain not installed locally (documented in earlier iterations).
+- Remaining risks / follow-ups:
+  - BE-0313 mariadb / BE-0315 mongo / BE-0317 redis each remain pending
+    and now follow the exact same shape: one engine constant + one
+    switch arm in validEngine + a per-engine test file cloned from
+    renderer_database_mysql_test.go (or postgres) with the engine
+    swapped. The BE-0311 commit narrows the remaining work to a
+    mechanical 3-line + 1-file extension per sibling story.
+  - The worker-side acceptance criteria for BE-0311 (dokploy_refs atomic
+    write after Dokploy ensure, quota reservation-to-conversion, fake
+    Dokploy create/update/deploy/poll/failure/retry/replay) continue to
+    defer to a later database worker story per the BE-0301 deferral
+    pattern. The renderer-side contract pinned by this story is the
+    structural barrier the worker depends on (Engine preserved verbatim,
+    label surfaced, application/compose-only fields dropped, byte-stable
+    determinism, redaction proven).
+- **Learnings for future iterations:**
+  - The validEngine whitelist extension from a single-case switch to a
+    two-case "case EnginePostgres, EngineMysql" comma list is the most
+    compact (and most idiomatic Go) shape for the closed-set extension.
+    BE-0313..0317 should keep extending the same case-list (one comma +
+    one identifier per story) rather than promoting it to one switch
+    arm per engine — the message "must be a supported database engine"
+    never names a value, so a longer comma list does not add per-engine
+    branching anywhere.
+  - The postgres test file's "unsupported engine" case used "sqlite" as
+    the rejected value. Cloning that case for mysql works without
+    modification because "sqlite" stays outside the whitelist for the
+    entire BE-0309..0317 family. Do NOT use the sibling engine name
+    ("postgres" in the mysql file, or "mysql" in the postgres file) as
+    the unsupported value — it would falsely pass for the SIBLING-engine
+    story even if validEngine accidentally accepted it.
+  - leakyValues in TestRenderDatabaseMysqlValidationFailures intentionally
+    OMITS "mysql" itself (the engine string under test) for the same
+    reason the postgres file omits "postgres": those are the legitimate
+    happy-path engine values and would never appear as a leaked
+    submitted value anyway.
+  - The yalla.engine label is the ONLY new audit/observability label the
+    BE-0309..0317 family introduces. Every cloned test file asserts BOTH
+    yalla.service-type=="database" AND yalla.engine=="<engine>" on the
+    database case AND yalla.engine ABSENT entirely on the application
+    case. Future engine stories must keep both assertions even if they
+    seem redundant — they jointly defend against a refactor that
+    silently re-routes the label key (e.g. renaming yalla.engine to
+    yalla.db-engine) breaking only one of the two assertion sites.
+  - database.golden in testdata/renderer/ was set up by BE-0309 to embed
+    yalla.engine="postgres" for the lone database golden scenario. The
+    BE-0311 mysql sibling does NOT add a second golden — goldenScenarios()
+    in renderer_test.go covers ONE database scenario (postgres) and that
+    coverage is sufficient because the engine-discriminator behaviour is
+    pinned by the per-engine test files, not the golden. Future engine
+    stories should follow the same rule: extend validEngine + add a
+    per-engine test file + DO NOT add a new golden scenario unless the
+    rendered Summary shape diverges in some non-engine dimension.
+  - go test invocations from the sandbox subprocess fail because the
+    sandbox treats /Users/juribadev/projects/poc/yalla as a system temp
+    root and ignores go.mod. Run go test, go vet, go mod tidy, and
+    gofmt-on-the-tree from the Bash tool directly (not from
+    ctx_execute), and pipe their long output to /tmp/<name>.log so only
+    the summary lines (exit code + ok/fail counters) flow into context.
 ---

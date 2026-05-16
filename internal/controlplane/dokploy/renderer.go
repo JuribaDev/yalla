@@ -104,6 +104,8 @@ const (
 const (
 	// EnginePostgres is the PostgreSQL managed engine.
 	EnginePostgres = "postgres"
+	// EngineMysql is the MySQL managed engine.
+	EngineMysql = "mysql"
 )
 
 // validEngine reports whether engine is a recognised managed database engine.
@@ -111,7 +113,7 @@ const (
 // BE-0311 mysql; BE-0313 mariadb; BE-0315 mongo; BE-0317 redis).
 func validEngine(engine string) bool {
 	switch engine {
-	case EnginePostgres:
+	case EnginePostgres, EngineMysql:
 		return true
 	default:
 		return false
