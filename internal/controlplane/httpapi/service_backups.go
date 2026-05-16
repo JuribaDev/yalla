@@ -51,6 +51,16 @@ var errNoServiceBackupRunner = errors.New("httpapi: no service backup runner con
 // misleading 2xx with no side effect.
 var errNoServiceBackupUpdater = errors.New("httpapi: no service backup updater configured")
 
+// errNoServiceBackupDeleter is returned when DELETE
+// /v1/services/{service_id}/backups/{backup_id} is reached without
+// a ServiceBackupDeleter wired into NewHandler. Like
+// errNoServiceBackupUpdater it can only happen through a wiring
+// error — a programming mistake, not a client error — so the
+// handler reports it as a typed internal failure rather than
+// serving a misleading 2xx confirming the destruction of a row
+// that was never removed.
+var errNoServiceBackupDeleter = errors.New("httpapi: no service backup deleter configured")
+
 // ServiceBackupReader is the narrow persistence port GET
 // /v1/services/{service_id}/backups depends on.
 // *store.ServiceBackupReader satisfies it in production; tests supply
@@ -675,6 +685,134 @@ func updateServiceBackupHandler(updater ServiceBackupUpdater) http.HandlerFunc {
 		writeOrganizationETag(w, updated.Version)
 		apienvelope.WriteData(w, http.StatusOK, requestID(r), updateServiceBackupPayload{
 			Backup: serviceBackupOf(updated),
+		})
+	}
+}
+
+// ServiceBackupDeleter is the narrow persistence port DELETE
+// /v1/services/{service_id}/backups/{backup_id} depends on.
+// *store.ServiceBackupService satisfies it in production; tests
+// supply a fake. Keeping the dependency an interface keeps the
+// handler unit-testable without a real database — the concrete
+// orchestrator (the tenant-scoped DELETE / optional If-Match
+// precondition / audit append composition committed in one
+// transaction) lives in the store layer.
+//
+// The HTTP boundary is the authoritative authorization gate:
+// RequireAuth authorizes action backup.delete against the (principal
+// home organization, {service_id}) resource the path names through
+// serviceIDResolver, so a request that reaches the deleter has
+// already cleared the policy boundary. The store layer does not
+// re-authorize inside the same *Tx for the delete path:
+// backup.delete is enforced only at the HTTP boundary, matching
+// domain.delete, service.delete, and the other CapWrite delete
+// endpoints — the in-transaction Authorizer is reserved for Create
+// (the create-time race against grant changes during a quota
+// reservation).
+type ServiceBackupDeleter interface {
+	Delete(ctx context.Context, in store.DeleteServiceBackupInput) (store.ServiceBackup, error)
+}
+
+// deleteServiceBackupPayload is the data block of the DELETE
+// /v1/services/{service_id}/backups/{backup_id} success envelope:
+// the backup-policy row as it stood at the moment of removal, in
+// the same stable wire shape every other service-backup endpoint
+// returns. It carries no credential material — a service_backups
+// row stores none (the actual backup artefact bytes live in the
+// worker / Dokploy / object-storage layer and never round-trip
+// through this endpoint). The row is gone from the database by the
+// time this body reaches the wire; an audit trail of the deletion
+// lives independently of the row.
+type deleteServiceBackupPayload struct {
+	Backup serviceBackup `json:"backup"`
+}
+
+// deleteServiceBackupHandler builds the DELETE
+// /v1/services/{service_id}/backups/{backup_id} handler. It
+// delegates to the ServiceBackupDeleter port the tenant-scoped
+// delete + audit unit of work, then projects the deleted snapshot
+// onto the wire. The optional If-Match header is parsed as an
+// optimistic-concurrency precondition before the deleter runs — a
+// malformed If-Match becomes a typed 400 that never echoes the
+// input, and the deleter never runs (a destructive operation that
+// silently degraded into "no precondition" would be a particularly
+// load-bearing footgun).
+//
+// RequireAuth gates the route on action backup.delete before the
+// handler runs — authorized through serviceIDResolver against the
+// (principal home organization, {service_id}) resource the path
+// names — and attaches the resolved principal, so a request that
+// reaches the handler has already cleared the policy boundary.
+// backup.delete is a CapWrite action, so the gate admits the
+// principal's organization-wide write roles (owner, admin,
+// developer, ci) and denies viewer (CapRead only), denies support
+// (CapRead + CapSupport — support is a deliberate cross-tenant READ
+// exception, never a write one). The path carries no parent
+// project_id, so the policy engine cannot pin the ProjectID leg of
+// the resource scope at authorization time — project-, environment-,
+// and service-scoped grants are denied at the boundary by the
+// engine's covers() rule (a grant scope that pins ProjectID cannot
+// cover a resource scope that does not); principals whose only
+// access is a scoped grant must use a parent-scoped route to
+// address a service by its (project, environment, service) tuple.
+//
+// The handler resolves the organization id from the authenticated
+// principal's home organization, the service id from the
+// {service_id} PATH parameter, and the backup id from the
+// {backup_id} PATH parameter — never from the request body (a
+// DELETE has none) — so the tenant boundary is structural here:
+// there is no caller input that could point the delete at another
+// tenant. A cross-tenant service_id or backup_id reaches the
+// persistence layer with the principal's home organization id and
+// is rejected as a deterministic 404 by the store-layer's
+// tenant-scoped DELETE predicate, never disguised as a 200 or a
+// 403 that would confirm the foreign row's existence.
+//
+// The response is 200 OK carrying the deleted backup as a snapshot
+// — agents can confirm what was destroyed without re-reading. The
+// row is gone from the database by the time this body reaches the
+// wire; an audit trail of the deletion lives independently of the
+// row. A 204 No Content was deliberately not chosen: a body-bearing
+// success keeps the wire contract uniform with every other
+// service-backup endpoint and prevents agents from special-casing
+// the no-body code path.
+func deleteServiceBackupHandler(deleter ServiceBackupDeleter) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if deleter == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoServiceBackupDeleter))
+			return
+		}
+
+		ifMatchVersion, ifMatchErr := parseIfMatchVersion(r)
+		if ifMatchErr != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(ifMatchErr))
+			return
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		deleted, err := deleter.Delete(r.Context(), store.DeleteServiceBackupInput{
+			OrganizationID: p.OrganizationID,
+			ServiceID:      r.PathValue("service_id"),
+			BackupID:       r.PathValue("backup_id"),
+			IfMatchVersion: ifMatchVersion,
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), deleteServiceBackupPayload{
+			Backup: serviceBackupOf(deleted),
 		})
 	}
 }

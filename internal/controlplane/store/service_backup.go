@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -297,6 +298,13 @@ const serviceBackupRunAction = "backup.run"
 // constant lives in the store layer because the audit event is
 // written from the same *Tx as the desired-state row update.
 const serviceBackupUpdateAction = "backup.update"
+
+// serviceBackupDeleteAction is the immutable audit-event Action
+// string emitted when a service backup policy is destroyed through
+// DELETE /v1/services/{service_id}/backups/{backup_id}. The constant
+// lives in the store layer because the audit event is written from
+// the same *Tx as the row removal.
+const serviceBackupDeleteAction = "backup.delete"
 
 // serviceBackupDefaultRetentionCount is the retention applied when the
 // caller does not supply one; the table's default is the same, so a
@@ -1245,4 +1253,209 @@ func (svc *ServiceBackupService) Update(ctx context.Context, in UpdateServiceBac
 		return ServiceBackup{}, txErr
 	}
 	return updated, nil
+}
+
+// DeleteByID removes the service_backups row identified by
+// (organizationID, serviceID, backupID) and returns the deleted row
+// as it stood at the moment of removal so the caller can render it
+// onto the wire and the audit record can name the row that was
+// destroyed. service_backups has no soft-delete column — a backup
+// policy is desired-state configuration, not a continuing audit-trail
+// tie that must outlive the row, so the row is removed outright (the
+// audit trail of the deletion lives independently of the row). The
+// delete is tenant scoped: the predicate filters on organization_id
+// first so a cross-tenant or unknown (service_id, backup_id) tuple
+// matches no rows even when a backup with the same id exists in
+// another tenant, and the response is never an oracle that confirms
+// another organization's backup ids.
+//
+// When ifMatchVersion is nil the predicate matches on
+// (organization_id, service_id, id) alone — next-write-wins. When it
+// is non-nil the predicate ALSO requires version = *ifMatchVersion
+// so a concurrent writer landing between the caller's read and this
+// delete is rejected with a typed apierr.ConflictStale carrying the
+// row's authoritative version. The pointer indirection distinguishes
+// "caller did not supply a precondition" from "caller supplied
+// version 0", which is impossible by schema CHECK and must not
+// silently behave like the unchecked path. A no-row delete with a
+// non-nil precondition disambiguates through
+// classifyServiceBackupConcurrencyMiss into either NotFound (row
+// really is gone) or ConflictStale (version moved under the caller's
+// feet).
+func (r *ServiceBackupRepository) DeleteByID(ctx context.Context, tx *Tx, organizationID, serviceID, backupID string, ifMatchVersion *int64) (ServiceBackup, error) {
+	if tx == nil {
+		return ServiceBackup{}, apierr.Internal(errors.New("store: ServiceBackupRepository.DeleteByID called with a nil transaction"))
+	}
+	var row pgx.Row
+	if ifMatchVersion == nil {
+		row = tx.QueryRow(ctx,
+			`DELETE FROM service_backups
+			  WHERE organization_id = $1 AND service_id = $2 AND id = $3
+			 RETURNING `+serviceBackupColumns,
+			organizationID, serviceID, backupID)
+	} else {
+		row = tx.QueryRow(ctx,
+			`DELETE FROM service_backups
+			  WHERE organization_id = $1 AND service_id = $2 AND id = $3 AND version = $4
+			 RETURNING `+serviceBackupColumns,
+			organizationID, serviceID, backupID, *ifMatchVersion)
+	}
+	deleted, err := scanServiceBackup(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if ifMatchVersion == nil {
+			return ServiceBackup{}, apierr.NotFound("service backup", backupID)
+		}
+		return ServiceBackup{}, classifyServiceBackupConcurrencyMiss(ctx, tx, organizationID, serviceID, backupID, *ifMatchVersion)
+	}
+	if err != nil {
+		return ServiceBackup{}, apierr.StoreUnavailable(err)
+	}
+	return deleted, nil
+}
+
+// DeleteServiceBackupInput is the typed input shape
+// ServiceBackupService.Delete accepts. OrganizationID identifies the
+// tenant the backup belongs to and is always taken from the
+// authenticated principal's home org at the httpapi layer (never
+// from caller-controlled request input). ServiceID and BackupID name
+// the service_backups row to remove and are always taken from path
+// parameters at the httpapi layer.
+//
+// IfMatchVersion is the optional optimistic-concurrency precondition:
+// when non-nil, the delete succeeds only if the row's current version
+// equals *IfMatchVersion at write time, otherwise it returns a typed
+// apierr.ConflictStale carrying the row's authoritative version. The
+// httpapi layer fills it from the request's If-Match header. A nil
+// pointer disables the check (next-write-wins). The pointer
+// indirection distinguishes "caller did not supply a precondition"
+// from "caller supplied version 0", which is impossible by schema
+// CHECK and must not silently behave like the unchecked path.
+//
+// A DELETE has no body, so no mutable-field shape lives on this
+// struct — the only path-parameter validation the service performs
+// is that none of OrganizationID, ServiceID, or BackupID is blank.
+// The Actor* and correlation fields describe the authenticated
+// principal performing the deletion and are recorded verbatim on
+// the audit event; they are plain strings so the store layer takes
+// no build dependency on the policy or telemetry packages — the
+// httpapi handler, which already holds the resolved principal and
+// the request correlation, fills them in.
+type DeleteServiceBackupInput struct {
+	OrganizationID string
+	ServiceID      string
+	BackupID       string
+	IfMatchVersion *int64
+	ActorID        string
+	ActorKind      string
+	ActorOrgID     string
+	RequestID      string
+	CorrelationID  string
+}
+
+// Delete runs the delete-backup unit of work inside one transaction:
+// remove the service_backups row identified by (OrganizationID,
+// ServiceID, BackupID), optionally enforce the If-Match precondition,
+// and append the immutable audit record. Validation of the input
+// shape (path identifiers, actor org) runs before the transaction
+// is opened, so an obviously invalid request never touches the
+// database.
+//
+// service_backups has no soft-delete column — a backup policy is
+// desired-state configuration, not a continuing audit-trail tie that
+// must outlive the row, so the row is removed outright. The
+// returned snapshot is the row exactly as it stood at the moment of
+// removal so the caller can confirm what was deleted. The HTTP layer
+// projects the snapshot through the same wire-shape every other
+// service-backup endpoint uses; the row carries no credential
+// material (the actual backup artefact bytes live in the worker /
+// Dokploy / object-storage layer and never round-trip through this
+// table).
+//
+// Tenant scoping is enforced at the persistence layer: the DELETE
+// predicate filters on organization_id first, so a cross-tenant or
+// unknown {service_id, backup_id} tuple matches no rows and the
+// service surfaces it as a deterministic apierr.NotFound. The audit
+// record is rolled back with the missed delete so an audit trail can
+// never name a deletion that did not happen.
+//
+// Authorization for backup.delete is enforced at the HTTP boundary
+// by RequireAuth against the (home organization, service_id)
+// resource the path names — the store layer never runs an
+// in-transaction Authorize for the delete path because the HTTP
+// gate is authoritative and the in-transaction Authorizer is
+// reserved for Create (the create-time race against grant changes
+// during a quota reservation).
+//
+// The audit event is filed under the actor's home organization (the
+// tenant the principal authenticated into) with
+// resource_kind=service_backup and resource_id={backup_id}. Metadata
+// records the structural identifiers (service_id) and the closed-
+// taxonomy enums and bounded scalars (status, enabled,
+// retention_count, version) verbatim — none carries secret material,
+// so they are safe to record as audit context — and never includes
+// the caller-controlled display_name or schedule free text.
+func (svc *ServiceBackupService) Delete(ctx context.Context, in DeleteServiceBackupInput) (ServiceBackup, error) {
+	c := validate.New()
+	organizationID := strings.TrimSpace(in.OrganizationID)
+	validate.ID(c, "organization_id", organizationID, domain.KindOrganization)
+	serviceID := strings.TrimSpace(in.ServiceID)
+	validate.ID(c, "service_id", serviceID, domain.KindService)
+	backupID := strings.TrimSpace(in.BackupID)
+	validate.ID(c, "id", backupID, domain.KindServiceBackup)
+	if err := c.Err(); err != nil {
+		return ServiceBackup{}, err
+	}
+
+	actorOrgID := strings.TrimSpace(in.ActorOrgID)
+	if actorOrgID == "" {
+		return ServiceBackup{}, apierr.Internal(errors.New("store: ServiceBackupService.Delete requires an actor organization for the audit record"))
+	}
+
+	var deleted ServiceBackup
+	txErr := svc.store.Write(ctx, func(ctx context.Context, tx *Tx) error {
+		row, delErr := svc.backups.DeleteByID(ctx, tx, organizationID, serviceID, backupID, in.IfMatchVersion)
+		if delErr != nil {
+			return delErr
+		}
+
+		event := AuditEvent{
+			OrganizationID: actorOrgID,
+			ActorID:        strings.TrimSpace(in.ActorID),
+			ActorKind:      strings.TrimSpace(in.ActorKind),
+			Action:         serviceBackupDeleteAction,
+			ResourceKind:   string(domain.KindServiceBackup),
+			ResourceID:     row.ID,
+			Decision:       AuditDecisionAllowed,
+			Reason:         "authorization granted for backup.delete",
+			RequestID:      strings.TrimSpace(in.RequestID),
+			CorrelationID:  strings.TrimSpace(in.CorrelationID),
+			// service_id is a structural identifier (never secret
+			// material). status is a closed-taxonomy enum
+			// (disabled/pending/running/succeeded/failed), enabled is a
+			// boolean, retention_count is a schema-bounded integer, and
+			// version is the row's last authoritative version before
+			// removal (useful for forensics and idempotency analysis) —
+			// each is safe to record verbatim by construction. The
+			// display_name and schedule are caller-controlled free text
+			// and are NOT recorded as audit metadata, to keep the audit
+			// row free of any value the application layer cannot prove
+			// redaction-safe by construction.
+			Metadata: map[string]string{
+				"service_id":      row.ServiceID,
+				"status":          row.Status,
+				"enabled":         boolStr(row.Enabled),
+				"retention_count": strconvI(row.RetentionCount),
+				"version":         strconv.FormatInt(row.Version, 10),
+			},
+		}
+		if _, audErr := svc.audit.Append(ctx, tx, event); audErr != nil {
+			return audErr
+		}
+		deleted = row
+		return nil
+	})
+	if txErr != nil {
+		return ServiceBackup{}, txErr
+	}
+	return deleted, nil
 }

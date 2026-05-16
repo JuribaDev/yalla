@@ -5806,8 +5806,8 @@
       ],
       "type": "endpoint-backup",
       "priority": 2,
-      "passes": false,
-      "notes": "Endpoint belongs to the backup backend surface."
+      "passes": true,
+      "notes": "Implemented DELETE /v1/services/{service_id}/backups/{backup_id} end-to-end (mirrors the service_domains DELETE vertical BE-0244+0245+0246). store/service_backup.go: serviceBackupDeleteAction constant + ServiceBackupRepository.DeleteByID (tenant-scoped DELETE...RETURNING, optional If-Match version predicate, classifyServiceBackupConcurrencyMiss reuse for disambiguating row-missing vs stale-version) + DeleteServiceBackupInput + ServiceBackupService.Delete orchestrator (validate path identifiers + actor org -> Tx: DeleteByID + audit append with service_id/status/enabled/retention_count/version metadata). httpapi/service_backups.go: ServiceBackupDeleter port + errNoServiceBackupDeleter sentinel + deleteServiceBackupPayload + deleteServiceBackupHandler (RequireAuth -> typed-internal guards -> parseIfMatchVersion -> deleter.Delete -> 200 yalla.output.v1 with deleted snapshot). routes.go: DELETE /v1/services/{service_id}/backups/{backup_id} route registered with operationId=deleteServiceBackup, RequiredAction=backup.delete, serviceIDResolver, two path params (service_id, backup_id). server.go + cmd/yalla-api/main.go + 75 test files updated to thread ServiceBackupDeleter through NewHandler/newRouteTable."
     },
     {
       "id": "BE-0260",
@@ -5825,8 +5825,8 @@
       ],
       "type": "test-backup",
       "priority": 2,
-      "passes": false,
-      "notes": "Contract coverage for DELETE /v1/services/{service_id}/backups/{backup_id}."
+      "passes": true,
+      "notes": "Contract suite service_backups_delete_test.go: declares fakeServiceBackupDeleter, deleteServiceBackupHandlerFor wires NewHandler with real engine + canned deleter, deleteServiceBackup / deleteServiceBackupWithIfMatch issue DELETE with optional If-Match. Coverage: happy path forwards principal home org + path service_id + path backup_id + actor identity (org never trusted from caller); If-Match header parsed as strong ETag forwarded as pointer to version; malformed If-Match 400 with deleter not reached (load-bearing no-run assertion for a destructive op); stale If-Match 409 with details.current_version; NotFound 404; InvalidInput 400; unauthenticated 401 with no-run assertion; StoreUnavailable 5xx; nil-principal / nil-deleter both surface as typed Internal; OpenAPI document registers operationId=deleteServiceBackup, path /v1/services/{service_id}/backups/{backup_id}, RequiredAction=backup.delete; X-Request-Id propagation honoured verbatim."
     },
     {
       "id": "BE-0261",
@@ -5844,8 +5844,8 @@
       ],
       "type": "policy-backup",
       "priority": 1,
-      "passes": false,
-      "notes": "Authorization coverage for DELETE /v1/services/{service_id}/backups/{backup_id}."
+      "passes": true,
+      "notes": "Policy matrix service_backups_delete_policy_test.go: roles (owner/admin/developer allowed via ReasonAllowedByRole; ci/viewer/support denied via ReasonDeniedNoCapability — backup.delete is CapWrite, NOT in the cross-tenant Support exception), revoked + expired credentials (deny via ReasonDeniedPrincipalDisabled, no body leak of principal/org/seeded backup data, deleter not reached — load-bearing for a destructive verb), wrong-org cross-tenant principal (wire 404 + engine cross-tenant deny pinned for all six roles via ReasonDeniedCrossTenant, no foreign-org leak in error.message), grant containment (project-scoped developer allowed inside target project / denied sibling project / denied at bare-id route via ReasonDeniedOutOfScope; project-scoped viewer + CI grants denied via ReasonDeniedNoCapability even inside the target project; env-grant on staging allowed inside staging / denied on production / denied at bare-id route; service-scoped grant allowed on full scope / denied on sibling service / denied at bare-id route; org-Admin allowed end-to-end on the bare-id route; org-Viewer denied at engine via ReasonDeniedNoCapability)."
     },
     {
       "id": "BE-0262",
