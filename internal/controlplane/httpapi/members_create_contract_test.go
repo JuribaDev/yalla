@@ -1,0 +1,232 @@
+package httpapi
+
+import (
+	"bytes"
+	stderrors "errors"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
+	"github.com/JuribaDev/yalla/internal/controlplane/auth"
+	"github.com/JuribaDev/yalla/internal/controlplane/policy"
+	"github.com/JuribaDev/yalla/internal/controlplane/runtime"
+)
+
+// Public-API contract coverage for POST /v1/organizations/{org_id}/members
+// (BE-0065).
+//
+// members_create_test.go already proves the 201 success envelope, the stable
+// yalla.output.v1 / yalla.error.v1 schema versions, the request_id
+// propagation, the OpenAPI operation registration, the malformed-body /
+// unknown-field / invalid-input / unauthenticated / invalid-credentials /
+// disabled-principal / cross-tenant / user-not-found / duplicate-conflict /
+// dependency-failure rejection space, and the "the handler forwards the
+// validated request body, the {org_id} path parameter, and the authenticated
+// actor to the MembershipCreator port unchanged" wiring invariant. This file
+// closes the remaining contract-test criteria those tests do not assert
+// directly:
+//
+//   - the HTTP server writes response data only through the http.ResponseWriter
+//     — never to the process stdout/stderr;
+//   - the per-request structured log stays redacted, on the success path AND
+//     the authorization-failure path, so a bearer credential is never logged;
+//   - an error envelope built from a wrapped dependency cause never leaks that
+//     cause onto the wire.
+//
+// Structural twin of organizations_create_contract_test.go (BE-0050), adapted
+// to the members POST request shape ({org_id} path parameter,
+// MembershipCreator port, addMemberPayload response data block).
+
+// addMemberContractSecret is a recognisable bearer credential used by the
+// redaction tests: if any byte of it reaches a log record or a response body,
+// the test fails.
+const addMemberContractSecret = "yk_live_supersecret_members_create_DEADBEEF0123456789"
+
+// addMemberHandlerForWithLogger builds the production POST
+// /v1/organizations/{org_id}/members request path (real policy engine, fake
+// Authenticator, caller-supplied membership creator) with a caller-supplied
+// logger so a test can inspect the structured request log. It mirrors
+// addMemberHandlerFor for the create-membership endpoint, with the logger
+// threaded into NewHandler so the per-request slog record lands in the
+// caller's buffer.
+func addMemberHandlerForWithLogger(
+	id auth.Identity, authErr error, creator MembershipCreator, logger *slog.Logger,
+) http.Handler {
+	a := fakeAuthenticator{identity: id, err: authErr}
+	return NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, nil, a, policy.NewEngine(),
+		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
+		fakeMembershipReader{}, creator, fakeMembershipUpdater{}, fakeMembershipRemover{},
+		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{},
+		fakeOrgVariableReader{}, fakeOrgVariableReplacer{}, fakeOrgVariablePatcher{}, fakeOrgVariableDeleter{},
+		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
+		fakeProjectReader{}, fakeProjectCreator{}, fakeProjectUpdater{}, fakeProjectDeleter{}, fakeProjectRestorer{},
+		fakeProjectGrantReader{}, fakeProjectGrantReplacer{},
+		fakeProjectVariableReader{}, fakeProjectVariableReplacer{},
+		fakeProjectEnvironmentReader{},
+		fakeEnvironmentCreator{}, fakeEnvironmentReader{}, fakeEnvironmentUpdater{}, fakeEnvironmentDeleter{}, fakeEnvironmentCloner{},
+		fakeEnvironmentGrantReader{}, fakeEnvironmentGrantReplacer{},
+		fakeEnvironmentVariableReader{}, fakeEnvironmentVariableReplacer{},
+		fakeEnvironmentServiceReader{}, fakeEnvironmentServiceCreator{},
+		fakeServiceReader{}, fakeServiceUpdater{}, fakeServiceDeleter{}, fakeServiceRestorer{},
+		fakeServiceRestarter{}, fakeServiceStarter{}, fakeServiceStopper{},
+		fakeServiceLogReader{}, fakeServiceMetricsReader{},
+		fakeServiceDomainReader{}, fakeServiceDomainCreator{}, fakeServiceDomainUpdater{}, fakeServiceDomainDeleter{},
+		fakeServiceBackupReader{}, fakeServiceBackupCreator{}, fakeServiceBackupUpdater{}, fakeServiceBackupRunner{}, fakeServiceBackupDeleter{},
+		fakeServiceVariableReader{}, fakeServiceVariableReplacer{},
+		fakeDeploymentCreator{}, fakeDeploymentLister{}, fakeDeploymentGetter{}, fakeDeploymentCanceler{}, fakeDeploymentRollbacker{},
+		fakeBreakGlassController{}, logger, nil)
+}
+
+// TestAddMemberServerWritesResponseDataOnlyToResponseWriter proves the HTTP
+// server renders the response through the http.ResponseWriter alone: a served
+// POST /v1/organizations/{org_id}/members writes nothing to the process
+// stdout/stderr, and the added-member payload is carried by the response
+// body.
+func TestAddMemberServerWritesResponseDataOnlyToResponseWriter(t *testing.T) {
+	// Not parallel: captureProcessOutput swaps the global os.Stdout/os.Stderr.
+
+	created := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	creator := fakeMembershipCreator{member: seedMember(
+		"org_acme", "usr_grace", "grace@acme.example", "Grace Hopper", "admin", 1, created, created)}
+	handler := addMemberHandlerForWithLogger(
+		auth.Identity{Principal: orgPrincipal("usr_ada", "org_acme", policy.RoleOwner), Method: auth.MethodSession},
+		nil, creator, logger,
+	)
+
+	var rec *httptest.ResponseRecorder
+	stdout, stderr := captureProcessOutput(t, func() {
+		rec = postMember(handler, "org_acme", addMemberContractSecret,
+			`{"user_id":"usr_grace","role":"admin"}`)
+	})
+
+	if stdout != "" {
+		t.Errorf("HTTP server wrote %q to stdout, want nothing — response data must go through the ResponseWriter", stdout)
+	}
+	if stderr != "" {
+		t.Errorf("HTTP server wrote %q to stderr, want nothing — response data must go through the ResponseWriter", stderr)
+	}
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body %s", rec.Code, rec.Body.String())
+	}
+	env := decodeAddMember(t, rec)
+	if env.Data.Member.UserID != "usr_grace" {
+		t.Errorf("user_id = %q, want usr_grace — the data must be carried by the response body",
+			env.Data.Member.UserID)
+	}
+	if env.Data.Member.Role != "admin" {
+		t.Errorf("role = %q, want admin — the data must be carried by the response body",
+			env.Data.Member.Role)
+	}
+	// The structured logger is the only sanctioned writer, and it goes to its
+	// own sink — never to the response and never to the process streams.
+	if logBuf.Len() == 0 {
+		t.Error("structured request log is empty, want one record for the served request")
+	}
+}
+
+// TestAddMemberRequestLogRedactsBearerToken proves the per-request structured
+// log never carries the bearer credential — on the happy path and on the
+// authorization-failure path alike. Headers are not logged at all; this test
+// pins that contract so a future logging change cannot quietly start leaking
+// credentials.
+func TestAddMemberRequestLogRedactsBearerToken(t *testing.T) {
+	t.Parallel()
+
+	owner := orgPrincipal("usr_ada", "org_acme", policy.RoleOwner)
+	disabled := orgPrincipal("usr_revoked", "org_acme", policy.RoleOwner)
+	disabled.Disabled = true
+
+	created := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	successCreator := fakeMembershipCreator{member: seedMember(
+		"org_acme", "usr_grace", "grace@acme.example", "Grace Hopper", "admin", 1, created, created)}
+	// The disabled-principal request must never reach the creator. A creator
+	// that would error if invoked proves the deny path short-circuits at
+	// policy, so any logged "creator error" can't be the leak source.
+	denyCreator := fakeMembershipCreator{err: stderrors.New("creator must not be called")}
+
+	tests := []struct {
+		name       string
+		identity   auth.Identity
+		creator    MembershipCreator
+		wantStatus int
+	}{
+		{
+			name:       "success path",
+			identity:   auth.Identity{Principal: owner, Method: auth.MethodSession},
+			creator:    successCreator,
+			wantStatus: http.StatusCreated,
+		},
+		{
+			name:       "authorization failure path",
+			identity:   auth.Identity{Principal: disabled, Method: auth.MethodSession},
+			creator:    denyCreator,
+			wantStatus: http.StatusForbidden,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var logBuf bytes.Buffer
+			logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+			handler := addMemberHandlerForWithLogger(tc.identity, nil, tc.creator, logger)
+
+			rec := postMember(handler, "org_acme", addMemberContractSecret,
+				`{"user_id":"usr_grace","role":"admin"}`)
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d; body %s", rec.Code, tc.wantStatus, rec.Body.String())
+			}
+			if logBuf.Len() == 0 {
+				t.Fatal("structured request log is empty, want one record for the served request")
+			}
+			if strings.Contains(logBuf.String(), addMemberContractSecret) {
+				t.Errorf("request log leaked the bearer credential: %s", logBuf.String())
+			}
+			if strings.Contains(rec.Body.String(), addMemberContractSecret) {
+				t.Errorf("response body echoed the bearer credential: %s", rec.Body.String())
+			}
+		})
+	}
+}
+
+// TestAddMemberErrorEnvelopeDoesNotLeakDependencyCause proves a creator-store
+// outage surfaces as a typed 5xx whose error envelope carries a stable
+// generic message — the wrapped driver cause (host, port, "connection
+// refused") is kept for server-side logs only and never reaches the client.
+// members_create_test.go pins the typed-status part of this contract
+// (TestAddMemberDependencyFailureIsTyped5xx); this test pins the "the wrapped
+// cause stays server-side" half that lives on the wire, including the bare
+// datastore address that the cause string carries.
+func TestAddMemberErrorEnvelopeDoesNotLeakDependencyCause(t *testing.T) {
+	t.Parallel()
+
+	const cause = "connection refused dialing 10.0.0.5:5432"
+	creator := fakeMembershipCreator{err: apierr.StoreUnavailable(stderrors.New(cause))}
+	handler := addMemberHandlerFor(
+		auth.Identity{Principal: orgPrincipal("usr_ada", "org_acme", policy.RoleOwner), Method: auth.MethodSession},
+		nil, creator,
+	)
+
+	rec := postMember(handler, "org_acme", addMemberContractSecret,
+		`{"user_id":"usr_grace","role":"admin"}`)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503; body %s", rec.Code, rec.Body.String())
+	}
+	env := decodeError(t, rec, "E_UNAVAILABLE")
+	if env.Error.Message == "" {
+		t.Error("error.message is empty, want a stable generic message")
+	}
+	if strings.Contains(rec.Body.String(), cause) {
+		t.Errorf("error envelope leaked the wrapped dependency cause %q: %s", cause, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "10.0.0.5") {
+		t.Errorf("error envelope leaked the datastore address: %s", rec.Body.String())
+	}
+}
