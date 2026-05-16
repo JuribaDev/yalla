@@ -24904,3 +24904,75 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
   - SECURITY.md acts as the human-facing contract for the static analyser's invariants. EVERY hardening story that adds a static pin should also add a section + verification-gate row to SECURITY.md so the public security policy stays in lockstep with the test. The matcher then pins the SECURITY.md section as a sibling assertion (TestSecurityPolicyDocumentsContainerHardening) — a regression that drops the section is caught as deterministically as a regression that drops the USER directive from the Dockerfile.
   - The fixture-string self-check approach (a `minimalCanonicalDockerfile()` helper + per-matcher table that mutates ONE invariant on top of it) is the cheapest way to keep regression cases independent: a future widening that loosens one matcher cannot accidentally pass a fixture that was constructed to test a different matcher. Reusing the canonical fixture also means new matchers don't need a fresh "good" fixture — just a mutation diff.
 ---
+
+## 2026-05-17 - BE-0095
+- Implemented BE-0095 (Add contract tests for GET /v1/organizations/{org_id}/limits).
+  Three new contract tests landed alongside the existing limits_test.go +
+  limits_policy_test.go coverage, closing the contract-test criteria that
+  the earlier tests did not assert directly: (1) the HTTP server writes
+  response data only through http.ResponseWriter, never to the process
+  stdout/stderr; (2) the per-request structured log never carries the
+  bearer credential, on the success path AND the authorization-failure
+  path; (3) the error envelope built from a wrapped dependency cause
+  never leaks that cause (raw string or datastore address) onto the wire.
+  Structural twin of members_list_contract_test.go (BE-0062) and
+  api_keys_list_contract_test.go (BE-0077), adapted to the limits read
+  request shape ({org_id} path parameter, LimitsReader port).
+- Files changed:
+  - internal/controlplane/httpapi/limits_get_contract_test.go (new): adds
+    listLimitsHandlerForWithLogger (mirrors listMembersHandlerForWithLogger
+    by threading a caller-supplied *slog.Logger into the production
+    NewHandler wiring with a fake Authenticator + real policy.Engine +
+    caller-supplied LimitsReader; the second-to-last NewHandler arg is the
+    logger, the last is the optional auditor — passed nil). Reuses the
+    existing getLimits request helper from limits_policy_test.go and the
+    decodeLimitsList helper from limits_test.go, so the new file adds no
+    scaffolding beyond the WithLogger handler builder, a recognisable
+    bearer credential constant (listLimitsContractSecret), and the three
+    test functions.
+  - ralph/prd.json: BE-0095 marked passes=true.
+- Verification run:
+  - gofmt -l internal/controlplane/httpapi/limits_get_contract_test.go
+    (clean)
+  - go vet ./...  (clean)
+  - go test -count=1 -run 'TestListLimits' ./internal/controlplane/httpapi/...
+    (ok; the 3 new tests + the 12 existing TestListLimits* tests pass)
+  - go test -count=1 ./internal/controlplane/httpapi/... (ok)
+  - go test -count=1 ./... (all packages ok; no-test-files packages remain
+    cmd/yalla, cmd/yalla-api, cmd/yalla-worker, internal/controlplane/jobs,
+    internal/credentials — unchanged from baseline)
+  - go test -race -count=1 -run 'TestListLimits'
+    ./internal/controlplane/httpapi/... (ok; the not-parallel
+    captureProcessOutput test serialises around its os.Stdout/os.Stderr
+    swap by design, the other two new tests are t.Parallel)
+  - go test -race -count=1 ./... (clean — no race detector output)
+- Results: BE-0095 passes; full module remains green.
+- Remaining risks or follow-ups:
+  - golangci-lint / staticcheck / govulncheck were not available on the
+    sandbox PATH; the gofmt + go vet + go test -race + go test pipeline is
+    the documented required minimum and is clean.
+  - goimports is not installed on the sandbox PATH; the file's imports
+    follow the existing httpapi-package convention by hand (stdlib block +
+    blank line + internal block), matching every other *_contract_test.go
+    file in the package.
+- **Learnings for future iterations:**
+  - The `getLimits(handler, orgID, token)` request helper already exists in
+    `limits_policy_test.go` (package-private to httpapi). Re-declaring it
+    in a sibling test file is a vet-time conflict ("getLimits redeclared
+    in this block"). When a sibling *_test.go in the same package has
+    already factored out the request helper, the new contract test file
+    must REUSE it and skip the local copy — same for the
+    `decodeLimitsList` / `decodeErrorEnvelope` decoders in
+    `limits_test.go`. The check is one-line: `grep -n "^func getLimits"`
+    across the package before declaring any HTTP-request helper.
+  - The NewHandler call signature ends with `..., fakeBreakGlassController{},
+    <logger>, <auditor>)` where both logger and auditor are nullable. The
+    existing `listLimitsHandlerFor` passes `nil, nil`; the new
+    `listLimitsHandlerForWithLogger` swaps the second-to-last `nil` for
+    the caller-supplied `*slog.Logger` and keeps the last `nil` for the
+    auditor. The httpapi AGENTS.md already calls out the multi-line
+    NewHandler call-site shape ("limits, audit_events, etc. multi-line
+    where the last fake is on one line and `nil)` or `logger)` is on the
+    next") — applying it without re-reading every WithLogger sibling
+    saves the rebuild.
+---

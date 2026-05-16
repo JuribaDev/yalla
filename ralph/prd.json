@@ -2690,7 +2690,7 @@
       ],
       "type": "test-quota",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Contract coverage for GET /v1/organizations/{org_id}/limits."
     },
     {
