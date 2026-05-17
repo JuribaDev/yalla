@@ -26088,3 +26088,110 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     used by usage_get_contract_test.go (decodeUsageList) and
     limits_get_contract_test.go (decodeLimitsList).
 ---
+
+## 2026-05-17 - BE-0107
+- What was implemented: contract-test coverage for GET
+  /v1/organizations/{org_id}/variables (the organization-scoped variables
+  read endpoint), closing the three contract gaps that variables_test.go
+  and variables_policy_test.go leave open.
+  - internal/controlplane/httpapi/variables_get_contract_test.go (new):
+    three named tests anchored on a single new handler-builder helper.
+    * listOrgVariablesContractSecret constant — a recognisable bearer
+      credential ("yk_live_supersecret_org_variables_get_DEADBEEF...");
+      the redaction tests assert no byte of it reaches the log buffer or
+      the response body.
+    * listOrgVariablesHandlerForWithLogger(id, authErr, reader, logger)
+      builder — clone of listOrgVariablesHandlerFor with the
+      second-to-last NewHandler nil swapped for the caller-supplied
+      *slog.Logger. Mirrors listAuditEventsHandlerForWithLogger /
+      listUsageHandlerForWithLogger exactly; the seam lives at the same
+      positional slot regardless of the reader port.
+    * TestListOrgVariablesServerWritesResponseDataOnlyToResponseWriter
+      (not parallel — captureProcessOutput swaps os.Stdout/os.Stderr):
+      a served request writes nothing to the process streams, the
+      seeded "ovar_001"/"FEATURE_FLAG" payload is carried by the
+      response body, and the structured logger sink is non-empty so a
+      regression to no-logging would surface here too.
+    * TestListOrgVariablesRequestLogRedactsBearerToken (parallel, two
+      subtests): success path (owner role, successReader, 200) and
+      authorization failure path (Disabled=true owner, denyReader, 403)
+      both assert (a) the structured request log is non-empty and (b)
+      it never carries the bearer credential, and (c) the response body
+      never echoes the credential. The deny leg uses a reader whose
+      ListByOrganization errors if invoked, so a logged "reader error"
+      can't be the leak source — the deny must short-circuit at policy.
+    * TestListOrgVariablesErrorEnvelopeDoesNotLeakDependencyCause
+      (parallel): a fakeOrgVariableReader returning
+      apierr.StoreUnavailable(connection refused dialing 10.0.0.5:5432)
+      surfaces as 503 E_UNAVAILABLE with a stable generic message and
+      no leak of the wrapped cause string OR the datastore address
+      "10.0.0.5" onto the wire.
+- Files changed:
+  - internal/controlplane/httpapi/variables_get_contract_test.go (new, ~250 LOC)
+  - ralph/prd.json (BE-0107 passes: true)
+  - ralph/progress.txt (this entry + Codebase Patterns ports BE-0107 worked
+    instance into the existing Read-endpoint contract-test triple pattern)
+- Verification run:
+  - gofmt -l internal/controlplane/httpapi/variables_get_contract_test.go (clean)
+  - go vet ./internal/controlplane/httpapi/ (clean)
+  - go test -run 'TestListOrgVariables(ServerWritesResponseDataOnlyToResponseWriter|RequestLogRedactsBearerToken|ErrorEnvelopeDoesNotLeakDependencyCause)' -v ./internal/controlplane/httpapi/
+    → 3 PASS + 2 subtest PASS (0.567s)
+  - go mod tidy (no-op)
+  - go test ./... → 28 ok, 0 FAIL
+  - go test -race ./... → 39 ok, 0 FAIL (exit 0; the harness-contention
+    pre-existing failures called out in earlier patterns did not reproduce
+    on this run, full -race clean end-to-end)
+  - go vet ./... (clean)
+- Results: BE-0107 passes. variables_get_contract_test.go is the THIRD
+  worked instance of the BE-0095/BE-0101 Read-endpoint contract-test
+  triple pattern (after BE-0104). It confirms the pattern ports
+  verbatim when the per-story knobs are (a) reader port type
+  (OrganizationVariableReader vs AuditEventReader vs UsageReader),
+  (b) fake reader's fields (fakeOrgVariableReader.vars/err vs
+  fakeAuditEventReader.events/err), (c) envelope decoder (decodeOrgVariables
+  vs decodeAuditEventList), and (d) the absence of any query parameter
+  on this endpoint (variables list does NOT take ?limit=, so the
+  helper signature collapses one knob). All other structural choices
+  (the WithLogger builder shape, the captureProcessOutput non-parallel
+  marker, the success+deny redaction matrix, the wrapped-cause
+  + datastore-address leak probe pair) are forward-applicable to every
+  remaining sibling story.
+- Remaining risks or follow-ups:
+  - Sibling P=2 stories BE-0110 (PUT org variables), BE-0113 (PATCH org
+    variable), BE-0116 (DELETE org variable) require the mutate-endpoint
+    variant of the contract-test pattern (which has a body-echo and an
+    audit-event assertion the read-only triple does not need). Out of
+    scope here.
+  - Sibling read-endpoint stories BE-0119 (GET projects), BE-0125 (GET
+    project), BE-0137 (GET project grants), BE-0143 (GET project
+    variables), BE-0149 (GET project environments) are all direct
+    structural clones of this file — same WithLogger builder shape,
+    same three named tests, same probe values, only the reader port /
+    envelope decoder / path differ.
+- Learnings for future iterations:
+  - The Read-endpoint contract-test triple pattern is now confirmed
+    portable across three distinct reader ports (UsageReader,
+    AuditEventReader, OrganizationVariableReader). The previously
+    documented "the only per-story knobs are the reader port type, the
+    fake reader's field name, and the envelope decoder" claim is now
+    empirically verified — no per-story scaffolding needed beyond
+    those three substitutions plus dropping the ?limit= knob when
+    absent.
+  - The orgPrincipal(...) + Disabled=true escape hatch from
+    variables_policy_test.go composes cleanly with the WithLogger
+    handler builder: the redaction test does NOT need a parallel
+    "deny-by-role" fixture because Disabled is itself a deny condition
+    independent of the role table, which keeps the contract test
+    decoupled from the policy matrix while still proving the
+    log-redaction invariant on a deny path. NOT applicable to
+    mutating-endpoint contract tests (BE-0110/BE-0113/BE-0116) — those
+    must also pin no-body-reflection on the validation-failure path,
+    which the read-only triple does not exercise.
+  - The BE-0104 file's package import list (apierr / auth / domain /
+    policy / runtime / store) is the upper bound; BE-0107 only needs
+    five of those six (no domain.KindUser appears in this test because
+    the success-path identity comes from orgVariableActorIdentity which
+    already encodes Kind=KindUser). Dropping the unused domain import
+    keeps goimports clean — a small but recurring per-story diff
+    against the BE-0104 template.
+---
