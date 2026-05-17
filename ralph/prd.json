@@ -262,7 +262,8 @@
       "go test -run TestAuditCompleteness ./...",
       "go test -run TestPaginationStability ./...",
       "go test -run TestTenantIsolation ./...",
-      "go test -run TestBackupRestoreRehearsal ./..."
+      "go test -run TestBackupRestoreRehearsal ./...",
+      "go test -run TestReleaseBuild ./..."
     ],
     "optionalWhenConfigured": [
       "goimports -w .",
@@ -8520,7 +8521,7 @@
       ],
       "type": "verification",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Test suite: release build tests."
     },
     {

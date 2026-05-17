@@ -196,7 +196,13 @@ if ! go test -run TestBackupRestoreRehearsal ./...; then
   required_failed=1
 fi
 
-# 25. Optional: govulncheck (vulnerability scan)
+# 25. Required: release build tests
+step "go test -run TestReleaseBuild ./..."
+if ! go test -run TestReleaseBuild ./...; then
+  required_failed=1
+fi
+
+# 26. Optional: govulncheck (vulnerability scan)
 step "govulncheck ./... (optional)"
 if command -v govulncheck >/dev/null 2>&1; then
   if ! govulncheck ./...; then
@@ -206,7 +212,7 @@ else
   skipped_tools+=("govulncheck (install: go install golang.org/x/vuln/cmd/govulncheck@latest)")
 fi
 
-# 26. Optional: staticcheck
+# 27. Optional: staticcheck
 step "staticcheck ./... (optional)"
 if command -v staticcheck >/dev/null 2>&1; then
   if ! staticcheck ./...; then
@@ -216,7 +222,7 @@ else
   skipped_tools+=("staticcheck (install: go install honnef.co/go/tools/cmd/staticcheck@latest)")
 fi
 
-# 27. Optional: golangci-lint
+# 28. Optional: golangci-lint
 step "golangci-lint run ./... (optional)"
 if command -v golangci-lint >/dev/null 2>&1; then
   if ! golangci-lint run ./...; then
@@ -226,7 +232,7 @@ else
   skipped_tools+=("golangci-lint (install: https://golangci-lint.run/welcome/install/)")
 fi
 
-# 28. Optional: goreleaser check (release config)
+# 29. Optional: goreleaser check (release config)
 step "goreleaser check (optional)"
 if command -v goreleaser >/dev/null 2>&1; then
   if ! goreleaser check; then
@@ -246,7 +252,7 @@ else
   fi
 fi
 
-# 29. Optional: external live-Dokploy smoke tests
+# 30. Optional: external live-Dokploy smoke tests
 # The smoke reaches a real Dokploy server and is only meaningful when the
 # operator has explicitly opted in by setting YALLA_EXTERNAL_DOKPLOY=1
 # (along with YALLA_EXTERNAL_DOKPLOY_BASE_URL and

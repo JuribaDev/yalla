@@ -84,6 +84,7 @@ defined in `.github/workflows/ci.yml`:
 | Pagination stability tests | `go test -run TestPaginationStability ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Tenant isolation tests | `go test -run TestTenantIsolation ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Backup restore rehearsal tests | `go test -run TestBackupRestoreRehearsal ./...` | `scripts/verify.sh`, CI | Every push and PR |
+| Release build tests | `go test -run TestReleaseBuild ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | External live-Dokploy smoke tests | `YALLA_EXTERNAL_DOKPLOY=1 go test -run TestLiveDokploySmoke ./...` | `.github/workflows/external-smoke.yml`, `scripts/verify.sh` (opt-in) | Opt-in (`YALLA_EXTERNAL_DOKPLOY=1`), nightly + manual |
 | Race detector | `go test -race ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Vulnerability scan | `govulncheck ./...` | CI `security` job | Every push and PR |
@@ -2818,6 +2819,103 @@ static defence for every collateral surface lives in
   runs the gate. The single static defence that pins every one of
   those surfaces is
   `internal/release/verification_suite_backup_restore_static_test.go`.
+
+## Release Build Tests
+
+The release build suite (BE-0401) is the release-derivation gate. It
+exists to catch a class of regressions a single-call unit test cannot:
+a renamed (OS, arch) coordinate that broke the npm wrapper's URL
+builder, a flipped archive extension that confused the Homebrew
+formula's untar step, a dropped windows `.exe` suffix that left
+the installed binary unrunnable, a checksums-template drift that
+desynced the per-version checksums file from the published archives,
+or a regression that introduced shared mutable state in the
+`internal/release` package and surfaced racing projections under
+contention. The canonical pair
+(`TestReleaseBuildCoversCallSites` and
+`TestReleaseBuildPreservesContractUnderContention`) lives in
+`internal/release/release_build_test.go` and binds to the PRD's
+`-run TestReleaseBuild` filter; the static defence for every
+collateral surface lives in
+`internal/release/verification_suite_release_build_static_test.go`.
+
+- **Scope.** The two load-bearing release-derivation invariants are
+  exercised by the canonical function pair. The first member walks a
+  closed-set scenario table built from `release.SupportedTargets` and
+  asserts every documented (OS, arch) coordinate yields the predicted
+  `ArchiveExt`, `BinaryName`, `ArchiveName`, and `ChecksumsName` for
+  a fixed sample version. The set itself is part of the closed-set
+  coverage: every documented coordinate (linux/amd64, linux/arm64,
+  darwin/amd64, darwin/arm64, windows/amd64, windows/arm64) MUST
+  appear exactly once and no off-list coordinate may slip in. The
+  second member fires
+  `releaseBuildWorkers * releaseBuildIterationsPerWorker` goroutines
+  against a shared slice of `release.SupportedTargets`-derived
+  scenarios, each goroutine asserting the projection for its OWN
+  scenario matches the predicted values; a cross-write under the race
+  that swapped two goroutines' scenarios would fail the per-iteration
+  assertion even when the aggregate pass count matched. The single
+  static defence is
+  `internal/release/verification_suite_release_build_static_test.go`,
+  which pins the existence of the canonical
+  `release_build_test.go` file and the canonical
+  `TestReleaseBuildCoversCallSites` +
+  `TestReleaseBuildPreservesContractUnderContention` function pair
+  (the load-bearing `-run TestReleaseBuild` filter from
+  `verificationLoop.requiredBackendCommands` binds to the
+  `TestReleaseBuild` prefix) so the release-derivation convention
+  itself cannot be silently deleted or renamed.
+- **Determinism.** The release build tests run against deterministic
+  fixtures only — `release.SupportedTargets` is a compile-time
+  constant table, the projections are pure functions of the
+  `(OS, arch, version)` tuple, and the contention burst's per-
+  goroutine fixture is derived from the worker + iteration index and
+  indexes into the closed-set scenario table so every test run
+  exercises the identical decision set. No release build test reaches
+  a live Postgres, a live Dokploy, the GoReleaser binary, or any
+  external network.
+- **Actionable failures.** Every diagnostic surfaces the offending
+  scenario name (for the coverage member) or the worker + iteration
+  index AND the offending scenario (for the burst member) so an
+  operator reading the CI log can map the failure to a specific
+  (OS, arch) coordinate without re-running the suite locally. The
+  scenario name is the `<os>_<arch>` form embedded in the archive
+  name template, so an operator can correlate the failure with the
+  exact GoReleaser target, npm wrapper URL, or Homebrew/Scoop/WinGet
+  manifest entry.
+- **Schema-version contract.** The release build suite exercises pure
+  string projections — it does not render JSON envelopes — but the
+  release surface it pins is the contract every released `yalla`
+  binary's `--json` output relies on: the version string embedded by
+  `-X main.Version` flows from the same archive-name template the
+  suite covers, and a regression that desynced the archive name from
+  the version stamp would break the `yalla.output.v1` `data.version`
+  field downstream. The release_test.go suite that already runs the
+  GoReleaser config / npm wrapper / workflow consistency checks
+  remains untouched and continues to enforce the cross-tool
+  invariants those tests document.
+- **Redaction.** The release build tests never log secrets — the
+  projection functions take only the (OS, arch, version) tuple and
+  return a string, so test output, error chains, and diagnostic
+  envelopes carry no credentials, no tokens, no Dokploy URLs, no
+  database DSNs, and no environment variable values.
+- **Tenant isolation.** The release build suite is process-global by
+  design — `release.SupportedTargets` describes the distribution
+  matrix, not per-tenant data — and therefore has no tenant boundary
+  to enforce. The per-tenant data-isolation contract is enforced by
+  the dedicated tenant-isolation suite (BE-0398) and the per-row
+  repository isolation tests under `internal/controlplane/store/`.
+- **CI cadence.** The release build gate runs as a dedicated
+  `Release build tests` step in `.github/workflows/ci.yml`, under
+  `# 25. Required: release build tests` in `scripts/verify.sh`, as
+  entry `25` in `CONTRIBUTING.md` under
+  `## Required Checks Before Every Commit`, and in `ralph/prd.json`
+  under `verificationLoop.requiredBackendCommands` so an AI agent
+  reading the PRD before picking up a story sees the gate without
+  needing to discover it from shell scripts or CI workflows. Every
+  push and PR runs the gate. The single static defence that pins
+  every one of those surfaces is
+  `internal/release/verification_suite_release_build_static_test.go`.
 
 ## Race Detector
 

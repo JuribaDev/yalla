@@ -56,6 +56,7 @@ and they must all pass on every commit you propose:
 22. `go test -run TestPaginationStability ./...`
 23. `go test -run TestTenantIsolation ./...`
 24. `go test -run TestBackupRestoreRehearsal ./...`
+25. `go test -run TestReleaseBuild ./...`
 
 `scripts/verify.sh` runs the full set in one command and is the local
 mirror of the `test` job in `.github/workflows/ci.yml`. Step 6 — the
@@ -455,6 +456,35 @@ assertion even when the aggregate pass count matched. Both members
 are deterministic by design: the FileReporters are built against
 `t.TempDir`-backed fixtures with injected clocks, and no test
 reaches a live Postgres, a live Dokploy, or any external network.
+Step 25 — the release build suite bound by the `-run TestReleaseBuild`
+filter — is the release-derivation gate documented in BE-0401; the
+dedicated invocation is defence-in-depth on the same principle so a
+narrowing of the umbrella `go test ./...` step would still leave the
+release build gate firing as a fast, targeted failure rather than
+buried inside the umbrella log. The canonical pair
+(`TestReleaseBuildCoversCallSites` and
+`TestReleaseBuildPreservesContractUnderContention`) lives in
+`internal/release/release_build_test.go`. The first member pins the
+closed-set release-derivation coverage invariant — every documented
+(OS, arch) coordinate in `release.SupportedTargets` yields the
+predicted `ArchiveExt`, `BinaryName`, `ArchiveName`, and
+`ChecksumsName` for a fixed sample version, and every documented
+coordinate (linux/amd64, linux/arm64, darwin/amd64, darwin/arm64,
+windows/amd64, windows/arm64) appears exactly once with no off-list
+pair slipping in; a regression in any of those projections (a renamed
+target, a flipped archive extension, a dropped windows `.exe` suffix,
+a checksums-template drift) trips the gate on the offending scenario
+name. The second member pins the per-decision stability invariant
+under contention — `releaseBuildWorkers *
+releaseBuildIterationsPerWorker` goroutines derive each target's
+projections from a shared slice and every goroutine asserts the
+projection for its OWN target matches the predicted values; a cross-
+write under the race that swapped two goroutines' scenarios would
+fail the per-iteration assertion even when the aggregate pass count
+matched. Both members are deterministic by design: the release
+package functions are pure projections from the (OS, arch) coordinate
+to a string and no test reaches the network, a live Postgres, a live
+Dokploy, or the GoReleaser binary.
 
 ## Required Checks Before Every Release
 

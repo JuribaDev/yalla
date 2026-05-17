@@ -1849,3 +1849,73 @@ update the matching constant in
 `verification_suite_external_dokploy_smoke_static_test.go`
 in the same edit. The matchers fail loudly on drift; the
 assertion IS the contract.
+
+## Verification suite: release build tests (BE-0401)
+
+`verification_suite_release_build_static_test.go` pins
+the release-build verification gate. It is the
+load-bearing static defence for the contract between
+Yalla's `internal/release` package (the canonical
+source-of-truth for the distribution matrix) and every
+downstream consumer that resolves to the same archives:
+GoReleaser's `archives` template, the npm wrapper's
+`lib/platform.js`, the Homebrew formula's untar step, the
+Scoop manifest's installer URL, and the WinGet manifest's
+download entry. The canonical pair
+(`TestReleaseBuildCoversCallSites` and
+`TestReleaseBuildPreservesContractUnderContention`) lives
+in `internal/release/release_build_test.go` and binds to
+the PRD's `-run TestReleaseBuild` filter. The first
+member walks a closed-set scenario table derived from
+`release.SupportedTargets` and asserts every documented
+(OS, arch) coordinate yields the predicted `ArchiveExt`,
+`BinaryName`, `ArchiveName`, and `ChecksumsName` for a
+fixed sample version, plus the exhaustiveness invariant
+(every documented coordinate — linux/amd64, linux/arm64,
+darwin/amd64, darwin/arm64, windows/amd64, windows/arm64
+— appears exactly once and no off-list coordinate slips
+in). The second member fires
+`releaseBuildWorkers * releaseBuildIterationsPerWorker`
+goroutines against a shared slice of scenarios; each
+goroutine derives the projection for its OWN scenario and
+asserts the result matches the predicted values — a
+cross-write under the race that swapped two goroutines'
+scenarios would fail the per-iteration assertion even
+when the aggregate pass count matched. Both members are
+deterministic by design: the release package functions
+are pure projections from the (OS, arch, version) tuple
+to a string and no test reaches the network, a live
+Postgres, a live Dokploy, or the GoReleaser binary. The
+static test pins SIX surfaces in one file: the CI step
+name + run command (`- name: Release build tests` /
+`run: go test -run TestReleaseBuild ./...` in
+`.github/workflows/ci.yml`), the verify.sh required step
+header `# 25. Required: release build tests` + literal
+command `go test -run TestReleaseBuild ./...`, the
+CONTRIBUTING.md numbered entry
+`25. \`go test -run TestReleaseBuild ./...\``, the
+SECURITY.md row + dedicated `## Release Build Tests`
+section (with the When column marked "Every push and
+PR"), the PRD command in
+`verificationLoop.requiredBackendCommands`, and the
+canonical pair file's existence with both function
+declarations present. Adding step #25 between BE-0399's
+#24 and the trailing optionals required renumbering
+verify.sh optional steps #25-#29 to #26-#30 and updating
+BE-0400's static test constant from `# 29. Optional…` to
+`# 30. Optional…` in the same edit — the renumber is the
+shared cost of inserting a required step into the
+sequence and is forward-applicable to every future
+required-step insertion. The self-check
+(`TestVerificationSuiteReleaseBuildAnalyzerDetectsRegressions`)
+drives every matcher with synthetic known-good AND
+known-bad fixtures so over-tightening (a legitimate
+change trips the analyser) and under-tightening (a real
+regression slips through) are both caught at the
+package-internal API. When changing the CI workflow name,
+the verify.sh header, the CONTRIBUTING.md entry, the
+SECURITY.md row or section, or the PRD commands, update
+the matching constant in
+`verification_suite_release_build_static_test.go` in the
+same edit. The matchers fail loudly on drift; the
+assertion IS the contract.
