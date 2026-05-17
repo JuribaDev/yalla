@@ -55,6 +55,7 @@ and they must all pass on every commit you propose:
 21. `go test -run TestAuditCompleteness ./...`
 22. `go test -run TestPaginationStability ./...`
 23. `go test -run TestTenantIsolation ./...`
+24. `go test -run TestBackupRestoreRehearsal ./...`
 
 `scripts/verify.sh` runs the full set in one command and is the local
 mirror of the `test` job in `.github/workflows/ci.yml`. Step 6 — the
@@ -422,6 +423,38 @@ design: the in-process `policy.Engine` is constructed via
 principals and resources are built from constant tenant IDs, and no
 test reaches a live Postgres, a live Dokploy, or any external
 network.
+
+Step 24 — the backup and restore rehearsal suite bound by the
+`-run TestBackupRestoreRehearsal` filter — is the
+backup-and-restore-loop gate documented in BE-0399; the dedicated
+invocation is defence-in-depth on the same principle so a narrowing
+of the umbrella `go test ./...` step would still leave the rehearsal
+gate firing as a fast, targeted failure rather than buried inside the
+umbrella log. The canonical pair
+(`TestBackupRestoreRehearsalCoversCallSites` and
+`TestBackupRestoreRehearsalPreservesContractUnderContention`) lives
+in
+`internal/controlplane/backup/backup_restore_rehearsal_test.go`. The
+first member pins the closed-set rehearsal coverage invariant — every
+documented `backup.FileReporter` state (pristine post-restore with
+`ErrNoBackupRecorded`, fresh, on-`MaxAge` boundary, stale,
+zero-MaxAge opt-out, clock-skew clamp to `Age=0`, whitespace-tolerant
+parse, empty file, whitespace-only file, malformed parse, secret-
+seeded file with the parse error stripped of the seeded marker,
+`Unconfigured()` zero-state, cancelled-context bubble-up) yields the
+predicted `(Status, error)` pair, and every typed `yerr.CodeServer`
+error names the status file path so an operator can correlate the
+failure with the AC3 resource id without re-running the suite. The
+second member pins the per-decision stability invariant under
+contention — a single shared `FileReporter` per scenario is hit by
+`rehearsalWorkers * rehearsalIterationsPerWorker` goroutines drawing
+fixtures from the same coverage table, and every goroutine asserts
+its OWN fixture's predicate; a cross-write under the race that
+swapped two goroutines' fixtures would fail the per-iteration
+assertion even when the aggregate pass count matched. Both members
+are deterministic by design: the FileReporters are built against
+`t.TempDir`-backed fixtures with injected clocks, and no test
+reaches a live Postgres, a live Dokploy, or any external network.
 
 ## Required Checks Before Every Release
 

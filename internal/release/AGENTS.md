@@ -1720,3 +1720,56 @@ section, or the PRD commands, update the matching constant
 in `verification_suite_tenant_isolation_static_test.go` in
 the same edit. The matchers fail loudly on drift; the
 assertion IS the contract.
+
+## Verification suite: backup and restore rehearsal tests (BE-0399)
+
+`verification_suite_backup_restore_static_test.go` pins the
+backup and restore rehearsal gate. It is the load-bearing
+static defence for the contract between Yalla's
+`backup.FileReporter` chokepoint and every agent, CI
+runner, operator, or audit reviewer that touches the
+unauthenticated `GET /healthz/backup` probe: every
+documented reporter state — pristine post-restore with
+`ErrNoBackupRecorded`, fresh, on-`MaxAge` boundary, stale,
+zero-`MaxAge` opt-out, clock-skew clamp to `Age=0`,
+whitespace-tolerant parse, empty, whitespace-only,
+malformed, secret-seeded with the parse error stripped of
+the seeded marker, `Unconfigured()` zero-state, cancelled
+context — MUST yield the predicted `(Status, error)` pair,
+and every typed `yerr.CodeServer` error MUST name the
+status file path without echoing the file's content. The
+canonical pair (`TestBackupRestoreRehearsalCoversCallSites`
+and
+`TestBackupRestoreRehearsalPreservesContractUnderContention`)
+lives in
+`internal/controlplane/backup/backup_restore_rehearsal_test.go`
+and binds to the PRD's `-run TestBackupRestoreRehearsal`
+filter. Both pair members are deterministic — they
+construct `FileReporter` instances against
+`t.TempDir`-backed fixtures with injected clocks, share
+each reporter across burst goroutines, and the contention
+burst fires
+`rehearsalWorkers * rehearsalIterationsPerWorker`
+goroutines against a single reporter per scenario with each
+goroutine asserting its OWN fixture's predicate, so the
+gate stays green on every developer machine without a live
+Postgres or any external dependency. The static test pins
+SIX surfaces in one file: the CI `Backup restore rehearsal
+tests` step (`.github/workflows/ci.yml`), the verify.sh
+step #24 header (`scripts/verify.sh`), the CONTRIBUTING.md
+entry #24, the SECURITY.md row + dedicated
+`## Backup Restore Rehearsal Tests` section, the PRD
+command in `verificationLoop.requiredBackendCommands`, and
+the canonical pair file's existence with both function
+declarations present. The self-check
+(`TestVerificationSuiteBackupRestoreAnalyzerDetectsRegressions`)
+drives every matcher with synthetic known-good AND
+known-bad fixtures so over-tightening (a legitimate change
+trips the analyser) and under-tightening (a real regression
+slips through) are both caught at the package-internal API.
+When changing the CI step name, the verify.sh header, the
+CONTRIBUTING.md numeric prefix, the SECURITY.md row or
+section, or the PRD commands, update the matching constant
+in `verification_suite_backup_restore_static_test.go` in
+the same edit. The matchers fail loudly on drift; the
+assertion IS the contract.

@@ -261,7 +261,8 @@
       "go test -run TestIdempotencyReplay ./...",
       "go test -run TestAuditCompleteness ./...",
       "go test -run TestPaginationStability ./...",
-      "go test -run TestTenantIsolation ./..."
+      "go test -run TestTenantIsolation ./...",
+      "go test -run TestBackupRestoreRehearsal ./..."
     ],
     "optionalWhenConfigured": [
       "goimports -w .",
@@ -8481,8 +8482,8 @@
       ],
       "type": "verification",
       "priority": 1,
-      "passes": false,
-      "notes": "Test suite: backup and restore rehearsal tests."
+      "passes": true,
+      "notes": "Canonical pair TestBackupRestoreRehearsalCoversCallSites + TestBackupRestoreRehearsalPreservesContractUnderContention in internal/controlplane/backup/backup_restore_rehearsal_test.go pin the closed-set rehearsal coverage invariant (every documented backup.FileReporter state — pristine post-restore with ErrNoBackupRecorded, fresh, on-MaxAge boundary, stale, zero-MaxAge opt-out, clock-skew clamp to Age=0, whitespace-tolerant parse, empty file, whitespace-only file, malformed parse, secret-seeded file with the parse error stripped of the seeded marker, Unconfigured() zero-state, cancelled-context bubble-up) yields the predicted (Status, error) pair, and the per-decision stability invariant under contention (rehearsalWorkers * rehearsalIterationsPerWorker concurrent goroutines against a single shared FileReporter per scenario all yield the predicate the scenario predicts for ITS OWN fixture, no cross-write under the race). Single static defence at internal/release/verification_suite_backup_restore_static_test.go pins six surfaces: CI step `Backup restore rehearsal tests`, verify.sh # 24. Required: backup and restore rehearsal tests, CONTRIBUTING.md entry 24, SECURITY.md Required Verification Gates row + ## Backup Restore Rehearsal Tests section, PRD verificationLoop.requiredBackendCommands entry go test -run TestBackupRestoreRehearsal ./..., and the canonical pair file + function declarations. Self-check TestVerificationSuiteBackupRestoreAnalyzerDetectsRegressions drives every matcher with synthetic known-good AND known-bad fixtures. Optional commands list extended in same edit (verify.sh #25..#28 renumbered for govulncheck / staticcheck / golangci-lint / goreleaser). Deterministic-by-default: t.TempDir-backed fixtures and injected clocks are the only dependencies; no live Postgres or Dokploy required."
     },
     {
       "id": "BE-0400",

@@ -83,6 +83,7 @@ defined in `.github/workflows/ci.yml`:
 | Audit completeness tests | `go test -run TestAuditCompleteness ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Pagination stability tests | `go test -run TestPaginationStability ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Tenant isolation tests | `go test -run TestTenantIsolation ./...` | `scripts/verify.sh`, CI | Every push and PR |
+| Backup restore rehearsal tests | `go test -run TestBackupRestoreRehearsal ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Race detector | `go test -race ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Vulnerability scan | `govulncheck ./...` | CI `security` job | Every push and PR |
 | Lint suite | `staticcheck ./...` and `golangci-lint run ./...` | CI `security` job | Every push and PR |
@@ -2689,6 +2690,133 @@ every collateral surface lives in
   Every push and PR runs the gate. The single static defence that
   pins every one of those surfaces is
   `internal/release/verification_suite_tenant_isolation_static_test.go`.
+
+## Backup Restore Rehearsal Tests
+
+The backup and restore rehearsal suite (BE-0399) is the
+backup-and-restore-loop gate. It exists to catch a class of
+regressions a single-call unit test cannot: a reporter that quietly
+returned a 200 envelope on a malformed status, a parse-error path
+that started echoing the file content into the wire message, a
+freshness predicate switched from `Age <= MaxAge` to `Age < MaxAge`
+so the on-boundary value flapped, or a regression that turned the
+`pristine post-restore` case into a 5xx because the missing-file
+sentinel was dropped. The canonical pair
+(`TestBackupRestoreRehearsalCoversCallSites` and
+`TestBackupRestoreRehearsalPreservesContractUnderContention`) lives
+in `internal/controlplane/backup/backup_restore_rehearsal_test.go`
+and binds to the PRD's `-run TestBackupRestoreRehearsal` filter; the
+static defence for every collateral surface lives in
+`internal/release/verification_suite_backup_restore_static_test.go`.
+
+- **Scope.** The two load-bearing rehearsal invariants are exercised
+  by the canonical function pair. The first member walks a
+  closed-set scenario table that covers every documented
+  `backup.FileReporter` state across the operator's backup-and-
+  restore loop: (1) the pristine post-restore state where the status
+  path is wired but no backup has landed yet surfaces
+  `ErrNoBackupRecorded` so a freshly-provisioned environment is
+  healthy rather than a 5xx; (2) the successful rehearsal where a
+  recently-landed `RFC3339` timestamp is parsed and reported with
+  `Configured=true`, the operator-chosen `MaxAge` mirrored on the
+  returned Status, and `Status.Fresh` reporting true against the
+  configured freshness threshold; (3) the on-`MaxAge` boundary case
+  where `Age == MaxAge` still satisfies `Status.Fresh` so the probe
+  does not flap at the boundary; (4) the past-window case where
+  `Age > MaxAge` surfaces stale so an operator sees the gate failure;
+  (5) the zero-`MaxAge` opt-out where any `Age` yields fresh so a
+  probe shipped before the operator picks a threshold does not flap;
+  (6) the clock-skew clamp where a status timestamp in the future
+  preserves `Status.LastSuccessAt` untouched but clamps `Age` to zero
+  so downstream JSON rendering and `Status.Fresh` get a well-defined
+  non-negative value; (7) the whitespace-tolerant parse where the
+  reporter parses cleanly through surrounding whitespace or a
+  trailing newline; (8) the empty-status, whitespace-only, and
+  malformed-status cases that each surface a typed `yerr.CodeServer`
+  error whose rendered message names the status file path but never
+  echoes the content; (9) the secret-seeded status file where the
+  parse error stays free of the seeded marker — the redaction
+  guard the entire suite hinges on; (10) the `Unconfigured()`
+  zero-state where `Configured=false` and `Status.Fresh` returns true
+  unconditionally; and (11) the cancelled-context case where a
+  shutting-down probe surfaces `context.Canceled` rather than an
+  I/O error. The second member fires
+  `rehearsalWorkers * rehearsalIterationsPerWorker` goroutines
+  against a single shared `FileReporter` per scenario, each goroutine
+  drawing a fixture from the same coverage table and asserting the
+  observation it recorded matches the predicate the fixture's
+  scenario predicts — a cross-write under the race that swapped two
+  goroutines' fixtures would fail the per-iteration assertion even
+  when the aggregate pass count matched. The single static defence is
+  `internal/release/verification_suite_backup_restore_static_test.go`,
+  which pins the existence of the canonical
+  `backup_restore_rehearsal_test.go` file and the canonical
+  `TestBackupRestoreRehearsalCoversCallSites` +
+  `TestBackupRestoreRehearsalPreservesContractUnderContention`
+  function pair (the load-bearing `-run TestBackupRestoreRehearsal`
+  filter from `verificationLoop.requiredBackendCommands` binds to
+  the `TestBackupRestoreRehearsal` prefix) so the rehearsal
+  convention itself cannot be silently deleted or renamed.
+- **Determinism.** The rehearsal tests run against deterministic
+  fixtures only — `t.TempDir`-backed status files seeded with
+  per-scenario content, `FileReporter` instances constructed via
+  `NewFileReporter` against an injected fixed clock, and the closed
+  set of states the reporter is documented to surface. The
+  contention burst's per-goroutine fixture is derived from the worker
+  + iteration index and indexes into the coverage table, so every
+  test run exercises the identical decision set. No rehearsal test
+  reaches a live Postgres, a live Dokploy, or any external network.
+- **Actionable failures.** Every diagnostic surfaces the offending
+  scenario name (for the coverage member) or the worker + iteration
+  index AND the offending scenario (for the burst member) so an
+  operator reading the CI log can map the failure to a specific
+  rehearsal state without re-running the suite locally. The mapped
+  HTTP envelope each typed-error rehearsal exercises carries an
+  originating `request_id`; the rendered error message names the
+  status file path (the AC3 resource id) so an operator can correlate
+  the failure with the specific source the reporter was wired to.
+- **Schema-version contract.** Every public HTTP response the
+  `/healthz/backup` handler renders — a 2xx `yalla.output.v1` success
+  envelope on `ErrNoBackupRecorded` and on a successfully parsed
+  status, and a 5xx `yalla.error.v1` envelope on a typed
+  `yerr.CodeServer` (mapped to `apierr.StoreUnavailable` at the
+  handler boundary) — flows through `backup.FileReporter.Status`,
+  the chokepoint the canonical pair exercises. The rehearsal suite
+  asserts the reporter's `(Status, error)` shape is stable under
+  every documented scenario so a regression that changed the
+  reporter's verdict for any rehearsal state would trip here even if
+  the wire shape stayed valid JSON.
+- **Redaction.** The error the reporter emits names the status file
+  path but never echoes the file's content, so a status file
+  accidentally seeded with a secret (a misconfigured pipeline
+  writing a DSN, an API key, or a session token instead of a
+  timestamp) cannot leak through the wire error string. The
+  coverage member exercises a secret-seeded fixture and asserts the
+  rendered error message stays free of the seeded marker; the burst
+  member preserves this contract under contention. Test output,
+  error chains, and audit metadata stay redacted of secrets — the
+  rehearsal suite never logs file content, only the path and the
+  typed code.
+- **Tenant isolation.** The rehearsal suite is process-global by
+  design — `FileReporter` reports the state of the operator's single
+  backup-and-restore pipeline, not per-tenant data — and therefore
+  has no tenant boundary to enforce. The per-tenant data-isolation
+  contract is enforced by the dedicated tenant-isolation suite
+  (BE-0398) and the per-row repository isolation tests under
+  `internal/controlplane/store/`.
+- **CI cadence.** The rehearsal gate runs as a dedicated
+  `Backup restore rehearsal tests` step in
+  `.github/workflows/ci.yml`, under
+  `# 24. Required: backup and restore rehearsal tests` in
+  `scripts/verify.sh`, as entry `24` in `CONTRIBUTING.md` under
+  `## Required Checks Before Every Commit`, and in
+  `ralph/prd.json` under
+  `verificationLoop.requiredBackendCommands` so an AI agent reading
+  the PRD before picking up a story sees the gate without needing to
+  discover it from shell scripts or CI workflows. Every push and PR
+  runs the gate. The single static defence that pins every one of
+  those surfaces is
+  `internal/release/verification_suite_backup_restore_static_test.go`.
 
 ## Race Detector
 
