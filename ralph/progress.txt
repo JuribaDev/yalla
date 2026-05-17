@@ -27757,3 +27757,79 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
   - fakeProjectReader.err of type apierr.StoreUnavailable(err) is the canonical way to
     drive the 503/E_UNAVAILABLE wire path without a real datastore.
 ---
+
+## 2026-05-17 - BE-0125 Add contract tests for GET /v1/projects/{project_id}
+- Implemented: internal/controlplane/httpapi/projects_get_contract_test.go.
+  Mirrors organizations_get_contract_test.go (BE-0053) and projects_list_contract_test.go (BE-0119) for the single-project GET endpoint.
+- Three tests close the contract-checklist gaps not pinned by projects_get_test.go:
+  TestGetProjectServerWritesResponseDataOnlyToResponseWriter,
+  TestGetProjectRequestLogRedactsBearerToken (success + authorization-failure paths),
+  TestGetProjectErrorEnvelopeDoesNotLeakDependencyCause (datastore-cause/address never leaks).
+- No new helper needed: the existing listProjectsHandlerForWithLogger (added in BE-0119)
+  serves the GET /v1/projects/{project_id} route in the same NewHandler wiring, because
+  both endpoints share the ProjectReader port. The contract test reuses the
+  existing getProjectByID, decodeGetProject, decodeError, captureProcessOutput,
+  orgPrincipal, and seedProject helpers from projects_get_test.go / projects_test.go.
+  No production code changed.
+- Verification run (from repo root):
+  gofmt -w internal/controlplane/httpapi/projects_get_contract_test.go (clean)
+  go vet ./internal/controlplane/httpapi/ (clean, exit=0)
+  go test -count=1 -run TestGetProject ./internal/controlplane/httpapi/ (ok 0.562s)
+  go test ./... (all packages ok)
+  go test -race -count=1 -run 'TestGetProject|TestListProjects' ./internal/controlplane/httpapi/ (ok 1.671s)
+  go test -race -count=1 ./internal/controlplane/httpapi/ (ok 8.125s)
+  go mod tidy (no changes)
+- One pre-existing race-run flake hit on the first full -race attempt:
+  TestListServiceLogsInvalidLimit/non-numeric failed because the random
+  request_id hex string happened to contain the substring "abc" (the
+  submitted limit). The test's "must not echo caller input" guard does a
+  plain substring scan over the whole body, including the request_id.
+  Re-running 3x passed. This is a pre-existing flake in services_logs_test.go
+  unrelated to BE-0125 — recorded here for the next iteration that touches
+  services_logs_test.go (consider anchoring the echo check on the error
+  message field only, not the full body, so a random request_id substring
+  collision cannot trigger a false positive).
+- Remaining risks / follow-ups: none on the BE-0125 surface.
+- **Learnings for future iterations:**
+  - The single-resource GET contract test (BE-0125) does NOT need its own
+    *HandlerForWithLogger helper. The corresponding list endpoint's helper
+    (here listProjectsHandlerForWithLogger) constructs the full NewHandler
+    with all 60+ fakes and the projects route table, and the path mux picks
+    GET /v1/projects/{project_id} from the same handler. Reusing the helper
+    avoids the 60-line fake-list duplication that would otherwise drift if
+    NewHandler grows another port. Forward-applicable: every BE-01xx
+    sibling for a {resource_id} GET endpoint (BE-0125 projects, BE-0155
+    environments, BE-0185 services, etc.) should reuse its list endpoint's
+    *HandlerForWithLogger rather than introduce a getXHandlerForWithLogger
+    twin — the existing organizations_get_contract_test.go is the structural
+    exception only because organizations has BOTH an org-id-less list AND
+    an org-id GET that resolve through different reader-call shapes.
+  - The closest twin for a {resource_id} GET contract test is
+    organizations_get_contract_test.go. The shape is identical: three
+    tests (stdout/stderr writer, bearer-redaction success+denial,
+    dependency-cause non-leakage), one bearer constant, two
+    captureProcessOutput-flavoured tests run NON-parallel (the global
+    os.Stdout/os.Stderr swap is process-global), and decodeError(t, rec,
+    "E_UNAVAILABLE") for the 503 wire check.
+  - The "must not echo caller input" guard in services_logs_test.go does a
+    full-body substring scan. Random request_id hex strings can produce
+    coincidental substring matches with short caller inputs ("abc", "def",
+    "bad", etc.). Future tests that pin "value not echoed" should scope
+    the scan to the error.message or error.hint field, not the whole
+    response body — the request_id is a generated value with no
+    redaction obligation.
+  - PRD-edit gotcha: do NOT use Node JSON.parse + JSON.stringify to flip a
+    passes flag in ralph/prd.json. JSON.stringify renders non-ASCII chars
+    as their literal UTF-8 form (em-dash, smart quotes), while the
+    committed file uses \uXXXX escapes throughout the notes/description
+    text. The round-trip rewrites thousands of bytes across the file as a
+    side effect of flipping a single boolean. Use a targeted Edit tool
+    operation anchored on the surrounding 3 lines of the target story
+    block instead — diff stays at 1 insertion + 1 deletion. (The BE-0389
+    progress entry says "MUST add via Node fs round-trip" for the
+    requiredBackendCommands list ADDITION case; that case needs JSON
+    structure-aware editing because the addition is a new array element
+    whose position is determined by JSON ordering. The PASSES-flag-flip
+    case is different — it's a single-token swap on a single line and the
+    targeted Edit anchored on 4 surrounding lines is uniquely safe.)
+---
