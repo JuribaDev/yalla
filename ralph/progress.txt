@@ -29851,3 +29851,41 @@ change that widened Reason to caller-supplied data.
     - GitHub Actions workflow edit triggered a security-reminder hook on the first attempt; a clean retry of the same Edit succeeded — the hook is paranoid about workflow edits in general, not blocking when the edit uses no untrusted GitHub event input.
   - Useful context: the verification-suite mega-pattern is now at 28 worked instances; the renumber chain (verify.sh + external-smoke static-test constants + docblock + stale error-message refs) is the recurring shared cost of inserting a required step at the tail of the sequence.
 ---
+
+## [2026-05-18] - BE-0158 Add contract tests for PATCH /v1/environments/{environment_id}
+- Implemented contract tests for PATCH /v1/environments/{environment_id}.
+- Files changed:
+  - internal/controlplane/httpapi/environments_update_contract_test.go (new)
+  - ralph/prd.json (BE-0158 passes:true)
+- Tests added (3, matching the projects_update_contract_test.go BE-0128 PATCH shape):
+  - TestUpdateEnvironmentServerWritesResponseDataOnlyToResponseWriter — NOT t.Parallel (captureProcessOutput swaps os.Stdout/os.Stderr globals). Captures process streams while serving a happy-path PATCH and asserts both are empty; asserts the env id + project_id are carried by the response body via decodeUpdateEnvironment, and that the structured logger received a record.
+  - TestUpdateEnvironmentRequestLogRedactsBearerToken — t.Parallel. Sub-tests for success (RoleOwner) and authorization-failure (Disabled = true on a RoleOwner principal) legs. Asserts neither the log buffer NOR the response body contains the bearer secret. Deny-leg uses a fakeEnvironmentUpdater{err: stderrors.New("updater must not be called")} so any logged "updater error" disproves itself as the leak source.
+  - TestUpdateEnvironmentErrorEnvelopeDoesNotLeakDependencyCause — t.Parallel. Drives the production updateEnvironmentHandlerFor (no logger needed) with a fakeEnvironmentUpdater{err: apierr.StoreUnavailable(...)}; asserts 503, E_UNAVAILABLE, non-empty stable error.message, and that the raw "connection refused dialing 10.0.0.5:5432" cause AND the bare "10.0.0.5" datastore address are absent from the response body.
+- Helpers reused (no new helpers beyond the *WithLogger variant):
+  - patchEnvironment, decodeUpdateEnvironment, fakeEnvironmentUpdater, canonicalUpdatedEnv (environments_update_test.go).
+  - updateEnvironmentHandlerFor (environments_update_test.go) — used by the 503-cause test which does not need a logger.
+  - orgPrincipal (org-wide principal builder), captureProcessOutput (me_contract_test.go), decodeError (errors_test.go).
+  - New helper: updateEnvironmentHandlerForWithLogger — identical NewHandler call to updateEnvironmentHandlerFor with `logger` threaded as the penultimate positional arg (replacing the first nil at the end of the arg list).
+- Verification run from repo root:
+  - gofmt -l internal/controlplane/httpapi/environments_update_contract_test.go (clean)
+  - gofmt -l . (clean)
+  - go mod tidy (no-op)
+  - go vet ./... (pass)
+  - go test -run 'TestUpdateEnvironmentServerWritesResponseDataOnly|TestUpdateEnvironmentRequestLogRedactsBearer|TestUpdateEnvironmentErrorEnvelopeDoesNotLeakDependency' ./internal/controlplane/httpapi/ (PASS, 0.587s)
+  - go test ./... (PASS, full module)
+  - go test -race ./... (PASS, full module)
+  - goimports not installed locally (documented gap; gofmt clean covers).
+- Results: 3 new tests pass under both standard and race modes. The full module test/race suite stays green. BE-0158 flipped to passes=true.
+- Remaining risks: none specific to this story. The four-test shape's body-marker leg (BE-0146 / BE-0152) was deliberately NOT included here — PATCH /v1/environments/{environment_id} accepts only public fields (display_name, slug); a future story that adds a secret-bearing field on the PATCH body should re-include the in-body marker pin (BE-0146 PUT-variables pattern with is_secret=true).
+- **Learnings for future iterations:**
+  - Patterns discovered:
+    - The BE-0128 (projects_update_contract_test.go) three-test PATCH shape transfers verbatim to the environments PATCH endpoint with only path/handler/decoder substitutions: replace patchProject/decodeUpdateProject/fakeProjectUpdater with patchEnvironment/decodeUpdateEnvironment/fakeEnvironmentUpdater; swap the canonical row prj_acme_alpha -> canonicalUpdatedEnv.ID; keep the orgPrincipal("usr_ada", "org_acme", policy.RoleOwner) wiring identical. The PATCH endpoint does not need a body-marker test because display_name / slug are public fields — a regression that echoed them in the response is by-design, not a redaction violation.
+    - For the deny leg, an org-wide RoleOwner with Disabled=true is the cheapest disabled-principal recipe: it short-circuits at policy without needing a separate role enum. The principal-builder helper orgPrincipal returns a struct by value, so the local copy can be mutated with disabled.Disabled = true without affecting the success-leg principal. Pin this even when (as here) the policy matrix story (BE-0159) lives in a separate file.
+  - Gotchas encountered:
+    - The 503-cause test should use updateEnvironmentHandlerFor (no logger) rather than the *WithLogger variant — the test does not need to inspect the log buffer, only the response body, and using the smaller helper matches projects_update_contract_test.go's TestUpdateProjectErrorEnvelopeDoesNotLeakDependencyCause exactly. The first two tests need the logger; the third does not.
+    - The "if-match-version pointer is nil when no header is sent" semantics live in environments_update_test.go's TestUpdateEnvironmentIfMatchHeader matrix, not here. The contract suite intentionally omits the If-Match header on all three tests so the failure axis under test stays the named contract (process-stream isolation / bearer redaction / dependency-cause leak), not the optimistic-concurrency precondition.
+  - Useful context:
+    - Sibling contract-test stories that follow this exact three-test PATCH shape: BE-0188 (PATCH /v1/services/{service_id}), BE-0128 already done (PATCH /v1/projects/{project_id}). The DELETE siblings (BE-0161 DELETE /v1/environments/{environment_id}, BE-0191 DELETE /v1/services/{service_id}) follow the same shape with the body-less PATCH-style helper signature (no body argument); the response body is the 202-accepted scheduled-for-deletion envelope.
+    - Forward-applicable to every PATCH-{resource_id} contract-test sibling: copy environments_update_contract_test.go, swap the package-level constants (updateEnvironmentContractSecret -> update{Resource}ContractSecret with a fresh hex marker, updateEnvironmentContractBody -> a valid PATCH body for that resource), swap the *HandlerForWithLogger helper, swap patchEnvironment/decodeUpdateEnvironment/fakeEnvironmentUpdater/canonicalUpdatedEnv, done.
+---
+
