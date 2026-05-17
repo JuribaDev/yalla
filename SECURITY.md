@@ -87,6 +87,7 @@ defined in `.github/workflows/ci.yml`:
 | Release build tests | `go test -run TestReleaseBuild ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Config validation tests | `go test -run TestConfigValidation ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Admin endpoint tests | `go test -run TestAdminEndpoint ./...` | `scripts/verify.sh`, CI | Every push and PR |
+| Break-glass tests | `go test -run TestBreakGlass ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | External live-Dokploy smoke tests | `YALLA_EXTERNAL_DOKPLOY=1 go test -run TestLiveDokploySmoke ./...` | `.github/workflows/external-smoke.yml`, `scripts/verify.sh` (opt-in) | Opt-in (`YALLA_EXTERNAL_DOKPLOY=1`), nightly + manual |
 | Race detector | `go test -race ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Vulnerability scan | `govulncheck ./...` | CI `security` job | Every push and PR |
@@ -3137,6 +3138,97 @@ needing to discover it from shell scripts or CI workflows. Every
 push and PR runs the gate. The single static defence that pins
 every one of those surfaces is
 `internal/release/verification_suite_admin_endpoint_static_test.go`.
+
+## Break-Glass Tests
+
+The break-glass suite (BE-0404) is the validator gate for the
+elevated cross-tenant access chokepoint. The `POST /v1/admin/break-glass`
+endpoint opens an elevated session against a target tenant; the
+session is recorded as an immutable audit row stamped with
+`metadata.elevated_access = "true"` and the unit of work is
+access-only (the service MUST NOT mint or rotate any credential).
+The pure decision logic that gates a session-row insert is
+`BreakGlassService.buildSessionToCreate`: it returns a typed
+`*yerr.Error` of code `CodeInvalidInput` carrying a
+`FieldViolation` that names the offending field path
+(`organization_id`, `actor_id`, `actor_kind`, `reason`, or `ttl`)
+when an input violates the documented rules, returns a populated
+`BreakGlassSession` with `ExpiresAt = StartedAt + min(TTL,
+breakGlassMaxTTL)` when the input is accepted, and never echoes
+the submitted reason value into the typed error string. The gate
+is run by `go test -run TestBreakGlass ./...`.
+
+The canonical pair lives in
+`internal/controlplane/store/break_glass_canonical_test.go`:
+
+- `TestBreakGlassCoversCallSites` walks a closed-set scenario
+  table built from every documented validator rule
+  (`organization_id_blank`, `actor_id_blank`, `actor_kind_unknown`,
+  `actor_kind_blank`, `reason_blank`, `reason_oversize`,
+  `ttl_zero`, `ttl_negative`, `ttl_capped`) and every documented
+  accept path (baseline valid input, `actor_kind=usr`,
+  `actor_kind=sa`, TTL strictly greater than `breakGlassMaxTTL` is
+  capped). Each row predicts the validator's outcome
+  deterministically: accept rows assert `ExpiresAt - StartedAt ==
+  min(TTL, breakGlassMaxTTL)` and that the operator-supplied
+  marker survives in the persisted `Reason` (the marker is not a
+  secret transport pattern so the redactor leaves it intact);
+  reject rows assert a typed `*yerr.Error` with
+  `Code == CodeInvalidInput` and a `FieldViolation` under the
+  expected field path, plus zero echo of the seeded marker in the
+  error message, in any `FieldViolation.Reason`, or in the
+  `fmt`-formatted error metadata. Three closed-set self-checks
+  fire fast at the head of the test before any row is walked:
+  every documented validator rule is exercised by at least one
+  scenario, every accepted `actor_kind` is covered by an accept
+  scenario, and the redactor leaves the marker intact (so the
+  marker-survival predicate on accept rows is meaningful).
+- `TestBreakGlassPreservesContractUnderContention` fires
+  `breakGlassWorkers * breakGlassIterationsPerWorker` goroutines
+  (32 × 64 = 2048 iterations) that each draw a row from the same
+  scenario table by deterministic mod-index (NOT per-goroutine
+  random selection — that would defeat the per-iteration
+  prediction contract), build their own `StartBreakGlassInput` by
+  applying the scenario's mutator to a fresh baseline, call
+  `buildSessionToCreate` against a single shared
+  `*BreakGlassService` instance, and assert the per-iteration
+  verdict. A regression that introduced shared mutable state in
+  the validator — a cached profile-defaults table, a `sync.Once`
+  mutating a per-scenario map, a leaky redactor reuse — would
+  surface as a per-iteration assertion failure even if the
+  aggregate pass count matched.
+
+Both members are deterministic by design:
+`buildSessionToCreate` is a pure function of (input, now) to
+either a `BreakGlassSession` or a typed `*yerr.Error` value, and
+no test reaches the process environment, the network, a live
+Postgres, a live Dokploy, or any external service. Failures are
+actionable: every scenario name encodes the rule it exercises
+(`baseline valid input is accepted`, `blank actor_id is rejected`,
+`ttl strictly greater than breakGlassMaxTTL is capped`, etc.) so
+a per-row failure points the operator at the exact rule that
+drifted. The wire envelopes the break-glass endpoint produces on
+a reject path remain stable `yalla.error.v1` JSON shapes — the
+gate is at the validator seam, not the wire seam, but the seam
+guarantees the wire envelope cannot quietly drift past it. The
+unit of work the service runs around `buildSessionToCreate` is
+access-only by construction (the `BreakGlassService` struct
+holds no API-key minting or rotation dependency); the
+support-access-review gate (BE-0358) enforces that invariant
+structurally at the package level, and the policy-engine gate
+(BE-0403) enforces the role-allow set for `admin.break_glass` so
+only `RoleSupport` can reach the endpoint. The gate is
+documented as a dedicated `Break-glass tests` step in
+`.github/workflows/ci.yml`, under
+`# 28. Required: break-glass tests` in `scripts/verify.sh`, as
+entry `28` in `CONTRIBUTING.md` under
+`## Required Checks Before Every Commit`, and in `ralph/prd.json`
+under `verificationLoop.requiredBackendCommands` so an AI agent
+reading the PRD before picking up a story sees the gate without
+needing to discover it from shell scripts or CI workflows. Every
+push and PR runs the gate. The single static defence that pins
+every one of those surfaces is
+`internal/release/verification_suite_break_glass_static_test.go`.
 
 ## Race Detector
 

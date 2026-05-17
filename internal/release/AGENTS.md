@@ -2122,3 +2122,102 @@ update the matching constant in
 `verification_suite_admin_endpoint_static_test.go` in
 the same edit. The matchers fail loudly on drift; the
 assertion IS the contract.
+
+## Verification suite: break-glass tests (BE-0404)
+
+`verification_suite_break_glass_static_test.go` pins
+the break-glass verification gate. It is the load-
+bearing static defence for the contract between Yalla's
+`internal/controlplane/store/break_glass_service.go`
+(the source-of-truth chokepoint for the elevated cross-
+tenant access surface) and every downstream caller that
+relies on the validator's typed `*yerr.Error` value-free
+error path. The canonical pair
+(`TestBreakGlassCoversCallSites` and
+`TestBreakGlassPreservesContractUnderContention`) lives
+in
+`internal/controlplane/store/break_glass_canonical_test.go`
+and binds to the PRD's `-run TestBreakGlass` filter. The
+first member walks a closed-set scenario table built
+from every documented rule in
+`BreakGlassService.buildSessionToCreate`
+(`organization_id_blank`, `actor_id_blank`,
+`actor_kind_unknown`, `actor_kind_blank`,
+`reason_blank`, `reason_oversize`, `ttl_zero`,
+`ttl_negative`, `ttl_capped`) and every documented
+accept path (baseline valid input, `actor_kind=usr`,
+`actor_kind=sa`, TTL strictly greater than
+`breakGlassMaxTTL` is capped). Each row predicts the
+validator's outcome deterministically: accept rows
+assert `ExpiresAt - StartedAt == min(TTL,
+breakGlassMaxTTL)` AND that the operator-supplied
+marker survives in the persisted `Reason`; reject rows
+assert a typed `*yerr.Error` with
+`Code == CodeInvalidInput` and a `FieldViolation` under
+the expected field path, plus zero echo of the seeded
+`BREAKGLASSSECRETMARKER` literal in the error message,
+in any `FieldViolation.Reason`, or in the
+`fmt`-formatted error metadata so a future regression
+that started embedding the offending value in the error
+string would fail the redaction predicate before it
+could ship. Three closed-set self-checks fire at the
+head of the test before any row is walked: every
+documented validator rule in `breakGlassValidatorRules`
+is exercised by at least one scenario; every accepted
+actor_kind in `breakGlassAcceptedActorKinds` is covered
+by an accept scenario; and the redactor leaves the
+marker intact (so the marker-survival predicate on
+accept rows is meaningful — an over-aggressive scrub
+regression would otherwise false-positive). The second
+member fires `breakGlassWorkers *
+breakGlassIterationsPerWorker` goroutines that each
+build their own `StartBreakGlassInput` by applying the
+scenario's mutator to a fresh baseline and run
+`buildSessionToCreate` against a SHARED
+`*BreakGlassService` instance, each goroutine asserting
+the rule its OWN scenario predicts; a cross-write under
+the race that swapped two goroutines' scenarios — or a
+future regression that introduced shared mutable state
+in the validator (a cached profile-defaults table, a
+sync.Once mutating a per-scenario map, a leaky
+redactor reuse) — would fail the per-iteration
+assertion even when the aggregate pass count matched.
+Both members are deterministic by design: the validator
+is a pure function from `(input, now)` to either a
+`BreakGlassSession` or a typed `*yerr.Error` value and
+no test reaches the process environment, the network, a
+live Postgres, a live Dokploy, or any external service.
+The static test pins SIX surfaces in one file: the CI
+step name + run command (`- name: Break-glass tests` /
+`run: go test -run TestBreakGlass ./...` in
+`.github/workflows/ci.yml`), the verify.sh required
+step header `# 28. Required: break-glass tests` +
+literal command `go test -run TestBreakGlass ./...`,
+the CONTRIBUTING.md numbered entry
+`28. \`go test -run TestBreakGlass ./...\``, the
+SECURITY.md row + dedicated `## Break-Glass Tests`
+section (with the When column marked "Every push and
+PR"), the PRD command in
+`verificationLoop.requiredBackendCommands`, and the
+canonical pair file's existence with both function
+declarations present. Adding step #28 between BE-0403's
+#27 and the trailing optionals required renumbering
+verify.sh optional steps #28-#32 to #29-#33 and updating
+BE-0400's static test constant from `# 32. Optional…` to
+`# 33. Optional…` (and its synthetic-fixture
+`# 31 → # 32`) in the same edit — the renumber is the
+shared cost of inserting a required step into the
+sequence and continues the BE-0403 pattern verbatim.
+The self-check
+(`TestVerificationSuiteBreakGlassAnalyzerDetectsRegressions`)
+drives every matcher with synthetic known-good AND
+known-bad fixtures so over-tightening (a legitimate
+change trips the analyser) and under-tightening (a real
+regression slips through) are both caught at the
+package-internal API. When changing the CI workflow
+name, the verify.sh header, the CONTRIBUTING.md entry,
+the SECURITY.md row or section, or the PRD commands,
+update the matching constant in
+`verification_suite_break_glass_static_test.go` in the
+same edit. The matchers fail loudly on drift; the
+assertion IS the contract.
