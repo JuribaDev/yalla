@@ -66,6 +66,7 @@ defined in `.github/workflows/ci.yml`:
 | Static analysis | `go vet ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Tests | `go test ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Repository integration tests | `go test ./internal/controlplane/store/...` | `scripts/verify.sh`, CI | Every push and PR |
+| HTTP handler contract tests | `go test ./internal/controlplane/httpapi/...` | `scripts/verify.sh`, CI | Every push and PR |
 | Race detector | `go test -race ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Vulnerability scan | `govulncheck ./...` | CI `security` job | Every push and PR |
 | Lint suite | `staticcheck ./...` and `golangci-lint run ./...` | CI `security` job | Every push and PR |
@@ -986,6 +987,91 @@ contract operators and AI agents rely on:
   workflows. The single static defence that pins every one of
   those surfaces is
   `internal/release/verification_suite_repo_integration_static_test.go`.
+
+## HTTP Handler Contract Tests
+
+Yalla's HTTP handler contract tests are the wire-contract gate that
+catches API regressions before they reach a customer, an AI agent, or
+a CI pipeline. The suite lives under
+`internal/controlplane/httpapi/` in `*_contract_test.go` files —
+every public HTTP endpoint ships one — and the canonical command is
+`go test ./internal/controlplane/httpapi/...`. The suite exercises
+the handler layer end-to-end against deterministic fixtures (fake
+authenticators, fake repositories, fake Dokploy, an in-memory
+`httptest.Server`); it never depends on a live Dokploy server, and
+any external smoke remains opt-in via `YALLA_EXTERNAL_DOKPLOY=1
+go test -run TestLiveDokploySmoke ./...`. BE-0381 publishes the
+contract operators and AI agents rely on:
+
+- **Scope.** Every public HTTP endpoint exposed by
+  `internal/controlplane/httpapi` ships a `*_contract_test.go`
+  file. The single static defence is
+  `internal/release/verification_suite_handler_contract_tests_static_test.go`,
+  which pins the existence of the canonical
+  `me_contract_test.go` file (the `GET /v1/me` contract — the
+  oldest and most-cited contract test in the repo) so the
+  contract-test convention itself cannot be silently deleted, and
+  pins the existence of the per-endpoint contract triple
+  (`ServerWritesResponseDataOnlyToResponseWriter`,
+  `RequestLogRedactsBearerToken`,
+  `ErrorEnvelopeDoesNotLeakDependencyCause`) so a refactor that
+  drops one of the three load-bearing assertions fails the gate.
+- **Determinism.** The handler contract tests run against
+  deterministic fixtures only — fake authenticators, fake
+  repositories, fake Dokploy from `internal/controlplane/dokploy`
+  and `internal/controlplane/worker`, an in-memory
+  `httptest.Server`, and a deterministic `slog` capture. No
+  contract test reaches a live Postgres, a live Dokploy, or any
+  network. A live Dokploy smoke is opt-in via
+  `YALLA_EXTERNAL_DOKPLOY=1` and never runs in the default gate.
+- **Actionable failures.** Every contract test surfaces the
+  failing `request_id` (and, where the endpoint owns a resource,
+  the `resource_id`) and the envelope `code` field in its
+  diagnostic so an operator reading the CI log can map the
+  failure to the exact request without re-running the suite
+  locally. Per-endpoint tests pin the `yalla.output.v1` /
+  `yalla.error.v1` envelope shape so a wire-contract regression
+  is caught before it ships.
+- **Coverage rows.** Each contract test covers success,
+  validation failure, authentication failure, authorization
+  failure, and not-found behaviour where the endpoint owns a
+  resource; quota-failure and conflict rows are covered where
+  the endpoint mutates desired state. The contract triple
+  (`ServerWritesResponseDataOnlyToResponseWriter` /
+  `RequestLogRedactsBearerToken` /
+  `ErrorEnvelopeDoesNotLeakDependencyCause`) is the load-bearing
+  shared invariant every endpoint MUST keep: response data goes
+  only through the `http.ResponseWriter` (never to stdout or
+  stderr), the per-request structured log stays redacted of
+  bearer credentials even on the authorization-failure path, and
+  an error envelope built from a wrapped dependency cause never
+  leaks that cause onto the wire.
+- **Redaction.** Test output, structured log capture, error
+  envelopes, audit metadata, and dry-run payloads MUST stay
+  redacted of secrets — bearer tokens, API keys, Dokploy tokens,
+  customer cookies, and rendered environment-variable values are
+  scrubbed by `internal/output.Redactor`. The
+  `RequestLogRedactsBearerToken` half of the contract triple
+  asserts this end-to-end on the handler path; the BE-0359 fuzz
+  harness in `internal/output/redact_fuzz_test.go` covers the
+  marker-bracketed-value contract at the redactor itself.
+- **CI gating.** `go test ./internal/controlplane/httpapi/...`
+  runs on `ubuntu-latest`, `macos-latest`, and `windows-latest`
+  for every push and every pull request via
+  `.github/workflows/ci.yml` (the `test` job's step `HTTP
+  handler contract tests`), and locally via `scripts/verify.sh`
+  (step `# 7. Required: HTTP handler contract tests`). Both
+  must pass before a commit lands in `main`. The same gate
+  appears in the verification-gates table above as the row
+  `| HTTP handler contract tests | go test ./internal/controlplane/httpapi/... | scripts/verify.sh, CI | Every push and PR |`,
+  in `CONTRIBUTING.md` under `## Required Checks Before Every
+  Commit`, and in `ralph/prd.json` under
+  `verificationLoop.requiredBackendCommands` so an AI agent
+  reading the PRD before picking up a story sees the gate
+  without needing to discover it from shell scripts or CI
+  workflows. The single static defence that pins every one of
+  those surfaces is
+  `internal/release/verification_suite_handler_contract_tests_static_test.go`.
 
 ## Disclosure Timeline (Best Effort)
 

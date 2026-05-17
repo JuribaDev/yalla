@@ -453,3 +453,68 @@ update the matching constant in
 `verification_suite_repo_integration_static_test.go` in the
 same edit. The matchers fail loudly on drift; the assertion IS
 the contract.
+
+## Verification suite: HTTP handler contract tests (BE-0381)
+
+`verification_suite_handler_contract_tests_static_test.go` is
+the load-bearing static defence for the HTTP handler contract
+gate documented in BE-0381. It pins SIX surfaces in one file so
+a future contributor changing any of them fails ONE test, not
+six:
+
+- `.github/workflows/ci.yml` — the `test` job's dedicated
+  `HTTP handler contract tests` step running
+  `go test ./internal/controlplane/httpapi/...`.
+  Defence-in-depth: a narrowing of the umbrella
+  `Unit and integration tests` step would still leave this
+  gate firing as a fast, targeted failure rather than buried
+  inside the umbrella log.
+- `scripts/verify.sh` — the local commit gate runs the same
+  canonical command under the canonical header
+  `# 7. Required: HTTP handler contract tests`. The numeric
+  prefix is part of the contract: reorders must be deliberate.
+- `CONTRIBUTING.md` — the Required Checks Before Every Commit
+  numbered list carries entry
+  `7. \`go test ./internal/controlplane/httpapi/...\`` so a
+  contributor sees the gate before opening a PR.
+- `SECURITY.md` — the Required Verification Gates table carries
+  the `HTTP handler contract tests` row AND a dedicated
+  `## HTTP Handler Contract Tests` section explains the
+  determinism, actionable-failure (with `request_id` /
+  `resource_id`), contract-triple
+  (`ServerWritesResponseDataOnlyToResponseWriter`,
+  `RequestLogRedactsBearerToken`,
+  `ErrorEnvelopeDoesNotLeakDependencyCause`), envelope-pinning
+  (`yalla.output.v1` / `yalla.error.v1`), fake-Dokploy, opt-in
+  `YALLA_EXTERNAL_DOKPLOY` external-smoke, and redaction
+  contracts auditors and operators rely on.
+- `ralph/prd.json` — the verification-loop's
+  `requiredBackendCommands` array carries
+  `go test ./internal/controlplane/httpapi/...` so an AI agent
+  reading the PRD before picking up a story sees the gate from
+  the contract document.
+- `internal/controlplane/httpapi/me_contract_test.go` — the
+  canonical reference contract test file MUST exist AND MUST
+  declare the contract triple
+  (`TestMeServerWritesResponseDataOnlyToResponseWriter`,
+  `TestMeRequestLogRedactsBearerToken`,
+  `TestMeErrorEnvelopeDoesNotLeakDependencyCause`). The
+  `GET /v1/me` endpoint is the oldest and most-cited contract
+  example in the repo; deleting the file or renaming one of
+  the triple silently kills the load-bearing convention every
+  other `*_contract_test.go` follows.
+
+The self-check
+`TestVerificationSuiteHandlerContractAnalyzerDetectsRegressions`
+drives every matcher with synthetic known-good AND known-bad
+fixtures so over-tightening (a legitimate change trips the
+analyser) and under-tightening (a real regression slips
+through) are both caught at the package-internal API. When
+changing the CI step name, the verify.sh header, the
+CONTRIBUTING.md numeric prefix, the SECURITY.md row or
+section, the PRD command, the canonical contract file path,
+or any contract-triple function name, update the matching
+constant in
+`verification_suite_handler_contract_tests_static_test.go` in
+the same edit. The matchers fail loudly on drift; the
+assertion IS the contract.

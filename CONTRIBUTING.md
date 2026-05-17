@@ -38,6 +38,7 @@ and they must all pass on every commit you propose:
 4. `go test ./...`
 5. `go test -race ./...`
 6. `go test ./internal/controlplane/store/...`
+7. `go test ./internal/controlplane/httpapi/...`
 
 `scripts/verify.sh` runs the full set in one command and is the local
 mirror of the `test` job in `.github/workflows/ci.yml`. Step 6 — the
@@ -45,7 +46,12 @@ repository integration suite under `internal/controlplane/store/...` —
 is the persistence-layer gate documented in BE-0380; even though
 `go test ./...` covers the same packages, the dedicated invocation is
 defence-in-depth and surfaces a faster, more targeted failure if any
-repository-layer regression slips in.
+repository-layer regression slips in. Step 7 — the HTTP handler
+contract suite under `internal/controlplane/httpapi/...` — is the
+wire-contract gate documented in BE-0381; the dedicated invocation is
+defence-in-depth on the same principle so a narrowing of the umbrella
+`go test ./...` step would still leave the contract gate firing as a
+fast, targeted failure rather than buried inside the umbrella log.
 
 ## Required Checks Before Every Release
 
