@@ -761,3 +761,95 @@ matching constant in
 `verification_suite_quota_concurrency_static_test.go` in the
 same edit. The matchers fail loudly on drift; the assertion
 IS the contract.
+
+## Verification suite: job worker lease tests (BE-0385)
+
+`verification_suite_job_worker_lease_static_test.go` is the
+single-file static defence for the job-worker-lease
+meta-contract: "a queued provisioning job is leased to exactly
+one worker at a time, and a worker interrupted mid-job returns
+the lease to the queue so the job is not lost." The canonical
+reference lease test file is
+`internal/controlplane/worker/queue_test.go`, which declares
+the lease function pair
+`TestJobWorkerLeaseExclusivityNeverDoubleClaims` (two
+concurrent `StoreClaimer.Claim` calls against a single queued
+job — exactly one returns a lease and the other returns
+`(nil, nil)`; the surviving lease runs the job to success and
+the row carries no stale lease afterward) and
+`TestJobWorkerLeaseReleasedOnShutdownIsRetryable` (a
+`Loop.Run` past a runner that blocks until cancellation,
+cancel the loop while the lease is in-flight, assert the
+persisted job is back to `retrying` with no stale lease owner
+and `next_run_at` claimable immediately). The pair binds to
+the PRD's `-run TestJobWorkerLease` filter via the
+`TestJobWorkerLease` prefix, so a rename to a function whose
+name does not match the prefix silently de-gates the lease
+suite. The static test pins SIX surfaces in one file so a
+future contributor changing any one of them fails ONE test,
+not six:
+
+- `.github/workflows/ci.yml` — the `test` job's
+  `Job worker lease tests` step MUST run
+  `go test -run TestJobWorkerLease ./...`. The dedicated step
+  is defence-in-depth on the same principle as BE-0380 /
+  BE-0381 / BE-0382 / BE-0383 / BE-0384: a narrowing of the
+  umbrella `go test ./...` step would still leave the lease
+  gate firing as a fast targeted failure.
+- `scripts/verify.sh` — the local commit gate's
+  `# 11. Required: job worker lease tests` block MUST invoke
+  the same canonical command. The numeric prefix is part of
+  the contract: a reorder must be a deliberate edit to both
+  the matching constant in this test file AND the script.
+  Inserting required step #11 between #10 (quota concurrency)
+  and the optionals renumbered 11→12 / 12→13 / 13→14 / 14→15
+  in the same edit (govulncheck / staticcheck / golangci-lint
+  / goreleaser).
+- `CONTRIBUTING.md` — the Required Checks Before Every Commit
+  section MUST list the canonical command as entry
+  `11. \`go test -run TestJobWorkerLease ./...\`` so
+  contributors know the gate before they open a PR. The
+  numeric prefix keeps verify.sh and CONTRIBUTING.md in
+  lockstep with BE-0379's `4. go test ./...`, BE-0380's
+  `6. go test ./internal/controlplane/store/...`, BE-0381's
+  `7. go test ./internal/controlplane/httpapi/...`, BE-0382's
+  `8. go test ./internal/controlplane/openapi/...`, BE-0383's
+  `9. go test -run TestPolicyMatrix ./...`, and BE-0384's
+  `10. go test -run TestQuotaConcurrency ./...`.
+- `SECURITY.md` — the Required Verification Gates table MUST
+  contain the `Job worker lease tests` row, AND a dedicated
+  `## Job Worker Lease Tests` section MUST explain the
+  exclusivity / shutdown-safety / determinism /
+  actionable-failure / opt-in-external / redaction contracts
+  so the public security posture stays in lockstep with the
+  worker.
+- `ralph/prd.json` —
+  `verificationLoop.requiredBackendCommands` MUST list
+  `go test -run TestJobWorkerLease ./...` so an AI agent
+  reading the PRD before picking up a story sees the gate
+  without needing to discover it from shell scripts or CI
+  workflows.
+- `internal/controlplane/worker/queue_test.go` — the canonical
+  reference lease test file MUST exist AND MUST declare the
+  lease function pair. The pair captures the two load-bearing
+  lease invariants the worker MUST keep:
+  `SELECT ... FOR UPDATE SKIP LOCKED` on the provisioning_jobs
+  row makes "two workers both leased the same job" impossible,
+  and the `Loop.Run` shutdown path that calls `Lease.Release`
+  against a context detached from the cancelled loop context
+  makes "the job is lost when the worker shuts down"
+  impossible.
+
+The self-check
+`TestVerificationSuiteJobWorkerLeaseAnalyzerDetectsRegressions`
+drives every matcher with synthetic known-good AND known-bad
+fixtures so over-tightening (a legitimate change trips the
+analyser) and under-tightening (a real regression slips
+through) are both caught at the package-internal API. When
+changing the CI step name, the verify.sh header, the
+CONTRIBUTING.md numeric prefix, the SECURITY.md row or
+section, the PRD command, the canonical lease file path, or
+either lease-pair function name, update the matching constant
+in `verification_suite_job_worker_lease_static_test.go` in
+the same edit. The matchers fail loudly on drift; the
+assertion IS the contract.

@@ -42,6 +42,7 @@ and they must all pass on every commit you propose:
 8. `go test ./internal/controlplane/openapi/...`
 9. `go test -run TestPolicyMatrix ./...`
 10. `go test -run TestQuotaConcurrency ./...`
+11. `go test -run TestJobWorkerLease ./...`
 
 `scripts/verify.sh` runs the full set in one command and is the local
 mirror of the `test` job in `.github/workflows/ci.yml`. Step 6 — the
@@ -73,6 +74,13 @@ concurrency gate documented in BE-0384; the dedicated invocation is
 defence-in-depth on the same principle so a narrowing of the umbrella
 `go test ./...` step would still leave the concurrency gate firing as
 a fast, targeted failure rather than buried inside the umbrella log.
+Step 11 — the job worker lease suite bound by the
+`-run TestJobWorkerLease` filter — is the exclusivity +
+shutdown-safety gate documented in BE-0385; the dedicated invocation
+is defence-in-depth on the same principle so a narrowing of the
+umbrella `go test ./...` step would still leave the lease gate
+firing as a fast, targeted failure rather than buried inside the
+umbrella log.
 
 ## Required Checks Before Every Release
 

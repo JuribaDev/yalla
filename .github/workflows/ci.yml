@@ -66,6 +66,9 @@ jobs:
       - name: Quota concurrency tests
         run: go test -run TestQuotaConcurrency ./...
 
+      - name: Job worker lease tests
+        run: go test -run TestJobWorkerLease ./...
+
       - name: Race detector
         run: go test -race ./...
 

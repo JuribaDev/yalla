@@ -70,6 +70,7 @@ defined in `.github/workflows/ci.yml`:
 | OpenAPI schema conformance tests | `go test ./internal/controlplane/openapi/...` | `scripts/verify.sh`, CI | Every push and PR |
 | Policy matrix tests | `go test -run TestPolicyMatrix ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Quota concurrency tests | `go test -run TestQuotaConcurrency ./...` | `scripts/verify.sh`, CI | Every push and PR |
+| Job worker lease tests | `go test -run TestJobWorkerLease ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Race detector | `go test -race ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Vulnerability scan | `govulncheck ./...` | CI `security` job | Every push and PR |
 | Lint suite | `staticcheck ./...` and `golangci-lint run ./...` | CI `security` job | Every push and PR |
@@ -1351,6 +1352,105 @@ contract operators and AI agents rely on:
   opt-in via `YALLA_EXTERNAL_DOKPLOY=1`. The single static
   defence that pins every one of those surfaces is
   `internal/release/verification_suite_quota_concurrency_static_test.go`.
+
+## Job Worker Lease Tests
+
+Yalla's job worker lease tests are the exclusivity + shutdown-safety
+gate that ensures the Postgres-backed claimer in
+`internal/controlplane/worker` deterministically leases each queued
+provisioning job to exactly one worker at a time and returns
+in-flight leases to the queue when the worker is interrupted, so a
+job is never run twice and never lost. The suite lives under
+`internal/controlplane/worker/` and the canonical command is
+`go test -run TestJobWorkerLease ./...`. The suite exercises the
+claimer and run loop end-to-end against deterministic fixtures
+(isolated, freshly migrated Postgres database via
+`testutil.RequireMigratedDB`, `seedQueueOrg`, `enqueueJob`,
+parallel goroutines driving `StoreClaimer.Claim` and `Loop.Run`);
+it never depends on a live Dokploy server, and any external smoke
+remains opt-in via `YALLA_EXTERNAL_DOKPLOY=1
+go test -run TestLiveDokploySmoke ./...`. BE-0385 publishes the
+contract operators and AI agents rely on:
+
+- **Scope.** The two load-bearing lease invariants are exercised
+  by the canonical function pair
+  (`TestJobWorkerLeaseExclusivityNeverDoubleClaims` and
+  `TestJobWorkerLeaseReleasedOnShutdownIsRetryable`). The single
+  static defence is
+  `internal/release/verification_suite_job_worker_lease_static_test.go`,
+  which pins the existence of the canonical
+  `internal/controlplane/worker/queue_test.go` file and the
+  canonical
+  `TestJobWorkerLeaseExclusivityNeverDoubleClaims` +
+  `TestJobWorkerLeaseReleasedOnShutdownIsRetryable` function pair
+  (the load-bearing `-run TestJobWorkerLease` filter from
+  `verificationLoop.requiredBackendCommands` binds to that prefix)
+  so the lease convention itself cannot be silently deleted or
+  renamed.
+- **Determinism.** The job worker lease tests run against
+  deterministic fixtures only — an isolated migrated Postgres
+  database seeded per test run with no shared instance state, a
+  process-local lease owner per claimer, and any Dokploy
+  interaction stays out of the path entirely (the claimer only
+  touches Postgres). No lease test reaches a live Dokploy or any
+  network. A live Dokploy smoke is opt-in via
+  `YALLA_EXTERNAL_DOKPLOY` and never runs in the default gate.
+  Tests skip cleanly when `YALLA_TEST_DATABASE_URL` is unset, so
+  contributors without a local Postgres get a fast green run
+  while CI gates on the real database.
+- **Actionable failures.** Every diagnostic surfaces the job ID
+  (`job_id`) and the organization ID so an operator reading the
+  CI log can map the failure to the exact provisioning job and
+  tenant without re-running the suite locally. The claim path
+  surfaces the `attempt`, `max_attempts`, `request_id`, and
+  `correlation_id` from `StoreClaimer.Claim`'s structured log so
+  the lease lineage is traceable from request to retry; the
+  release path surfaces the released `job_id` plus the same
+  `request_id`/`correlation_id` so an interrupted lease is
+  observable end-to-end through the audit trail.
+- **Coverage rows.** The exclusivity invariant
+  (`TestJobWorkerLeaseExclusivityNeverDoubleClaims`) drives two
+  concurrent `StoreClaimer.Claim` calls against a single queued
+  job; the `SELECT ... FOR UPDATE SKIP LOCKED` claim in the
+  Postgres-backed claimer is what guarantees exactly one
+  goroutine receives the lease and the other receives
+  `(nil, nil)`. The shutdown-safety invariant
+  (`TestJobWorkerLeaseReleasedOnShutdownIsRetryable`) drives a
+  `Loop.Run` past a runner that blocks until cancellation,
+  cancels the loop while the lease is in-flight, and asserts the
+  persisted job is back to `retrying` with no stale lease owner
+  and an immediate `next_run_at` — the `Loop.Run` shutdown path
+  that invokes `Lease.Release` against a context detached from
+  the cancelled loop context is what makes "the job is lost when
+  the worker shuts down" impossible.
+- **Schema-version contract.** Every public HTTP response that
+  surfaces a provisioning job (status, failure summary, retry
+  schedule) uses the stable JSON envelope shape pinned by
+  `yalla.output.v1` (success) and `yalla.error.v1` (error) so a
+  wire-contract regression in how lease outcomes are reported is
+  caught at the httpapi handler-contract layer (BE-0381) before
+  it reaches a customer.
+- **Redaction.** Lease diagnostics never embed secrets, tokens,
+  API keys, cookies, or rendered environment variable values in
+  the surfaces a runner failure crosses. The runner error string
+  is handed to the store transition through the redaction
+  chokepoint, and any metadata carried alongside a job is
+  redacted through the shared output sentinel so a CI log,
+  audit metadata blob, or dead-letter row never becomes the
+  place a credential leaks.
+- **CI cadence.** The lease gate runs as a dedicated `Job worker
+  lease tests` step in `.github/workflows/ci.yml`, under
+  `# 11. Required: job worker lease tests` in `scripts/verify.sh`,
+  as entry `11` in `CONTRIBUTING.md` under
+  `## Required Checks Before Every Commit`, and in
+  `ralph/prd.json` under
+  `verificationLoop.requiredBackendCommands` so an AI agent
+  reading the PRD before picking up a story sees the gate without
+  needing to discover it from shell scripts or CI workflows.
+  Every push and PR runs the gate; a live-Dokploy smoke remains
+  opt-in via `YALLA_EXTERNAL_DOKPLOY=1`. The single static
+  defence that pins every one of those surfaces is
+  `internal/release/verification_suite_job_worker_lease_static_test.go`.
 
 ## Disclosure Timeline (Best Effort)
 

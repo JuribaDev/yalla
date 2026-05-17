@@ -444,3 +444,166 @@ func TestStoreClaimerTwoWorkersRunEachJobOnce(t *testing.T) {
 		}
 	}
 }
+
+// TestJobWorkerLeaseExclusivityNeverDoubleClaims is the first half of the
+// canonical BE-0385 job worker lease pair. It encodes the
+// FOR-UPDATE-SKIP-LOCKED contract: under contention against a single queued
+// job, exactly one StoreClaimer wins the lease and the other sees (nil, nil) —
+// never (lease, nil) for both. A regression that drops the SKIP LOCKED clause
+// (or downgrades the row lock to a shared lock) would let two workers run the
+// same job in parallel; this test trips that regression at the queue layer
+// before any duplicate-execution side effect reaches Dokploy.
+func TestJobWorkerLeaseExclusivityNeverDoubleClaims(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newQueueStore(t, db)
+	repo := store.NewJobRepository()
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	org := seedQueueOrg(t, db, f, "Acme")
+	stored := enqueueJob(ctx, t, s, repo, queueJobFixture(org.ID, "idem-lease-exclusivity"))
+
+	// Two claimers, distinct owners — anything else would mean a worker is
+	// its own contention partner, which would mask the SKIP LOCKED contract.
+	newClaimer := func(owner string) *worker.StoreClaimer {
+		c, err := worker.NewStoreClaimer(worker.StoreClaimerConfig{
+			Store: s, Owner: owner,
+			Runner:        worker.RunnerFunc(func(context.Context, store.ProvisioningJob) error { return nil }),
+			LeaseDuration: 5 * time.Second,
+		})
+		if err != nil {
+			t.Fatalf("NewStoreClaimer(%s): %v", owner, err)
+		}
+		return c
+	}
+	a := newClaimer("worker-lease-a")
+	b := newClaimer("worker-lease-b")
+
+	type result struct {
+		owner string
+		lease worker.Lease
+		err   error
+	}
+	out := make(chan result, 2)
+	var start sync.WaitGroup
+	start.Add(1)
+	for _, c := range []struct {
+		owner string
+		cl    *worker.StoreClaimer
+	}{{"worker-lease-a", a}, {"worker-lease-b", b}} {
+		c := c
+		go func() {
+			start.Wait()
+			l, err := c.cl.Claim(ctx)
+			out <- result{owner: c.owner, lease: l, err: err}
+		}()
+	}
+	start.Done()
+
+	var holders int
+	var winner result
+	for i := 0; i < 2; i++ {
+		r := <-out
+		if r.err != nil {
+			t.Fatalf("Claim(%s): %v", r.owner, r.err)
+		}
+		if r.lease != nil {
+			holders++
+			winner = r
+		}
+	}
+	if holders != 1 {
+		t.Fatalf("two concurrent claimers leased the same job %d times, want exactly 1 (FOR UPDATE SKIP LOCKED contract violated; the job could be run twice). job_id=%s organization_id=%s",
+			holders, stored.ID, org.ID)
+	}
+
+	// The winner runs the job to success; the loser would still see nothing.
+	if err := winner.lease.Run(ctx); err != nil {
+		t.Fatalf("winner.lease.Run: %v", err)
+	}
+	final := getJob(ctx, t, s, repo, org.ID, stored.ID)
+	if final.Status != store.JobStatusSucceeded {
+		t.Errorf("final status = %q, want succeeded (job did not finish through the surviving lease). job_id=%s organization_id=%s",
+			final.Status, stored.ID, org.ID)
+	}
+	if final.LeaseOwner != "" || !final.LeaseDeadline.IsZero() {
+		t.Errorf("succeeded job still carries a lease — exclusivity was broken on the recording side. job_id=%s lease_owner=%q lease_deadline=%v",
+			stored.ID, final.LeaseOwner, final.LeaseDeadline)
+	}
+}
+
+// TestJobWorkerLeaseReleasedOnShutdownIsRetryable is the second half of the
+// canonical BE-0385 job worker lease pair. It encodes the shutdown-safety
+// contract: a worker interrupted while running a job MUST return the
+// in-flight lease to the queue with the lease cleared and the job retryable
+// immediately, so the job is not lost. A regression that orphans the lease
+// on shutdown (skipped Release, lease left held by a dead worker, next_run_at
+// scheduled into the future) would quarantine the job until the lease
+// expires; this test trips that regression at the loop+queue boundary by
+// driving a Loop past a runner that blocks until cancellation, cancelling
+// the loop, and asserting the job is persisted as retrying with no
+// stale lease and an immediate next_run_at.
+func TestJobWorkerLeaseReleasedOnShutdownIsRetryable(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newQueueStore(t, db)
+	repo := store.NewJobRepository()
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	org := seedQueueOrg(t, db, f, "Acme")
+	stored := enqueueJob(ctx, t, s, repo, queueJobFixture(org.ID, "idem-lease-release"))
+
+	started := make(chan struct{})
+	runner := worker.RunnerFunc(func(runCtx context.Context, _ store.ProvisioningJob) error {
+		close(started)
+		<-runCtx.Done()
+		return runCtx.Err()
+	})
+	owner := worker.NewOwnerID()
+	claimer, err := worker.NewStoreClaimer(worker.StoreClaimerConfig{
+		Store: s, Owner: owner, Runner: runner, LeaseDuration: 5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("NewStoreClaimer: %v", err)
+	}
+	loop := &worker.Loop{Claimer: claimer, IdleDelay: time.Millisecond}
+
+	loopCtx, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() { done <- loop.Run(loopCtx) }()
+
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		cancel()
+		<-done
+		t.Fatalf("runner never started; the worker did not claim the queued job. job_id=%s organization_id=%s",
+			stored.ID, org.ID)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("loop.Run: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatalf("loop did not return after shutdown; the release path is hung. job_id=%s organization_id=%s",
+			stored.ID, org.ID)
+	}
+
+	final := getJob(ctx, t, s, repo, org.ID, stored.ID)
+	if final.Status != store.JobStatusRetrying {
+		t.Fatalf("status = %q, want retrying after interrupted-lease release (the job would be lost). job_id=%s organization_id=%s",
+			final.Status, stored.ID, org.ID)
+	}
+	if final.LeaseOwner != "" || !final.LeaseDeadline.IsZero() {
+		t.Errorf("interrupted lease left a stale lease (owner=%q, deadline=%v); the row would be quarantined until the lease expires. job_id=%s organization_id=%s",
+			final.LeaseOwner, final.LeaseDeadline, stored.ID, org.ID)
+	}
+	if final.NextRunAt.After(time.Now().UTC()) {
+		t.Errorf("released job is scheduled into the future (%v); a released job must be claimable immediately. job_id=%s organization_id=%s",
+			final.NextRunAt, stored.ID, org.ID)
+	}
+}
