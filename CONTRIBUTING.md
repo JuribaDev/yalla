@@ -57,6 +57,7 @@ and they must all pass on every commit you propose:
 23. `go test -run TestTenantIsolation ./...`
 24. `go test -run TestBackupRestoreRehearsal ./...`
 25. `go test -run TestReleaseBuild ./...`
+26. `go test -run TestConfigValidation ./...`
 
 `scripts/verify.sh` runs the full set in one command and is the local
 mirror of the `test` job in `.github/workflows/ci.yml`. Step 6 — the
@@ -485,6 +486,45 @@ matched. Both members are deterministic by design: the release
 package functions are pure projections from the (OS, arch) coordinate
 to a string and no test reaches the network, a live Postgres, a live
 Dokploy, or the GoReleaser binary.
+Step 26 — the config validation suite bound by the
+`-run TestConfigValidation` filter — is the configuration-loader gate
+documented in BE-0402; the dedicated invocation is defence-in-depth
+on the same principle so a narrowing of the umbrella `go test ./...`
+step would still leave the config-validation gate firing as a fast,
+targeted failure rather than buried inside the umbrella log. The
+canonical pair (`TestConfigValidationCoversCallSites` and
+`TestConfigValidationPreservesContractUnderContention`) lives in
+`internal/controlplane/config/config_validation_test.go`. The first
+member pins the closed-set validation coverage invariant — every
+documented validation rule in `config.Validate` (invalid profile,
+invalid log level, invalid listen address, invalid public URL,
+invalid Dokploy URL, non-postgres database scheme, short signing
+key, wrong-length secret key, non-hex secret key, malformed /
+too-small / too-large shutdown timeout, non-absolute backup status
+file path, malformed / negative backup max age, bad feature flag
+value / empty flag name, negative / out-of-range rate-limit RPS /
+burst / idle TTL, malformed bool / int rate-limit overrides) and
+every documented strict-profile presence check in
+`config.requireStrictFields` (`YALLA_PUBLIC_URL`,
+`YALLA_DATABASE_URL`, `YALLA_SIGNING_KEYS`, `YALLA_SECRET_KEYS`,
+`YALLA_DOKPLOY_BASE_URL`, `YALLA_DOKPLOY_TOKEN`) yields a typed
+`*yerr.Error` with `Code == CodeConfig`, an error message that names
+the offending env var, and zero echo of the seeded secret marker so
+a future regression that started embedding the offending value in
+the error string would fail the redaction predicate before it could
+ship. The second member pins the per-decision stability invariant
+under contention —
+`configValidationWorkers * configValidationIterationsPerWorker`
+goroutines each build their own env map from the scenario table and
+run `config.Load(MapLookup(env))` and every goroutine asserts the
+rule its OWN scenario predicts; a cross-write under the race that
+swapped two goroutines' scenarios — or a future regression that
+introduced shared mutable state in the validator — would fail the
+per-iteration assertion even when the aggregate pass count matched.
+Both members are deterministic by design: the validator is a pure
+function from the env map to a `*Config` or a typed `*yerr.Error`
+value, and no test reaches the process environment, the network,
+a live Postgres, a live Dokploy, or any external service.
 
 ## Required Checks Before Every Release
 

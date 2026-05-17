@@ -111,6 +111,9 @@ jobs:
       - name: Release build tests
         run: go test -run TestReleaseBuild ./...
 
+      - name: Config validation tests
+        run: go test -run TestConfigValidation ./...
+
       - name: Race detector
         run: go test -race ./...
 

@@ -263,7 +263,8 @@
       "go test -run TestPaginationStability ./...",
       "go test -run TestTenantIsolation ./...",
       "go test -run TestBackupRestoreRehearsal ./...",
-      "go test -run TestReleaseBuild ./..."
+      "go test -run TestReleaseBuild ./...",
+      "go test -run TestConfigValidation ./..."
     ],
     "optionalWhenConfigured": [
       "goimports -w .",
@@ -8540,7 +8541,7 @@
       ],
       "type": "verification",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Test suite: config validation tests."
     },
     {

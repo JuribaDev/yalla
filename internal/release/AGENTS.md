@@ -1919,3 +1919,93 @@ the matching constant in
 `verification_suite_release_build_static_test.go` in the
 same edit. The matchers fail loudly on drift; the
 assertion IS the contract.
+
+## Verification suite: config validation tests (BE-0402)
+
+`verification_suite_config_validation_static_test.go`
+pins the config-validation verification gate. It is the
+load-bearing static defence for the contract between
+Yalla's `internal/controlplane/config` package (the
+single configuration chokepoint both backend binaries
+`cmd/yalla-api` and `cmd/yalla-worker` call once at
+startup) and every downstream caller that relies on the
+typed `*yerr.Error` value-free error path. The canonical
+pair (`TestConfigValidationCoversCallSites` and
+`TestConfigValidationPreservesContractUnderContention`)
+lives in
+`internal/controlplane/config/config_validation_test.go`
+and binds to the PRD's `-run TestConfigValidation`
+filter. The first member walks a closed-set scenario
+table built from every documented rule in
+`config.Validate` and every documented strict-profile
+presence check in `config.requireStrictFields` (invalid
+profile, invalid log level, invalid listen address,
+invalid public URL, invalid Dokploy URL, non-postgres
+database scheme, short signing key, wrong-length /
+non-hex secret key, malformed / too-small / too-large
+shutdown timeout, non-absolute backup status file,
+malformed / negative backup max age, bad feature-flag
+value / empty flag name, negative or oversized rate-
+limit RPS / burst / idle TTL, malformed bool / int rate-
+limit overrides, and the strict-profile presence checks
+for `YALLA_PUBLIC_URL`, `YALLA_DATABASE_URL`,
+`YALLA_SIGNING_KEYS`, `YALLA_SECRET_KEYS`,
+`YALLA_DOKPLOY_BASE_URL`, `YALLA_DOKPLOY_TOKEN`) and
+asserts each yields a typed `*yerr.Error` with
+`Code == CodeConfig`, an error message that names the
+offending env var, and zero echo of the seeded
+`SUPERSECRETMARKER` literal so a future regression that
+started embedding the offending value in the error
+string would fail the redaction predicate before it
+could ship. The second member fires
+`configValidationWorkers *
+configValidationIterationsPerWorker` goroutines that
+each build their own env map from the scenario table
+(via the package's `MapLookup` test seam) and run
+`config.Load(MapLookup(env))`, each goroutine asserting
+the rule its OWN scenario predicts; a cross-write under
+the race that swapped two goroutines' scenarios — or a
+future regression that introduced shared mutable state
+in the validator (a cached profile-defaults table, a
+global rate-limit builder, a sync.Once mutating a shared
+map) — would fail the per-iteration assertion even when
+the aggregate pass count matched. Both members are
+deterministic by design: the validator is a pure
+function from the env map to a `*Config` or a typed
+`*yerr.Error` value and no test reaches the process
+environment, the network, a live Postgres, a live
+Dokploy, or any external service. The static test pins
+SIX surfaces in one file: the CI step name + run command
+(`- name: Config validation tests` /
+`run: go test -run TestConfigValidation ./...` in
+`.github/workflows/ci.yml`), the verify.sh required step
+header `# 26. Required: config validation tests` +
+literal command `go test -run TestConfigValidation
+./...`, the CONTRIBUTING.md numbered entry
+`26. \`go test -run TestConfigValidation ./...\``, the
+SECURITY.md row + dedicated `## Config Validation Tests`
+section (with the When column marked "Every push and
+PR"), the PRD command in
+`verificationLoop.requiredBackendCommands`, and the
+canonical pair file's existence with both function
+declarations present. Adding step #26 between BE-0401's
+#25 and the trailing optionals required renumbering
+verify.sh optional steps #26-#30 to #27-#31 and updating
+BE-0400's static test constant from `# 30. Optional…` to
+`# 31. Optional…` (and its synthetic-fixture
+`# 29 → # 30`) in the same edit — the renumber is the
+shared cost of inserting a required step into the
+sequence and is forward-applicable to every future
+required-step insertion. The self-check
+(`TestVerificationSuiteConfigValidationAnalyzerDetectsRegressions`)
+drives every matcher with synthetic known-good AND
+known-bad fixtures so over-tightening (a legitimate
+change trips the analyser) and under-tightening (a real
+regression slips through) are both caught at the
+package-internal API. When changing the CI workflow name,
+the verify.sh header, the CONTRIBUTING.md entry, the
+SECURITY.md row or section, or the PRD commands, update
+the matching constant in
+`verification_suite_config_validation_static_test.go` in
+the same edit. The matchers fail loudly on drift; the
+assertion IS the contract.

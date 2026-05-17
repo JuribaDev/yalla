@@ -85,6 +85,7 @@ defined in `.github/workflows/ci.yml`:
 | Tenant isolation tests | `go test -run TestTenantIsolation ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Backup restore rehearsal tests | `go test -run TestBackupRestoreRehearsal ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Release build tests | `go test -run TestReleaseBuild ./...` | `scripts/verify.sh`, CI | Every push and PR |
+| Config validation tests | `go test -run TestConfigValidation ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | External live-Dokploy smoke tests | `YALLA_EXTERNAL_DOKPLOY=1 go test -run TestLiveDokploySmoke ./...` | `.github/workflows/external-smoke.yml`, `scripts/verify.sh` (opt-in) | Opt-in (`YALLA_EXTERNAL_DOKPLOY=1`), nightly + manual |
 | Race detector | `go test -race ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Vulnerability scan | `govulncheck ./...` | CI `security` job | Every push and PR |
@@ -2916,6 +2917,140 @@ collateral surface lives in
   push and PR runs the gate. The single static defence that pins
   every one of those surfaces is
   `internal/release/verification_suite_release_build_static_test.go`.
+
+## Config Validation Tests
+
+The config validation suite (BE-0402) is the configuration-loader
+gate. It exists to catch a class of regressions a single-call unit
+test cannot: a relaxed `YALLA_DATABASE_URL` scheme check that
+silently accepted a `mysql://` DSN, a `YALLA_SECRET_KEYS` entry
+that snuck through with non-hex characters, an out-of-range
+`YALLA_SHUTDOWN_TIMEOUT` that wedged graceful shutdown, a strict
+profile that booted with a missing operational field, a feature-
+flag parser that swallowed a malformed value, a rate-limit override
+that escaped the documented bounds, or a redaction regression that
+echoed the offending value into an error string and leaked a
+credential into operator logs, audit metadata, or test output. The
+canonical pair (`TestConfigValidationCoversCallSites` and
+`TestConfigValidationPreservesContractUnderContention`) lives in
+`internal/controlplane/config/config_validation_test.go` and binds
+to the PRD's `-run TestConfigValidation` filter; the static defence
+for every collateral surface lives in
+`internal/release/verification_suite_config_validation_static_test.go`.
+
+- **Scope.** The two load-bearing validation invariants are
+  exercised by the canonical function pair. The first member walks
+  a closed-set scenario table built from every documented rule in
+  `config.Validate` and every documented strict-profile presence
+  check in `config.requireStrictFields` (invalid profile, invalid
+  log level, invalid listen address, invalid public URL, invalid
+  Dokploy URL, non-postgres `YALLA_DATABASE_URL` scheme, short
+  signing key, wrong-length / non-hex `YALLA_SECRET_KEYS` entry,
+  malformed / too-small / too-large shutdown timeout, non-absolute
+  backup status file path, malformed / negative backup max age,
+  bad feature-flag value / empty flag name, negative or oversized
+  rate-limit RPS / burst / idle TTL, malformed bool / int rate-
+  limit overrides, and the strict-profile presence checks for
+  `YALLA_PUBLIC_URL`, `YALLA_DATABASE_URL`, `YALLA_SIGNING_KEYS`,
+  `YALLA_SECRET_KEYS`, `YALLA_DOKPLOY_BASE_URL`, and
+  `YALLA_DOKPLOY_TOKEN`) and asserts each yields a typed
+  `*yerr.Error` with `Code == CodeConfig`, an error message that
+  names the offending env var, and zero echo of the seeded secret
+  marker. The set itself is part of the closed-set coverage: a
+  future relaxation of one rule must be a deliberate edit to both
+  the validator and the scenario table. The second member fires
+  `configValidationWorkers * configValidationIterationsPerWorker`
+  goroutines that each build their own env map from the scenario
+  table (via the package's `MapLookup` test seam) and run
+  `config.Load(MapLookup(env))`, each goroutine asserting the rule
+  its OWN scenario predicts; a cross-write under the race that
+  swapped two goroutines' scenarios would fail the per-iteration
+  assertion even when the aggregate pass count matched. The single
+  static defence is
+  `internal/release/verification_suite_config_validation_static_test.go`,
+  which pins the existence of the canonical
+  `config_validation_test.go` file and the canonical
+  `TestConfigValidationCoversCallSites` +
+  `TestConfigValidationPreservesContractUnderContention` function
+  pair (the load-bearing `-run TestConfigValidation` filter from
+  `verificationLoop.requiredBackendCommands` binds to the
+  `TestConfigValidation` prefix) so the validation convention
+  itself cannot be silently deleted or renamed.
+- **Typed-error contract.** Every documented validator branch
+  returns a typed `*yerr.Error` whose `Code` field equals
+  `yerr.CodeConfig`. That code is the load-bearing exit pivot the
+  API binary (`cmd/yalla-api`) and the worker binary
+  (`cmd/yalla-worker`) translate to a deterministic non-zero exit;
+  an `error` returned as a plain `errors.New` value would silently
+  downgrade the exit path to a generic "unknown error" and a
+  misconfigured process would either fail with an unclassified
+  diagnostic or — worse — enter the request path. The coverage
+  member asserts the typed code for every scenario.
+- **Determinism.** The config validation tests run against
+  deterministic fixtures only — the scenario table is a compile-
+  time constant, the validator is a pure function from the env map
+  to a `*Config` or a typed `*yerr.Error` value, and the
+  contention burst's per-goroutine fixture is derived from the
+  worker + iteration index and indexes into the closed-set
+  scenario table so every test run exercises the identical
+  decision set. No config validation test reaches the process
+  environment, the network, a live Postgres, a live Dokploy, or
+  any external service. The test seam `config.MapLookup` adapts an
+  in-memory map to the validator's `LookupFunc` signature so the
+  real process environment never bleeds into assertions and the
+  burst's per-goroutine env can be built without contention on
+  shared state.
+- **Actionable failures.** Every diagnostic surfaces the scenario
+  name (for the coverage member) or the worker + iteration index
+  AND the offending scenario (for the burst member) so an operator
+  reading the CI log can map the failure to a specific validator
+  branch without re-running the suite locally. The scenario name
+  is descriptive (`invalid_database_scheme`, `non_hex_secret_key`,
+  `strict_missing_dokploy_token`, etc.) so an operator can
+  correlate the failure with the exact env var or rule that
+  drifted, and the originating `request_id` is carried through the
+  process startup chain when the API binary fails to boot.
+- **Schema-version contract.** The config validation suite
+  exercises typed `*yerr.Error` values directly — it does not
+  render HTTP envelopes — but the typed-error surface it pins is
+  the contract every customer-facing wire response downstream
+  relies on: a `CodeConfig` error surfaces through
+  `internal/output`'s envelope renderer as `yalla.error.v1` with a
+  stable `code` field, and the success path the validator gates
+  surfaces through `yalla.output.v1` envelopes. A regression that
+  silently lost the typed code would break the wire schema for
+  every downstream caller.
+- **Redaction.** The config validation tests seed the baseline
+  strict env with the `SUPERSECRETMARKER` literal embedded in the
+  `YALLA_DATABASE_URL`, `YALLA_SIGNING_KEYS`, and
+  `YALLA_DOKPLOY_TOKEN` positions and assert no validation error
+  message ever echoes the marker. Validation errors describe which
+  env var failed without echoing its value, even when the
+  offending value is itself a secret. This is the structural
+  redaction predicate every operator log, audit metadata record,
+  and test output line downstream of `config.Load` relies on. The
+  matcher is deliberately a substring check on the rendered error
+  string so a future regression that introduced an `%v` formatter
+  over the offending value would fail the predicate on its first
+  scenario.
+- **Tenant isolation.** The config validation suite is process-
+  global by design — `config.Load` resolves the binary-wide
+  startup config, not per-tenant data — and therefore has no
+  tenant boundary to enforce. The per-tenant data-isolation
+  contract is enforced by the dedicated tenant-isolation suite
+  (BE-0398) and the per-row repository isolation tests under
+  `internal/controlplane/store/`.
+- **CI cadence.** The config validation gate runs as a dedicated
+  `Config validation tests` step in `.github/workflows/ci.yml`,
+  under `# 26. Required: config validation tests` in
+  `scripts/verify.sh`, as entry `26` in `CONTRIBUTING.md` under
+  `## Required Checks Before Every Commit`, and in `ralph/prd.json`
+  under `verificationLoop.requiredBackendCommands` so an AI agent
+  reading the PRD before picking up a story sees the gate without
+  needing to discover it from shell scripts or CI workflows. Every
+  push and PR runs the gate. The single static defence that pins
+  every one of those surfaces is
+  `internal/release/verification_suite_config_validation_static_test.go`.
 
 ## Race Detector
 
