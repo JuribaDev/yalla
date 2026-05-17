@@ -49,6 +49,7 @@ and they must all pass on every commit you propose:
 15. `go test -run TestMigrationsEmptyDB ./...`
 16. `go test -run TestMigrationsDowngradeSafety ./...`
 17. `go test -run TestLoadSmoke ./...`
+18. `go test -run TestChaosDokployTimeouts ./...`
 
 `scripts/verify.sh` runs the full set in one command and is the local
 mirror of the `test` job in `.github/workflows/ci.yml`. Step 6 — the
@@ -177,6 +178,42 @@ deterministic by design: the bootstrap surface is the one part of
 the API that needs no backing infrastructure, so the load smoke
 gate stays green on every machine without Postgres or a live
 Dokploy server.
+
+Step 18 — the chaos-timeout suite bound by the
+`-run TestChaosDokployTimeouts` filter — is the typed-Dokploy-client
+chaos-classification gate documented in BE-0393; the dedicated
+invocation is defence-in-depth on the same principle so a narrowing
+of the umbrella `go test ./...` step would still leave the chaos gate
+firing as a fast, targeted failure rather than buried inside the
+umbrella log. The canonical pair
+(`TestChaosDokployTimeoutsCoversCallSites` and
+`TestChaosDokployTimeoutsMapsToTypedTimeoutEnvelope`) lives in
+`internal/controlplane/dokploy/chaos_dokploy_timeouts_test.go`. The
+first member pins the closed-set chaos-scenario coverage invariant —
+the scenario table the burst harness iterates MUST stay non-empty,
+free of duplicate names, scoped to the typed client surface (GET,
+POST, DELETE) and to the idempotency rule (POST attempted exactly
+once; GET and DELETE attempted 1 + MaxRetries), and every entry MUST
+map to `yerr.CodeTimeout` attributed to `apierr.DependencyDokploy` —
+and runs without any infrastructure dependency so a typo or
+classification-regression trips on every developer machine. The
+second member pins the runtime chaos invariant — the typed Dokploy
+client spun up against a per-iteration fake-Dokploy server and
+firing `chaosWorkers * chaosIterationsPerWorker` concurrent scenario
+invocations MUST yield only failures that are typed `*yerr.Error`
+values with `Code=yerr.CodeTimeout`, attribute to
+`apierr.DependencyDokploy`, carry the caller's
+`telemetry.HeaderRequestID` into every recorded attempt, leave every
+recorded Authorization header redacted to `output.Sentinel`, and
+carry no Dokploy bearer-token literal in any wrapped cause. Failures
+surface with the offending scenario name AND the observed request_id
+so an operator can correlate the gate failure with a specific
+in-flight chaos run without re-running the suite locally. Both
+members are deterministic by design: the in-process fake-Dokploy is
+the only dependency the chaos harness needs, the `TimeoutFault`
+primitive honours `r.Context().Done()` so each per-attempt deadline
+cancels the in-flight request, and the gate stays green on every
+machine without Postgres or a live Dokploy server.
 
 ## Required Checks Before Every Release
 

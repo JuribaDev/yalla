@@ -1407,3 +1407,54 @@ section, or the PRD commands, update the matching constant
 in `verification_suite_load_smoke_static_test.go` in the
 same edit. The matchers fail loudly on drift; the assertion
 IS the contract.
+
+## Verification suite: chaos tests for Dokploy timeouts (BE-0393)
+
+`verification_suite_chaos_dokploy_timeouts_static_test.go`
+pins the chaos-timeout gate. It is the load-bearing static
+defence for the contract between Yalla's typed Dokploy
+client and every operator, AI agent, audit reviewer, or
+upstream retry surface that consumes a Dokploy-timeout
+failure: every chaos-timeout failure surfaces as a
+`*yerr.Error` with `Code=yerr.CodeTimeout` attributed to
+`apierr.DependencyDokploy`, the caller's
+`telemetry.HeaderRequestID` propagates into every recorded
+attempt, the per-attempt timeout fires inside the bounded
+retry budget (POST attempted exactly once; GET and DELETE
+attempted 1 + `MaxRetries`), every Authorization header is
+redacted to `output.Sentinel` on the wire, and no Dokploy
+bearer token leaks at any level of the wrapped cause chain
+even when fired by `chaosWorkers *
+chaosIterationsPerWorker` concurrent goroutines per
+scenario. The canonical pair
+(`TestChaosDokployTimeoutsCoversCallSites` and
+`TestChaosDokployTimeoutsMapsToTypedTimeoutEnvelope`) lives
+in
+`internal/controlplane/dokploy/chaos_dokploy_timeouts_test.go`
+and binds to the PRD's `-run TestChaosDokployTimeouts`
+filter. Both pair members are deterministic — they spin a
+per-iteration `dokployfake.Server` up in-process and never
+reach a live Dokploy server or any Postgres — because the
+fake's `TimeoutFault` honours `r.Context().Done()` so each
+per-attempt deadline cancels the in-flight request and the
+harness finishes well under one second. The static test
+pins SIX surfaces in one file: the CI
+`Chaos tests for Dokploy timeouts` step
+(`.github/workflows/ci.yml`), the verify.sh step #18 header
+(`scripts/verify.sh`), the CONTRIBUTING.md entry #18, the
+SECURITY.md row + dedicated
+`## Chaos Tests For Dokploy Timeouts` section, the PRD
+command in `verificationLoop.requiredBackendCommands`, and
+the canonical pair file's existence with both function
+declarations present. The self-check
+(`TestVerificationSuiteChaosDokployTimeoutsAnalyzerDetectsRegressions`)
+drives every matcher with synthetic known-good AND
+known-bad fixtures so over-tightening (a legitimate change
+trips the analyser) and under-tightening (a real regression
+slips through) are both caught at the package-internal API.
+When changing the CI step name, the verify.sh header, the
+CONTRIBUTING.md numeric prefix, the SECURITY.md row or
+section, or the PRD commands, update the matching constant
+in `verification_suite_chaos_dokploy_timeouts_static_test.go`
+in the same edit. The matchers fail loudly on drift; the
+assertion IS the contract.

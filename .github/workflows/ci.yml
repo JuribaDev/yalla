@@ -87,6 +87,9 @@ jobs:
       - name: Load smoke tests
         run: go test -run TestLoadSmoke ./...
 
+      - name: Chaos tests for Dokploy timeouts
+        run: go test -run TestChaosDokployTimeouts ./...
+
       - name: Race detector
         run: go test -race ./...
 

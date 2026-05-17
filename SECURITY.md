@@ -77,6 +77,7 @@ defined in `.github/workflows/ci.yml`:
 | Migration tests from empty DB | `go test -run TestMigrationsEmptyDB ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Migration downgrade safety tests | `go test -run TestMigrationsDowngradeSafety ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Load smoke tests | `go test -run TestLoadSmoke ./...` | `scripts/verify.sh`, CI | Every push and PR |
+| Chaos tests for Dokploy timeouts | `go test -run TestChaosDokployTimeouts ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Race detector | `go test -race ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Vulnerability scan | `govulncheck ./...` | CI `security` job | Every push and PR |
 | Lint suite | `staticcheck ./...` and `golangci-lint run ./...` | CI `security` job | Every push and PR |
@@ -1997,6 +1998,119 @@ collateral surface lives in
   rendered environment variable values are redacted in fake Dokploy
   fixtures, the bootstrap envelope, the response headers, and every
   log line the burst harness might observe.
+
+## Chaos Tests For Dokploy Timeouts
+
+The chaos-timeout suite (BE-0393) is the typed-Dokploy-client
+chaos-classification gate. It exists to catch a class of regressions
+a single-request unit test cannot: a per-attempt timeout misclassified
+as `E_INTERNAL` or `E_UNAVAILABLE` after a code refactor, a POST
+quietly retried after a timeout that would duplicate a provisioning
+side effect, an idempotent GET or DELETE that stopped retrying inside
+its bounded budget, a `telemetry.HeaderRequestID` that fails to
+propagate from the calling context into every Dokploy attempt so an
+operator cannot correlate a timeout with the originating request, or
+an Authorization header that leaks a Dokploy bearer-token literal
+into the error chain or the recorded request fixtures even under
+`chaosWorkers * chaosIterationsPerWorker` concurrent goroutines per
+scenario. The canonical pair
+(`TestChaosDokployTimeoutsCoversCallSites` and
+`TestChaosDokployTimeoutsMapsToTypedTimeoutEnvelope`) lives in
+`internal/controlplane/dokploy/chaos_dokploy_timeouts_test.go` and
+binds to the PRD's `-run TestChaosDokployTimeouts` filter; the
+static defence for every collateral surface lives in
+`internal/release/verification_suite_chaos_dokploy_timeouts_static_test.go`.
+
+- **Scope.** The two load-bearing chaos invariants are exercised by
+  the canonical function pair. The first member walks an in-memory
+  closed-set scenario table covering the typed client's GET, POST,
+  and DELETE call sites (`GetDeployment`, `EnsureOrganization`,
+  `RemoveService`) and asserts every entry maps to
+  `yerr.CodeTimeout` attributed to `apierr.DependencyDokploy` with
+  an attempt count consistent with the idempotency rule (POST = 1;
+  GET and DELETE = 1 + MaxRetries). The second member spins the
+  typed Dokploy client up against a per-iteration in-process
+  `dokployfake.Server`, queues `expectedAttempts` `TimeoutFault`
+  entries whose delay outlasts the per-attempt timeout, and asserts
+  every returned error is a typed `*yerr.Error` with the expected
+  code, dependency, attempt count, and request-id propagation. The
+  single static defence is
+  `internal/release/verification_suite_chaos_dokploy_timeouts_static_test.go`,
+  which pins the existence of the canonical
+  `chaos_dokploy_timeouts_test.go` file and the canonical
+  `TestChaosDokployTimeoutsCoversCallSites` +
+  `TestChaosDokployTimeoutsMapsToTypedTimeoutEnvelope` function
+  pair (the load-bearing `-run TestChaosDokployTimeouts` filter
+  from `verificationLoop.requiredBackendCommands` binds to the
+  `TestChaosDokployTimeouts` prefix) so the chaos-timeout
+  convention itself cannot be silently deleted or renamed.
+- **Determinism.** The chaos-timeout tests run against
+  deterministic fixtures only — a per-iteration `dokployfake.Server`
+  constructed in-process with no shared instance state, a
+  bounded-budget retry client whose `RetryBaseDelay`/`RetryMaxDelay`
+  collapse the production backoff to sub-millisecond so the suite
+  stays fast, and `TimeoutFault` entries whose delay is bounded by
+  the per-attempt context cancellation so the wall-clock cost is
+  predictable. No chaos test reaches a live Dokploy or any network.
+  A live Dokploy smoke is opt-in via `YALLA_EXTERNAL_DOKPLOY` and
+  never runs in the default gate; `TestLiveDokploySmoke` is the
+  documented opt-in entry point.
+- **Actionable failures.** Every diagnostic surfaces the offending
+  scenario name AND the observed `request_id` from the
+  `telemetry.NewRequestID()` seed propagated through the call
+  context so an operator reading the CI log can map the failure to
+  the exact chaos scenario and in-flight request without re-running
+  the suite locally. The attempt-count mismatch path reports both
+  observed and expected counts so an idempotency-rule regression
+  surfaces with the exact divergence.
+- **Coverage rows.** The closed-set chaos-scenario coverage member
+  (`TestChaosDokployTimeoutsCoversCallSites`) drives the entire
+  typed client surface — `GET /api/deployments/<id>` retried inside
+  the bounded budget, `POST /api/organizations` attempted exactly
+  once, `DELETE /api/services/<id>` retried inside the bounded
+  budget — and the runtime classification member
+  (`TestChaosDokployTimeoutsMapsToTypedTimeoutEnvelope`) drives
+  every scenario through the production `Client.do` /
+  `Client.attempt` / `Client.transportError` chain so an
+  end-to-end regression in the per-attempt timeout, the
+  idempotency-aware retry budget, the typed-error mapping, or the
+  redaction chokepoint surfaces on the first iteration that fires.
+- **Schema-version contract.** Every public HTTP response that
+  surfaces a Dokploy-timeout failure (a provisioning job marked
+  failed, an admin diagnostic that reports the upstream as
+  `unavailable`, an error envelope returned to the customer) uses
+  the stable JSON envelope shape pinned by `yalla.output.v1`
+  (success) and `yalla.error.v1` (error). The chaos-timeout suite
+  itself asserts on the typed `*yerr.Error` boundary the envelope
+  is built from, so a regression that drifted the wire shape would
+  also fail the upstream handler-contract suite (BE-0381) and the
+  OpenAPI conformance suite (BE-0382).
+- **Redaction.** Test output, error chains, audit metadata, and
+  the recorded request fixtures the fake exposes via
+  `Server.Requests()` MUST stay redacted of secrets — the Dokploy
+  bearer token literal, the canonical Yalla API key prefix
+  (`yka_`), the `Bearer ` scheme value, and the literal
+  `DOKPLOY_TOKEN` env-var name are scrubbed by
+  `internal/output.Redactor` and the fake's `record()` chokepoint
+  before any byte reaches a test log or an audit blob. The chaos
+  suite walks the whole `errors.Unwrap` chain and every recorded
+  request's `Authorization` field looking for these markers, so a
+  leaked credential surfaces with the marker substring that
+  drifted.
+- **CI cadence.** The chaos-timeout gate runs as a dedicated
+  `Chaos tests for Dokploy timeouts` step in
+  `.github/workflows/ci.yml`, under
+  `# 18. Required: chaos tests for Dokploy timeouts` in
+  `scripts/verify.sh`, as entry `18` in `CONTRIBUTING.md` under
+  `## Required Checks Before Every Commit`, and in
+  `ralph/prd.json` under
+  `verificationLoop.requiredBackendCommands` so an AI agent
+  reading the PRD before picking up a story sees the gate without
+  needing to discover it from shell scripts or CI workflows.
+  Every push and PR runs the gate; a live-Dokploy smoke remains
+  opt-in via `YALLA_EXTERNAL_DOKPLOY=1`. The single static
+  defence that pins every one of those surfaces is
+  `internal/release/verification_suite_chaos_dokploy_timeouts_static_test.go`.
 
 ## Race Detector
 

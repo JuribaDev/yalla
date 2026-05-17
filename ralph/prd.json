@@ -255,7 +255,8 @@
       "go test -run TestFuzzValidator ./...",
       "go test -run TestMigrationsEmptyDB ./...",
       "go test -run TestMigrationsDowngradeSafety ./...",
-      "go test -run TestLoadSmoke ./..."
+      "go test -run TestLoadSmoke ./...",
+      "go test -run TestChaosDokployTimeouts ./..."
     ],
     "optionalWhenConfigured": [
       "goimports -w .",
@@ -8361,8 +8362,8 @@
       ],
       "type": "verification",
       "priority": 1,
-      "passes": false,
-      "notes": "Test suite: chaos tests for Dokploy timeouts."
+      "passes": true,
+      "notes": "Test suite: chaos tests for Dokploy timeouts. Pinned via internal/release/verification_suite_chaos_dokploy_timeouts_static_test.go. Canonical pair TestChaosDokployTimeoutsCoversCallSites + TestChaosDokployTimeoutsMapsToTypedTimeoutEnvelope lives in internal/controlplane/dokploy/chaos_dokploy_timeouts_test.go and binds to the PRD's `-run TestChaosDokployTimeouts` filter. Both members are deterministic \u2014 they spin a per-iteration dokployfake.Server up in-process and never reach a live Dokploy server or Postgres \u2014 because the fake-Dokploy TimeoutFault honours r.Context().Done() so each per-attempt deadline cancels the in-flight request. The runtime member fires chaosWorkers x chaosIterationsPerWorker concurrent scenario invocations across GET (idempotent, retried), POST (non-idempotent, never retried), and DELETE (idempotent, retried) call sites and asserts every failure is a typed *yerr.Error with Code=yerr.CodeTimeout attributed to apierr.DependencyDokploy, with telemetry.HeaderRequestID propagated to every recorded attempt, every recorded Authorization header redacted to output.Sentinel, no Dokploy bearer-token literal anywhere in the wrapped cause chain, and an attempt count matching the typed client's idempotency rule (POST=1, GET/DELETE=1+MaxRetries). Six surfaces pinned: ci.yml step `Chaos tests for Dokploy timeouts`, verify.sh step #18, CONTRIBUTING.md entry #18, SECURITY.md gate row + dedicated `## Chaos Tests For Dokploy Timeouts` section, PRD requiredBackendCommands `go test -run TestChaosDokployTimeouts ./...`, canonical pair file existence."
     },
     {
       "id": "BE-0394",
