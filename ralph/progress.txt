@@ -1,5 +1,6 @@
 ## Codebase Patterns
 - Security-verification cross-package secret-confinement pattern, Dokploy-token instance (BE-0361 pattern, internal/release/dokploy_token_isolation_static_test.go + internal/controlplane/config/dokploy_token_isolation_test.go + SECURITY.md "## Dokploy Token Isolation" section + internal/controlplane/dokploy/AGENTS.md "Token isolation (BE-0361)" subsection; SEVENTH worked instance of the BE-0344 two-test template and FIRST cross-package instance — confirms the template scales from "this single function MUST honour rule X" (BE-0346) and "this directory MUST NOT import surface Y" (BE-0357 admin endpoints, BE-0349 SSRF) to "this scarce in-process secret MUST flow from source-of-truth package A through redaction package B into wire-emission package C with NO leak surface in customer-facing package D". Six load-bearing rules: (1) TRAILING-SELECTOR-NAME matching — when the field name is unambiguously the secret in the codebase ("DokployToken" is unique to the Config secret field, no other struct has a field of the same name), match by `SelectorExpr.Sel.Name == "DokployToken"` regardless of the receiver. This catches `config.DokployToken`, `cfg.DokployToken`, `c.DokployToken`, and any future-receiver shape alike, in ONE matcher rule, where the package-qualified-only variant would miss the `c.DokployToken` form a method using a `*config.Config` receiver would naturally write. The receiver-name freedom is the load-bearing rule: any closed list of qualifiers (`config.`, `cfg.`, …) is brittle to local-naming choices in a future refactor. (2) RETURN-FALSE-FROM-INSPECT to suppress double-counting when a matcher fires on a parent node whose children would ALSO match — `config.EnvDokployToken` is both a SelectorExpr (X=`config`, Sel=`EnvDokployToken`) and contains an inner `EnvDokployToken` Ident that the bare-Ident matcher would also flag. Returning `false` from the `ast.Inspect` callback after emitting the SelectorExpr diagnostic stops descent and keeps the count at 1. The self-check fixture `handler that reads config.EnvDokployToken is rejected` pins this — without the `return false` it would fail with `got 2, want 1`. (3) COUNT-AND-PIN-LOCATION instead of count-only — for invariants where the secret MUST appear at exactly one structural location (here, `c.token` in `client.go`'s Authorization header), the matcher returns the full set of `file:line:col` triples across every production file in the package, the test asserts `len == 1` AND the single hit's path-prefix equals the canonical file. A count-only assertion would let a future refactor move the line to a different file silently; a path-only assertion would let a duplicate slip in. The two assertions in series are strictly stronger than either alone. The constructor's `token: token` binding (a `KeyValueExpr.Key`, not a `SelectorExpr`) is NOT counted by construction — `ast.Inspect` walks the Key as an `Ident`, not a `SelectorExpr`, so the matcher's `SelectorExpr` pivot skips it for free. The self-check fixture `constructor binding token: token is NOT counted` pins this distinction. (4) COMPOSITE-LITERAL-FIELD-VALUE inspection for redaction-seam invariants — `(*Config).Redacted()` returns a `RedactedConfig{...}` composite literal whose `DokployToken` field value MUST be a CallExpr to the local `redact(...)` closure. The matcher uses `findMethodOnReceiver(file, "Config", "Redacted")` (a small helper that walks `file.Decls` filtering `FuncDecl.Recv.List[0].Type` against both `*ast.Ident` and `*ast.StarExpr` receivers), then walks the method body looking for ANY composite literal containing a `DokployToken` KeyValueExpr, then asserts the value is a CallExpr with `Fun.Name == "redact"`. Three orthogonal regressions fire one diagnostic each: missing method, missing field in the literal, bare-selector value instead of a call. The same pattern applies to ANY future "method M MUST stamp field F through helper H before returning" structural rule. (5) USES-FIRST gate for defence-in-depth log surfaces — `(*Config).LogValue()` MUST call `c.Redacted()` first AND MUST NOT touch `c.DokployToken` directly. The matcher walks the method body, tracking `seenRedactedCall` (set when a `c.Redacted()` CallExpr is found) and emitting a diagnostic for EVERY `c.DokployToken` SelectorExpr seen. The two diagnostics are independent — a method that called `c.Redacted()` but ALSO read `c.DokployToken` directly would fire one; a method that omitted the call but had no direct read would fire the other; a method that did both would fire both. Forward-applicable to any "MUST consult helper H before reading secret S" pattern (variables LogValue, future credentials redactor, etc.). (6) MARKER-PATTERN runtime gate at the projection seams — three table-driven tests in `dokploy_token_isolation_test.go` install a fixed `BE0361DOKPLOYTOKENMARKERXYZ` prefix on the Config.DokployToken field and assert the marker never appears in (a) the `json.Marshal(c.Redacted())` byte stream, (b) the `slog.JSONHandler` output under `slog.Any("config", c)`, and (c) the `c.String()` debug projection — for EACH of three fixtures: short-token (canonical), long-token (longer than the redactor's sentinel, longer than any reasonable line-buffered slog chunk so a partial-flush leak would still surface), and collision-prefix (token prefix collides with the projection's field name `dokploy_token`, so a regression that truncated at the field-name boundary would still trip the marker check). The marker is the leak detector — asserting on token bytes alone would false-positive whenever the value happens to equal a substring of the stable projection text. (7) GOLANGCI-LINT S1025 gotcha — staticcheck (under golangci-lint v2) flags `fmt.Sprintf("%s", x)` as redundant when `x` has a `String()` method, suggesting `x.String()` instead. For BE-0361 the intent of the runtime test was to PROVE that `fmt.Sprintf("%s", cfg)` doesn't leak, but since `fmt.Sprintf` with `%s` against a Stringer DELEGATES to `.String()`, calling `.String()` directly exercises the same code path and satisfies the linter. The test comment must explicitly document the equivalence so a future reader understands why the seemingly indirect "%s" check is actually identical to the direct Stringer invocation. The same gotcha applies to any future Stringer-surface security test.
+- Security-verification package-confinement pattern, backup-encryption instance (BE-0362 pattern, internal/release/backup_encryption_static_test.go + internal/controlplane/backup/encryption_isolation_test.go + SECURITY.md "## Backup Encryption" section + SECURITY.md Required Verification Gates table row + internal/controlplane/backup/AGENTS.md "Backup encryption boundary (BE-0362)" subsection; EIGHTH worked instance of the BE-0344 two-test template and FIRST whole-package-confinement instance — confirms the template scales from "this single function MUST honour rule X" (BE-0346), "this directory MUST NOT import surface Y" (BE-0357 admin endpoints, BE-0349 SSRF), and "this cross-package secret MUST flow through one seam" (BE-0361 Dokploy token) to "this leaf package MUST NOT carry an entire data plane". Eight load-bearing rules: (1) IMPORT-WHITELIST-AS-FORBIDDEN-LIST — the backup package's only legitimate I/O is os.ReadFile on the operator-supplied status path, so the gate enumerates the symmetric/asymmetric cipher set (crypto/aes, crypto/cipher, crypto/des, crypto/rc4, crypto/rsa, crypto/ecdsa, crypto/ed25519, crypto/tls), the archive/compression set (archive/zip, archive/tar, compress/gzip, compress/zlib, compress/flate, compress/bzip2), the database driver set (database/sql, github.com/jackc/pgx/v5, github.com/jackc/pgx/v5/pgxpool), and the process-boundary set (os/exec, net/http) as a closed forbidden map. The set is intentionally aggressive because the boundary contract is "no data plane", not "this specific library is bad"; a future contributor who needs one of these libraries must surface the design change in review, not slip it in. (2) INTERFACE-METHOD-COUNT-AND-NAMES — the read-only Reporter interface is pinned by name AND by its single method's name (Status). The matcher locates the InterfaceType named Reporter, rejects every field in iface.Methods.List whose len(Names)==0 (embedded interfaces would let any method through, e.g. embed io.Writer would silently expand the surface), and rejects every named method whose Name != "Status". A missing interface fires a separate "missing required interface" diagnostic — a future refactor that renamed Reporter to BackupSurface would silently disable the gate otherwise. (3) CALL-EXPR-SELECTOR write-seam scan — the package MUST NOT call package-qualified write/exec functions. The matcher walks every CallExpr, asserts call.Fun is a SelectorExpr whose X is an ast.Ident (package alias) and joins pkg.Name + "." + sel.Sel.Name to compare against forbiddenBackupWriteSeams (os.Create, os.CreateTemp, os.WriteFile, os.OpenFile, os.Mkdir, os.MkdirAll, os.Rename, os.Remove, os.RemoveAll, os.Symlink, os.Link, os.Truncate, os.Chmod, os.Chown, exec.Command, exec.CommandContext). os.ReadFile / os.Stat / os.Open are deliberately excluded — they are the legitimate read-only seams. (4) MARKER-PATTERN runtime evidence with FOUR encryption-shaped fixtures — a parameterised subtest installs the BE0362KMSMARKERXYZ prefix inside four payload shapes (kms-key-id with arn:aws:kms:, aes-wrap-blob with base64-shaped repeated bytes, restore-failed-message with multi-line bucket URL, pem-private-key with BEGIN/END markers) and asserts the marker never appears in (a) err.Error(), (b) every errors.Unwrap layer (TestFileReporterEncryptionMarkerSurvivesErrorWrapping walks the wrap chain — a regression that wrapped raw content inside a deeper %w would be caught), or (c) json.Marshal(Status) (defensive: the struct has no content field today, but a future Detail field would surface the operator's accidentally-seeded payload through every downstream projection). (5) FIXTURE-SHAPE diversity for redaction robustness — every fixture exercises a different class of regression a future "improvement" to the parse-error message might introduce; the marker is what makes the leak detector load-bearing across all four shapes, because asserting on the fixture's full content would false-positive whenever the content happens to share a substring with a stable error phrase (e.g. a fixture containing "is malformed" would trip the existing "backup: status file is malformed" message). (6) WRAP-ROBUST DOC SUBSTRINGS — when pinning Markdown content from a wrapped document (SECURITY.md and the runbook), choose substrings short enough to survive line wrapping. The first iteration used "Plaintext WAL must never" and "no read access" — both spanned line wraps in the source files ("Plaintext WAL must\n   never" and "**no** read access") and the test fired false positives. Fix: use "Plaintext WAL" and "read access" — same semantic, robust to Markdown wrap and to **bold** runs. The closed substring list still names every load-bearing fact (KMS-managed key for at-rest, read access for the no-access invariant, Plaintext WAL for the WAL ban, Auditability for restore audit events) without being brittle to formatting. (7) DUAL-DOC PIN — the gate pins TWO operator-facing documents: SECURITY.md (the public posture) AND docs/operations/backup-restore.md (the operator runbook). Each gets its own test function with its own heading constant and closed substring set. Pinning both prevents a future "tidy" pass from collapsing one without the other — the operator-facing runbook is part of the public contract because operators rely on it to discover the KMS rotation cadence, the no-read-access invariant, and the audit-event posture. (8) SELF-CHECK with KNOWN-GOOD AND KNOWN-BAD pairs for EVERY matcher — TestBackupEncryptionStaticAnalyzerDetectsRegressions feeds three pairs (imports, reporter-interface, write-seams) through every matcher. Each known-bad fixture must produce ≥N hits (N matches the synthetic regression count); each known-good fixture must produce zero false positives. The reporter-interface self-check has a THIRD synthetic — a renamed interface (Surface) — that proves the matcher fires a "missing required interface" diagnostic when Reporter is removed, not just when its method set widens. A self-check that only feeds known-bad through the matcher cannot catch over-tightening (a matcher that fires on legitimate code would still satisfy the bad-fixture assertions); a self-check that only feeds known-good cannot catch under-tightening (a matcher that fires on nothing would still satisfy the good-fixture assertions). Both pairs are load-bearing. Forward-applicable to ANY future security-verification story whose invariant is "this leaf package MUST NOT carry a data plane for cross-cutting concern X" — credential vaulting (the secrets package must not encrypt under a process-resident key), audit shipping (the audit package must not network out to a SIEM), rate-limit storage (the ratelimit package must not persist a token-bucket distributed store), backup restore orchestration (a future restore package's port shape), and KMS proxying (any future package that mediates KMS calls).
 
 - Read-endpoint contract-test triple (BE-0095/BE-0101 pattern,
   internal/controlplane/httpapi/{limits_get_contract_test.go,
@@ -26272,4 +26273,235 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
       now dokploy + config + release). The shape is stable enough that
       future security-verification stories should reach for this
       skeleton first.
+---
+
+## 2026-05-17 - BE-0362 - Security verification: backup encryption
+- What was implemented:
+  - BE-0362 follows the BE-0344 two-test pattern (eighth worked
+    instance, FIRST whole-package-confinement application — prior
+    instances pinned single functions, directory-import rules, or
+    cross-package secret seams; this one pins that the backup leaf
+    package MUST NOT carry a data plane in the first place).
+  - Static half (internal/release/backup_encryption_static_test.go):
+    six tests pin the structural invariants:
+    (a) TestBackupEncryptionNoForbiddenImports — every non-test .go
+        file directly under internal/controlplane/backup is parsed
+        with parser.ImportsOnly and every import path is checked
+        against a closed forbidden set covering symmetric/asymmetric
+        ciphers (crypto/aes, crypto/cipher, crypto/des, crypto/rc4,
+        crypto/rsa, crypto/ecdsa, crypto/ed25519), crypto/tls,
+        archives (archive/zip, archive/tar), compression
+        (compress/gzip|zlib|flate|bzip2), database drivers
+        (database/sql, github.com/jackc/pgx/v5, pgxpool), os/exec,
+        and net/http. The package's only legitimate I/O is
+        os.ReadFile on the operator-supplied status path.
+    (b) TestBackupEncryptionReporterInterfaceIsReadOnly — the
+        Reporter interface declaration in health.go is located by
+        AST name, then validated to have exactly one named method
+        whose name is "Status". Embedded interfaces are rejected
+        as a separate regression (embed io.Writer would silently
+        expand the surface).
+    (c) TestBackupEncryptionNoWriteSeams — every CallExpr whose
+        Fun is a SelectorExpr is checked against a forbidden write/
+        exec set (os.Create, os.CreateTemp, os.WriteFile,
+        os.OpenFile, os.Mkdir, os.MkdirAll, os.Rename, os.Remove,
+        os.RemoveAll, os.Symlink, os.Link, os.Truncate, os.Chmod,
+        os.Chown, exec.Command, exec.CommandContext). os.ReadFile
+        is deliberately excluded.
+    (d) TestBackupEncryptionSecurityDocumented — SECURITY.md must
+        contain the "## Backup Encryption" heading, the closed
+        substring set ("backup_encryption_static_test.go",
+        "internal/controlplane/backup", "read access",
+        "Reporter.Status", "docs/operations/backup-restore.md"),
+        and the verification-gates table row "Backup encryption".
+    (e) TestBackupEncryptionRunbookDocumented — the operator
+        runbook docs/operations/backup-restore.md must contain the
+        "## Encryption expectations" heading and the closed
+        substring set ("KMS-managed key", "read access",
+        "Plaintext WAL", "Auditability").
+    (f) TestBackupEncryptionStaticAnalyzerDetectsRegressions —
+        self-check feeding synthetic known-bad AND known-good
+        fixtures through every matcher (three pairs: import,
+        reporter-interface, write-seam). Includes a third
+        "renamed interface" synthetic that proves the matcher
+        fires a "missing required interface" diagnostic when
+        Reporter is renamed, not just when methods widen.
+  - Runtime half (internal/controlplane/backup/encryption_isolation_test.go):
+    Two tests pin the redaction seam across encryption-shaped
+    status-file payloads. Every fixture inherits the marker prefix
+    BE0362KMSMARKERXYZ so the leak detector remains anchored on
+    the marker rather than per-fixture bytes.
+    (a) TestFileReporterEncryptionMarkerNeverLeaks — four
+        parameterised fixtures (kms-key-id, aes-wrap-blob,
+        restore-failed-message, pem-private-key) each assert (1) a
+        typed yerr.CodeServer parse error is returned, (2) the
+        marker does NOT appear in err.Error(), (3) the marker does
+        NOT appear in json.Marshal(Status). The Status struct has
+        no content field today, but a future "Detail" field would
+        surface the operator's accidentally-seeded payload through
+        every downstream projection — the JSON check is the
+        defensive backstop.
+    (b) TestFileReporterEncryptionMarkerSurvivesErrorWrapping —
+        walks the errors.Unwrap chain from the typed parse error
+        and asserts no layer's Error() string carries the marker.
+        A regression that wrapped raw content inside a deeper
+        fmt.Errorf("%w", err) would be visible to any caller that
+        formats %v on the wrapped error.
+  - SECURITY.md gains a new "## Backup Encryption" section between
+    "## Dokploy Token Isolation" and "## Log Redaction Fuzzing"
+    documenting the threat model, the closed forbidden-import set,
+    the Reporter.Status read-only port, the no-write-seams rule,
+    the dual-doc (SECURITY.md + runbook) pin, and the marker-
+    based runtime evidence. A new row "Backup encryption" lands
+    in the Required Verification Gates table with the canonical
+    -run selector pair.
+  - internal/controlplane/backup/AGENTS.md gains a "Backup
+    encryption boundary (BE-0362)" subsection summarising the
+    two load-bearing rules for package editors (no data plane,
+    Reporter exposes one method) plus the marker convention for
+    new encryption-shaped fixtures.
+- Files changed:
+  - internal/release/backup_encryption_static_test.go (new)
+  - internal/controlplane/backup/encryption_isolation_test.go (new)
+  - SECURITY.md (new "## Backup Encryption" section + new gates
+    table row)
+  - internal/controlplane/backup/AGENTS.md (new "Backup encryption
+    boundary (BE-0362)" subsection)
+  - ralph/prd.json (BE-0362 passes=true)
+  - ralph/progress.txt (this entry + new BE-0362 pattern bullet)
+- Verification run:
+  - gofmt -l . -> clean
+  - go mod tidy -> clean (no changes)
+  - go vet ./... -> clean
+  - go test ./... -> all 39 packages PASS (cache + fresh
+    backup/release/httpapi runs); backup ran 0.254s, release ran
+    0.243s, no FAILs anywhere.
+  - go test -race -count=1 ./internal/release/...
+    ./internal/controlplane/backup/...
+    ./internal/controlplane/httpapi/... -> all three PASS (release
+    1.499s, backup 1.746s, httpapi 8.722s, no data races
+    reported).
+  - Focused: go test -run 'TestBackupEncryption|TestFileReporterEncryptionMarker'
+    ./internal/release/... ./internal/controlplane/backup/... ->
+    PASS (release 0.480s, backup 0.813s).
+- Results: BE-0362 acceptance criteria satisfied:
+  - Documents the backup-encryption threat (SECURITY.md "## Backup
+    Encryption" section + runbook "## Encryption expectations").
+  - Tests fail when the control is removed (self-check fixtures +
+    known-bad import/interface/write-seam synthetics + runtime
+    marker assertions).
+  - Audit/telemetry evidence: BE-0039's existing
+    TestBackupHealthErrorMessageDoesNotLeakReporterError +
+    notFoundRecorder envelope path are the request-log evidence;
+    BE-0362's marker-pattern runtime tests close the parse-error
+    surface.
+  - No real customer secrets / no live Dokploy required — all
+    fixtures use the synthetic marker prefix BE0362KMSMARKERXYZ.
+  - Public envelopes unchanged (the gate pins the absence of a
+    surface, not a new endpoint).
+  - Tests cover success (existing happy-path FileReporter tests),
+    validation failure (typed yerr.CodeServer parse error path
+    proved by marker fixtures), authorization failure (BE-0039's
+    TestBackupHealthIsUnauthenticated is the structural decision),
+    and not-found behaviour (ErrNoBackupRecorded sentinel; pre-
+    existing BE-0039 test).
+  - Tests do not require a live Dokploy server — the gate scans
+    source files and parses synthetic in-memory fixtures.
+  - Secrets / tokens / API keys / cookies / rendered env-var values
+    are redacted: the marker assertion ensures every fixture
+    payload (KMS key id, AES wrap blob, restore-failed bucket URL,
+    PEM private key) never reaches any error string, any wrapped
+    layer, or the Status JSON projection.
+- Remaining risks or follow-ups:
+  - None for this story. The next sibling security-verification
+    story in PRD pending order is BE-0363 "rate-limit bypass
+    resistance", which is structurally different (no static AST
+    invariant — pure runtime contract over the ratelimit package's
+    concurrency seams) and will follow the single-test runtime-
+    only variant of the BE-0344 template documented in the BE-0359
+    pattern.
+  - The static gate scans only the top level of
+    internal/controlplane/backup. If a future story adds a
+    subdirectory (e.g. backup/restore/), the helper
+    backupEncryptionPackageProductionFiles must be extended; the
+    test's pre-flight "no production .go files" guard would fail
+    loudly if the entire top level were emptied, but a subdirectory
+    addition is silent until a contributor extends the helper.
+    Documented in the package-files helper's doc comment.
+- Learnings for future iterations:
+  - The BE-0344 two-test template now has EIGHT worked instances
+    spanning four distinct invariant shapes:
+    (i) single-function-rule (BE-0346 environment-variable redaction
+        in variables service),
+    (ii) directory-import-rule (BE-0357 admin endpoints, BE-0349
+         SSRF),
+    (iii) cross-package secret-confinement (BE-0361 Dokploy token —
+          single secret flows through one seam, projection methods
+          must consult the redactor first),
+    (iv) NEW: whole-package data-plane confinement (BE-0362 backup
+         encryption — a leaf package MUST NOT carry an entire
+         data plane: cipher, archive, database, exec, HTTP). The
+         template's flexibility is in the matcher's targeting
+         (single Sel.Name vs InterfaceType.Methods vs package-
+         qualified CallExpr selector) and in the closed-set
+         tightness; the doc pinning + self-check + marker-pattern
+         halves are constant across all four shapes.
+  - WRAP-ROBUST DOC SUBSTRINGS — when pinning content from a
+    wrapped Markdown document, choose substrings short enough to
+    survive line wraps and **bold** runs. The first iteration of
+    this story used "Plaintext WAL must never" and "no read
+    access"; both spanned a wrap or a markdown-bold run in the
+    source files ("Plaintext WAL must\n   never" in the runbook,
+    "**no** read access" — actually just "**read access**" in the
+    new SECURITY section) and the test fired false-positive
+    diagnostics. Fix is structural: use "Plaintext WAL" + "read
+    access" — same semantic, robust to Markdown wrap and to
+    in-line **bold** markers. Forward-applicable to every future
+    doc-pinning gate: the matcher reads RAW Markdown bytes, so
+    substrings that contain ASCII spaces, line wraps, or bold
+    runs need a wrap-robust form. The lesson is: doc-pinning
+    substrings should be at most one short phrase, never multi-
+    word sentences that the formatter might re-wrap.
+  - INTERFACE-METHOD-COUNT-AND-NAMES is a new matcher shape worth
+    documenting. The matcher locates an InterfaceType by name,
+    then walks iface.Methods.List and rejects (a) embedded
+    interfaces (len(field.Names) == 0 — embed io.Writer would
+    silently expand the surface), (b) named methods whose Name
+    is not in the allowed set, and (c) the interface being
+    missing entirely. The third case is the easy regression — a
+    renamed interface (Reporter -> BackupSurface) would silently
+    disable the gate without it. The self-check pair must
+    include a "renamed-interface" synthetic for the gate to be
+    load-bearing.
+  - DUAL-DOC PIN is genuinely new — most prior security-
+    verification stories pinned one document (SECURITY.md). BE-
+    0362 pins SECURITY.md AND docs/operations/backup-restore.md
+    because the runbook is part of the operator contract (KMS
+    rotation cadence, restore audit-event semantics). Each gets
+    its own test function with its own constant-list. Forward-
+    applicable to any story whose threat model relies on
+    operator-facing runbooks (replica-lag oncall guide, KMS
+    rotation playbook, certificate-renewal runbook).
+  - IMPORT-WHITELIST-AS-FORBIDDEN-LIST design — when the
+    invariant is "this leaf package MUST NOT carry a data plane",
+    list every package the data plane would require as forbidden
+    rather than listing the small read-only seam as the only
+    allowed set. The forbidden list is closed and the boundary is
+    explicit; an extension (e.g. needing crypto/sha256 for an
+    integrity check) must surface in review, not slip in via a
+    "this isn't really an encryption library" argument. The
+    AGENTS.md note in the package documents the rule alongside
+    its rationale so a contributor learns the rule by reading the
+    package, not by reading the failing test output.
+  - The "ignoring go.mod in system temp root" pattern when running
+    go via context-mode's ctx_execute(shell): the sandbox prefixes
+    cd but does not preserve cwd for subsequent go commands, so go
+    treats /Users/juribadev/projects/poc/yalla as a temp root and
+    fails with "directory prefix X does not contain main module".
+    Workaround: use Bash for go invocations (cwd is preserved by
+    the shell tool's working-directory contract) and reserve
+    ctx_execute(shell) for short scripted multi-step pipelines
+    that don't need cwd inheritance, OR rely on Python sandbox
+    scripts that read absolute paths. Documented here so the next
+    iteration does not waste a round on the same false alarm.
 ---

@@ -55,3 +55,37 @@ facing surface tomorrow.
   port; passing `nil` is permitted and is treated identically to
   `Unconfigured()`. The test guard `TestBackupHealthHandler` covers both
   the nil and `Unconfigured` paths.
+
+## Backup encryption boundary (BE-0362)
+
+The package is the Yalla-side terminator of an external encryption
+boundary: the operator's pipeline encrypts every backup object under a
+KMS-managed key and writes the encrypted blob to storage neither the
+control-plane API nor the worker has read access to. The Yalla process
+consumes exactly one signal — a single RFC3339 timestamp at
+`YALLA_BACKUP_STATUS_FILE`. The boundary is pinned by
+`internal/release/backup_encryption_static_test.go` and the runtime
+fixtures in `encryption_isolation_test.go`. Two rules are load-bearing
+for anyone editing this package:
+
+- **No backup data plane.** Never add an import from the forbidden
+  set (`crypto/aes`, `crypto/cipher`, `archive/zip`, `compress/gzip`,
+  `database/sql`, `github.com/jackc/pgx/v5`, `os/exec`, `net/http`,
+  …). Never add a write seam (`os.Create`, `os.WriteFile`,
+  `os.OpenFile`, `exec.Command`, …) — `os.ReadFile` against the
+  operator-supplied path is the only legitimate I/O. The static gate
+  in `internal/release/` rejects every other shape at build time, so
+  a regression fails CI before review.
+- **`Reporter` exposes one method.** The `Reporter` interface MUST
+  remain `Status(ctx) (Status, error)` — adding a `Write`, `Backup`,
+  `Restore`, `Encrypt`, or `Upload` method would route a backup data
+  plane through the read-only port and is rejected by the static
+  gate. If a future story needs a second port (e.g. a "report
+  freshness" predicate already on `Status.Fresh()`), add a separate
+  interface in this package; do not widen `Reporter`.
+
+When adding an encryption-shaped fixture to
+`encryption_isolation_test.go`, prefix the content with the
+`BE0362KMSMARKERXYZ` marker so the leak detector remains anchored on
+the marker rather than on per-fixture bytes — the marker is the
+load-bearing assertion across fuzzed input shapes.

@@ -75,6 +75,7 @@ defined in `.github/workflows/ci.yml`:
 | Support access review | `go test ./internal/release/... -run TestSupportAccessReview` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Environment variable redaction | `go test ./internal/controlplane/variables/... -run TestRedaction` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Dokploy token isolation | `go test ./internal/release/... -run TestDokployTokenIsolation` and `go test ./internal/controlplane/config/... -run TestRuntimeConfigDokployToken` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| Backup encryption | `go test ./internal/release/... -run TestBackupEncryption` and `go test ./internal/controlplane/backup/... -run TestFileReporterEncryptionMarker` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Release config | `goreleaser check` and `goreleaser release --snapshot` | CI `goreleaser-check` job | Every push and PR |
 
 Before cutting a tag the maintainer additionally runs:
@@ -557,6 +558,100 @@ detector load-bearing under fuzzed inputs.
 **No live secrets.** The test suite installs synthetic marker
 prefixes (`"BE0361DOKPLOYTOKENMARKERXYZ"`) — never real Dokploy
 service tokens.
+
+## Backup Encryption
+
+The Yalla source-of-truth Postgres database is the only place
+tenant identity, scoped grants, desired state, deployments, audit
+history, and provisioning-job rows can be reconstructed from. A
+lost or tampered backup is an unrecoverable outage — Dokploy can be
+re-provisioned from desired state, but desired state cannot be
+reconstructed from Dokploy. The backup pipeline is intentionally
+**external** to the Yalla process: `pg_dump` / `pgBackRest` runs
+under the operator's pipeline, encrypts every object with a KMS-
+managed key under the operator's principal, and writes to object
+storage neither the control-plane API nor the worker has **read
+access** to. Yalla consumes exactly one signal — a single RFC3339
+timestamp the pipeline atomically writes to the status file named
+by `YALLA_BACKUP_STATUS_FILE`. The operator-facing detail lives in
+`docs/operations/backup-restore.md` (KMS rotation cadence,
+plaintext-WAL ban, restore audit-event posture); the Yalla-side
+posture is pinned by
+`internal/release/backup_encryption_static_test.go` (BE-0362). The
+gate rejects any of the following shapes at build time, and the
+runtime evidence in
+`internal/controlplane/backup/encryption_isolation_test.go`
+(`TestFileReporterEncryptionMarkerNeverLeaks`,
+`TestFileReporterEncryptionMarkerSurvivesErrorWrapping`) and the
+pre-existing `TestFileReporterParseErrorRedactsContent` (BE-0039)
+plus the handler-side
+`TestBackupHealthErrorMessageDoesNotLeakReporterError` prove the
+redaction seam holds across encryption-shaped status-file content:
+
+- **No backup data plane inside the Yalla process.** No production
+  source file under `internal/controlplane/backup` may import a
+  package whose presence implies the Yalla process produces,
+  encrypts, ships, or restores backup data. The closed forbidden
+  set is `crypto/aes`, `crypto/cipher`, `crypto/des`, `crypto/rc4`,
+  `crypto/rsa`, `crypto/ecdsa`, `crypto/ed25519`, `crypto/tls`,
+  `archive/zip`, `archive/tar`, `compress/gzip`, `compress/zlib`,
+  `compress/flate`, `compress/bzip2`, `database/sql`,
+  `github.com/jackc/pgx/v5`, `github.com/jackc/pgx/v5/pgxpool`,
+  `os/exec`, and `net/http`. A regression that pulled any of these
+  into the package would collapse the encryption boundary in two
+  ways: (a) the encryption key (or bucket credential, or database
+  role) would need to live inside the Yalla config surface, where
+  the redaction seam alone cannot protect it once a decryption
+  library is on the call path; (b) the same process handling
+  customer requests would gain read access to the encrypted blobs,
+  dissolving the no-read-access invariant.
+- **`Reporter.Status` is the only port.** The `Reporter` interface
+  declared in `internal/controlplane/backup/health.go` MUST expose
+  exactly one method, named `Status`. A `Write`, `Backup`,
+  `Restore`, `Encrypt`, `Decrypt`, `Upload`, or `Rotate` method
+  would route a backup data plane through the read-only port. The
+  matcher rejects every other method name and every embedded
+  interface (so a future `embed io.Writer` cannot silently expand
+  the surface). A renamed interface is also a regression because
+  the gate would silently disable itself otherwise.
+- **No write seams.** No production source file under
+  `internal/controlplane/backup` may call `os.Create`,
+  `os.CreateTemp`, `os.WriteFile`, `os.OpenFile`, `os.Mkdir`,
+  `os.MkdirAll`, `os.Rename`, `os.Remove`, `os.RemoveAll`,
+  `os.Symlink`, `os.Link`, `os.Truncate`, `os.Chmod`, `os.Chown`,
+  `exec.Command`, or `exec.CommandContext`. The legitimate I/O is
+  `os.ReadFile` against the operator-supplied status path —
+  nothing else. A write-seam regression would indicate the Yalla
+  process writes backup data, shells out to `pg_dump`, or mutates
+  the operator's filesystem under the backup mount.
+- **Operator-facing runbook is part of the public contract.**
+  `docs/operations/backup-restore.md` MUST keep its
+  `## Encryption expectations` section with the load-bearing
+  substrings `KMS-managed key`, `read access`, `Plaintext WAL`,
+  and `Auditability`. The runbook is how operators learn
+  the KMS rotation cadence (90 days), the no-read-access
+  invariant for the control-plane API and worker processes, the
+  plaintext-WAL ban, and the audit-event contract for restores. A
+  silent removal of any of those substrings is a regression on
+  equal footing with a code change.
+
+**Runtime evidence.** Four parameterised fixtures
+(`kms-key-id`, `aes-wrap-blob`, `restore-failed-message`,
+`pem-private-key`) install the canonical `BE0362KMSMARKERXYZ`
+marker prefix inside encryption-shaped status-file payloads and
+assert the marker never appears in the parse error, in any layer of
+the wrapped error chain, or in the JSON projection of the returned
+`backup.Status` struct. The marker pattern is the leak detector —
+asserting the payload's bytes alone would false-positive whenever
+the content happens to share a substring with a stable error phrase
+(e.g. a fixture containing "is malformed" would trip the existing
+"backup: status file is malformed" message), so the unique marker
+prefix is what makes the detector load-bearing across fuzzed
+inputs.
+
+**No live secrets.** The test suite installs synthetic marker
+prefixes (`"BE0362KMSMARKERXYZ"`) — never real KMS key material,
+backup bucket credentials, or PEM private keys.
 
 ## Log Redaction Fuzzing
 
