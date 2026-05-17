@@ -84,6 +84,9 @@ jobs:
       - name: Migration downgrade safety tests
         run: go test -run TestMigrationsDowngradeSafety ./...
 
+      - name: Load smoke tests
+        run: go test -run TestLoadSmoke ./...
+
       - name: Race detector
         run: go test -race ./...
 

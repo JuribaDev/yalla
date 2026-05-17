@@ -1366,3 +1366,44 @@ section, or the PRD commands, update the matching constant
 in `verification_suite_race_detector_static_test.go` in the
 same edit. The matchers fail loudly on drift; the assertion
 IS the contract.
+
+## Verification suite: load smoke tests (BE-0392)
+
+`verification_suite_load_smoke_static_test.go` pins the load
+smoke gate. It is the load-bearing static defence for the
+contract between Yalla's public bootstrap surface
+(`/healthz`, `/readyz`, `/version`) and every operator, AI
+agent, or CI gate that polls those endpoints under burst
+load: every response carries a stable `yalla.output.v1`
+envelope with `ok=true`, every response carries a
+SafeID-clean `request_id` unique to that request, and no
+response leaks a secret-shaped substring in body or header
+even when fired by `loadSmokeWorkers *
+loadSmokeIterationsPerWorker` concurrent goroutines per
+endpoint. The canonical pair
+(`TestLoadSmokeContractCoversCoreEndpoints` and
+`TestLoadSmokeContractRunsBurstWithStableEnvelopes`) lives
+in `internal/controlplane/httpapi/load_smoke_test.go` and
+binds to the PRD's `-run TestLoadSmoke` filter. Both pair
+members are deterministic — they run without Postgres and
+without a live Dokploy server — because the bootstrap
+surface is the one part of the API that needs no backing
+infrastructure. The static test pins SIX surfaces in one
+file: the CI `Load smoke tests` step (`.github/workflows/ci.yml`),
+the verify.sh step #17 header (`scripts/verify.sh`), the
+CONTRIBUTING.md entry #17, the SECURITY.md row + dedicated
+`## Load Smoke Tests` section, the PRD command in
+`verificationLoop.requiredBackendCommands`, and the canonical
+pair file's existence with both function declarations
+present. The self-check
+(`TestVerificationSuiteLoadSmokeAnalyzerDetectsRegressions`)
+drives every matcher with synthetic known-good AND
+known-bad fixtures so over-tightening (a legitimate change
+trips the analyser) and under-tightening (a real regression
+slips through) are both caught at the package-internal API.
+When changing the CI step name, the verify.sh header, the
+CONTRIBUTING.md numeric prefix, the SECURITY.md row or
+section, or the PRD commands, update the matching constant
+in `verification_suite_load_smoke_static_test.go` in the
+same edit. The matchers fail loudly on drift; the assertion
+IS the contract.

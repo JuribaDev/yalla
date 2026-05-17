@@ -76,6 +76,7 @@ defined in `.github/workflows/ci.yml`:
 | Fuzz validator tests | `go test -run TestFuzzValidator ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Migration tests from empty DB | `go test -run TestMigrationsEmptyDB ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Migration downgrade safety tests | `go test -run TestMigrationsDowngradeSafety ./...` | `scripts/verify.sh`, CI | Every push and PR |
+| Load smoke tests | `go test -run TestLoadSmoke ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Race detector | `go test -race ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Vulnerability scan | `govulncheck ./...` | CI `security` job | Every push and PR |
 | Lint suite | `staticcheck ./...` and `golangci-lint run ./...` | CI `security` job | Every push and PR |
@@ -1923,6 +1924,79 @@ with identical checksums and dirty=false on every row.
   `internal/release/verification_suite_migration_downgrade_safety_static_test.go`.
   A drift on any single surface (rename, renumber, deletion)
   fails ONE test, not six.
+
+## Load Smoke Tests
+
+The load smoke suite (BE-0392) is the bootstrap-surface
+burst-stability gate. It exists to catch regressions a single-request
+test cannot: a request_id generator that silently collides under
+contention, an unbounded handler that allocates a fresh logger per
+request and pushes the runtime into memory pressure, a recently-added
+middleware that echoes the inbound `Authorization` value back
+verbatim in a response header, or a partial envelope that drops
+`schema_version` under sustained load. The canonical pair
+(`TestLoadSmokeContractCoversCoreEndpoints` and
+`TestLoadSmokeContractRunsBurstWithStableEnvelopes`) lives in
+`internal/controlplane/httpapi/load_smoke_test.go` and binds to the
+PRD's `-run TestLoadSmoke` filter; the static defence for every
+collateral surface lives in
+`internal/release/verification_suite_load_smoke_static_test.go`.
+
+- **Closed-set bootstrap coverage.** The first pair member walks the
+  in-memory endpoint table the burst harness iterates and asserts it
+  stays non-empty, free of duplicate (method, path) tuples, scoped
+  to the bootstrap surface (paths under `/v1/` are explicitly
+  rejected because they would require authenticated fixtures that
+  defeat the deterministic-by-default contract), and that every
+  entry carries a valid HTTP method. Today the closed set is
+  `/healthz`, `/readyz`, and `/version` — the three paths the public
+  HTTP handler can serve with no backing state. The matcher trips at
+  the package-internal API with no infrastructure dependency, so a
+  typo or scope-creep regression surfaces on every developer
+  machine.
+- **Burst stability under concurrency.** The second pair member spins
+  the public HTTP handler up in-process via `httptest.NewServer`,
+  fires `loadSmokeWorkers * loadSmokeIterationsPerWorker` (16 × 32 =
+  512) concurrent requests per endpoint, and asserts every response
+  carries the canonical status, a stable `yalla.output.v1` envelope
+  with `ok=true`, a SafeID-clean `request_id`, a `request_id`
+  unique across the whole burst (no two responses may share an id),
+  and no secret-shaped substring (`yka_`, `Bearer `, `Set-Cookie`,
+  `postgres://`, `DOKPLOY_TOKEN`) in body or header. Public-facing
+  error envelopes carry `yalla.error.v1`; the burst-stability member
+  surfaces both schemas through the same failure path so an
+  unexpected error envelope under burst is treated as a regression.
+- **Deterministic by default.** Both pair members run without
+  Postgres, without a live Dokploy server, and without any fake
+  Dokploy fixtures being touched — the bootstrap surface is the one
+  part of the API that needs no backing infrastructure. Operators
+  can therefore run the gate on every machine, every CI runner, and
+  in every sandboxed environment without provisioning external
+  state. The opt-in `YALLA_EXTERNAL_DOKPLOY` environment variable
+  remains the escape hatch for the broader external smoke suite
+  (`TestLiveDokploySmoke`); the load smoke gate never reaches it.
+- **Actionable failures.** Every assertion failure surfaces with the
+  offending endpoint (`GET /healthz` etc.) AND the observed
+  `request_id` (or `<missing>` when the response carried none), so
+  an operator can correlate the gate failure with the specific
+  in-flight request in their logs and metrics dashboards without
+  re-running the suite locally. Body and header redaction failures
+  carry the offending secret-marker substring so the operator can
+  immediately identify which redaction contract drifted.
+- **CI cadence.** The dedicated `Load smoke tests` step runs on
+  `Every push and PR` in `.github/workflows/ci.yml`, mirroring the
+  local `scripts/verify.sh` step 17. Both surfaces invoke the
+  identical `go test -run TestLoadSmoke ./...` command so a passing
+  local gate predicts a passing CI gate.
+- **Self-locating.** The CI step, verify.sh step header,
+  CONTRIBUTING entry, this section, the PRD command, and the
+  canonical reference file are all pinned by
+  `internal/release/verification_suite_load_smoke_static_test.go`.
+  A drift on any single surface (rename, renumber, deletion) fails
+  ONE test, not six. Secrets, tokens, API keys, cookies, and
+  rendered environment variable values are redacted in fake Dokploy
+  fixtures, the bootstrap envelope, the response headers, and every
+  log line the burst harness might observe.
 
 ## Race Detector
 

@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Verification-suite single-file multi-surface static-test, load-smoke instance (BE-0392 pattern, internal/release/verification_suite_load_smoke_static_test.go + internal/controlplane/httpapi/load_smoke_test.go's new canonical pair TestLoadSmokeContractCoversCoreEndpoints + TestLoadSmokeContractRunsBurstWithStableEnvelopes + SECURITY.md "## Load Smoke Tests" section AND a new row in the Required Verification Gates table + internal/release/AGENTS.md "## Verification suite: load smoke tests (BE-0392)" subsection; FOURTEENTH worked instance of the BE-0379..BE-0391 verification-suite mega-pattern, canonical command `go test -run TestLoadSmoke ./...`, CI step name `Load smoke tests`, verify.sh prefix #17 inserted between BE-0390's #16 and the optionals — optionals renumbered #17→#18 govulncheck, #18→#19 staticcheck, #19→#20 golangci-lint, #20→#21 goreleaser in the SAME edit; TENTH consecutive required-step insertion with optional renumbering since BE-0380's #6). Two BE-0392-specific extensions to the template, all forward-applicable to ANY future verification story whose load-bearing subject is an HTTP handler under burst load: (1) `CANONICAL PAIR ENCODES DETERMINISTIC × DETERMINISTIC DUAL — NO POSTGRES MEMBER` — unlike BE-0389/BE-0390 whose canonical pair splits across deterministic-fixture-only + Postgres-required substrates, BE-0392's BOTH pair members are deterministic. The bootstrap surface (`/healthz`, `/readyz`, `/version`) is the one part of the public HTTP API that needs no backing infrastructure — no Postgres, no fake Dokploy fixtures, no quota counters mutated, no scope-resolution chain. The closed-set member walks an in-memory endpoint table; the burst member spins the test handler in-process via httptest.NewServer and fires 16 workers × 32 iterations = 512 concurrent requests per endpoint. Neither member calls t.Skip on missing env vars — the gate trips on every developer machine and every CI runner without setup. Forward-applicable to ANY future verification story whose subject is a stateless HTTP surface or a pure-in-process invariant (BE-0407 desired-state goldens against in-memory reconciler, BE-0398 tenant isolation matrix at the policy layer alone). Critical implication: the BE-0389/BE-0390 dual-substrate shape is NOT mandatory for the canonical-pair template — when both invariants are deterministic, the pair can stay deterministic-only and the SECURITY.md section's "skips when YALLA_TEST_DATABASE_URL is unset" language is OMITTED (BE-0392's section instead explicitly says "no Postgres, no live Dokploy server"). The shared `YALLA_EXTERNAL_DOKPLOY` opt-in-external substring stays in the substring set as the cross-suite escape hatch reference, but does NOT bind to any code path the canonical pair member exercises. (2) `BURST OBSERVATION COLLECTION SHAPE — channel buffered to total request count, observation struct includes endpoint + status + schema + ok + requestID + bodyBad + headerBad, then post-burst aggregation in main goroutine` — the burst test must avoid testing.T calls from worker goroutines (race-detector hostile and stdlib-discouraged); instead each goroutine pushes a typed `observation{}` onto a buffered channel sized to `len(endpoints) * workers * iterations` and the main goroutine drains the channel after wg.Wait()+close. Aggregation builds (a) a per-endpoint count map asserted against the expected burst total, (b) a per-request-id map for uniqueness assertion, (c) per-observation envelope/status/redaction assertions. Failure messages quote the offending endpoint AND the observed request_id (or "<missing>" sentinel + a synthetic "<request-construction-failed:...>" / "<request-do-failed:...>" id when the round-trip itself failed) so the operator correlates against logs without re-running. The burst total (16 × 32 × 3 = 1536 requests) completes in ~600ms on a developer laptop — safely under the flaky-test threshold. Forward-applicable to BE-0393 (chaos Dokploy timeouts — same channel+aggregation shape, but with a fault-injection step before each iteration), BE-0394 (chaos Postgres disconnects — same shape but with t.Skip on YALLA_TEST_DATABASE_URL), BE-0395 (idempotency replay — same shape but each iteration writes the same Idempotency-Key and asserts every response after the first is the cached envelope). The closed-set bootstrap endpoint table includes a `wantStatus` field per entry so a future endpoint that legitimately returns 503 under some condition can be added without breaking the burst member's status assertion. Per-story knobs for siblings: same as BE-0390's bullet — (a) canonical command from PRD, (b) dedicated CI step name, (c) verify.sh numeric prefix (next number after last required step; renumber trailing optionals in same edit), (d) SECURITY.md section heading and substring set (BE-0392 substring count = 17; matches BE-0389's count), (e) AGENTS.md subsection mirroring SECURITY.md but speaking to maintainers. Load-bearing invariant unchanged: ONE FILE, SIX SURFACES, SELF-CHECK; drift on any surface fails ONE test, not six.
 - Verification-suite UMBRELLA-shape adaptation, race-detector instance (BE-0391 pattern, internal/release/verification_suite_race_detector_static_test.go + SECURITY.md "## Race Detector" section + internal/release/AGENTS.md "## Verification suite: race detector tests (BE-0391)" subsection; SECOND worked instance of the umbrella shape — first was BE-0379's `go test ./...` — and THIRTEENTH worked instance of the BE-0379..BE-0390 verification-suite mega-pattern overall, canonical command `go test -race ./...`, CI step name `Race detector`, verify.sh prefix #5 STABLE since BE-0379). Three BE-0391-specific extensions to the template, all forward-applicable to ANY future umbrella verification story whose canonical command is a flag (`-race`, `-msan`, `-asan`, `-cover`) or an unfiltered `./...` rather than a `-run` filter: (1) `NO CANONICAL TEST-FUNCTION PAIR` — the `-race` flag wraps every `Test*` function the suite runs at the Go runtime layer, so there is no function-name prefix to pin (unlike BE-0383..BE-0390 whose `-run TestXxx` filter binds to a specific prefix). The umbrella shape mirrors BE-0379's `go test ./...` gate, but BE-0379 had `allowedPackagesWithoutUnitTests` + `findPackagesMissingTests` as its analog "closed-set" surface (every package MUST have a *_test.go file OR be in the exemption set); BE-0391 has NEITHER closed-set surface because every package's tests are AUTOMATICALLY in scope when `-race` is set — there is nothing for the test to enumerate. The static test pins exactly 5 surfaces (no canonical-pair surface = 5 not 6): ci.yml step, verify.sh step, CONTRIBUTING entry, SECURITY row + section, PRD command(s). Forward-applicable to any future flag-style umbrella gate (race detector variants, msan, asan, coverage thresholds). (2) `TWO-ENTRY PRD PIN — `requiredLocalCommands` AND `requiredBackendCommands`` — unlike every prior verification-suite story (BE-0379..BE-0390) that pinned a single PRD command entry (BE-0379 in requiredLocalCommands, BE-0380..BE-0390 in requiredBackendCommands), BE-0391 pins BOTH: `go test -race ./...` in requiredLocalCommands AND `go test -race ./internal/controlplane/...` in requiredBackendCommands. The umbrella command is the canonical gate; the backend-narrowed command is the faster mid-iteration variant an agent can run without paying the full umbrella cost. Both are part of the contract because each serves a different agent workflow (final pre-commit gate vs. mid-iteration check). The two-entry pin is forward-applicable to ANY future verification gate whose canonical command has a naturally faster narrow variant (e.g. a future `go test -msan ./...` gate would also pin a `go test -msan ./internal/controlplane/...` faster variant). The matcher uses a shared `containsString([]string, string) bool` helper (declared in verification_suite_race_detector_static_test.go) instead of inlining the loop — this helper is now a reusable release_test package primitive future PRD-array matchers can call. (3) `STABLE PRE-EXISTING NUMERIC SLOT — NO RENUMBER NEEDED` — unlike BE-0380..BE-0390 each of which inserted a NEW required step into verify.sh and renumbered the trailing optionals in the same edit (NINE consecutive insertions from BE-0380's #6 to BE-0390's #16), BE-0391's slot #5 was STABLE since BE-0379's foundation work — verify.sh, CONTRIBUTING.md, and ci.yml already carried the race-detector step / header / entry. The BE-0391 work was purely DEFENSIVE: it added the static test that PINS those pre-existing surfaces so a future regression (rename, renumber, deletion) trips the gate. Critical implication: when a verification story's surfaces ALREADY EXIST at story start (because they were authored as foundation work before the verification-suite mega-pattern landed), the implementation is JUST the new static test + new SECURITY.md section + new AGENTS.md subsection + PRD flag flip — no ci.yml / verify.sh / CONTRIBUTING.md edits at all. Forward-applicable to any future verification story whose canonical command predates the mega-pattern (BE-0379's `go test ./...`, BE-0391's `go test -race ./...`, future `go vet ./...` / `gofmt -l .` umbrellas if those ever get verification-suite stories). The SECURITY.md substring set adapts: race-detector substring set has 11 entries (vs BE-0389's 17) because the umbrella gate has fewer per-suite-specific literals to pin — no canonical function pair to quote, no `-run` filter pivot, no per-suite env var beyond the shared `YALLA_EXTERNAL_DOKPLOY`. The 11 substrings anchor on the umbrella contract pivots: `data race`, `go test -race`, `Every push and PR`, `deterministic`, `request_id`, `fake Dokploy`, `YALLA_EXTERNAL_DOKPLOY`, `redacted`, `yalla.output.v1`, `yalla.error.v1`, and the self-locating file path. NOT applicable to focused `-run`-filter verification stories (BE-0392 load smoke, BE-0393 chaos Dokploy timeouts, BE-0394 chaos Postgres disconnects, BE-0395 idempotency replay, etc.) — those follow the BE-0389/BE-0390 canonical-pair shape; the umbrella shape applies ONLY when the canonical command itself is a runtime-flag or unfiltered umbrella.
 - Verification-suite single-file multi-surface static-test, migrations-from-empty-DB instance (BE-0389 pattern, internal/release/verification_suite_migrations_empty_db_static_test.go + internal/controlplane/store/migrate/migrate_test.go's new canonical pair TestMigrationsEmptyDBContractCoversAllNumberedFiles + TestMigrationsEmptyDBContractAppliesEmbeddedLadderToEmptyDatabase + SECURITY.md "## Migration Tests From Empty DB" section AND a new row in the Required Verification Gates table + internal/release/AGENTS.md "## Verification suite: migration tests from empty DB (BE-0389)" subsection; ELEVENTH worked instance of the BE-0379..BE-0388 verification-suite mega-pattern, canonical command `go test -run TestMigrationsEmptyDB ./...`, CI step name `Migration tests from empty DB`, verify.sh prefix #15). Four BE-0389-specific extensions to the template: (1) `CANONICAL PAIR ENCODES DETERMINISTIC × POSTGRES-REQUIRED DUAL` — unlike every prior verification-suite story whose canonical pair pinned two invariants on the same execution substrate, BE-0389's pair splits across two SUBSTRATES: TestMigrationsEmptyDBContractCoversAllNumberedFiles runs on the embed.FS alone (no Postgres dependency, runs on every developer machine and every CI runner deterministically); TestMigrationsEmptyDBContractAppliesEmbeddedLadderToEmptyDatabase requires a real Postgres (creates a throwaway database via crypto/rand-named DSN, runs the embedded ladder, asserts schema_migrations is clean, skips with t.Skip when YALLA_TEST_DATABASE_URL is unset). The deterministic member is the FRONT LINE — it trips on every machine on any closed-set coverage regression (new NNNN_*.up.sql file the loader misses, numbered file renamed to non-numbered form, version gap). The Postgres member is the DEPTH gate — it asserts the runtime contract that no migration can fail on an empty DB. Forward-applicable to ANY future verification story whose contract spans deterministic-fixture-only AND requires-infrastructure invariants: BE-0390 (migration downgrade safety — deterministic Reversible check + Postgres Down test), BE-0392 (load smoke — deterministic harness contract + Postgres load run), BE-0394 (chaos Postgres disconnects — deterministic injection-point coverage + Postgres reconnect test). The Postgres member MUST use t.Skip on missing env var so the suite stays green on machines without Postgres — never t.Fatal, never silently pass. (2) `CLOSED-SET COVERAGE WALKS embed.FS, NOT RUNTIME.CALLER` — unlike BE-0388 (which read its own source via runtime.Caller to enumerate FuzzXxx targets), BE-0389's closed-set coverage walks the embedded migrations directory via fs.ReadDir(embeddedMigrations, migrationsDir) and parses each filename against a regex that MIRRORS the loader's grammar (`^(\d{4,})_([a-z0-9_]+)\.(up|down)\.sql$`). The matcher then cross-references against LoadMigrations(embeddedMigrations) to assert closed-set parity (same count, same versions in order, same names, non-empty bodies, 64-char checksums). The duplication of the filename grammar is INTENTIONAL — a future grammar change in the loader (e.g. permissive `.sql` form) MUST update both the loader AND the test in the same edit. Forward-applicable to any verification story whose closed-set surface is a directory tree (BE-0390 down-script coverage, BE-0398 tenant-isolation test coverage per repository method, BE-0407 desired-state goldens). (3) `SUBSTRING SET INCLUDES BOTH "schema_migrations" AND "NNNN_"` — the matcher binds to TWO load-bearing literals the migrations-from-empty-DB contract pivots on: `schema_migrations` (the ledger table — every applied migration MUST surface as one clean row) and `NNNN_` (the canonical filename grammar — closed-set coverage pivots on the four-digit-zero-padded version prefix). The substring set also includes `YALLA_TEST_DATABASE_URL` (the deterministic-skip env var) AND `YALLA_EXTERNAL_DOKPLOY` (the shared opt-in-external escape hatch) so the matcher pins BOTH the per-suite skip contract and the cross-suite external contract. Substring count = 17 (matches BE-0388's count). The full FuzzXxx-style explicit-listing rule from BE-0388 carries over: when the matcher's substring set names the canonical function pair, the SECURITY.md section MUST quote each full function name verbatim — TestMigrationsEmptyDBContractCoversAllNumberedFiles AND TestMigrationsEmptyDBContractAppliesEmbeddedLadderToEmptyDatabase — so a reader sees the gate from the doc alone. (4) `VERIFY.SH RENUMBER OF OPTIONALS BLOCK — NINE INSERTIONS NOW (#6→#15)` — inserting required step #15 between #14 (fuzz validator tests) and the optionals renumbered 15→16/16→17/17→18/18→19 in the same edit (govulncheck/staticcheck/golangci-lint/goreleaser). The previous count was EIGHT consecutive insertions (BE-0380..BE-0388). Per-story knobs for siblings: same as BE-0388's bullet — (a) canonical command from PRD, (b) dedicated CI step name, (c) verify.sh numeric prefix (next number after last required step; renumber trailing optionals in same edit), (d) SECURITY.md section heading and 15-17-entry substring set (per-suite invariants — preserve closed-set discipline; list canonical function pair verbatim), (e) AGENTS.md subsection mirroring SECURITY.md but speaking to maintainers. Load-bearing invariant unchanged: ONE FILE, SIX SURFACES, SELF-CHECK; drift on any surface fails ONE test, not six. GOTCHA: when the PRD's `-run` filter is NOT already in verificationLoop.requiredBackendCommands (BE-0389's `go test -run TestMigrationsEmptyDB ./...` was not), the implementation MUST add it via a Node fs round-trip (JSON.parse + JSON.stringify) to preserve 2-space indent + trailing newline; direct text Edit can drift the formatting. Forward-applicable to BE-0390..BE-0399 sibling stories.
 - Verification-suite single-file multi-surface static-test, fuzz-validators instance (BE-0388 pattern, internal/release/verification_suite_fuzz_validators_static_test.go + internal/controlplane/validate/fuzz_test.go's new canonical pair TestFuzzValidatorContractCoversExpectedValidators + TestFuzzValidatorContractSeedCorpusRejectsHostileInputs + SECURITY.md "## Fuzz Validator Tests" section AND a new row in the Required Verification Gates table + internal/release/AGENTS.md "## Verification suite: fuzz tests for validators (BE-0388)" subsection; TENTH worked instance of the BE-0379..BE-0387 verification-suite mega-pattern, canonical command `go test -run TestFuzzValidator ./...`, CI step name `Fuzz validator tests`, verify.sh prefix #14). Four BE-0388-specific extensions to the template: (1) `CANONICAL PAIR WRAPS FuzzXxx TARGETS, NOT INDIVIDUAL VALIDATORS` — unlike BE-0386 (one fake, dual invariants) and BE-0387 (one redactor, dual invariants), BE-0388's load-bearing surface is a SET of nine FuzzXxx targets (FuzzName, FuzzPath, FuzzDomain, FuzzEnvVarName, FuzzEnvVarValue, FuzzDecodeJSON, FuzzImageRef, FuzzURL, FuzzGitBranch). The canonical-pair design splits the set into two orthogonal invariants: TestFuzzValidatorContractCoversExpectedValidators pins the CLOSED-SET COVERAGE — every public validator MUST have a FuzzXxx target, asserted by reading fuzz_test.go's own source via runtime.Caller and matching against `fuzzValidatorExpectedTargets` (the nine literal `func FuzzXxx(f *testing.F)` declarations). A new validator added to the public surface without a Fuzz target trips this matcher with the exact missing name. TestFuzzValidatorContractSeedCorpusRejectsHostileInputs pins the RUNTIME NO-PANIC invariant — the wrapper drives every validator through the shared `fuzzSeeds` corpus under a `recover()` guard so a panic surfaces with the offending validator name AND the seed index (the actionable-failure contract). Forward-applicable to ANY future verification story whose load-bearing surface is a SET of targets sharing one invariant + a closed-set coverage rule: BE-0394 (chaos Postgres disconnects — set of disconnect injection points), BE-0395 (idempotency replay — set of idempotency-protected endpoints), BE-0398 (tenant isolation — set of customer-data queries). (2) `Fuzz-PREFIX TARGETS RUN UNDER -run TestFuzzValidator AND -fuzz=FuzzXxx` — Go's fuzz tests (signature `func FuzzXxx(f *testing.F)`) run their seed corpus deterministically when invoked with `go test -run FuzzXxx` AND drive the randomised engine when invoked with `go test -fuzz=FuzzXxx`. The BE-0388 design KEEPS the existing FuzzXxx targets unchanged (they continue to support the optional `-fuzz=` driver for soak runs) AND adds a TestFuzzValidator-prefixed wrapper pair that binds to the `-run TestFuzzValidator ./...` filter on every `go test ./...` invocation. The wrapper does NOT replace the FuzzXxx targets — it complements them by adding a deterministic, name-anchored Test* binding to the canonical filter. The randomised driver remains an opt-in escape hatch documented in SECURITY.md (`-fuzz=Fuzz<Name>`); CI runs the wrapper, soak runs drive `-fuzz=`. (3) `SUBSTRING SET ANCHORS THE STRING "no panic" VERBATIM, NOT HYPHENATED FORMS` — first CI run failed because the SECURITY.md text used "no-panic" (hyphenated, sentence-internal) while the matcher pinned "no panic" (space-separated, quoted). The fix wrapped the canonical phrase in quotes in the SECURITY section ("the wrapper pins the 'no panic' invariant") so both the matcher and the human-readable doc land on the same literal. Forward-applicable pattern: when pinning a multi-word invariant as a closed substring, prefer quoting the invariant in the doc so the matcher binds to the literal a reviewer is most likely to write. Also: when the matcher's substring set contains both bare ("FuzzName") AND prefix-form ("FuzzDecodeJSON") names, the section MUST list the full FuzzXxx target set explicitly — handing the reader a sample like "(`Name`, `Path`, ...)" doesn't satisfy a matcher that pins on the literal "FuzzName" substring. (4) `VERIFY.SH RENUMBER OF OPTIONALS BLOCK — EIGHT INSERTIONS NOW (#6→#14)` — inserting required step #14 between #13 (redaction tests) and the optionals renumbered 14→15/15→16/16→17/17→18 in the same edit (govulncheck/staticcheck/golangci-lint/goreleaser). The previous count was SEVEN consecutive insertions (BE-0380..BE-0387). Per-story knobs for siblings: same as BE-0387's bullet — (a) canonical command from PRD, (b) dedicated CI step name, (c) verify.sh numeric prefix (next number after last required step; renumber trailing optionals in same edit), (d) SECURITY.md section heading and 15-17-entry substring set (per-suite invariants — preserve closed-set discipline; list FULL target-name set explicitly when pinning a multi-target surface), (e) AGENTS.md subsection mirroring SECURITY.md but speaking to maintainers. Load-bearing invariant unchanged: ONE FILE, SIX SURFACES, SELF-CHECK; drift on any surface fails ONE test, not six.
@@ -28223,4 +28224,213 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     is therefore load-bearing for every other concurrency
     gate's runtime guarantees; this is documented in the
     `## Race Detector` SECURITY.md section.
+---
+
+## 2026-05-17 - BE-0392 Verification suite: load smoke tests
+- Implemented BE-0392 (fourteenth worked instance of the
+  BE-0379..BE-0391 verification-suite mega-pattern; follows the
+  BE-0389/BE-0390 canonical-pair shape, NOT the BE-0379/BE-0391
+  umbrella shape). Canonical command: `go test -run TestLoadSmoke ./...`.
+  CI step name: `Load smoke tests`. verify.sh numeric prefix: #17
+  (inserted between BE-0390's #16 and the optionals; trailing
+  optionals renumbered #17 -> #18 govulncheck, #18 -> #19 staticcheck,
+  #19 -> #20 golangci-lint, #20 -> #21 goreleaser).
+- Canonical pair appended to
+  `internal/controlplane/httpapi/load_smoke_test.go`:
+    1. `TestLoadSmokeContractCoversCoreEndpoints` — closed-set
+       bootstrap-coverage invariant. Walks the in-memory
+       `loadSmokeEndpoints` table and asserts it stays non-empty,
+       free of duplicate (method, path) tuples, scoped to the
+       bootstrap surface (no `/v1/` paths), every entry has a valid
+       HTTP method from the closed `validHTTPMethods` set, every
+       `wantStatus` is in the [100, 599] range, and every entry in
+       `loadSmokeSecretMarkers` is non-empty. Runs with NO
+       infrastructure dependency.
+    2. `TestLoadSmokeContractRunsBurstWithStableEnvelopes` — burst
+       stability invariant. Spins the test handler in-process via
+       `httptest.NewServer`, fires `loadSmokeWorkers *
+       loadSmokeIterationsPerWorker` (16 * 32 = 512) concurrent
+       requests per endpoint, and asserts every response carries
+       the canonical status, a stable `yalla.output.v1` envelope
+       with `ok=true`, a `telemetry.SafeID`-clean request_id, a
+       request_id unique across the whole burst (no duplicates
+       allowed), and no secret-shaped substring (`yka_`, `Bearer `,
+       `Set-Cookie`, `postgres://`, `DOKPLOY_TOKEN`) in body or
+       header. Worker goroutines push typed `observation{}` onto a
+       buffered channel; main goroutine drains after `wg.Wait()` +
+       `close` and aggregates per-endpoint counts, per-request-id
+       collisions, and per-observation envelope/status/redaction
+       assertions. Failure messages quote the offending endpoint AND
+       the observed request_id (or a synthetic
+       `<request-construction-failed:...>` / `<request-do-failed:...>`
+       sentinel when the round-trip itself failed). Burst total
+       (1536 requests) completes in ~600ms locally.
+- Static defence file
+  `internal/release/verification_suite_load_smoke_static_test.go`
+  pins SIX surfaces in one file (CI workflow step name + run
+  command, verify.sh step header + canonical command,
+  CONTRIBUTING.md numeric-prefixed entry, SECURITY.md table row +
+  dedicated `## Load Smoke Tests` section with 17-substring
+  closed-set, PRD command in
+  `verificationLoop.requiredBackendCommands`, canonical file +
+  function-pair existence) plus a self-check
+  `TestVerificationSuiteLoadSmokeAnalyzerDetectsRegressions` that
+  drives every matcher with synthetic known-good AND known-bad
+  fixtures (CI step matcher, verify.sh header+cmd matcher,
+  CONTRIBUTING entry matcher, SECURITY substring set matcher, PRD
+  command matcher, canonical-funcs matcher, and a dedicated
+  `TestLoadSmoke prefix locks the -run filter contract` subtest).
+- Edited `scripts/verify.sh` to insert `# 17. Required: load smoke
+  tests` between the `# 16. Required: migration downgrade safety
+  tests` block and the optionals, renumbering optionals `# 17 ->
+  # 18` (govulncheck), `# 18 -> # 19` (staticcheck), `# 19 -> # 20`
+  (golangci-lint), `# 20 -> # 21` (goreleaser check) in the same
+  edit.
+- Edited `.github/workflows/ci.yml` to add a dedicated
+  `Load smoke tests` step in the `test` job invoking
+  `go test -run TestLoadSmoke ./...` right after the
+  `Migration downgrade safety tests` step and before
+  `Race detector`.
+- Edited `CONTRIBUTING.md` to add entry
+  `17. \`go test -run TestLoadSmoke ./...\`` to the Required
+  Checks Before Every Commit list and an explanatory paragraph
+  documenting BE-0392 as the bootstrap-surface burst-stability
+  gate, naming the two canonical pair members and their
+  substrates (deterministic closed-set bootstrap-coverage +
+  deterministic in-process burst via httptest.NewServer).
+- Edited `SECURITY.md` to add the `Load smoke tests` row to the
+  Required Verification Gates table and a dedicated
+  `## Load Smoke Tests` section between `## Migration Downgrade
+  Safety Tests` and `## Race Detector` with bullets covering the
+  closed-set bootstrap-coverage invariant, the burst-stability
+  invariant under concurrency, deterministic-by-default behaviour
+  (no Postgres / no live Dokploy server / no fake fixtures
+  touched), opt-in `YALLA_EXTERNAL_DOKPLOY` external smoke,
+  actionable failures (endpoint + observed request_id), CI cadence
+  (Every push and PR), and the self-locating gate file. The 17
+  required substrings are: `internal/controlplane/httpapi`,
+  `load_smoke_test.go`, `deterministic`, `bootstrap surface`,
+  `/healthz`, `/readyz`, `/version`, `request_id`,
+  `yalla.output.v1`, `yalla.error.v1`,
+  `TestLoadSmokeContractCoversCoreEndpoints`,
+  `TestLoadSmokeContractRunsBurstWithStableEnvelopes`,
+  `Every push and PR`, `YALLA_EXTERNAL_DOKPLOY`, `redacted`,
+  `fake Dokploy`,
+  `verification_suite_load_smoke_static_test.go`.
+- Edited `internal/release/AGENTS.md` to add a new
+  `## Verification suite: load smoke tests (BE-0392)` subsection
+  appended after BE-0391's subsection, mirroring the SECURITY.md
+  contract but speaking to maintainers (six pinned surfaces, the
+  canonical-pair invariants, the deterministic-by-design rationale,
+  the assertion-IS-the-contract closing line).
+- Edited `ralph/prd.json` via Node fs round-trip (JSON.parse +
+  JSON.stringify, 2-space indent, trailing newline preserved) to
+  (a) append `"go test -run TestLoadSmoke ./..."` to
+  `verificationLoop.requiredBackendCommands`, (b) flip
+  `BE-0392.passes` from false to true, and (c) expand the BE-0392
+  notes field to summarise the canonical pair, the six pinned
+  surfaces, and the deterministic-by-design rationale.
+- Files changed:
+    - internal/controlplane/httpapi/load_smoke_test.go (new)
+    - internal/release/verification_suite_load_smoke_static_test.go (new)
+    - .github/workflows/ci.yml (CI step added between migration
+      downgrade safety and race detector)
+    - scripts/verify.sh (step #17 inserted; optionals renumbered)
+    - CONTRIBUTING.md (entry #17 + explanatory paragraph appended)
+    - SECURITY.md (gate row + dedicated `## Load Smoke Tests`
+      section inserted between BE-0390 and BE-0391 sections)
+    - internal/release/AGENTS.md (new BE-0392 subsection appended)
+    - ralph/prd.json (requiredBackendCommands entry appended;
+      BE-0392.passes=true; notes expanded)
+- Verification run (from repo root):
+    gofmt -l . -> empty
+    go mod tidy -> no changes
+    go vet ./... -> clean
+    go test -count=1 -run 'TestLoadSmoke|TestVerificationSuiteLoadSmoke'
+      ./... -> ok (canonical pair PASS in 0.608s on httpapi;
+      static suite PASS in release_test)
+    go test ./... -> 0 FAIL (full umbrella green; no FAIL or panic
+      lines)
+    go test -race ./... -> 0 FAIL (race detector clean across all
+      packages; no DATA RACE, FAIL, or panic lines)
+- Results: Story passes:true. The canonical pair binds to the
+  PRD's `-run TestLoadSmoke ./...` filter. The static
+  verification suite pins all six surfaces; a drift on any single
+  surface (rename, renumber, deletion) fails ONE test, not six.
+- Remaining risks / follow-ups: none on the BE-0392 surface. The
+  pre-existing TestListServiceLogsInvalidLimit race-substring
+  flake noted under BE-0125 / BE-0103 did not recur on this run
+  but the underlying collision in services_logs_test.go is still
+  latent. BE-0390 still has no AGENTS.md subsection (recorded in
+  its progress entry but not actually present in the file); not
+  in scope to backfill here.
+- **Learnings for future iterations:**
+  - BE-0379..BE-0391 verification-suite template ports to BE-0392
+    with two BE-0392-specific shape extensions: (a) CANONICAL PAIR
+    ENCODES DETERMINISTIC × DETERMINISTIC DUAL — both members
+    deterministic-by-design because the bootstrap surface
+    (`/healthz`, `/readyz`, `/version`) needs no backing
+    infrastructure. Forward-applicable to ANY future verification
+    story whose subject is a stateless HTTP surface or pure
+    in-process invariant. Critical implication: the
+    BE-0389/BE-0390 dual-substrate (deterministic-fixture-only +
+    Postgres-required) shape is NOT mandatory; when both
+    invariants are deterministic, the pair stays deterministic-only
+    and the SECURITY.md section's `skips when
+    YALLA_TEST_DATABASE_URL is unset` language is OMITTED. (b)
+    BURST OBSERVATION COLLECTION SHAPE — buffered channel sized to
+    `len(endpoints) * workers * iterations`, typed `observation{}`
+    struct pushed from each goroutine, main goroutine drains after
+    `wg.Wait()` + `close` and aggregates per-endpoint counts,
+    per-request-id uniqueness, and per-observation
+    envelope/status/redaction assertions. Worker goroutines MUST
+    NOT call testing.T methods (race-hostile and
+    stdlib-discouraged). Failure messages quote endpoint AND
+    observed request_id (or synthetic
+    `<request-construction-failed:...>` /
+    `<request-do-failed:...>` sentinel for failed round-trips) so
+    operators correlate against logs without re-running. The 1536
+    request total completes in ~600ms locally — safely under the
+    flaky-test threshold.
+  - The `loadSmokeEndpoints` table includes a `wantStatus` field
+    per entry so a future endpoint that legitimately returns 503
+    under some condition (e.g. `/readyz` during startup) can be
+    added without breaking the burst member's status assertion.
+    The closed-set member's bootstrap-scope rule
+    (`!strings.HasPrefix(ep.path, "/v1/")`) is what prevents
+    scope-creep regressions from silently adding endpoints that
+    require fake dependencies and break the
+    deterministic-by-default contract.
+  - The SECURITY.md substring set adapts per story: BE-0392 has
+    17 entries (matches BE-0389's count) — the 17 substrings
+    anchor on the bootstrap surface (`/healthz`, `/readyz`,
+    `/version`), the canonical-pair function names verbatim
+    (`TestLoadSmokeContractCoversCoreEndpoints`,
+    `TestLoadSmokeContractRunsBurstWithStableEnvelopes`), the
+    self-locating file path
+    (`verification_suite_load_smoke_static_test.go`), the
+    redaction contract (`redacted`, `fake Dokploy`), and the
+    shared cross-suite tokens (`yalla.output.v1`, `yalla.error.v1`,
+    `Every push and PR`, `YALLA_EXTERNAL_DOKPLOY`, `request_id`,
+    `deterministic`, `bootstrap surface`,
+    `internal/controlplane/httpapi`, `load_smoke_test.go`). The
+    shared `YALLA_EXTERNAL_DOKPLOY` substring is included as the
+    cross-suite escape hatch reference even though the BE-0392
+    canonical pair does NOT exercise any code path it controls.
+  - PRD `-run TestLoadSmoke` filter matched ZERO existing tests
+    before the story landed (the prefix is new across the
+    module). The implementation FIRST added the canonical pair so
+    the filter binds to real assertions, THEN wired the gates.
+    Same shape as BE-0386's `EXISTING-TEST-SATISFIES-RUN-FILTER`
+    NEGATIVE form: when picking up a verification-suite story
+    whose PRD `-run` filter exists, ALWAYS run `go test -run
+    <Prefix> ./...` first — if it shows `no tests to run`
+    everywhere, the story MUST add canonical tests under the
+    prefix BEFORE wiring the gates, otherwise the gates pass
+    vacuously.
+  - Workflow security reminder hook surfaces an informational
+    error on the first ci.yml Edit; the second identical Edit
+    succeeds. Plan for one retry when editing workflow YAML.
+    (BE-0380 established this; BE-0392 confirmed it remains
+    accurate.)
 ---

@@ -48,6 +48,7 @@ and they must all pass on every commit you propose:
 14. `go test -run TestFuzzValidator ./...`
 15. `go test -run TestMigrationsEmptyDB ./...`
 16. `go test -run TestMigrationsDowngradeSafety ./...`
+17. `go test -run TestLoadSmoke ./...`
 
 `scripts/verify.sh` runs the full set in one command and is the local
 mirror of the `test` job in `.github/workflows/ci.yml`. Step 6 — the
@@ -146,6 +147,36 @@ so the suite stays green on machines without Postgres. Failures
 surface with the offending migration version AND the resource_id
 (`schema_migrations.version=N`) so an operator can map the failure
 to the exact migration without re-running the suite locally.
+
+Step 17 — the load smoke suite bound by the `-run TestLoadSmoke`
+filter — is the bootstrap-surface burst-stability gate documented in
+BE-0392; the dedicated invocation is defence-in-depth on the same
+principle so a narrowing of the umbrella `go test ./...` step would
+still leave the burst gate firing as a fast, targeted failure rather
+than buried inside the umbrella log. The canonical pair
+(`TestLoadSmokeContractCoversCoreEndpoints` and
+`TestLoadSmokeContractRunsBurstWithStableEnvelopes`) lives in
+`internal/controlplane/httpapi/load_smoke_test.go`. The first member
+pins the closed-set bootstrap-coverage invariant — the endpoint
+table the burst harness iterates MUST stay non-empty, free of
+duplicates, scoped to the bootstrap surface (`/healthz`, `/readyz`,
+`/version`, nothing under `/v1/`), and every entry MUST carry a
+valid HTTP method — and runs without any infrastructure dependency
+so a typo or scope-creep regression trips on every developer
+machine. The second member pins the burst-stability invariant — the
+in-process public HTTP handler accepts
+`loadSmokeWorkers * loadSmokeIterationsPerWorker` concurrent
+requests per endpoint and every response carries the canonical
+status, a stable `yalla.output.v1` envelope with ok=true, a
+SafeID-clean `request_id` unique across the whole burst, and no
+secret-shaped substring in body or header. Failures surface with
+the offending endpoint AND the observed request_id so an operator
+can correlate the gate failure with a specific in-flight request
+without re-running the suite locally. Both members are
+deterministic by design: the bootstrap surface is the one part of
+the API that needs no backing infrastructure, so the load smoke
+gate stays green on every machine without Postgres or a live
+Dokploy server.
 
 ## Required Checks Before Every Release
 
