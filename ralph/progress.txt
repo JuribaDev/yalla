@@ -30051,3 +30051,16 @@ change that widened Reason to caller-supplied data.
     package - mirrors BE-0379..BE-0407 convention; no white-box test
     needed.
 ---
+
+## 2026-05-18 - BE-0167
+- Added httpapi/environment_grants_get_contract_test.go: contract coverage for GET /v1/environments/{environment_id}/grants. Three tests close the three contract gaps not already pinned by environment_grants_test.go and environment_grants_policy_test.go: (1) server writes response data only through the http.ResponseWriter (captureProcessOutput proves stdout/stderr stay empty); (2) per-request structured log redacts the bearer credential on BOTH the success path (allowed developer) AND the authorization-failure path (disabled principal short-circuits at policy before reader runs, with a denyReader whose ListEnvironmentGrants would error if invoked); (3) error envelope built from a wrapped StoreUnavailable cause does not leak the wrapped driver cause string nor the bare datastore address 10.0.0.5.
+- Files changed: internal/controlplane/httpapi/environment_grants_get_contract_test.go (new, 261 lines); ralph/prd.json (BE-0167.passes=true).
+- Verification: gofmt -w on the new file; go vet ./...; go test ./internal/controlplane/httpapi/ (ok 1.264s); go test -race ./internal/controlplane/httpapi/ (ok 8.979s); go test ./... (all packages ok); go test -race ./... (no failures, no data races). go mod tidy: no-op.
+- Results: all gates pass. New tests run with t.Parallel() except the captureProcessOutput leg (mutates os.Stdout/os.Stderr globals).
+- Remaining risks/follow-ups: none. Mirrors the BE-0137 project-grants contract test trio exactly; future GET-list contract stories (BE-0173 variables read, BE-0179 services read) can clone this file the same way.
+- **Learnings for future iterations:**
+  - The project_grants_get_contract_test.go template (BE-0137) is the canonical clone-source for any GET-list contract test on the environments/services/projects axis: ONE constant secret, ONE handler-with-logger constructor (clones listEnvironmentGrantsHandlerFor with logger/nil at the trailing slots instead of nil/nil), THREE tests (server-writes-only-to-ResponseWriter, log-redacts-bearer-on-both-paths, error-envelope-does-not-leak-cause). The structure is fixed; only the seed helper name, reader interface, principal helper, getter helper, decoder helper, wire field names (GrantID/EnvironmentID vs GrantID/ProjectID), and path parameter change.
+  - The deny-path-short-circuits-at-policy trick for the redaction test uses `denied.Principal.Disabled = true` on a principal that would otherwise be admitted. The denyReader returns an error if invoked, which proves the policy boundary short-circuits before the reader runs — so a logged "reader error" cannot be the leak source.
+  - captureProcessOutput is in me_contract_test.go and mutates package-global os.Stdout/os.Stderr — the test that uses it MUST NOT use t.Parallel(). The other two contract tests in the trio can and should use t.Parallel().
+  - The wire shape for GET /v1/environments/{environment_id}/grants has the principal as a nested object (`Principal environmentGrantPrincipal`) — different from the projectGrantResource which uses flat PrincipalID/PrincipalKind. The contract test only asserts GrantID and EnvironmentID so it stays clone-stable across both shapes.
+---
