@@ -51,6 +51,7 @@ and they must all pass on every commit you propose:
 17. `go test -run TestLoadSmoke ./...`
 18. `go test -run TestChaosDokployTimeouts ./...`
 19. `go test -run TestChaosPostgresDisconnects ./...`
+20. `go test -run TestIdempotencyReplay ./...`
 
 `scripts/verify.sh` runs the full set in one command and is the local
 mirror of the `test` job in `.github/workflows/ci.yml`. Step 6 — the
@@ -254,6 +255,39 @@ fake closes accepted connections gracefully so pgx's dial completes
 and the chaos error surfaces on the startup-handshake read, and the
 gate stays green on every machine without Postgres or a live Dokploy
 server.
+
+Step 20 — the idempotency-replay suite bound by the
+`-run TestIdempotencyReplay` filter — is the HTTP idempotency
+middleware replay gate documented in BE-0395; the dedicated
+invocation is defence-in-depth on the same principle so a narrowing
+of the umbrella `go test ./...` step would still leave the replay
+gate firing as a fast, targeted failure rather than buried inside the
+umbrella log. The canonical pair
+(`TestIdempotencyReplayCoversCallSites` and
+`TestIdempotencyReplayPreservesByteIdenticalEnvelope`) lives in
+`internal/controlplane/httpapi/idempotency_replay_test.go`. The first
+member pins the closed-set replay-coverage invariant — for every
+outcome category the middleware records (a 202 `yalla.output.v1`
+success envelope, a 400 `E_INVALID_INPUT` validation failure, a 403
+`E_FORBIDDEN` authorization failure, a 404 `E_NOT_FOUND` not-found
+failure), a second request with the same `Idempotency-Key` and the
+same body MUST receive the byte-identical recorded envelope, the
+same status, and an `Idempotency-Replayed: true` header without
+re-invoking the wrapped handler, and a sentinel marker placed inside
+the submitted request body MUST NOT leak into the recorded claim or
+the replayed response. The 5xx server-failure case is deliberately
+excluded from the replay closed set — the middleware releases the
+claim on 5xx so a retry re-runs the handler rather than replaying an
+unfinished result. The second member pins the deterministic-replay
+invariant under contention — seeding a completed claim and firing
+`replayWorkers * replayIterationsPerWorker` concurrent retries
+against the same key MUST yield byte-identical replayed bodies,
+identical statuses, the `Idempotency-Replayed: true` header on
+every retry, and exactly zero handler invocations across the burst.
+Both members are deterministic by design: the in-process
+`fakeIdempotencyStore` is the only dependency the replay harness
+needs, no live Postgres is required, and the gate stays green on
+every machine without Postgres or a live Dokploy server.
 
 ## Required Checks Before Every Release
 

@@ -79,6 +79,7 @@ defined in `.github/workflows/ci.yml`:
 | Load smoke tests | `go test -run TestLoadSmoke ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Chaos tests for Dokploy timeouts | `go test -run TestChaosDokployTimeouts ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Chaos tests for Postgres disconnects | `go test -run TestChaosPostgresDisconnects ./...` | `scripts/verify.sh`, CI | Every push and PR |
+| Idempotency replay tests | `go test -run TestIdempotencyReplay ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Race detector | `go test -race ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Vulnerability scan | `govulncheck ./...` | CI `security` job | Every push and PR |
 | Lint suite | `staticcheck ./...` and `golangci-lint run ./...` | CI `security` job | Every push and PR |
@@ -2226,6 +2227,103 @@ static defence for every collateral surface lives in
   Every push and PR runs the gate. The single static defence that
   pins every one of those surfaces is
   `internal/release/verification_suite_chaos_postgres_disconnects_static_test.go`.
+
+## Idempotency Replay Tests
+
+The idempotency-replay suite (BE-0395) is the HTTP idempotency
+middleware replay gate. It exists to catch a class of regressions a
+single-request unit test cannot: a retry that re-runs the wrapped
+handler and double-creates a project, a recorded body that drifts on
+replay so an agent sees a different `request_id` on the second
+call, an in-memory recorder that returns truncated bytes under
+concurrent retries, or a submitted request body reflected into the
+recorded envelope so a sentinel marker placed inside the body would
+surface in an audit log. The canonical pair
+(`TestIdempotencyReplayCoversCallSites` and
+`TestIdempotencyReplayPreservesByteIdenticalEnvelope`) lives in
+`internal/controlplane/httpapi/idempotency_replay_test.go` and binds
+to the PRD's `-run TestIdempotencyReplay` filter; the static defence
+for every collateral surface lives in
+`internal/release/verification_suite_idempotency_replay_static_test.go`.
+
+- **Scope.** The two load-bearing replay invariants are exercised by
+  the canonical function pair. The first member walks a closed-set
+  scenario table covering every outcome category the middleware
+  records: a success scenario that renders a `yalla.output.v1`
+  envelope at 202 Accepted, a validation-failure scenario that
+  renders a `yalla.error.v1` envelope at 400 Bad Request with
+  `E_INVALID_INPUT`, an authorization-failure scenario at 403
+  Forbidden with `E_FORBIDDEN`, and a not-found scenario at 404 Not
+  Found with `E_NOT_FOUND`. For each scenario the test asserts the
+  wrapped handler runs exactly once, the second response's status
+  equals the first, the second response's body is byte-identical to
+  the first, the replay carries the `Idempotency-Replayed: true`
+  header, and the recorded body carries the schema_version it
+  advertises on the wire. The 5xx server-failure case is deliberately
+  excluded from the replay closed set — the middleware's contract
+  releases the claim on 5xx so a retry re-runs the handler rather
+  than replaying an unfinished result, and that exclusion is pinned
+  separately by `TestRequireIdempotencyServerErrorIsNotRecorded`. The
+  second member seeds a completed claim and fires
+  `replayWorkers * replayIterationsPerWorker` concurrent retries
+  against the same `Idempotency-Key`, asserting every retry observes
+  the same status, the same byte-identical body, the
+  `Idempotency-Replayed: true` header, and that the wrapped handler
+  is never invoked. The single static defence is
+  `internal/release/verification_suite_idempotency_replay_static_test.go`,
+  which pins the existence of the canonical
+  `idempotency_replay_test.go` file and the canonical
+  `TestIdempotencyReplayCoversCallSites` +
+  `TestIdempotencyReplayPreservesByteIdenticalEnvelope` function
+  pair (the load-bearing `-run TestIdempotencyReplay` filter from
+  `verificationLoop.requiredBackendCommands` binds to the
+  `TestIdempotencyReplay` prefix) so the replay convention itself
+  cannot be silently deleted or renamed.
+- **Determinism.** The idempotency-replay tests run against
+  deterministic fixtures only — a per-scenario in-process
+  `fakeIdempotencyStore` constructed with no shared instance state,
+  a per-scenario `recordingHandler` whose invocation count is the
+  closed-set bound, and seeded claims whose recorded bodies are
+  byte-literal `yalla.output.v1` envelopes (a structural comparison
+  would mask a whitespace drift). No replay test reaches a live
+  Postgres, a live Dokploy, or any external network.
+- **Actionable failures.** Every diagnostic surfaces the offending
+  scenario name AND, where relevant, the iteration index from the
+  concurrent burst so an operator reading the CI log can map the
+  failure to the exact replay scenario without re-running the suite
+  locally. The byte-identical-envelope member reports the iteration
+  count plus the observed body bytes so a regression that drifted
+  the recorder under contention surfaces with the exact divergence.
+- **Schema-version contract.** Every public HTTP response the
+  middleware records — a recorded 202 success, a recorded 400
+  validation failure, a recorded 403 authorization failure, a
+  recorded 404 not-found — uses the stable JSON envelope shape
+  pinned by `yalla.output.v1` (success) and `yalla.error.v1`
+  (error). The replay suite asserts the schema_version literal
+  survives byte-identically into the recorded claim AND the replayed
+  response, so a regression that re-rendered the envelope on replay
+  (and dropped or drifted the schema_version) trips here even if the
+  parsed JSON stayed semantically equivalent.
+- **Redaction.** A sentinel marker placed inside the submitted
+  request body MUST NEVER appear in the first rendered response, in
+  the recorded claim body, or in the replayed response — the
+  middleware records the already-rendered, already-redacted
+  apienvelope body, so a regression that started recording the raw
+  handler output or reflecting the request body into the envelope
+  would surface with the marker substring. Test output, error
+  chains, audit metadata, and the recorded envelope MUST stay
+  redacted of secrets.
+- **CI cadence.** The idempotency-replay gate runs as a dedicated
+  `Idempotency replay tests` step in `.github/workflows/ci.yml`,
+  under `# 20. Required: idempotency replay tests` in
+  `scripts/verify.sh`, as entry `20` in `CONTRIBUTING.md` under
+  `## Required Checks Before Every Commit`, and in `ralph/prd.json`
+  under `verificationLoop.requiredBackendCommands` so an AI agent
+  reading the PRD before picking up a story sees the gate without
+  needing to discover it from shell scripts or CI workflows.
+  Every push and PR runs the gate. The single static defence that
+  pins every one of those surfaces is
+  `internal/release/verification_suite_idempotency_replay_static_test.go`.
 
 ## Race Detector
 

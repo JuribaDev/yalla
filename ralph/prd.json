@@ -257,7 +257,8 @@
       "go test -run TestMigrationsDowngradeSafety ./...",
       "go test -run TestLoadSmoke ./...",
       "go test -run TestChaosDokployTimeouts ./...",
-      "go test -run TestChaosPostgresDisconnects ./..."
+      "go test -run TestChaosPostgresDisconnects ./...",
+      "go test -run TestIdempotencyReplay ./..."
     ],
     "optionalWhenConfigured": [
       "goimports -w .",
@@ -8401,7 +8402,7 @@
       ],
       "type": "verification",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Test suite: idempotency replay tests."
     },
     {

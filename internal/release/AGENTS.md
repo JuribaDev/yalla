@@ -1514,3 +1514,55 @@ section, or the PRD commands, update the matching constant
 in `verification_suite_chaos_postgres_disconnects_static_test.go`
 in the same edit. The matchers fail loudly on drift; the
 assertion IS the contract.
+
+## Verification suite: idempotency replay tests (BE-0395)
+
+`verification_suite_idempotency_replay_static_test.go` pins
+the idempotency-replay gate. It is the load-bearing static
+defence for the contract between Yalla's HTTP idempotency
+middleware and every agent, CI runner, audit reviewer, or
+operator that retries an unsafe request: a second request
+with the same `Idempotency-Key` and the same body replays
+the original response byte-identically — same status, same
+envelope bytes, with the `Idempotency-Replayed: true`
+header — without re-invoking the wrapped handler, for every
+outcome category the middleware records (success,
+validation failure, authorization failure, not-found
+failure), even under concurrent retry contention, and
+without reflecting any sentinel marker from the submitted
+request body into the recorded claim or the replayed
+response. The canonical pair
+(`TestIdempotencyReplayCoversCallSites` and
+`TestIdempotencyReplayPreservesByteIdenticalEnvelope`) lives
+in `internal/controlplane/httpapi/idempotency_replay_test.go`
+and binds to the PRD's `-run TestIdempotencyReplay` filter.
+Both pair members are deterministic — they use the
+in-process `fakeIdempotencyStore` and the package-local
+`recordingHandler`, so the gate stays green on every
+developer machine without a live Postgres or any external
+dependency. The 5xx server-failure case is deliberately
+excluded from the replay closed set — the middleware
+releases the claim on 5xx so a retry re-runs the handler
+rather than replaying an unfinished result, and that
+exclusion is pinned separately by
+`TestRequireIdempotencyServerErrorIsNotRecorded` in the
+same file. The static test pins SIX surfaces in one file:
+the CI `Idempotency replay tests` step
+(`.github/workflows/ci.yml`), the verify.sh step #20 header
+(`scripts/verify.sh`), the CONTRIBUTING.md entry #20, the
+SECURITY.md row + dedicated `## Idempotency Replay Tests`
+section, the PRD command in
+`verificationLoop.requiredBackendCommands`, and the
+canonical pair file's existence with both function
+declarations present. The self-check
+(`TestVerificationSuiteIdempotencyReplayAnalyzerDetectsRegressions`)
+drives every matcher with synthetic known-good AND
+known-bad fixtures so over-tightening (a legitimate change
+trips the analyser) and under-tightening (a real regression
+slips through) are both caught at the package-internal API.
+When changing the CI step name, the verify.sh header, the
+CONTRIBUTING.md numeric prefix, the SECURITY.md row or
+section, or the PRD commands, update the matching constant
+in `verification_suite_idempotency_replay_static_test.go`
+in the same edit. The matchers fail loudly on drift; the
+assertion IS the contract.

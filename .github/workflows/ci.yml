@@ -93,6 +93,9 @@ jobs:
       - name: Chaos tests for Postgres disconnects
         run: go test -run TestChaosPostgresDisconnects ./...
 
+      - name: Idempotency replay tests
+        run: go test -run TestIdempotencyReplay ./...
+
       - name: Race detector
         run: go test -race ./...
 
