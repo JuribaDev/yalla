@@ -27725,3 +27725,35 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     new Postgres-touching test should use testPool, never the
     raw DSN directly.
 ---
+
+## 2026-05-17 - BE-0119 Add contract tests for GET /v1/projects
+- Implemented: internal/controlplane/httpapi/projects_list_contract_test.go.
+  Mirrors organizations_contract_test.go (BE-0047) and members_list_contract_test.go (BE-0062) for the GET /v1/projects LIST endpoint.
+- Three tests close the contract-checklist gaps not pinned by projects_test.go:
+  TestListProjectsServerWritesResponseDataOnlyToResponseWriter,
+  TestListProjectsRequestLogRedactsBearerToken (success + authorization-failure paths),
+  TestListProjectsErrorEnvelopeDoesNotLeakDependencyCause (datastore-cause/address never leaks).
+- Helper added: listProjectsHandlerForWithLogger (mirrors organizationsHandlerForWithLogger),
+  reuses existing fakeProjectReader, getProjects, decodeListProjects, decodeError,
+  captureProcessOutput, orgPrincipal, seedProject. No production code or other tests changed.
+- Verification run (from repo root):
+  gofmt -w internal/controlplane/httpapi/projects_list_contract_test.go (clean)
+  go vet ./... (clean)
+  go test -run TestListProjects ./internal/controlplane/httpapi/ (ok 0.575s)
+  go test ./... (all packages ok)
+  go test -race ./internal/controlplane/httpapi/ (ok 8.266s)
+  go mod tidy (no changes)
+- Remaining risks / follow-ups: none — contract suite pattern is now reused 1:1.
+- **Learnings for future iterations:**
+  - Project list endpoint already has full unit/role/cross-tenant coverage in projects_test.go;
+    BE-0119 only had to add the three "contract-checklist gap" tests (stdout/stderr writer,
+    bearer-redaction on both success+denial, dependency-cause non-leakage on the wire).
+  - The closest twin for a LIST endpoint contract test is organizations_contract_test.go.
+    For path-parameter LIST endpoints (e.g. GET /v1/orgs/{org_id}/members), the twin is
+    members_list_contract_test.go.
+  - The handlerForWithLogger helper pattern lets the test pass a *slog.Logger into NewHandler
+    so the per-request structured log is inspectable; the final NewHandler arg (readiness)
+    stays nil for non-/readyz tests.
+  - fakeProjectReader.err of type apierr.StoreUnavailable(err) is the canonical way to
+    drive the 503/E_UNAVAILABLE wire path without a real datastore.
+---
