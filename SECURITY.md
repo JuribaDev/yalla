@@ -81,6 +81,7 @@ defined in `.github/workflows/ci.yml`:
 | Chaos tests for Postgres disconnects | `go test -run TestChaosPostgresDisconnects ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Idempotency replay tests | `go test -run TestIdempotencyReplay ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Audit completeness tests | `go test -run TestAuditCompleteness ./...` | `scripts/verify.sh`, CI | Every push and PR |
+| Pagination stability tests | `go test -run TestPaginationStability ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Race detector | `go test -race ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Vulnerability scan | `govulncheck ./...` | CI `security` job | Every push and PR |
 | Lint suite | `staticcheck ./...` and `golangci-lint run ./...` | CI `security` job | Every push and PR |
@@ -2432,6 +2433,132 @@ for every collateral surface lives in
   Every push and PR runs the gate. The single static defence that
   pins every one of those surfaces is
   `internal/release/verification_suite_audit_completeness_static_test.go`.
+
+## Pagination Stability Tests
+
+The pagination-stability suite (BE-0397) is the list-endpoint cursor
+stability gate. It exists to catch a class of regressions a
+single-call unit test cannot: a list endpoint that silently
+duplicates rows under a concurrent insert, a cursor that decodes
+without sort/direction integrity checking and lets a caller mix
+cursors across endpoints, a wire-shape switch from base64url to a
+non-URL-safe encoding that breaks CDN caching guarantees, or a
+cross-tenant cursor that leaks rows because the store layer dropped
+the orgID scope. The canonical pair
+(`TestPaginationStabilityCoversCallSites` and
+`TestPaginationStabilityPreservesPagesUnderInserts`) lives in
+`internal/controlplane/pagination/pagination_stability_test.go` and
+binds to the PRD's `-run TestPaginationStability` filter; the
+static defence for every collateral surface lives in
+`internal/release/verification_suite_pagination_stability_static_test.go`.
+
+- **Scope.** The two load-bearing pagination-stability invariants
+  are exercised by the canonical function pair. The first member
+  walks a closed-set scenario table covering every canonical
+  list-endpoint shape (empty set, single row, exact page, multi-page
+  no remainder, multi-page with trailing partial, small-page
+  descending, ascending) and asserts no duplicates and no drops in
+  the paged traversal — every seeded row in the coverage tenant
+  appears exactly once across the cursor stream, the terminal
+  page's `next_cursor` is empty exactly when there are no further
+  rows, every emitted Page carries a non-nil Items slice, every
+  emitted cursor round-trips through `DecodeCursor` with matching
+  Sort and Direction, the encoded cursor wire shape stays
+  base64url-safe (no padding, no `+`, no `/`, no `=`, no
+  whitespace), and a cursor issued for the coverage tenant yields
+  zero rows when applied against a cross tenant. The second member
+  seeds a single shared `concurrentPaginationStore` with
+  `paginationStabilitySeedRows` rows under one tenant and a reader
+  paginates end-to-end at `paginationStabilityPageSize` while
+  `paginationStabilityWorkers * paginationStabilityIterationsPerWorker`
+  goroutines fire mixed insert + delete operations against the
+  same tenant; it asserts the reader's cursor stream contains no
+  duplicate ids across pages, every undeleted seed row appears
+  exactly once, no row deleted before the reader could observe it
+  resurrects in any subsequent page, and the traversal terminates
+  via an empty `next_cursor` within a safety bound. The single
+  static defence is
+  `internal/release/verification_suite_pagination_stability_static_test.go`,
+  which pins the existence of the canonical
+  `pagination_stability_test.go` file and the canonical
+  `TestPaginationStabilityCoversCallSites` +
+  `TestPaginationStabilityPreservesPagesUnderInserts` function
+  pair (the load-bearing `-run TestPaginationStability` filter
+  from `verificationLoop.requiredBackendCommands` binds to the
+  `TestPaginationStability` prefix) so the pagination-stability
+  convention itself cannot be silently deleted or renamed.
+- **Determinism.** The pagination-stability tests run against
+  deterministic fixtures only — the in-package `fakeStore` (a
+  zero-mutex list fixture declared in `page_test.go` and reused by
+  the coverage member) and the file-local
+  `concurrentPaginationStore` (a mutex-guarded list fixture used
+  only by the contention burst). The seeded ids and createdAt
+  values are constants — every test run paginates the identical
+  initial set, the burst's insert ids are derived from the worker
+  + iteration index, and the delete targets are chosen so the
+  reader only observes them on later pages. No
+  pagination-stability test reaches a live Postgres, a live
+  Dokploy, or any external network.
+- **Actionable failures.** Every diagnostic surfaces the offending
+  scenario name (for the coverage member) or the worker +
+  iteration index (for the burst member) AND the offending row id
+  so an operator reading the CI log can map the failure to the
+  exact in-flight traversal without re-running the suite locally.
+  The list-endpoint envelope each scenario exercises carries an
+  originating `request_id`; a regression that dropped the cursor
+  stability under contention surfaces with the divergent row id
+  bound to the iteration it came from, and the diagnostic names
+  every required pagination invariant (no duplicates, no drops,
+  cursor opaqueness, no cross-tenant leak) that the regression
+  violated.
+- **Schema-version contract.** Every public HTTP response a list
+  endpoint renders — a 2xx `yalla.output.v1` success envelope
+  carrying `Page[T]` as the items + next_cursor + total_estimate
+  payload, a 4xx `yalla.error.v1` validation envelope when a
+  cursor or limit is malformed — flows through the cursor
+  chokepoint the canonical pair exercises. The
+  pagination-stability suite asserts the cursor wire shape is
+  stable under every scenario (base64url with the
+  `EncodeCursor` / `DecodeCursor` round-trip preserving Sort and
+  Direction), so a regression that changed the encoded payload
+  schema would trip here even if the parsed JSON stayed
+  semantically equivalent.
+- **Redaction.** The cursor wire payload is redacted of tenant
+  identifiers by construction — `pagination.Cursor` carries
+  Position, Sort, and Direction but NEVER an organization id —
+  so the opaque cursor cannot be a reflection channel and a
+  caller cannot hand-craft a cursor to read another tenant's
+  rows. The coverage member exercises a cross-tenant probe
+  (a cursor issued for the coverage tenant applied against a
+  sibling tenant's store) and asserts zero rows surface; the
+  cursor-decoder rejects schema-version mismatches so a
+  tampered cursor surfaces as a stable 400 instead of a silent
+  cross-tenant read. Test output, error chains, and audit
+  metadata stay redacted of secrets, and the wire cursor is
+  base64url-safe so an intermediate CDN or log shipper cannot
+  reflect it into a URL position that escapes URL-safety
+  guarantees.
+- **Tenant isolation.** Cross-tenant cursors do not leak rows.
+  The store layer scopes every list query by organization id
+  before the cursor is consulted; the cursor only carries a
+  position within the already-tenant-scoped set. A cursor
+  issued for tenant A pointed at tenant B's store yields zero
+  rows from tenant A and zero rows of tenant B that tenant A
+  could not already see. The canonical pair pins this with a
+  cross-tenant probe in the coverage member.
+- **CI cadence.** The pagination-stability gate runs as a
+  dedicated `Pagination stability tests` step in
+  `.github/workflows/ci.yml`, under
+  `# 22. Required: pagination stability tests` in
+  `scripts/verify.sh`, as entry `22` in `CONTRIBUTING.md` under
+  `## Required Checks Before Every Commit`, and in
+  `ralph/prd.json` under
+  `verificationLoop.requiredBackendCommands` so an AI agent
+  reading the PRD before picking up a story sees the gate
+  without needing to discover it from shell scripts or CI
+  workflows. Every push and PR runs the gate. The single static
+  defence that pins every one of those surfaces is
+  `internal/release/verification_suite_pagination_stability_static_test.go`.
 
 ## Race Detector
 

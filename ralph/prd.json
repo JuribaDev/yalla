@@ -259,7 +259,8 @@
       "go test -run TestChaosDokployTimeouts ./...",
       "go test -run TestChaosPostgresDisconnects ./...",
       "go test -run TestIdempotencyReplay ./...",
-      "go test -run TestAuditCompleteness ./..."
+      "go test -run TestAuditCompleteness ./...",
+      "go test -run TestPaginationStability ./..."
     ],
     "optionalWhenConfigured": [
       "goimports -w .",
@@ -8441,7 +8442,7 @@
       ],
       "type": "verification",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Test suite: pagination stability tests."
     },
     {

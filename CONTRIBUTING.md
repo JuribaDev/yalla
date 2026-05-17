@@ -53,6 +53,7 @@ and they must all pass on every commit you propose:
 19. `go test -run TestChaosPostgresDisconnects ./...`
 20. `go test -run TestIdempotencyReplay ./...`
 21. `go test -run TestAuditCompleteness ./...`
+22. `go test -run TestPaginationStability ./...`
 
 `scripts/verify.sh` runs the full set in one command and is the local
 mirror of the `test` job in `.github/workflows/ci.yml`. Step 6 — the
@@ -331,6 +332,49 @@ Both members are deterministic by design: the in-package
 completeness harness needs, no live Postgres is required, and the
 gate stays green on every machine without Postgres or a live
 Dokploy server.
+
+Step 22 — the pagination-stability suite bound by the
+`-run TestPaginationStability` filter — is the list-endpoint cursor
+stability gate documented in BE-0397; the dedicated invocation is
+defence-in-depth on the same principle so a narrowing of the umbrella
+`go test ./...` step would still leave the pagination-stability gate
+firing as a fast, targeted failure rather than buried inside the
+umbrella log. The canonical pair
+(`TestPaginationStabilityCoversCallSites` and
+`TestPaginationStabilityPreservesPagesUnderInserts`) lives in
+`internal/controlplane/pagination/pagination_stability_test.go`. The
+first member pins the closed-set pagination-stability coverage
+invariant — for each canonical list-endpoint shape (empty set, single
+row, exact page, multi-page no remainder, multi-page with trailing
+partial, ascending, descending) the paged traversal MUST visit every
+seeded row exactly once with no duplicates and no drops, the terminal
+page's `next_cursor` MUST be empty exactly when there are no further
+rows, every emitted Page MUST carry a non-nil Items slice, every
+non-terminal `next_cursor` MUST decode through `DecodeCursor` with a
+Sort and Direction that match the request (so a subsequent
+`ParseParams` call does not silently reject the cursor as
+sort/direction mismatch), the encoded cursor wire shape MUST stay
+base64url-safe (no padding, no `+`, no `/`, no `=`, no whitespace),
+and a cursor issued for the coverage tenant MUST yield zero rows
+when applied against a cross tenant. The second member pins the
+per-page stability invariant under contention — a single shared
+`concurrentPaginationStore` seeded with
+`paginationStabilitySeedRows` rows and burst by
+`paginationStabilityWorkers * paginationStabilityIterationsPerWorker`
+goroutines firing mixed insert + delete operations while a reader
+paginates end-to-end MUST yield no duplicate rows across the
+reader's cursor stream, every undeleted seed row observed exactly
+once, no resurrection of a row already deleted from the stream, and
+a deterministic terminal page. Failures surface with the offending
+scenario name (or the worker + iteration index) AND the offending
+row id so an operator reading the CI log can correlate the gate
+failure with a specific in-flight traversal without re-running the
+suite locally. Both members are deterministic by design: the
+in-package `fakeStore` (declared in `page_test.go`) and the
+file-local `concurrentPaginationStore` are the only dependencies
+the pagination-stability harness needs, no live Postgres is
+required, and the gate stays green on every machine without
+Postgres or a live Dokploy server.
 
 ## Required Checks Before Every Release
 

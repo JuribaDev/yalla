@@ -1618,3 +1618,52 @@ section, or the PRD commands, update the matching constant
 in `verification_suite_audit_completeness_static_test.go`
 in the same edit. The matchers fail loudly on drift; the
 assertion IS the contract.
+
+## Verification suite: pagination stability tests (BE-0397)
+
+`verification_suite_pagination_stability_static_test.go`
+pins the pagination-stability gate. It is the load-bearing
+static defence for the contract between Yalla's
+`pagination.Page[T]` / `EncodeCursor` / `DecodeCursor`
+chokepoint and every agent, CI runner, operator, or audit
+reviewer that paginates a list endpoint: end-to-end paged
+traversal MUST visit every row exactly once (no duplicates,
+no drops), the cursor wire shape MUST stay opaque
+(base64url, no padding, no `+`, no `/`, no `=`, no
+whitespace, no embedded tenant identifier), the cursor MUST
+be stable under concurrent inserts and deletes (no
+duplicates across pages, no resurrection of a row already
+deleted from the stream, inserts above the boundary never
+appear on subsequent pages), and cross-tenant cursors MUST
+NOT leak rows. The canonical pair
+(`TestPaginationStabilityCoversCallSites` and
+`TestPaginationStabilityPreservesPagesUnderInserts`) lives
+in
+`internal/controlplane/pagination/pagination_stability_test.go`
+and binds to the PRD's `-run TestPaginationStability`
+filter. Both pair members are deterministic — they use the
+in-package `fakeStore` (declared in `page_test.go`) for the
+coverage member and a file-local
+`concurrentPaginationStore` (a mutex-guarded sibling of
+`fakeStore`) for the contention burst, so the gate stays
+green on every developer machine without a live Postgres or
+any external dependency. The static test pins SIX surfaces
+in one file: the CI `Pagination stability tests` step
+(`.github/workflows/ci.yml`), the verify.sh step #22 header
+(`scripts/verify.sh`), the CONTRIBUTING.md entry #22, the
+SECURITY.md row + dedicated `## Pagination Stability Tests`
+section, the PRD command in
+`verificationLoop.requiredBackendCommands`, and the
+canonical pair file's existence with both function
+declarations present. The self-check
+(`TestVerificationSuitePaginationStabilityAnalyzerDetectsRegressions`)
+drives every matcher with synthetic known-good AND
+known-bad fixtures so over-tightening (a legitimate change
+trips the analyser) and under-tightening (a real regression
+slips through) are both caught at the package-internal API.
+When changing the CI step name, the verify.sh header, the
+CONTRIBUTING.md numeric prefix, the SECURITY.md row or
+section, or the PRD commands, update the matching constant
+in `verification_suite_pagination_stability_static_test.go`
+in the same edit. The matchers fail loudly on drift; the
+assertion IS the contract.
