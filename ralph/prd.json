@@ -269,7 +269,8 @@
       "go test -run TestBreakGlass ./...",
       "go test -run TestReconciliation ./...",
       "go test -run TestImportDryRun ./...",
-      "go test -run TestServiceDesiredState ./..."
+      "go test -run TestServiceDesiredState ./...",
+      "go test -run TestDeploymentLifecycleE2E ./..."
     ],
     "optionalWhenConfigured": [
       "goimports -w .",
@@ -8660,7 +8661,7 @@
       ],
       "type": "verification",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Test suite: deployment lifecycle end-to-end tests."
     },
     {

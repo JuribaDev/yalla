@@ -2493,3 +2493,99 @@ update the matching constant in
 `verification_suite_service_desired_state_static_test.go`
 in the same edit. The matchers fail loudly on drift;
 the assertion IS the contract.
+
+## Verification suite: deployment lifecycle end-to-end tests (BE-0408)
+
+The deployment-lifecycle suite gate is the BE-0408
+verification entrypoint:
+`go test -run TestDeploymentLifecycleE2E ./...`. It
+pins the deployment lifecycle's pure projection
+chokepoint
+`(store.Deployment).LogValue() slog.Value`
+through six surfaces in lockstep — the CI workflow
+step named `Deployment lifecycle end-to-end tests`,
+the verify.sh step header
+`# 32. Required: deployment lifecycle end-to-end tests`
+and its literal command
+`go test -run TestDeploymentLifecycleE2E ./...`, the
+CONTRIBUTING.md numbered entry
+`32. \`go test -run TestDeploymentLifecycleE2E ./...\``,
+the SECURITY.md row + dedicated
+`## Deployment Lifecycle End-to-End Tests` section
+(with the When column marked "Every push and PR"),
+the PRD command in
+`verificationLoop.requiredBackendCommands`, and the
+canonical pair file's existence with both function
+declarations present. Adding step #32 between
+BE-0407's #31 and the trailing optionals required
+renumbering verify.sh optional steps #32-#36 to
+#33-#37 and updating BE-0400's static test constants
+from `# 36. Optional…` to `# 37. Optional…` (and its
+synthetic-fixture `# 35 → # 36`) in the same edit —
+the renumber is the shared cost of inserting a
+required step into the sequence and continues the
+BE-0379..BE-0407 mega-pattern verbatim. The
+deployment-lifecycle chokepoint is a pure projection
+on a value receiver — `(store.Deployment).LogValue()`
+takes no context, no port interfaces, no Repository,
+and no clock. Like BE-0407's renderer it is a pure
+function of its input alone, but unlike the renderer
+its closed-set surface is the lifecycle state
+machine itself (`DeploymentSource` ∈ {git, image,
+manual} × `DeploymentStatus` ∈ {queued, running,
+succeeded, failed, cancelled, rolled_back}) plus the
+`deployments_finished_consistent` table CHECK
+mirrored at the Go projection. The contention burst
+constructs a fresh `store.Deployment` per iteration
+to pin the contract that the projection carries no
+package-level shared state; a regression that
+smuggled in a sync.Once mutating a per-call map, a
+sync.Pool reused without resetting, or any cached
+view would surface as a per-iteration mismatch even
+when the aggregate pass count matched. The
+value-free LogValue canary seeds a unique secret
+marker into `SourceRef`, `IdempotencyKey`,
+`ErrorMessage`, `RequestID`, AND `CorrelationID`,
+then asserts the marker is absent from the slog
+projection through BOTH a text handler (the
+production format) and a JSON handler (used to
+inspect the structural whitelist/blacklist), so a
+regression that switched the handler still trips
+the contract. The structural check pins the
+documented field whitelist (id, organization_id,
+project_id, environment_id, service_id, source,
+status, requested_by, version) AND the redacted
+blacklist (source_ref, idempotency_key, error_code,
+error_message, request_id, correlation_id) — the
+chokepoint differs from BE-0407's three-surface
+canary in that the LogValue group only projects a
+fixed whitelist (it has no Summary/String dual);
+pinning the JSON-structural form is the equivalent
+defence against a regression that decided to "fix
+log output" by adding the redacted fields back. The
+self-check
+(`TestVerificationSuiteDeploymentLifecycleE2EAnalyzerDetectsRegressions`)
+drives every matcher with synthetic known-good AND
+known-bad fixtures so over-tightening (a legitimate
+change trips the analyser) and under-tightening (a
+real regression slips through) are both caught at
+the package-internal API. The canonical pair file
+lives in `package store_test` (mirrors the
+BE-0379..BE-0406 convention for chokepoints whose
+public API is reachable through the parent package's
+exported types — `store.Deployment`, `store.DeploymentSource`,
+`store.DeploymentStatus`), and the lifecycle-
+timestamp consistency self-check (#4) is the new
+forward-applicable invariant specific to lifecycle
+chokepoints: any verification story whose chokepoint
+projects a row whose terminal-vs-non-terminal status
+implies a database CHECK on a timestamp column MUST
+pin the same invariant at the Go projection so an
+in-memory regression is caught before the row
+reaches Postgres. When changing the CI workflow
+name, the verify.sh header, the CONTRIBUTING.md
+entry, the SECURITY.md row or section, or the PRD
+commands, update the matching constant in
+`verification_suite_deployment_lifecycle_e2e_static_test.go`
+in the same edit. The matchers fail loudly on drift;
+the assertion IS the contract.

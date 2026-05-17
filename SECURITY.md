@@ -91,6 +91,7 @@ defined in `.github/workflows/ci.yml`:
 | Reconciliation tests | `go test -run TestReconciliation ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Import dry-run tests | `go test -run TestImportDryRun ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Service desired-state golden tests | `go test -run TestServiceDesiredState ./...` | `scripts/verify.sh`, CI | Every push and PR |
+| Deployment lifecycle end-to-end tests | `go test -run TestDeploymentLifecycleE2E ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | External live-Dokploy smoke tests | `YALLA_EXTERNAL_DOKPLOY=1 go test -run TestLiveDokploySmoke ./...` | `.github/workflows/external-smoke.yml`, `scripts/verify.sh` (opt-in) | Opt-in (`YALLA_EXTERNAL_DOKPLOY=1`), nightly + manual |
 | Race detector | `go test -race ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Vulnerability scan | `govulncheck ./...` | CI `security` job | Every push and PR |
@@ -3509,6 +3510,101 @@ without needing to discover it from shell scripts or CI
 workflows. Every push and PR runs the gate. The single
 static defence that pins every one of those surfaces is
 `internal/release/verification_suite_service_desired_state_static_test.go`.
+
+## Deployment Lifecycle End-to-End Tests
+
+The deployment lifecycle end-to-end suite (BE-0408) pins the
+deployment lifecycle's pure projection chokepoint
+`(store.Deployment).LogValue() slog.Value` — the redaction-safe
+debug surface every slog record capturing a `store.Deployment`
+funnels through. The deployment lifecycle is the customer-visible
+state machine `queued -> running -> succeeded | failed |
+cancelled | rolled_back`; `LogValue` is a deterministic pure
+function of its input that projects the lifecycle row's
+closed-set tags (`DeploymentSource` ∈ {`git`, `image`, `manual`},
+`DeploymentStatus` ∈ {`queued`, `running`, `succeeded`, `failed`,
+`cancelled`, `rolled_back`}) without echoing any caller- or
+operator-supplied free-text field. The gate is run by
+`go test -run TestDeploymentLifecycleE2E ./...`.
+
+The closed-set coverage invariant pins five structural lifecycle
+contracts in one place: every documented `DeploymentSource`
+(`git`, `image`, `manual`) MUST be exercised by at least one
+scenario row; every documented `DeploymentStatus` (`queued`,
+`running`, `succeeded`, `failed`, `cancelled`, `rolled_back`)
+MUST be exercised by at least one scenario row; every
+non-terminal row MUST carry a nil `FinishedAt` and every
+terminal row MUST carry a set `FinishedAt` — the same invariant
+the `deployments_finished_consistent` table CHECK enforces at
+Postgres, pinned at the Go projection so an in-memory regression
+is caught before the row reaches the database; `LogValue` MUST
+be a deterministic function of its input — calling it twice on
+the same row MUST yield equal `slog.Value` projections (same
+group, same fields, same order); and the value-free LogValue
+invariant pins that the projected slog group NEVER carries
+`SourceRef`, `IdempotencyKey`, `ErrorMessage`, `RequestID`, or
+`CorrelationID` even when the canonical pair seeds a secret
+marker into every one of those free-text fields. The structural
+whitelist/blacklist split is asserted through the JSON slog
+handler so a regression that switched the text format still
+trips the contract.
+
+The canonical pair (`TestDeploymentLifecycleE2ECoversCallSites`
+and `TestDeploymentLifecycleE2EPreservesContractUnderContention`)
+lives in
+`internal/controlplane/store/deployment_lifecycle_e2e_canonical_test.go`
+and binds to the PRD's `-run TestDeploymentLifecycleE2E` filter.
+The first member walks a closed scenario table built from every
+documented `DeploymentSource` and `DeploymentStatus` value,
+asserts the terminal-implies-`FinishedAt` lifecycle invariant
+per row, seeds the secret marker into `SourceRef`,
+`IdempotencyKey`, `ErrorMessage`, `RequestID`, and
+`CorrelationID`, and asserts the marker is absent from the
+rendered slog projection for every row. The second member fires
+`deploymentLifecycleContentionWorkers *
+deploymentLifecycleContentionIterationsPerWorker` goroutines
+that each draw a row from the same scenario table by
+deterministic mod-index, construct a fresh `Deployment` per
+iteration, and assert the per-iteration verdict (the predicted
+`Source`, `Status`, lifecycle-timestamp consistency, and the
+value-free LogValue). The per-iteration Deployment pins the
+contract that construction is cheap and `LogValue` is a pure
+function of its input — a regression that smuggled in a
+package-level cache, a `sync.Once` mutating a per-call map, or a
+`sync.Pool` reused without resetting would surface as a
+per-iteration mismatch even when the aggregate pass count
+matched. Both members are deterministic by design and reach
+neither the process environment, the network, a live Postgres,
+a live Dokploy, nor any external service.
+
+When the suite fails, every actionable failure message names
+the scenario row that drifted, the closed-set tag the row
+predicted, and the closed-set tag the projection actually
+emitted (or the secret marker it leaked), so operators do not
+need to read the canonical pair to triage. Errors propagate
+through the same `yalla.error.v1` envelope shape any other
+backend test produces. The redaction contract is the safety
+guarantee that lets Yalla render a `store.Deployment` into a
+log line, an audit record, or a dashboard panel without
+exposing a customer's branch name, idempotency key, raw error
+string, or correlation identifier — the value-free `LogValue`
+projection omits every free-text field by construction, and the
+canonical pair asserts that contract end-to-end for every row
+in the closed scenario table.
+
+The gate is documented as a dedicated
+`Deployment lifecycle end-to-end tests` step in
+`.github/workflows/ci.yml`, as step `# 32. Required: deployment
+lifecycle end-to-end tests` in `scripts/verify.sh`, as item 32
+in `CONTRIBUTING.md` under
+`## Required Checks Before Every Commit`, and in
+`ralph/prd.json` under
+`verificationLoop.requiredBackendCommands` so an AI agent
+reading the PRD before picking up a story sees the gate without
+needing to discover it from shell scripts or CI workflows.
+Every push and PR runs the gate. The single static defence that
+pins every one of those surfaces is
+`internal/release/verification_suite_deployment_lifecycle_e2e_static_test.go`.
 
 ## Race Detector
 

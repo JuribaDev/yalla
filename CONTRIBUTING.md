@@ -63,6 +63,7 @@ and they must all pass on every commit you propose:
 29. `go test -run TestReconciliation ./...`
 30. `go test -run TestImportDryRun ./...`
 31. `go test -run TestServiceDesiredState ./...`
+32. `go test -run TestDeploymentLifecycleE2E ./...`
 
 `scripts/verify.sh` runs the full set in one command and is the local
 mirror of the `test` job in `.github/workflows/ci.yml`. Step 6 — the
