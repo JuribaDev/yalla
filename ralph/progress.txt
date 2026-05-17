@@ -27833,3 +27833,100 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     case is different — it's a single-token swap on a single line and the
     targeted Edit anchored on 4 surrounding lines is uniquely safe.)
 ---
+
+## 2026-05-17 - BE-0128 Add contract tests for PATCH /v1/projects/{project_id}
+- Implemented: internal/controlplane/httpapi/projects_update_contract_test.go.
+  Mirrors projects_get_contract_test.go (BE-0125) and projects_create_contract_test.go
+  (BE-0122) for the PATCH /v1/projects/{project_id} endpoint. Closes the three
+  contract-checklist axes that projects_update_test.go does not pin directly:
+    1. TestUpdateProjectServerWritesResponseDataOnlyToResponseWriter — proves
+       the served PATCH writes nothing to os.Stdout / os.Stderr; response data
+       lands only on the http.ResponseWriter, and the slog record lands only in
+       the caller-supplied buffer.
+    2. TestUpdateProjectRequestLogRedactsBearerToken — a table-driven success +
+       authorization-failure pair (disabled RoleOwner principal -> 403) proves
+       the bearer credential is never logged and never echoed back in the
+       response body. The deny-path fakeProjectUpdater errs if invoked so any
+       logged "updater error" cannot become a leak source.
+    3. TestUpdateProjectErrorEnvelopeDoesNotLeakDependencyCause — a
+       fakeProjectUpdater returning apierr.StoreUnavailable("connection refused
+       dialing 10.0.0.5:5432") surfaces as 503 E_UNAVAILABLE with a stable
+       generic message; neither the wrapped cause string nor the bare datastore
+       address (10.0.0.5) reaches the wire.
+- New helper: updateProjectHandlerForWithLogger(id, authErr, updater, logger).
+  Clones updateProjectHandlerFor's 60-fake NewHandler wiring with the logger
+  param threaded so the per-request slog record lands in the caller's buffer.
+  Mirrors createProjectHandlerForWithLogger (BE-0122) and
+  listProjectsHandlerForWithLogger (BE-0119) for the PATCH/ProjectUpdater port.
+  Cannot reuse listProjectsHandlerForWithLogger here because that helper threads
+  ProjectReader, not ProjectUpdater — the PATCH path needs the updater wired so
+  the success-path subtest can return a row and the deny path can prove the
+  updater was never reached.
+- Constants: updateProjectContractSecret (yk_live_supersecret_..._DEADBEEF...)
+  and updateProjectContractBody (`{"display_name":"Web API v2","slug":"web"}`).
+  The body stays syntactically valid so the failure axis under test stays the
+  one named in the test, not the strict-decoder.
+- Reused existing helpers from projects_update_test.go / projects_test.go:
+  patchProject, decodeUpdateProject, fakeProjectUpdater, orgPrincipal, plus
+  captureProcessOutput (me_contract_test.go) and decodeError (errors_test.go).
+  No new helpers beyond updateProjectHandlerForWithLogger.
+- Verification run:
+  gofmt -l internal/controlplane/httpapi/projects_update_contract_test.go (clean)
+  go vet ./internal/controlplane/httpapi/ (clean)
+  go test -run 'TestUpdateProject(ServerWritesResponseDataOnly|RequestLogRedactsBearerToken|ErrorEnvelopeDoesNotLeakDependencyCause)' -count=1 ./internal/controlplane/httpapi/ (ok 0.555s)
+  go test -race -count=1 ./internal/controlplane/httpapi/ (ok 8.376s)
+  go vet ./... (clean)
+  go test ./... (all packages ok)
+  go test -race -count=1 ./... (all packages ok)
+  go mod tidy (no changes)
+- Remaining risks / follow-ups: none on the BE-0128 surface. The
+  pre-existing TestListServiceLogsInvalidLimit flake noted under BE-0125
+  did not recur on this run but the underlying race-substring collision
+  is still latent in services_logs_test.go for the next iteration that
+  touches that file.
+- **Learnings for future iterations:**
+  - The PATCH {resource_id} contract test DOES need its own
+    *HandlerForWithLogger helper (unlike the GET {resource_id} contract
+    test, which reuses the list endpoint's helper per BE-0125). Reason:
+    the GET endpoint and the LIST endpoint share the ProjectReader port,
+    so a single helper that threads ProjectReader covers both; the PATCH
+    endpoint binds the ProjectUpdater port, which the list helper does
+    not expose as a parameter. Forward-applicable: every BE-01xx PATCH
+    {resource_id} sibling (BE-0158 environments update, BE-0188 services
+    update, etc.) must introduce its own updateXHandlerForWithLogger
+    twin — there is no helper-reuse short-circuit here. The signature
+    pattern is (id auth.Identity, authErr error, updater XUpdater,
+    logger *slog.Logger), with the updater wired into NewHandler at the
+    same positional slot updateXHandlerFor uses.
+  - The contract test's authorization-failure subtest must use a
+    Disabled: true principal (not a viewer/grant-only principal) for
+    CapWrite endpoints. A disabled principal denies at policy BEFORE the
+    body decoder reads the request, so the updater short-circuit fake
+    (err: stderrors.New("updater must not be called")) is the only
+    sanctioned proof that the deny path did not reach the store layer.
+    For CapRead endpoints (BE-0125 GET) the same pattern uses a disabled
+    RoleOwner principal too — the role choice doesn't matter for the
+    disabled axis because Disabled trips at the policy layer regardless
+    of role. The wantStatus is http.StatusForbidden for both Cap classes.
+  - The dependency-cause leak test for a PATCH endpoint uses the
+    no-logger helper (updateProjectHandlerFor) — not the WithLogger
+    variant. The leak axis under test is the wire body, not the slog
+    record. The default logger discards records, so attaching a buffered
+    logger would only add noise. (BE-0125 follows the same convention.)
+  - The PATCH body for contract tests must be a syntactically valid JSON
+    that decodes cleanly under the strict decoder. A malformed body would
+    fail the strict-decoder pre-check before policy/authentication runs
+    on some paths, masking the contract axis under test. The two-key
+    body {"display_name":"...","slug":"..."} is the minimum valid PATCH
+    that updateProject's decoder accepts and that projects_update_test.go
+    already uses as the happy-path body — reuse it for new contract tests
+    on the same endpoint so the body stays a known-good baseline.
+  - PRD-edit gotcha reminder (BE-0125): when flipping a single passes
+    flag, use a targeted Edit anchored on the surrounding 3-4 lines of
+    the target story (type/priority/passes/notes block) — NOT a Node
+    JSON.parse + JSON.stringify round-trip, which rewrites thousands of
+    \uXXXX-escaped bytes as a side effect. The Edit tool's old_string
+    must be unique in the file, and the (type, priority, passes, notes)
+    quartet is unique per story because the notes field carries the
+    story-specific tail string.
+---

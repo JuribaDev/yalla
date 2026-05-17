@@ -3324,7 +3324,7 @@
       ],
       "type": "test-project",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Contract coverage for PATCH /v1/projects/{project_id}."
     },
     {
