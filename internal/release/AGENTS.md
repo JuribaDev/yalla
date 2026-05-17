@@ -853,3 +853,101 @@ either lease-pair function name, update the matching constant
 in `verification_suite_job_worker_lease_static_test.go` in
 the same edit. The matchers fail loudly on drift; the
 assertion IS the contract.
+
+## Verification suite: fake Dokploy contract tests (BE-0386)
+
+`verification_suite_fake_dokploy_contract_static_test.go` is
+the single-file static defence for the fake-Dokploy
+meta-contract: "every worker/handler/agent test exercising
+Dokploy-shaped behaviour runs against the deterministic
+in-memory fake — never a live Dokploy server — and every
+request the recorder captures has its bearer redacted before
+it can land in a CI log." The canonical reference fake-Dokploy
+test file is
+`internal/controlplane/dokploy/dokployfake/dokployfake_test.go`,
+which declares the fake-Dokploy function pair
+`TestFakeDokployContractDeterministicHierarchyIDs` (two
+independent `dokployfake.New()` servers driven through the
+same Create chain mint byte-identical resource IDs at every
+level — `org_1`, `proj_1`, `env_1`, `app_1`, `dep_1` — and
+keep per-server request counts isolated) and
+`TestFakeDokployContractRecordedRequestsRedactCredentials` (a
+successful create, a GET, and a failure-path POST whose body
+deliberately echoes the bearer token; every recorded request
+carries `AuthHeader == output.Sentinel`,
+`Headers[Authorization] == output.Sentinel`, and no body
+retains the bearer literal). The pair binds to the PRD's
+`-run TestFakeDokploy` filter via the `TestFakeDokploy`
+prefix, so a rename to a function whose name does not match
+the prefix silently de-gates the fake-Dokploy suite. The
+static test pins SIX surfaces in one file so a future
+contributor changing any one of them fails ONE test, not six:
+
+- `.github/workflows/ci.yml` — the `test` job's
+  `Fake Dokploy contract tests` step MUST run
+  `go test -run TestFakeDokploy ./...`. The dedicated step
+  is defence-in-depth on the same principle as BE-0380 /
+  BE-0381 / BE-0382 / BE-0383 / BE-0384 / BE-0385: a
+  narrowing of the umbrella `go test ./...` step would still
+  leave the fake-Dokploy gate firing as a fast targeted
+  failure.
+- `scripts/verify.sh` — the local commit gate's
+  `# 12. Required: fake Dokploy contract tests` block MUST
+  invoke the same canonical command. The numeric prefix is
+  part of the contract: a reorder must be a deliberate edit
+  to both the matching constant in this test file AND the
+  script. Inserting required step #12 between #11 (job worker
+  lease) and the optionals renumbered 12→13 / 13→14 / 14→15
+  / 15→16 in the same edit (govulncheck / staticcheck /
+  golangci-lint / goreleaser).
+- `CONTRIBUTING.md` — the Required Checks Before Every Commit
+  section MUST list the canonical command as entry
+  `12. \`go test -run TestFakeDokploy ./...\`` so
+  contributors know the gate before they open a PR. The
+  numeric prefix keeps verify.sh and CONTRIBUTING.md in
+  lockstep with BE-0379's `4. go test ./...`, BE-0380's
+  `6. go test ./internal/controlplane/store/...`, BE-0381's
+  `7. go test ./internal/controlplane/httpapi/...`, BE-0382's
+  `8. go test ./internal/controlplane/openapi/...`, BE-0383's
+  `9. go test -run TestPolicyMatrix ./...`, BE-0384's
+  `10. go test -run TestQuotaConcurrency ./...`, and
+  BE-0385's `11. go test -run TestJobWorkerLease ./...`.
+- `SECURITY.md` — the Required Verification Gates table MUST
+  contain the `Fake Dokploy contract tests` row, AND a
+  dedicated `## Fake Dokploy Contract Tests` section MUST
+  explain the determinism / recorder-redaction /
+  actionable-failure / opt-in-external / schema-version
+  contracts so the public security posture stays in lockstep
+  with the fake.
+- `ralph/prd.json` —
+  `verificationLoop.requiredBackendCommands` MUST list
+  `go test -run TestFakeDokploy ./...` so an AI agent
+  reading the PRD before picking up a story sees the gate
+  without needing to discover it from shell scripts or CI
+  workflows.
+- `internal/controlplane/dokploy/dokployfake/dokployfake_test.go` —
+  the canonical reference fake-Dokploy test file MUST exist
+  AND MUST declare the fake-Dokploy function pair. The pair
+  captures the two load-bearing invariants the fake MUST
+  keep: independent `dokployfake.New()` servers produce
+  byte-identical hierarchy IDs (so any test using the fake
+  is reproducible across runs and goroutines), and the
+  recorder swaps the Authorization header for the shared
+  `output.Sentinel` AND scans the body for the bearer
+  literal before any caller can read it back (so a CI log
+  never becomes the place a Dokploy bearer leaks).
+
+The self-check
+`TestVerificationSuiteFakeDokployContractAnalyzerDetectsRegressions`
+drives every matcher with synthetic known-good AND known-bad
+fixtures so over-tightening (a legitimate change trips the
+analyser) and under-tightening (a real regression slips
+through) are both caught at the package-internal API. When
+changing the CI step name, the verify.sh header, the
+CONTRIBUTING.md numeric prefix, the SECURITY.md row or
+section, the PRD command, the canonical fake-Dokploy file
+path, or either pair function name, update the matching
+constant in
+`verification_suite_fake_dokploy_contract_static_test.go` in
+the same edit. The matchers fail loudly on drift; the
+assertion IS the contract.

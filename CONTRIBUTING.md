@@ -43,6 +43,7 @@ and they must all pass on every commit you propose:
 9. `go test -run TestPolicyMatrix ./...`
 10. `go test -run TestQuotaConcurrency ./...`
 11. `go test -run TestJobWorkerLease ./...`
+12. `go test -run TestFakeDokploy ./...`
 
 `scripts/verify.sh` runs the full set in one command and is the local
 mirror of the `test` job in `.github/workflows/ci.yml`. Step 6 — the
@@ -80,7 +81,13 @@ shutdown-safety gate documented in BE-0385; the dedicated invocation
 is defence-in-depth on the same principle so a narrowing of the
 umbrella `go test ./...` step would still leave the lease gate
 firing as a fast, targeted failure rather than buried inside the
-umbrella log.
+umbrella log. Step 12 — the fake Dokploy contract suite bound by
+the `-run TestFakeDokploy` filter — is the deterministic-fixtures +
+recorder-redaction gate documented in BE-0386; the dedicated
+invocation is defence-in-depth on the same principle so a narrowing
+of the umbrella `go test ./...` step would still leave the
+fake-Dokploy gate firing as a fast, targeted failure rather than
+buried inside the umbrella log.
 
 ## Required Checks Before Every Release
 

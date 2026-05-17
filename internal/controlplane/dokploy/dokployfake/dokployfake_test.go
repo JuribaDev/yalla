@@ -530,3 +530,157 @@ func TestResetClearsState(t *testing.T) {
 		t.Fatalf("organization id after Reset = %v, want org_1", id)
 	}
 }
+
+// TestFakeDokployContractDeterministicHierarchyIDs is the canonical
+// determinism half of the BE-0386 fake-Dokploy contract pair. The
+// PRD's `go test -run TestFakeDokploy ./...` filter binds to the
+// `TestFakeDokploy` prefix, so this function name is part of the
+// public contract — a rename to a name that does not match the
+// prefix silently de-gates the fake-Dokploy suite for any caller
+// relying on the filter (CI, verify.sh, CONTRIBUTING.md,
+// SECURITY.md, ralph/prd.json).
+//
+// Two independent `dokployfake.New()` servers each provisioned with
+// the same org -> project -> environment -> application sequence
+// MUST mint byte-identical resource IDs at every level, while keeping
+// their own per-server state isolated. The determinism is what makes
+// the fake usable as a deterministic fixture (AC2) — every test that
+// drives the same call sequence sees the same IDs across runs and
+// across goroutines, so failures are reproducible from the recorded
+// log alone, no "flaky on Tuesday" mystery to chase.
+func TestFakeDokployContractDeterministicHierarchyIDs(t *testing.T) {
+	t.Parallel()
+	first := dokployfake.New()
+	defer first.Close()
+	second := dokployfake.New()
+	defer second.Close()
+
+	// chain provisions a full org -> project -> environment ->
+	// application -> deployment hierarchy against srv and returns
+	// the resource IDs at every level in stable order so a divergence
+	// between the two servers points the caller at the exact layer
+	// that drifted.
+	chain := func(srv *dokployfake.Server) []string {
+		t.Helper()
+		tok := srv.Token()
+
+		_, raw := call(t, srv, http.MethodPost, "/api/organizations", tok,
+			map[string]any{"name": "acme"})
+		orgID := idOf(t, raw)
+		_, raw = call(t, srv, http.MethodPost, "/api/projects", tok,
+			map[string]any{"organization_id": orgID, "name": "store"})
+		projID := idOf(t, raw)
+		_, raw = call(t, srv, http.MethodPost, "/api/environments", tok,
+			map[string]any{"project_id": projID, "name": "production"})
+		envID := idOf(t, raw)
+		_, raw = call(t, srv, http.MethodPost, "/api/applications", tok,
+			map[string]any{"environment_id": envID, "name": "api"})
+		appID := idOf(t, raw)
+		_, raw = call(t, srv, http.MethodPost, "/api/deployments", tok,
+			map[string]any{"service_id": appID})
+		depID := idOf(t, raw)
+		return []string{orgID, projID, envID, appID, depID}
+	}
+
+	firstIDs := chain(first)
+	secondIDs := chain(second)
+
+	if len(firstIDs) != len(secondIDs) {
+		t.Fatalf("hierarchy length differs: first=%d second=%d", len(firstIDs), len(secondIDs))
+	}
+	wantIDs := []string{"org_1", "proj_1", "env_1", "app_1", "dep_1"}
+	for i, want := range wantIDs {
+		if firstIDs[i] != want {
+			t.Errorf("first server hierarchy[%d] = %q, want %q", i, firstIDs[i], want)
+		}
+		if secondIDs[i] != want {
+			t.Errorf("second server hierarchy[%d] = %q, want %q", i, secondIDs[i], want)
+		}
+		if firstIDs[i] != secondIDs[i] {
+			t.Errorf("hierarchy[%d] diverges between independent servers: first=%q second=%q",
+				i, firstIDs[i], secondIDs[i])
+		}
+	}
+
+	// Per-server request counts MUST remain isolated — determinism
+	// applies to the issued IDs, not to a shared global counter. Each
+	// chain submits 5 POSTs.
+	if first.RequestCount() != 5 || second.RequestCount() != 5 {
+		t.Errorf("request counts not isolated: first=%d second=%d (want 5/5)",
+			first.RequestCount(), second.RequestCount())
+	}
+}
+
+// TestFakeDokployContractRecordedRequestsRedactCredentials is the
+// canonical credential-redaction half of the BE-0386 fake-Dokploy
+// contract pair. The PRD's `go test -run TestFakeDokploy ./...`
+// filter binds to the `TestFakeDokploy` prefix, so this function
+// name is part of the public contract — a rename silently de-gates
+// the suite.
+//
+// The fake's recorder is the single seam between a worker test and
+// any operator who reads a CI log: every recorded request MUST have
+// its Authorization header replaced by the redaction sentinel, and
+// no recorded body may carry the bearer token verbatim — even when
+// the caller deliberately echoes the token into a request body
+// (AC8). The contract holds across every kind of request the worker
+// might issue (creates that succeed, creates that 4xx, GETs that
+// return read-back state), not just the happy path.
+func TestFakeDokployContractRecordedRequestsRedactCredentials(t *testing.T) {
+	t.Parallel()
+	srv := dokployfake.New()
+	defer srv.Close()
+	tok := srv.Token()
+
+	// 1. A successful create.
+	status, raw := call(t, srv, http.MethodPost, "/api/organizations", tok,
+		map[string]any{"name": "acme"})
+	requireStatus(t, status, http.StatusCreated, raw)
+	orgID := idOf(t, raw)
+
+	// 2. A GET that reads the resource back — recorder still records.
+	status, raw = call(t, srv, http.MethodGet, "/api/organizations/"+orgID, tok, nil)
+	requireStatus(t, status, http.StatusOK, raw)
+
+	// 3. A request whose body intentionally echoes the bearer token
+	//    so a recorder that only scrubs headers would leak. The
+	//    DisallowUnknownFields validator rejects the body with 400,
+	//    but the request is still recorded — exactly the failure-path
+	//    case AC8 protects.
+	status, raw = call(t, srv, http.MethodPost, "/api/organizations", tok,
+		map[string]any{"name": "leaky", "note": "token=" + tok})
+	requireStatus(t, status, http.StatusBadRequest, raw)
+
+	reqs := srv.Requests()
+	if len(reqs) != 3 {
+		t.Fatalf("recorded %d requests, want 3", len(reqs))
+	}
+	for i, rec := range reqs {
+		if rec.AuthHeader != output.Sentinel {
+			t.Errorf("recorded request %d (%s %s): AuthHeader = %q, want redaction sentinel",
+				i, rec.Method, rec.Path, rec.AuthHeader)
+		}
+		if got := rec.Headers.Get("Authorization"); got != output.Sentinel {
+			t.Errorf("recorded request %d (%s %s): Headers[Authorization] = %q, want redaction sentinel",
+				i, rec.Method, rec.Path, got)
+		}
+		if strings.Contains(rec.Body, tok) {
+			t.Errorf("recorded request %d (%s %s) leaked the bearer token in body: %s",
+				i, rec.Method, rec.Path, rec.Body)
+		}
+		// Nothing the recorder exposes about the request may contain
+		// the raw token in any field — header, body, or any other
+		// projection a future field could add.
+		for name, field := range map[string]string{
+			"AuthHeader":     rec.AuthHeader,
+			"Body":           rec.Body,
+			"Header[Auth]":   rec.Headers.Get("Authorization"),
+			"Header[Bearer]": rec.Headers.Get("Bearer"),
+		} {
+			if strings.Contains(field, tok) {
+				t.Errorf("recorded request %d (%s %s) leaked bearer in %s: %q",
+					i, rec.Method, rec.Path, name, field)
+			}
+		}
+	}
+}

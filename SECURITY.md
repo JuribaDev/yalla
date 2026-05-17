@@ -71,6 +71,7 @@ defined in `.github/workflows/ci.yml`:
 | Policy matrix tests | `go test -run TestPolicyMatrix ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Quota concurrency tests | `go test -run TestQuotaConcurrency ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Job worker lease tests | `go test -run TestJobWorkerLease ./...` | `scripts/verify.sh`, CI | Every push and PR |
+| Fake Dokploy contract tests | `go test -run TestFakeDokploy ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Race detector | `go test -race ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Vulnerability scan | `govulncheck ./...` | CI `security` job | Every push and PR |
 | Lint suite | `staticcheck ./...` and `golangci-lint run ./...` | CI `security` job | Every push and PR |
@@ -1451,6 +1452,101 @@ contract operators and AI agents rely on:
   opt-in via `YALLA_EXTERNAL_DOKPLOY=1`. The single static
   defence that pins every one of those surfaces is
   `internal/release/verification_suite_job_worker_lease_static_test.go`.
+
+## Fake Dokploy Contract Tests
+
+Yalla's fake Dokploy contract tests are the deterministic-fixtures +
+recorder-redaction gate that ensures every worker, handler, or agent
+test exercising Dokploy-shaped behaviour runs against the in-memory
+fake in `internal/controlplane/dokploy/dokployfake` — never a live
+Dokploy server — and that every request the test recorder captures
+has its bearer token replaced by the shared output sentinel before
+it can land in a CI log, an audit metadata blob, or a developer's
+terminal. The canonical command is
+`go test -run TestFakeDokploy ./...`. The suite exercises the fake
+end-to-end against deterministic fixtures (two independent
+`dokployfake.New()` servers minting byte-identical hierarchy IDs
+across runs; a recorder that scrubs the Authorization header, all
+header projections, and the body even when the caller deliberately
+echoes the bearer into a request body); it never depends on a live
+Dokploy server, and any external smoke remains opt-in via
+`YALLA_EXTERNAL_DOKPLOY=1 go test -run TestLiveDokploySmoke ./...`.
+BE-0386 publishes the contract operators and AI agents rely on:
+
+- **Scope.** The two load-bearing fake-Dokploy invariants are
+  exercised by the canonical function pair
+  (`TestFakeDokployContractDeterministicHierarchyIDs` and
+  `TestFakeDokployContractRecordedRequestsRedactCredentials`). The
+  single static defence is
+  `internal/release/verification_suite_fake_dokploy_contract_static_test.go`,
+  which pins the existence of the canonical
+  `internal/controlplane/dokploy/dokployfake/dokployfake_test.go`
+  file and the canonical
+  `TestFakeDokployContractDeterministicHierarchyIDs` +
+  `TestFakeDokployContractRecordedRequestsRedactCredentials`
+  function pair (the load-bearing `-run TestFakeDokploy` filter
+  from `verificationLoop.requiredBackendCommands` binds to that
+  prefix) so the fake-Dokploy convention itself cannot be silently
+  deleted or renamed.
+- **Determinism.** The fake-Dokploy contract tests run against
+  deterministic fixtures only — two independent
+  `dokployfake.New()` servers driven through the same org ->
+  project -> environment -> application -> deployment chain MUST
+  mint byte-identical resource IDs (`org_1`, `proj_1`, `env_1`,
+  `app_1`, `dep_1`) and MUST keep per-server state (request count,
+  resource store, fault queue) isolated. The fake is in-memory,
+  exposes no global state, and never reaches a live Dokploy or any
+  network. A live Dokploy smoke is opt-in via
+  `YALLA_EXTERNAL_DOKPLOY` and never runs in the default gate;
+  `TestLiveDokploySmoke` is the documented opt-in entry point.
+- **Actionable failures.** Every diagnostic surfaces the recorded
+  request's `Method`, `Path`, and the index within
+  `Server.Requests()` so an operator reading the CI log can map the
+  failure to the exact request that drifted without re-running the
+  suite locally. Determinism failures point the operator at the
+  exact hierarchy layer that diverged between the two servers; the
+  resource_id at every level is part of the diagnostic.
+- **Coverage rows.** The determinism invariant
+  (`TestFakeDokployContractDeterministicHierarchyIDs`) drives two
+  fresh `dokployfake.New()` servers through the same Create chain
+  and asserts every layer's resource ID is byte-identical and the
+  per-server request counts stay isolated. The redaction invariant
+  (`TestFakeDokployContractRecordedRequestsRedactCredentials`)
+  drives a successful create, a GET that reads the resource back,
+  and a deliberate failure-path POST whose body echoes the bearer
+  token, then asserts every recorded request carries
+  `AuthHeader == output.Sentinel`, `Headers[Authorization] ==
+  output.Sentinel`, and no body retains the bearer — the recorder
+  scrubs the secret regardless of the response status or the
+  caller's body shape.
+- **Schema-version contract.** Every public HTTP response that a
+  worker surfaces after a fake-Dokploy interaction (provisioning
+  job status, failure summary, retry schedule) uses the stable
+  JSON envelope shape pinned by `yalla.output.v1` (success) and
+  `yalla.error.v1` (error) so a wire-contract regression in how
+  Dokploy-shaped outcomes are reported is caught at the httpapi
+  handler-contract layer (BE-0381) before it reaches a customer.
+- **Redaction.** Fake-Dokploy diagnostics never embed secrets,
+  tokens, API keys, cookies, or rendered environment variable
+  values in the surfaces a recorder request crosses. The recorder
+  swaps the Authorization header for the shared output sentinel
+  inline, and the body is scanned for the bearer literal before
+  the test can read it back, so a CI log or audit metadata blob
+  never becomes the place a Dokploy bearer leaks. The contract
+  holds for every recorded request, not just the happy path.
+- **CI cadence.** The fake-Dokploy gate runs as a dedicated
+  `Fake Dokploy contract tests` step in `.github/workflows/ci.yml`,
+  under `# 12. Required: fake Dokploy contract tests` in
+  `scripts/verify.sh`, as entry `12` in `CONTRIBUTING.md` under
+  `## Required Checks Before Every Commit`, and in
+  `ralph/prd.json` under
+  `verificationLoop.requiredBackendCommands` so an AI agent
+  reading the PRD before picking up a story sees the gate without
+  needing to discover it from shell scripts or CI workflows.
+  Every push and PR runs the gate; a live-Dokploy smoke remains
+  opt-in via `YALLA_EXTERNAL_DOKPLOY=1`. The single static
+  defence that pins every one of those surfaces is
+  `internal/release/verification_suite_fake_dokploy_contract_static_test.go`.
 
 ## Disclosure Timeline (Best Effort)
 
