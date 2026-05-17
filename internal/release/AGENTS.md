@@ -1272,3 +1272,97 @@ constant in
 `verification_suite_migrations_empty_db_static_test.go` in the
 same edit. The matchers fail loudly on drift; the assertion
 IS the contract.
+
+## Verification suite: race detector tests (BE-0391)
+
+`verification_suite_race_detector_static_test.go` is the
+load-bearing static defence for the data-race gate. The
+canonical command is `go test -race ./...` (an UMBRELLA
+invocation, not a `-run` filter). Race detector is the only
+verification gate that flips the runtime `-race` flag on, so
+its absence makes every concurrency invariant other gates pin
+(quota concurrency BE-0384, job worker leases BE-0385,
+fake-Dokploy contract BE-0386, redaction emitters BE-0387) a
+paper invariant: their tests would still pass under a
+regression that introduced a race, because the race only
+manifests with the detector enabled. The umbrella shape
+mirrors BE-0379's `go test ./...` gate — there is no canonical
+test-function pair to pin because the `-race` flag wraps every
+`Test*` function the suite runs, unlike BE-0383..BE-0390 whose
+`-run` filter binds to a specific function-name prefix.
+
+The static test pins FIVE surfaces in one file so a future
+contributor changing any one of them fails ONE test, not five:
+
+- `.github/workflows/ci.yml` — the `test` job's
+  `Race detector` step MUST run `go test -race ./...`. The
+  dedicated step is defence-in-depth on the same principle as
+  BE-0379..BE-0390: a future narrowing of the umbrella
+  `go test ./...` step would still leave the race gate firing
+  as a fast targeted failure rather than buried inside the
+  umbrella log.
+- `scripts/verify.sh` — the local commit gate's
+  `# 5. Required: race detector` block MUST invoke the same
+  canonical command. The numeric prefix is part of the
+  contract: a reorder must be a deliberate edit to both the
+  matching constant in this test file AND the script. Slot
+  #5 has been stable since BE-0379's #4
+  (`go test ./...`) and predates every BE-0380..BE-0390
+  insertion at slots #6..#16; a future required-step
+  insertion BETWEEN #4 and #6 must update the matching
+  constant in the same edit.
+- `CONTRIBUTING.md` — the Required Checks Before Every Commit
+  section MUST list the canonical command as entry
+  `5. \`go test -race ./...\`` so contributors know the gate
+  before they open a PR. The numeric prefix keeps verify.sh
+  and CONTRIBUTING.md in lockstep with BE-0379's
+  `4. go test ./...`, BE-0380's
+  `6. go test ./internal/controlplane/store/...`, BE-0381's
+  `7. go test ./internal/controlplane/httpapi/...`, BE-0382's
+  `8. go test ./internal/controlplane/openapi/...`, BE-0383's
+  `9. go test -run TestPolicyMatrix ./...`, BE-0384's
+  `10. go test -run TestQuotaConcurrency ./...`, BE-0385's
+  `11. go test -run TestJobWorkerLease ./...`, BE-0386's
+  `12. go test -run TestFakeDokploy ./...`, BE-0387's
+  `13. go test -run TestRedaction ./...`, BE-0388's
+  `14. go test -run TestFuzzValidator ./...`, BE-0389's
+  `15. go test -run TestMigrationsEmptyDB ./...`, and
+  BE-0390's `16. go test -run TestMigrationsDowngradeSafety
+  ./...`.
+- `SECURITY.md` — the Required Verification Gates table MUST
+  contain the `Race detector` row, AND a dedicated
+  `## Race Detector` section MUST explain the
+  data-race-as-test-failure / umbrella-scope /
+  deterministic-by-default / actionable-failure /
+  opt-in-external / redacted-test-output / stable-envelope /
+  every-push-and-PR contracts so the public security posture
+  stays in lockstep with the runtime gate.
+- `ralph/prd.json` —
+  `verificationLoop.requiredLocalCommands` MUST list
+  `go test -race ./...` AND
+  `verificationLoop.requiredBackendCommands` MUST list
+  `go test -race ./internal/controlplane/...` so an AI agent
+  reading the PRD before picking up a story sees both the
+  umbrella race gate and the focused backend race gate
+  without needing to discover them from CI workflows or
+  shell scripts. The two-entry pin is a BE-0391-specific
+  extension to the template — every prior verification-suite
+  story pinned a single PRD command because the canonical
+  command WAS the umbrella; BE-0391 pins TWO because the
+  race detector has a faster mid-iteration variant
+  (backend-only) an agent can run without paying the full
+  umbrella cost, and the contract must keep that variant
+  visible in the PRD too.
+
+The self-check
+`TestVerificationSuiteRaceDetectorAnalyzerDetectsRegressions`
+drives every matcher with synthetic known-good AND known-bad
+fixtures so over-tightening (a legitimate change trips the
+analyser) and under-tightening (a real regression slips
+through) are both caught at the package-internal API. When
+changing the CI step name, the verify.sh header, the
+CONTRIBUTING.md numeric prefix, the SECURITY.md row or
+section, or the PRD commands, update the matching constant
+in `verification_suite_race_detector_static_test.go` in the
+same edit. The matchers fail loudly on drift; the assertion
+IS the contract.

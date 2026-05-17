@@ -8322,8 +8322,8 @@
       ],
       "type": "verification",
       "priority": 1,
-      "passes": false,
-      "notes": "Test suite: race detector tests."
+      "passes": true,
+      "notes": "Implemented BE-0391 (thirteenth worked instance of the BE-0379..BE-0390 verification-suite mega-pattern). Umbrella race-detector gate: canonical command `go test -race ./...` wraps every Test* function. Pinned five surfaces in internal/release/verification_suite_race_detector_static_test.go (ci.yml step `Race detector`, scripts/verify.sh step #5, CONTRIBUTING.md entry #5, SECURITY.md gate row + dedicated `## Race Detector` section, ralph/prd.json verificationLoop.requiredLocalCommands AND .requiredBackendCommands two-entry pin). No canonical test-function pair (umbrella shape, like BE-0379). go vet, go test ./... and go test -race ./... pass."
     },
     {
       "id": "BE-0392",

@@ -1924,6 +1924,88 @@ with identical checksums and dirty=false on every row.
   A drift on any single surface (rename, renumber, deletion)
   fails ONE test, not six.
 
+## Race Detector
+
+The race-detector suite (BE-0391) is the data-race gate. Go's race
+detector wraps every `Test*` function the suite runs and turns any
+unsynchronised read/write to shared memory into a hard test failure
+with stack traces that point at the racing goroutines. Yalla's
+control-plane carries enough concurrent code paths — the quota
+checker's per-organization `FOR UPDATE` lock, the worker queue's
+lease loop, the audit emitter's shared buffers, the Dokploy client's
+connection pool, the variable resolver's per-request cache — that a
+silent regression in any one of them would void the runtime
+guarantees every other verification gate (BE-0379..BE-0390) pins.
+This suite is the only gate that flips the `-race` flag on, so its
+absence makes every concurrency invariant a paper invariant.
+
+- **Umbrella scope.** The canonical command
+  `go test -race ./...` runs the entire repository test suite under
+  the race detector. There is no `-run` filter — the gate is
+  umbrella by design, the same shape as the unit-test gate
+  (BE-0379). A data race anywhere in the codebase (under `cmd/`,
+  under `internal/`, in `pkg/` if ever added) trips this gate. The
+  focused variant `go test -race ./internal/controlplane/...` runs
+  the backend-only race sweep as a mid-iteration helper an agent
+  can run without paying the full umbrella cost.
+- **Deterministic by default.** The race detector adds no
+  non-determinism of its own — the underlying tests still rely on
+  the same deterministic fixtures every other gate uses (fake
+  Dokploy fixtures, sealed crypto fixtures, embedded migrations,
+  hand-rolled per-test Postgres databases). A flake under
+  `go test -race ./...` is either (a) a latent data race in the
+  code under test, or (b) a test that depended on goroutine
+  scheduling order — both are bugs the gate is designed to catch,
+  not noise to retry around.
+- **Actionable failures.** Race detector reports include the full
+  stack of the racing goroutine pair, the address of the contested
+  memory location, and the source files / lines where the
+  unsynchronised read and write occurred. For handler-path races,
+  the request_id from the test's logged envelope can be
+  cross-referenced against the slog record to map the failure back
+  to the offending HTTP request; for worker-path races, the
+  resource_id of the contested provisioning job surfaces in the
+  same way. Failures are loud enough that an operator hitting a
+  CI red can map the stack to the exact concurrent code path
+  without re-running the suite locally.
+- **No live Dokploy dependency.** The race-detector run uses the
+  same fake Dokploy fixtures every other gate uses. A live Dokploy
+  server is reachable only through the opt-in
+  `YALLA_EXTERNAL_DOKPLOY=1 go test -run TestLiveDokploySmoke ./...`
+  escape hatch, which is itself a separately marked external
+  smoke. The umbrella race-detector run never reaches a real
+  Dokploy host by accident.
+- **Stable envelopes preserved.** Tests that exercise HTTP handlers
+  under the race detector continue to assert the
+  `yalla.output.v1` success envelope and the `yalla.error.v1`
+  error envelope — the race detector does not change response
+  shapes, only failure modes. A handler that produces a stable
+  envelope under `go test ./...` will produce the same envelope
+  under `go test -race ./...`; a divergence is itself a race.
+- **Redacted test output.** Secrets, tokens, API keys, cookies,
+  and rendered environment variable values are redacted in every
+  log line, error string, audit metadata field, and test-output
+  fixture the suite emits — the race detector adds stack traces
+  to failures but does NOT bypass the redaction layer. A
+  race-detector failure whose stack happens to capture a struct
+  containing a token still surfaces the token through the same
+  `Redacted()` / `LogValue()` / `String()` shims every other gate
+  uses.
+- **CI cadence.** `Race detector` is a dedicated step in the
+  `test` job on every push and PR (`scripts/verify.sh`, CI). It
+  runs alongside `Unit and integration tests` and every focused
+  `-run` step so a race regression in any one of them fails its
+  own labelled step rather than getting buried inside the
+  umbrella log.
+- **Self-locating.** The CI step, verify.sh step header,
+  CONTRIBUTING entry, this section, and the PRD's
+  `verificationLoop.requiredLocalCommands` /
+  `verificationLoop.requiredBackendCommands` entries are all
+  pinned by
+  `internal/release/verification_suite_race_detector_static_test.go`.
+  A drift on any single surface (rename, renumber, deletion)
+  fails ONE test, not five.
+
 ## Disclosure Timeline (Best Effort)
 
 1. **Day 0** — report received, acknowledgement sent.
