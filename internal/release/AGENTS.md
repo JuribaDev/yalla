@@ -1566,3 +1566,55 @@ section, or the PRD commands, update the matching constant
 in `verification_suite_idempotency_replay_static_test.go`
 in the same edit. The matchers fail loudly on drift; the
 assertion IS the contract.
+
+## Verification suite: audit completeness tests (BE-0396)
+
+`verification_suite_audit_completeness_static_test.go` pins
+the audit-completeness gate. It is the load-bearing static
+defence for the contract between Yalla's `audit.Auditor`
+chokepoint and every operator, auditor, or incident-response
+agent that reads the audit log: every security-relevant
+policy decision recorded through `audit.Auditor.Record`
+surfaces as a `store.AuditEvent` that carries the full
+closed set of identifying fields (`Action`, `ResourceKind`,
+`ResourceID`, `Decision` allowed | denied, `Reason`,
+`OrganizationID`, `ActorID`, `ActorKind`, `RequestID`,
+`CorrelationID`) for BOTH allowed AND denied decisions
+across every canonical action surface (organization /
+project / environment / service / api_key / grants / admin
+break-glass), with every metadata value redacted before
+persistence so a sentinel marker placed under a
+sensitive-shaped key never reaches the audit log, and
+under concurrent emission no event is dropped, spuriously
+added, or cross-written with another emitter's fields.
+The canonical pair (`TestAuditCompletenessCoversCallSites`
+and `TestAuditCompletenessPreservesRecordedFieldsUnderContention`)
+lives in
+`internal/controlplane/audit/audit_completeness_test.go`
+and binds to the PRD's `-run TestAuditCompleteness` filter.
+Both pair members are deterministic — they use the
+in-package `fakeRecorder` (reused from `audit_test.go` by
+the coverage member) and a file-local
+`concurrentAuditRecorder` (a mutex-guarded recorder used
+only by the contention burst), so the gate stays green on
+every developer machine without a live Postgres or any
+external dependency. The static test pins SIX surfaces in
+one file: the CI `Audit completeness tests` step
+(`.github/workflows/ci.yml`), the verify.sh step #21 header
+(`scripts/verify.sh`), the CONTRIBUTING.md entry #21, the
+SECURITY.md row + dedicated `## Audit Completeness Tests`
+section, the PRD command in
+`verificationLoop.requiredBackendCommands`, and the
+canonical pair file's existence with both function
+declarations present. The self-check
+(`TestVerificationSuiteAuditCompletenessAnalyzerDetectsRegressions`)
+drives every matcher with synthetic known-good AND
+known-bad fixtures so over-tightening (a legitimate change
+trips the analyser) and under-tightening (a real regression
+slips through) are both caught at the package-internal API.
+When changing the CI step name, the verify.sh header, the
+CONTRIBUTING.md numeric prefix, the SECURITY.md row or
+section, or the PRD commands, update the matching constant
+in `verification_suite_audit_completeness_static_test.go`
+in the same edit. The matchers fail loudly on drift; the
+assertion IS the contract.

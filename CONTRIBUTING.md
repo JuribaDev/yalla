@@ -52,6 +52,7 @@ and they must all pass on every commit you propose:
 18. `go test -run TestChaosDokployTimeouts ./...`
 19. `go test -run TestChaosPostgresDisconnects ./...`
 20. `go test -run TestIdempotencyReplay ./...`
+21. `go test -run TestAuditCompleteness ./...`
 
 `scripts/verify.sh` runs the full set in one command and is the local
 mirror of the `test` job in `.github/workflows/ci.yml`. Step 6 — the
@@ -288,6 +289,48 @@ Both members are deterministic by design: the in-process
 `fakeIdempotencyStore` is the only dependency the replay harness
 needs, no live Postgres is required, and the gate stays green on
 every machine without Postgres or a live Dokploy server.
+
+Step 21 — the audit-completeness suite bound by the
+`-run TestAuditCompleteness` filter — is the audit-log completeness
+gate documented in BE-0396; the dedicated invocation is
+defence-in-depth on the same principle so a narrowing of the umbrella
+`go test ./...` step would still leave the audit-completeness gate
+firing as a fast, targeted failure rather than buried inside the
+umbrella log. The canonical pair
+(`TestAuditCompletenessCoversCallSites` and
+`TestAuditCompletenessPreservesRecordedFieldsUnderContention`) lives
+in `internal/controlplane/audit/audit_completeness_test.go`. The
+first member pins the closed-set audit-completeness coverage
+invariant — for each canonical action surface (organization, project,
+environment, service, api_keys, limits) recorded as both an allowed
+and a denied decision, the recorded `store.AuditEvent` MUST carry a
+non-empty `Action`, `ResourceKind`, `ResourceID`, `Decision` (allowed
+or denied), `Reason`, `OrganizationID`, `ActorID`, `ActorKind`,
+`RequestID`, and `CorrelationID`, every value MUST match the scenario
+inputs byte-for-byte, the sensitive-shaped metadata value MUST be
+replaced with `output.Sentinel` in the recorded `Metadata` map, and
+the sentinel marker MUST NOT leak into any non-Metadata recorded
+field (`Action`, `ResourceID`, `Reason`, `IPAddress`, `UserAgent`).
+The second member pins the per-emitter field-fidelity invariant
+under contention — a single shared `audit.Auditor` seeded from
+`auditCompletenessWorkers * auditCompletenessIterationsPerWorker`
+goroutines MUST yield exactly that many captured events, every
+event's `RequestID` MUST resolve to its emitter (no drop, no
+duplicate, no cross-write of one emitter's request id onto another's
+recorded event), every event MUST carry the matching organization id
+and a non-empty actor id, the sentinel marker MUST stay redacted on
+every event, and the marker substring MUST NOT appear in any
+captured event's `Action`, `Reason`, `ResourceID`, `IPAddress`, or
+`UserAgent`. Failures surface with the offending scenario name (or
+the worker + iteration index) AND the observed `request_id` so an
+operator reading the CI log can correlate the gate failure with a
+specific in-flight emission without re-running the suite locally.
+Both members are deterministic by design: the in-package
+`fakeRecorder` (reused from `audit_test.go`) and the file-local
+`concurrentAuditRecorder` are the only dependencies the audit-
+completeness harness needs, no live Postgres is required, and the
+gate stays green on every machine without Postgres or a live
+Dokploy server.
 
 ## Required Checks Before Every Release
 

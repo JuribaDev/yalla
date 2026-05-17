@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Verification-suite single-file multi-surface static-test, audit-completeness instance (BE-0396 pattern, internal/release/verification_suite_audit_completeness_static_test.go + internal/controlplane/audit/audit_completeness_test.go's new canonical pair TestAuditCompletenessCoversCallSites + TestAuditCompletenessPreservesRecordedFieldsUnderContention + SECURITY.md "## Audit Completeness Tests" section AND a new row in the Required Verification Gates table + internal/release/AGENTS.md "## Verification suite: audit completeness tests (BE-0396)" subsection; EIGHTEENTH worked instance of the BE-0379..BE-0395 verification-suite mega-pattern, canonical command `go test -run TestAuditCompleteness ./...`, CI step name `Audit completeness tests`, verify.sh prefix #21 inserted between BE-0395's #20 and the trailing optionals renumbered 21->22/22->23/23->24/24->25 in the same edit. Per-story knobs unchanged from BE-0395's bullet — (a) canonical command from PRD, (b) dedicated CI step name, (c) verify.sh numeric prefix (next number after last required step; renumber trailing optionals in same edit), (d) SECURITY.md section heading and substring set (BE-0396 substring count = 18; matches BE-0395 count — the scope swaps three idempotency-specific anchors `Idempotency-Replayed` / `Idempotency-Key` / `fakeIdempotencyStore` for three audit-specific anchors `Auditor.Record` / `policy.Action` / `policy.Decision`, and swaps `byte-identical` / `E_INVALID_INPUT` / `E_FORBIDDEN` / `E_NOT_FOUND` for `allowed` / `denied` / `concurrentAuditRecorder` / `fakeRecorder`), (e) AGENTS.md subsection mirroring SECURITY.md but speaking to maintainers. Load-bearing invariant unchanged: ONE FILE, SIX SURFACES, SELF-CHECK; drift on any surface fails ONE test, not six. Three BE-0396-specific extensions to the verification-suite template, all forward-applicable to ANY future verification story whose subject is a chokepoint-mediated event-recording surface (audit / metrics / structured-log / outbox emitter) in a Go package with an existing single-call test fixture: (1) `DUAL-FIXTURE REUSE — EXISTING SINGLE-CALL FIXTURE FOR THE COVERAGE MEMBER, A FILE-LOCAL CONCURRENT FIXTURE FOR THE BURST MEMBER` — the canonical pair lives in `package audit_test` (the same external test package as the existing `audit_test.go`) so the coverage member reuses the existing `fakeRecorder` / `newAuditor` / `ctxWith` / `orgID` helpers verbatim. The contention burst introduces a SECOND in-file recorder, `concurrentAuditRecorder`, with a mutex-guarded events slice and a `snapshot()` accessor — declaring it in the new test file (not in `audit_test.go`) keeps the existing `fakeRecorder`'s zero-mutex shape for the single-call unit tests that rely on it. Forward-applicable to every verification story whose contention burst would race the existing single-call fixture: don't retrofit a mutex onto the existing helper — add a sibling helper in the new test file. The BE-0395 pattern called for "extend, don't fork" the existing fixtures; BE-0396 refines that to "extend the coverage helper, add a sibling for the contention burst" when the existing helper's zero-mutex shape is part of its contract. (2) `CLOSED-SET SCENARIO TABLE WALKS ALLOWED *AND* DENIED VARIANTS PER ACTION SURFACE` — the audit-completeness contract is not "every recorded event is well-formed" — it's "every security-relevant decision IS recorded AND well-formed", and denied decisions are as load-bearing as allowed ones (an audit log that omits denials is incomplete by definition). The scenario table therefore enumerates the canonical policy.Action surface (organization.create allowed, project.create allowed, environment.create allowed, service.create allowed, project.delete denied cross-tenant, environment.delete denied out-of-scope, keys.manage denied no-capability, limits.write denied principal-disabled) and the per-scenario `wantDecision` field pins the recorded `store.AuditDecision` to `AuditDecisionAllowed` or `AuditDecisionDenied` so a regression that flipped the recorder's verdict literal trips per-scenario. Forward-applicable to every verification story whose subject is a chokepoint that records BOTH outcomes (audit / metrics counter / structured log emitter / outbox): the closed-set scenario table MUST cover both verdicts, not just the happy path. (3) `PER-EMITTER FIELD-FIDELITY UNDER CONTENTION VIA EXPECTED-SET / OBSERVED-SET DIFF` — the runtime burst seeds `auditCompletenessWorkers * auditCompletenessIterationsPerWorker = 32` concurrent goroutines, each emitting a recorded decision with a unique `req_audit_completeness_burst_<w>_<i>` request_id. After the burst, the test builds two maps (expected: the closed set of synthesized request_ids; observed: the set of request_ids on captured events) and reports both missing-in-observed (a dropped emission OR a cross-write that overwrote one emitter's RequestID with another's — both surface here) AND unexpected-in-observed (a spurious event OR a cross-write that produced a new request_id under contention). Asserting on the SET (not just the count) is what catches the cross-write regression — a recorder that swapped two emitters' RequestIDs under a race would pass the count assertion but fail the set diff. Forward-applicable to every verification story whose contention burst's contract is "every emitter's identifying field is preserved on its recorded event": build expected/observed sets keyed on the emitter-unique identifier, then diff both ways. The burst's auditWorkers=4 × auditIters=8 sizing matches the BE-0395 burst sizing (32 concurrent calls is the smallest power-of-two-burst-table-pair where a non-thread-safe recorder fails under -race ~99% of the time, while keeping the wall-clock under 1s on CI).
 - Verification-suite single-file multi-surface static-test, idempotency-replay instance (BE-0395 pattern, internal/release/verification_suite_idempotency_replay_static_test.go + internal/controlplane/httpapi/idempotency_replay_test.go's new canonical pair TestIdempotencyReplayCoversCallSites + TestIdempotencyReplayPreservesByteIdenticalEnvelope + SECURITY.md "## Idempotency Replay Tests" section AND a new row in the Required Verification Gates table + internal/release/AGENTS.md "## Verification suite: idempotency replay tests (BE-0395)" subsection; SEVENTEENTH worked instance of the BE-0379..BE-0394 verification-suite mega-pattern, canonical command `go test -run TestIdempotencyReplay ./...`, CI step name `Idempotency replay tests`, verify.sh prefix #20 inserted between BE-0394's #19 and the trailing optionals renumbered 20->21/21->22/22->23/23->24 in the same edit. Per-story knobs unchanged from BE-0394's bullet — (a) canonical command from PRD, (b) dedicated CI step name, (c) verify.sh numeric prefix (next number after last required step; renumber trailing optionals in same edit), (d) SECURITY.md section heading and substring set (BE-0395 substring count = 18; up from BE-0394's 16 because the idempotency-replay scope adds three closed-set error codes E_INVALID_INPUT / E_FORBIDDEN / E_NOT_FOUND and the Idempotency-Replayed/Idempotency-Key wire-header pair, and drops the chaos-Postgres-specific fakepg / DisconnectFault / yerr.CodeUnavailable / apierr.DependencyStore / apierr.StoreUnavailable constants in favour of the replay-specific fakeIdempotencyStore and byte-identical anchors), (e) AGENTS.md subsection mirroring SECURITY.md but speaking to maintainers. Load-bearing invariant unchanged: ONE FILE, SIX SURFACES, SELF-CHECK; drift on any surface fails ONE test, not six. Three BE-0395-specific extensions to the verification-suite template, all forward-applicable to ANY future verification story whose subject is an HTTP middleware with an existing test corpus in the same Go package: (1) `EXISTING IN-PACKAGE TEST FIXTURES MUST BE REUSED, NOT FORKED` — the canonical pair lives in `package httpapi` (not `httpapi_test`) deliberately so the existing newFakeIdempotencyStore, idemRef, recordingHandler, jsonHandler, postReq, run, decodeError, and idemPrincipal helpers from idempotency_test.go and middleware_test.go are reused verbatim. The closed-set bound on Claim/Complete/Release counters is part of the fakeIdempotencyStore contract and a forked helper would silently break that bound. Forward-applicable to every verification story whose subject is an HTTP middleware with an existing test corpus in the same package: extend, don't fork. The siblings BE-0396..BE-0404 should look for an existing `fake<Subject>Store` / `recording<Subject>` helper in the same package before adding a new one — the prior security-verification BE-0344+BE-0345 pattern said the same about handler-builders. (2) `CLOSED-SET SCENARIO TABLE MUST DOCUMENT THE EXCLUSION` — the replay closed set is success + 400/403/404 error envelopes; 5xx is deliberately excluded because the middleware releases the claim on 5xx (the contract is TestRequireIdempotencyServerErrorIsNotRecorded). Both the canonical pair's package-doc block AND the SECURITY.md section's Scope paragraph spell out the exclusion explicitly, so a future reader understands the asymmetry without re-reading the middleware. Forward-applicable to any verification story whose closed-set scenario table has a deliberate gap: name the gap in the section comment + SECURITY.md so a future contributor doesn't "fix" the apparent omission. (3) `BYTE-LITERAL RECORDED BODY, NOT STRUCTURAL JSON COMPARISON` — the runtime burst seeds a literal byte slice `{"schema_version":"yalla.output.v1","ok":true,...}` and asserts `got.body == string(recorded)`, not reflect.DeepEqual on json.Unmarshal'd maps. A structural comparison would mask a whitespace drift (an envelope re-rendered on replay would parse semantically equivalent but byte-different). Forward-applicable to every replay/recording invariant: assert on bytes, not parsed structures, when the contract is byte-identical determinism. Burst sizing: replayWorkers=4 × replayIterationsPerWorker=8 = 32 concurrent retries per run, enough to surface a non-deterministic recorder under -race without bloating CI wall-clock. The runtime burst observes per-iteration {status, body, header} and asserts post-burst aggregation in the main goroutine (no testing.T calls from workers — same shape as BE-0392's burst pattern).
 - Verification-suite single-file multi-surface static-test, chaos-Postgres-disconnects instance (BE-0394 pattern, internal/release/verification_suite_chaos_postgres_disconnects_static_test.go + internal/controlplane/store/chaos_postgres_disconnects_test.go's new canonical pair TestChaosPostgresDisconnectsCoversCallSites + TestChaosPostgresDisconnectsMapsToTypedUnavailableEnvelope + new internal/controlplane/store/fakepg package (Server + DisconnectFault + NewServer) + SECURITY.md "## Chaos Tests For Postgres Disconnects" section AND a new row in the Required Verification Gates table + internal/release/AGENTS.md "## Verification suite: chaos tests for Postgres disconnects (BE-0394)" subsection; SIXTEENTH worked instance of the BE-0379..BE-0393 verification-suite mega-pattern, canonical command `go test -run TestChaosPostgresDisconnects ./...`, CI step name `Chaos tests for Postgres disconnects`, verify.sh prefix #19 inserted between BE-0393's #18 and the trailing optionals renumbered 19->20/20->21/21->22/22->23 in the same edit. Per-story knobs unchanged from BE-0393's bullet — (a) canonical command from PRD, (b) dedicated CI step name, (c) verify.sh numeric prefix (next number after last required step; renumber trailing optionals in same edit), (d) SECURITY.md section heading and substring set (BE-0394 substring count = 16; matches BE-0393's count), (e) AGENTS.md subsection mirroring SECURITY.md but speaking to maintainers. Load-bearing invariant unchanged: ONE FILE, SIX SURFACES, SELF-CHECK; drift on any surface fails ONE test, not six. Three BE-0394-specific extensions to the chaos-classification template, all forward-applicable to ANY future chaos-Postgres / chaos-network-partition / chaos-rate-limit sibling whose subject is the store layer or any pgxpool-backed dependency: (1) `NEW IN-PROCESS FAKE NETWORK ENDPOINT FOR PGX` — unlike BE-0393's dokployfake (which exists as a long-standing HTTP test double under internal/controlplane/dokploy/dokployfake), there was no fakepg before this story. The minimal viable shape is a TCP listener on 127.0.0.1:0 that does NOT speak the Postgres wire protocol — it accepts the TCP connection (so pgx's dial completes successfully — important: graceful FIN, NOT RST via SetLinger(0), because RST races the dial on some kernels and surfaces as `connection reset by peer` on connect rather than the production failure mode of "dial succeeds, handshake fails") and then closes the conn, so pgx observes EOF on its startup-handshake read. The fake exposes a FIFO Fault queue (only DisconnectFault for now), a Host()/Port()/Addr() trio for DSN construction, an AcceptedConnections() counter so the harness can assert pgx made >=1 TCP attempt per op (a regression that short-circuited pgx without ever attempting a network connect would otherwise pass silently), Close() (idempotent), New(testing.TB) for tests inside the testing package, and NewServer() error for worker-goroutine constructors that cannot satisfy testing.TB. Forward-applicable to every future chaos-Postgres sibling: add SQLErrorFault (writes an ErrorResponse before closing — would require pgproto3 dependency from pgx), LatencyFault (delays the close), AuthFailFault (writes a FATAL ErrorResponse during startup). (2) `CLASSIFIER-WRAP CONTRACT, NOT END-TO-END CALLSITE WRAP` — unlike BE-0393's chaos test which exercises real production methods on the typed Dokploy client (c.GetDeployment, c.EnsureOrganization, c.RemoveService) so the test asserts on errors the client's PRODUCTION wrapping chokepoint already produced, BE-0394's chaos test exercises raw pgxpool ops (Pool.Ping, Pool.Acquire, Pool.Begin, Pool.Exec, Pool.Query) and EXPLICITLY wraps the resulting pgx error through apierr.StoreUnavailable inside the runtime member before asserting the contract. This is because the store layer does not currently route every call site through a single classifier chokepoint the way the Dokploy client does — store call sites return raw pgx errors and the wrapping happens at handler-shim boundaries. The chaos contract therefore pins the wrapper's behaviour given realistic pgx-derived errors, not every call site's wrapping behaviour. Forward-applicable to any verification story whose subject lacks a single production classifier chokepoint: assert the wrapper given realistic causes, not the production path. When a future story (BE-04xx) adds a store-layer classifier chokepoint, the chaos test can switch to invoking that chokepoint instead — the scenario table and the redaction/dependency/code assertions stay identical. (3) `ASYMMETRIC REDACTION CONTRACT — PASSWORD AT EVERY LEVEL, USERNAME AT WRAPPER ONLY` — pgx's connect error formatter intentionally includes the DSN username in error messages (for operator debuggability) but redacts the password. The chaos test's chaosPostgresSecretMarkers (cause-chain scan) therefore lists ONLY the password sentinel; the wrapper-envelope assertion (chaosPostgresEnvelopeMarkers) lists BOTH the password and the username sentinel because apierr.StoreUnavailable's rendered message is static ("the Yalla datastore is temporarily unavailable") and MUST NOT echo ANY pgx cause-chain content. The runtime member walks errors.Unwrap chain for the password marker AND asserts the wrapper envelope's rendered Error() string for both markers. Forward-applicable: any future chaos test whose subject is a wire-protocol library that includes debug info in errors should split the redaction contract into chain-level (real secrets only) + envelope-level (anything pgx-style libraries might leak into debug strings). The sentinel-literal approach (chaosPostgresSentinelPassword="yallachaossecret_DO_NOT_LEAK_42") keeps the assertion meaningful: if the wrapper EVER started embedding the cause's message, the sentinel would surface and the gate would trip on the first observation. Per-iteration setup cost is bounded by chaosPostgresConnectTimeout=750ms (per-attempt pgx connect deadline) which is strictly less than chaosPostgresOpTimeout=2s (per-op context deadline), so the burst (5 scenarios × 4 workers × 3 iterations = 60 iterations) completes in ~0.5s wall-clock.
 - Verification-suite single-file multi-surface static-test, chaos-Dokploy-timeouts instance (BE-0393 pattern, internal/release/verification_suite_chaos_dokploy_timeouts_static_test.go + internal/controlplane/dokploy/chaos_dokploy_timeouts_test.go's new canonical pair TestChaosDokployTimeoutsCoversCallSites + TestChaosDokployTimeoutsMapsToTypedTimeoutEnvelope + SECURITY.md "## Chaos Tests For Dokploy Timeouts" section AND a new row in the Required Verification Gates table + internal/release/AGENTS.md "## Verification suite: chaos tests for Dokploy timeouts (BE-0393)" subsection; FIFTEENTH worked instance of the BE-0379..BE-0392 verification-suite mega-pattern, canonical command `go test -run TestChaosDokployTimeouts ./...`, CI step name `Chaos tests for Dokploy timeouts`, verify.sh prefix #18 inserted between BE-0392's #17 and the trailing optionals renumbered 18->19/19->20/20->21/21->22 in the same edit. Per-story knobs unchanged from BE-0392's bullet — (a) canonical command from PRD, (b) dedicated CI step name, (c) verify.sh numeric prefix (next number after last required step; renumber trailing optionals in same edit), (d) SECURITY.md section heading and substring set (BE-0393 substring count = 16; one fewer than BE-0392 because the chaos suite is package-bounded to internal/controlplane/dokploy and does not need a separate /healthz//readyz//version path enumeration — instead it names `TimeoutFault`, `yerr.CodeTimeout`, and `apierr.DependencyDokploy` as the load-bearing classification anchors), (e) AGENTS.md subsection mirroring SECURITY.md but speaking to maintainers. Load-bearing invariant unchanged: ONE FILE, SIX SURFACES, SELF-CHECK; drift on any surface fails ONE test, not six. Additional pattern member specific to chaos-classification verification stories: the canonical pair member that runs the runtime burst constructs a FRESH fake-Dokploy server per iteration (not per goroutine) via runChaosIteration so the FIFO fault queue and the recorded-request buffer stay isolated; this avoids the shared-queue contention that would otherwise turn a per-scenario expectedAttempts assertion into a flake under concurrent goroutines. Forward-applicable to every BE-039x chaos-timeout sibling whose invariant is `client classifies X dependency as typed *yerr.Error with Code=Y under fault Z` (BE-0394 chaos Postgres disconnects, future chaos-network-partition / chaos-rate-limit suites). The fixture-table closed-set member's per-scenario knobs — name, method, expectedAttempts, expectedCode, expectedDependency, call closure — are the reusable shape; the BE-0394 Postgres-disconnect sibling extends this by swapping the fake-Dokploy `TimeoutFault` for a fakepg.DisconnectFault and the typed-client surface for the store layer's pgx pool, keeping every other knob.
@@ -28728,4 +28729,166 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     Adding a substring requires updating both the var and the
     self-check's chosen excluded substring (BE-0395 excludes
     `byte-identical`; BE-0394 excludes `yerr.CodeUnavailable`).
+---
+
+## 2026-05-17 - BE-0396
+- Implemented BE-0396 (Verification suite: audit completeness tests).
+- Created canonical pair `TestAuditCompletenessCoversCallSites` and
+  `TestAuditCompletenessPreservesRecordedFieldsUnderContention` in
+  `internal/controlplane/audit/audit_completeness_test.go`. The first
+  member walks a closed-set scenario table covering every canonical
+  policy.Action surface (organization.create, project.create,
+  environment.create, service.create allowed; project.delete denied
+  cross-tenant, environment.delete denied out-of-scope, keys.manage
+  denied no-capability, limits.write denied principal-disabled) and
+  pins on every recorded `store.AuditEvent` a non-empty Action,
+  ResourceKind, ResourceID, Decision, Reason, OrganizationID, ActorID,
+  ActorKind, RequestID, CorrelationID, byte-for-byte agreement with
+  scenario inputs, the sensitive-shaped metadata value replaced with
+  `output.Sentinel`, and zero leakage of the sentinel marker into any
+  non-Metadata recorded field. The second member seeds a single
+  shared audit.Auditor from `auditCompletenessWorkers *
+  auditCompletenessIterationsPerWorker` (4*8=32) goroutines each
+  emitting a recorded decision with a unique request_id, then
+  asserts the recorder captured exactly 32 events, every event's
+  RequestID resolves to its emitter via expected/observed set diff
+  (no drop, no duplicate, no cross-write), every event carries the
+  matching organization id and a non-empty actor id, and the
+  sentinel marker stays redacted on every event.
+- Created `internal/release/verification_suite_audit_completeness_static_test.go`
+  pinning six surfaces: CI step `Audit completeness tests`, verify.sh
+  step #21, CONTRIBUTING.md entry #21, SECURITY.md table row +
+  `## Audit Completeness Tests` section (with 18-substring closed
+  set), PRD `verificationLoop.requiredBackendCommands`, and the
+  canonical test file's existence + function pair.
+- Wired all six surfaces:
+  - `scripts/verify.sh`: inserted #21 between BE-0395's #20 and the
+    trailing optionals; renumbered #21->#22 (govulncheck),
+    #22->#23 (staticcheck), #23->#24 (golangci-lint), #24->#25
+    (goreleaser check).
+  - `.github/workflows/ci.yml`: added `Audit completeness tests` step
+    invoking `go test -run TestAuditCompleteness ./...` between the
+    `Idempotency replay tests` step and the `Race detector` step.
+  - `CONTRIBUTING.md`: added entry `21. \`go test -run
+    TestAuditCompleteness ./...\`` and an explanatory paragraph after
+    the Step 20 paragraph naming the canonical pair, the closed-set
+    coverage invariant, the per-emitter field-fidelity invariant,
+    and the deterministic-fixture contract.
+  - `SECURITY.md`: added verification-gates row + dedicated
+    `## Audit Completeness Tests` section between Idempotency Replay
+    Tests and Race Detector.
+  - `ralph/prd.json`: appended `go test -run TestAuditCompleteness
+    ./...` to `verificationLoop.requiredBackendCommands` (count 19
+    -> 20).
+  - `internal/release/AGENTS.md`: added BE-0396 subsection mirroring
+    BE-0395's structure.
+- Files changed:
+  - internal/controlplane/audit/audit_completeness_test.go (new)
+  - internal/release/verification_suite_audit_completeness_static_test.go (new)
+  - .github/workflows/ci.yml
+  - scripts/verify.sh
+  - CONTRIBUTING.md
+  - SECURITY.md
+  - internal/release/AGENTS.md
+  - ralph/prd.json (BE-0396.passes=true + requiredBackendCommands append)
+  - ralph/progress.txt (this entry + Codebase Patterns new bullet)
+- Verification run:
+  - `gofmt -l .` clean.
+  - `go mod tidy` clean.
+  - `go vet ./...` clean.
+  - `go test -count=1 -run 'TestAuditCompleteness|TestVerificationSuiteAuditCompleteness'
+    ./internal/controlplane/audit/... ./internal/release/...` pass
+    (audit 0.8s, release 0.5s).
+  - `go test -count=1 ./...` pass (41 ok packages).
+  - `go test -count=1 -race ./...` pass (41 ok packages,
+    httpapi 13.1s, others ~5s).
+- Flipped BE-0396 `passes: true` in `ralph/prd.json`.
+- Remaining: 290 stories pending (BE-0397..onward).
+- **Learnings for future iterations:**
+  - Verification-suite single-file multi-surface static-test, audit-
+    completeness instance (BE-0396 pattern, internal/release/verification_suite_audit_completeness_static_test.go +
+    internal/controlplane/audit/audit_completeness_test.go's
+    canonical pair TestAuditCompletenessCoversCallSites +
+    TestAuditCompletenessPreservesRecordedFieldsUnderContention +
+    SECURITY.md "## Audit Completeness Tests" section + new row in
+    Required Verification Gates table + internal/release/AGENTS.md
+    BE-0396 subsection; EIGHTEENTH worked instance of the BE-0379..
+    BE-0395 verification-suite mega-pattern, canonical command
+    `go test -run TestAuditCompleteness ./...`, CI step name
+    `Audit completeness tests`, verify.sh prefix #21 inserted between
+    BE-0395's #20 and the trailing optionals renumbered
+    21->22/22->23/23->24/24->25 in the same edit. Per-story knobs
+    unchanged from BE-0395's bullet — (a) canonical command from
+    PRD, (b) dedicated CI step name, (c) verify.sh numeric prefix
+    (next number after last required step; renumber trailing
+    optionals in same edit), (d) SECURITY.md section heading and
+    substring set (BE-0396 substring count = 18; matches BE-0395
+    count — the audit-completeness scope swaps three idempotency-
+    specific anchors for three audit-specific anchors:
+    `Idempotency-Replayed` / `Idempotency-Key` / `fakeIdempotencyStore`
+    -> `Auditor.Record` / `policy.Action` / `policy.Decision`, and
+    swaps `byte-identical` / `E_INVALID_INPUT` / `E_FORBIDDEN` /
+    `E_NOT_FOUND` for `allowed` / `denied` / `concurrentAuditRecorder`
+    / `fakeRecorder`), (e) AGENTS.md subsection mirroring SECURITY.md
+    but speaking to maintainers. Load-bearing invariant unchanged:
+    ONE FILE, SIX SURFACES, SELF-CHECK; drift on any surface fails
+    ONE test, not six.
+  - Three BE-0396-specific rules the BE-0395 entry does NOT capture:
+    (1) `DUAL-FIXTURE REUSE — EXISTING SINGLE-CALL FIXTURE FOR THE
+    COVERAGE MEMBER, A FILE-LOCAL CONCURRENT FIXTURE FOR THE BURST
+    MEMBER` — the canonical pair lives in `package audit_test` (the
+    same external test package as the existing audit_test.go) so the
+    coverage member reuses the existing fakeRecorder / newAuditor /
+    ctxWith / orgID helpers verbatim. The contention burst introduces
+    a SECOND in-file recorder, concurrentAuditRecorder, with a
+    mutex-guarded events slice and a snapshot() accessor — declaring
+    it in the new test file (not in audit_test.go) keeps the
+    existing fakeRecorder's zero-mutex shape for the single-call unit
+    tests that rely on it. Forward-applicable to every verification
+    story whose contention burst would race the existing single-call
+    fixture: don't retrofit a mutex onto the existing helper — add a
+    sibling helper in the new test file. The BE-0395 pattern called
+    for "extend, don't fork" the existing fixtures; BE-0396 refines
+    that to "extend the coverage helper, add a sibling for the
+    contention burst" when the existing helper's zero-mutex shape is
+    part of its contract.
+    (2) `CLOSED-SET SCENARIO TABLE WALKS ALLOWED *AND* DENIED
+    VARIANTS PER ACTION SURFACE` — the audit-completeness contract
+    is not "every recorded event is well-formed" — it's "every
+    security-relevant decision IS recorded AND well-formed", and
+    denied decisions are as load-bearing as allowed ones (an audit
+    log that omits denials is incomplete by definition). The scenario
+    table therefore enumerates the canonical policy.Action surface
+    with both allowed (organization.create, project.create,
+    environment.create, service.create) and denied (project.delete
+    denied cross-tenant, environment.delete denied out-of-scope,
+    keys.manage denied no-capability, limits.write denied
+    principal-disabled) variants, and the per-scenario wantDecision
+    field pins the recorded store.AuditDecision to AuditDecisionAllowed
+    or AuditDecisionDenied so a regression that flipped the recorder's
+    verdict literal trips per-scenario. Forward-applicable to every
+    verification story whose subject is a chokepoint that records
+    BOTH outcomes (audit / metrics counter / structured log emitter
+    / outbox): the closed-set scenario table MUST cover both
+    verdicts, not just the happy path.
+    (3) `PER-EMITTER FIELD-FIDELITY UNDER CONTENTION VIA
+    EXPECTED-SET / OBSERVED-SET DIFF` — the runtime burst seeds
+    auditCompletenessWorkers * auditCompletenessIterationsPerWorker
+    = 32 concurrent goroutines, each emitting a recorded decision
+    with a unique req_audit_completeness_burst_<w>_<i> request_id.
+    After the burst, the test builds two maps (expected: the closed
+    set of synthesized request_ids; observed: the set of request_ids
+    on captured events) and reports BOTH missing-in-observed (a
+    dropped emission OR a cross-write that overwrote one emitter's
+    RequestID with another's — both surface here) AND
+    unexpected-in-observed (a spurious event OR a cross-write that
+    produced a new request_id under contention). Asserting on the
+    SET (not just the count) is what catches the cross-write
+    regression — a recorder that swapped two emitters' RequestIDs
+    under a race would pass the count assertion but fail the set
+    diff. Forward-applicable to every verification story whose
+    contention burst's contract is "every emitter's identifying
+    field is preserved on its recorded event": build
+    expected/observed sets keyed on the emitter-unique identifier,
+    then diff both ways.
 ---

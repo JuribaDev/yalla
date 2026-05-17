@@ -80,6 +80,7 @@ defined in `.github/workflows/ci.yml`:
 | Chaos tests for Dokploy timeouts | `go test -run TestChaosDokployTimeouts ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Chaos tests for Postgres disconnects | `go test -run TestChaosPostgresDisconnects ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Idempotency replay tests | `go test -run TestIdempotencyReplay ./...` | `scripts/verify.sh`, CI | Every push and PR |
+| Audit completeness tests | `go test -run TestAuditCompleteness ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Race detector | `go test -race ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Vulnerability scan | `govulncheck ./...` | CI `security` job | Every push and PR |
 | Lint suite | `staticcheck ./...` and `golangci-lint run ./...` | CI `security` job | Every push and PR |
@@ -2324,6 +2325,113 @@ for every collateral surface lives in
   Every push and PR runs the gate. The single static defence that
   pins every one of those surfaces is
   `internal/release/verification_suite_idempotency_replay_static_test.go`.
+
+## Audit Completeness Tests
+
+The audit-completeness suite (BE-0396) is the audit-log completeness
+gate. It exists to catch a class of regressions a single-call unit
+test cannot: a denied authorization decision that is never written to
+the audit log because the deny path forgot to call
+`audit.Auditor.Record`, a recorded event that drops its `request_id`
+because the auth middleware regressed, a cross-write under contention
+where one emitter's `request_id` lands on another's recorded event,
+or a sensitive-shaped metadata value reflected unredacted into a
+recorded `Metadata` value or — worse — into a non-Metadata field.
+The canonical pair (`TestAuditCompletenessCoversCallSites` and
+`TestAuditCompletenessPreservesRecordedFieldsUnderContention`) lives
+in `internal/controlplane/audit/audit_completeness_test.go` and binds
+to the PRD's `-run TestAuditCompleteness` filter; the static defence
+for every collateral surface lives in
+`internal/release/verification_suite_audit_completeness_static_test.go`.
+
+- **Scope.** The two load-bearing audit-completeness invariants are
+  exercised by the canonical function pair. The first member walks a
+  closed-set scenario table covering every canonical action surface
+  (`policy.Action` constants for organization, project, environment,
+  service, api_keys, limits) recorded as BOTH an `allowed` decision
+  AND a `denied` decision via `audit.Auditor.Record`. For each
+  scenario the test asserts the recorded `store.AuditEvent` carries a
+  non-empty `Action`, `ResourceKind`, `ResourceID`, `Decision`,
+  `Reason`, `OrganizationID`, `ActorID`, `ActorKind`, `RequestID`,
+  and `CorrelationID`, every value matches the scenario inputs
+  byte-for-byte (the `policy.Decision` verdict surfaces as the
+  recorded `AuditDecisionAllowed` or `AuditDecisionDenied`, the
+  `policy.Action` surfaces as the recorded `Action`, the
+  `policy.Resource.Kind` surfaces as the recorded `ResourceKind`),
+  the sensitive-shaped metadata value is replaced with
+  `output.Sentinel` in the recorded `Metadata` map, and the sentinel
+  marker does NOT leak into any non-Metadata recorded field. The
+  second member seeds a single shared `audit.Auditor` from
+  `auditCompletenessWorkers * auditCompletenessIterationsPerWorker`
+  goroutines each firing a recorded decision with a distinct
+  `request_id`, and asserts the recorder captured exactly that many
+  events, every event's `RequestID` resolves to its emitter (no
+  drop, no duplicate, no cross-write), every event carries the
+  matching organization id and a non-empty actor id, the sentinel
+  marker stays redacted on every event, and the marker substring
+  does NOT appear in any captured event's `Action`, `Reason`,
+  `ResourceID`, `IPAddress`, or `UserAgent`. The single static
+  defence is
+  `internal/release/verification_suite_audit_completeness_static_test.go`,
+  which pins the existence of the canonical
+  `audit_completeness_test.go` file and the canonical
+  `TestAuditCompletenessCoversCallSites` +
+  `TestAuditCompletenessPreservesRecordedFieldsUnderContention`
+  function pair (the load-bearing `-run TestAuditCompleteness`
+  filter from `verificationLoop.requiredBackendCommands` binds to
+  the `TestAuditCompleteness` prefix) so the audit-completeness
+  convention itself cannot be silently deleted or renamed.
+- **Determinism.** The audit-completeness tests run against
+  deterministic fixtures only — the in-package `fakeRecorder` (a
+  zero-mutex stand-in for `*store.AuditRepository` reused from
+  `audit_test.go` by the coverage member) and the file-local
+  `concurrentAuditRecorder` (a mutex-guarded recorder used only by
+  the contention burst). The principal and `telemetry.Correlation`
+  are constructed in-process via the shared `ctxWith` helper. No
+  audit-completeness test reaches a live Postgres, a live Dokploy,
+  or any external network.
+- **Actionable failures.** Every diagnostic surfaces the offending
+  scenario name (for the coverage member) or the worker + iteration
+  index (for the burst member) AND the observed `request_id` so an
+  operator reading the CI log can map the failure to the exact
+  recorded emission without re-running the suite locally. The
+  per-emitter field-fidelity member reports the exact field whose
+  fidelity drifted (a missing `RequestID`, a mis-attributed
+  `OrganizationID`, a recorded `Decision` whose value disagrees
+  with the scenario verdict) so a regression in the audit recorder
+  under contention surfaces with the exact divergence.
+- **Schema-version contract.** Every public HTTP response the
+  audited mutating endpoints render — a 2xx `yalla.output.v1`
+  success envelope, a 4xx `yalla.error.v1` validation /
+  authorization / not-found envelope — flows through the same
+  audit chokepoint the canonical pair exercises. The audit-
+  completeness suite asserts the audit log preserves the
+  identifying fields the envelope's `request_id` carried, so a
+  regression that re-rendered the envelope and dropped the
+  `request_id` from the audit row trips here even if the parsed
+  JSON stayed semantically equivalent.
+- **Redaction.** A sentinel marker placed under a sensitive-shaped
+  metadata key MUST NEVER appear in the recorded `Metadata` value
+  — `audit.Auditor.Record` runs every metadata value through the
+  redactor before persistence, and the audit-completeness gate
+  asserts the recorded value is replaced wholesale with
+  `output.Sentinel`. The marker substring MUST also NEVER appear in
+  any non-Metadata recorded field (`Action`, `ResourceID`,
+  `Reason`, `IPAddress`, `UserAgent`); a regression that reflected
+  metadata into a non-Metadata field would surface with the marker
+  substring. Test output, error chains, audit metadata, and the
+  recorded event MUST stay redacted of secrets.
+- **CI cadence.** The audit-completeness gate runs as a dedicated
+  `Audit completeness tests` step in `.github/workflows/ci.yml`,
+  under `# 21. Required: audit completeness tests` in
+  `scripts/verify.sh`, as entry `21` in `CONTRIBUTING.md` under
+  `## Required Checks Before Every Commit`, and in `ralph/prd.json`
+  under `verificationLoop.requiredBackendCommands` so an AI agent
+  reading the PRD before picking up a story sees the gate without
+  needing to discover it from shell scripts or CI workflows.
+  Every push and PR runs the gate. The single static defence that
+  pins every one of those surfaces is
+  `internal/release/verification_suite_audit_completeness_static_test.go`.
 
 ## Race Detector
 

@@ -258,7 +258,8 @@
       "go test -run TestLoadSmoke ./...",
       "go test -run TestChaosDokployTimeouts ./...",
       "go test -run TestChaosPostgresDisconnects ./...",
-      "go test -run TestIdempotencyReplay ./..."
+      "go test -run TestIdempotencyReplay ./...",
+      "go test -run TestAuditCompleteness ./..."
     ],
     "optionalWhenConfigured": [
       "goimports -w .",
@@ -8421,8 +8422,8 @@
       ],
       "type": "verification",
       "priority": 1,
-      "passes": false,
-      "notes": "Test suite: audit completeness tests."
+      "passes": true,
+      "notes": "Canonical pair TestAuditCompletenessCoversCallSites + TestAuditCompletenessPreservesRecordedFieldsUnderContention in internal/controlplane/audit/audit_completeness_test.go pin the closed-set audit-completeness coverage invariant (every canonical policy.Action surface recorded as both allowed and denied yields a store.AuditEvent with non-empty Action, ResourceKind, ResourceID, Decision, Reason, OrganizationID, ActorID, ActorKind, RequestID, CorrelationID, with the sensitive-shaped metadata value redacted to output.Sentinel) and the per-emitter field-fidelity invariant under contention (auditCompletenessWorkers * auditCompletenessIterationsPerWorker concurrent goroutines yield exactly that many captured events, every event's RequestID resolves to its emitter with no drop / duplicate / cross-write, the sentinel marker stays redacted on every event). Single static defence at internal/release/verification_suite_audit_completeness_static_test.go pins six surfaces: CI step Audit completeness tests, verify.sh # 21. Required: audit completeness tests, CONTRIBUTING.md entry 21, SECURITY.md Required Verification Gates row + ## Audit Completeness Tests section, PRD verificationLoop.requiredBackendCommands entry go test -run TestAuditCompleteness ./..., and the canonical pair file + function declarations. Self-check TestVerificationSuiteAuditCompletenessAnalyzerDetectsRegressions drives every matcher with synthetic known-good AND known-bad fixtures. Optional commands list extended in same edit (verify.sh #22..#25 renumbered for govulncheck / staticcheck / golangci-lint / goreleaser). Deterministic-by-default: fakeRecorder reused from audit_test.go and a file-local concurrentAuditRecorder are the only dependencies; no live Postgres or Dokploy required."
     },
     {
       "id": "BE-0397",

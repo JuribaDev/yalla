@@ -172,7 +172,13 @@ if ! go test -run TestIdempotencyReplay ./...; then
   required_failed=1
 fi
 
-# 21. Optional: govulncheck (vulnerability scan)
+# 21. Required: audit completeness tests
+step "go test -run TestAuditCompleteness ./..."
+if ! go test -run TestAuditCompleteness ./...; then
+  required_failed=1
+fi
+
+# 22. Optional: govulncheck (vulnerability scan)
 step "govulncheck ./... (optional)"
 if command -v govulncheck >/dev/null 2>&1; then
   if ! govulncheck ./...; then
@@ -182,7 +188,7 @@ else
   skipped_tools+=("govulncheck (install: go install golang.org/x/vuln/cmd/govulncheck@latest)")
 fi
 
-# 22. Optional: staticcheck
+# 23. Optional: staticcheck
 step "staticcheck ./... (optional)"
 if command -v staticcheck >/dev/null 2>&1; then
   if ! staticcheck ./...; then
@@ -192,7 +198,7 @@ else
   skipped_tools+=("staticcheck (install: go install honnef.co/go/tools/cmd/staticcheck@latest)")
 fi
 
-# 23. Optional: golangci-lint
+# 24. Optional: golangci-lint
 step "golangci-lint run ./... (optional)"
 if command -v golangci-lint >/dev/null 2>&1; then
   if ! golangci-lint run ./...; then
@@ -202,7 +208,7 @@ else
   skipped_tools+=("golangci-lint (install: https://golangci-lint.run/welcome/install/)")
 fi
 
-# 24. Optional: goreleaser check (release config)
+# 25. Optional: goreleaser check (release config)
 step "goreleaser check (optional)"
 if command -v goreleaser >/dev/null 2>&1; then
   if ! goreleaser check; then
