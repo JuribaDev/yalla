@@ -51,11 +51,11 @@ import (
 //     default CI run on every push and PR MUST NOT reach a real Dokploy.
 //  2. `scripts/verify.sh` — the local commit gate MUST carry an OPTIONAL
 //     step under the canonical step header
-//     `# 35. Optional: external live-Dokploy smoke tests` that only
+//     `# 36. Optional: external live-Dokploy smoke tests` that only
 //     invokes `YALLA_EXTERNAL_DOKPLOY=1 go test -run TestLiveDokploySmoke
 //     ./...` when the operator has explicitly set the opt-in env var.
-//     The trailing-optional position (`#35`, after the existing
-//     `#31 govulncheck`/`#32 staticcheck`/`#33 golangci-lint`/`#34
+//     The trailing-optional position (`#36`, after the existing
+//     `#32 govulncheck`/`#33 staticcheck`/`#34 golangci-lint`/`#35
 //     goreleaser` block) is part of the contract; a renumber forces a
 //     deliberate edit in lockstep with this constant.
 //  3. `CONTRIBUTING.md` — the optional-tooling section MUST mention the
@@ -137,7 +137,7 @@ const (
 	// to both this constant and the script. The smoke sits in the
 	// trailing-optional block (after govulncheck/staticcheck/golangci-lint/
 	// goreleaser).
-	externalDokploySmokeVerifyShStepHeader = "# 35. Optional: external live-Dokploy smoke tests"
+	externalDokploySmokeVerifyShStepHeader = "# 36. Optional: external live-Dokploy smoke tests"
 	// externalDokploySmokeVerifyShStepCmd is the literal opt-in command
 	// the optional step MUST invoke. The leading env prefix is required:
 	// without it the test would `t.Skip` and the optional gate would
@@ -308,7 +308,7 @@ func TestVerificationSuiteExternalDokploySmokeVerifyShRunsOptInCommand(t *testin
 	doc := mustReadString(t, filepath.Join(root, requiredVerifyShPath))
 
 	if !strings.Contains(doc, externalDokploySmokeVerifyShStepHeader) {
-		t.Errorf("%s: missing required optional step header %q; the verify.sh trailing-optional block is the local mirror of the CI workflow, and the step must keep its canonical position #35 after the govulncheck/staticcheck/golangci-lint/goreleaser block.",
+		t.Errorf("%s: missing required optional step header %q; the verify.sh trailing-optional block is the local mirror of the CI workflow, and the step must keep its canonical position #36 after the govulncheck/staticcheck/golangci-lint/goreleaser block.",
 			requiredVerifyShPath, externalDokploySmokeVerifyShStepHeader)
 	}
 	if !strings.Contains(doc, externalDokploySmokeVerifyShStepCmd) {
@@ -476,7 +476,7 @@ func TestVerificationSuiteExternalDokploySmokeAnalyzerDetectsRegressions(t *test
 
 	t.Run("verify.sh matcher flags missing optional step", func(t *testing.T) {
 		t.Parallel()
-		doc := "# 34. Optional: goreleaser check\nstep \"goreleaser check\"\nif command -v goreleaser >/dev/null 2>&1; then\n  goreleaser check\nfi\n"
+		doc := "# 35. Optional: goreleaser check\nstep \"goreleaser check\"\nif command -v goreleaser >/dev/null 2>&1; then\n  goreleaser check\nfi\n"
 		if strings.Contains(doc, externalDokploySmokeVerifyShStepHeader) {
 			t.Fatalf("synthetic verify.sh unexpectedly contains %q — fix the fixture", externalDokploySmokeVerifyShStepHeader)
 		}
@@ -484,7 +484,7 @@ func TestVerificationSuiteExternalDokploySmokeAnalyzerDetectsRegressions(t *test
 
 	t.Run("verify.sh matcher accepts complete fixture", func(t *testing.T) {
 		t.Parallel()
-		doc := "# 35. Optional: external live-Dokploy smoke tests\nif [[ \"${YALLA_EXTERNAL_DOKPLOY:-}\" = \"1\" ]]; then\n  step \"YALLA_EXTERNAL_DOKPLOY=1 go test -run TestLiveDokploySmoke ./...\"\n  if ! YALLA_EXTERNAL_DOKPLOY=1 go test -run TestLiveDokploySmoke ./...; then\n    required_failed=1\n  fi\nfi\n"
+		doc := "# 36. Optional: external live-Dokploy smoke tests\nif [[ \"${YALLA_EXTERNAL_DOKPLOY:-}\" = \"1\" ]]; then\n  step \"YALLA_EXTERNAL_DOKPLOY=1 go test -run TestLiveDokploySmoke ./...\"\n  if ! YALLA_EXTERNAL_DOKPLOY=1 go test -run TestLiveDokploySmoke ./...; then\n    required_failed=1\n  fi\nfi\n"
 		if !strings.Contains(doc, externalDokploySmokeVerifyShStepHeader) {
 			t.Fatalf("complete fixture missing header %q", externalDokploySmokeVerifyShStepHeader)
 		}

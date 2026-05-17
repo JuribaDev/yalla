@@ -2433,3 +2433,63 @@ update the matching constant in
 `verification_suite_import_dry_run_static_test.go` in
 the same edit. The matchers fail loudly on drift; the
 assertion IS the contract.
+
+## Verification suite: service desired-state golden tests (BE-0407)
+
+The service-desired-state suite gate is the BE-0407
+verification entrypoint:
+`go test -run TestServiceDesiredState ./...`. It pins
+the dokploy renderer's pure desired-state chokepoint
+`(*dokploy.Renderer).Render(in RenderInput) (RenderedSpec, error)`
+through six surfaces in lockstep — the CI workflow
+step named `Service desired-state golden tests`,
+the verify.sh step header
+`# 31. Required: service desired-state golden tests`
+and its literal command
+`go test -run TestServiceDesiredState ./...`, the
+CONTRIBUTING.md numbered entry
+`31. \`go test -run TestServiceDesiredState ./...\``,
+the SECURITY.md row + dedicated
+`## Service Desired-State Golden Tests` section (with
+the When column marked "Every push and PR"), the PRD
+command in `verificationLoop.requiredBackendCommands`,
+and the canonical pair file's existence with both
+function declarations present. Adding step #31 between
+BE-0406's #30 and the trailing optionals required
+renumbering verify.sh optional steps #31-#35 to
+#32-#36 and updating BE-0400's static test constants
+from `# 35. Optional…` to `# 36. Optional…` (and its
+synthetic-fixture `# 34 → # 35`) in the same edit —
+the renumber is the shared cost of inserting a
+required step into the sequence and continues the
+BE-0379..BE-0406 mega-pattern verbatim. The renderer
+chokepoint differs from earlier pure-classifier
+instances in that it has no context, no port
+interfaces, and no Repository — it is a pure function
+of its input alone. The contention burst therefore
+constructs a fresh `Renderer` per iteration via
+`dokploy.NewRenderer()` to pin the contract that
+construction is cheap and `Render` carries no
+package-level shared state; a regression that
+smuggled in a sync.Once mutating a per-call map, a
+sync.Pool reused without resetting, or any cached
+view would surface as a per-iteration mismatch even
+when the aggregate pass count matched. The value-free
+`Summary` projection canary seeds a unique secret
+marker into organization, project, environment, AND
+service variables, then asserts the marker is absent
+from the redacted Summary JSON, the slog `LogValue`
+group, and the Summary.String() form on every
+scenario row. The self-check
+(`TestVerificationSuiteServiceDesiredStateAnalyzerDetectsRegressions`)
+drives every matcher with synthetic known-good AND
+known-bad fixtures so over-tightening (a legitimate
+change trips the analyser) and under-tightening (a
+real regression slips through) are both caught at the
+package-internal API. When changing the CI workflow
+name, the verify.sh header, the CONTRIBUTING.md entry,
+the SECURITY.md row or section, or the PRD commands,
+update the matching constant in
+`verification_suite_service_desired_state_static_test.go`
+in the same edit. The matchers fail loudly on drift;
+the assertion IS the contract.

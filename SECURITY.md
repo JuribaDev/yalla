@@ -90,6 +90,7 @@ defined in `.github/workflows/ci.yml`:
 | Break-glass tests | `go test -run TestBreakGlass ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Reconciliation tests | `go test -run TestReconciliation ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Import dry-run tests | `go test -run TestImportDryRun ./...` | `scripts/verify.sh`, CI | Every push and PR |
+| Service desired-state golden tests | `go test -run TestServiceDesiredState ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | External live-Dokploy smoke tests | `YALLA_EXTERNAL_DOKPLOY=1 go test -run TestLiveDokploySmoke ./...` | `.github/workflows/external-smoke.yml`, `scripts/verify.sh` (opt-in) | Opt-in (`YALLA_EXTERNAL_DOKPLOY=1`), nightly + manual |
 | Race detector | `go test -race ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Vulnerability scan | `govulncheck ./...` | CI `security` job | Every push and PR |
@@ -3412,6 +3413,102 @@ the gate without needing to discover it from shell scripts or
 CI workflows. Every push and PR runs the gate. The single
 static defence that pins every one of those surfaces is
 `internal/release/verification_suite_import_dry_run_static_test.go`.
+
+## Service Desired-State Golden Tests
+
+The service desired-state golden suite (BE-0407) pins the
+dokploy renderer's pure desired-state projection. The
+chokepoint is
+`(*dokploy.Renderer).Render(in RenderInput) (RenderedSpec, error)` —
+the single point at which Yalla's source-of-truth hierarchy
+(organization, project, environment, service) is projected
+into the desired Dokploy spec the provisioning worker will
+reconcile. The renderer is a deterministic pure function of
+its input: no I/O, no clock, no package-level shared state.
+A Yalla operator who reads a `RenderedSpec` `Summary` in a
+log, an audit record, or a dry-run preview MUST be able to
+predict the rendered spec from the input alone. The gate is
+run by `go test -run TestServiceDesiredState ./...`.
+
+The closed-set coverage invariant pins five structural
+desired-state contracts in one place: every documented
+`ServiceType` (`application`, `compose`, `database`) MUST be
+exercised by at least one scenario row; every documented
+`ServiceRole` (`web`, `worker`, `cron`) MUST be exercised by
+at least one application scenario row; every documented
+application `Builder` (`dockerfile`, `nixpacks`, `image`,
+`drop-artifact`) MUST be exercised by at least one row; every
+documented database `Engine` (`postgres`, `mysql`, `mariadb`,
+`mongo`, `redis`) MUST be exercised by at least one database
+scenario row; and every documented `EnvironmentTier`
+(`staging`, `production`, `preview`) MUST be exercised by at
+least one row. The determinism invariant pins that
+`Render(in)` is a deterministic function of its input —
+calling it twice on the same `RenderInput` MUST yield equal
+`RenderedSpec` values (same fields, same variable order, same
+domain order, same label order). The value-free `Summary`
+invariant pins that the redacted `Summary` JSON, the slog
+`LogValue` group, and the `Summary.String()` form NEVER carry
+a raw variable Value even when the canonical pair seeds a
+secret marker into every level of the variable hierarchy.
+
+The canonical pair (`TestServiceDesiredStateCoversCallSites`
+and `TestServiceDesiredStatePreservesContractUnderContention`)
+lives in
+`internal/controlplane/dokploy/service_desired_state_canonical_test.go`
+and binds to the PRD's `-run TestServiceDesiredState`
+filter. The first member walks a closed scenario table built
+from every documented `ServiceType`, `ServiceRole`,
+`Builder`, `Engine`, and `EnvironmentTier` value, seeds the
+secret marker into organization, project, environment, AND
+service variables, and asserts the marker is absent from the
+`Summary` JSON, the slog `LogValue` group, and the
+`Summary.String()` form for every row. The second member
+fires `serviceDesiredStateContentionWorkers *
+serviceDesiredStateContentionIterationsPerWorker` goroutines
+that each draw a row from the same scenario table by
+deterministic mod-index, construct a fresh `Renderer` via
+`dokploy.NewRenderer()` per iteration, and assert the per-
+iteration verdict (the predicted `ServiceType`,
+`ServiceRole`, `Builder`, `Engine`, `EnvironmentTier`, and
+the value-free `Summary`). The per-iteration Renderer pins
+the contract that construction is cheap and `Render` is a
+pure function of its input — a regression that smuggled in a
+package-level cache, a `sync.Once` mutating a per-call map,
+or a `sync.Pool` reused without resetting would surface as a
+per-iteration mismatch even when the aggregate pass count
+matched. Both members are deterministic by design and reach
+neither the process environment, the network, a live
+Postgres, a live Dokploy, nor any external service.
+
+When the suite fails, every actionable failure message names
+the scenario row that drifted, the closed-set tag the row
+predicted, and the closed-set tag the renderer actually
+emitted, so operators do not need to read the canonical pair
+to triage. Errors propagate through the same
+`yalla.error.v1` envelope shape any other backend test
+produces. The redaction contract is the safety guarantee
+that lets Yalla render a `RenderedSpec` into a log line, an
+audit record, or a dry-run preview without exposing a
+customer's `ORG_TOKEN`, `PROJECT_TOKEN`, `ENV_TOKEN`, or
+`API_TOKEN` — the value-free `Summary` projection replaces
+every variable Value with the redaction sentinel before
+serialisation, and the canonical pair asserts that contract
+end-to-end for every row in the closed scenario table.
+
+The gate is documented as a dedicated
+`Service desired-state golden tests` step in
+`.github/workflows/ci.yml`, as step `# 31. Required: service
+desired-state golden tests` in `scripts/verify.sh`, as item
+31 in `CONTRIBUTING.md` under
+`## Required Checks Before Every Commit`, and in
+`ralph/prd.json` under
+`verificationLoop.requiredBackendCommands` so an AI agent
+reading the PRD before picking up a story sees the gate
+without needing to discover it from shell scripts or CI
+workflows. Every push and PR runs the gate. The single
+static defence that pins every one of those surfaces is
+`internal/release/verification_suite_service_desired_state_static_test.go`.
 
 ## Race Detector
 

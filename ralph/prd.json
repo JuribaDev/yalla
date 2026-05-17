@@ -268,7 +268,8 @@
       "go test -run TestAdminEndpoint ./...",
       "go test -run TestBreakGlass ./...",
       "go test -run TestReconciliation ./...",
-      "go test -run TestImportDryRun ./..."
+      "go test -run TestImportDryRun ./...",
+      "go test -run TestServiceDesiredState ./..."
     ],
     "optionalWhenConfigured": [
       "goimports -w .",
@@ -8640,7 +8641,7 @@
       ],
       "type": "verification",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Test suite: service desired-state golden tests."
     },
     {
