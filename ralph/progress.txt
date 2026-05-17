@@ -26544,3 +26544,46 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
   - The `_, _ := captureProcessOutput(...)` helper requires `t.Parallel()` be omitted — it swaps `os.Stdout`/`os.Stderr` globally.
   - The `NewHandler` constructor's positional fakes list is long and brittle; the lowest-risk approach is to copy a recent sibling's invocation verbatim and swap the relevant slot, rather than reasoning about positions.
 ---
+
+
+## [2026-05-17 UTC] - BE-0363
+- Added internal/release/rate_limit_bypass_resistance_static_test.go (structural half of the BE-0344 two-test pattern, EIGHTH instance) — five test functions plus a self-check:
+  - TestRateLimitBypassResistanceExemptOnlyForInternalWorker: walks every non-test .go in internal/controlplane/httpapi, asserts exactly one `<expr>.Exempt = true` assignment exists, and that the single site lives inside an `if` whose condition references the SelectorExpr `auth.MethodInternalWorker` (trailing-name match). Catches the five bypass shapes (header, path, private IP, missing principal, constant-true).
+  - TestRateLimitBypassResistanceDecisionBucketIsClosedConstantSet: walks `Decision{Bucket: ...}` composite literals in limiter.go and asserts every Bucket value is BucketOrg / BucketKey / BucketIP (Ident or trailing-name SelectorExpr).
+  - TestRateLimitBypassResistance429EmitSiteIsCanonical: pins exactly one `apierr.RateLimited(...)` + exactly one `apienvelope.WriteError(...)` in ratelimit.go and zero forbidden seams (`http.Error`, `fmt.Fprintf`, `w.Write([]byte(...))`).
+  - TestRateLimitBypassResistanceServerWiresEveryRoute: pins exactly one `RateLimit(...)` construction site and exactly one `h = rateLimit(h)` per-route wrap in server.go.
+  - TestRateLimitBypassResistanceSecurityDocumented: pins the SECURITY.md "## Rate Limit Bypass Resistance" section, the closed-constant list, the canonical envelope call sites, the static-test filename mention, and the Required Verification Gates table row.
+  - TestRateLimitBypassResistanceStaticAnalyzerDetectsRegressions: seven-fixture self-check — each matcher's positive and negative case is pinned so a refactor that silently neuters a matcher would surface here.
+- Added internal/controlplane/httpapi/ratelimit_bypass_test.go (runtime evidence half) — seven tests with a constant `bypassMarker = "BE0363RATELIMITBYPASSMARKERXYZ"` sentinel:
+  - TestRateLimitBypassResistanceForgedInternalHeaderDoesNotExempt: forged X-Yalla-Internal / X-Yalla-Auth-Method headers do NOT flip Exempt; queued denial still wins.
+  - TestRateLimitBypassResistanceForgedInternalPathDoesNotExempt: a /v1/internal/* path is not a bypass signal.
+  - TestRateLimitBypassResistanceInternalWorkerCannotBeForgedFromHeader: two-leg proof — (a) Authorization-header bearer + principal-stamped context with NO auth method → not exempt; (b) auth method stamped to MethodAPIKey (not MethodInternalWorker) → not exempt.
+  - TestRateLimitBypassResistanceClientIPHonoursOnlyFirstHop: table-driven, three cases — chained XFF first hop wins, X-Real-IP fallback works, no-header falls through to RemoteAddr; bypassMarker never reaches the bucket key.
+  - TestRateLimitBypassResistanceConcurrentBurstCannotExceedCap: 20 parallel requests against a production *ratelimit.Limiter with Burst=3 → allowed ≤ 3, denied > 0, allowed+denied = 20. Uses a stateless inline http.HandlerFunc to avoid racing on the shared rateLimitOK.ran field.
+  - TestRateLimitBypassResistanceDecisionBucketIsClosedConstantSet (runtime complement): drains every bucket dimension and verifies emitted Decision.Bucket values are in the closed-constant set.
+  - TestRateLimitBypassResistanceDenyLogDoesNotEchoBucketIdentity: slog.JSONHandler captures the WARN record; bucket dimension MUST appear, bypassMarker count MUST be ≤ 1 (path attribute only — bucket/principal/key slots must not echo it).
+  - TestRateLimitBypassResistanceEnvelopeBodyHidesBucketIdentity: 429 envelope decoded; details.scope MUST be one of the dimension names; bypassMarker MUST NOT appear in body.
+  - TestRateLimitBypassResistanceEmptyContextStillBillsIPBucket: anonymous request (no principal, no auth method) still consults limiter and falls through to IP bucket; the "send anonymous to skip the gate" bypass does not exist.
+- SECURITY.md updates:
+  - Required Verification Gates table: new "Rate limit bypass resistance" row pinning `-run TestRateLimitBypassResistance` selector for both internal/release/... and internal/controlplane/httpapi/...
+  - New ## Rate Limit Bypass Resistance section documenting the closed five-bypass threat model (forged internal-worker claim, bucket-identity leak, non-canonical 429 emission, un-wrapped route, XFF chain spoofing), the static-evidence summary, the runtime-evidence summary, and the bypass-marker sentinel rationale.
+- Files changed:
+  - internal/release/rate_limit_bypass_resistance_static_test.go (new, ~640 lines)
+  - internal/controlplane/httpapi/ratelimit_bypass_test.go (new, ~410 lines)
+  - SECURITY.md (verification gates row + new bypass-resistance section)
+  - ralph/prd.json (BE-0363 passes -> true)
+  - ralph/progress.txt (this entry)
+- Verification:
+  - gofmt -l . → clean
+  - go vet ./internal/release/... ./internal/controlplane/httpapi/... ./internal/controlplane/ratelimit/... → clean
+  - go test -run TestRateLimitBypassResistance ./internal/release/... ./internal/controlplane/httpapi/... → PASS (12 test functions, all subtests green)
+  - go test ./... → PASS (full module, no FAIL lines)
+  - go test -race ./... → PASS (after fixing one race in the concurrent test by switching from shared rateLimitOK helper to a stateless inline http.HandlerFunc — see "Learnings" below)
+  - go mod tidy → clean
+- Remaining risks / follow-ups: none.
+- Learnings for future iterations:
+  - **Shared test helpers race under -race**: the existing `rateLimitOK{ran bool}` helper in ratelimit_test.go writes its `ran` field on every ServeHTTP call. When N goroutines hit the SAME helper instance (BE-0363's concurrent-burst test originally did this), the -race detector flags the write-write race even though the field is logically irrelevant to the assertion. **Pattern**: any test that fans out N goroutines through one http.Handler MUST use a stateless handler (an inline `http.HandlerFunc` that writes only to its per-call ResponseWriter), NOT a shared helper struct with mutable fields. The non-race tests in this file can keep using the shared helper because httptest single-request flow is sequential.
+  - **AST `ast.Inspect` does not expose parent**: BE-0363's `findRateLimitWrapSeams` matcher needed to know "the local variable `rateLimit` was bound to `RateLimit(...)`" before it could look for `h = rateLimit(h)` wrap sites. Solution: TWO passes — first walk records binders (`<name> = RateLimit(...)`) into a `map[string]struct{}`; second pass looks for assignments whose RHS is `<binder>(<lhs>)`. Same shape applies to any "find downstream uses of a CallExpr-bound name" matcher.
+  - **Static-test SECURITY.md substring assertions need the exact rendered substring, NOT a paraphrase**: the matcher checks `strings.Contains(text, want)` with the literal string. If the doc says `internal/release/...static_test.go` (with the path prefix), the substring `static_test.go` (without prefix) fails the contains check ONLY if the prefix is required by the assertion. Lesson: write the assertion list as the EXACT substrings the doc must contain, then write the doc to match. My first pass listed the full path `` `internal/release/rate_limit_bypass_resistance_static_test.go` `` but wrote the doc as a two-clause phrase that broke the substring; reworded the doc to keep the bare backtick-fenced filename `` `rate_limit_bypass_resistance_static_test.go` `` and added a "(under `internal/release/`, BE-0363)" follow-up — both halves now match independently.
+  - **The BE-0344 two-test pattern scales to "non-bypass" invariants**: BE-0363 is the EIGHTH worked instance, but the FIRST where the runtime half exercises an actual concurrent attacker (20 parallel goroutines through a production limiter). The pattern absorbs the new shape with no template changes — the static half pins the structural invariants (single Exempt site, closed constant set, canonical 429 seam, per-route wrap), the runtime half pins the marker-based behavioural invariants (forged headers/path/IP cannot flip Exempt, concurrent burst cannot exceed cap, deny log redacts bucket identity, envelope body redacts bucket identity, anonymous request still consults limiter). Forward-applicable to any future "X must not be reachable via attacker-controlled input Y" gate.
+---

@@ -7782,7 +7782,7 @@
       ],
       "type": "security-verification",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Security topic: rate-limit bypass resistance."
     },
     {

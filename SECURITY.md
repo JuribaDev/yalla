@@ -76,6 +76,7 @@ defined in `.github/workflows/ci.yml`:
 | Environment variable redaction | `go test ./internal/controlplane/variables/... -run TestRedaction` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Dokploy token isolation | `go test ./internal/release/... -run TestDokployTokenIsolation` and `go test ./internal/controlplane/config/... -run TestRuntimeConfigDokployToken` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Backup encryption | `go test ./internal/release/... -run TestBackupEncryption` and `go test ./internal/controlplane/backup/... -run TestFileReporterEncryptionMarker` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| Rate limit bypass resistance | `go test ./internal/release/... -run TestRateLimitBypassResistance` and `go test ./internal/controlplane/httpapi/... -run TestRateLimitBypassResistance` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Release config | `goreleaser check` and `goreleaser release --snapshot` | CI `goreleaser-check` job | Every push and PR |
 
 Before cutting a tag the maintainer additionally runs:
@@ -737,6 +738,125 @@ this `SECURITY.md` section so the threat model stays accurate.
 secrets (the fuzzer's mutated raw bytes wrapped in `~…~` markers)
 — never real `--token` values, real Dokploy tokens, or real
 customer API keys.
+
+## Rate Limit Bypass Resistance
+
+The customer-facing HTTP rate-limit gate
+(`internal/controlplane/httpapi/ratelimit.go`, BE-0035) bills three
+in-memory token buckets in order: the resolved organization, the
+resolved API key / session principal, and the resolved client IP.
+The dimension name (`organization` / `api_key` / `ip`) is the only
+identity Yalla puts on the wire. The bucket *identity* (a tenant
+org id, an API key id, a client IP) is never echoed to the wire,
+to the structured WARN log record, or to the `Decision.Bucket`
+field. A regression that smuggled a bucket identity onto any of
+those surfaces would turn the throttling signal into a
+cross-tenant leak.
+
+**Threat model.** Five bypass-shaped regressions are explicitly
+out of scope for this control:
+
+1. **Forged internal-worker claim.** The internal-worker
+   credential scheme is the one and only bypass: a request whose
+   principal authenticated through `auth.MethodInternalWorker`
+   carries `ratelimit.Request.Exempt = true` and is
+   unconditionally allowed. A regression that set `Exempt = true`
+   on any code path other than "the resolved auth method is
+   `auth.MethodInternalWorker`" — for example, a request that
+   carries an `X-Yalla-Internal: 1` header, a path that begins
+   with `/v1/internal`, or a private-range source IP — would let
+   an external attacker spoof their way past the gate.
+2. **Bucket-identity leak.** A `Decision.Bucket` value other than
+   `ratelimit.BucketOrg`, `ratelimit.BucketKey`, or
+   `ratelimit.BucketIP` would push the bucket identity into the
+   `apierr.RateLimited` detail map and onto the wire envelope's
+   `details["scope"]` slot.
+3. **Non-canonical 429 emission.** A bare `http.Error`, a
+   hand-rolled JSON `fmt.Fprintf`, or a direct
+   `w.Write([]byte(...))` in the deny branch would either lose
+   the stable `yalla.error.v1` envelope or embed the limiter's
+   internal error string in the body. The only legal emission
+   seam is `apienvelope.WriteError(w, requestID(r),
+   apierr.RateLimited(decision.Bucket, retry))`.
+4. **Un-wrapped route.** `server.go` MUST hold exactly one
+   `RateLimit(...)` construction site and the per-route loop body
+   MUST pass every served handler through `rateLimit(h)`. A
+   regression that wrapped only some routes would let an
+   attacker bypass the gate by hitting the un-wrapped route.
+5. **`X-Forwarded-For` chain spoofing.** `ClientIP` parses only
+   the first comma-separated entry of `X-Forwarded-For`. A bogus
+   suffix cannot push the real client identity out of the bucket
+   key; a forged prefix is acceptable only when a trusted reverse
+   proxy is in front (the TLS/proxy header trust posture in
+   SECURITY.md's "TLS Termination and Proxy Header Trust"
+   section).
+
+**Static evidence (structural half).** The static gate
+`rate_limit_bypass_resistance_static_test.go`
+(under `internal/release/`, BE-0363) walks the production AST
+and asserts:
+
+- Exactly one `Exempt = true` assignment lives in the
+  `internal/controlplane/httpapi` package production tree, and
+  it sits inside an `if` whose condition references
+  `auth.MethodInternalWorker`.
+- Every `Decision{Bucket: ...}` composite literal in
+  `internal/controlplane/ratelimit/limiter.go` uses one of the
+  three named constants (`BucketOrg`, `BucketKey`, `BucketIP`).
+- The 429 emission seam in `ratelimit.go` is exactly one
+  `apienvelope.WriteError` call wrapped around exactly one
+  `apierr.RateLimited` call, with no `http.Error`,
+  `fmt.Fprintf(w, ...)`, or `w.Write([]byte(...))` siblings.
+- `server.go` holds exactly one `RateLimit(...)` construction
+  site and exactly one `h = rateLimit(h)` per-route wrap.
+
+A self-check
+(`TestRateLimitBypassResistanceStaticAnalyzerDetectsRegressions`)
+installs intentionally-broken fixtures and proves each matcher
+flags its regression class, so the positive-case silence of the
+production tree today is never a false negative.
+
+**Runtime evidence (behavioural half).**
+`internal/controlplane/httpapi/ratelimit_bypass_test.go` proves
+the same invariants end-to-end through the middleware:
+
+- A request with `X-Yalla-Internal: 1`,
+  `X-Yalla-Auth-Method: internal_worker`, or any other
+  attacker-controlled header CANNOT flip `Exempt` to true; the
+  limiter still bills the customer bucket and the request is
+  deniable.
+- A request to `/v1/internal/...` cannot bypass the gate; the
+  path is not a bypass signal.
+- A request stamped with a non-internal-worker auth method
+  (`auth.MethodAPIKey`) is rate-limited normally.
+- A chained `X-Forwarded-For` value honours the first hop only;
+  the bypass-marker tail never reaches the bucket key.
+- A concurrent burst of 20 parallel requests against a single
+  per-key bucket with `Burst=3` cannot grant more than 3
+  successes (atomicity of the production `*ratelimit.Limiter`).
+- The WARN log record emitted on a denial carries only the
+  bucket dimension name; the bucket identity (principal id, org
+  id, client IP) never appears in the record.
+- The 429 wire envelope body carries `details["scope"]` equal to
+  one of `organization` / `api_key` / `ip`, never the bucket
+  identity.
+- An anonymous request (no principal, no auth method) still
+  consults the limiter and falls through to the IP bucket — the
+  "send anonymous to skip the gate" bypass does not exist.
+
+**Bypass-marker sentinel.** Every runtime test prefixes its
+attacker-controlled fields with the constant
+`bypassMarker = "BE0363RATELIMITBYPASSMARKERXYZ"` (longer than
+any realistic header value), then asserts the marker never
+reaches the limiter's `Exempt` flag, the deny log record's
+non-path slots, or the 429 envelope body. The marker is the
+leak detector — asserting on the bucket dimension name alone
+would false-positive whenever the value happens to equal a
+substring of the stable projection text.
+
+**No live secrets.** The test suite uses synthetic marker
+prefixes only — never real `Authorization` bearer tokens, real
+Dokploy tokens, or real customer API keys.
 
 ## Disclosure Timeline (Best Effort)
 
