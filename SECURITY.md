@@ -74,6 +74,7 @@ defined in `.github/workflows/ci.yml`:
 | Admin endpoint isolation | `go test ./internal/release/... -run TestAdminEndpointIsolation` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Support access review | `go test ./internal/release/... -run TestSupportAccessReview` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Environment variable redaction | `go test ./internal/controlplane/variables/... -run TestRedaction` | CI `test` job, `scripts/verify.sh` | Every push and PR |
+| Dokploy token isolation | `go test ./internal/release/... -run TestDokployTokenIsolation` and `go test ./internal/controlplane/config/... -run TestRuntimeConfigDokployToken` | CI `test` job, `scripts/verify.sh` | Every push and PR |
 | Release config | `goreleaser check` and `goreleaser release --snapshot` | CI `goreleaser-check` job | Every push and PR |
 
 Before cutting a tag the maintainer additionally runs:
@@ -467,6 +468,95 @@ operator-opt-in.
 (`"FUZZENVMARKERLMN"`) and synthetic values (the corpus or the fuzzer's
 mutated raw bytes wrapped in marker brackets) — never real customer
 secrets, real Dokploy tokens, or real API keys.
+
+## Dokploy Token Isolation
+
+The privileged Dokploy bearer token (`YALLA_DOKPLOY_TOKEN`) is the
+master credential the Yalla control plane uses to mutate any resource
+inside the operator's private Dokploy installation. A leak — into
+operator logs, customer-facing JSON responses, the audit ring buffer,
+or an error message — would compromise every customer organization
+the Dokploy instance hosts. A regression that piped the token into a
+customer-facing HTTP handler would let any authenticated customer
+mint privileged Dokploy requests directly, bypassing the worker
+queue, the audit trail, and Yalla's per-tenant policy decisions. The
+posture below is pinned by
+`internal/release/dokploy_token_isolation_static_test.go` (BE-0361);
+the gate rejects any of the following shapes at build time, and the
+runtime evidence in
+`internal/controlplane/config/dokploy_token_isolation_test.go`,
+`internal/controlplane/dokploy/client_test.go`
+(`TestClientRedactsSecrets`, `TestClientLogValueRedactsToken`), and
+the auth-failure path of `TestClientAuthorizationFailure` proves the
+operator-visible projections never carry the bearer.
+
+- **Single in-process consumer.** The Dokploy token MUST flow into
+  exactly one in-process consumer — the typed `*Client` in
+  `internal/controlplane/dokploy/client.go`, where it is bound to
+  the unexported `token` field of `*Client`. The `Client` struct's
+  bearer-token field MUST remain unexported (lowercase `token`); an
+  exported `Token` field would let any caller read the secret via a
+  selector. The matcher walks the `Client` struct's fields and
+  rejects any exported field whose lowercased name is `token`.
+- **One wire emission site.** The `.token` selector against a
+  `*Client` receiver MUST appear in exactly one location across all
+  production `.go` files under `internal/controlplane/dokploy` —
+  the canonical `Authorization: Bearer <token>` header injection
+  (`req.Header.Set("Authorization", "Bearer "+c.token)`) in
+  `client.go`'s `attempt` method. The constructor's
+  `token: token` composite-literal binding is a `KeyValueExpr.Key`,
+  not a selector, and is the only other legitimate token-touching
+  site. A regression that added a `fmt.Errorf("token %q rejected",
+  c.token)`, a `slog.String("token", c.token)`, an audit-metadata
+  stamp, or an envelope projection would surface the bytes in
+  operator logs, error messages, or customer-facing responses; the
+  matcher counts every `.token` selector across the production
+  package and rejects any count other than 1, plus pins the single
+  allowed location to `client.go`.
+- **Customer-facing surface is quarantined.** No production source
+  file under `internal/controlplane/httpapi` may name
+  `dokploy.Client`, `dokploy.NewClient`, or `dokploy.Config` — the
+  three token-bearing entry points of the dokploy package. The
+  handler tree legitimately imports the dokploy package to consume
+  the value enum (`dokploy.ServiceType`, `dokploy.ServiceApplication`,
+  `dokploy.ServiceDatabase`, `dokploy.ServiceCompose`) for desired-
+  state rendering; that surface carries no token. The matcher also
+  rejects any SelectorExpr ending in `.DokployToken` (catching
+  `config.DokployToken`, `cfg.DokployToken`, and any other receiver
+  alike) and any reference to `EnvDokployToken` or
+  `config.EnvDokployToken` from httpapi production sources — a
+  handler that read the env-var directly would short-circuit the
+  redaction seam and would let customer-facing code mint privileged
+  Dokploy requests outside the worker boundary.
+- **Operator-visible projections go through the redactor.**
+  `(*Config).Redacted()` MUST stamp the `DokployToken` field via
+  the local `redact(...)` closure so the returned `RedactedConfig`
+  carries the `[REDACTED]` sentinel, not the secret. The matcher
+  walks the Redacted method's returned composite literal, locates
+  the `DokployToken` field, and rejects a value that is not a
+  `redact(...)` call expression. `(*Config).LogValue()` MUST
+  consult `c.Redacted()` first AND MUST NOT touch `c.DokployToken`
+  directly; the redaction seam is the only thing standing between
+  an accidental `slog.Any("config", c)` capture and the bearer
+  landing in the structured log stream. The matcher pins both
+  shapes.
+
+**Runtime evidence.** Three table-driven tests under
+`internal/controlplane/config/dokploy_token_isolation_test.go` close
+the runtime half: every fixture installs the canonical
+`BE0361DOKPLOYTOKENMARKERXYZ` marker prefix on the
+`Config.DokployToken` field and asserts the marker never appears in
+the `Redacted()` JSON projection, in the slog-JSON-handler output
+under `slog.Any("config", c)`, or in the `(*Config).String()` debug
+projection. The marker pattern is the leak detector — asserting the
+token's bytes alone would false-positive whenever the value happens
+to equal a substring of the stable projection text (e.g. the field
+name `dokploy_token`), so the unique marker prefix is what makes the
+detector load-bearing under fuzzed inputs.
+
+**No live secrets.** The test suite installs synthetic marker
+prefixes (`"BE0361DOKPLOYTOKENMARKERXYZ"`) — never real Dokploy
+service tokens.
 
 ## Log Redaction Fuzzing
 

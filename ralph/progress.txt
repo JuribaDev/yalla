@@ -1,4 +1,6 @@
 ## Codebase Patterns
+- Security-verification cross-package secret-confinement pattern, Dokploy-token instance (BE-0361 pattern, internal/release/dokploy_token_isolation_static_test.go + internal/controlplane/config/dokploy_token_isolation_test.go + SECURITY.md "## Dokploy Token Isolation" section + internal/controlplane/dokploy/AGENTS.md "Token isolation (BE-0361)" subsection; SEVENTH worked instance of the BE-0344 two-test template and FIRST cross-package instance — confirms the template scales from "this single function MUST honour rule X" (BE-0346) and "this directory MUST NOT import surface Y" (BE-0357 admin endpoints, BE-0349 SSRF) to "this scarce in-process secret MUST flow from source-of-truth package A through redaction package B into wire-emission package C with NO leak surface in customer-facing package D". Six load-bearing rules: (1) TRAILING-SELECTOR-NAME matching — when the field name is unambiguously the secret in the codebase ("DokployToken" is unique to the Config secret field, no other struct has a field of the same name), match by `SelectorExpr.Sel.Name == "DokployToken"` regardless of the receiver. This catches `config.DokployToken`, `cfg.DokployToken`, `c.DokployToken`, and any future-receiver shape alike, in ONE matcher rule, where the package-qualified-only variant would miss the `c.DokployToken` form a method using a `*config.Config` receiver would naturally write. The receiver-name freedom is the load-bearing rule: any closed list of qualifiers (`config.`, `cfg.`, …) is brittle to local-naming choices in a future refactor. (2) RETURN-FALSE-FROM-INSPECT to suppress double-counting when a matcher fires on a parent node whose children would ALSO match — `config.EnvDokployToken` is both a SelectorExpr (X=`config`, Sel=`EnvDokployToken`) and contains an inner `EnvDokployToken` Ident that the bare-Ident matcher would also flag. Returning `false` from the `ast.Inspect` callback after emitting the SelectorExpr diagnostic stops descent and keeps the count at 1. The self-check fixture `handler that reads config.EnvDokployToken is rejected` pins this — without the `return false` it would fail with `got 2, want 1`. (3) COUNT-AND-PIN-LOCATION instead of count-only — for invariants where the secret MUST appear at exactly one structural location (here, `c.token` in `client.go`'s Authorization header), the matcher returns the full set of `file:line:col` triples across every production file in the package, the test asserts `len == 1` AND the single hit's path-prefix equals the canonical file. A count-only assertion would let a future refactor move the line to a different file silently; a path-only assertion would let a duplicate slip in. The two assertions in series are strictly stronger than either alone. The constructor's `token: token` binding (a `KeyValueExpr.Key`, not a `SelectorExpr`) is NOT counted by construction — `ast.Inspect` walks the Key as an `Ident`, not a `SelectorExpr`, so the matcher's `SelectorExpr` pivot skips it for free. The self-check fixture `constructor binding token: token is NOT counted` pins this distinction. (4) COMPOSITE-LITERAL-FIELD-VALUE inspection for redaction-seam invariants — `(*Config).Redacted()` returns a `RedactedConfig{...}` composite literal whose `DokployToken` field value MUST be a CallExpr to the local `redact(...)` closure. The matcher uses `findMethodOnReceiver(file, "Config", "Redacted")` (a small helper that walks `file.Decls` filtering `FuncDecl.Recv.List[0].Type` against both `*ast.Ident` and `*ast.StarExpr` receivers), then walks the method body looking for ANY composite literal containing a `DokployToken` KeyValueExpr, then asserts the value is a CallExpr with `Fun.Name == "redact"`. Three orthogonal regressions fire one diagnostic each: missing method, missing field in the literal, bare-selector value instead of a call. The same pattern applies to ANY future "method M MUST stamp field F through helper H before returning" structural rule. (5) USES-FIRST gate for defence-in-depth log surfaces — `(*Config).LogValue()` MUST call `c.Redacted()` first AND MUST NOT touch `c.DokployToken` directly. The matcher walks the method body, tracking `seenRedactedCall` (set when a `c.Redacted()` CallExpr is found) and emitting a diagnostic for EVERY `c.DokployToken` SelectorExpr seen. The two diagnostics are independent — a method that called `c.Redacted()` but ALSO read `c.DokployToken` directly would fire one; a method that omitted the call but had no direct read would fire the other; a method that did both would fire both. Forward-applicable to any "MUST consult helper H before reading secret S" pattern (variables LogValue, future credentials redactor, etc.). (6) MARKER-PATTERN runtime gate at the projection seams — three table-driven tests in `dokploy_token_isolation_test.go` install a fixed `BE0361DOKPLOYTOKENMARKERXYZ` prefix on the Config.DokployToken field and assert the marker never appears in (a) the `json.Marshal(c.Redacted())` byte stream, (b) the `slog.JSONHandler` output under `slog.Any("config", c)`, and (c) the `c.String()` debug projection — for EACH of three fixtures: short-token (canonical), long-token (longer than the redactor's sentinel, longer than any reasonable line-buffered slog chunk so a partial-flush leak would still surface), and collision-prefix (token prefix collides with the projection's field name `dokploy_token`, so a regression that truncated at the field-name boundary would still trip the marker check). The marker is the leak detector — asserting on token bytes alone would false-positive whenever the value happens to equal a substring of the stable projection text. (7) GOLANGCI-LINT S1025 gotcha — staticcheck (under golangci-lint v2) flags `fmt.Sprintf("%s", x)` as redundant when `x` has a `String()` method, suggesting `x.String()` instead. For BE-0361 the intent of the runtime test was to PROVE that `fmt.Sprintf("%s", cfg)` doesn't leak, but since `fmt.Sprintf` with `%s` against a Stringer DELEGATES to `.String()`, calling `.String()` directly exercises the same code path and satisfies the linter. The test comment must explicitly document the equivalence so a future reader understands why the seemingly indirect "%s" check is actually identical to the direct Stringer invocation. The same gotcha applies to any future Stringer-surface security test.
+
 - Read-endpoint contract-test triple (BE-0095/BE-0101 pattern,
   internal/controlplane/httpapi/{limits_get_contract_test.go,
   usage_get_contract_test.go}; structural template for every
@@ -26194,4 +26196,80 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     already encodes Kind=KindUser). Dropping the unused domain import
     keeps goimports clean — a small but recurring per-story diff
     against the BE-0104 template.
+---
+
+
+## 2026-05-17 - BE-0361 - Security verification: Dokploy token isolation
+
+- Implemented the two-test BE-0344 template for the privileged Dokploy
+  bearer token: static gate (AST + literal pin in SECURITY.md) + runtime
+  marker-pattern projection-seam test + AGENTS.md subsection.
+- Files changed:
+  - internal/release/dokploy_token_isolation_static_test.go (NEW): six
+    tests + one self-check covering five structural invariants —
+    (1) customer-facing httpapi tree is selector-free of dokploy.Client /
+    dokploy.NewClient / dokploy.Config and reference-free of
+    DokployToken / EnvDokployToken; (2) Client struct's token field
+    stays unexported; (3) the `c.token` selector against the receiver
+    appears at exactly ONE file:line:col across every production .go
+    file in internal/controlplane/dokploy and the single hit lives in
+    client.go; (4) (*Config).Redacted() stamps DokployToken through
+    the local redact() closure; (5) (*Config).LogValue() calls
+    c.Redacted() first and never touches c.DokployToken directly.
+  - internal/controlplane/config/dokploy_token_isolation_test.go (NEW):
+    three table-driven runtime tests (Redacted JSON, LogValue slog
+    JSON, Config.String() Stringer) with the BE0361DOKPLOYTOKENMARKERXYZ
+    marker pattern across three fixtures (short-token, long-token,
+    collision-prefix).
+  - SECURITY.md: added "## Dokploy Token Isolation" section
+    documenting the threat model, the four structural invariants, the
+    runtime evidence, and the no-live-secrets policy; added the
+    "Dokploy token isolation" row to the Required Verification Gates
+    table with the canonical `go test ./... -run TestDokployTokenIsolation`
+    and `... -run TestRuntimeConfigDokployToken` invocations.
+  - internal/controlplane/dokploy/AGENTS.md: added "## Token isolation
+    (BE-0361)" subsection summarising the three load-bearing rules a
+    future contributor in this package must observe (unexported token
+    field, single `.token` selector site, customer-surface
+    quarantine of Client/NewClient/Config).
+  - ralph/prd.json: BE-0361.passes flipped to true.
+- Verification run:
+  - gofmt -l . (clean)
+  - go mod tidy (clean)
+  - go vet ./... (clean)
+  - go test ./... (PASS — 38 packages, including the 4 new tests +
+    self-check subtests under TestDokployTokenIsolation*)
+  - go test -race ./... (PASS)
+  - golangci-lint run ./internal/release/... ./internal/controlplane/config/...
+    (0 issues; fixed one S1025 by replacing `fmt.Sprintf("%s", cfg)`
+    with `cfg.String()` — same code path, lint-clean)
+  - staticcheck / govulncheck NOT installed locally; CI security job
+    runs both.
+- Remaining risks or follow-ups:
+  - The static gate's customer-surface scan is bounded to direct
+    children of internal/controlplane/httpapi. If the handler tree
+    ever grows subdirectories, the matcher must be extended to recurse
+    (current dokployTokenHTTPAPIProductionFiles uses os.ReadDir, not
+    filepath.WalkDir). No httpapi subdirs exist today, but a future
+    `internal/controlplane/httpapi/v2/` would silently escape the gate.
+  - The single-`.token`-selector gate counts ANY `.token` selector in
+    the production package's non-test, non-dokployfake sources, not
+    just selectors against *Client. If a future refactor introduces a
+    new type with a `token` field in this package (e.g. a request-
+    level retry tracker), the gate would fire on it. The right fix
+    when that lands is to widen the matcher with a type-aware predicate
+    or to add the new type to an explicit allowlist; the threat
+    model justifies the conservative default.
+  - **Learnings for future iterations:**
+    - Six new patterns added to the Codebase Patterns block above.
+      The cross-package secret-confinement template is the most
+      reusable: any future "secret S MUST flow from package A through
+      package B into package C with NO leak surface in package D"
+      story can clone this layout end-to-end with only the constants,
+      the fixture marker, and the SECURITY.md substrings changed.
+    - The BE-0344 two-test template has now scaled across six packages
+      (output, telemetry/logging, httpapi/csrf, httpapi/admin, validate/ssrf,
+      now dokploy + config + release). The shape is stable enough that
+      future security-verification stories should reach for this
+      skeleton first.
 ---

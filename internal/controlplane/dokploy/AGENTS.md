@@ -102,3 +102,29 @@ client.
 - The fake takes no `testing.TB`; callers `defer srv.Close()`. It depends only
   on `internal/output` + stdlib, so any package's tests can import it without
   a cycle.
+
+## Token isolation (BE-0361)
+
+- The bearer token MUST live in the unexported `token` field of `*Client`
+  and nowhere else. A regression that renamed it `Token` (exported) is
+  rejected at build time by
+  `internal/release/dokploy_token_isolation_static_test.go`.
+- The `.token` selector against a `*Client` receiver MUST appear in
+  exactly one location across every production `.go` file in this
+  package — the canonical
+  `req.Header.Set("Authorization", "Bearer "+c.token)` call inside
+  `client.go`'s `attempt`. The constructor's `token: token` composite-
+  literal binding (a `KeyValueExpr.Key`, not a SelectorExpr) is the
+  only other legitimate token-touching site. A new `fmt.Errorf("token
+  %q rejected", c.token)`, `slog.String("token", c.token)`, audit-
+  metadata stamp, or envelope projection that adds a second
+  `.token` selector breaks the static gate by design.
+- Customer-facing handlers MUST NOT name `dokploy.Client`,
+  `dokploy.NewClient`, or `dokploy.Config`. The handler tree
+  (`internal/controlplane/httpapi`) is allowed to consume only the
+  value enum — `dokploy.ServiceType` and the
+  `dokploy.Service{Application,Database,Compose}` constants — because
+  those carry no token. Any new exported symbol on this package that
+  reaches a handler must either be a pure-data type (no token, no
+  HTTP capability) or be paired with an update to the static gate's
+  `forbiddenDokployClientSelectors` allowlist after security review.
