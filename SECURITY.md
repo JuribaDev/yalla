@@ -89,6 +89,7 @@ defined in `.github/workflows/ci.yml`:
 | Admin endpoint tests | `go test -run TestAdminEndpoint ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Break-glass tests | `go test -run TestBreakGlass ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Reconciliation tests | `go test -run TestReconciliation ./...` | `scripts/verify.sh`, CI | Every push and PR |
+| Import dry-run tests | `go test -run TestImportDryRun ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | External live-Dokploy smoke tests | `YALLA_EXTERNAL_DOKPLOY=1 go test -run TestLiveDokploySmoke ./...` | `.github/workflows/external-smoke.yml`, `scripts/verify.sh` (opt-in) | Opt-in (`YALLA_EXTERNAL_DOKPLOY=1`), nightly + manual |
 | Race detector | `go test -race ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Vulnerability scan | `govulncheck ./...` | CI `security` job | Every push and PR |
@@ -3318,6 +3319,99 @@ needing to discover it from shell scripts or CI workflows. Every
 push and PR runs the gate. The single static defence that pins
 every one of those surfaces is
 `internal/release/verification_suite_reconciliation_static_test.go`.
+
+## Import Dry-Run Tests
+
+The import dry-run suite (BE-0406) is the operator-facing
+preview gate for the migrateimport package. The pure-classifier
+chokepoint is
+`(*migrateimport.Importer).Plan(ctx, PlanInput) (Plan, error)`:
+the planner walks the live Dokploy snapshot, queries the
+Repository port for slug collisions and pre-existing links, and
+emits a deterministic `Plan` whose every `PlanItem` carries a
+stable closed-set tag `(ResourceLevel, ItemStatus, ItemReason)`.
+A Yalla operator runs this gate to preview which pre-existing
+Dokploy resources would become customer-visible if the operator
+committed to an `OwnerAssignment`; the dry-run itself MUST
+never write to the Repository and MUST never query the
+Repository when invoked without an assignment (the pending-
+owner short-circuit). The gate is run by
+`go test -run TestImportDryRun ./...`.
+
+The closed-set coverage invariant pins five structural import-
+dry-run contracts in one place: every documented `ItemStatus`
+(`ready`, `pending_owner`, `skip_duplicate`,
+`skip_missing_parent`, `skip_unsupported_type`,
+`skip_already_imported`) MUST be exercised by at least one
+scenario row; every documented `ItemReason`
+(`ready_to_import`, `explicit_owner_missing`,
+`duplicate_name_in_parent`, `missing_parent_import`,
+`unsupported_service_type`, `already_linked`) MUST also be
+exercised by at least one row; `Plan(ctx, in)` MUST be
+deterministic — calling it twice on the same inputs with the
+same seeded Repository state yields equal plans; the value-free
+classification invariant pins that untrusted Dokploy display
+names reach `ProposedDisplay` (the deliberate value-routing
+field operators read in audits) but NEVER appear in `Status`,
+`Reason`, or `Level`; and the dry-run purity invariant pins
+that `Plan` is read-only — no `CreateProject`,
+`CreateEnvironment`, or `CreateService` call ever shows up on
+the Repository, and a no-`OwnerAssignment` call never touches
+the Repository at all.
+
+The canonical pair (`TestImportDryRunCoversCallSites` and
+`TestImportDryRunPreservesContractUnderContention`) lives in
+`internal/controlplane/migrateimport/import_dry_run_canonical_test.go`
+and binds to the PRD's `-run TestImportDryRun` filter. The
+first member walks a closed scenario table built from every
+documented `ItemStatus` and `ItemReason` of `Importer.Plan`,
+seeds `importsecretmarker` into untrusted Dokploy display
+names on every row, and asserts the marker survives in
+`ProposedDisplay` but is absent from every closed-set tag field
+of every emitted item. The second member fires
+`importDryRunWorkers * importDryRunIterationsPerWorker`
+goroutines that each draw a row from the same scenario table
+by deterministic mod-index, build their own (Snapshot, fake
+Repository, OwnerAssignment) triple, construct an Importer,
+and assert the per-iteration verdict. A cross-write under the
+race that swapped two goroutines' scenarios — or a future
+regression that introduced shared mutable state in the package
+(a cached owner table, a `sync.Once` mutating a per-action
+map, a `sync.Pool` reused without reset) — would fail the
+per-iteration assertion even when the aggregate pass count
+matched. Both members are deterministic by design: `Plan` is a
+deterministic function of its inputs and the seeded Repository
+state, and neither member reaches the process environment, the
+network, a live Postgres, a live Dokploy, or any external
+service.
+
+When the suite fails, every actionable failure message names
+the scenario row that drifted, the closed-set tag the row
+predicted, and the closed-set tag the planner actually emitted,
+so operators do not need to read the canonical pair to triage.
+Errors propagate through the same `yalla.error.v1` envelope
+shape any other backend test produces; success rows assert the
+plan's `DokployOrganizationID` is non-empty so the tenant-
+scoping invariant is enforced on every row. The redaction
+contract is exercised in two directions: every scenario seeds
+the marker into Dokploy display names and asserts the marker
+survives into `ProposedDisplay` (the operator review surface
+needs to render the human-authored name), and the marker MUST
+NOT echo into `Status`, `Reason`, or `Level` of any emitted
+item. Only a Yalla service principal with the `admin` role can
+trigger an import via the eventual
+`POST /v1/admin/dokploy/import` admin endpoint; the gate is
+documented as a dedicated `Import dry-run tests` step in
+`.github/workflows/ci.yml`, under
+`# 30. Required: import dry-run tests` in `scripts/verify.sh`,
+as entry `30` in `CONTRIBUTING.md` under
+`## Required Checks Before Every Commit`, and in
+`ralph/prd.json` under `verificationLoop.requiredBackendCommands`
+so an AI agent reading the PRD before picking up a story sees
+the gate without needing to discover it from shell scripts or
+CI workflows. Every push and PR runs the gate. The single
+static defence that pins every one of those surfaces is
+`internal/release/verification_suite_import_dry_run_static_test.go`.
 
 ## Race Detector
 

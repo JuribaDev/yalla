@@ -2322,3 +2322,114 @@ update the matching constant in
 `verification_suite_reconciliation_static_test.go` in
 the same edit. The matchers fail loudly on drift; the
 assertion IS the contract.
+
+## Verification suite: import dry-run tests (BE-0406)
+
+`verification_suite_import_dry_run_static_test.go` pins
+the import dry-run verification gate. It is the load-
+bearing static defence for the contract between Yalla's
+`internal/controlplane/migrateimport/importer.go` (the
+pure-classifier chokepoint
+`(*migrateimport.Importer).Plan(ctx, PlanInput)
+(Plan, error)`) and every downstream caller that relies
+on the planner's closed-set `(ResourceLevel,
+ItemStatus, ItemReason)` tag on every emitted
+`PlanItem`. The canonical pair
+(`TestImportDryRunCoversCallSites` and
+`TestImportDryRunPreservesContractUnderContention`)
+lives in
+`internal/controlplane/migrateimport/import_dry_run_canonical_test.go`
+and binds to the PRD's `-run TestImportDryRun` filter.
+The first member walks a closed scenario table built
+from every documented `ItemStatus` (`ready`,
+`pending_owner`, `skip_duplicate`,
+`skip_missing_parent`, `skip_unsupported_type`,
+`skip_already_imported`) and every documented
+`ItemReason` (`ready_to_import`,
+`explicit_owner_missing`, `duplicate_name_in_parent`,
+`missing_parent_import`, `unsupported_service_type`,
+`already_linked`) of `Importer.Plan`. Each row predicts
+the dominant item's closed-set tag deterministically;
+every row seeds `importsecretmarker` into untrusted
+Dokploy display names and asserts the marker survives
+into `ProposedDisplay` (the deliberate value-routing
+field operators read in audits) and is absent from
+every closed-set classification field (`string(Level)`,
+`string(Status)`, `string(Reason)`) of every emitted
+item — a regression that started echoing the untrusted
+display name into `Status`, `Reason`, or `Level` would
+fail the marker-absence predicate on its first
+scenario. Four closed-set self-checks fire at the head
+of the test before any row is walked: every documented
+`ItemStatus` in `importDryRunItemStatuses` is exercised
+by at least one row; every documented `ItemReason` in
+`importDryRunItemReasons` is exercised by at least one
+row; `Plan(ctx, in)` produces equal plans on repeated
+calls (deterministic ordering); and the secret marker
+is non-empty so the per-row canary is meaningful. The
+second member fires `importDryRunWorkers *
+importDryRunIterationsPerWorker` goroutines that each
+draw a row by deterministic mod-index (`idx :=
+(w*iters + i) % len(rows)`, never per-goroutine random
+selection — that would defeat the per-iteration
+prediction contract), build their own (Snapshot, fake
+Repository, OwnerAssignment) triple via the scenario's
+builder, construct an `Importer`, and assert the per-
+iteration verdict. A cross-write under the race that
+swapped two goroutines' scenarios — or a future
+regression that smuggled shared mutable state into the
+package (a cached owner table, a `sync.Once` mutating
+a per-action map, a `sync.Pool` reused across calls
+without resetting) — would fail the per-iteration
+assertion even when the aggregate pass count matched.
+Both members are deterministic by design: `Plan` is a
+deterministic function of its inputs and the seeded
+Repository state, and neither member reaches the
+process environment, the network, a live Postgres, a
+live Dokploy, or any external service. The static test
+pins SIX surfaces in one file: the CI step name + run
+command (`- name: Import dry-run tests` /
+`run: go test -run TestImportDryRun ./...` in
+`.github/workflows/ci.yml`), the verify.sh required
+step header `# 30. Required: import dry-run tests` +
+literal command `go test -run TestImportDryRun ./...`,
+the CONTRIBUTING.md numbered entry
+`30. \`go test -run TestImportDryRun ./...\``, the
+SECURITY.md row + dedicated `## Import Dry-Run Tests`
+section (with the When column marked "Every push and
+PR"), the PRD command in
+`verificationLoop.requiredBackendCommands`, and the
+canonical pair file's existence with both function
+declarations present. Adding step #30 between
+BE-0405's #29 and the trailing optionals required
+renumbering verify.sh optional steps #30-#34 to
+#31-#35 and updating BE-0400's static test constants
+from `# 34. Optional…` to `# 35. Optional…` (and its
+synthetic-fixture `# 33 → # 34`) in the same edit —
+the renumber is the shared cost of inserting a
+required step into the sequence and continues the
+BE-0405 pattern verbatim. A second pure-classifier
+instance after BE-0405's reconcile chokepoint, the
+import-dry-run chokepoint differs in that `Plan`
+takes a context and queries small port interfaces
+(Scanner, Repository) rather than being a pure
+package-level function; the contention burst therefore
+builds a fresh Importer per iteration (rather than
+sharing a single chokepoint) so the burst's value is
+the assertion that the planner's *internal* pure logic
+(`classify`, `pendingOwnerItems`, `proposeSlug`,
+`indexProjectsByID`, `indexEnvironmentsByID`,
+`indexServicesByID`) has no package-level shared
+state. The self-check
+(`TestVerificationSuiteImportDryRunAnalyzerDetectsRegressions`)
+drives every matcher with synthetic known-good AND
+known-bad fixtures so over-tightening (a legitimate
+change trips the analyser) and under-tightening (a
+real regression slips through) are both caught at the
+package-internal API. When changing the CI workflow
+name, the verify.sh header, the CONTRIBUTING.md entry,
+the SECURITY.md row or section, or the PRD commands,
+update the matching constant in
+`verification_suite_import_dry_run_static_test.go` in
+the same edit. The matchers fail loudly on drift; the
+assertion IS the contract.
