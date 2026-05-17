@@ -3032,7 +3032,7 @@
       ],
       "type": "test-variables",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Contract coverage for PATCH /v1/organizations/{org_id}/variables/{key}."
     },
     {
