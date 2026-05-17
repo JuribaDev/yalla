@@ -81,6 +81,9 @@ jobs:
       - name: Migration tests from empty DB
         run: go test -run TestMigrationsEmptyDB ./...
 
+      - name: Migration downgrade safety tests
+        run: go test -run TestMigrationsDowngradeSafety ./...
+
       - name: Race detector
         run: go test -race ./...
 

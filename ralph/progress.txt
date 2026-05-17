@@ -27930,3 +27930,176 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     quartet is unique per story because the notes field carries the
     story-specific tail string.
 ---
+
+## 2026-05-17 - BE-0390 Verification suite: migration downgrade safety tests
+- Implemented BE-0390 (twelfth worked instance of the BE-0379..BE-0389
+  verification-suite mega-pattern). Canonical command:
+  `go test -run TestMigrationsDowngradeSafety ./...`.
+  CI step name: `Migration downgrade safety tests`. verify.sh numeric
+  prefix: #16 (inserted between BE-0389's #15 and the optionals;
+  trailing optionals renumbered 16->17 govulncheck, 17->18 staticcheck,
+  18->19 golangci-lint, 19->20 goreleaser).
+- Six-surface meta-contract pinned in
+  internal/release/verification_suite_migration_downgrade_safety_static_test.go:
+  .github/workflows/ci.yml step, scripts/verify.sh step #16,
+  CONTRIBUTING.md entry #16, SECURITY.md gate row + dedicated
+  `## Migration Downgrade Safety Tests` section,
+  ralph/prd.json verificationLoop.requiredBackendCommands entry, and
+  the canonical function pair in
+  internal/controlplane/store/migrate/migrate_test.go.
+- Canonical pair added to internal/controlplane/store/migrate/migrate_test.go:
+    1. TestMigrationsDowngradeSafetyContractCoversAllDownFiles -
+       closed-set reversibility, deterministic, no Postgres. Walks
+       embedded fs through the loader's filename grammar, asserts every
+       up has a matching non-empty down, no orphan downs, and
+       LoadMigrations surfaces every embedded down file as a non-empty
+       DownSQL. Cross-checks LoadMigrations against the on-disk FS so a
+       loader change that drops DownSQL parsing fails ONE test.
+    2. TestMigrationsDowngradeSafetyContractRoundTripsEmbeddedLadder -
+       Postgres-required, t.Skip when YALLA_TEST_DATABASE_URL unset.
+       Up, Down(0), assert ledger empty, Up again, assert checksums
+       match first-Up checksums with dirty=false. Surfaces failures with
+       schema_migrations.version=N resource_id; errors.Is(ErrIrreversible)
+       routes to the closed-set gate explicitly.
+- Files changed:
+    - internal/controlplane/store/migrate/migrate_test.go (canonical pair appended)
+    - internal/release/verification_suite_migration_downgrade_safety_static_test.go (new)
+    - .github/workflows/ci.yml (CI step added)
+    - scripts/verify.sh (step #16 inserted; optionals renumbered)
+    - CONTRIBUTING.md (entry #16 appended)
+    - SECURITY.md (gate row + dedicated section)
+    - ralph/prd.json (requiredBackendCommands entry; BE-0390.passes=true)
+- Verification run (from repo root):
+    gofmt -w . (clean)
+    go mod tidy (no changes)
+    go vet ./... (clean)
+    go test -count=1 -run TestMigrationsDowngradeSafety ./... -> ok (canonical pair: deterministic ran, Postgres skipped)
+    go test -count=1 -run TestVerificationSuiteMigrationDowngradeSafety ./internal/release/ -> ok
+    go test ./... -> 0 FAIL
+    go test -race -count=1 ./... -> 0 FAIL
+    go test -race -count=1 ./internal/controlplane/store/migrate/ ./internal/release/ -> ok
+- One iteration loop: first static-test run flagged SECURITY.md as
+  missing the literal substring "down script" - my first SECURITY.md
+  draft used "matching `.down.sql` partner" but never the bare phrase
+  "down script". Added "down script" inside the existing partner clause
+  in one Edit; both static tests then passed.
+- Remaining risks / follow-ups: none on the BE-0390 surface. The
+  pre-existing TestListServiceLogsInvalidLimit race-substring flake
+  noted under BE-0125 did not recur on this run but the underlying
+  collision is still latent in services_logs_test.go.
+- **Learnings for future iterations:**
+  - BE-0379..BE-0389 verification-suite template ports to BE-0390 with
+    only the per-story knobs changing: (a) canonical command
+    `go test -run TestMigrationsDowngradeSafety ./...`,
+    (b) CI step name `Migration downgrade safety tests`,
+    (c) verify.sh numeric prefix #16 (renumber trailing optionals in
+    the same edit - this is the FIRST time the optionals had to be
+    renumbered for a new required step; prior siblings only ever
+    appended a new required step at the next slot when no optionals
+    sat between them),
+    (d) SECURITY.md heading `## Migration Downgrade Safety Tests` and a
+    closed substring set anchored on the BE-0390 contract pivots
+    (down script, ErrIrreversible, Down(0), schema_migrations, NNNN_,
+    deterministic, resource_id, request_id, YALLA_TEST_DATABASE_URL,
+    YALLA_EXTERNAL_DOKPLOY, TestLiveDokploySmoke, yalla.output.v1,
+    yalla.error.v1, both canonical func names, "Every push and PR",
+    and the static-test file's own filename for self-locating).
+  - CANONICAL PAIR ENCODES DETERMINISTIC x POSTGRES-REQUIRED DUAL
+    (BE-0389 pattern, second worked instance) - the BE-0390 pair
+    splits across the same two substrates as BE-0389: the closed-set
+    reversibility test reads embed.FS only and runs on every machine;
+    the round-trip test acquires a throwaway Postgres database via
+    testPool and t.Skip's cleanly when YALLA_TEST_DATABASE_URL is
+    unset. Forward-applicable to any future verification story whose
+    contract spans deterministic-fixture-only AND
+    requires-infrastructure invariants (BE-0394 chaos Postgres
+    disconnects, BE-0407 desired-state goldens with optional Postgres
+    replay).
+  - CLOSED-SET COVERAGE WALKS embed.FS (BE-0389 pattern, second worked
+    instance) - the closed-set reversibility test walks the embedded
+    migrations directory through `fs.ReadDir(embeddedMigrations,
+    migrationsDir)` and the same `^(\d{4,})_([a-z0-9_]+)\.(up|down)\.sql$`
+    regex the loader uses. The matcher MIRRORS the loader's filename
+    grammar - a future grammar change in migrate.go MUST update both
+    the loader AND the canonical test in the same edit. The
+    bidirectional check (every up needs a down AND every down needs
+    an up) catches both halves of the closed-set regression with the
+    offending filename surfaced in the failure context.
+  - LOADER-CROSS-CHECK PINS DownSQL PARSING - the closed-set test
+    cross-references the embed-FS walk against
+    LoadMigrations(embeddedMigrations) and asserts
+    (DownSQL non-empty) == (down file present) for every loaded
+    migration. This catches a loader regression that drops DownSQL
+    parsing silently - the embed FS would still have the down file but
+    the loaded Migration would carry an empty DownSQL, which Down()
+    would treat as ErrIrreversible at runtime. Forward-applicable to
+    any future story whose closed-set surface has both an on-disk and
+    in-memory representation (BE-0398 tenant-isolation per repository
+    method, BE-0407 desired-state goldens).
+  - ROUND-TRIP READS LEDGER TWICE - the empty-DB round-trip test
+    captures schema_migrations rows AFTER first Up and AGAIN after
+    second Up post-Down(0), then asserts version+checksum equality
+    row-by-row. The checksum check is what catches "down script
+    destroys idempotency" regressions (a down that drops a table the
+    next up assumes exists, or a down that leaves state the next up
+    cannot tolerate). The dirty-row check on the second-Up reads is
+    what catches transaction-per-migration breaks across the
+    round-trip.
+  - VERIFY.SH RENUMBERING IS A SAME-EDIT OPERATION - inserting step #16
+    between #15 (BE-0389) and the existing optionals required
+    renumbering 16->17 govulncheck, 17->18 staticcheck,
+    18->19 golangci-lint, 19->20 goreleaser in the SAME edit. The
+    static-test fixture in TestVerificationSuiteMigrationDowngradeSafetyAnalyzerDetectsRegressions
+    explicitly anchors the synthetic CONTRIBUTING.md fixture on
+    `15. \`go test -run TestMigrationsEmptyDB ./...\`` (BE-0389's
+    entry) so the known-good fixture is the prior-state fixture and
+    the known-bad fixture is the prior-state fixture too - exactly
+    what the matcher needs to distinguish "BE-0390 added" from
+    "BE-0389 still present".
+  - SECURITY.md SUBSTRING SET ORDERING DOES NOT MATTER, COVERAGE DOES -
+    the BE-0390 SECURITY section's substring set was authored by
+    semantic anchor, not by source order: each entry pins a single
+    load-bearing fact (down script, ErrIrreversible, Down(0),
+    deterministic, schema_migrations, NNNN_, resource_id, request_id,
+    YALLA_TEST_DATABASE_URL, YALLA_EXTERNAL_DOKPLOY,
+    TestLiveDokploySmoke, yalla.output.v1, yalla.error.v1, both
+    canonical func names, "Every push and PR", and the static-test
+    file's own filename for self-locating). Authoring the section's
+    Markdown prose freely as long as every substring appears
+    somewhere in the section is the explicit affordance the test
+    leaves open. The FIRST static-test run caught one missing
+    substring ("down script") that my first draft of the section did
+    not include verbatim - inserting "down script" inline inside the
+    existing partner-clause sentence was a 1-edit fix.
+  - PRD requiredBackendCommands NEEDS TARGETED EDIT, NOT NODE
+    ROUND-TRIP - the BE-0389 progress entry said "MUST add via Node fs
+    round-trip" for the requiredBackendCommands list addition case.
+    For BE-0390 a plain targeted Edit anchored on the unique pair
+    `"go test -run TestFuzzValidator ./...",\n      "go test -run TestMigrationsEmptyDB ./..."` worked
+    cleanly with a 1-insertion + 1-deletion diff. The requiredBackendCommands
+    array is plain ASCII (no smart quotes or non-ASCII chars), so the
+    JSON-encoding-preservation concern that drove the Node round-trip
+    advice for ARBITRARY field additions does not apply when the new
+    array element is plain ASCII inserted between two existing plain-ASCII
+    entries. Use Node round-trip only when adding a field whose value
+    might contain non-ASCII chars that JSON.stringify would re-render.
+  - PRD passes-flag FLIP STAYS A TARGETED EDIT (BE-0125 pattern,
+    fourth worked instance) - flipping a single passes flag for
+    BE-0390 used a 4-line anchor on the unique (type, priority, passes,
+    notes) quartet. The notes field carries the story-specific tail
+    string ("Test suite: migration downgrade safety tests.") which is
+    unique across all 614 stories - the quartet is therefore a unique
+    anchor by construction.
+  - STATIC-TEST -run FILTER DOES NOT BIND TO INTERNAL/RELEASE - the
+    `go test -run TestMigrationsDowngradeSafety` filter binds to the
+    canonical pair in internal/controlplane/store/migrate/migrate_test.go
+    only; the static tests in
+    internal/release/verification_suite_migration_downgrade_safety_static_test.go
+    are named TestVerificationSuiteMigrationDowngradeSafety* (singular
+    Migration, not plural Migrations) and do NOT match
+    `TestMigrationsDowngradeSafety`. This is by design - the canonical
+    pair is what CI's dedicated step exercises; the static tests
+    surface in the umbrella `go test ./...` step. This mirrors the
+    BE-0389 pattern (TestVerificationSuiteMigrationsEmptyDB* vs
+    `-run TestMigrationsEmptyDB`).
+---

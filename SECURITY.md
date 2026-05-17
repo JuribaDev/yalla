@@ -75,6 +75,7 @@ defined in `.github/workflows/ci.yml`:
 | Redaction tests | `go test -run TestRedaction ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Fuzz validator tests | `go test -run TestFuzzValidator ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Migration tests from empty DB | `go test -run TestMigrationsEmptyDB ./...` | `scripts/verify.sh`, CI | Every push and PR |
+| Migration downgrade safety tests | `go test -run TestMigrationsDowngradeSafety ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Race detector | `go test -race ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Vulnerability scan | `govulncheck ./...` | CI `security` job | Every push and PR |
 | Lint suite | `staticcheck ./...` and `golangci-lint run ./...` | CI `security` job | Every push and PR |
@@ -1861,6 +1862,65 @@ operators and AI agents rely on:
   CONTRIBUTING entry, this section, the PRD command, and the
   canonical reference file are all pinned by
   `internal/release/verification_suite_migrations_empty_db_static_test.go`.
+  A drift on any single surface (rename, renumber, deletion)
+  fails ONE test, not six.
+
+## Migration Downgrade Safety Tests
+
+The migration-downgrade-safety suite (BE-0390) is the operator
+recovery gate. It pins the contract between Yalla's migration runner
+(`internal/controlplane/store/migrate`) and every operator who must
+roll a control-plane database back to recover from a botched deploy:
+every numbered `NNNN_*.up.sql` migration MUST ship with a non-empty
+matching `NNNN_*.down.sql` down script partner, no `.down.sql` may be an orphan,
+and the embedded ladder MUST round-trip cleanly — Up applies the
+ladder, `Down(0)` empties the `schema_migrations` ledger without
+returning `ErrIrreversible`, and a second Up re-applies the ladder
+with identical checksums and dirty=false on every row.
+
+- **Suite scope.** The canonical reference test file is
+  `internal/controlplane/store/migrate/migrate_test.go`. It declares
+  the two functions the `go test -run TestMigrationsDowngradeSafety
+  ./...` filter binds to:
+  - `TestMigrationsDowngradeSafetyContractCoversAllDownFiles` —
+    walks the embedded migrations directory through the loader's
+    filename grammar `NNNN_*.{up,down}.sql`, asserts every up has a
+    matching non-empty down, no down is an orphan, and
+    `LoadMigrations` surfaces every embedded down file as a
+    non-empty `DownSQL`. Runs on every developer machine and every
+    CI runner — no Postgres required — so the regression surfaces
+    deterministically.
+  - `TestMigrationsDowngradeSafetyContractRoundTripsEmbeddedLadder`
+    — applies the embedded ladder to an isolated throwaway
+    Postgres database, calls `Down(0)`, asserts the ledger is
+    empty, then calls Up a second time and asserts the
+    `schema_migrations` rows match the first-Up checksums with
+    dirty=false on every row. The throwaway database is created
+    by `testPool` when `YALLA_TEST_DATABASE_URL` is set and the
+    test skips with `t.Skip` otherwise — the suite stays green on
+    machines without Postgres without silently passing.
+- **Deterministic by default.** The closed-set reversibility test
+  reads the embedded fixtures every run. The round-trip test uses
+  an isolated, throwaway database that is dropped on cleanup. The
+  optional opt-in `YALLA_EXTERNAL_DOKPLOY=1 go test -run
+  TestLiveDokploySmoke ./...` smoke test is the only external
+  surface, and it never runs by default.
+- **Schema-version contract.** Migration runner failures surface
+  through the `yalla.error.v1` envelope when invoked via an admin
+  endpoint or worker job; success responses use
+  `yalla.output.v1`. The envelope `request_id` field maps every
+  failure to a single request trace.
+- **Actionable failures.** Every assertion in the canonical pair
+  carries the offending migration version AND a `resource_id`
+  (`schema_migrations.version=N`) so an operator can map the
+  failure to the exact migration without re-running the suite
+  locally. An `ErrIrreversible` during `Down(0)` is impossible by
+  construction once the closed-set reversibility test passes,
+  because the runtime gate would never reach an up-only migration.
+- **Self-locating.** The CI step, verify.sh step header,
+  CONTRIBUTING entry, this section, the PRD command, and the
+  canonical reference file are all pinned by
+  `internal/release/verification_suite_migration_downgrade_safety_static_test.go`.
   A drift on any single surface (rename, renumber, deletion)
   fails ONE test, not six.
 

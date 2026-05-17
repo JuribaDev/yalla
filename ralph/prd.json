@@ -253,7 +253,8 @@
       "go test -run TestJobWorkerLease ./...",
       "go test -run TestRedaction ./...",
       "go test -run TestFuzzValidator ./...",
-      "go test -run TestMigrationsEmptyDB ./..."
+      "go test -run TestMigrationsEmptyDB ./...",
+      "go test -run TestMigrationsDowngradeSafety ./..."
     ],
     "optionalWhenConfigured": [
       "goimports -w .",
@@ -8302,7 +8303,7 @@
       ],
       "type": "verification",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Test suite: migration downgrade safety tests."
     },
     {

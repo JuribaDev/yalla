@@ -735,3 +735,300 @@ func TestMigrationsEmptyDBContractAppliesEmbeddedLadderToEmptyDatabase(t *testin
 		t.Errorf("Status.Current = %d, want %d (resource_id schema_migrations.version=%d)", st.Current, wantCurrent, wantCurrent)
 	}
 }
+
+// --- BE-0390 canonical pair: migration downgrade safety ---
+//
+// These two tests are the canonical pair the PRD's
+// `go test -run TestMigrationsDowngradeSafety ./...` filter binds to.
+// They pin the two load-bearing invariants the migration runner owes any
+// operator who must roll a control-plane database back to recover from a
+// botched deploy:
+//
+//  1. TestMigrationsDowngradeSafetyContractCoversAllDownFiles — the
+//     closed-set reversibility invariant. Every numbered
+//     `NNNN_*.up.sql` file in the embedded migrations directory MUST
+//     ship with a matching `NNNN_*.down.sql` file with the same
+//     version+name, a non-empty body, and no orphan `.down.sql` files
+//     for a version that has no `.up.sql`. A new migration committed
+//     without a down script — or a down script accidentally renamed,
+//     deleted, or version-mismatched — trips this gate at the
+//     package-internal API with no Postgres dependency, so the
+//     regression surfaces on every developer machine. Without this
+//     invariant `Migrator.Down(ctx, 0)` returns ErrIrreversible mid-way
+//     through a rollback, leaving the ledger in an indeterminate state.
+//  2. TestMigrationsDowngradeSafetyContractRoundTripsEmbeddedLadder —
+//     the empty-DB round-trip invariant. A throwaway database (created
+//     by `testPool` when `YALLA_TEST_DATABASE_URL` is set; skipped
+//     otherwise) MUST accept the full embedded ladder, then accept a
+//     Down to version 0 (the ledger MUST become empty), then accept Up
+//     a second time and end up in the same fully-applied state with
+//     identical checksums. Failures surface with the offending
+//     migration version AND resource_id (`schema_migrations.version=N`)
+//     so an operator can map the failure to the exact migration
+//     without re-running the suite locally. The test skips when
+//     `YALLA_TEST_DATABASE_URL` is unset so the suite stays green on
+//     machines without Postgres; CI sets the env var.
+
+// TestMigrationsDowngradeSafetyContractCoversAllDownFiles pins the
+// closed-set reversibility invariant: every `NNNN_*.up.sql` file
+// embedded in the binary MUST ship with a matching
+// `NNNN_*.down.sql` file (same version, same name slug), every
+// embedded `.down.sql` MUST correspond to an existing `.up.sql`, and
+// every loaded Migration with a recorded version MUST carry a
+// non-empty DownSQL body. The matcher walks the embedded directory
+// through the same filename grammar the loader uses and cross-checks
+// the parsed set against LoadMigrations so a drift between filename
+// presence and loader-recognised reversibility is caught in the same
+// edit.
+//
+// No live Postgres is required: this is a deterministic, sandbox-only
+// invariant that runs on every developer machine and on every CI
+// runner.
+func TestMigrationsDowngradeSafetyContractCoversAllDownFiles(t *testing.T) {
+	t.Parallel()
+
+	entries, err := fs.ReadDir(embeddedMigrations, migrationsDir)
+	if err != nil {
+		t.Fatalf("read embedded migrations dir %q: %v", migrationsDir, err)
+	}
+
+	type fileRef struct {
+		version  int64
+		name     string
+		filename string
+		body     string
+	}
+	ups := map[int64]fileRef{}
+	downs := map[int64]fileRef{}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		matches := migrationFilenamePattern.FindStringSubmatch(e.Name())
+		if matches == nil {
+			t.Errorf("embedded migrations contain non-conforming file %q; the loader's filename grammar is `NNNN_name.{up,down}.sql` — re-run the loader fixtures if this is intentional",
+				e.Name())
+			continue
+		}
+		v, err := strconv.ParseInt(matches[1], 10, 64)
+		if err != nil {
+			t.Errorf("embedded migration %q has unparseable version %q: %v",
+				e.Name(), matches[1], err)
+			continue
+		}
+		body, err := fs.ReadFile(embeddedMigrations, migrationsDir+"/"+e.Name())
+		if err != nil {
+			t.Errorf("read embedded migration %q: %v", e.Name(), err)
+			continue
+		}
+		ref := fileRef{version: v, name: matches[2], filename: e.Name(), body: string(body)}
+		switch matches[3] {
+		case "up":
+			ups[v] = ref
+		case "down":
+			downs[v] = ref
+		}
+	}
+	if len(ups) == 0 {
+		t.Fatal("embedded migrations directory contains no `NNNN_*.up.sql` files; the downgrade-safety gate has nothing to bind to — the embed glob in migrate.go has drifted")
+	}
+
+	// Every up MUST have a matching down with the same name slug and a
+	// non-empty body. A migration without a down script is a recovery
+	// hazard — `Migrator.Down(ctx, 0)` returns ErrIrreversible when it
+	// reaches an up-only version, leaving the ledger in an
+	// indeterminate state.
+	for version, up := range ups {
+		resourceID := "schema_migrations.version=" + strconv.FormatInt(version, 10)
+		down, ok := downs[version]
+		if !ok {
+			t.Errorf("embedded migration %q (resource_id %s) has no matching `%04d_%s.down.sql`; every reversible migration MUST ship a down script so `Migrator.Down(ctx, 0)` can roll the ledger back without ErrIrreversible",
+				up.filename, resourceID, version, up.name)
+			continue
+		}
+		if down.name != up.name {
+			t.Errorf("embedded down migration %q (resource_id %s) has name slug %q, want %q to match `%s`; the loader pairs up/down by both version and name, so a mismatch is a closed-set reversibility regression",
+				down.filename, resourceID, down.name, up.name, up.filename)
+		}
+		if strings.TrimSpace(down.body) == "" {
+			t.Errorf("embedded down migration %q (resource_id %s) is empty; an empty down script silently no-ops on rollback and leaves the corresponding up-side schema in place, which the round-trip test would observe as a stale object",
+				down.filename, resourceID)
+		}
+	}
+
+	// Every down MUST have a corresponding up. An orphan down is a
+	// closed-set regression: the loader will reject the FS with
+	// `version N has a down migration but no up migration`, so we
+	// mirror that invariant here for a faster failure with the
+	// offending filename surfaced.
+	for version, down := range downs {
+		if _, ok := ups[version]; !ok {
+			t.Errorf("embedded down migration %q (resource_id schema_migrations.version=%d) has no matching `NNNN_*.up.sql`; every down script MUST pair with an up script — `LoadMigrations` would reject this FS with `version %d has a down migration but no up migration`",
+				down.filename, version, version)
+		}
+	}
+
+	// Cross-check: LoadMigrations sees every up-side migration as
+	// reversible (DownSQL non-empty) iff a matching down file exists.
+	// This pins the loader's behaviour against the embed FS we just
+	// inspected so a future loader change that drops DownSQL parsing
+	// silently fails ONE test, not zero.
+	loaded, err := LoadMigrations(embeddedMigrations)
+	if err != nil {
+		t.Fatalf("LoadMigrations(embedded): %v", err)
+	}
+	for _, m := range loaded {
+		resourceID := "schema_migrations.version=" + strconv.FormatInt(m.Version, 10)
+		_, hasDownFile := downs[m.Version]
+		hasDownSQL := strings.TrimSpace(m.DownSQL) != ""
+		if hasDownFile != hasDownSQL {
+			t.Errorf("loaded migration version=%d name=%q (resource_id %s): DownSQL-non-empty=%v but down file present=%v; LoadMigrations must surface every embedded `NNNN_*.down.sql` as a non-empty DownSQL — a drift here means the loader will refuse to roll back versions that have a down file on disk",
+				m.Version, m.Name, resourceID, hasDownSQL, hasDownFile)
+		}
+	}
+}
+
+// TestMigrationsDowngradeSafetyContractRoundTripsEmbeddedLadder pins
+// the empty-DB round-trip invariant: a throwaway database MUST accept
+// the full embedded ladder, then accept a Down to version 0 (the
+// ledger MUST become empty), then accept Up a second time and end up
+// in the same fully-applied state with identical checksums. Failures
+// surface with the offending migration version AND the resource_id
+// (`schema_migrations.version=N`) so the operator can map the failure
+// to the exact migration without re-running the suite locally. The
+// test skips when `YALLA_TEST_DATABASE_URL` is unset so the suite
+// stays green on machines without Postgres; CI sets the env var.
+func TestMigrationsDowngradeSafetyContractRoundTripsEmbeddedLadder(t *testing.T) {
+	t.Parallel()
+	pool := testPool(t)
+	ctx := context.Background()
+
+	m, err := New(pool, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	want := m.Migrations()
+	if len(want) == 0 {
+		t.Fatal("no embedded migrations; the downgrade-safety round-trip gate has nothing to bind to")
+	}
+
+	// Phase 1: Up applies the full ladder cleanly.
+	if err := m.Up(ctx); err != nil {
+		t.Fatalf("Up(empty-db): %v", err)
+	}
+	beforeDown, err := pool.Query(ctx,
+		`SELECT version, checksum FROM schema_migrations ORDER BY version`)
+	if err != nil {
+		t.Fatalf("read schema_migrations before Down: %v", err)
+	}
+	type ledgerRow struct {
+		version  int64
+		checksum string
+	}
+	var firstUp []ledgerRow
+	for beforeDown.Next() {
+		var r ledgerRow
+		if err := beforeDown.Scan(&r.version, &r.checksum); err != nil {
+			beforeDown.Close()
+			t.Fatalf("scan schema_migrations before Down: %v", err)
+		}
+		firstUp = append(firstUp, r)
+	}
+	beforeDown.Close()
+	if err := beforeDown.Err(); err != nil {
+		t.Fatalf("iterate schema_migrations before Down: %v", err)
+	}
+	if len(firstUp) != len(want) {
+		t.Fatalf("schema_migrations rows after first Up = %d, want %d (every embedded migration MUST land in the ledger before the round-trip can begin)",
+			len(firstUp), len(want))
+	}
+
+	// Phase 2: Down to version 0 rolls every migration back. The
+	// ledger MUST be empty; an ErrIrreversible at this point would
+	// mean an up-only migration slipped past the closed-set
+	// reversibility gate above.
+	if err := m.Down(ctx, 0); err != nil {
+		// Surface the offending version when the runner identifies
+		// one. errors.Is(ErrIrreversible) ties this back to the
+		// closed-set reversibility gate above; the down-file
+		// coverage matcher would have caught the missing file
+		// deterministically without needing Postgres.
+		if errors.Is(err, ErrIrreversible) {
+			t.Fatalf("Down(0) returned ErrIrreversible: %v — an embedded migration ships no down script; the closed-set reversibility gate (TestMigrationsDowngradeSafetyContractCoversAllDownFiles) should have caught this before Postgres ran",
+				err)
+		}
+		t.Fatalf("Down(0) on a fully-applied empty-DB ladder: %v", err)
+	}
+
+	// The ledger MUST be empty after a full rollback.
+	var rowCount int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&rowCount); err != nil {
+		t.Fatalf("count schema_migrations after Down(0): %v", err)
+	}
+	if rowCount != 0 {
+		t.Fatalf("schema_migrations rows after Down(0) = %d, want 0 — a non-empty ledger after a full rollback means a down script silently no-opped its delete or a partial rollback left a row behind",
+			rowCount)
+	}
+
+	// Status reports zero applied, all pending, current=0, dirty=false.
+	st, err := m.Status(ctx)
+	if err != nil {
+		t.Fatalf("Status after Down(0): %v", err)
+	}
+	if st.Current != 0 || len(st.Applied) != 0 || st.Dirty {
+		t.Errorf("Status after Down(0) = {current:%d applied:%d dirty:%v}, want {0 0 false}",
+			st.Current, len(st.Applied), st.Dirty)
+	}
+	if len(st.Pending) != len(want) {
+		t.Errorf("Status.Pending after Down(0) = %d, want %d (every embedded migration MUST be re-pending after a full rollback)",
+			len(st.Pending), len(want))
+	}
+
+	// Phase 3: Up a second time after the rollback. The runner MUST
+	// re-apply the full ladder cleanly and end up at the same set of
+	// versions with the same checksums it had before the Down. A
+	// drift here would indicate a down script that destroyed
+	// idempotency (e.g. dropped a table the next up assumes exists,
+	// or left state the next up cannot tolerate).
+	if err := m.Up(ctx); err != nil {
+		t.Fatalf("Up after Down(0): %v — a clean down script MUST leave the database in a state the next Up can re-apply", err)
+	}
+	afterUp, err := pool.Query(ctx,
+		`SELECT version, checksum, dirty FROM schema_migrations ORDER BY version`)
+	if err != nil {
+		t.Fatalf("read schema_migrations after second Up: %v", err)
+	}
+	defer afterUp.Close()
+	var roundTrip []ledgerRow
+	for afterUp.Next() {
+		var r ledgerRow
+		var dirty bool
+		if err := afterUp.Scan(&r.version, &r.checksum, &dirty); err != nil {
+			t.Fatalf("scan schema_migrations after second Up: %v", err)
+		}
+		if dirty {
+			t.Errorf("ledger row version=%d (resource_id schema_migrations.version=%d) is dirty=true after round-trip Up — a dirty row after a clean down+up cycle means the transaction-per-migration contract was broken",
+				r.version, r.version)
+		}
+		roundTrip = append(roundTrip, r)
+	}
+	if err := afterUp.Err(); err != nil {
+		t.Fatalf("iterate schema_migrations after second Up: %v", err)
+	}
+	if len(roundTrip) != len(firstUp) {
+		t.Fatalf("schema_migrations rows after round-trip = %d, want %d — the ladder is not idempotent across a Down(0)+Up cycle",
+			len(roundTrip), len(firstUp))
+	}
+	for i, r := range roundTrip {
+		f := firstUp[i]
+		resourceID := "schema_migrations.version=" + strconv.FormatInt(r.version, 10)
+		if r.version != f.version {
+			t.Errorf("round-trip ledger row %d: version = %d, want %d (resource_id %s)",
+				i, r.version, f.version, resourceID)
+		}
+		if r.checksum != f.checksum {
+			t.Errorf("round-trip ledger row %d: checksum = %q, want %q (resource_id %s) — a checksum drift after a Down(0)+Up cycle indicates the loader read different up SQL between the two phases",
+				i, r.checksum, f.checksum, resourceID)
+		}
+	}
+}

@@ -47,6 +47,7 @@ and they must all pass on every commit you propose:
 13. `go test -run TestRedaction ./...`
 14. `go test -run TestFuzzValidator ./...`
 15. `go test -run TestMigrationsEmptyDB ./...`
+16. `go test -run TestMigrationsDowngradeSafety ./...`
 
 `scripts/verify.sh` runs the full set in one command and is the local
 mirror of the `test` job in `.github/workflows/ci.yml`. Step 6 — the

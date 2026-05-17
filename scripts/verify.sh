@@ -142,7 +142,13 @@ if ! go test -run TestMigrationsEmptyDB ./...; then
   required_failed=1
 fi
 
-# 16. Optional: govulncheck (vulnerability scan)
+# 16. Required: migration downgrade safety tests
+step "go test -run TestMigrationsDowngradeSafety ./..."
+if ! go test -run TestMigrationsDowngradeSafety ./...; then
+  required_failed=1
+fi
+
+# 17. Optional: govulncheck (vulnerability scan)
 step "govulncheck ./... (optional)"
 if command -v govulncheck >/dev/null 2>&1; then
   if ! govulncheck ./...; then
@@ -152,7 +158,7 @@ else
   skipped_tools+=("govulncheck (install: go install golang.org/x/vuln/cmd/govulncheck@latest)")
 fi
 
-# 17. Optional: staticcheck
+# 18. Optional: staticcheck
 step "staticcheck ./... (optional)"
 if command -v staticcheck >/dev/null 2>&1; then
   if ! staticcheck ./...; then
@@ -162,7 +168,7 @@ else
   skipped_tools+=("staticcheck (install: go install honnef.co/go/tools/cmd/staticcheck@latest)")
 fi
 
-# 18. Optional: golangci-lint
+# 19. Optional: golangci-lint
 step "golangci-lint run ./... (optional)"
 if command -v golangci-lint >/dev/null 2>&1; then
   if ! golangci-lint run ./...; then
@@ -172,7 +178,7 @@ else
   skipped_tools+=("golangci-lint (install: https://golangci-lint.run/welcome/install/)")
 fi
 
-# 19. Optional: goreleaser check (release config)
+# 20. Optional: goreleaser check (release config)
 step "goreleaser check (optional)"
 if command -v goreleaser >/dev/null 2>&1; then
   if ! goreleaser check; then
