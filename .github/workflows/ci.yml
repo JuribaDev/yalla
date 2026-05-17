@@ -57,6 +57,9 @@ jobs:
       - name: HTTP handler contract tests
         run: go test ./internal/controlplane/httpapi/...
 
+      - name: OpenAPI schema conformance tests
+        run: go test ./internal/controlplane/openapi/...
+
       - name: Race detector
         run: go test -race ./...
 

@@ -94,7 +94,13 @@ if ! go test ./internal/controlplane/httpapi/...; then
   required_failed=1
 fi
 
-# 8. Optional: govulncheck (vulnerability scan)
+# 8. Required: OpenAPI schema conformance tests
+step "go test ./internal/controlplane/openapi/..."
+if ! go test ./internal/controlplane/openapi/...; then
+  required_failed=1
+fi
+
+# 9. Optional: govulncheck (vulnerability scan)
 step "govulncheck ./... (optional)"
 if command -v govulncheck >/dev/null 2>&1; then
   if ! govulncheck ./...; then
@@ -104,7 +110,7 @@ else
   skipped_tools+=("govulncheck (install: go install golang.org/x/vuln/cmd/govulncheck@latest)")
 fi
 
-# 9. Optional: staticcheck
+# 10. Optional: staticcheck
 step "staticcheck ./... (optional)"
 if command -v staticcheck >/dev/null 2>&1; then
   if ! staticcheck ./...; then
@@ -114,7 +120,7 @@ else
   skipped_tools+=("staticcheck (install: go install honnef.co/go/tools/cmd/staticcheck@latest)")
 fi
 
-# 10. Optional: golangci-lint
+# 11. Optional: golangci-lint
 step "golangci-lint run ./... (optional)"
 if command -v golangci-lint >/dev/null 2>&1; then
   if ! golangci-lint run ./...; then
@@ -124,7 +130,7 @@ else
   skipped_tools+=("golangci-lint (install: https://golangci-lint.run/welcome/install/)")
 fi
 
-# 11. Optional: goreleaser check (release config)
+# 12. Optional: goreleaser check (release config)
 step "goreleaser check (optional)"
 if command -v goreleaser >/dev/null 2>&1; then
   if ! goreleaser check; then

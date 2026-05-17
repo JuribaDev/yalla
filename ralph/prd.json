@@ -244,6 +244,7 @@
       "go test -race ./internal/controlplane/...",
       "go test ./internal/controlplane/store/...",
       "go test ./internal/controlplane/httpapi/...",
+      "go test ./internal/controlplane/openapi/...",
       "go test -run TestMigrations ./...",
       "go test -run TestOpenAPI ./...",
       "go test -run TestPolicyMatrix ./...",
@@ -8145,7 +8146,7 @@
       ],
       "type": "verification",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Test suite: OpenAPI schema conformance tests."
     },
     {

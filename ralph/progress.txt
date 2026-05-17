@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Verification-suite single-file multi-surface static-test, OpenAPI-conformance instance (BE-0382 pattern, internal/release/verification_suite_openapi_conformance_static_test.go + internal/controlplane/openapi/openapi_conformance_test.go + SECURITY.md "## OpenAPI Schema Conformance Tests" section AND a new row in the Required Verification Gates table + internal/release/AGENTS.md "## Verification suite: OpenAPI schema conformance tests (BE-0382)" subsection; FOURTH worked instance of the BE-0379/BE-0380/BE-0381 verification-suite single-file multi-surface static-test mega-pattern). Two BE-0382-specific extensions to the template: (1) `-RUN-FILTER PREFIX CONTRACT` — when the PRD already carries a `-run TestXxx ./...` filter for the suite (BE-0382 inherited `-run TestOpenAPI ./...` from the PRD's verificationLoop array unchanged; that filter previously matched zero tests because the existing openapi tests are `TestBuild…` / `TestOperation…` not `TestOpenAPI…`), the canonical-funcs entries MUST satisfy the `-run` filter prefix or the named gate silently matches zero tests. The static test pins this with a dedicated `<subject>PrefixLocksTheRunFilterContract` analyzer subtest that walks the canonical-funcs list and asserts every entry begins with `func TestOpenAPI` (or whatever the suite's filter prefix is). Forward-applicable to BE-0383 (`-run TestPolicyMatrix`), BE-0384 (`-run TestQuotaConcurrency`), and BE-0386 (`-run TestFakeDokploy`); NOT applicable to BE-0385 (no `-run` filter — package-level only). When picking up such a sibling story FIRST check whether the PRD's `-run` filter currently matches any test (`go test -run <PrefixPattern> ./...` shows `no tests to run` everywhere) — if so, the story MUST add tests that satisfy the prefix, not just wire the dedicated step. (2) `VALUE-TYPE STRUCT FIELD SHAPE` — when the canonical conformance test reads a struct field that's a value type (not a pointer), the test MUST NOT guard with `field == nil` (compile error against the value type); the empty-struct sentinel is `field.SubField == ""` instead. This is a per-package shape detail; the canonical fix is to read the type once at write time, not to introduce a pointer indirection or a package-internal nil sentinel that does not exist today. Worked instance: openapi.Parameter.Schema is a `Schema` value not `*Schema`, so the conformance test checks `param.Schema.Type != "string"` directly. The six surfaces are: (a) .github/workflows/ci.yml dedicated `OpenAPI schema conformance tests` step running `go test ./internal/controlplane/openapi/...`, (b) scripts/verify.sh `# 8. Required: OpenAPI schema conformance tests` header + literal command (BE-0381's prior steps 8/9/10/11 — govulncheck/staticcheck/golangci-lint/goreleaser — renumbered to 9/10/11/12 in the same edit), (c) CONTRIBUTING.md `8. \`go test ./internal/controlplane/openapi/...\`` entry under `## Required Checks Before Every Commit`, (d) SECURITY.md verification-gates table row + dedicated `## OpenAPI Schema Conformance Tests` section with a 13-entry closed substring set covering scope (internal/controlplane/openapi) / determinism (deterministic fixtures) / actionable-failures (operationId) / authorization (x-required-action) / opt-in-external (YALLA_EXTERNAL_DOKPLOY) / envelope-pinning (yalla.output.v1, yalla.error.v1) / conformance-triple (TestOpenAPIConformance, TestOpenAPIEnvelopesReferenceStableSchemaVersions, TestOpenAPIExamplesAreRedacted) / redaction / CI-cadence (Every push and PR) / self-locating gate filename, (e) ralph/prd.json verificationLoop.requiredBackendCommands entry inserted immediately after the httpapi entry (so the two adjacent commands are the two package-level subsets that follow the umbrella `./internal/controlplane/...` walker), (f) canonical reference conformance test file `internal/controlplane/openapi/openapi_conformance_test.go` + load-bearing conformance triple covering (i) end-to-end document conformance (3.1.0 identity, both response rows per operation, public empty security, authenticated ApiKeyAuth + x-required-action, required-string-in-path parameters), (ii) envelope schema_version enum pinning to `output.SuccessSchema` / `yerr.SchemaVersion`, (iii) example redaction via `output.Sentinel` with negative assertion against the credential-shaped `yalla_sk_<env>_<value>` pattern; the self-check `TestVerificationSuiteOpenAPIConformanceAnalyzerDetectsRegressions` drives every matcher with 11 synthetic known-good AND known-bad fixtures. Per-story knobs for siblings: (a) canonical subset command, (b) dedicated CI step name, (c) verify.sh numeric prefix (next number after the last required step; renumber the trailing optional steps in the same edit), (d) SECURITY.md section heading and 11-13 substring set covering every AC, (e) PRD requiredBackendCommands entry (insert near siblings in the array; keep the umbrella entry FIRST), (f) canonical reference test file path + closed conformance-triple func-name set + the `-run` filter prefix the canonical-funcs entries MUST satisfy. Load-bearing invariant: ONE FILE, SIX SURFACES, SELF-CHECK; drift on any surface fails ONE test, not six.
 - Verification-suite single-file multi-surface static-test, repository-integration-tests instance (BE-0380 pattern, internal/release/verification_suite_repo_integration_static_test.go + SECURITY.md "## Repository Integration Tests" section AND a new row in the Required Verification Gates table + internal/release/AGENTS.md "## Verification suite: repository integration tests (BE-0380)" subsection; SECOND worked instance of the BE-0379 verification-suite single-file template — applies to verification stories whose subject is a SUBSET of `go test ./...` (a specific package path, a specific `-run` filter) rather than the umbrella suite). EIGHT load-bearing rules: (1) SUBSET-OF-UMBRELLA REDUNDANCY IS DEFENCE-IN-DEPTH, NOT CHURN — when the canonical command (`go test ./internal/controlplane/store/...`) is a strict subset of an already-gated umbrella command (`go test ./...`), the new CI step / verify.sh step / CONTRIBUTING entry are NOT redundant: a future narrowing of the umbrella (e.g. `go test ./internal/...` minus store, a "skip slow tests" flag) would silently de-gate the subject while leaving the umbrella green; the dedicated step still fires AND surfaces the regression as a fast, named, targeted failure rather than buried inside the umbrella log. Cost: one extra ~30s parallel CI step. (2) VERIFY.SH RENUMBERING SAFETY — the verify.sh numeric prefixes 6-9 (optional steps after BE-0379's `# 4. Required: tests` and the bare `# 5. Required: race detector`) were not pinned by any existing test; inserting a new `# 6. Required: <subject>` between current 5 and current 6 and renumbering optionals 6→7, 7→8, 8→9, 9→10 was a safe edit. BE-0379's `# 4. Required: tests` pin is preserved verbatim. Future verification-suite subset stories adding a required step should follow the same pattern OR agree on a fixed prefix range like `# 6.X.` to avoid further renumbering as more stories land. (3) PRD HAS TWO COMMAND ARRAYS — verificationLoop.requiredLocalCommands (umbrella `go test ./...`, BE-0379) and verificationLoop.requiredBackendCommands (per-package paths and per-`-run` filters, BE-0380 and later). Subset stories add to requiredBackendCommands; the JSON decode in the test MUST target that field. The two arrays must NEVER be confused — a regression where BE-0380's command lands in requiredLocalCommands instead of requiredBackendCommands would silently weaken the contract because the matcher decodes the wrong field. (4) PREFIX-TOLERANT FUNCTION MATCHER — the `func TestMigrations` matcher is intentionally prefix-tolerant (matches `func TestMigrationsForward` too) because the PRD's `-run TestMigrations` filter is itself a prefix match. Document the gap in a self-check subtest with a stricter fixture (one with NO `func TestMigrations*` declaration at all) so a future maintainer who wants exact-name pinning knows to switch to a regex anchored on `\(`. (5) ELEVEN-SUBSTRING SECURITY SECTION — the section MUST name every load-bearing AC fact: package boundary (`internal/controlplane/store`), determinism (`deterministic fixtures`), isolation (`isolated migrated`), bootstrap function (`TestMigrations`), actionable-failure tokens (BOTH `request_id` AND `resource_id` because HTTP-facing tests use the former and row-level tests use the latter — separating them keeps both contracts visible), opt-in escape hatch (`YALLA_EXTERNAL_DOKPLOY`), deterministic fixture (`fake Dokploy`), redaction (`redacted`), CI cadence (`Every push and PR`), self-locating gate file name. Each substring is distinct and semantically anchored so Markdown line wrap cannot break the matcher. (6) SELF-CHECK PARITY WITH BE-0379 — each per-surface matcher gets BOTH a "fires on missing" AND "passes on complete" synthetic subtest. The CI workflow self-check uses a fixture containing the umbrella step but NOT the new dedicated step, asserting both halves of the matcher fail; the complete fixture adds the dedicated step and asserts both halves pass. (7) AGENTS.md SUBSECTION MIRRORS THE STATIC TEST — internal/release/AGENTS.md grows a per-story subsection mirroring BE-0379's structure: six-surface bullet list + closing paragraph saying "the matchers fail loudly on drift; the assertion IS the contract". The subsection heading is the story title verbatim so `grep "Verification suite:"` finds every instance. (8) EDIT-HOOK RETRY on .github/workflows/*.yml — the workflow security reminder hook may surface as an "error" on first attempt to a non-trivial workflow edit; the second identical Edit succeeds (the hook is informational, not blocking). Plan for one retry when editing workflow YAML. Forward-applicable verbatim to BE-0381 (HTTP handler contract tests, canonical `go test -run TestOpenAPI ./internal/controlplane/httpapi/...`), BE-0382 (OpenAPI schema conformance, `TestOpenAPI`), BE-0383 (policy matrix, `TestPolicyMatrix`), BE-0384 (quota concurrency, `TestQuotaConcurrency`), BE-0385 (job worker lease), BE-0386 (fake Dokploy contract, `TestFakeDokploy`), BE-0387 (redaction), BE-0388 (validator fuzz), BE-0389 (migrations from empty DB), BE-0390 (migration downgrade safety), BE-0391 (race detector — though this one is itself an umbrella story, may use BE-0379's template instead of BE-0380's), BE-0392..BE-0408. Per-story knobs: (a) canonical subset command, (b) dedicated CI step name, (c) verify.sh numeric prefix (or fixed-range agreement), (d) SECURITY.md section heading and 8-11 substring set, (e) PRD requiredBackendCommands entry, (f) bootstrap test function name (TestMigrations for BE-0380, TestOpenAPI for BE-0382, TestPolicyMatrix for BE-0383). Load-bearing invariant: ONE FILE, SIX SURFACES, SELF-CHECK; drift on any surface fails ONE test, not six.
 - Verification-suite single-file multi-surface static-test, HTTP-handler-contract-tests instance (BE-0381 pattern, internal/release/verification_suite_handler_contract_tests_static_test.go + SECURITY.md "## HTTP Handler Contract Tests" section AND a new row in the Required Verification Gates table + internal/release/AGENTS.md "## Verification suite: HTTP handler contract tests (BE-0381)" subsection; THIRD worked instance of the BE-0379/BE-0380 verification-suite single-file multi-surface static-test mega-pattern: the static-test file pins SIX surfaces in one place — (1) .github/workflows/ci.yml dedicated `HTTP handler contract tests` step running `go test ./internal/controlplane/httpapi/...`, (2) scripts/verify.sh `# 7. Required: HTTP handler contract tests` header + literal command, (3) CONTRIBUTING.md `7. \`go test ./internal/controlplane/httpapi/...\`` entry under `## Required Checks Before Every Commit`, (4) SECURITY.md verification-gates table row + dedicated `## HTTP Handler Contract Tests` section with a closed substring set covering scope/determinism/actionable-failures/contract-triple/envelope-pinning (yalla.output.v1, yalla.error.v1)/redaction/CI-cadence, (5) ralph/prd.json verificationLoop.requiredBackendCommands entry, (6) the canonical reference contract test file `internal/controlplane/httpapi/me_contract_test.go` AND its load-bearing contract triple (TestMeServerWritesResponseDataOnlyToResponseWriter, TestMeRequestLogRedactsBearerToken, TestMeErrorEnvelopeDoesNotLeakDependencyCause) so deleting the canonical example or renaming any of the three silently breaks the convention every other *_contract_test.go follows; the self-check `TestVerificationSuiteHandlerContractAnalyzerDetectsRegressions` drives every matcher with synthetic known-good AND known-bad fixtures so over-tightening and under-tightening are both caught at the package-internal API; REUSES the shared constants requiredCIWorkflowPath, requiredVerifyShPath, requiredContributingPath, requiredContributingSection, requiredSecurityPath, requiredPRDPath defined in verification_suite_unit_tests_static_test.go; when inserting a new numbered verify.sh step, ALSO renumber subsequent optional steps in the same edit because the numeric prefix is part of the contract shared between verify.sh and the static-test constants — skipping the renumber breaks the BE-0380 contract-prefix matcher).
 - Verification-suite single-file multi-surface static-test, unit-tests-for-every-package instance (BE-0379 pattern, internal/release/verification_suite_unit_tests_static_test.go + internal/credentials/keyring_test.go + SECURITY.md "## Unit Test Suite" section + internal/release/AGENTS.md "## Verification suite: unit tests for every package (BE-0379)" subsection; FIRST worked instance of the verification-suite single-file template called out in the BE-0354 dependency_scan pattern's closing line — applies to verification stories whose subject is the suite itself rather than a specific security control). NINE load-bearing rules: (1) SINGLE FILE pins ALL surfaces of the meta-contract so a future contributor changing the CI step name, the verify.sh step header, the CONTRIBUTING numeric prefix, the SECURITY row, or the PRD verification-loop array fails ONE test, not five. The single-file shape is the BE-0354 dependency_scan pattern carried forward to the verification-suite family. (2) CLOSED EXEMPT SET WITH RATIONALE — every exemption in allowedPackagesWithoutUnitTests MUST carry a rationale that points to where coverage actually lives, not just a "thin entrypoint" hand-wave. The rationale is what makes a future review decide whether to keep, extend, or remove the entry; without it the set drifts. Current exempt set: cmd/yalla (Cobra entrypoint, behaviour in internal/cli), cmd/yalla-api (process wiring, behaviour in internal/controlplane/*), cmd/yalla-worker (loop wiring, behaviour in internal/controlplane/worker), internal/controlplane/jobs (doc.go placeholder). (3) STALE-EXEMPTION GUARD (TestVerificationSuiteExemptionSetIsTight) — assert every exempt dir (a) exists and (b) still lacks tests. Otherwise a package that gains tests silently keeps its exemption and the discipline rots. (4) IGNORED-PREFIX WALKER — the package coverage walker MUST skip `.git/`, `node_modules/`, `dist/`, `outputs/`, `tmp/`, `bin/`, `vendor/` via prefix-with-trailing-slash check (the trailing slash is what prevents a hypothetical `output/` package from being accidentally skipped). (5) PURE FUNCTION SPLIT — findPackagesMissingTests takes (root, exempt, ignored) and is called once by the runtime test against the real repo AND multiple times by the self-check with synthetic trees built via t.TempDir + mkFile helper. The self-check is what proves the walker doesn't false-positive on test-only dirs and doesn't false-negative on ignored subtrees. (6) CASE-SENSITIVE SUBSTRING CONSTANTS — `requiredSecuritySectionSubstrings` are matched verbatim against the doc, so a substring like "every Go package" will NOT match a sentence-start "Every Go package". When the doc text naturally starts a sentence with the substring, use the capitalised form in the constant. The first run caught this: the test failed with `missing required substring "every Go package"`; the fix aligned the constant with the doc, not the doc with the constant. The self-check fixture (synthetic SECURITY.md inside TestVerificationSuiteUnitTestsAnalyzerDetectsRegressions) must be updated in the same edit — if the synthetic fixture starts to fail, the test diagnostic explicitly says "fix the fixture, not the test" to prevent the wrong direction of fix. (7) NON-MAIN, NON-DOC-ONLY PACKAGE WITHOUT TESTS IS NEVER EXEMPT-WORTHY — prefer adding 2-3 small tests (e.g. internal/credentials IsNotFound + IsUnsupported + Store-interface compile-time pin) over expanding the exemption set. The exemption set is reserved for thin main-glue and `doc.go`-only placeholders. Adding the keyring_test.go tests took ~70 lines and was strictly preferable to a `internal/credentials` exemption entry, because the package has real classification logic (errors.Is over upstream keyring sentinels) that a future upstream rename could silently break. (8) PRD AS A VERIFICATION SURFACE — the prd.json's `verificationLoop.requiredLocalCommands` array is itself part of the contract. An AI agent reads the PRD before picking up a story; pinning the suite command there guarantees the agent sees it without needing to discover CI workflows or shell scripts. The matcher uses encoding/json with a partial struct (`{VerificationLoop struct{RequiredLocalCommands []string `json:"requiredLocalCommands"`}}`) so a future PRD schema extension doesn't break it. (9) CI MATRIX AS PART OF THE CONTRACT — pinning ubuntu-latest + macos-latest + windows-latest is what prevents a silent "we only test on Linux now" regression. The matrix dimension is a separate substring assertion per host so the failure diagnostic names the missing host explicitly. Forward-applicable to BE-0380 (repository integration tests — replace findPackagesMissingTests with findStoreTestsMissingTenantIsolation), BE-0381 (HTTP handler contract tests — replace with findHandlersMissingContractTest), BE-0382 (OpenAPI conformance — replace with findEndpointsMissingOpenAPI), BE-0383 (policy matrix), BE-0384 (quota concurrency), BE-0385 (job worker leases), BE-0386 (fake Dokploy contract), BE-0387 (redaction), BE-0388 (validator fuzz), BE-0389 (migrations from empty DB), BE-0390 (migration downgrade), BE-0391 (race detector), and every future P=1 verification-suite story. Per-story knobs: (a) canonical suite command (e.g. `go test -run TestMigrations ./...`), (b) scope predicate (which packages/files the matcher walks), (c) doc heading constant, (d) substring-set capturing the ACs of that story, (e) per-story exemption set if any. The pattern is the next-strongest form of the BE-0354 (dependency_scan) single-file multi-surface pattern, applied to a meta-contract whose subject is the test suite itself rather than a specific security control. The two pattern families share: (i) single file, (ii) closed substring/constant set per surface, (iii) self-check with synthetic fixtures driving every matcher. They differ in: (i) BE-0379-family stories have a `findPackagesMissingTests`-style repo walker as their primary matcher (the security-control family has no such walker; their primary matcher is an AST scan over package source); (ii) BE-0379-family stories pin the PRD itself (security-control stories generally don't); (iii) BE-0379-family stories use a closed exempt set with per-entry rationale (security-control stories use closed constant lists like `forbiddenSecretEnvFragments` but no per-entry rationale).
@@ -26730,4 +26731,142 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
   - The verification-suite single-file multi-surface pattern is now applied a third time (BE-0379, BE-0380, BE-0381). The shape is stable: ONE static-test file in internal/release/ that pins CI step + verify.sh step + CONTRIBUTING entry + SECURITY row + SECURITY section (with closed substring set) + PRD requiredBackendCommands + at least one canonical artifact (test function or test file), plus a self-check `*AnalyzerDetectsRegressions` subtest set with synthetic known-good AND known-bad fixtures for each matcher.
   - Reuse the shared constants `requiredCIWorkflowPath`, `requiredVerifyShPath`, `requiredContributingPath`, `requiredContributingSection`, `requiredSecurityPath`, `requiredPRDPath` (defined in `verification_suite_unit_tests_static_test.go`) — they are package-private and the verification-suite gates already share them.
   - When inserting a new numbered verify.sh step, renumber subsequent optional steps in the same edit; the numeric prefix is part of the contract that lives in both verify.sh and the static-test constants. Skipping the renumber would break the BE-0380 contract prefix matcher.
+---
+
+## 2026-05-17 - BE-0382
+- Implemented Verification suite: OpenAPI schema conformance tests.
+- Added canonical conformance test file
+  internal/controlplane/openapi/openapi_conformance_test.go with
+  the conformance triple (TestOpenAPIConformance,
+  TestOpenAPIEnvelopesReferenceStableSchemaVersions,
+  TestOpenAPIExamplesAreRedacted). Each `TestOpenAPI…` prefix binds
+  the PRD's `-run TestOpenAPI ./...` filter — that filter previously
+  matched zero tests (existing openapi tests are TestBuild…/
+  TestOperation…), so this commit makes the PRD's named gate
+  actually fire.
+- Added load-bearing static defence
+  internal/release/verification_suite_openapi_conformance_static_test.go
+  pinning six surfaces:
+    1. .github/workflows/ci.yml (new step
+       "OpenAPI schema conformance tests" running
+       `go test ./internal/controlplane/openapi/...`),
+    2. scripts/verify.sh (new step header
+       "# 8. Required: OpenAPI schema conformance tests"; renumbered
+       BE-0381's prior step 8 govulncheck → step 9, staticcheck → 10,
+       golangci-lint → 11, goreleaser → 12),
+    3. CONTRIBUTING.md (new entry
+       "8. `go test ./internal/controlplane/openapi/...`" under
+       Required Checks Before Every Commit),
+    4. SECURITY.md (new row in the Required Verification Gates
+       table + dedicated `## OpenAPI Schema Conformance Tests`
+       section enumerating every load-bearing AC),
+    5. ralph/prd.json (added
+       `go test ./internal/controlplane/openapi/...` to
+       verificationLoop.requiredBackendCommands immediately after
+       the httpapi entry),
+    6. canonical file pin
+       `internal/controlplane/openapi/openapi_conformance_test.go`
+       and the three conformance-triple func names.
+- Added the self-check
+  TestVerificationSuiteOpenAPIConformanceAnalyzerDetectsRegressions
+  that drives every matcher with synthetic known-good AND known-bad
+  fixtures — including a dedicated subtest pinning that every
+  canonical-funcs entry starts with `func TestOpenAPI` so the PRD's
+  `-run TestOpenAPI` filter contract cannot drift silently.
+- Updated internal/release/AGENTS.md with the
+  "## Verification suite: OpenAPI schema conformance tests (BE-0382)"
+  subsection mirroring the BE-0379/0380/0381 sections.
+
+- Files changed:
+    - internal/controlplane/openapi/openapi_conformance_test.go (NEW)
+    - internal/release/verification_suite_openapi_conformance_static_test.go (NEW)
+    - .github/workflows/ci.yml
+    - scripts/verify.sh
+    - CONTRIBUTING.md
+    - SECURITY.md
+    - ralph/prd.json
+    - internal/release/AGENTS.md
+    - ralph/progress.txt
+
+- Verification run:
+    - gofmt -w . (clean)
+    - go mod tidy (clean)
+    - go vet ./... (clean)
+    - go test ./... (all packages PASS)
+    - go test -race ./... (all packages PASS)
+    - go test ./internal/controlplane/openapi/... (PASS)
+    - go test ./internal/release/... (PASS)
+    - go test -run TestOpenAPI ./... (now matches the new
+      TestOpenAPI* triple in internal/controlplane/openapi and
+      every per-endpoint OpenAPI test in internal/controlplane/httpapi
+      whose name contains the TestOpenAPI substring; the gate
+      previously matched zero tests).
+    - go test -run TestVerificationSuiteOpenAPIConformance
+      ./internal/release/... (PASS, including the analyzer self-check
+      that exercises 11 synthetic fixtures).
+
+- Remaining risks or follow-ups:
+    - Existing OpenAPI tests TestBuild…/TestOperation… are still
+      covered by the package-level command
+      `go test ./internal/controlplane/openapi/...`; they are
+      complementary to the new TestOpenAPI* triple and not subsumed
+      by it.
+
+- **Learnings for future iterations:**
+  - Verification-suite single-file multi-surface static-test,
+    OpenAPI-conformance instance (BE-0382 pattern,
+    internal/release/verification_suite_openapi_conformance_static_test.go
+    + SECURITY.md "## OpenAPI Schema Conformance Tests" section AND
+    a new row in the Required Verification Gates table +
+    internal/release/AGENTS.md "## Verification suite: OpenAPI
+    schema conformance tests (BE-0382)" subsection +
+    internal/controlplane/openapi/openapi_conformance_test.go (the
+    canonical conformance file pinned by the static test); FOURTH
+    worked instance of the BE-0379/BE-0380/BE-0381 single-file
+    multi-surface static-test mega-pattern: the static-test file
+    pins SIX surfaces in one place — (1) .github/workflows/ci.yml
+    dedicated step running the package-level command, (2)
+    scripts/verify.sh `# 8. Required: <subject>` header + literal
+    command (renumbering optional steps as needed: in this case
+    BE-0381's prior steps 8/9/10/11 became 9/10/11/12), (3)
+    CONTRIBUTING.md `8. \`<command>\`` Required Checks entry, (4)
+    SECURITY.md verification-gates row + dedicated section + the
+    closed substring set the section MUST contain, (5)
+    ralph/prd.json verificationLoop.requiredBackendCommands entry,
+    and (6) a canonical reference file + closed func-name set the
+    suite is built on. Load-bearing invariant: ONE FILE, SIX
+    SURFACES, SELF-CHECK; drift on any surface fails ONE test, not
+    six. Two BE-0382-specific extensions to the template:
+      - When the PRD already carries a `-run TestXxx ./...` filter
+        for the suite (BE-0382 inherited `-run TestOpenAPI ./...`
+        from the PRD's verificationLoop array unchanged), the
+        canonical-funcs entries MUST also satisfy the `-run` filter
+        prefix or the named gate silently matches zero tests. The
+        static test pins this with a dedicated
+        `<subject>PrefixLocksTheRunFilterContract` subtest in the
+        analyzer self-check. Forward-applicable to BE-0383 (`-run
+        TestPolicyMatrix`), BE-0384 (`-run TestQuotaConcurrency`),
+        BE-0385 (no `-run` filter — package-level only), and
+        BE-0386 (`-run TestFakeDokploy`).
+      - When the existing openapi.Parameter.Schema field is a
+        value type (not `*Schema`), the conformance test MUST NOT
+        guard with `param.Schema == nil` (compile error against
+        the value type); the empty struct sentinel is
+        `param.Schema.Type == ""`. This is a per-package shape
+        detail and the canonical fix is to read the type once at
+        write time, not to introduce a pointer indirection or a
+        package-internal nil sentinel that does not exist today.
+    Forward-applicable to BE-0383 policy matrix tests, BE-0384
+    quota concurrency tests, BE-0385 job worker lease tests, and
+    BE-0386 fake Dokploy contract tests: each sibling adds ONE new
+    static-test file under internal/release/ + ONE new section to
+    SECURITY.md + ONE new row to the verification-gates table +
+    ONE new entry to CONTRIBUTING.md (next number; the BE-0381/0382
+    pattern is to grow the numbered Required Checks list rather
+    than re-cluster the existing entries) + ONE new step to
+    scripts/verify.sh (renumber subsequent optional steps in the
+    same edit) + ONE new step to .github/workflows/ci.yml + ONE
+    new entry to ralph/prd.json's requiredBackendCommands + the
+    closed canonical-funcs set for that suite's invariant triple
+    (or whatever the suite's load-bearing assertion set is).
 ---

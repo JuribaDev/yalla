@@ -67,6 +67,7 @@ defined in `.github/workflows/ci.yml`:
 | Tests | `go test ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Repository integration tests | `go test ./internal/controlplane/store/...` | `scripts/verify.sh`, CI | Every push and PR |
 | HTTP handler contract tests | `go test ./internal/controlplane/httpapi/...` | `scripts/verify.sh`, CI | Every push and PR |
+| OpenAPI schema conformance tests | `go test ./internal/controlplane/openapi/...` | `scripts/verify.sh`, CI | Every push and PR |
 | Race detector | `go test -race ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Vulnerability scan | `govulncheck ./...` | CI `security` job | Every push and PR |
 | Lint suite | `staticcheck ./...` and `golangci-lint run ./...` | CI `security` job | Every push and PR |
@@ -1072,6 +1073,97 @@ contract operators and AI agents rely on:
   workflows. The single static defence that pins every one of
   those surfaces is
   `internal/release/verification_suite_handler_contract_tests_static_test.go`.
+
+## OpenAPI Schema Conformance Tests
+
+Yalla's OpenAPI schema conformance tests are the published-document
+gate that ensures the `/openapi.json` artifact every customer, AI
+agent, CI pipeline, and downstream SDK reads is structurally
+correct. The suite lives under `internal/controlplane/openapi/` —
+the package that builds the OpenAPI 3.1 document from the neutral
+`[]Endpoint` slice the `internal/controlplane/httpapi` route table
+supplies — and the canonical command is
+`go test ./internal/controlplane/openapi/...`. The suite exercises
+the document builder end-to-end against deterministic fixtures (a
+hand-curated public + authenticated endpoint pair, deterministic
+JSON marshalling, redaction sentinels in every example); it never
+depends on a live Dokploy server, and any external smoke remains
+opt-in via `YALLA_EXTERNAL_DOKPLOY=1
+go test -run TestLiveDokploySmoke ./...`. BE-0382 publishes the
+contract operators and AI agents rely on:
+
+- **Scope.** Every documented HTTP operation that
+  `internal/controlplane/openapi` surfaces in the
+  `/openapi.json` artifact is covered by the conformance suite.
+  The single static defence is
+  `internal/release/verification_suite_openapi_conformance_static_test.go`,
+  which pins the existence of the canonical
+  `openapi_conformance_test.go` file and the canonical
+  `TestOpenAPIConformance` function (the load-bearing
+  `-run TestOpenAPI` filter from
+  `verificationLoop.requiredBackendCommands` binds to that exact
+  function name) so the conformance convention itself cannot be
+  silently deleted or renamed.
+- **Determinism.** The OpenAPI conformance tests run against
+  deterministic fixtures only — a hand-curated
+  public+authenticated `[]Endpoint` slice, deterministic JSON
+  marshalling driven by `marshalSortedMap`, and redaction
+  sentinels from `internal/output.Sentinel` in every example
+  body. No conformance test reaches a live Postgres, a live
+  Dokploy, or any network. A live Dokploy smoke is opt-in via
+  `YALLA_EXTERNAL_DOKPLOY=1` and never runs in the default gate.
+- **Actionable failures.** Every conformance test surfaces the
+  failing `operationId`, method, and path in its diagnostic so an
+  operator reading the CI log can map the failure to the exact
+  documented endpoint without re-running the suite locally. The
+  schema-version contract pins the `yalla.output.v1` /
+  `yalla.error.v1` envelope shape in the published
+  `SuccessEnvelope` and `ErrorEnvelope` component schemas so a
+  wire-contract regression is caught at document build time.
+- **Coverage rows.** Each conformance test covers success
+  (`SuccessEnvelope` with `schema_version` enum
+  `yalla.output.v1`), error (`ErrorEnvelope` with
+  `schema_version` enum `yalla.error.v1`), authentication
+  (`ApiKeyAuth` security scheme requirement on every
+  `RequiresAuth: true` endpoint and empty security on every
+  public endpoint), authorization (`x-required-action` OpenAPI
+  extension echoes the policy action constant), and path
+  parameter declarations (`required: true`, `in: path`, string
+  schema) where the endpoint owns one. The conformance triple
+  (`TestOpenAPIConformance` / `TestOpenAPIEnvelopesReferenceStableSchemaVersions` /
+  `TestOpenAPIExamplesAreRedacted`) is the load-bearing shared
+  invariant every documented operation MUST keep: every endpoint
+  declares both a documented success response and a stable
+  error-envelope response, every envelope schema_version enum is
+  pinned to the published constant, and every example body that
+  resembles a credential is rendered through the redaction
+  sentinel rather than a live secret.
+- **Redaction.** Document examples, structured log capture,
+  error envelopes, and dry-run payloads MUST stay redacted of
+  secrets — bearer tokens, API keys, Dokploy tokens, customer
+  cookies, and rendered environment-variable values are scrubbed
+  by `internal/output.Redactor`. The `TestOpenAPIExamplesAreRedacted`
+  conformance test asserts this end-to-end on the published
+  document path; the BE-0359 fuzz harness in
+  `internal/output/redact_fuzz_test.go` covers the
+  marker-bracketed-value contract at the redactor itself.
+- **CI gating.** `go test ./internal/controlplane/openapi/...`
+  runs on `ubuntu-latest`, `macos-latest`, and `windows-latest`
+  for every push and every pull request via
+  `.github/workflows/ci.yml` (the `test` job's step `OpenAPI
+  schema conformance tests`), and locally via `scripts/verify.sh`
+  (step `# 8. Required: OpenAPI schema conformance tests`). Both
+  must pass before a commit lands in `main`. The same gate
+  appears in the verification-gates table above as the row
+  `| OpenAPI schema conformance tests | go test ./internal/controlplane/openapi/... | scripts/verify.sh, CI | Every push and PR |`,
+  in `CONTRIBUTING.md` under `## Required Checks Before Every
+  Commit`, and in `ralph/prd.json` under
+  `verificationLoop.requiredBackendCommands` so an AI agent
+  reading the PRD before picking up a story sees the gate
+  without needing to discover it from shell scripts or CI
+  workflows. The single static defence that pins every one of
+  those surfaces is
+  `internal/release/verification_suite_openapi_conformance_static_test.go`.
 
 ## Disclosure Timeline (Best Effort)
 

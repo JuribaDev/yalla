@@ -518,3 +518,81 @@ constant in
 `verification_suite_handler_contract_tests_static_test.go` in
 the same edit. The matchers fail loudly on drift; the
 assertion IS the contract.
+
+## Verification suite: OpenAPI schema conformance tests (BE-0382)
+
+`verification_suite_openapi_conformance_static_test.go` is the
+load-bearing static defence for the OpenAPI schema conformance
+gate documented in BE-0382. It pins SIX surfaces in one file so
+a future contributor changing any of them fails ONE test, not
+six:
+
+- `.github/workflows/ci.yml` — the `test` job's dedicated
+  `OpenAPI schema conformance tests` step running
+  `go test ./internal/controlplane/openapi/...`.
+  Defence-in-depth: a narrowing of the umbrella
+  `Unit and integration tests` step would still leave this
+  gate firing as a fast, targeted failure rather than buried
+  inside the umbrella log.
+- `scripts/verify.sh` — the local commit gate runs the same
+  canonical command under the canonical header
+  `# 8. Required: OpenAPI schema conformance tests`. The
+  numeric prefix is part of the contract: reorders must be
+  deliberate.
+- `CONTRIBUTING.md` — the Required Checks Before Every Commit
+  numbered list carries entry
+  `8. \`go test ./internal/controlplane/openapi/...\`` so a
+  contributor sees the gate before opening a PR.
+- `SECURITY.md` — the Required Verification Gates table carries
+  the `OpenAPI schema conformance tests` row AND a dedicated
+  `## OpenAPI Schema Conformance Tests` section explains the
+  determinism, actionable-failure (with `operationId`),
+  conformance-triple (`TestOpenAPIConformance`,
+  `TestOpenAPIEnvelopesReferenceStableSchemaVersions`,
+  `TestOpenAPIExamplesAreRedacted`), envelope-pinning
+  (`yalla.output.v1` / `yalla.error.v1`), `x-required-action`,
+  path-parameter shape, opt-in `YALLA_EXTERNAL_DOKPLOY`
+  external-smoke, and redaction contracts auditors and
+  operators rely on.
+- `ralph/prd.json` — the verification-loop's
+  `requiredBackendCommands` array carries
+  `go test ./internal/controlplane/openapi/...` so an AI agent
+  reading the PRD before picking up a story sees the gate from
+  the contract document. The companion
+  `go test -run TestOpenAPI ./...` filter (already present in
+  the PRD) binds to the conformance-triple function names; a
+  rename to a name that does not match the `TestOpenAPI`
+  prefix silently de-gates the conformance suite for any
+  caller relying on the filter, so the canonical-funcs entries
+  in this static test pin every triple member to the
+  `TestOpenAPI…` prefix.
+- `internal/controlplane/openapi/openapi_conformance_test.go`
+  — the canonical reference conformance test file MUST exist
+  AND MUST declare the conformance triple
+  (`TestOpenAPIConformance`,
+  `TestOpenAPIEnvelopesReferenceStableSchemaVersions`,
+  `TestOpenAPIExamplesAreRedacted`). The triple covers the
+  three load-bearing wire invariants the published
+  `/openapi.json` artifact MUST keep: every documented
+  operation has a success response and a stable error envelope
+  response with the correct security wiring and path-parameter
+  shape; every envelope component schema pins the
+  `schema_version` enum to the published Go constants
+  (`output.SuccessSchema` / `yerr.SchemaVersion`); and every
+  example body that resembles a credential is rendered through
+  `output.Sentinel`.
+
+The self-check
+`TestVerificationSuiteOpenAPIConformanceAnalyzerDetectsRegressions`
+drives every matcher with synthetic known-good AND known-bad
+fixtures so over-tightening (a legitimate change trips the
+analyser) and under-tightening (a real regression slips
+through) are both caught at the package-internal API. When
+changing the CI step name, the verify.sh header, the
+CONTRIBUTING.md numeric prefix, the SECURITY.md row or
+section, the PRD command, the canonical conformance file
+path, or any conformance-triple function name, update the
+matching constant in
+`verification_suite_openapi_conformance_static_test.go` in
+the same edit. The matchers fail loudly on drift; the
+assertion IS the contract.
