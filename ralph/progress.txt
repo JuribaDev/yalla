@@ -29096,3 +29096,78 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     dropped the `g.Scope.OrganizationID != principal.OrganizationID`
     guard in engine.Decide trips both legs.
 ---
+
+## 2026-05-17 - BE-0143
+- What was implemented: Added contract-test coverage for GET
+  /v1/projects/{project_id}/variables, closing the remaining
+  acceptance-criteria the wire-contract suite (project_variables_test.go
+  / BE-0142) and the policy matrix (projects_variables_get_policy_test.go
+  / BE-0144) leave open: (a) ResponseWriter-only response data — the
+  HTTP server writes nothing to process stdout/stderr; (b) bearer-token
+  redaction in the per-request structured log on both the success and
+  the authorization-failure path; (c) error envelope does not leak the
+  wrapped dependency cause or the bare datastore address when the
+  reader-store surfaces an outage. Structural twin of BE-0140
+  (project_grants_get_contract_test.go).
+- Files changed:
+  - internal/controlplane/httpapi/project_variables_get_contract_test.go (new)
+  - ralph/prd.json (BE-0143.passes=true)
+  - ralph/progress.txt (this entry)
+- Verification run:
+  - `gofmt -l .` clean.
+  - `go mod tidy` clean.
+  - `go vet ./...` clean.
+  - `go test -count=1 -run TestListProjectVariables
+    ./internal/controlplane/httpapi/` pass (httpapi 0.56s).
+  - `go test -count=1 ./...` pass (all packages).
+  - `go test -count=1 -race ./...` pass (all packages, httpapi 8.93s).
+- Flipped BE-0143 `passes: true` in `ralph/prd.json`.
+- Remaining: 286 stories pending.
+- **Learnings for future iterations:**
+  - Contract-test for a GET-list-of-child-resources endpoint with a
+    {parent_id} path parameter (BE-0143 instance of the BE-0140
+    project_grants_get_contract_test.go template, structurally the same
+    shape ported across the {project_id}->variables reader). The
+    template is now confirmed reusable for any GET list endpoint whose
+    only input is an opaque path parameter and whose response is a
+    deterministic non-nil slice. The three contract members map onto
+    the acceptance-criteria gaps the wire-contract suite leaves open:
+    (1) `TestList<Resource>ServerWritesResponseDataOnlyToResponseWriter`
+    — wraps a captureProcessOutput(t, ...) around getList<Resource>(...)
+    and asserts stdout=="" && stderr=="" while the seeded entry is
+    still carried by the response body. Uses a caller-supplied logger
+    threaded through a `<Resource>HandlerForWithLogger` variant so the
+    structured log goes to a buffer (the sanctioned out-of-band writer)
+    rather than the process streams.
+    (2) `TestList<Resource>RequestLogRedactsBearerToken` — a two-leg
+    table (success path / authorization-failure path) that builds a
+    handler with a JSON-handler logger at slog.LevelDebug, sends the
+    bearer credential as Authorization: Bearer <token>, then asserts
+    neither the log buffer nor the response body contains the literal
+    bearer. The deny leg uses `principal.Disabled = true` so policy
+    short-circuits before the reader, and the reader's err is
+    `stderrors.New("reader must not be called")` to prove the deny
+    path never reached the store.
+    (3) `TestList<Resource>ErrorEnvelopeDoesNotLeakDependencyCause` —
+    seeds the reader's err with `apierr.StoreUnavailable(
+    stderrors.New("connection refused dialing 10.0.0.5:5432"))`, then
+    asserts the 503 response body contains neither the wrapped cause
+    string NOR the datastore address substring "10.0.0.5". This is
+    the chokepoint for "an error envelope leaked the internal-network
+    detail" regressions.
+  - The handler-builder fanout for a new `<Resource>HandlerForWithLogger`
+    helper is the SAME 60-argument NewHandler call as the existing
+    `<Resource>HandlerFor`, but with `logger` substituted for the
+    second-to-last `nil` argument. The argument-positional slot for
+    the resource's own port stays unchanged (here `reader` lives in
+    the projectVariables slot of the projects/grants/variables/replacer
+    quad on the NewHandler line). Forward-applicable to every future
+    GET list contract test: build a `WithLogger` sibling once per
+    resource, reuse it across all three contract members.
+  - The contract-test bearer constant is namespaced per endpoint
+    (`listProjectVariablesContractSecret`) so a future analyzer can
+    grep for any byte of it leaking into logs / response bodies.
+    Convention: `yk_live_supersecret_<resource>_<method>_DEADBEEF...`.
+    The DEADBEEF suffix makes accidental collisions across files
+    impossible.
+---
