@@ -88,6 +88,7 @@ defined in `.github/workflows/ci.yml`:
 | Config validation tests | `go test -run TestConfigValidation ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Admin endpoint tests | `go test -run TestAdminEndpoint ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Break-glass tests | `go test -run TestBreakGlass ./...` | `scripts/verify.sh`, CI | Every push and PR |
+| Reconciliation tests | `go test -run TestReconciliation ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | External live-Dokploy smoke tests | `YALLA_EXTERNAL_DOKPLOY=1 go test -run TestLiveDokploySmoke ./...` | `.github/workflows/external-smoke.yml`, `scripts/verify.sh` (opt-in) | Opt-in (`YALLA_EXTERNAL_DOKPLOY=1`), nightly + manual |
 | Race detector | `go test -race ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Vulnerability scan | `govulncheck ./...` | CI `security` job | Every push and PR |
@@ -3229,6 +3230,94 @@ needing to discover it from shell scripts or CI workflows. Every
 push and PR runs the gate. The single static defence that pins
 every one of those surfaces is
 `internal/release/verification_suite_break_glass_static_test.go`.
+
+## Reconciliation Tests
+
+The reconciliation suite (BE-0405) is the planner gate for the
+reconcile loop's pure classifier chokepoint
+`reconcile.Diff(desired, actual) reconcile.Plan`. The reconcile
+loop is the only customer-facing surface that consumes both the
+Yalla desired-state snapshot (source of truth) and the live
+Dokploy actual-state snapshot (defence-in-depth) in the same
+evaluation. `Diff` is a deterministic function from
+`(DesiredOrganization, ActualOrganization)` to a `Plan` whose
+every `Action` carries a stable closed-set tag `(ActionType,
+DriftKind, DriftReason)`. The gate is run by
+`go test -run TestReconciliation ./...`.
+
+The closed-set coverage invariant pins four structural reconcile
+contracts in one place: every documented `DriftReason`
+(`env_var_changed`, `env_var_missing`, `env_var_extra`,
+`domain_missing`, `domain_renamed`, `service_missing`,
+`database_missing`, `service_type_changed`,
+`resource_unmanaged`) MUST be exercised by at least one scenario
+row; every documented `ActionType` (`update_env_var`,
+`ensure_domain`, `remove_extra_env_var`, `review_missing_service`,
+`review_missing_database`, `review_renamed_domain`,
+`review_service_type_change`, `mark_unmanaged`) MUST also be
+exercised by at least one row; `Diff(desired, actual)` MUST be
+deterministic — calling it twice on the same inputs yields equal
+plans; and the value-free classification invariant pins that
+desired env-var values reach `Action.DesiredValue` (the single
+value-routing field a Repairer adapter consumes) but NEVER
+appear in `Action.Type`, `Action.Kind`, `Action.Reason`,
+`Action.EnvVarKey`, `Action.Service`, `Action.Domain`, or
+`Action.Unmanaged`. The safety dispatch invariant routes
+`safe` drift to the auto-repair path, `dangerous` drift to the
+review queue, and `unmanaged` drift to quarantine; a regression
+that flipped a `dangerous` kind to `safe` would let the engine
+auto-repair drift it must not touch and would surface here as a
+closed-set tag mismatch on the affected scenario row.
+
+The canonical pair (`TestReconciliationCoversCallSites` and
+`TestReconciliationPreservesContractUnderContention`) lives in
+`internal/controlplane/reconcile/reconcile_canonical_test.go`
+and binds to the PRD's `-run TestReconciliation` filter. The
+first member walks a closed scenario table built from every
+documented `DriftReason` and `ActionType` of `reconcile.Diff`,
+seeds `RECONCILESECRETMARKER` into desired env-var values on
+env-var rows, and asserts the marker survives in
+`Action.DesiredValue` but is absent from every other field of
+every emitted action. The second member fires
+`reconcileWorkers * reconcileIterationsPerWorker` goroutines
+that each draw a row from the same scenario table by
+deterministic mod-index, build their own (desired, actual) pair,
+call `reconcile.Diff` directly, and assert the per-iteration
+verdict. A cross-write under the race that swapped two
+goroutines' scenarios — or a future regression that introduced
+shared mutable state in the package (a cached reason table, a
+`sync.Once` mutating a per-action map, a `sync.Pool` reused
+without reset) — would fail the per-iteration assertion even
+when the aggregate pass count matched. Both members are
+deterministic by design: `Diff` is a pure function from
+`(desired, actual)` to a `Plan` and neither member reaches the
+process environment, the network, a live Postgres, a live
+Dokploy, or any external service.
+
+When the suite fails, every actionable failure message names
+the scenario row that drifted, the closed-set tag the row
+predicted, and the closed-set tag the planner actually emitted,
+so operators do not need to read the canonical pair to triage.
+Errors propagate through the same `yalla.error.v1` envelope
+shape any other backend test produces; success rows assert the
+plan's `OrganizationID` is non-empty so the tenant-scoping
+invariant is enforced on every row. The redaction contract is
+exercised in two directions: on env-var scenarios the marker
+MUST survive into `Action.DesiredValue` (a Repairer adapter
+needs to write the desired value back), and the marker MUST NOT
+echo into any classification field of any action. Only a Yalla
+service principal with `support` role can trigger a manual
+reconciliation; the gate is documented as a dedicated
+`Reconciliation tests` step in `.github/workflows/ci.yml`, under
+`# 29. Required: reconciliation tests` in `scripts/verify.sh`,
+as entry `29` in `CONTRIBUTING.md` under
+`## Required Checks Before Every Commit`, and in `ralph/prd.json`
+under `verificationLoop.requiredBackendCommands` so an AI agent
+reading the PRD before picking up a story sees the gate without
+needing to discover it from shell scripts or CI workflows. Every
+push and PR runs the gate. The single static defence that pins
+every one of those surfaces is
+`internal/release/verification_suite_reconciliation_static_test.go`.
 
 ## Race Detector
 

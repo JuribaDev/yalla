@@ -2221,3 +2221,104 @@ update the matching constant in
 `verification_suite_break_glass_static_test.go` in the
 same edit. The matchers fail loudly on drift; the
 assertion IS the contract.
+
+## Verification suite: reconciliation tests (BE-0405)
+
+`verification_suite_reconciliation_static_test.go` pins
+the reconciliation verification gate. It is the load-
+bearing static defence for the contract between Yalla's
+`internal/controlplane/reconcile/diff.go` (the pure
+planner chokepoint `reconcile.Diff(desired, actual)
+reconcile.Plan`) and every downstream caller that
+relies on the planner's closed-set `(ActionType,
+DriftKind, DriftReason)` tag on every emitted `Action`.
+The canonical pair (`TestReconciliationCoversCallSites`
+and `TestReconciliationPreservesContractUnderContention`)
+lives in
+`internal/controlplane/reconcile/reconcile_canonical_test.go`
+and binds to the PRD's `-run TestReconciliation`
+filter. The first member walks a closed scenario table
+built from every documented `DriftReason`
+(`env_var_changed`, `env_var_missing`, `env_var_extra`,
+`domain_missing`, `domain_renamed`, `service_missing`,
+`database_missing`, `service_type_changed`,
+`resource_unmanaged`) and every documented `ActionType`
+(`update_env_var`, `ensure_domain`,
+`remove_extra_env_var`, `review_missing_service`,
+`review_missing_database`, `review_renamed_domain`,
+`review_service_type_change`, `mark_unmanaged`) of
+`reconcile.Diff`. Each row predicts the dominant
+action's closed-set tag deterministically; rows that
+seed `RECONCILESECRETMARKER` into desired env-var values
+also assert the marker survives into
+`Action.DesiredValue` (the single value-routing field a
+Repairer adapter consumes) and is absent from every
+other field of every emitted action — a regression that
+started echoing the desired value into `Action.Type`,
+`Action.Kind`, `Action.Reason`, `Action.EnvVarKey`,
+`Action.Service.*`, `Action.Domain.*`, or
+`Action.Unmanaged.*` would fail the marker-absence
+predicate on its first env-var scenario. Four closed-set
+self-checks fire at the head of the test before any row
+is walked: every documented `DriftReason` in
+`reconcileDriftReasons` is exercised by at least one
+row; every documented `ActionType` in
+`reconcileActionTypes` is exercised by at least one
+row; `Diff(desired, actual)` produces equal plans on
+repeated calls (deterministic ordering); and the secret
+marker survives plain string formatting so the per-row
+canary is meaningful. The second member fires
+`reconcileWorkers * reconcileIterationsPerWorker`
+goroutines that each draw a row by deterministic
+mod-index (`idx := (w*iters + i) % len(rows)`, never
+per-goroutine random selection — that would defeat the
+per-iteration prediction contract), build their own
+(desired, actual) pair via `reconcileApplyMutator`,
+call `reconcile.Diff` directly (no shared receiver,
+because the chokepoint is a pure function), and assert
+the per-iteration verdict. A cross-write under the race
+that swapped two goroutines' scenarios — or a future
+regression that smuggled shared mutable state into the
+package (a cached reason table, a `sync.Once` mutating
+a per-action map, a `sync.Pool` reused across calls
+without resetting) — would fail the per-iteration
+assertion even when the aggregate pass count matched.
+Both members are deterministic by design: `Diff` is a
+pure function from `(DesiredOrganization,
+ActualOrganization)` to a `Plan` and neither member
+reaches the process environment, the network, a live
+Postgres, a live Dokploy, or any external service. The
+static test pins SIX surfaces in one file: the CI step
+name + run command (`- name: Reconciliation tests` /
+`run: go test -run TestReconciliation ./...` in
+`.github/workflows/ci.yml`), the verify.sh required
+step header `# 29. Required: reconciliation tests` +
+literal command `go test -run TestReconciliation ./...`,
+the CONTRIBUTING.md numbered entry
+`29. \`go test -run TestReconciliation ./...\``, the
+SECURITY.md row + dedicated `## Reconciliation Tests`
+section (with the When column marked "Every push and
+PR"), the PRD command in
+`verificationLoop.requiredBackendCommands`, and the
+canonical pair file's existence with both function
+declarations present. Adding step #29 between BE-0404's
+#28 and the trailing optionals required renumbering
+verify.sh optional steps #29-#33 to #30-#34 and
+updating BE-0400's static test constant from
+`# 33. Optional…` to `# 34. Optional…` (and its
+synthetic-fixture `# 32 → # 33`) in the same edit — the
+renumber is the shared cost of inserting a required
+step into the sequence and continues the BE-0404
+pattern verbatim. The self-check
+(`TestVerificationSuiteReconciliationAnalyzerDetectsRegressions`)
+drives every matcher with synthetic known-good AND
+known-bad fixtures so over-tightening (a legitimate
+change trips the analyser) and under-tightening (a real
+regression slips through) are both caught at the
+package-internal API. When changing the CI workflow
+name, the verify.sh header, the CONTRIBUTING.md entry,
+the SECURITY.md row or section, or the PRD commands,
+update the matching constant in
+`verification_suite_reconciliation_static_test.go` in
+the same edit. The matchers fail loudly on drift; the
+assertion IS the contract.

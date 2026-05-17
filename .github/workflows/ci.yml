@@ -120,6 +120,9 @@ jobs:
       - name: Break-glass tests
         run: go test -run TestBreakGlass ./...
 
+      - name: Reconciliation tests
+        run: go test -run TestReconciliation ./...
+
       - name: Race detector
         run: go test -race ./...
 
