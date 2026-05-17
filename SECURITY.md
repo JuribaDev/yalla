@@ -86,6 +86,7 @@ defined in `.github/workflows/ci.yml`:
 | Backup restore rehearsal tests | `go test -run TestBackupRestoreRehearsal ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Release build tests | `go test -run TestReleaseBuild ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Config validation tests | `go test -run TestConfigValidation ./...` | `scripts/verify.sh`, CI | Every push and PR |
+| Admin endpoint tests | `go test -run TestAdminEndpoint ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | External live-Dokploy smoke tests | `YALLA_EXTERNAL_DOKPLOY=1 go test -run TestLiveDokploySmoke ./...` | `.github/workflows/external-smoke.yml`, `scripts/verify.sh` (opt-in) | Opt-in (`YALLA_EXTERNAL_DOKPLOY=1`), nightly + manual |
 | Race detector | `go test -race ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Vulnerability scan | `govulncheck ./...` | CI `security` job | Every push and PR |
@@ -3051,6 +3052,91 @@ for every collateral surface lives in
   push and PR runs the gate. The single static defence that pins
   every one of those surfaces is
   `internal/release/verification_suite_config_validation_static_test.go`.
+
+## Admin Endpoint Tests
+
+The admin-endpoint suite (BE-0403) is the authorization gate for the
+tagged-admin HTTP routes the control-plane API binary (`cmd/yalla-api`)
+ships behind a single role. The four admin actions — `admin.read`,
+`admin.import`, `admin.reconcile`, and `admin.break_glass` — authorise
+cross-tenant inspection, mutating reconciliation, importing pre-existing
+Dokploy resources into Yalla, and opening elevated cross-tenant access
+sessions. Each is catalogued as `CapSupport`, and `CapSupport` is held
+only by `RoleSupport` in the built-in role-to-capability matrix; the
+engine's cross-tenant exception clause admits `CapSupport` OR `CapRead`
+so a same-tenant Support principal authorises `admin.*` via
+`ReasonAllowedByRole` and a cross-tenant Support principal authorises
+through `ReasonAllowedBySupport`. Every admin endpoint's resource scope
+is org-rooted by construction (`Kind=KindOrganization`, only
+`OrganizationID` pinned) so the policy engine's `covers()` rule denies
+every project-, environment-, and service-scoped grant at the boundary
+with `ReasonDeniedOutOfScope` — even a Support-role grant scoped to a
+project cannot widen to the admin endpoints. The gate is run by
+`go test -run TestAdminEndpoint ./...`.
+
+The canonical pair lives in
+`internal/controlplane/policy/admin_endpoint_policy_test.go`:
+
+- `TestAdminEndpointCoversCallSites` walks the closed-set cartesian
+  product of every tagged-admin HTTP route registered in
+  `internal/controlplane/httpapi/routes.go`
+  (`GET /v1/admin/dokploy/drift`, `POST /v1/admin/dokploy/reconcile`,
+  `POST /v1/admin/dokploy/import`,
+  `GET /v1/admin/organizations/{org_id}/dokploy-refs`,
+  `POST /v1/admin/break-glass`,
+  `DELETE /v1/admin/break-glass/{session_id}`) × every built-in role
+  (`RoleOwner`, `RoleAdmin`, `RoleDeveloper`, `RoleViewer`, `RoleCI`,
+  `RoleSupport`) × the same-tenant / cross-tenant axes × the grant
+  containment positions (project-, environment-, service-scoped
+  grants), asserting `policy.Engine.Decide` returns the predicted
+  `(Allow, Reason)` for every row. The closed-set self-check at the
+  head of the test catches drift in either direction: a new admin
+  endpoint that ships without a row, or an existing admin endpoint
+  that drops its row. Two additional structural self-checks fire fast
+  at the catalog and role-matrix seams: every admin action is
+  catalogued as `CapSupport` in `defaultActionCatalog`, and
+  `builtinRoleCaps` admits `CapSupport` for exactly `RoleSupport` and
+  for no other built-in role.
+- `TestAdminEndpointPreservesContractUnderContention` fires
+  `adminEndpointWorkers * adminEndpointIterationsPerWorker` goroutines
+  that each draw a row from the same scenario table by deterministic
+  mod-index (NOT per-goroutine random selection — that would defeat
+  the per-iteration prediction contract), build their own Principal /
+  Resource, evaluate `policy.Engine.Decide` against a single shared
+  Engine instance, and assert the per-iteration verdict. A regression
+  that introduced shared mutable state in the engine — a cached
+  role-cap table, a `sync.Once` mutating a per-action capability map,
+  a leaky `builtinRoleCaps` reuse — would surface as a per-iteration
+  assertion failure even if the aggregate pass count matched.
+
+Both members are deterministic by design: the engine is a pure
+function from `(principal, action, resource)` to a `Decision` value,
+and no test reaches the process environment, the network, a live
+Postgres, a live Dokploy, or any external service. Failures are
+actionable: the closed-set table encodes `(method, path, role,
+scope, axis)` into every scenario name so a per-row failure points
+the operator at the exact admin endpoint, role, and scope that
+drifted. Decision Reasons are drawn from the closed `Reason` set
+in `internal/controlplane/policy/policy.go` and never carry
+caller-supplied data; the contention burst seeds a sentinel literal
+into every Principal ID and the assertion scans the Reason string
+for it, so a future engine change that started echoing
+principal-supplied data into the Reason would fail the redaction
+canary on its first iteration. The wire envelopes the admin
+endpoints produce on a deny path remain stable
+`yalla.error.v1` JSON shapes — the gate is at the policy seam, not
+the wire seam, but the seam guarantees the wire envelope cannot
+quietly drift past it. The gate is documented as a dedicated
+`Admin endpoint tests` step in `.github/workflows/ci.yml`, under
+`# 27. Required: admin endpoint tests` in `scripts/verify.sh`, as
+entry `27` in `CONTRIBUTING.md` under
+`## Required Checks Before Every Commit`, and in `ralph/prd.json`
+under `verificationLoop.requiredBackendCommands` so an AI agent
+reading the PRD before picking up a story sees the gate without
+needing to discover it from shell scripts or CI workflows. Every
+push and PR runs the gate. The single static defence that pins
+every one of those surfaces is
+`internal/release/verification_suite_admin_endpoint_static_test.go`.
 
 ## Race Detector
 

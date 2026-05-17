@@ -2009,3 +2009,116 @@ the matching constant in
 `verification_suite_config_validation_static_test.go` in
 the same edit. The matchers fail loudly on drift; the
 assertion IS the contract.
+
+## Verification suite: admin endpoint tests (BE-0403)
+
+`verification_suite_admin_endpoint_static_test.go` pins
+the admin-endpoint verification gate. It is the load-
+bearing static defence for the contract between the
+tagged-admin HTTP routes the control-plane API binary
+(`cmd/yalla-api`) ships and the policy engine's pure
+`Decide` function: every `/v1/admin/*` route resolves
+to one of the four `ActionAdmin*` constants
+(`admin.read`, `admin.import`, `admin.reconcile`,
+`admin.break_glass`), every admin action is catalogued
+as `CapSupport` in `defaultActionCatalog`, `CapSupport`
+is held by exactly `RoleSupport` in `builtinRoleCaps`,
+every admin endpoint's resource scope is org-rooted by
+construction (`Kind=KindOrganization`, only
+`OrganizationID` pinned), and the engine's cross-tenant
+exception clause admits `CapSupport` OR `CapRead` so a
+same-tenant Support principal is allowed via
+`ReasonAllowedByRole`, a cross-tenant Support principal
+is allowed via `ReasonAllowedBySupport`, every non-
+Support built-in role is denied with
+`ReasonDeniedNoCapability` same-tenant and
+`ReasonDeniedCrossTenant` cross-tenant, and every
+scoped grant narrower than the org root is denied by
+`covers()` with `ReasonDeniedOutOfScope` regardless of
+the grant role (covers() is one-way; a grant with a
+pinned `ProjectID` cannot cover a resource with no
+inner leg). The canonical pair
+(`TestAdminEndpointCoversCallSites` and
+`TestAdminEndpointPreservesContractUnderContention`)
+lives in
+`internal/controlplane/policy/admin_endpoint_policy_test.go`
+and binds to the PRD's `-run TestAdminEndpoint` filter.
+The first member walks a closed scenario table built
+from the cartesian product of every tagged-admin HTTP
+route (six routes today) × every built-in role
+(`RoleOwner`, `RoleAdmin`, `RoleDeveloper`,
+`RoleViewer`, `RoleCI`, `RoleSupport`) × the same-tenant
+/ cross-tenant axes × the grant containment positions
+(project-, environment-, service-scoped grants),
+asserting `policy.Engine.Decide` returns the predicted
+`(Allow, Reason)` for every row. Three closed-set self-
+checks fire at the head of the test before any row is
+walked: every admin endpoint in `adminEndpointCallSites`
+names a member of `adminEndpointActions` and every
+admin action is bound to at least one endpoint
+(exhaustiveness in both directions); every admin action
+is catalogued as `CapSupport` in `defaultActionCatalog`
+via `Engine.ActionCapability`; and `builtinRoleCaps`
+admits `CapSupport` for exactly `RoleSupport` and for
+no other built-in role via `BuiltinRoles()`. The second
+member fires
+`adminEndpointWorkers * adminEndpointIterationsPerWorker`
+goroutines that each draw a row from the same scenario
+table by deterministic mod-index
+(`idx := (w*iters + i) % len(rows)`, never per-goroutine
+random selection — that would defeat the per-iteration
+prediction contract), build their own Principal /
+Resource, evaluate `policy.Engine.Decide` against a
+single shared Engine instance, and assert the per-
+iteration verdict. A cross-write under the race that
+swapped two goroutines' scenarios — or a future
+regression that introduced shared mutable state in the
+engine (a cached role-cap table, a `sync.Once` mutating
+a per-action capability map, a leaky `builtinRoleCaps`
+reuse) — would fail the per-iteration assertion even
+when the aggregate pass count matched. Each Principal
+ID carries the `ADMINENDPOINTSECRETMARKER` literal and
+the contention loop scans the Decision's Reason for it
+on every iteration, so a future engine change that
+started embedding caller-supplied data into the
+Reason field would fail the redaction canary on its
+first iteration. Both members are deterministic by
+design: the engine is a pure function from
+`(principal, action, resource)` to a `Decision` value
+and no test reaches the process environment, the
+network, a live Postgres, a live Dokploy, or any
+external service. The static test pins SIX surfaces in
+one file: the CI step name + run command
+(`- name: Admin endpoint tests` /
+`run: go test -run TestAdminEndpoint ./...` in
+`.github/workflows/ci.yml`), the verify.sh required step
+header `# 27. Required: admin endpoint tests` +
+literal command `go test -run TestAdminEndpoint ./...`,
+the CONTRIBUTING.md numbered entry
+`27. \`go test -run TestAdminEndpoint ./...\``, the
+SECURITY.md row + dedicated `## Admin Endpoint Tests`
+section (with the When column marked "Every push and
+PR"), the PRD command in
+`verificationLoop.requiredBackendCommands`, and the
+canonical pair file's existence with both function
+declarations present. Adding step #27 between BE-0402's
+#26 and the trailing optionals required renumbering
+verify.sh optional steps #27-#31 to #28-#32 and updating
+BE-0400's static test constant from `# 31. Optional…` to
+`# 32. Optional…` (and its synthetic-fixture
+`# 30 → # 31`) in the same edit — the renumber is the
+shared cost of inserting a required step into the
+sequence and continues the BE-0402 pattern verbatim.
+The self-check
+(`TestVerificationSuiteAdminEndpointAnalyzerDetectsRegressions`)
+drives every matcher with synthetic known-good AND
+known-bad fixtures so over-tightening (a legitimate
+change trips the analyser) and under-tightening (a real
+regression slips through) are both caught at the
+package-internal API. When changing the CI workflow
+name, the verify.sh header, the CONTRIBUTING.md entry,
+the SECURITY.md row or section, or the PRD commands,
+update the matching constant in
+`verification_suite_admin_endpoint_static_test.go` in
+the same edit. The matchers fail loudly on drift; the
+assertion IS the contract.

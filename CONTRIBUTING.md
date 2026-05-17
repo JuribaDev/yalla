@@ -58,6 +58,7 @@ and they must all pass on every commit you propose:
 24. `go test -run TestBackupRestoreRehearsal ./...`
 25. `go test -run TestReleaseBuild ./...`
 26. `go test -run TestConfigValidation ./...`
+27. `go test -run TestAdminEndpoint ./...`
 
 `scripts/verify.sh` runs the full set in one command and is the local
 mirror of the `test` job in `.github/workflows/ci.yml`. Step 6 — the
@@ -523,6 +524,47 @@ introduced shared mutable state in the validator — would fail the
 per-iteration assertion even when the aggregate pass count matched.
 Both members are deterministic by design: the validator is a pure
 function from the env map to a `*Config` or a typed `*yerr.Error`
+value, and no test reaches the process environment, the network,
+a live Postgres, a live Dokploy, or any external service.
+Step 27 — the admin endpoint suite bound by the
+`-run TestAdminEndpoint` filter — is the admin-authorization gate
+documented in BE-0403; the dedicated invocation is defence-in-depth
+on the same principle so a narrowing of the umbrella `go test ./...`
+step would still leave the admin-endpoint gate firing as a fast,
+targeted failure rather than buried inside the umbrella log. The
+canonical pair (`TestAdminEndpointCoversCallSites` and
+`TestAdminEndpointPreservesContractUnderContention`) lives in
+`internal/controlplane/policy/admin_endpoint_policy_test.go`. The
+first member pins the closed-set admin-endpoint coverage invariant —
+every tagged-admin HTTP route (`GET /v1/admin/dokploy/drift`,
+`POST /v1/admin/dokploy/reconcile`, `POST /v1/admin/dokploy/import`,
+`GET /v1/admin/organizations/{org_id}/dokploy-refs`,
+`POST /v1/admin/break-glass`,
+`DELETE /v1/admin/break-glass/{session_id}`) is bound to one of the
+four ActionAdmin* constants (`admin.read`, `admin.import`,
+`admin.reconcile`, `admin.break_glass`), every admin action is
+catalogued as `CapSupport`, the role-to-capability matrix admits
+`CapSupport` only for `RoleSupport`, every admin endpoint's resource
+is org-rooted (`Kind=KindOrganization`, only `OrganizationID`
+pinned), and the cartesian table of (endpoint × built-in role ×
+same-tenant / cross-tenant axis × grant scope) yields the predicted
+`policy.Decision` from the engine's pure `Decide` function — a
+regression that demoted any admin action's capability, added
+`CapSupport` to a non-Support built-in role, pinned a deeper-than-org
+leg on an admin endpoint's resource, or dropped the cross-tenant
+Support exception (`CapSupport` OR `CapRead`) would fail a per-row
+verdict before it could ship. The second member pins the per-decision
+stability invariant under contention —
+`adminEndpointWorkers * adminEndpointIterationsPerWorker` goroutines
+each draw a row from the same scenario table by deterministic
+mod-index and assert the verdict their OWN row predicts; a
+cross-write under the race that swapped two goroutines' scenarios —
+or a future regression that introduced shared mutable state in the
+engine (a cached role-cap table, a sync.Once mutating a per-action
+capability map, a leaky `builtinRoleCaps` reuse) — would fail the
+per-iteration assertion even when the aggregate pass count matched.
+Both members are deterministic by design: the engine is a pure
+function from `(principal, action, resource)` to a `Decision`
 value, and no test reaches the process environment, the network,
 a live Postgres, a live Dokploy, or any external service.
 
