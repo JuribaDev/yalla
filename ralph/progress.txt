@@ -29490,3 +29490,24 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
           (tests #2, #3, #4 plus project_variables_test.go's existing
           response-body sentinel pin).
 ---
+
+## 2026-05-17 - BE-0149 — Add contract tests for GET /v1/projects/{project_id}/environments
+- Created internal/controlplane/httpapi/project_environments_get_contract_test.go with three tests cloning the BE-0143 GET-variables PUT-contract shape (three-test read-only variant) for the project-environments READ endpoint.
+- Files changed:
+  - internal/controlplane/httpapi/project_environments_get_contract_test.go (new, ~250 lines): listProjectEnvironmentsHandlerForWithLogger helper, listProjectEnvironmentsContractSecret module-scope bearer constant with endpoint-specific hex suffix, three tests (ServerWritesResponseDataOnlyToResponseWriter — NOT t.Parallel because captureProcessOutput swaps os.Stdout/os.Stderr; RequestLogRedactsBearerToken — success + disabled-principal deny legs both proving headers are not logged; ErrorEnvelopeDoesNotLeakDependencyCause — pins both the bare cause string AND the datastore address 10.0.0.5 stay server-side).
+  - ralph/prd.json (BE-0149 passes:false -> true).
+- Verification:
+  - gofmt -w internal/controlplane/httpapi/project_environments_get_contract_test.go: clean
+  - go vet ./internal/controlplane/httpapi/: pass
+  - go test -run 'TestListProjectEnvironments(ServerWritesResponseDataOnlyToResponseWriter|RequestLogRedactsBearerToken|ErrorEnvelopeDoesNotLeakDependencyCause)' ./internal/controlplane/httpapi/: PASS (3/3, 0.55s)
+  - go test ./...: PASS (all packages green)
+  - go test -race ./...: PASS (all packages green, internal/release 1.558s)
+  - go vet ./...: clean
+- Results: BE-0149 contract coverage closed; story flipped to passes=true.
+- Remaining risks/follow-ups: BE-0152 (POST /v1/projects/{project_id}/environments contract tests) is the next sibling and inherits the same handler-with-logger seam but on a write path — it should follow the BE-0146 PUT-contract four-test shape (success + deny redaction on both legs), not this BE-0149 three-test read-only shape, because POST bodies can carry caller-supplied request material that must also be redaction-proven.
+- **Learnings for future iterations:**
+  - Forward-applicable: the read-only GET contract test for a project-scoped child resource (variables, grants, environments) is structurally three tests — (1) non-parallel captureProcessOutput stdout/stderr assertion, (2) parallel two-case log-redaction sweep with success leg + disabled-principal deny leg backed by a reader that errors if invoked (deny path must short-circuit at policy so any reader-error log is structurally impossible to attribute), (3) parallel error-envelope cause-leak assertion against apierr.StoreUnavailable wrapping a host:port string, asserting BOTH the cause substring AND the bare datastore address stay off the wire.
+  - Gotcha: the NewHandler positional fake-fixture sweep for a GET on the project-environments path uses `reader` (a ProjectEnvironmentReader) at the project_environments slot between fakeProjectVariableReplacer{} and fakeEnvironmentCreator{}; the position is positional, NOT named, so a clone must copy the entire NewHandler call expression from listProjectEnvironmentsHandlerFor verbatim and only swap the trailing (nil, nil) for (logger, nil).
+  - Gotcha: this endpoint's projection (projectEnvironmentOf) has no secret-bearing fields (environments table stores only structural identifiers + slug + display name + version + lifecycle timestamps; no env-scoped variables on this wire shape), so the BE-0143 secret-value redaction test does NOT apply — the three-test read-only shape collapses cleanly to bearer + cause coverage, no fourth secret-projection test needed.
+  - Useful context: `denied.Principal.Disabled = true` is the canonical knob to force a CapRead policy short-circuit before the reader runs; the deny-leg reader returns stderrors.New("reader must not be called") and the test relies on policy never invoking it.
+---
