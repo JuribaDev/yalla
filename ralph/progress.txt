@@ -28434,3 +28434,60 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     (BE-0380 established this; BE-0392 confirmed it remains
     accurate.)
 ---
+
+## 2026-05-17 - BE-0131 Add contract tests for DELETE /v1/projects/{project_id}
+- Added internal/controlplane/httpapi/projects_delete_contract_test.go covering the
+  three contract gaps the existing projects_delete_test.go + projects_delete_policy_test.go
+  pair leaves open: (1) HTTP server writes response data only to the
+  http.ResponseWriter (captureProcessOutput asserts os.Stdout and os.Stderr empty
+  on a happy-path DELETE; structured logger sink is non-empty so a future "no
+  logging" regression also surfaces); (2) per-request structured log redacts the
+  bearer credential on both the success path AND the authorization-failure path
+  (parallel subtests, Disabled-flagged principal + a deleter that errors if invoked
+  so the deny path provably short-circuits at policy); (3) error envelope built
+  from apierr.StoreUnavailable(cause) never leaks the wrapped cause string or the
+  bare datastore address "10.0.0.5" onto the wire (503 / E_UNAVAILABLE / non-empty
+  stable Message).
+- New helper deleteProjectHandlerForWithLogger clones the existing
+  deleteProjectHandlerFor with a caller-supplied *slog.Logger threaded into the
+  second-to-last NewHandler slot — same shape as updateProjectHandlerForWithLogger
+  in projects_update_contract_test.go (BE-0128).
+- Adapted the BE-0128 contract-triple template to the DELETE shape: no request
+  body (deleteProject helper takes only projectID + token), success status is
+  http.StatusAccepted (202) instead of 200 because the destructive teardown is
+  scheduled rather than immediate, and the success-path payload carries
+  store.Project.DeletionScheduledAt (set via the existing fakeProjectDeleter).
+- Verification run from repo root:
+  - gofmt -w internal/controlplane/httpapi/projects_delete_contract_test.go (clean)
+  - goimports -w internal/controlplane/httpapi/projects_delete_contract_test.go (clean)
+  - go mod tidy (no changes)
+  - go vet ./... (clean)
+  - go test -run 'TestDeleteProject(ServerWritesResponseDataOnlyToResponseWriter|RequestLogRedactsBearerToken|ErrorEnvelopeDoesNotLeakDependencyCause)' ./internal/controlplane/httpapi/ → PASS (0.589s)
+  - go test ./... → all packages PASS
+  - go test -race ./... → PASS (exit=0)
+- Files changed: internal/controlplane/httpapi/projects_delete_contract_test.go (new),
+  ralph/prd.json (BE-0131 passes:true).
+- Remaining risks / follow-ups: none for this story. The contract-triple template
+  is now confirmed adaptable to ANY mutating endpoint (PATCH → BE-0128, DELETE →
+  BE-0131); next siblings BE-0134 (POST .../restore) and beyond can clone this
+  shape directly.
+- **Learnings for future iterations:**
+  - The contract-test triple (server-only-writes-to-ResponseWriter +
+    bearer-redaction-on-success-AND-deny + error-envelope-no-cause-leak) first
+    documented for read endpoints (BE-0095/BE-0101 GET triple) and then adapted
+    for PATCH (BE-0128) ports cleanly to DELETE with only two shape changes:
+    (a) drop the request-body constant — the deleteProject helper is body-less;
+    (b) flip the happy-path want status from 200 to 202 (StatusAccepted) because
+    DELETE /v1/projects/{project_id} schedules teardown rather than performing
+    it synchronously. Everything else — the WithLogger handler-builder clone,
+    the captureProcessOutput-stdout-stderr-empty assertion, the two-leg parallel
+    redaction subtests with a disabled-principal deny-deleter, the
+    apierr.StoreUnavailable(cause) "10.0.0.5" leak probe with decodeError(t,
+    rec, "E_UNAVAILABLE") — transfers verbatim.
+  - For mutating endpoints whose success status is NOT 200, the contract-triple
+    "server writes response data only to ResponseWriter" test must pin the
+    correct StatusAccepted/StatusCreated/etc. — copying the BE-0128 template
+    blindly with `http.StatusOK` would mask a genuine status-code regression
+    behind a "200 != 202" test failure rather than the more specific
+    "the data path must work even with stdout/stderr capture in effect" check.
+---
