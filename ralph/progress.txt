@@ -28556,3 +28556,23 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
   - The static defence's 16-substring SECURITY.md anchor set is one fewer than BE-0392's 17 because the chaos suite is package-bounded to internal/controlplane/dokploy and does not need to enumerate three bootstrap paths (`/healthz`, `/readyz`, `/version`); instead it names the typed-error classification anchors (`yerr.CodeTimeout`, `apierr.DependencyDokploy`, `TimeoutFault`) so a regression that renames any of those symbols still trips the SECURITY.md substring check.
   - The PRD's `requiredBackendCommands` append placement matters: inserting `go test -run TestChaosDokployTimeouts ./...` immediately after the TestLoadSmoke entry keeps the array's ordering aligned with verify.sh's step numbering, so an agent reading the PRD top-to-bottom sees commands in the same order they appear in verify.sh and CONTRIBUTING.md.
 ---
+
+## 2026-05-17 - BE-0137
+- Implemented contract tests for GET /v1/projects/{project_id}/grants.
+- Files changed:
+  - internal/controlplane/httpapi/project_grants_get_contract_test.go (new) — three pinned contract invariants for the project-grants READ endpoint.
+- Verification run:
+  - gofmt -w .
+  - go mod tidy
+  - go vet ./...
+  - go test ./...
+  - go test -race ./...
+  - go test -run "TestListProjectGrants(ServerWritesResponseDataOnlyToResponseWriter|RequestLogRedactsBearerToken|ErrorEnvelopeDoesNotLeakDependencyCause)" ./internal/controlplane/httpapi/
+- Results: all green; cached store/race packages still pass.
+- Remaining risks/follow-ups: none — twin-pattern clone of the BE-0107 variables_get_contract_test.go shape. Sibling READ endpoints BE-0143 (project variables), BE-0149 (project environments) are next and follow exactly the same template.
+- **Learnings for future iterations:**
+  - The BE-0107 read-endpoint contract triple (server-writes-only-through-ResponseWriter + request-log-redacts-bearer + error-envelope-does-not-leak-dependency-cause) is now the canonical shape for any single-{parent_id}-path-parameter read endpoint that already has a working _test.go (200/empty/notfound/store-outage/unwired) and a _policy_test.go (role matrix). The three tests file pattern: ListXxxContractSecret recognisable bearer + listXxxHandlerForWithLogger that mirrors the existing listXxxHandlerFor with the logger as the second-last positional NewHandler arg + the three test funcs.
+  - For the deny-leg, prefer "principal.Disabled = true" over an out-of-tenant principal — Disabled denies every action at the engine's first gate (no resource resolution needed) and works uniformly even when the action's allow-set widens (CapSupport on Reads, CapDeploy widening to CI keys).
+  - getProjectGrants + decodeListProjectGrants helpers already exist in project_grants_test.go; the contract test file reuses them. fakeProjectGrantReader already supports gotOrgID/gotProjectID/callCount + err for the unit-level forwarding pin, but the contract triple only needs grants/err.
+  - When the test file's "principal" helper returns auth.Identity (not policy.Principal), use `identity.Principal.Disabled = true` to flip the disabled flag (vs `principal.Disabled = true` when the helper returns a bare Principal).
+---
