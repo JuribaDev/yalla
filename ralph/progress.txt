@@ -29793,3 +29793,21 @@ change that widened Reason to caller-supplied data.
   - Determinism is structurally different from the closed-set tag — pin it as its own head-of-test self-check, not folded into the per-row verdict. The reconcile coverage member calls `Diff(desired, actual)` twice per scenario and `reflect.DeepEquals` the plans; a future regression that introduced map-iteration ordering into the planner output would surface here as a fast targeted failure rather than a confusing per-iteration burst mismatch many lines later.
   - The sandbox's TMPDIR collision with the Go module's path triggers `pattern ...: directory prefix ... does not contain main module` warnings. Wrapping invocations with `TMPDIR=/tmp go test ...` from `ctx_execute(language: "shell")` is sufficient — the harness's normal `Bash` tool already runs in the right working directory without that prefix.
 ---
+
+## [2026-05-17 22:35Z] - BE-0155
+- Implemented contract tests for GET /v1/environments/{environment_id}.
+- Files changed:
+  - internal/controlplane/httpapi/environments_get_contract_test.go (new)
+  - ralph/prd.json (BE-0155 passes:true)
+- Verification:
+  - gofmt -l .                                        (clean)
+  - go vet ./...                                      (pass)
+  - go test ./...                                     (pass — full module)
+  - go test -race ./internal/controlplane/httpapi/    (pass)
+- Results: 3 new tests pass (ResponseWriter-only output, bearer redaction on success+forbidden, error envelope does not leak dependency cause / datastore address).
+- Remaining risks: none specific to this story. Pattern fully mirrors project_environments_get_contract_test.go (BE-0152) and api_keys_get_contract_test.go (BE-0083).
+- **Learnings for future iterations:**
+  - The package-default `authForEnvGet{}` authenticator only accepts the bearer "a-valid-token". Contract tests that need a recognizable secret bearer must use `fakeAuthenticator{identity: id}` instead — that's what listProjectEnvironmentsHandlerForWithLogger does.
+  - For routes without a parent project_id in the URL (bare /v1/environments/{env_id}), the policy engine's covers() rule denies project-, environment-, and service-scoped grants because the resource has no ProjectID leg. Contract redaction tests must therefore use either org-wide roles or `Disabled = true` for the deny leg.
+  - canonicalEnvForGet and principalForEnvGet are already declared in environments_test.go; the contract test can reuse them rather than redeclaring fixtures.
+---
