@@ -78,6 +78,7 @@ defined in `.github/workflows/ci.yml`:
 | Migration downgrade safety tests | `go test -run TestMigrationsDowngradeSafety ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Load smoke tests | `go test -run TestLoadSmoke ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Chaos tests for Dokploy timeouts | `go test -run TestChaosDokployTimeouts ./...` | `scripts/verify.sh`, CI | Every push and PR |
+| Chaos tests for Postgres disconnects | `go test -run TestChaosPostgresDisconnects ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Race detector | `go test -race ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Vulnerability scan | `govulncheck ./...` | CI `security` job | Every push and PR |
 | Lint suite | `staticcheck ./...` and `golangci-lint run ./...` | CI `security` job | Every push and PR |
@@ -2111,6 +2112,120 @@ static defence for every collateral surface lives in
   opt-in via `YALLA_EXTERNAL_DOKPLOY=1`. The single static
   defence that pins every one of those surfaces is
   `internal/release/verification_suite_chaos_dokploy_timeouts_static_test.go`.
+
+## Chaos Tests For Postgres Disconnects
+
+The chaos-disconnect suite (BE-0394) is the store-layer
+chaos-classification gate. It exists to catch a class of regressions a
+single-request unit test cannot: a Postgres connection drop
+misclassified as `E_INTERNAL` or `E_TIMEOUT` after a code refactor, a
+store-layer call that classifies a transient transport failure as a
+permanent failure and refuses to retry, a `request_id` that fails to
+propagate through the per-op context so an operator cannot correlate a
+disconnect with the originating request, or a DSN password literal
+leaking into the error chain even under
+`chaosPostgresWorkers * chaosPostgresIterationsPerWorker` concurrent
+goroutines per scenario. The canonical pair
+(`TestChaosPostgresDisconnectsCoversCallSites` and
+`TestChaosPostgresDisconnectsMapsToTypedUnavailableEnvelope`) lives in
+`internal/controlplane/store/chaos_postgres_disconnects_test.go` and
+binds to the PRD's `-run TestChaosPostgresDisconnects` filter; the
+static defence for every collateral surface lives in
+`internal/release/verification_suite_chaos_postgres_disconnects_static_test.go`.
+
+- **Scope.** The two load-bearing chaos invariants are exercised by
+  the canonical function pair. The first member walks an in-memory
+  closed-set scenario table covering the pgxpool surface every store
+  method uses (`Pool.Ping`, `Pool.Acquire`, `Pool.Begin`, `Pool.Exec`,
+  `Pool.Query`) and asserts every entry maps to `yerr.CodeUnavailable`
+  attributed to `apierr.DependencyStore`. The second member spins a
+  fresh `pgxpool.Pool` up against a per-iteration in-process
+  `fakepg.Server`, queues a `DisconnectFault` per pool op, fires the
+  scenario's call under a context carrying a SafeID `request_id`,
+  wraps the resulting pgx error through `apierr.StoreUnavailable`
+  (the single public classifier chokepoint the store layer's
+  call-site surfaces use), and asserts every wrapped error is a typed
+  `*yerr.Error` with `Code=yerr.CodeUnavailable`, attributed to
+  `apierr.DependencyStore`, with the fake recording at least one
+  accepted TCP connection per attempt. The single static defence is
+  `internal/release/verification_suite_chaos_postgres_disconnects_static_test.go`,
+  which pins the existence of the canonical
+  `chaos_postgres_disconnects_test.go` file and the canonical
+  `TestChaosPostgresDisconnectsCoversCallSites` +
+  `TestChaosPostgresDisconnectsMapsToTypedUnavailableEnvelope` function
+  pair (the load-bearing `-run TestChaosPostgresDisconnects` filter
+  from `verificationLoop.requiredBackendCommands` binds to the
+  `TestChaosPostgresDisconnects` prefix) so the chaos-disconnect
+  convention itself cannot be silently deleted or renamed. The
+  classification chokepoint is `apierr.StoreUnavailable`, which
+  produces a `*yerr.Error` whose `Code=yerr.CodeUnavailable` and
+  whose dependency tag is `apierr.DependencyStore`.
+- **Determinism.** The chaos-disconnect tests run against
+  deterministic fixtures only — a per-iteration `fakepg.Server`
+  constructed in-process with no shared instance state, a fresh
+  `pgxpool.Pool` per iteration whose `ConnectTimeout` is bounded by
+  `chaosPostgresConnectTimeout` so a single attempt completes well
+  under one second, and `DisconnectFault` entries that close the
+  accepted TCP socket gracefully (FIN, not RST) so pgx's dial
+  completes and the chaos error surfaces on the startup-handshake
+  read — the same failure mode an actual Postgres restart or network
+  partition produces in production. No chaos test reaches a live
+  Postgres, a live Dokploy, or any external network.
+- **Actionable failures.** Every diagnostic surfaces the offending
+  scenario name AND the observed `request_id` from
+  `telemetry.NewRequestID()` propagated through the call context via
+  `telemetry.WithCorrelation` so an operator reading the CI log can
+  map the failure to the exact chaos scenario and in-flight request
+  without re-running the suite locally. The accepted-connection
+  assertion reports the observed count so a regression that
+  short-circuited pgx without ever attempting a network connect
+  surfaces with the exact divergence.
+- **Coverage rows.** The closed-set chaos-scenario coverage member
+  (`TestChaosPostgresDisconnectsCoversCallSites`) drives the entire
+  pgxpool public surface — `Pool.Ping` for health checks, `Pool.Acquire`
+  for per-request connection use, `Pool.Begin` for transactional
+  writes, `Pool.Exec` for one-shot mutating statements, `Pool.Query`
+  for one-shot reads — and the runtime classification member
+  (`TestChaosPostgresDisconnectsMapsToTypedUnavailableEnvelope`) drives
+  every scenario through the production `apierr.StoreUnavailable`
+  wrapper so an end-to-end regression in the classifier chokepoint,
+  the dependency attribution, or the wrapped envelope's static
+  message surfaces on the first iteration that fires.
+- **Schema-version contract.** Every public HTTP response that
+  surfaces a Postgres-disconnect failure (a request that fails because
+  the datastore is briefly unreachable, an admin diagnostic that
+  reports the store as `unavailable`, an error envelope returned to
+  the customer) uses the stable JSON envelope shape pinned by
+  `yalla.output.v1` (success) and `yalla.error.v1` (error). The
+  chaos-disconnect suite itself asserts on the typed `*yerr.Error`
+  boundary the envelope is built from, so a regression that drifted
+  the wire shape would also fail the upstream handler-contract suite
+  (BE-0381) and the OpenAPI conformance suite (BE-0382).
+- **Redaction.** Test output, error chains, audit metadata, and the
+  wrapped envelope's rendered message MUST stay redacted of secrets —
+  the sentinel password literal embedded in every chaos DSN MUST
+  NEVER appear at any level of the wrapped cause chain, and the
+  wrapped envelope's `Error()` message MUST stay static
+  (`apierr.StoreUnavailable`'s rendered message is "the Yalla
+  datastore is temporarily unavailable") so neither the DSN password
+  nor the DSN username sentinel echoes into a test log or an audit
+  blob. The chaos suite walks the whole `errors.Unwrap` chain looking
+  for the password marker and re-asserts both markers against the
+  wrapped envelope's rendered string, so a leaked credential
+  surfaces with the marker substring that drifted.
+- **CI cadence.** The chaos-disconnect gate runs as a dedicated
+  `Chaos tests for Postgres disconnects` step in
+  `.github/workflows/ci.yml`, under
+  `# 19. Required: chaos tests for Postgres disconnects` in
+  `scripts/verify.sh`, as entry `19` in `CONTRIBUTING.md` under
+  `## Required Checks Before Every Commit`, and in
+  `ralph/prd.json` under
+  `verificationLoop.requiredBackendCommands` so an AI agent
+  reading the PRD before picking up a story sees the gate without
+  needing to discover it from shell scripts or CI workflows.
+  Every push and PR runs the gate. The single static defence that
+  pins every one of those surfaces is
+  `internal/release/verification_suite_chaos_postgres_disconnects_static_test.go`.
 
 ## Race Detector
 

@@ -256,7 +256,8 @@
       "go test -run TestMigrationsEmptyDB ./...",
       "go test -run TestMigrationsDowngradeSafety ./...",
       "go test -run TestLoadSmoke ./...",
-      "go test -run TestChaosDokployTimeouts ./..."
+      "go test -run TestChaosDokployTimeouts ./...",
+      "go test -run TestChaosPostgresDisconnects ./..."
     ],
     "optionalWhenConfigured": [
       "goimports -w .",
@@ -8381,7 +8382,7 @@
       ],
       "type": "verification",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Test suite: chaos tests for Postgres disconnects."
     },
     {

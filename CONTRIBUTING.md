@@ -50,6 +50,7 @@ and they must all pass on every commit you propose:
 16. `go test -run TestMigrationsDowngradeSafety ./...`
 17. `go test -run TestLoadSmoke ./...`
 18. `go test -run TestChaosDokployTimeouts ./...`
+19. `go test -run TestChaosPostgresDisconnects ./...`
 
 `scripts/verify.sh` runs the full set in one command and is the local
 mirror of the `test` job in `.github/workflows/ci.yml`. Step 6 — the
@@ -214,6 +215,45 @@ the only dependency the chaos harness needs, the `TimeoutFault`
 primitive honours `r.Context().Done()` so each per-attempt deadline
 cancels the in-flight request, and the gate stays green on every
 machine without Postgres or a live Dokploy server.
+
+Step 19 — the chaos-disconnect suite bound by the
+`-run TestChaosPostgresDisconnects` filter — is the store-layer
+chaos-classification gate documented in BE-0394; the dedicated
+invocation is defence-in-depth on the same principle so a narrowing
+of the umbrella `go test ./...` step would still leave the chaos gate
+firing as a fast, targeted failure rather than buried inside the
+umbrella log. The canonical pair
+(`TestChaosPostgresDisconnectsCoversCallSites` and
+`TestChaosPostgresDisconnectsMapsToTypedUnavailableEnvelope`) lives in
+`internal/controlplane/store/chaos_postgres_disconnects_test.go`. The
+first member pins the closed-set chaos-scenario coverage invariant —
+the scenario table the burst harness iterates MUST stay non-empty,
+free of duplicate names, scoped to the pgxpool surface every store
+method uses (`Ping`, `Acquire`, `Begin`, `Exec`, `Query`), and every
+entry MUST map to `yerr.CodeUnavailable` attributed to
+`apierr.DependencyStore` — and runs without any infrastructure
+dependency so a typo or classification-regression trips on every
+developer machine. The second member pins the runtime chaos invariant
+— a fresh `pgxpool.Pool` wired against a per-iteration
+`fakepg.Server` (a tiny in-process TCP listener that gracefully closes
+accepted connections so pgx fails on its startup-handshake read) and
+firing `chaosPostgresWorkers * chaosPostgresIterationsPerWorker`
+concurrent scenario invocations MUST yield only failures that wrap
+via `apierr.StoreUnavailable` into typed `*yerr.Error` values with
+`Code=yerr.CodeUnavailable`, attribute to `apierr.DependencyStore`,
+record at least one accepted TCP connection per attempt, leave the
+wrapped envelope's rendered message free of any DSN field (neither
+the sentinel password nor the sentinel username), and carry no
+sentinel password literal in any wrapped cause. Failures surface with
+the offending scenario name AND the observed request_id so an
+operator can correlate the gate failure with a specific in-flight
+chaos run without re-running the suite locally. Both members are
+deterministic by design: the in-process `fakepg.Server` is the only
+dependency the chaos harness needs, no live Postgres is required, the
+fake closes accepted connections gracefully so pgx's dial completes
+and the chaos error surfaces on the startup-handshake read, and the
+gate stays green on every machine without Postgres or a live Dokploy
+server.
 
 ## Required Checks Before Every Release
 

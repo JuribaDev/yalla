@@ -1458,3 +1458,59 @@ section, or the PRD commands, update the matching constant
 in `verification_suite_chaos_dokploy_timeouts_static_test.go`
 in the same edit. The matchers fail loudly on drift; the
 assertion IS the contract.
+
+## Verification suite: chaos tests for Postgres disconnects (BE-0394)
+
+`verification_suite_chaos_postgres_disconnects_static_test.go`
+pins the chaos-disconnect gate. It is the load-bearing
+static defence for the contract between Yalla's store layer
+and every operator, AI agent, audit reviewer, or upstream
+retry surface that consumes a Postgres-disconnect failure:
+every chaos-disconnect failure surfaces as a `*yerr.Error`
+with `Code=yerr.CodeUnavailable` attributed to
+`apierr.DependencyStore` via `apierr.StoreUnavailable`, the
+caller's `request_id` propagates through the per-op context,
+the per-iteration `fakepg.Server` records at least one
+accepted TCP connection per attempt (so a regression that
+short-circuited pgx without ever attempting a network
+connect trips here), the wrapped envelope's rendered
+`Error()` message stays static (apierr.StoreUnavailable
+MUST NOT echo any pgx cause-chain field — neither the DSN
+password nor the DSN username), and no DSN password literal
+leaks at any level of the wrapped cause chain even when
+fired by `chaosPostgresWorkers *
+chaosPostgresIterationsPerWorker` concurrent goroutines per
+scenario. The canonical pair
+(`TestChaosPostgresDisconnectsCoversCallSites` and
+`TestChaosPostgresDisconnectsMapsToTypedUnavailableEnvelope`)
+lives in
+`internal/controlplane/store/chaos_postgres_disconnects_test.go`
+and binds to the PRD's `-run TestChaosPostgresDisconnects`
+filter. Both pair members are deterministic — they spin a
+per-iteration `fakepg.Server` (a tiny in-process TCP
+listener under `internal/controlplane/store/fakepg`) up and
+never reach a live Postgres or any live Dokploy — because
+the fake closes accepted connections gracefully (FIN, not
+RST) so pgx's dial completes and the chaos error surfaces
+on the startup-handshake read, the same failure mode an
+actual Postgres restart or network partition produces. The
+static test pins SIX surfaces in one file: the CI
+`Chaos tests for Postgres disconnects` step
+(`.github/workflows/ci.yml`), the verify.sh step #19 header
+(`scripts/verify.sh`), the CONTRIBUTING.md entry #19, the
+SECURITY.md row + dedicated
+`## Chaos Tests For Postgres Disconnects` section, the PRD
+command in `verificationLoop.requiredBackendCommands`, and
+the canonical pair file's existence with both function
+declarations present. The self-check
+(`TestVerificationSuiteChaosPostgresDisconnectsAnalyzerDetectsRegressions`)
+drives every matcher with synthetic known-good AND
+known-bad fixtures so over-tightening (a legitimate change
+trips the analyser) and under-tightening (a real regression
+slips through) are both caught at the package-internal API.
+When changing the CI step name, the verify.sh header, the
+CONTRIBUTING.md numeric prefix, the SECURITY.md row or
+section, or the PRD commands, update the matching constant
+in `verification_suite_chaos_postgres_disconnects_static_test.go`
+in the same edit. The matchers fail loudly on drift; the
+assertion IS the contract.

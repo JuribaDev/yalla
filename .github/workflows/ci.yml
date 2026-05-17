@@ -90,6 +90,9 @@ jobs:
       - name: Chaos tests for Dokploy timeouts
         run: go test -run TestChaosDokployTimeouts ./...
 
+      - name: Chaos tests for Postgres disconnects
+        run: go test -run TestChaosPostgresDisconnects ./...
+
       - name: Race detector
         run: go test -race ./...
 
