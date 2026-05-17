@@ -37,9 +37,15 @@ and they must all pass on every commit you propose:
 3. `go vet ./...`
 4. `go test ./...`
 5. `go test -race ./...`
+6. `go test ./internal/controlplane/store/...`
 
 `scripts/verify.sh` runs the full set in one command and is the local
-mirror of the `test` job in `.github/workflows/ci.yml`.
+mirror of the `test` job in `.github/workflows/ci.yml`. Step 6 — the
+repository integration suite under `internal/controlplane/store/...` —
+is the persistence-layer gate documented in BE-0380; even though
+`go test ./...` covers the same packages, the dedicated invocation is
+defence-in-depth and surfaces a faster, more targeted failure if any
+repository-layer regression slips in.
 
 ## Required Checks Before Every Release
 

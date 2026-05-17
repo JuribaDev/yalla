@@ -65,6 +65,7 @@ defined in `.github/workflows/ci.yml`:
 | Module hygiene | `go mod tidy` | `scripts/verify.sh`, CI | Every push and PR |
 | Static analysis | `go vet ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Tests | `go test ./...` | `scripts/verify.sh`, CI | Every push and PR |
+| Repository integration tests | `go test ./internal/controlplane/store/...` | `scripts/verify.sh`, CI | Every push and PR |
 | Race detector | `go test -race ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Vulnerability scan | `govulncheck ./...` | CI `security` job | Every push and PR |
 | Lint suite | `staticcheck ./...` and `golangci-lint run ./...` | CI `security` job | Every push and PR |
@@ -916,6 +917,75 @@ BE-0379 publishes the contract operators and AI agents rely on:
   `verificationLoop.requiredLocalCommands` so an AI agent reading
   the PRD before picking up a story sees the gate without needing
   to discover it from shell scripts or CI workflows.
+
+## Repository Integration Tests
+
+Yalla's repository integration tests are the persistence-layer
+gate that catches regressions before they reach the HTTP API.
+The suite under `internal/controlplane/store/...` exercises every
+repository method — organizations, users, API keys, projects,
+environments, services, deployments, audit events, idempotency,
+jobs, quota counters — against an isolated migrated Postgres
+database using deterministic fixtures; it never depends on a live
+Dokploy server, and any fake Dokploy interaction it consumes lives
+in `internal/controlplane/dokploy` so the live external smoke
+remains opt-in via `YALLA_EXTERNAL_DOKPLOY=1 go test -run
+TestLiveDokploySmoke ./...`. The canonical command is
+`go test ./internal/controlplane/store/...`. BE-0380 publishes the
+contract operators and AI agents rely on:
+
+- **Scope.** Every repository method ships tenant-isolation tests
+  that prove cross-organization IDs cannot surface another
+  tenant's rows. `TestMigrations` in
+  `internal/controlplane/store/migrate/migrate_test.go` runs the
+  migration ladder forward from an empty Postgres so a future
+  contributor adding a migration cannot silently break the
+  initial-bootstrap contract; the PRD's
+  `go test -run TestMigrations ./...` command binds to that exact
+  function name.
+- **Determinism.** The repository tests run against deterministic
+  fixtures only — an isolated migrated database per test run with
+  no shared instance state, and any Dokploy interaction is
+  satisfied by a fake Dokploy fixture from
+  `internal/controlplane/dokploy`. A live Dokploy smoke is
+  opt-in via `YALLA_EXTERNAL_DOKPLOY=1` and never runs in the
+  default gate.
+- **Actionable failures.** Every assertion surfaces the failing
+  `resource_id` (organization_id, project_id, environment_id,
+  service_id, deployment_id, audit event id) and — for
+  HTTP-facing repository tests — the `request_id` so an operator
+  reading the CI log can map the failure to the exact row or
+  request without re-running the suite locally. Per-method tests
+  pin the `yalla.output.v1` / `yalla.error.v1` envelope shape
+  where the repository sits behind a handler, so a wire-contract
+  regression is caught at the persistence boundary too.
+- **Redaction.** Test output, structured log capture, error
+  envelopes, audit metadata, and dry-run payloads MUST stay
+  redacted of secrets — bearer tokens, API keys, Dokploy tokens,
+  customer cookies, and rendered environment-variable values are
+  scrubbed by `internal/output.Redactor`. Repository tests that
+  serialize a row carrying a secret column (API key hash,
+  environment-variable rendered value, Dokploy token) MUST flow
+  through the redactor before logging or printing — the BE-0359
+  fuzz harness in `internal/output/redact_fuzz_test.go` covers
+  the marker-bracketed-value contract end-to-end.
+- **CI gating.** `go test ./internal/controlplane/store/...` runs
+  on `ubuntu-latest`, `macos-latest`, and `windows-latest` for
+  every push and every pull request via
+  `.github/workflows/ci.yml` (the `test` job's step `Repository
+  integration tests`), and locally via `scripts/verify.sh`
+  (step `# 6. Required: repository integration tests`). Both
+  must pass before a commit lands in `main`. The same gate
+  appears in the verification-gates table above as the row
+  `| Repository integration tests | go test ./internal/controlplane/store/... | scripts/verify.sh, CI | Every push and PR |`,
+  in `CONTRIBUTING.md` under `## Required Checks Before Every
+  Commit`, and in `ralph/prd.json` under
+  `verificationLoop.requiredBackendCommands` so an AI agent
+  reading the PRD before picking up a story sees the gate
+  without needing to discover it from shell scripts or CI
+  workflows. The single static defence that pins every one of
+  those surfaces is
+  `internal/release/verification_suite_repo_integration_static_test.go`.
 
 ## Disclosure Timeline (Best Effort)
 

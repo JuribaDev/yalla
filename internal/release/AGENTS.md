@@ -400,3 +400,56 @@ matching constant in `verification_suite_unit_tests_static_test.go`
 in the same edit. The matchers fail loudly on drift; do not
 "fix" them by relaxing the assertion — the assertion IS the
 contract.
+
+## Verification suite: repository integration tests (BE-0380)
+
+`verification_suite_repo_integration_static_test.go` is the
+load-bearing static defence for the repository-integration gate
+documented in BE-0380. It pins SIX surfaces in one file so a
+future contributor changing any of them fails ONE test, not six:
+
+- `.github/workflows/ci.yml` — the `test` job's dedicated
+  `Repository integration tests` step running
+  `go test ./internal/controlplane/store/...`. Defence-in-depth:
+  a narrowing of the umbrella `Unit and integration tests` step
+  would still leave this gate firing as a fast, targeted
+  failure rather than buried inside the umbrella log.
+- `scripts/verify.sh` — the local commit gate runs the same
+  canonical command under the canonical header
+  `# 6. Required: repository integration tests`. The numeric
+  prefix is part of the contract: reorders must be deliberate.
+- `CONTRIBUTING.md` — the Required Checks Before Every Commit
+  numbered list carries entry
+  `6. \`go test ./internal/controlplane/store/...\`` so a
+  contributor sees the gate before opening a PR.
+- `SECURITY.md` — the Required Verification Gates table carries
+  the `Repository integration tests` row AND a dedicated
+  `## Repository Integration Tests` section explains the
+  tenant-isolation, determinism, actionable-failure (with
+  `request_id` / `resource_id`), fake-Dokploy, opt-in
+  `YALLA_EXTERNAL_DOKPLOY` external-smoke, and redaction
+  contracts auditors and operators rely on.
+- `ralph/prd.json` — the verification-loop's
+  `requiredBackendCommands` array carries
+  `go test ./internal/controlplane/store/...` so an AI agent
+  reading the PRD before picking up a story sees the gate from
+  the contract document.
+- `internal/controlplane/store/migrate/migrate_test.go` —
+  `func TestMigrations` MUST exist. The PRD's
+  `go test -run TestMigrations ./...` binds to that exact
+  function name; a rename (e.g. `TestMigrationsForward`)
+  silently de-gates the migration-ladder bootstrap.
+
+The self-check
+`TestVerificationSuiteRepoIntegrationAnalyzerDetectsRegressions`
+drives every matcher with synthetic known-good AND known-bad
+fixtures so over-tightening (a legitimate change trips the
+analyser) and under-tightening (a real regression slips
+through) are both caught at the package-internal API. When
+changing the CI step name, the verify.sh header, the
+CONTRIBUTING.md numeric prefix, the SECURITY.md row or
+section, the PRD command, or the migrations function name,
+update the matching constant in
+`verification_suite_repo_integration_static_test.go` in the
+same edit. The matchers fail loudly on drift; the assertion IS
+the contract.

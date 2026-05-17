@@ -51,6 +51,9 @@ jobs:
       - name: Unit and integration tests
         run: go test ./...
 
+      - name: Repository integration tests
+        run: go test ./internal/controlplane/store/...
+
       - name: Race detector
         run: go test -race ./...
 

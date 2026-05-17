@@ -242,6 +242,7 @@
     "requiredBackendCommands": [
       "go test ./internal/controlplane/...",
       "go test -race ./internal/controlplane/...",
+      "go test ./internal/controlplane/store/...",
       "go test -run TestMigrations ./...",
       "go test -run TestOpenAPI ./...",
       "go test -run TestPolicyMatrix ./...",
@@ -8105,7 +8106,7 @@
       ],
       "type": "verification",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Test suite: repository integration tests."
     },
     {
