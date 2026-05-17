@@ -102,6 +102,9 @@ jobs:
       - name: Pagination stability tests
         run: go test -run TestPaginationStability ./...
 
+      - name: Tenant isolation tests
+        run: go test -run TestTenantIsolation ./...
+
       - name: Race detector
         run: go test -race ./...
 

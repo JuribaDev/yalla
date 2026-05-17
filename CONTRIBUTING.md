@@ -54,6 +54,7 @@ and they must all pass on every commit you propose:
 20. `go test -run TestIdempotencyReplay ./...`
 21. `go test -run TestAuditCompleteness ./...`
 22. `go test -run TestPaginationStability ./...`
+23. `go test -run TestTenantIsolation ./...`
 
 `scripts/verify.sh` runs the full set in one command and is the local
 mirror of the `test` job in `.github/workflows/ci.yml`. Step 6 — the
@@ -375,6 +376,52 @@ file-local `concurrentPaginationStore` are the only dependencies
 the pagination-stability harness needs, no live Postgres is
 required, and the gate stays green on every machine without
 Postgres or a live Dokploy server.
+
+Step 23 — the tenant-isolation suite bound by the
+`-run TestTenantIsolation` filter — is the cross-tenant authorization
+gate documented in BE-0398; the dedicated invocation is
+defence-in-depth on the same principle so a narrowing of the umbrella
+`go test ./...` step would still leave the tenant-isolation gate
+firing as a fast, targeted failure rather than buried inside the
+umbrella log. The canonical pair
+(`TestTenantIsolationCoversCallSites` and
+`TestTenantIsolationPreservesScopeUnderContention`) lives in
+`internal/controlplane/policy/tenant_isolation_test.go`. The first
+member pins the closed-set cross-tenant coverage invariant — for every
+built-in role × every catalogued action × a resource whose
+`Scope.OrganizationID` is the cross tenant, the engine's verdict MUST
+match the engine's documented cross-tenant ordering: `CapSelf`
+actions are organization-independent and always allowed
+(`ReasonAllowedSelf`), the support role's `CapSupport` bridges the
+tenant boundary for `CapRead` and `CapSupport` actions only
+(`ReasonAllowedBySupport`), every other role on every other action
+falls through to `ReasonDeniedCrossTenant`, and a scoped `Grant`
+whose `Scope.OrganizationID` is the cross tenant is silently ignored
+(grants never bridge tenants). The same closed set covers the
+disabled-principal short-circuit (cross-tenant denial NEVER masks a
+disabled-principal denial), the missing-principal short-circuit
+(`ReasonDeniedNoPrincipal` precedes the cross-tenant check), and the
+uncatalogued-action short-circuit (`ReasonDeniedUnknownAction`
+precedes the cross-tenant check). The second member pins the
+per-decision stability invariant under contention — a single shared
+`policy.Engine` is hit by
+`tenantIsolationWorkers * tenantIsolationIterationsPerWorker`
+goroutines firing mixed-tenant `Decide(...)` tuples drawn from the
+coverage table, and every goroutine asserts the verdict it observed
+matches the verdict the closed-set scenario for its OWN tuple
+predicts — a cross-write that swapped two goroutines' resources or
+principals under the race would fail the per-iteration assertion
+even when the aggregate verdict count is correct. Failures surface
+with the offending tuple's role + action + tenant-pair (for the
+coverage member) or the worker + iteration index AND the offending
+tuple (for the burst member) so an operator reading the CI log can
+correlate the gate failure with a specific decision without
+re-running the suite locally. Both members are deterministic by
+design: the in-process `policy.Engine` is constructed via
+`NewEngine()` from the package's default action catalog, the
+principals and resources are built from constant tenant IDs, and no
+test reaches a live Postgres, a live Dokploy, or any external
+network.
 
 ## Required Checks Before Every Release
 

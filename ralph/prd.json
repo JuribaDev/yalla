@@ -260,7 +260,8 @@
       "go test -run TestChaosPostgresDisconnects ./...",
       "go test -run TestIdempotencyReplay ./...",
       "go test -run TestAuditCompleteness ./...",
-      "go test -run TestPaginationStability ./..."
+      "go test -run TestPaginationStability ./...",
+      "go test -run TestTenantIsolation ./..."
     ],
     "optionalWhenConfigured": [
       "goimports -w .",
@@ -8461,8 +8462,8 @@
       ],
       "type": "verification",
       "priority": 1,
-      "passes": false,
-      "notes": "Test suite: tenant isolation tests."
+      "passes": true,
+      "notes": "Canonical pair TestTenantIsolationCoversCallSites + TestTenantIsolationPreservesScopeUnderContention in internal/controlplane/policy/tenant_isolation_test.go pin the closed-set cross-tenant coverage invariant (every built-in role x every catalogued policy.Action against a cross-tenant resource yields the engine's documented verdict: CapSelf -> ReasonAllowedSelf, support-role CapSupport on CapRead/CapSupport -> ReasonAllowedBySupport, every other role on every other action -> ReasonDeniedCrossTenant; plus the three short-circuit guards that MUST precede the cross-tenant check: ReasonDeniedNoPrincipal, ReasonDeniedPrincipalDisabled, ReasonDeniedUnknownAction; plus the grants-never-bridge-tenants rule: a Grant whose Scope.OrganizationID is the cross tenant is silently ignored by the engine) and the per-decision stability invariant under contention (tenantIsolationWorkers * tenantIsolationIterationsPerWorker concurrent goroutines hit a single shared policy.Engine with tuples drawn from the same coverage table; every goroutine asserts its own tuple's verdict matches the verdict the closed-set scenario predicts, so a cross-write under the race fails the per-iteration assertion). Single static defence at internal/release/verification_suite_tenant_isolation_static_test.go pins six surfaces: CI step Tenant isolation tests, verify.sh # 23. Required: tenant isolation tests, CONTRIBUTING.md entry 23, SECURITY.md Required Verification Gates row + ## Tenant Isolation Tests section, PRD verificationLoop.requiredBackendCommands entry go test -run TestTenantIsolation ./..., and the canonical pair file + function declarations. Self-check TestVerificationSuiteTenantIsolationAnalyzerDetectsRegressions drives every matcher with synthetic known-good AND known-bad fixtures. Optional commands list extended in same edit (verify.sh #24..#27 renumbered for govulncheck / staticcheck / golangci-lint / goreleaser). Deterministic-by-default: policy.Engine constructed via NewEngine() with the package default action catalog and constant orgA/orgB tenant ids are the only dependencies; no live Postgres or Dokploy required."
     },
     {
       "id": "BE-0399",

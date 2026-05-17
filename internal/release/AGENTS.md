@@ -1667,3 +1667,56 @@ section, or the PRD commands, update the matching constant
 in `verification_suite_pagination_stability_static_test.go`
 in the same edit. The matchers fail loudly on drift; the
 assertion IS the contract.
+
+## Verification suite: tenant isolation tests (BE-0398)
+
+`verification_suite_tenant_isolation_static_test.go` pins
+the tenant-isolation gate. It is the load-bearing static
+defence for the contract between Yalla's `policy.Engine`
+chokepoint and every agent, CI runner, operator, or audit
+reviewer that touches an authenticated endpoint: for every
+built-in role × every catalogued `policy.Action` against a
+cross-tenant resource, the engine's verdict MUST match the
+documented cross-tenant ordering — `CapSelf` →
+`ReasonAllowedSelf`, support role's `CapSupport` on
+`CapRead`/`CapSupport` → `ReasonAllowedBySupport`,
+everything else → `ReasonDeniedCrossTenant` — AND the three
+short-circuit guards (`ReasonDeniedNoPrincipal`,
+`ReasonDeniedPrincipalDisabled`,
+`ReasonDeniedUnknownAction`) MUST precede the cross-tenant
+check, AND a scoped `Grant` whose `Scope.OrganizationID`
+is the cross tenant MUST be silently ignored (grants never
+bridge tenants). The canonical pair
+(`TestTenantIsolationCoversCallSites` and
+`TestTenantIsolationPreservesScopeUnderContention`) lives
+in `internal/controlplane/policy/tenant_isolation_test.go`
+and binds to the PRD's `-run TestTenantIsolation` filter.
+Both pair members are deterministic — they construct an
+in-process `policy.Engine` via `NewEngine()` from the
+package's default action catalog, build principals and
+resources from constant tenant ids (`orgA`, `orgB`), and
+the contention burst fires
+`tenantIsolationWorkers * tenantIsolationIterationsPerWorker`
+goroutines against a single shared engine with each
+goroutine asserting its OWN tuple's predicted verdict, so
+the gate stays green on every developer machine without a
+live Postgres or any external dependency. The static test
+pins SIX surfaces in one file: the CI `Tenant isolation
+tests` step (`.github/workflows/ci.yml`), the verify.sh
+step #23 header (`scripts/verify.sh`), the CONTRIBUTING.md
+entry #23, the SECURITY.md row + dedicated
+`## Tenant Isolation Tests` section, the PRD command in
+`verificationLoop.requiredBackendCommands`, and the
+canonical pair file's existence with both function
+declarations present. The self-check
+(`TestVerificationSuiteTenantIsolationAnalyzerDetectsRegressions`)
+drives every matcher with synthetic known-good AND
+known-bad fixtures so over-tightening (a legitimate change
+trips the analyser) and under-tightening (a real regression
+slips through) are both caught at the package-internal API.
+When changing the CI step name, the verify.sh header, the
+CONTRIBUTING.md numeric prefix, the SECURITY.md row or
+section, or the PRD commands, update the matching constant
+in `verification_suite_tenant_isolation_static_test.go` in
+the same edit. The matchers fail loudly on drift; the
+assertion IS the contract.

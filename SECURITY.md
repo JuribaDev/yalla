@@ -82,6 +82,7 @@ defined in `.github/workflows/ci.yml`:
 | Idempotency replay tests | `go test -run TestIdempotencyReplay ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Audit completeness tests | `go test -run TestAuditCompleteness ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Pagination stability tests | `go test -run TestPaginationStability ./...` | `scripts/verify.sh`, CI | Every push and PR |
+| Tenant isolation tests | `go test -run TestTenantIsolation ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Race detector | `go test -race ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Vulnerability scan | `govulncheck ./...` | CI `security` job | Every push and PR |
 | Lint suite | `staticcheck ./...` and `golangci-lint run ./...` | CI `security` job | Every push and PR |
@@ -2559,6 +2560,135 @@ static defence for every collateral surface lives in
   workflows. Every push and PR runs the gate. The single static
   defence that pins every one of those surfaces is
   `internal/release/verification_suite_pagination_stability_static_test.go`.
+
+## Tenant Isolation Tests
+
+The tenant-isolation suite (BE-0398) is the cross-tenant authorization
+gate. It exists to catch a class of regressions a single-call unit
+test cannot: a role drift that quietly allowed `RoleAdmin` to read
+another tenant's project, a re-ordering of `policy.Engine.Decide`'s
+short-circuits that let a cross-tenant resource bypass the
+disabled-principal check, a scoped `Grant` that silently bridged
+tenants because the engine forgot to compare `Grant.Scope.OrganizationID`
+against `Principal.OrganizationID`, or a custom-role hook regression
+that minted CapWrite across tenants. The canonical pair
+(`TestTenantIsolationCoversCallSites` and
+`TestTenantIsolationPreservesScopeUnderContention`) lives in
+`internal/controlplane/policy/tenant_isolation_test.go` and binds to
+the PRD's `-run TestTenantIsolation` filter; the static defence for
+every collateral surface lives in
+`internal/release/verification_suite_tenant_isolation_static_test.go`.
+
+- **Scope.** The two load-bearing tenant-isolation invariants are
+  exercised by the canonical function pair. The first member walks a
+  closed-set scenario table covering every built-in role
+  (`RoleOwner`, `RoleAdmin`, `RoleDeveloper`, `RoleViewer`,
+  `RoleCI`, `RoleSupport`) × every catalogued `policy.Action` ×
+  resources whose `Scope.OrganizationID` is the cross tenant, and
+  asserts the engine's verdict matches the engine's documented
+  cross-tenant ordering: `CapSelf` actions are
+  organization-independent and surface `ReasonAllowedSelf`; the
+  support role's `CapSupport` bridges the tenant boundary for
+  `CapRead` and `CapSupport` actions only and surfaces
+  `ReasonAllowedBySupport`; every other (role, action) pair on a
+  cross-tenant resource surfaces `ReasonDeniedCrossTenant`. The
+  closed set also covers the three short-circuit guards that MUST
+  precede the cross-tenant check — a missing principal surfaces
+  `ReasonDeniedNoPrincipal`, a disabled principal surfaces
+  `ReasonDeniedPrincipalDisabled`, an uncatalogued action surfaces
+  `ReasonDeniedUnknownAction` — and asserts a scoped `Grant` whose
+  `Scope.OrganizationID` is the cross tenant is silently ignored by
+  the engine (`ReasonDeniedNoCapability`, never
+  `ReasonAllowedByGrant`). The second member fires
+  `tenantIsolationWorkers * tenantIsolationIterationsPerWorker`
+  goroutines against a single shared `policy.Engine` constructed via
+  `NewEngine()`, each goroutine drawing a tuple from the same
+  coverage table and asserting the verdict it observed matches the
+  verdict its OWN tuple predicts — a cross-write that swapped two
+  goroutines' principals or resources under the race would fail the
+  per-iteration assertion even when the aggregate verdict counts
+  matched. The single static defence is
+  `internal/release/verification_suite_tenant_isolation_static_test.go`,
+  which pins the existence of the canonical
+  `tenant_isolation_test.go` file and the canonical
+  `TestTenantIsolationCoversCallSites` +
+  `TestTenantIsolationPreservesScopeUnderContention` function pair
+  (the load-bearing `-run TestTenantIsolation` filter from
+  `verificationLoop.requiredBackendCommands` binds to the
+  `TestTenantIsolation` prefix) so the tenant-isolation convention
+  itself cannot be silently deleted or renamed.
+- **Determinism.** The tenant-isolation tests run against
+  deterministic fixtures only — the in-process `policy.Engine`
+  constructed via `NewEngine()` with the package's default action
+  catalog, principals and resources built from constant tenant ids
+  (`orgA`, `orgB`), and the closed-set role × action coverage table
+  enumerated from `policy.BuiltinRoles()` and `policy.Actions()`.
+  The contention burst's per-goroutine tuple is derived from the
+  worker + iteration index and indexes into the coverage table, so
+  every test run exercises the identical decision set. No
+  tenant-isolation test reaches a live Postgres, a live Dokploy, or
+  any external network.
+- **Actionable failures.** Every diagnostic surfaces the offending
+  tuple's role + action + tenant pair (for the coverage member) or
+  the worker + iteration index AND the offending tuple (for the
+  burst member) so an operator reading the CI log can map the
+  failure to a specific decision without re-running the suite
+  locally. The mapped HTTP envelope each cross-tenant denial
+  exercises carries an originating `request_id`; a regression that
+  flipped a cross-tenant verdict surfaces with the divergent tuple
+  bound to the iteration it came from, and the diagnostic names
+  every required tenant-isolation invariant
+  (`ReasonDeniedCrossTenant`, the short-circuit ordering, the
+  grant-never-bridges-tenants rule) that the regression violated.
+- **Schema-version contract.** Every public HTTP response the
+  authorization middleware renders — a 2xx `yalla.output.v1`
+  success envelope when the engine returns allow, a 4xx
+  `yalla.error.v1` envelope (`apierr.Unauthenticated` mapped to
+  HTTP 401 when the principal is missing, `apierr.Forbidden`
+  mapped to HTTP 403 for every other deny, and a deliberate
+  remapping to `yerr.CodeNotFound` at the handler layer for
+  cross-tenant resources so the existence of another tenant's row
+  is never revealed by status alone) — flows through
+  `policy.Engine.Authorize`, the chokepoint the canonical pair
+  exercises. The tenant-isolation suite asserts the engine's
+  decision shape is stable under every scenario so a regression
+  that changed the verdict for a (role, action, cross-tenant)
+  triple would trip here even if the wire shape stayed valid JSON.
+- **Redaction.** The error message
+  `policy.Engine.Authorize` places on the wire carries only the
+  action and the stable reason code — never the principal ID, the
+  resource ID, or any organization id — so a 403 cannot be used as
+  a side-channel to confirm another tenant's resource exists. The
+  coverage member exercises a cross-tenant probe for every role
+  and every action and asserts the rendered error message stays
+  free of every cross-tenant identifier; the burst member preserves
+  this contract under contention. Test output, error chains, and
+  audit metadata stay redacted of secrets — the tenant-isolation
+  suite never logs principal ids, resource ids, or cross-tenant
+  organization ids.
+- **Tenant isolation.** This suite IS the tenant-isolation gate.
+  Cross-tenant resource access is denied with
+  `ReasonDeniedCrossTenant` for every role except the support
+  role's `CapSupport` bridge (limited to `CapRead` and
+  `CapSupport` actions). Scoped `Grant`s never bridge tenants —
+  a `Grant.Scope.OrganizationID` that does not match the
+  `Principal.OrganizationID` is silently ignored by the engine. The
+  canonical pair pins both invariants with a closed-set coverage
+  table AND a contention burst, so a regression in either the
+  cross-tenant short-circuit or the grant-tenant comparison trips
+  the gate.
+- **CI cadence.** The tenant-isolation gate runs as a dedicated
+  `Tenant isolation tests` step in `.github/workflows/ci.yml`,
+  under `# 23. Required: tenant isolation tests` in
+  `scripts/verify.sh`, as entry `23` in `CONTRIBUTING.md` under
+  `## Required Checks Before Every Commit`, and in
+  `ralph/prd.json` under
+  `verificationLoop.requiredBackendCommands` so an AI agent
+  reading the PRD before picking up a story sees the gate without
+  needing to discover it from shell scripts or CI workflows.
+  Every push and PR runs the gate. The single static defence that
+  pins every one of those surfaces is
+  `internal/release/verification_suite_tenant_isolation_static_test.go`.
 
 ## Race Detector
 
