@@ -69,6 +69,7 @@ defined in `.github/workflows/ci.yml`:
 | HTTP handler contract tests | `go test ./internal/controlplane/httpapi/...` | `scripts/verify.sh`, CI | Every push and PR |
 | OpenAPI schema conformance tests | `go test ./internal/controlplane/openapi/...` | `scripts/verify.sh`, CI | Every push and PR |
 | Policy matrix tests | `go test -run TestPolicyMatrix ./...` | `scripts/verify.sh`, CI | Every push and PR |
+| Quota concurrency tests | `go test -run TestQuotaConcurrency ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Race detector | `go test -race ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Vulnerability scan | `govulncheck ./...` | CI `security` job | Every push and PR |
 | Lint suite | `staticcheck ./...` and `golangci-lint run ./...` | CI `security` job | Every push and PR |
@@ -1253,6 +1254,103 @@ contract operators and AI agents rely on:
   opt-in via `YALLA_EXTERNAL_DOKPLOY=1`. The single static
   defence that pins every one of those surfaces is
   `internal/release/verification_suite_policy_matrix_static_test.go`.
+
+## Quota Concurrency Tests
+
+Yalla's quota concurrency tests are the hard-limit + cross-tenant
+concurrency gate that ensures the checker in
+`internal/controlplane/quota` deterministically rejects every reservation
+that would exhaust a hard limit, even under parallel writers from the
+same tenant, and never lets one organization's parallel reservations
+leak into another's count. The suite lives under
+`internal/controlplane/quota/` and the canonical command is
+`go test -run TestQuotaConcurrency ./...`. The suite exercises the
+checker end-to-end against deterministic fixtures (isolated, freshly
+migrated Postgres database via `testutil.RequireMigratedDB`,
+`seedQuotaOrg`, `seedOrgQuotaPolicy`, parallel goroutines driving
+`store.Write`); it never depends on a live Dokploy server, and any
+external smoke remains opt-in via `YALLA_EXTERNAL_DOKPLOY=1
+go test -run TestLiveDokploySmoke ./...`. BE-0384 publishes the
+contract operators and AI agents rely on:
+
+- **Scope.** The two load-bearing concurrency invariants are
+  exercised by the canonical function pair
+  (`TestQuotaConcurrencyHardLimitNeverOverallocates` and
+  `TestQuotaConcurrencyTenantIsolation`). The single static defence
+  is
+  `internal/release/verification_suite_quota_concurrency_static_test.go`,
+  which pins the existence of the canonical
+  `internal/controlplane/quota/quota_test.go` file and the canonical
+  `TestQuotaConcurrencyHardLimitNeverOverallocates` +
+  `TestQuotaConcurrencyTenantIsolation` function pair (the
+  load-bearing `-run TestQuotaConcurrency` filter from
+  `verificationLoop.requiredBackendCommands` binds to that prefix)
+  so the concurrency convention itself cannot be silently deleted
+  or renamed.
+- **Determinism.** The quota concurrency tests run against
+  deterministic fixtures only — an isolated migrated Postgres
+  database seeded per test run with no shared instance state, and
+  any Dokploy interaction stays out of the path entirely (the
+  checker only touches Postgres). No concurrency test reaches a
+  live Dokploy or any network. A live Dokploy smoke is opt-in via
+  `YALLA_EXTERNAL_DOKPLOY` and never runs in the default gate.
+  Tests skip cleanly when `YALLA_TEST_DATABASE_URL` is unset, so
+  contributors without a local Postgres get a fast green run while
+  CI gates on the real database.
+- **Actionable failures.** Every diagnostic surfaces the
+  organization ID (the load-bearing `organization_id` predicate
+  that scopes the `FOR UPDATE` lock and every counter, sum, and
+  reservation insert) and the resource so an operator reading the
+  CI log can map the failure to the exact tenant and dimension
+  without re-running the suite locally. A typed quota rejection
+  surfaces as `yerr.CodeQuotaExceeded` carrying the recoverable
+  `quota.ExceededDetail` (current, reserved, requested, limit) so
+  a regression that shifts the counts is caught at the boundary,
+  not at the persistence layer where the over-allocation has
+  already happened.
+- **Coverage rows.** The hard-limit invariant
+  (`TestQuotaConcurrencyHardLimitNeverOverallocates`) drives
+  `attempts` parallel writers against a single organization with a
+  hard limit below `attempts`, asserts exactly `limit` writers see
+  no error and the rest see `CodeQuotaExceeded`, and asserts the
+  database row count agrees with the success count. The
+  cross-tenant invariant
+  (`TestQuotaConcurrencyTenantIsolation`) drives parallel writers
+  against two organizations with independent hard limits, asserts
+  each organization respects its own limit, and asserts the two
+  tenants' active reservation rows sum to the two limits (no
+  collapse into one bucket). The `FOR UPDATE` lock on the per-
+  organization, per-resource usage counter row is what makes the
+  hard-limit invariant hold; the `organization_id` predicate
+  carried through every counter, sum, and insert is what makes
+  the cross-tenant invariant hold.
+- **Schema-version contract.** Every public HTTP response that
+  surfaces a quota rejection uses the stable JSON envelope shape
+  pinned by `yalla.output.v1` (success) and `yalla.error.v1`
+  (error) so a wire-contract regression in how rejections are
+  reported is caught at the httpapi handler-contract layer
+  (BE-0381) before it reaches a customer.
+- **Redaction.** Quota decisions never embed secrets, tokens, API
+  keys, cookies, or rendered environment variable values in the
+  diagnostic surface. `ExceededDetail` carries only the resource
+  dimension name and four non-secret counts; the organization ID
+  is a non-secret identifier; and any metadata carried alongside a
+  rejection is redacted through the shared output sentinel so a
+  CI log or audit metadata blob never becomes the place a
+  credential leaks.
+- **CI cadence.** The concurrency gate runs as a dedicated `Quota
+  concurrency tests` step in `.github/workflows/ci.yml`, under
+  `# 10. Required: quota concurrency tests` in `scripts/verify.sh`,
+  as entry `10` in `CONTRIBUTING.md` under
+  `## Required Checks Before Every Commit`, and in
+  `ralph/prd.json` under
+  `verificationLoop.requiredBackendCommands` so an AI agent
+  reading the PRD before picking up a story sees the gate without
+  needing to discover it from shell scripts or CI workflows.
+  Every push and PR runs the gate; a live-Dokploy smoke remains
+  opt-in via `YALLA_EXTERNAL_DOKPLOY=1`. The single static
+  defence that pins every one of those surfaces is
+  `internal/release/verification_suite_quota_concurrency_static_test.go`.
 
 ## Disclosure Timeline (Best Effort)
 

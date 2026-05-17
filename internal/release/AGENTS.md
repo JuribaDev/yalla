@@ -674,3 +674,90 @@ either matrix-pair function name, update the matching
 constant in `verification_suite_policy_matrix_static_test.go`
 in the same edit. The matchers fail loudly on drift; the
 assertion IS the contract.
+
+## Verification suite: quota concurrency tests (BE-0384)
+
+`verification_suite_quota_concurrency_static_test.go` is the
+load-bearing static defence for the hard-limit + cross-tenant
+concurrency gate. The canonical command is
+`go test -run TestQuotaConcurrency ./...` and the canonical
+reference file is
+`internal/controlplane/quota/quota_test.go`, which declares
+the concurrency function pair
+`TestQuotaConcurrencyHardLimitNeverOverallocates` (parallel
+reservations against one organization with a hard limit below
+the attempt count resolve to exactly `limit` successes and the
+rest rejected with `yerr.CodeQuotaExceeded`, with the database
+row count agreeing) and `TestQuotaConcurrencyTenantIsolation`
+(parallel reservations against two organizations each respect
+their own hard limit and never leak across tenants — the two
+tenants' active reservations sum to the two limits, never
+collapse into one bucket). The pair binds to the PRD's
+`-run TestQuotaConcurrency` filter via the
+`TestQuotaConcurrency` prefix, so a rename to a function whose
+name does not match the prefix silently de-gates the
+concurrency suite. The static test pins SIX surfaces in one
+file so a future contributor changing any one of them fails
+ONE test, not six:
+
+- `.github/workflows/ci.yml` — the `test` job's
+  `Quota concurrency tests` step MUST run
+  `go test -run TestQuotaConcurrency ./...`. The dedicated
+  step is defence-in-depth on the same principle as BE-0380 /
+  BE-0381 / BE-0382 / BE-0383: a narrowing of the umbrella
+  `go test ./...` step would still leave the concurrency
+  gate firing as a fast targeted failure.
+- `scripts/verify.sh` — the local commit gate's
+  `# 10. Required: quota concurrency tests` block MUST
+  invoke the same canonical command. The numeric prefix is
+  part of the contract: a reorder must be a deliberate edit
+  to both the matching constant in this test file AND the
+  script.
+- `CONTRIBUTING.md` — the Required Checks Before Every
+  Commit section MUST list the canonical command as entry
+  `10. \`go test -run TestQuotaConcurrency ./...\`` so
+  contributors know the gate before they open a PR. The
+  numeric prefix keeps verify.sh and CONTRIBUTING.md in
+  lockstep with BE-0379's `4. go test ./...`, BE-0380's
+  `6. go test ./internal/controlplane/store/...`,
+  BE-0381's `7. go test ./internal/controlplane/httpapi/...`,
+  BE-0382's `8. go test ./internal/controlplane/openapi/...`,
+  and BE-0383's `9. go test -run TestPolicyMatrix ./...`.
+- `SECURITY.md` — the Required Verification Gates table MUST
+  contain the `Quota concurrency tests` row, AND a dedicated
+  `## Quota Concurrency Tests` section MUST explain the
+  hard-limit-never-overallocates / cross-tenant-isolation /
+  determinism / actionable-failure / opt-in-external /
+  redaction contracts so the public security posture stays
+  in lockstep with the checker.
+- `ralph/prd.json` —
+  `verificationLoop.requiredBackendCommands` MUST list
+  `go test -run TestQuotaConcurrency ./...` so an AI agent
+  reading the PRD before picking up a story sees the gate
+  without needing to discover it from shell scripts or CI
+  workflows.
+- `internal/controlplane/quota/quota_test.go` — the
+  canonical reference concurrency test file MUST exist AND
+  MUST declare the concurrency function pair. The pair
+  captures the two load-bearing concurrency invariants the
+  checker MUST keep: `FOR UPDATE` on the per-organization,
+  per-resource usage counter row makes "two units of work
+  both decide they have headroom" impossible, and the
+  `organization_id` predicate carried through every counter,
+  sum, and insert makes "two tenants flatten into one
+  bucket" impossible.
+
+The self-check
+`TestVerificationSuiteQuotaConcurrencyAnalyzerDetectsRegressions`
+drives every matcher with synthetic known-good AND known-bad
+fixtures so over-tightening (a legitimate change trips the
+analyser) and under-tightening (a real regression slips
+through) are both caught at the package-internal API. When
+changing the CI step name, the verify.sh header, the
+CONTRIBUTING.md numeric prefix, the SECURITY.md row or
+section, the PRD command, the canonical concurrency file
+path, or either concurrency-pair function name, update the
+matching constant in
+`verification_suite_quota_concurrency_static_test.go` in the
+same edit. The matchers fail loudly on drift; the assertion
+IS the contract.

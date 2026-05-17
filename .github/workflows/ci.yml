@@ -63,6 +63,9 @@ jobs:
       - name: Policy matrix tests
         run: go test -run TestPolicyMatrix ./...
 
+      - name: Quota concurrency tests
+        run: go test -run TestQuotaConcurrency ./...
+
       - name: Race detector
         run: go test -race ./...
 

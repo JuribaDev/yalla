@@ -41,6 +41,7 @@ and they must all pass on every commit you propose:
 7. `go test ./internal/controlplane/httpapi/...`
 8. `go test ./internal/controlplane/openapi/...`
 9. `go test -run TestPolicyMatrix ./...`
+10. `go test -run TestQuotaConcurrency ./...`
 
 `scripts/verify.sh` runs the full set in one command and is the local
 mirror of the `test` job in `.github/workflows/ci.yml`. Step 6 — the
@@ -66,6 +67,12 @@ documented in BE-0383; the dedicated invocation is defence-in-depth
 on the same principle so a narrowing of the umbrella
 `go test ./...` step would still leave the matrix gate firing as a
 fast, targeted failure rather than buried inside the umbrella log.
+Step 10 — the quota concurrency suite bound by the
+`-run TestQuotaConcurrency` filter — is the hard-limit + cross-tenant
+concurrency gate documented in BE-0384; the dedicated invocation is
+defence-in-depth on the same principle so a narrowing of the umbrella
+`go test ./...` step would still leave the concurrency gate firing as
+a fast, targeted failure rather than buried inside the umbrella log.
 
 ## Required Checks Before Every Release
 

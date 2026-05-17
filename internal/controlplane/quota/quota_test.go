@@ -303,6 +303,169 @@ func TestCheckerReserveConcurrentRespectsLimit(t *testing.T) {
 	}
 }
 
+// TestQuotaConcurrencyHardLimitNeverOverallocates is the canonical
+// hard-limit concurrency invariant: parallel reservations against the same
+// organization, with a hard limit below the number of attempts, must result
+// in exactly limit successes and the rest rejected with
+// yerr.CodeQuotaExceeded. The FOR UPDATE lock on the usage counter row is
+// what makes "two units of work both decide they have headroom" impossible;
+// a regression that drops the lock would silently let two concurrent
+// reservations exceed the limit without firing any other gate.
+//
+// The function name is deliberately prefixed `TestQuotaConcurrency` so the
+// PRD's `go test -run TestQuotaConcurrency ./...` filter (pinned by
+// `internal/release/verification_suite_quota_concurrency_static_test.go`)
+// binds to it. Renaming this function to a name that does not match the
+// prefix silently de-gates the concurrency suite for any caller relying
+// on the filter — the static test fails loudly if this happens.
+//
+// Actionable failures: every diagnostic surfaces the organization ID and
+// the resource so an operator reading the CI log can map the failure to
+// the exact tenant and dimension without re-running the suite locally.
+func TestQuotaConcurrencyHardLimitNeverOverallocates(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newQuotaStore(t, db)
+	checker := mustChecker(t)
+	ctx := context.Background()
+
+	orgID := seedQuotaOrg(t, db)
+	const limit = 3
+	const attempts = 12
+	seedOrgQuotaPolicy(t, db, orgID, "projects", limit, "hard")
+
+	var (
+		wg        sync.WaitGroup
+		mu        sync.Mutex
+		succeeded int
+		rejected  int
+	)
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+				return checker.Reserve(ctx, tx, orgID, "projects")
+			})
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case err == nil:
+				succeeded++
+			case yerr.From(err).Code == yerr.CodeQuotaExceeded:
+				rejected++
+			default:
+				t.Errorf("organization %q resource %q unexpected Reserve error: %v", orgID, "projects", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if succeeded != limit {
+		t.Errorf("organization %q resource %q succeeded reservations = %d, want %d", orgID, "projects", succeeded, limit)
+	}
+	if rejected != attempts-limit {
+		t.Errorf("organization %q resource %q rejected reservations = %d, want %d", orgID, "projects", rejected, attempts-limit)
+	}
+	if got := activeReservationCount(t, db, orgID, "projects"); got != limit {
+		t.Errorf("organization %q resource %q active reservations in the database = %d, want %d", orgID, "projects", got, limit)
+	}
+}
+
+// TestQuotaConcurrencyTenantIsolation is the canonical cross-tenant
+// concurrency invariant: parallel reservations against two organizations,
+// each with its own hard limit, must each respect its own organization's
+// limit and must never have one tenant's usage leak into the other. A
+// regression that scoped the FOR UPDATE lock to the resource dimension
+// alone (instead of the organization-and-resource pair) would silently
+// serialise unrelated tenants behind one another and could over-count
+// usage across organizations; a regression that dropped the
+// organization predicate from the usage-counter or reservation-sum
+// queries would silently flatten cross-tenant counts into one bucket
+// and reject one tenant on another tenant's traffic.
+//
+// The function name is deliberately prefixed `TestQuotaConcurrency` so
+// the PRD's `go test -run TestQuotaConcurrency ./...` filter (pinned by
+// `internal/release/verification_suite_quota_concurrency_static_test.go`)
+// binds to it. The pair (this test + the hard-limit twin above) captures
+// the two load-bearing concurrency invariants the checker MUST keep.
+//
+// Actionable failures: every diagnostic names both organization IDs so
+// an operator reading the CI log can map the failure to the exact pair
+// without re-running the suite locally.
+func TestQuotaConcurrencyTenantIsolation(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newQuotaStore(t, db)
+	checker := mustChecker(t)
+	ctx := context.Background()
+
+	orgA := seedQuotaOrg(t, db)
+	orgB := seedQuotaOrg(t, db)
+	const limitA = 2
+	const limitB = 4
+	const attemptsPerOrg = 8
+	seedOrgQuotaPolicy(t, db, orgA, "projects", limitA, "hard")
+	seedOrgQuotaPolicy(t, db, orgB, "projects", limitB, "hard")
+
+	type tally struct {
+		mu                  sync.Mutex
+		succeeded, rejected int
+	}
+	results := map[string]*tally{orgA: {}, orgB: {}}
+
+	var wg sync.WaitGroup
+	for _, orgID := range []string{orgA, orgB} {
+		orgID := orgID
+		bucket := results[orgID]
+		for i := 0; i < attemptsPerOrg; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+					return checker.Reserve(ctx, tx, orgID, "projects")
+				})
+				bucket.mu.Lock()
+				defer bucket.mu.Unlock()
+				switch {
+				case err == nil:
+					bucket.succeeded++
+				case yerr.From(err).Code == yerr.CodeQuotaExceeded:
+					bucket.rejected++
+				default:
+					t.Errorf("organization %q unexpected Reserve error: %v", orgID, err)
+				}
+			}()
+		}
+	}
+	wg.Wait()
+
+	for orgID, want := range map[string]int{orgA: limitA, orgB: limitB} {
+		got := results[orgID]
+		if got.succeeded != want {
+			t.Errorf("organization %q (limit %d) succeeded reservations = %d, want %d (concurrent reserves under another tenant must not leak into this tenant's count)", orgID, want, got.succeeded, want)
+		}
+		if got.rejected != attemptsPerOrg-want {
+			t.Errorf("organization %q (limit %d) rejected reservations = %d, want %d", orgID, want, got.rejected, attemptsPerOrg-want)
+		}
+		if active := activeReservationCount(t, db, orgID, "projects"); active != want {
+			t.Errorf("organization %q (limit %d) active reservations in the database = %d, want %d", orgID, want, active, want)
+		}
+	}
+
+	// Defence-in-depth: the two tenants' active reservations MUST sum to
+	// the two limits. A regression that flattened cross-tenant counts
+	// into one bucket (e.g. dropping the organization predicate from the
+	// usage-counter query) would let each per-organization
+	// activeReservationCount above still pass while the total silently
+	// dropped below limitA+limitB.
+	totalA := activeReservationCount(t, db, orgA, "projects")
+	totalB := activeReservationCount(t, db, orgB, "projects")
+	if totalA+totalB != limitA+limitB {
+		t.Errorf("tenant-isolation total active reservations across organizations %q and %q = %d, want %d (the two tenants' counts must sum to the two limits, never collapse into one bucket)", orgA, orgB, totalA+totalB, limitA+limitB)
+	}
+}
+
 func TestCheckerReserveTenantIsolation(t *testing.T) {
 	t.Parallel()
 	db := testutil.RequireMigratedDB(t)
