@@ -26011,3 +26011,80 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     would need a separate `Open()` step before the marker check.
 
 ---
+
+## 2026-05-17 - BE-0104 - Add contract tests for GET /v1/organizations/{org_id}/audit-events
+- Added internal/controlplane/httpapi/audit_events_get_contract_test.go closing the
+  three contract-test criteria the base audit_events_test.go + audit_events_policy_test.go
+  pair leaves open: (1) HTTP server writes response data only through the
+  ResponseWriter (stdout/stderr empty under captureProcessOutput); (2) per-request
+  structured log redacts the bearer credential on both the success path and the
+  authorization-failure path (disabled owner -> 403 short-circuits at policy,
+  reader configured to error if invoked so a logged "reader error" cannot be the
+  leak source); (3) error envelope built from a wrapped StoreUnavailable cause
+  ("connection refused dialing 10.0.0.5:5432") does not leak the cause string nor
+  the bare datastore address onto the wire.
+- New helper: listAuditEventsHandlerForWithLogger mirrors listUsageHandlerForWithLogger,
+  threading a caller-supplied *slog.Logger into NewHandler so the request log can
+  be inspected per test.
+- Unique secret token (listAuditEventsContractSecret) is a recognisable
+  yk_live_supersecret_audit_events_get_DEADBEEF... bearer string scanned for in
+  both the log buffer and the response body.
+- Files changed:
+  - internal/controlplane/httpapi/audit_events_get_contract_test.go (new)
+  - ralph/prd.json (BE-0104 passes=true)
+  - ralph/progress.txt (this entry)
+- Verification run:
+  - gofmt -l . -> clean
+  - go mod tidy -> clean
+  - go vet ./... -> clean
+  - go test -run 'TestListAuditEvents(ServerWritesResponseDataOnlyToResponseWriter|RequestLogRedactsBearerToken|ErrorEnvelopeDoesNotLeakDependencyCause)' ./internal/controlplane/httpapi/ -> PASS (0.538s)
+  - go test ./internal/controlplane/httpapi/ -> ok (1.122s)
+  - go test -race ./internal/controlplane/httpapi/ -> ok (8.097s)
+  - go test ./... -> ok (39 packages)
+  - go test -race ./... -> ok (39 packages, no data races)
+- Results: BE-0104 passes; all acceptance criteria met by the combination of
+  audit_events_test.go (success envelope, schema versions, request_id, OpenAPI op,
+  unauthenticated, malformed/out-of-range limit invalid-input, empty-list not-found
+  shape, StoreUnavailable typed 503), audit_events_policy_test.go (full policy
+  matrix), and the new audit_events_get_contract_test.go (ResponseWriter-only,
+  log redaction, dependency-cause non-leak).
+- Remaining risks or follow-ups: none for this story. The BE-0344-family
+  two-test cookie/CSRF security verification template is unrelated. The next
+  audit-events-adjacent stories in the PRD pending list start at BE-0107
+  (variables-list contract tests).
+- **Learnings for future iterations:**
+  - Reader-only GET .../{org_id}/X contract-test template (BE-0095 limits ->
+    BE-0101 usage -> BE-0104 audit-events) now has a THIRD worked instance, and
+    the audit-events instance confirms the template scales unchanged to endpoints
+    that ALSO accept an optional query parameter (?limit= in [1,200]). The
+    invalid-input path the template glosses over for parameterless endpoints
+    ("there is therefore no syntactic request to reject as invalid input beyond
+    the rejection paths already covered") is already pinned for audit-events by
+    the existing TestListAuditEventsRejectsMalformedLimit /
+    TestListAuditEventsRejectsOutOfRangeLimit tests in audit_events_test.go, so
+    the contract-test file deliberately does NOT duplicate them — the file
+    closes only the three criteria (ResponseWriter-only, log-redaction,
+    dependency-cause-non-leak) that the base test pair leaves open. The opening
+    block-comment makes this scope explicit so a future maintainer doesn't add
+    a fourth redundant test.
+  - The "disabled owner" deny-path identity (Principal.Disabled=true with role=Owner)
+    is the SAME deny shape across endpoints regardless of whether the action is
+    CapRead (usage.read) or CapAdmin (audit.read) — the policy engine short-circuits
+    on the Disabled flag BEFORE the capability check, so the same test scaffolding
+    transfers verbatim. NOT applicable to endpoints where the deny path is itself
+    an interesting policy-matrix coordinate (e.g. CapAdmin with a viewer role) —
+    that belongs in the *_policy_test.go file, not the contract-test file.
+  - For the WithLogger NewHandler helper, the new logger slot is the
+    SECOND-to-last positional argument (`fakeBreakGlassController{}, logger, nil)`),
+    NOT a leading slot. The audit-events instance places the AuditEventReader
+    parameter `reader` in the slot that the usage instance fills with
+    fakeAuditEventReader{} — the rest of the 81-arg call stays identical. This
+    keeps the helper signature stable across endpoint stories and makes the
+    diff between usage_get_contract_test.go and audit_events_get_contract_test.go
+    a clean three-line swap.
+  - decodeAuditEventList lives in audit_events_test.go and returns an envelope
+    with Data.Events as a []struct with explicit JSON tags — the contract-test
+    file can reuse it directly without redeclaring the type. Same convention
+    used by usage_get_contract_test.go (decodeUsageList) and
+    limits_get_contract_test.go (decodeLimitsList).
+---
