@@ -72,6 +72,7 @@ defined in `.github/workflows/ci.yml`:
 | Quota concurrency tests | `go test -run TestQuotaConcurrency ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Job worker lease tests | `go test -run TestJobWorkerLease ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Fake Dokploy contract tests | `go test -run TestFakeDokploy ./...` | `scripts/verify.sh`, CI | Every push and PR |
+| Redaction tests | `go test -run TestRedaction ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Race detector | `go test -race ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Vulnerability scan | `govulncheck ./...` | CI `security` job | Every push and PR |
 | Lint suite | `staticcheck ./...` and `golangci-lint run ./...` | CI `security` job | Every push and PR |
@@ -1547,6 +1548,125 @@ BE-0386 publishes the contract operators and AI agents rely on:
   opt-in via `YALLA_EXTERNAL_DOKPLOY=1`. The single static
   defence that pins every one of those surfaces is
   `internal/release/verification_suite_fake_dokploy_contract_static_test.go`.
+
+## Redaction Tests
+
+Yalla's redaction tests are the secrets-never-leak-into-logs gate
+that ensures every bearer token, API key, cookie, query-string
+credential, and rendered environment variable value is replaced by
+the shared `output.Sentinel` (`[REDACTED]`) before any surface a
+human, AI agent, audit pipeline, or CI log can read it back. The
+canonical command is `go test -run TestRedaction ./...`. The suite
+exercises the central `Redactor` in `internal/output`, the per-tenant
+scoped, rendered, and resolved variable redaction in
+`internal/controlplane/variables`, and the CLI envelope, dry-run,
+and multipart-upload redaction in `internal/cli`. It never depends
+on a live Dokploy server, and any external smoke remains opt-in via
+`YALLA_EXTERNAL_DOKPLOY=1 go test -run TestLiveDokploySmoke ./...`.
+BE-0387 publishes the contract operators, auditors, and AI agents
+rely on:
+
+- **Scope.** The two load-bearing canonical redaction invariants are
+  exercised by the function pair
+  (`TestRedactionContractStructuralPatternsAcrossKnownTransports`
+  and `TestRedactionContractExplicitSecretsAndIdempotency`). The
+  single static defence is
+  `internal/release/verification_suite_redaction_static_test.go`,
+  which pins the existence of the canonical
+  `internal/output/redact_test.go` file and the canonical
+  `TestRedactionContractStructuralPatternsAcrossKnownTransports` +
+  `TestRedactionContractExplicitSecretsAndIdempotency` function pair
+  (the load-bearing `-run TestRedaction` filter from
+  `verificationLoop.requiredBackendCommands` binds to the
+  `TestRedaction` prefix) so the redaction convention itself cannot
+  be silently deleted or renamed. The prefix also matches every
+  downstream redaction suite — `TestRedaction_*` in
+  `internal/cli/redaction_security_test.go` and
+  `internal/cli/redaction_security_multipart_test.go`,
+  `TestRedactionLogValueMethodsReferenceSentinel`,
+  `TestRedactionExplainedVariableLiteralsRedactValue`,
+  `TestRedactionNoPlaintextInErrorSurface`,
+  `TestRedactionStaticAnalyzerDetectsRegressions`,
+  `TestRedactionScopedVariableLogValueNeverLeaks`,
+  `TestRedactionRenderedLogValueNeverLeaks`,
+  `TestRedactionResolvedLogValueNeverLeaks`,
+  `TestRedactionExplainProjectionNeverLeaks`,
+  `TestRedactionResolverOpenedSecretValueNeverEntersSlog`, and
+  `TestRedactionFuzzScopeExclusionsAreReal` in
+  `internal/controlplane/variables` — so a single failed gate fires
+  across every package whose redaction posture matters.
+- **Determinism.** The redaction tests run against deterministic
+  fixtures only — distinctive literal probes
+  (`REDACTION-CONTRACT-VALUE-…`, `REDACTION-CONTRACT-EXPLICIT-SECRET-…`)
+  that make a leak detectable by literal substring match, not by
+  hash mismatch. Every `Redactor` is constructed in-process per
+  test, never reaches a live Dokploy or any network, and a live
+  Dokploy smoke remains opt-in via `YALLA_EXTERNAL_DOKPLOY` and
+  never runs in the default gate; `TestLiveDokploySmoke` is the
+  documented opt-in entry point.
+- **Actionable failures.** Every diagnostic names the transport
+  shape that drifted (header name, query parameter, explicit
+  secret, idempotency pass) and the literal probe that leaked, so
+  an operator reading the CI log can map the failure to the exact
+  redaction rule that regressed without re-running the suite
+  locally. The downstream `request_id` and `resource_id`
+  identifiers carried by the variables and CLI redaction tests
+  surface for the per-tenant and per-envelope assertions.
+- **Coverage rows.** The structural-transport invariant
+  (`TestRedactionContractStructuralPatternsAcrossKnownTransports`)
+  drives every supported transport — Authorization header
+  (upper/lower casing), `X-API-Key` (upper/lower casing),
+  `X-Auth-Token` (upper/lower casing), `?token=`, `?api_key=`,
+  `?api-key=`, `?access_token=`, `?x-auth-token=` (first and
+  trailing parameter positions) — asserts the bearer literal is
+  scrubbed and the header/parameter name is preserved, pins the
+  canonical sentinel value `[REDACTED]`, asserts non-secret query
+  parameters pass through unchanged, and asserts the redactor is
+  panic-free on hostile inputs (header lines without a colon,
+  query parameters without a value, URLs with adjacent
+  ampersands, NUL-prefixed strings). The explicit-secret +
+  idempotency invariant
+  (`TestRedactionContractExplicitSecretsAndIdempotency`) drives an
+  explicit secret across every surrounding-character context
+  (plain prose, JSON quoting, header context, query context,
+  start of string, end of string, adjacent occurrence), pins
+  sub-threshold/empty/whitespace secrets are dropped on
+  construction, pins duplicate secrets are de-duplicated, pins
+  `Redact(Redact(s)) == Redact(s)` across the contract corpus,
+  pins empty-input pass-through, and pins the sentinel literal
+  itself cannot be re-registered as a secret (so the redactor
+  never scrubs its own marker).
+- **Schema-version contract.** Every public HTTP response that
+  surfaces a redacted value (CLI envelope, error envelope, audit
+  metadata, dry-run output) uses the stable JSON envelope shape
+  pinned by `yalla.output.v1` (success) and `yalla.error.v1`
+  (error) so a wire-contract regression that re-introduces a
+  plaintext secret in a response field is caught at the httpapi
+  handler-contract layer (BE-0381) before it reaches a customer.
+- **Redaction.** The contract itself IS that secrets, tokens, API
+  keys, cookies, and rendered environment variable values never
+  appear in customer-facing output, logs, errors, audit metadata,
+  test output, or dry-run output. The canonical pair pins the
+  structural net the central `Redactor` provides; the downstream
+  per-package suites (`internal/cli/redaction_security_*_test.go`
+  for the CLI surface, `internal/controlplane/variables/env_var_redaction_*_test.go`
+  for the per-tenant variable surface, and
+  `internal/output/redact_fuzz_test.go` for the fuzz harness from
+  BE-0359) pin the contract at every place the secret can cross
+  a boundary.
+- **CI cadence.** The redaction gate runs as a dedicated
+  `Redaction tests` step in `.github/workflows/ci.yml`, under
+  `# 13. Required: redaction tests` in `scripts/verify.sh`, as
+  entry `13` in `CONTRIBUTING.md` under
+  `## Required Checks Before Every Commit`, and in
+  `ralph/prd.json` under
+  `verificationLoop.requiredBackendCommands` so an AI agent
+  reading the PRD before picking up a story sees the gate without
+  needing to discover it from shell scripts or CI workflows.
+  Every push and PR runs the gate; a live-Dokploy smoke remains
+  opt-in via `YALLA_EXTERNAL_DOKPLOY=1`. The single static
+  defence that pins every one of those surfaces is
+  `internal/release/verification_suite_redaction_static_test.go`.
 
 ## Disclosure Timeline (Best Effort)
 

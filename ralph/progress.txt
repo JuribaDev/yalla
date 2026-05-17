@@ -27215,3 +27215,161 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     ctx_execute ONLY for analysis/processing where stdout is the
     only signal needed.
 ---
+
+## 2026-05-17 - BE-0387 Verification suite: redaction tests
+- What was implemented:
+  - Added the canonical TestRedaction* function pair to
+    `internal/output/redact_test.go`:
+    `TestRedactionContractStructuralPatternsAcrossKnownTransports`
+    (pins Sentinel == "[REDACTED]"; pins Authorization, X-API-Key,
+    X-Auth-Token header scrubbing across casing; pins
+    ?token=/?api_key=/?api-key=/?access_token=/?x-auth-token= query
+    parameter scrubbing across positions; pins non-secret query
+    parameter pass-through; pins panic-free behaviour on hostile
+    inputs — header lines without colon, query parameters without
+    value, URLs with adjacent ampersands, NUL-prefixed strings) and
+    `TestRedactionContractExplicitSecretsAndIdempotency` (pins
+    explicit-secret scrubbing across surrounding-character contexts;
+    pins sub-threshold/empty/whitespace secret dropping; pins
+    duplicate dedupe; pins `Redact(Redact(s)) == Redact(s)` across
+    the contract corpus; pins empty-input pass-through; pins the
+    sentinel-cannot-be-re-registered-as-a-secret invariant).
+  - Created
+    `internal/release/verification_suite_redaction_static_test.go`
+    pinning SIX surfaces in one file (CI workflow step, verify.sh
+    step header + command, CONTRIBUTING.md numeric-prefixed entry,
+    SECURITY.md table row + dedicated `## Redaction Tests` section
+    with 16-substring closed-set, PRD command, canonical file +
+    function-pair existence) plus a self-check that drives every
+    matcher with synthetic known-good AND known-bad fixtures.
+  - Edited `scripts/verify.sh` to insert
+    `# 13. Required: redaction tests` between the
+    `# 12. Required: fake Dokploy contract tests` block and the
+    optional steps, renumbering optionals
+    `# 13. Optional: govulncheck` -> `# 14`,
+    `# 14. Optional: staticcheck` -> `# 15`,
+    `# 15. Optional: golangci-lint` -> `# 16`,
+    `# 16. Optional: goreleaser check` -> `# 17` in the same edit.
+  - Edited `.github/workflows/ci.yml` to add a dedicated
+    `Redaction tests` step in the `test` job invoking
+    `go test -run TestRedaction ./...` right after the
+    `Fake Dokploy contract tests` step and before
+    `Race detector`.
+  - Edited `CONTRIBUTING.md` to add entry
+    `13. \`go test -run TestRedaction ./...\`` to the Required
+    Checks Before Every Commit list and an explanatory paragraph
+    documenting BE-0387 as the secrets-never-leak-into-logs gate
+    that binds across `internal/output`,
+    `internal/controlplane/variables`, and `internal/cli`.
+  - Edited `SECURITY.md` to add the `Redaction tests` table row
+    to the Required Verification Gates table and a dedicated
+    `## Redaction Tests` section explaining scope, determinism,
+    actionable failures, coverage rows, schema-version contract,
+    redaction, and CI cadence.
+  - Edited `internal/release/AGENTS.md` to add a
+    `## Verification suite: redaction tests (BE-0387)` section
+    mirroring the BE-0385 and BE-0386 entries and pointing future
+    contributors at every load-bearing surface.
+  - Edited `ralph/prd.json` to add
+    `"go test -run TestRedaction ./..."` to
+    `verificationLoop.requiredBackendCommands`.
+  - Flipped `passes: true` for BE-0387 in `ralph/prd.json`.
+- Files changed:
+  - internal/output/redact_test.go (added canonical TestRedaction*
+    pair after TestRedactor_EmptyStringPassthrough)
+  - internal/release/verification_suite_redaction_static_test.go
+    (new — single-file static defence; ~470 lines)
+  - scripts/verify.sh (insert step #13 + renumber optionals 13->14,
+    14->15, 15->16, 16->17)
+  - .github/workflows/ci.yml (insert Redaction tests step in the
+    `test` job between Fake Dokploy contract tests and Race detector)
+  - CONTRIBUTING.md (add entry #13 + BE-0387 explanation paragraph)
+  - SECURITY.md (add table row + dedicated `## Redaction Tests`
+    section)
+  - internal/release/AGENTS.md (add BE-0387 subsection)
+  - ralph/prd.json (add `go test -run TestRedaction ./...` to
+    requiredBackendCommands; flip BE-0387 passes to true)
+- Verification run:
+  - `gofmt -l .` — empty
+  - `go vet ./...` — clean
+  - `go test -count=1 -run 'TestVerificationSuiteRedaction'
+    ./internal/release/...` — PASS (BE-0387 static suite)
+  - `go test -count=1 -run
+    'TestRedactionContractStructuralPatternsAcrossKnownTransports|TestRedactionContractExplicitSecretsAndIdempotency'
+    ./internal/output/...` — PASS (canonical pair)
+  - `go test -count=1 -run TestRedaction ./...` — PASS across every
+    package whose tests bind to the `TestRedaction` prefix
+    (`internal/output`, `internal/controlplane/variables`,
+    `internal/cli`); every other package reports `[no tests to run]`.
+  - `go test -count=1 ./...` — PASS (every package)
+  - `go test -race -count=1 ./...` — PASS (every package)
+- Remaining risks or follow-ups:
+  - None for BE-0387. The static test fails loudly if any of the
+    six surfaces drifts.
+  - The verify.sh optional steps continue to renumber per the
+    BE-0379..BE-0386 established pattern; the next contributor
+    adding required step #14 should follow the same edit shape
+    (canonical command from PRD, dedicated CI step name,
+    verify.sh numeric prefix, SECURITY.md row + section,
+    CONTRIBUTING.md entry, AGENTS.md subsection, PRD
+    requiredBackendCommands entry).
+- Learnings for future iterations:
+  - `EXISTING-CALLERS-BIND-TO-NEW-PREFIX` — sibling of
+    BE-0382's `EXISTING-TEST-SATISFIES-RUN-FILTER`. The
+    `TestRedaction` prefix the PRD's
+    `-run TestRedaction ./...` filter binds to was NOT
+    pre-existing in `requiredBackendCommands` (only the existing
+    `Environment variable redaction` SECURITY.md gate already
+    used the prefix scoped to `internal/controlplane/variables`),
+    but seventeen TestRedaction* tests already existed across
+    three packages (`internal/output/redact_test.go`,
+    `internal/controlplane/variables/env_var_redaction_*_test.go`,
+    `internal/cli/redaction_security_*_test.go`). The canonical
+    pair this story adds binds to the SAME prefix without
+    renaming any of the existing callers — every existing test
+    is now part of the gate the moment BE-0387 lands, AND the
+    canonical pair pins the structural-net invariant the central
+    Redactor MUST keep across every other caller. Forward-applicable:
+    when picking up a verification-suite story whose `-run` filter
+    matches existing tests across multiple packages, the canonical
+    pair should live in the package that owns the contract (here
+    `internal/output` where the `Redactor` type and `Sentinel`
+    const are defined) rather than in any downstream consumer; the
+    static defence then asserts both the canonical pair and the
+    PRD command, so future regressions in either the central
+    contract or a downstream consumer trip the same gate.
+  - `SEVENTEEN-EXISTING-CALLERS-NUMBERED-ENTRY-#13` — sibling of
+    BE-0386's `OPT-IN BLOCK — SEVEN INSERTIONS NOW`. Now EIGHT
+    consecutive required-step insertions (BE-0379..BE-0387) with
+    optional renumbering; the verify.sh optional band has shifted
+    from #11..#14 (pre-BE-0383) to #14..#17 (post-BE-0387). The
+    next contributor adding required step #14 (BE-0388 fuzz tests
+    for validators, canonical `go test -run TestValidator ./...`
+    if PRD names that filter) should follow the same edit shape
+    AND prepare for an optional-band renumber to #15..#18.
+  - `SENTINEL-CANNOT-BE-RE-REGISTERED-AS-SECRET` — the redactor's
+    `minRedactableLen = 4` constant happens to be exactly the length
+    of `"REDACTED"` (8) and `"[REDACTED]"` (10) so registering the
+    sentinel as a secret would, in principle, cause the Redactor to
+    scrub its own marker. The canonical pair's
+    `r2 := NewRedactor(Sentinel, "REDACTED")` probe pins this case
+    explicitly: if a future refactor lowers `minRedactableLen` or
+    relaxes the dedupe filter, the test fails because the Redactor
+    would scrub its own sentinel and make redacted output
+    indistinguishable from never-redacted output. The probe deserves
+    a place in the canonical pair so the regression surfaces in the
+    public contract, not buried in an internal helper test.
+  - `THREE-PACKAGE REDACTION-PREFIX BINDING` — the
+    `TestRedaction` prefix binds across `internal/output`
+    (central Redactor + canonical pair), `internal/controlplane/variables`
+    (per-tenant LogValue, ScopedVariable, ResolvedVariable,
+    ExplainProjection, plus the env_var_redaction static
+    analyzer), and `internal/cli` (CLI envelope, dry-run, multipart
+    upload). The dedicated `Redaction tests` CI step exercises
+    every package in one shot; a regression in any one tearing
+    the secret-leak posture fires the same gate. When adding a
+    new redaction surface (e.g. an audit pipeline, a new
+    transport like a custom header) name the test
+    `TestRedaction_<Surface>...` so the prefix continues to bind
+    across packages without modifying the static defence.
+---

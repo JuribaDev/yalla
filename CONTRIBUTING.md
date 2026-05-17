@@ -44,6 +44,7 @@ and they must all pass on every commit you propose:
 10. `go test -run TestQuotaConcurrency ./...`
 11. `go test -run TestJobWorkerLease ./...`
 12. `go test -run TestFakeDokploy ./...`
+13. `go test -run TestRedaction ./...`
 
 `scripts/verify.sh` runs the full set in one command and is the local
 mirror of the `test` job in `.github/workflows/ci.yml`. Step 6 — the
@@ -87,7 +88,18 @@ recorder-redaction gate documented in BE-0386; the dedicated
 invocation is defence-in-depth on the same principle so a narrowing
 of the umbrella `go test ./...` step would still leave the
 fake-Dokploy gate firing as a fast, targeted failure rather than
-buried inside the umbrella log.
+buried inside the umbrella log. Step 13 — the redaction suite bound
+by the `-run TestRedaction` filter — is the
+secrets-never-leak-into-logs gate documented in BE-0387; the
+dedicated invocation is defence-in-depth on the same principle so a
+narrowing of the umbrella `go test ./...` step would still leave the
+redaction gate firing as a fast, targeted failure rather than buried
+inside the umbrella log. The filter binds across every package whose
+tests assert the redaction contract — the central `Redactor` in
+`internal/output`, the per-tenant variable redaction in
+`internal/controlplane/variables`, and the CLI envelope and dry-run
+redaction in `internal/cli` — so a regression in any one of them
+trips the dedicated step before it can ship under the umbrella log.
 
 ## Required Checks Before Every Release
 
