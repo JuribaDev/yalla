@@ -596,3 +596,81 @@ matching constant in
 `verification_suite_openapi_conformance_static_test.go` in
 the same edit. The matchers fail loudly on drift; the
 assertion IS the contract.
+
+## Verification suite: policy matrix tests (BE-0383)
+
+`verification_suite_policy_matrix_static_test.go` is the
+load-bearing static defence for the RBAC + cross-tenant gate.
+The canonical command is `go test -run TestPolicyMatrix ./...`
+and the canonical reference file is
+`internal/controlplane/policy/policy_test.go`, which declares
+the matrix function pair `TestPolicyMatrix` (every built-in
+role × every catalogued action on an in-organization resource)
+and `TestPolicyMatrixDeniesCrossTenant` (every built-in role
+× every catalogued action on a foreign-organization resource).
+The pair binds to the PRD's `-run TestPolicyMatrix` filter via
+the `TestPolicyMatrix` prefix, so a rename to a function whose
+name does not match the prefix silently de-gates the matrix
+suite. The static test pins SIX surfaces in one file so a
+future contributor changing any one of them fails ONE test,
+not six:
+
+- `.github/workflows/ci.yml` — the `test` job's
+  `Policy matrix tests` step MUST run
+  `go test -run TestPolicyMatrix ./...`. The dedicated step
+  is defence-in-depth on the same principle as BE-0380 /
+  BE-0381 / BE-0382: a narrowing of the umbrella
+  `go test ./...` step would still leave the matrix gate
+  firing as a fast targeted failure.
+- `scripts/verify.sh` — the local commit gate's
+  `# 9. Required: policy matrix tests` block MUST invoke the
+  same canonical command. The numeric prefix is part of the
+  contract: a reorder must be a deliberate edit to both the
+  matching constant in this test file AND the script.
+- `CONTRIBUTING.md` — the Required Checks Before Every Commit
+  section MUST list the canonical command as entry
+  `9. \`go test -run TestPolicyMatrix ./...\`` so
+  contributors know the gate before they open a PR. The
+  numeric prefix keeps verify.sh and CONTRIBUTING.md in
+  lockstep with BE-0379's `4. go test ./...`, BE-0380's
+  `6. go test ./internal/controlplane/store/...`,
+  BE-0381's `7. go test ./internal/controlplane/httpapi/...`,
+  and BE-0382's `8. go test ./internal/controlplane/openapi/...`.
+- `SECURITY.md` — the Required Verification Gates table MUST
+  contain the `Policy matrix tests` row, AND a dedicated
+  `## Policy Matrix Tests` section MUST explain the
+  exhaustive-coverage / cross-tenant-invariant / determinism
+  / actionable-failure / opt-in-external / redaction
+  contracts so the public security posture stays in lockstep
+  with the engine.
+- `ralph/prd.json` —
+  `verificationLoop.requiredBackendCommands` MUST list
+  `go test -run TestPolicyMatrix ./...` so an AI agent
+  reading the PRD before picking up a story sees the gate
+  without needing to discover it from shell scripts or CI
+  workflows.
+- `internal/controlplane/policy/policy_test.go` — the
+  canonical reference matrix test file MUST exist AND MUST
+  declare the matrix function pair. The pair captures the
+  two load-bearing matrix invariants the engine MUST keep:
+  in-tenant decisions resolve via the
+  `ReasonAllowedSelf`/`ReasonAllowedByRole`/`ReasonDeniedNoCapability`
+  branches per the role's `capSet`, and cross-tenant
+  decisions resolve to `ReasonAllowedSelf` (CapSelf),
+  `ReasonAllowedBySupport` (support's CapSupport bridging
+  `CapRead` / `CapSupport` only), or `ReasonDeniedCrossTenant`
+  (everything else) — the engine's cross-org leak invariant.
+
+The self-check
+`TestVerificationSuitePolicyMatrixAnalyzerDetectsRegressions`
+drives every matcher with synthetic known-good AND known-bad
+fixtures so over-tightening (a legitimate change trips the
+analyser) and under-tightening (a real regression slips
+through) are both caught at the package-internal API. When
+changing the CI step name, the verify.sh header, the
+CONTRIBUTING.md numeric prefix, the SECURITY.md row or
+section, the PRD command, the canonical matrix file path, or
+either matrix-pair function name, update the matching
+constant in `verification_suite_policy_matrix_static_test.go`
+in the same edit. The matchers fail loudly on drift; the
+assertion IS the contract.

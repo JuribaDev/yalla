@@ -40,6 +40,7 @@ and they must all pass on every commit you propose:
 6. `go test ./internal/controlplane/store/...`
 7. `go test ./internal/controlplane/httpapi/...`
 8. `go test ./internal/controlplane/openapi/...`
+9. `go test -run TestPolicyMatrix ./...`
 
 `scripts/verify.sh` runs the full set in one command and is the local
 mirror of the `test` job in `.github/workflows/ci.yml`. Step 6 — the
@@ -59,7 +60,12 @@ documented in BE-0382; the dedicated invocation is defence-in-depth
 on the same principle so a narrowing of the umbrella
 `go test ./...` step would still leave the OpenAPI conformance gate
 firing as a fast, targeted failure rather than buried inside the
-umbrella log.
+umbrella log. Step 9 — the policy matrix suite bound by the
+`-run TestPolicyMatrix` filter — is the RBAC + cross-tenant gate
+documented in BE-0383; the dedicated invocation is defence-in-depth
+on the same principle so a narrowing of the umbrella
+`go test ./...` step would still leave the matrix gate firing as a
+fast, targeted failure rather than buried inside the umbrella log.
 
 ## Required Checks Before Every Release
 

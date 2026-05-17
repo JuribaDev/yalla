@@ -65,6 +65,53 @@ func TestPolicyMatrix(t *testing.T) {
 	}
 }
 
+// TestPolicyMatrixDeniesCrossTenant exhaustively checks every built-in role
+// against every catalogued action on a resource in a *different* organization.
+// The expected verdict is the cross-tenant invariant the engine guarantees:
+// CapSelf actions are organization-independent and always allowed; the support
+// role's CapSupport bridges the tenant boundary for read and break-glass
+// actions; every other role must be denied with ReasonDeniedCrossTenant. A
+// drift in either the role/capability matrix, the action catalog, or the
+// engine's cross-tenant ordering fails this matrix immediately so a future
+// regression cannot silently leak data across tenants.
+func TestPolicyMatrixDeniesCrossTenant(t *testing.T) {
+	t.Parallel()
+	e := NewEngine()
+
+	for _, role := range BuiltinRoles() {
+		role := role
+		for _, action := range Actions() {
+			action := action
+			t.Run(string(role)+"/"+string(action), func(t *testing.T) {
+				t.Parallel()
+				required, ok := e.ActionCapability(action)
+				if !ok {
+					t.Fatalf("action %q missing from catalog", action)
+				}
+				got := e.Decide(principalIn(orgA, role), action, resourceIn(orgB))
+
+				switch {
+				case required == CapSelf:
+					// Self actions are organization-independent: the cross-tenant
+					// check is gated behind the CapSelf shortcut in engine.Decide.
+					assertDecision(t, got, true, ReasonAllowedSelf)
+				case builtinRoleCaps[role].has(CapSupport) && (required == CapRead || required == CapSupport):
+					// Support role's CapSupport bridges the tenant boundary
+					// for CapRead and CapSupport actions only — every other
+					// required capability falls through to the cross-tenant
+					// deny per the engine.Decide cross-tenant clause.
+					assertDecision(t, got, true, ReasonAllowedBySupport)
+				default:
+					// Every other role acting on a foreign tenant must be
+					// denied with the cross-tenant reason — never with a
+					// generic capability denial that could mask the leak.
+					assertDecision(t, got, false, ReasonDeniedCrossTenant)
+				}
+			})
+		}
+	}
+}
+
 // TestDecideNoPrincipal denies the zero principal outright.
 func TestDecideNoPrincipal(t *testing.T) {
 	t.Parallel()

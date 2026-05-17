@@ -60,6 +60,9 @@ jobs:
       - name: OpenAPI schema conformance tests
         run: go test ./internal/controlplane/openapi/...
 
+      - name: Policy matrix tests
+        run: go test -run TestPolicyMatrix ./...
+
       - name: Race detector
         run: go test -race ./...
 

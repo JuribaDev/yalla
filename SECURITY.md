@@ -68,6 +68,7 @@ defined in `.github/workflows/ci.yml`:
 | Repository integration tests | `go test ./internal/controlplane/store/...` | `scripts/verify.sh`, CI | Every push and PR |
 | HTTP handler contract tests | `go test ./internal/controlplane/httpapi/...` | `scripts/verify.sh`, CI | Every push and PR |
 | OpenAPI schema conformance tests | `go test ./internal/controlplane/openapi/...` | `scripts/verify.sh`, CI | Every push and PR |
+| Policy matrix tests | `go test -run TestPolicyMatrix ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Race detector | `go test -race ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Vulnerability scan | `govulncheck ./...` | CI `security` job | Every push and PR |
 | Lint suite | `staticcheck ./...` and `golangci-lint run ./...` | CI `security` job | Every push and PR |
@@ -1164,6 +1165,94 @@ contract operators and AI agents rely on:
   workflows. The single static defence that pins every one of
   those surfaces is
   `internal/release/verification_suite_openapi_conformance_static_test.go`.
+
+## Policy Matrix Tests
+
+Yalla's policy matrix tests are the RBAC + cross-tenant gate that
+ensures the engine in `internal/controlplane/policy` deterministically
+authorises every catalogued action for every built-in role and never
+silently allows a cross-organization read or write. The suite lives
+under `internal/controlplane/policy/` and the canonical command is
+`go test -run TestPolicyMatrix ./...`. The suite exercises the
+decision engine end-to-end against deterministic fixtures
+(`principalIn(orgA, role)`, `resourceIn(orgA)`/`resourceIn(orgB)`,
+the full `BuiltinRoles()` × `Actions()` cross-product); it never
+depends on a live Postgres or a live Dokploy server, and any
+external smoke remains opt-in via `YALLA_EXTERNAL_DOKPLOY=1
+go test -run TestLiveDokploySmoke ./...`. BE-0383 publishes the
+contract operators and AI agents rely on:
+
+- **Scope.** Every built-in role × every catalogued action is
+  exercised on an in-organization resource (`TestPolicyMatrix`)
+  and on a foreign-organization resource
+  (`TestPolicyMatrixDeniesCrossTenant`). The single static defence
+  is
+  `internal/release/verification_suite_policy_matrix_static_test.go`,
+  which pins the existence of the canonical
+  `internal/controlplane/policy/policy_test.go` file and the
+  canonical `TestPolicyMatrix` + `TestPolicyMatrixDeniesCrossTenant`
+  function pair (the load-bearing `-run TestPolicyMatrix` filter
+  from `verificationLoop.requiredBackendCommands` binds to that
+  prefix) so the matrix convention itself cannot be silently
+  deleted or renamed.
+- **Determinism.** The policy matrix tests run against
+  deterministic fixtures only — in-memory `Principal`, `Resource`,
+  and `Grant` values constructed by the package's test helpers,
+  no I/O, no clock, no environment. No matrix test reaches a live
+  Postgres, a live Dokploy, or any network. A live Dokploy smoke
+  is opt-in via `YALLA_EXTERNAL_DOKPLOY` and never runs in the
+  default gate.
+- **Actionable failures.** Each matrix subtest is named
+  `<role>/<action>` so a failing row in the CI log names the exact
+  role and action pair an operator must investigate without
+  re-running the suite locally. The cross-tenant matrix surfaces
+  the expected `ReasonDeniedCrossTenant` (or, for the documented
+  exceptions, `ReasonAllowedSelf` and `ReasonAllowedBySupport`) so
+  a regression that silently flips a cross-org deny into an allow
+  fails the matrix at the engine boundary, not at the persistence
+  layer where the data has already leaked.
+- **Coverage rows.** The matrix covers success
+  (`ReasonAllowedByRole` and `ReasonAllowedSelf` for in-tenant
+  decisions), validation failure (unknown actions deny via
+  `ReasonDeniedUnknownAction`, unknown roles deny via
+  `ReasonDeniedUnknownRole`), authorization failure
+  (`ReasonDeniedNoCapability` for in-tenant decisions where the
+  role's `capSet` does not satisfy the required capability), and
+  tenant isolation
+  (`ReasonDeniedCrossTenant` for every role × action pair except
+  the documented `CapSelf` shortcut and the `CapSupport` bridge
+  for CapRead / CapSupport actions). The action catalog maps every
+  action constant to a `Capability` value (`CapSelf`, `CapRead`,
+  `CapDeploy`, `CapWrite`, `CapAdmin`, `CapOwner`, `CapSupport`);
+  the matrix iterates `Actions()` and `BuiltinRoles()` so a new
+  action or a new role automatically widens the matrix without
+  any test edit.
+- **Schema-version contract.** Every public HTTP response that
+  surfaces a policy denial uses the stable JSON envelope shape
+  pinned by `yalla.output.v1` (success) and `yalla.error.v1`
+  (error) so a wire-contract regression in how denials are
+  reported is caught at the httpapi handler-contract layer
+  (BE-0381) before it reaches a customer.
+- **Redaction.** Policy decisions never embed secrets, tokens,
+  API keys, cookies, or rendered environment variable values in
+  the diagnostic surface. Decision reasons are typed string
+  constants, principal IDs are non-secret identifiers, and any
+  metadata carried alongside a denial is redacted through the
+  shared output sentinel so a CI log or audit metadata blob never
+  becomes the place a credential leaks.
+- **CI cadence.** The matrix gate runs as a dedicated `Policy
+  matrix tests` step in `.github/workflows/ci.yml`, under
+  `# 9. Required: policy matrix tests` in `scripts/verify.sh`,
+  as entry `9` in `CONTRIBUTING.md` under
+  `## Required Checks Before Every Commit`, and in
+  `ralph/prd.json` under
+  `verificationLoop.requiredBackendCommands` so an AI agent
+  reading the PRD before picking up a story sees the gate without
+  needing to discover it from shell scripts or CI workflows.
+  Every push and PR runs the gate; a live-Dokploy smoke remains
+  opt-in via `YALLA_EXTERNAL_DOKPLOY=1`. The single static
+  defence that pins every one of those surfaces is
+  `internal/release/verification_suite_policy_matrix_static_test.go`.
 
 ## Disclosure Timeline (Best Effort)
 
