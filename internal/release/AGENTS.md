@@ -1773,3 +1773,79 @@ section, or the PRD commands, update the matching constant
 in `verification_suite_backup_restore_static_test.go` in
 the same edit. The matchers fail loudly on drift; the
 assertion IS the contract.
+
+## Verification suite: external live-Dokploy smoke tests behind an opt-in flag (BE-0400)
+
+`verification_suite_external_dokploy_smoke_static_test.go`
+pins the external live-Dokploy smoke gate. It is the
+load-bearing static defence for the contract between
+Yalla's `internal/controlplane/dokploy.Client` and every
+agent, CI runner, operator, or audit reviewer that opts
+into the live-Dokploy smoke: when
+`YALLA_EXTERNAL_DOKPLOY=1` is set (along with
+`YALLA_EXTERNAL_DOKPLOY_BASE_URL` and
+`YALLA_EXTERNAL_DOKPLOY_TOKEN`), the canonical command
+`YALLA_EXTERNAL_DOKPLOY=1 go test -run TestLiveDokploySmoke
+./...` reaches a real Dokploy server, exercises a
+read-only `GetServiceStatus` intent end-to-end, and
+surfaces failures with the request_id, resource_id, and
+typed `yerr` code the operator can map back to the live
+Dokploy's audit log; when the opt-in flag is unset the
+smoke `t.Skip`s cleanly so the same command run on a
+developer laptop without external infrastructure is a
+green PASS, not a failure. The smoke is the only entry in
+the PRD's `verificationLoop.optionalWhenConfigured` array
+and MUST NEVER appear in
+`verificationLoop.requiredBackendCommands` — its CI
+cadence is opt-in / nightly / manual, never "Every push
+and PR". The canonical pair
+(`TestLiveDokploySmokeRespectsOptInFlag` and
+`TestLiveDokploySmokeExercisesLiveEndpoint`) lives in
+`internal/controlplane/dokploy/live_dokploy_smoke_test.go`
+and binds to the PRD's `-run TestLiveDokploySmoke` filter.
+The first pair member is deterministic — it sweeps the
+closed set of opt-in env-var values (unset, empty, `0`,
+whitespace, `false`, `1`) and asserts the predicted
+skip-vs-typed-`CodeConfig` outcome via `t.Setenv` against
+the in-process loader, never reaching the network. The
+second pair member combines a deterministic
+redaction-contract branch (a synthetic
+`httptest.NewServer` that echoes a sentinel bearer token
+in its 401 body; the smoke MUST surface the typed
+`CodeInternal` error from the Dokploy client without
+leaking the token) with the opt-in-only live branch (when
+the flag is set, the smoke constructs a real
+`dokploy.Client` against the configured base URL and token
+and exercises `GetServiceStatus` against the configured
+probe service id, asserting a typed `yerr` code that is
+NOT `CodeConfig`). The static test pins SIX surfaces in
+one file: the dedicated opt-in workflow
+`.github/workflows/external-smoke.yml` (with
+`workflow_dispatch` + nightly `schedule` triggers and the
+`YALLA_EXTERNAL_DOKPLOY: "1"` env injection), the
+verify.sh optional step #29
+(`YALLA_EXTERNAL_DOKPLOY=1 go test -run TestLiveDokploySmoke
+./...` gated on the opt-in env var so it does not bleed
+into the default `scripts/verify.sh` run), the
+CONTRIBUTING.md opt-in entry in the Optional Tools
+section, the SECURITY.md row + dedicated
+`## External Live-Dokploy Smoke Tests` section (with the
+When column marked as opt-in / nightly + manual, NOT
+"Every push and PR"), the PRD command in
+`verificationLoop.optionalWhenConfigured` (and a negative
+assertion that it never lives in
+`requiredBackendCommands`), and the canonical pair file's
+existence with both function declarations present. The
+self-check
+(`TestVerificationSuiteExternalDokploySmokeAnalyzerDetectsRegressions`)
+drives every matcher with synthetic known-good AND
+known-bad fixtures so over-tightening (a legitimate change
+trips the analyser) and under-tightening (a real
+regression slips through) are both caught at the
+package-internal API. When changing the CI workflow name,
+the verify.sh header, the CONTRIBUTING.md opt-in entry,
+the SECURITY.md row or section, or the PRD commands,
+update the matching constant in
+`verification_suite_external_dokploy_smoke_static_test.go`
+in the same edit. The matchers fail loudly on drift; the
+assertion IS the contract.

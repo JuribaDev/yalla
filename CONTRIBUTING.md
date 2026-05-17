@@ -498,6 +498,27 @@ go install honnef.co/go/tools/cmd/staticcheck@latest
 `scripts/verify.sh --strict` treats a missing optional tool as a
 failure; use it from CI scripts that need a hard gate.
 
+### Opt-in external suites
+
+A few suites only run when the operator explicitly opts in by setting an
+environment variable. They are not part of the on-every-PR gate; CI runs
+them out-of-band (a dedicated workflow on a schedule + manual dispatch).
+Run them locally before opening a PR that touches the Dokploy client,
+the Dokploy mapping layer, or the worker's provisioning path:
+
+- `YALLA_EXTERNAL_DOKPLOY=1 go test -run TestLiveDokploySmoke ./...` —
+  opt-in external live-Dokploy smoke. Also requires
+  `YALLA_EXTERNAL_DOKPLOY_BASE_URL` and `YALLA_EXTERNAL_DOKPLOY_TOKEN`.
+  An optional `YALLA_EXTERNAL_DOKPLOY_PROBE_SERVICE` enables an
+  end-to-end read against a known service id. The smoke `t.Skip`s
+  cleanly when `YALLA_EXTERNAL_DOKPLOY` is unset so this command is
+  safe to run on a laptop without external infrastructure (it will
+  pass, not fail). The dedicated CI workflow lives at
+  `.github/workflows/external-smoke.yml` and runs on
+  `workflow_dispatch` plus a nightly schedule; see
+  `SECURITY.md` → "External Live-Dokploy Smoke Tests" for the full
+  contract.
+
 ## Coding Conventions
 
 - Cobra commands return typed `*errors.Error` from `internal/errors`

@@ -84,6 +84,7 @@ defined in `.github/workflows/ci.yml`:
 | Pagination stability tests | `go test -run TestPaginationStability ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Tenant isolation tests | `go test -run TestTenantIsolation ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Backup restore rehearsal tests | `go test -run TestBackupRestoreRehearsal ./...` | `scripts/verify.sh`, CI | Every push and PR |
+| External live-Dokploy smoke tests | `YALLA_EXTERNAL_DOKPLOY=1 go test -run TestLiveDokploySmoke ./...` | `.github/workflows/external-smoke.yml`, `scripts/verify.sh` (opt-in) | Opt-in (`YALLA_EXTERNAL_DOKPLOY=1`), nightly + manual |
 | Race detector | `go test -race ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Vulnerability scan | `govulncheck ./...` | CI `security` job | Every push and PR |
 | Lint suite | `staticcheck ./...` and `golangci-lint run ./...` | CI `security` job | Every push and PR |
@@ -2899,6 +2900,91 @@ absence makes every concurrency invariant a paper invariant.
   `internal/release/verification_suite_race_detector_static_test.go`.
   A drift on any single surface (rename, renumber, deletion)
   fails ONE test, not five.
+
+## External Live-Dokploy Smoke Tests
+
+Every other Dokploy-touching suite Yalla ships uses the in-process
+fake Dokploy server (`internal/controlplane/dokploy/dokployfake`) so
+the gate stays green on every developer machine without external
+infrastructure. The external live-Dokploy smoke is the SOLE exception:
+when an operator opts in by setting `YALLA_EXTERNAL_DOKPLOY=1` (along
+with `YALLA_EXTERNAL_DOKPLOY_BASE_URL` and
+`YALLA_EXTERNAL_DOKPLOY_TOKEN`), the canonical command
+`YALLA_EXTERNAL_DOKPLOY=1 go test -run TestLiveDokploySmoke ./...`
+reaches an actual Dokploy server, exercises a read-only
+`GetServiceStatus` intent end-to-end, and surfaces failures with the
+request_id / resource_id / typed `yerr` code the operator can map
+back to the Yalla audit log. The smoke is the only entry in the PRD's
+`verificationLoop.optionalWhenConfigured` array; it never appears in
+`verificationLoop.requiredBackendCommands` because its CI cadence is
+nightly + manual, not "Every push and PR".
+
+- **Closed-set opt-in coverage.** Every documented value of
+  `YALLA_EXTERNAL_DOKPLOY` (unset, empty, `0`, whitespace, `false`,
+  `1`) is exercised by
+  `TestLiveDokploySmokeRespectsOptInFlag`. Only the canonical `1`
+  value flips the smoke into its live path; every other value is a
+  deterministic `t.Skip` so a stray export never half-enables the
+  smoke. When the opt-in flag is set but a required env var is
+  missing, the loader returns a typed `yerr.Error` with
+  `Code = E_CONFIG` naming the missing variable — the wire failure is
+  actionable without grepping the test code.
+- **Deterministic skip default.** Running
+  `go test -run TestLiveDokploySmoke ./...` on a developer laptop
+  without `YALLA_EXTERNAL_DOKPLOY=1` is a green PASS, not a failure.
+  The fast `ci.yml` test job exercises the same command — the smoke
+  `t.Skip`s there cleanly so the default CI run on every push and PR
+  never reaches a real Dokploy.
+- **Opt-in / nightly / manual CI gating.** The dedicated workflow
+  `.github/workflows/external-smoke.yml` runs the canonical command
+  with `YALLA_EXTERNAL_DOKPLOY: "1"` injected, on `workflow_dispatch`
+  (operators run on demand) and on a nightly `schedule` (the smoke is
+  exercised continuously when repository secrets are configured).
+  The workflow is deliberately separate from `ci.yml` so the default
+  push/PR run can never reach a real Dokploy host by accident, even
+  if a regression dropped the smoke's internal opt-in guard.
+- **Actionable failures.** Every error path in the smoke surfaces a
+  typed `*yerr.Error` from the Dokploy client; the wire error names
+  the affected env var, the Dokploy operation, the HTTP status, and
+  the upstream's redacted error body. The smoke's request flows
+  through the same `request_id`-carrying telemetry path the
+  production handlers use, so a CI red can be cross-referenced
+  against the live Dokploy's audit log without re-running the suite
+  locally.
+- **Stable envelopes preserved.** The smoke does not directly emit a
+  wire envelope, but it pins the property that the Dokploy client's
+  typed errors flow into the upstream `yalla.error.v1` shape unchanged.
+  A regression that swapped a `CodeNotFound` for `CodeServer` would
+  fail the smoke's typed-code assertion; a regression that smuggled
+  the bearer token into the wire body would fail the smoke's
+  redaction assertion.
+- **Redaction contract.** The Dokploy client's `Redactor` strips the
+  bearer token from every error surface — including the cause chain
+  wrapped under `apierr.Internal` for an upstream 401. The smoke
+  pins this property by injecting a sentinel token into a synthetic
+  upstream that echoes the token back; a regression that bypassed
+  the redactor would fail the synthetic-server branch deterministically
+  on every push and PR. Secrets, tokens, API keys, cookies, and
+  rendered environment variable values are redacted in every log
+  line, error string, and test-output fixture the suite emits.
+- **No mutation of live state.** When an operator supplies
+  `YALLA_EXTERNAL_DOKPLOY_PROBE_SERVICE` the smoke calls
+  `GetServiceStatus` against that service id (read-only). When the
+  variable is absent the smoke calls `GetServiceStatus` against a
+  deterministically non-existent service id and asserts a typed
+  `yerr.CodeNotFound`. Either branch proves reachability and
+  authentication; neither branch mutates Dokploy state. The smoke
+  never deploys, never restarts, and never deletes.
+- **Self-locating.** The opt-in workflow, the verify.sh optional step
+  #29, the CONTRIBUTING.md opt-in entry, this section, the PRD's
+  `verificationLoop.optionalWhenConfigured` entry, and the canonical
+  pair file
+  (`internal/controlplane/dokploy/live_dokploy_smoke_test.go` with
+  `TestLiveDokploySmokeRespectsOptInFlag` and
+  `TestLiveDokploySmokeExercisesLiveEndpoint`) are all pinned by
+  `internal/release/verification_suite_external_dokploy_smoke_static_test.go`.
+  A drift on any single surface (rename, renumber, deletion) fails
+  ONE test, not six.
 
 ## Disclosure Timeline (Best Effort)
 

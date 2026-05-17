@@ -246,6 +246,25 @@ else
   fi
 fi
 
+# 29. Optional: external live-Dokploy smoke tests
+# The smoke reaches a real Dokploy server and is only meaningful when the
+# operator has explicitly opted in by setting YALLA_EXTERNAL_DOKPLOY=1
+# (along with YALLA_EXTERNAL_DOKPLOY_BASE_URL and
+# YALLA_EXTERNAL_DOKPLOY_TOKEN). When the opt-in env var is unset, the
+# step is skipped so a developer running scripts/verify.sh on a laptop
+# without external infrastructure does not see a failure. This is a
+# deliberate opt-out (not a missing tool) so it is reported on stderr but
+# NOT appended to skipped_tools — that keeps --strict free to fail only on
+# genuinely missing optional tooling.
+step "YALLA_EXTERNAL_DOKPLOY=1 go test -run TestLiveDokploySmoke ./... (optional)"
+if [[ "${YALLA_EXTERNAL_DOKPLOY:-}" = "1" ]]; then
+  if ! YALLA_EXTERNAL_DOKPLOY=1 go test -run TestLiveDokploySmoke ./...; then
+    required_failed=1
+  fi
+else
+  echo "verify.sh: external live-Dokploy smoke is opt-in; export YALLA_EXTERNAL_DOKPLOY=1 with YALLA_EXTERNAL_DOKPLOY_BASE_URL/TOKEN to enable" >&2
+fi
+
 if [[ ${#skipped_tools[@]} -gt 0 ]]; then
   echo "" >&2
   echo "verify.sh: optional tools not installed (skipped, NOT silently — see CONTRIBUTING.md):" >&2

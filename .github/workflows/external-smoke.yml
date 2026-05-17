@@ -1,0 +1,63 @@
+name: External live-Dokploy smoke
+
+# Opt-in external smoke gate (BE-0400). This workflow is deliberately
+# separate from the default `ci.yml` test job: the default CI run on every
+# push and PR uses only the in-process fake Dokploy fixtures and MUST NOT
+# reach a real Dokploy host. This workflow runs the canonical
+# `go test -run TestLiveDokploySmoke ./...` command with
+# `YALLA_EXTERNAL_DOKPLOY=1` injected, exercising the smoke end-to-end
+# against the Dokploy server configured via repository secrets.
+#
+# When the secrets are not configured, the smoke `t.Skip`s cleanly so the
+# workflow still reports green — that mirrors the developer-laptop
+# behaviour of `go test -run TestLiveDokploySmoke ./...` without the
+# opt-in flag.
+#
+# Triggers:
+#   - workflow_dispatch  — operators can run the smoke on demand.
+#   - schedule (nightly) — the smoke runs every night at 03:13 UTC when
+#     the repository secrets are configured.
+#
+# Secrets are bound only to env vars (never interpolated into run scripts)
+# to avoid GitHub Actions injection patterns.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "13 3 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: external-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: External live-Dokploy smoke tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: External live-Dokploy smoke tests
+        env:
+          # The opt-in flag MUST be injected into the test step's
+          # environment so the smoke takes the live path. Without it the
+          # smoke `t.Skip`s and the workflow would always report green
+          # without ever reaching Dokploy. The dedicated static test
+          # `internal/release/verification_suite_external_dokploy_smoke_static_test.go`
+          # pins this env injection so a regression that dropped it fails
+          # one test, not the whole workflow silently.
+          YALLA_EXTERNAL_DOKPLOY: "1"
+          YALLA_EXTERNAL_DOKPLOY_BASE_URL: ${{ secrets.YALLA_EXTERNAL_DOKPLOY_BASE_URL }}
+          YALLA_EXTERNAL_DOKPLOY_TOKEN: ${{ secrets.YALLA_EXTERNAL_DOKPLOY_TOKEN }}
+          YALLA_EXTERNAL_DOKPLOY_PROBE_SERVICE: ${{ secrets.YALLA_EXTERNAL_DOKPLOY_PROBE_SERVICE }}
+        run: go test -run TestLiveDokploySmoke ./...
