@@ -45,6 +45,7 @@ and they must all pass on every commit you propose:
 11. `go test -run TestJobWorkerLease ./...`
 12. `go test -run TestFakeDokploy ./...`
 13. `go test -run TestRedaction ./...`
+14. `go test -run TestFuzzValidator ./...`
 
 `scripts/verify.sh` runs the full set in one command and is the local
 mirror of the `test` job in `.github/workflows/ci.yml`. Step 6 — the
@@ -100,6 +101,25 @@ tests assert the redaction contract — the central `Redactor` in
 `internal/controlplane/variables`, and the CLI envelope and dry-run
 redaction in `internal/cli` — so a regression in any one of them
 trips the dedicated step before it can ship under the umbrella log.
+Step 14 — the fuzz validator suite bound by the
+`-run TestFuzzValidator` filter — is the
+hostile-input-never-panics-or-leaks gate documented in BE-0388; the
+dedicated invocation is defence-in-depth on the same principle so a
+narrowing of the umbrella `go test ./...` step would still leave the
+fuzz gate firing as a fast, targeted failure rather than buried
+inside the umbrella log. The canonical pair
+(`TestFuzzValidatorContractCoversExpectedValidators` and
+`TestFuzzValidatorContractSeedCorpusRejectsHostileInputs`) lives in
+`internal/controlplane/validate/fuzz_test.go` next to the `FuzzName`
+/ `FuzzPath` / `FuzzDomain` / `FuzzEnvVarName` / `FuzzEnvVarValue` /
+`FuzzDecodeJSON` / `FuzzImageRef` / `FuzzURL` / `FuzzGitBranch`
+targets it pins; the wrapper drives every validator through the
+shared hostile seed corpus (long strings, invalid UTF-8, traversal
+sequences, embedded NUL, control characters, Unicode tricks) under
+a `recover()` guard so a regression surfaces with the offending
+validator AND the seed index. The optional randomised driver
+remains available as `go test -fuzz=Fuzz<Name>
+./internal/controlplane/validate/...` for soak runs.
 
 ## Required Checks Before Every Release
 

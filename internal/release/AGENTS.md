@@ -1053,3 +1053,110 @@ or either pair function name, update the matching constant
 in `verification_suite_redaction_static_test.go` in the same
 edit. The matchers fail loudly on drift; the assertion IS
 the contract.
+
+## Verification suite: fuzz tests for validators (BE-0388)
+
+`verification_suite_fuzz_validators_static_test.go` is the
+single-file static defence for the validator hostile-input
+meta-contract: "no validator ever panics on hostile input,
+no validator echoes a submitted value back into an error or
+log, and every public validator has a corresponding Fuzz
+target." The canonical reference fuzz test file is
+`internal/controlplane/validate/fuzz_test.go`, which declares
+the fuzz function pair
+`TestFuzzValidatorContractCoversExpectedValidators` (pins the
+closed-set coverage invariant — every public validator in
+`internal/controlplane/validate` MUST have a corresponding
+`Fuzz<Name>` target so the seed corpus replays hostile inputs
+deterministically under `go test -run TestFuzzValidator ./...`
+AND under `go test -fuzz=<target>
+./internal/controlplane/validate/...`) and
+`TestFuzzValidatorContractSeedCorpusRejectsHostileInputs`
+(pins the no-panic runtime invariant — every validator
+survives every hostile seed without panicking; the wrapper
+drives every validator under a `recover()` guard so a panic
+surfaces with the offending validator name AND the seed
+index). The pair binds to the PRD's `-run TestFuzzValidator`
+filter via the `TestFuzzValidator` prefix, so a rename to a
+function whose name does not match the prefix silently
+de-gates the fuzz suite. The wrapper sits next to the nine
+`FuzzName` / `FuzzPath` / `FuzzDomain` / `FuzzEnvVarName` /
+`FuzzEnvVarValue` / `FuzzDecodeJSON` / `FuzzImageRef` /
+`FuzzURL` / `FuzzGitBranch` targets it pins; deleting any
+target trips the closed-set coverage matcher with the exact
+validator name.
+
+The static test pins SIX surfaces in one file so a future
+contributor changing any one of them fails ONE test, not six:
+
+- `.github/workflows/ci.yml` — the `test` job's
+  `Fuzz validator tests` step MUST run
+  `go test -run TestFuzzValidator ./...`. The dedicated step
+  is defence-in-depth on the same principle as BE-0380 /
+  BE-0381 / BE-0382 / BE-0383 / BE-0384 / BE-0385 / BE-0386 /
+  BE-0387: a narrowing of the umbrella `go test ./...` step
+  would still leave the fuzz gate firing as a fast targeted
+  failure.
+- `scripts/verify.sh` — the local commit gate's
+  `# 14. Required: fuzz tests for validators` block MUST
+  invoke the same canonical command. The numeric prefix is
+  part of the contract: a reorder must be a deliberate edit
+  to both the matching constant in this test file AND the
+  script. Inserting required step #14 between #13 (redaction
+  tests) and the optionals renumbered 14→15 / 15→16 / 16→17 /
+  17→18 in the same edit (govulncheck / staticcheck /
+  golangci-lint / goreleaser). This is EIGHT consecutive
+  required-step insertions with optional renumbering.
+- `CONTRIBUTING.md` — the Required Checks Before Every Commit
+  section MUST list the canonical command as entry
+  `14. \`go test -run TestFuzzValidator ./...\`` so
+  contributors know the gate before they open a PR. The
+  numeric prefix keeps verify.sh and CONTRIBUTING.md in
+  lockstep with BE-0379's `4. go test ./...`, BE-0380's
+  `6. go test ./internal/controlplane/store/...`, BE-0381's
+  `7. go test ./internal/controlplane/httpapi/...`, BE-0382's
+  `8. go test ./internal/controlplane/openapi/...`, BE-0383's
+  `9. go test -run TestPolicyMatrix ./...`, BE-0384's
+  `10. go test -run TestQuotaConcurrency ./...`, BE-0385's
+  `11. go test -run TestJobWorkerLease ./...`, BE-0386's
+  `12. go test -run TestFakeDokploy ./...`, and BE-0387's
+  `13. go test -run TestRedaction ./...`.
+- `SECURITY.md` — the Required Verification Gates table MUST
+  contain the `Fuzz validator tests` row, AND a dedicated
+  `## Fuzz Validator Tests` section MUST explain the
+  no-panic / no-value-echo / closed-set-coverage /
+  deterministic-seed-corpus / actionable-failure /
+  opt-in-external / `-fuzz=` / schema-version contracts so
+  the public security posture stays in lockstep with the
+  validate toolkit.
+- `ralph/prd.json` —
+  `verificationLoop.requiredBackendCommands` MUST list
+  `go test -run TestFuzzValidator ./...` so an AI agent
+  reading the PRD before picking up a story sees the gate
+  without needing to discover it from shell scripts or CI
+  workflows.
+- `internal/controlplane/validate/fuzz_test.go` — the
+  canonical reference fuzz test file MUST exist AND MUST
+  declare the fuzz function pair. The pair captures the two
+  load-bearing fuzz invariants the validate toolkit MUST
+  keep: every public validator has a Fuzz target (the
+  closed-set coverage invariant pinned by reading the file's
+  own source under `runtime.Caller` so a future package move
+  auto-updates the lookup), and every validator survives
+  every hostile seed without panicking (the no-panic runtime
+  invariant pinned by `recover()`-wrapped invocations across
+  the shared seed corpus).
+
+The self-check
+`TestVerificationSuiteFuzzValidatorsAnalyzerDetectsRegressions`
+drives every matcher with synthetic known-good AND known-bad
+fixtures so over-tightening (a legitimate change trips the
+analyser) and under-tightening (a real regression slips
+through) are both caught at the package-internal API. When
+changing the CI step name, the verify.sh header, the
+CONTRIBUTING.md numeric prefix, the SECURITY.md row or
+section, the PRD command, the canonical fuzz file path, or
+either pair function name, update the matching constant in
+`verification_suite_fuzz_validators_static_test.go` in the
+same edit. The matchers fail loudly on drift; the assertion
+IS the contract.

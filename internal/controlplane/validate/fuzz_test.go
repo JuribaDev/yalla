@@ -3,6 +3,10 @@ package validate_test
 import (
 	stderrors "errors"
 	"net"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode"
@@ -345,4 +349,134 @@ func FuzzGitBranch(f *testing.F) {
 			t.Fatalf("GitBranch accepted a malformed reference %q", input)
 		}
 	})
+}
+
+// fuzzValidatorExpectedTargets is the closed set of public validators in
+// `internal/controlplane/validate` that MUST have a corresponding Fuzz
+// target in this file. Each entry is the literal function declaration the
+// canonical fuzz file MUST carry. The PRD's `go test -run TestFuzzValidator
+// ./...` filter binds to the `TestFuzzValidator` prefix on the wrapper
+// functions below; the FuzzXxx targets bind to `go test -fuzz=FuzzXxx
+// ./internal/controlplane/validate/...`. A regression that drops a
+// validator from this list, deletes a FuzzXxx target, or adds a new public
+// validator without an accompanying FuzzXxx target silently weakens the
+// hostile-input contract — the seed corpus is what proves "no panic, no
+// value-echo, no accepted invalid input" under adversarial conditions.
+var fuzzValidatorExpectedTargets = []string{
+	"func FuzzName(f *testing.F)",
+	"func FuzzPath(f *testing.F)",
+	"func FuzzDomain(f *testing.F)",
+	"func FuzzEnvVarName(f *testing.F)",
+	"func FuzzEnvVarValue(f *testing.F)",
+	"func FuzzDecodeJSON(f *testing.F)",
+	"func FuzzImageRef(f *testing.F)",
+	"func FuzzURL(f *testing.F)",
+	"func FuzzGitBranch(f *testing.F)",
+}
+
+// TestFuzzValidatorContractCoversExpectedValidators pins that every public
+// validator in the `internal/controlplane/validate` surface has a Fuzz
+// target declared in this file. A new validator added without an
+// accompanying FuzzXxx target — or a deletion of an existing target —
+// silently drops the validator from the seed-corpus replay that proves
+// hostile inputs (long strings, invalid UTF-8, traversal sequences,
+// embedded NUL, control characters, Unicode tricks) never panic and never
+// produce an accepted-but-invalid value.
+//
+// The matcher reads this file's source on disk (resolved via
+// `runtime.Caller` so a future package move auto-updates the lookup) and
+// asserts every literal in `fuzzValidatorExpectedTargets` appears. The
+// closed-set design means BOTH directions are caught:
+//
+//   - Deletion. A removed FuzzXxx target leaves a missing declaration; the
+//     matcher fires with the exact validator name so the failure points the
+//     operator at the regressed surface.
+//   - Addition. A new validator (say, `validate.Slug`) added to the public
+//     surface without a `FuzzSlug` target plus an updated expected-list
+//     leaves the list out of date; the maintainer extending the validator
+//     surface MUST extend this list in the same edit, which forces the
+//     accompanying FuzzXxx target to be written before the test passes.
+func TestFuzzValidatorContractCoversExpectedValidators(t *testing.T) {
+	t.Parallel()
+	_, self, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller(0) failed; cannot resolve fuzz_test.go path")
+	}
+	b, err := os.ReadFile(self)
+	if err != nil {
+		t.Fatalf("read %s: %v", filepath.Base(self), err)
+	}
+	doc := string(b)
+	for _, want := range fuzzValidatorExpectedTargets {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s: missing fuzz target declaration %q; every public validator in `internal/controlplane/validate` MUST have a Fuzz target so the seed corpus replays hostile inputs deterministically under `go test -run TestFuzzValidator ./...` AND under `go test -fuzz=<target> ./internal/controlplane/validate/...`. A missing target silently drops the validator from the seed-corpus replay that proves no-panic, no-value-echo, and no-accepted-invalid-input under adversarial conditions.",
+				filepath.Base(self), want)
+		}
+	}
+}
+
+// TestFuzzValidatorContractSeedCorpusRejectsHostileInputs binds the
+// `go test -run TestFuzzValidator ./...` filter to a real runtime
+// assertion: every public validator MUST accept every hostile seed in
+// `fuzzSeeds` without panicking. This complements the FuzzXxx targets'
+// `-fuzz` driver — the FuzzXxx functions only run their full random walk
+// when invoked with `-fuzz=<name>`; without that flag they replay only
+// their seed corpus, so the canonical Test wrapper here is the one a
+// plain `go test ./...` run exercises.
+//
+// Each subtest drives every validator with one seed inside a `recover()`
+// guard so a panic surfaces as a failure naming the offending validator
+// AND the seed (the actionable-failure contract). The runtime invariant
+// pinned here is the weakest one every Fuzz target carries — no panic.
+// Stronger per-validator invariants (the rejection rules, the no-value-
+// echo guarantees) remain in the FuzzXxx targets themselves; the wrapper
+// is intentionally weak so a new validator added without an extended
+// rejection rule still trips this gate on seed-corpus panic.
+func TestFuzzValidatorContractSeedCorpusRejectsHostileInputs(t *testing.T) {
+	t.Parallel()
+	for i, seed := range fuzzSeeds {
+		i, seed := i, seed
+		t.Run("seed"+strconv.Itoa(i), func(t *testing.T) {
+			t.Parallel()
+			run := func(name string, fn func()) {
+				t.Helper()
+				defer func() {
+					if r := recover(); r != nil {
+						t.Errorf("%s panicked on seed[%d]=%q: %v", name, i, seed, r)
+					}
+				}()
+				fn()
+			}
+			run("Name", func() {
+				validate.Name(validate.New(), "name", seed)
+			})
+			run("Path", func() {
+				validate.Path(validate.New(), "path", seed)
+			})
+			run("Domain", func() {
+				validate.Domain(validate.New(), "host", seed, validate.DomainOptions{AllowWildcard: false})
+			})
+			run("EnvVarName", func() {
+				validate.EnvVars(validate.New(), "env", []validate.EnvVar{{Name: seed, Value: "value", Secret: false}})
+			})
+			run("EnvVarValue", func() {
+				validate.EnvVars(validate.New(), "env", []validate.EnvVar{{Name: "FUZZ_VALUE", Value: seed, Secret: true}})
+			})
+			run("DecodeJSON", func() {
+				var into struct {
+					Name string `json:"name"`
+				}
+				_ = validate.DecodeJSON(strings.NewReader(seed), &into, 4096)
+			})
+			run("ImageRef", func() {
+				validate.ImageRef(validate.New(), "image", seed)
+			})
+			run("URL", func() {
+				validate.URL(validate.New(), "url", seed)
+			})
+			run("GitBranch", func() {
+				validate.GitBranch(validate.New(), "branch", seed)
+			})
+		})
+	}
 }

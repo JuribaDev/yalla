@@ -251,7 +251,8 @@
       "go test -run TestQuotaConcurrency ./...",
       "go test -run TestFakeDokploy ./...",
       "go test -run TestJobWorkerLease ./...",
-      "go test -run TestRedaction ./..."
+      "go test -run TestRedaction ./...",
+      "go test -run TestFuzzValidator ./..."
     ],
     "optionalWhenConfigured": [
       "goimports -w .",
@@ -8262,7 +8263,7 @@
       ],
       "type": "verification",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Test suite: fuzz tests for validators."
     },
     {

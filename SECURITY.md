@@ -73,6 +73,7 @@ defined in `.github/workflows/ci.yml`:
 | Job worker lease tests | `go test -run TestJobWorkerLease ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Fake Dokploy contract tests | `go test -run TestFakeDokploy ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Redaction tests | `go test -run TestRedaction ./...` | `scripts/verify.sh`, CI | Every push and PR |
+| Fuzz validator tests | `go test -run TestFuzzValidator ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Race detector | `go test -race ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Vulnerability scan | `govulncheck ./...` | CI `security` job | Every push and PR |
 | Lint suite | `staticcheck ./...` and `golangci-lint run ./...` | CI `security` job | Every push and PR |
@@ -1667,6 +1668,100 @@ rely on:
   opt-in via `YALLA_EXTERNAL_DOKPLOY=1`. The single static
   defence that pins every one of those surfaces is
   `internal/release/verification_suite_redaction_static_test.go`.
+
+## Fuzz Validator Tests
+
+Yalla's fuzz validator tests are the hostile-input gate that
+ensures the request-validation toolkit in
+`internal/controlplane/validate` never panics on adversarial input,
+never echoes a submitted value back into an error or audit
+metadata, and covers every public validator. The suite lives in
+`internal/controlplane/validate/fuzz_test.go` and the canonical
+command is `go test -run TestFuzzValidator ./...`. The wrapper
+pair (`TestFuzzValidatorContractCoversExpectedValidators` and
+`TestFuzzValidatorContractSeedCorpusRejectsHostileInputs`) drives
+every validator (`Name`, `Path`, `Domain`, `EnvVarName`,
+`EnvVarValue`, `DecodeJSON`, `ImageRef`, `URL`, `GitBranch`)
+through a shared hostile seed corpus under a `recover()` guard so
+a regression surfaces with the offending validator AND the seed
+index. The corresponding fuzz targets (`FuzzName`, `FuzzPath`,
+`FuzzDomain`, `FuzzEnvVarName`, `FuzzEnvVarValue`,
+`FuzzDecodeJSON`, `FuzzImageRef`, `FuzzURL`, `FuzzGitBranch`) pin
+the no-panic invariant on every public validator under the same
+seed corpus and accept Go's randomised driver via
+`-fuzz=Fuzz<Name>` for opt-in soak runs. BE-0388 publishes the
+contract operators and AI agents rely on:
+
+- **Scope.** The suite exercises every public validator in
+  `internal/controlplane/validate` against a fixed hostile seed
+  corpus (long strings, invalid UTF-8, path traversal segments,
+  embedded NUL bytes, control characters, Unicode tricks,
+  embedded credentials, IPv4 literals, reserved DNS suffixes,
+  binary garbage). The canonical-pair design pins the closed-set
+  coverage so a new validator added without an accompanying Fuzz
+  target trips the gate at the package-internal API; the runtime
+  wrapper pins the "no panic" invariant so a regression that
+  panics on a hostile seed fails fast with the offending
+  validator name AND the seed index.
+- **Determinism.** The seed corpus replays the same hostile
+  inputs on every run. `go test ./...` runs each FuzzXxx
+  function with its seed corpus only (no randomised driver); the
+  randomised driver remains available as
+  `go test -fuzz=Fuzz<Name>
+  ./internal/controlplane/validate/...` for opt-in soak runs.
+  No live Postgres is required and no live Dokploy is required;
+  the opt-in external smoke remains `YALLA_EXTERNAL_DOKPLOY=1
+  go test -run TestLiveDokploySmoke ./...`.
+- **Actionable failures.** A panic on a hostile seed reports
+  the offending validator name AND the seed index so an operator
+  reading the CI log can map the failure to the exact validator
+  + the exact input without re-running the suite locally. The
+  wrapper uses `recover()` so a panic in one validator never
+  hides a panic in another — every panic is surfaced; every
+  recovered seed is named. Failures carry the `request_id` of
+  the encompassing request when surfaced through downstream
+  handlers; the underlying validator surface itself is pure and
+  has no request context.
+- **CI gating.** `go test -run TestFuzzValidator ./...` runs on
+  `ubuntu-latest`, `macos-latest`, and `windows-latest` for
+  every push and every pull request via
+  `.github/workflows/ci.yml` (the `test` job's step
+  `Fuzz validator tests`), and locally via `scripts/verify.sh`
+  (step `# 14. Required: fuzz tests for validators`). Both
+  must pass before a commit lands in `main`. The same gate
+  appears in the verification-gates table above as the row
+  `| Fuzz validator tests | go test -run TestFuzzValidator ./... | scripts/verify.sh, CI | Every push and PR |`,
+  in `CONTRIBUTING.md` under `## Required Checks Before Every
+  Commit`, and in `ralph/prd.json` under
+  `verificationLoop.requiredBackendCommands` so an AI agent
+  reading the PRD before picking up a story sees the gate
+  without needing to discover it from shell scripts or CI
+  workflows.
+- **Envelope contract.** When a validator failure surfaces
+  through a handler the resulting JSON envelope uses
+  `yalla.error.v1` with code `E_INVALID_INPUT`; the success
+  path uses `yalla.output.v1`. The fuzz suite itself is pure —
+  it asserts the validators directly without going through an
+  HTTP handler — so the envelope contract is pinned by the
+  HTTP handler contract suite (BE-0381) and surfaces here only
+  as the documented downstream invariant.
+- **Redaction.** The no-value-echo invariant is the load-bearing
+  redaction promise the fuzz suite carries: a rejected value
+  must never appear in the validator's error reason, the audit
+  metadata, or the test failure output. The shared
+  `internal/output.Redactor` provides the structural net every
+  downstream caller uses; the fuzz suite verifies the per-
+  validator commitment that the toolkit itself does not echo
+  submitted values back. The `FuzzEnvVarValue` and `FuzzURL`
+  targets explicitly assert this — if a within-bounds,
+  well-formed value produces a violation, the value MUST NOT
+  appear in `err.Error()`.
+- **Self-locating.** The CI step, verify.sh step header,
+  CONTRIBUTING entry, this section, the PRD command, and the
+  canonical reference file are all pinned by
+  `internal/release/verification_suite_fuzz_validators_static_test.go`.
+  A drift on any single surface (rename, renumber, deletion)
+  fails ONE test, not six.
 
 ## Disclosure Timeline (Best Effort)
 

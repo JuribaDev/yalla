@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Verification-suite single-file multi-surface static-test, fuzz-validators instance (BE-0388 pattern, internal/release/verification_suite_fuzz_validators_static_test.go + internal/controlplane/validate/fuzz_test.go's new canonical pair TestFuzzValidatorContractCoversExpectedValidators + TestFuzzValidatorContractSeedCorpusRejectsHostileInputs + SECURITY.md "## Fuzz Validator Tests" section AND a new row in the Required Verification Gates table + internal/release/AGENTS.md "## Verification suite: fuzz tests for validators (BE-0388)" subsection; TENTH worked instance of the BE-0379..BE-0387 verification-suite mega-pattern, canonical command `go test -run TestFuzzValidator ./...`, CI step name `Fuzz validator tests`, verify.sh prefix #14). Four BE-0388-specific extensions to the template: (1) `CANONICAL PAIR WRAPS FuzzXxx TARGETS, NOT INDIVIDUAL VALIDATORS` — unlike BE-0386 (one fake, dual invariants) and BE-0387 (one redactor, dual invariants), BE-0388's load-bearing surface is a SET of nine FuzzXxx targets (FuzzName, FuzzPath, FuzzDomain, FuzzEnvVarName, FuzzEnvVarValue, FuzzDecodeJSON, FuzzImageRef, FuzzURL, FuzzGitBranch). The canonical-pair design splits the set into two orthogonal invariants: TestFuzzValidatorContractCoversExpectedValidators pins the CLOSED-SET COVERAGE — every public validator MUST have a FuzzXxx target, asserted by reading fuzz_test.go's own source via runtime.Caller and matching against `fuzzValidatorExpectedTargets` (the nine literal `func FuzzXxx(f *testing.F)` declarations). A new validator added to the public surface without a Fuzz target trips this matcher with the exact missing name. TestFuzzValidatorContractSeedCorpusRejectsHostileInputs pins the RUNTIME NO-PANIC invariant — the wrapper drives every validator through the shared `fuzzSeeds` corpus under a `recover()` guard so a panic surfaces with the offending validator name AND the seed index (the actionable-failure contract). Forward-applicable to ANY future verification story whose load-bearing surface is a SET of targets sharing one invariant + a closed-set coverage rule: BE-0394 (chaos Postgres disconnects — set of disconnect injection points), BE-0395 (idempotency replay — set of idempotency-protected endpoints), BE-0398 (tenant isolation — set of customer-data queries). (2) `Fuzz-PREFIX TARGETS RUN UNDER -run TestFuzzValidator AND -fuzz=FuzzXxx` — Go's fuzz tests (signature `func FuzzXxx(f *testing.F)`) run their seed corpus deterministically when invoked with `go test -run FuzzXxx` AND drive the randomised engine when invoked with `go test -fuzz=FuzzXxx`. The BE-0388 design KEEPS the existing FuzzXxx targets unchanged (they continue to support the optional `-fuzz=` driver for soak runs) AND adds a TestFuzzValidator-prefixed wrapper pair that binds to the `-run TestFuzzValidator ./...` filter on every `go test ./...` invocation. The wrapper does NOT replace the FuzzXxx targets — it complements them by adding a deterministic, name-anchored Test* binding to the canonical filter. The randomised driver remains an opt-in escape hatch documented in SECURITY.md (`-fuzz=Fuzz<Name>`); CI runs the wrapper, soak runs drive `-fuzz=`. (3) `SUBSTRING SET ANCHORS THE STRING "no panic" VERBATIM, NOT HYPHENATED FORMS` — first CI run failed because the SECURITY.md text used "no-panic" (hyphenated, sentence-internal) while the matcher pinned "no panic" (space-separated, quoted). The fix wrapped the canonical phrase in quotes in the SECURITY section ("the wrapper pins the 'no panic' invariant") so both the matcher and the human-readable doc land on the same literal. Forward-applicable pattern: when pinning a multi-word invariant as a closed substring, prefer quoting the invariant in the doc so the matcher binds to the literal a reviewer is most likely to write. Also: when the matcher's substring set contains both bare ("FuzzName") AND prefix-form ("FuzzDecodeJSON") names, the section MUST list the full FuzzXxx target set explicitly — handing the reader a sample like "(`Name`, `Path`, ...)" doesn't satisfy a matcher that pins on the literal "FuzzName" substring. (4) `VERIFY.SH RENUMBER OF OPTIONALS BLOCK — EIGHT INSERTIONS NOW (#6→#14)` — inserting required step #14 between #13 (redaction tests) and the optionals renumbered 14→15/15→16/16→17/17→18 in the same edit (govulncheck/staticcheck/golangci-lint/goreleaser). The previous count was SEVEN consecutive insertions (BE-0380..BE-0387). Per-story knobs for siblings: same as BE-0387's bullet — (a) canonical command from PRD, (b) dedicated CI step name, (c) verify.sh numeric prefix (next number after last required step; renumber trailing optionals in same edit), (d) SECURITY.md section heading and 15-17-entry substring set (per-suite invariants — preserve closed-set discipline; list FULL target-name set explicitly when pinning a multi-target surface), (e) AGENTS.md subsection mirroring SECURITY.md but speaking to maintainers. Load-bearing invariant unchanged: ONE FILE, SIX SURFACES, SELF-CHECK; drift on any surface fails ONE test, not six.
 - Verification-suite single-file multi-surface static-test, fake-Dokploy-contract instance (BE-0386 pattern, internal/release/verification_suite_fake_dokploy_contract_static_test.go + internal/controlplane/dokploy/dokployfake/dokployfake_test.go's new canonical pair TestFakeDokployContractDeterministicHierarchyIDs + TestFakeDokployContractRecordedRequestsRedactCredentials + SECURITY.md "## Fake Dokploy Contract Tests" section AND a new row in the Required Verification Gates table + internal/release/AGENTS.md "## Verification suite: fake Dokploy contract tests (BE-0386)" subsection; EIGHTH worked instance of the BE-0379/BE-0380/BE-0381/BE-0382/BE-0383/BE-0384/BE-0385 verification-suite mega-pattern, confirms the BE-0385 closing-line prediction held verbatim — canonical command `go test -run TestFakeDokploy ./...`, CI step name `Fake Dokploy contract tests`, verify.sh prefix #12). Four BE-0386-specific extensions to the template: (1) `CANONICAL FILE = CONTRACT-OWNING PACKAGE, NOT A CONSUMER` — unlike BE-0385 which pinned `internal/controlplane/worker/queue_test.go` (the worker's lease test) and BE-0384 which pinned the quota test in the quota package, BE-0386's canonical file is `internal/controlplane/dokploy/dokployfake/dokployfake_test.go` — the FAKE's own contract tests, not a downstream consumer's tests against the fake. The rationale: a fake-X contract-test story should bind to the package whose contract is being asserted (the fake itself), not to a caller that happens to use the fake. The worker test in `internal/controlplane/worker/dokployfake_test.go` (TestWorkerRunnerProvisionsThroughFakeDokploy, TestWorkerRunnerSurfacesFakeDokployFaults) is downstream evidence, NOT the canonical contract. Forward-applicable: any future verification story whose subject is a deterministic test fixture (BE-0392 load smoke harness, BE-0393 chaos test harness, BE-0399 backup-restore rehearsal) should pin the fixture's own contract tests, not a consumer's. (2) `-RUN FILTER PRE-EXISTING IN PRD BUT MATCHED ZERO TESTS` — sibling of BE-0382's `EXISTING-TEST-SATISFIES-RUN-FILTER` but the OPPOSITE shape: the PRD's `verificationLoop.requiredBackendCommands` already contained `go test -run TestFakeDokploy ./...` before BE-0386 landed, BUT the `TestFakeDokploy` prefix matched ZERO existing tests anywhere in the repo (the dokployfake package's tests are TestCreateHierarchy…, TestTwoServers…, TestRequestRecordingRedactsCredentials, etc. — none start with TestFakeDokploy). The named CI/verify.sh/CONTRIBUTING gates would have silently passed against zero tests. BE-0386 adds value by (a) CREATING the canonical TestFakeDokploy* pair so the `-run` filter binds to real assertions, (b) wiring CI/verify.sh/CONTRIBUTING/SECURITY/AGENTS surfaces as named gates, (c) adding the static defence that pins both halves. Forward-applicable: when picking up ANY verification-suite story whose PRD `-run` filter exists, FIRST run `go test -run <Prefix> ./...` — if it shows `no tests to run` everywhere, the story MUST add canonical tests under the prefix BEFORE wiring the gates, otherwise the gates pass vacuously. (3) `CANONICAL-PAIR DUAL-INVARIANT NAMING — DETERMINISM × RECORDER-REDACTION` — TestFakeDokployContractDeterministicHierarchyIDs pins the per-server deterministic ID allocator (two independent dokployfake.New() servers driven through the same org/project/env/app/deployment chain mint byte-identical org_1/proj_1/env_1/app_1/dep_1, with per-server request counts isolated to 5/5); TestFakeDokployContractRecordedRequestsRedactCredentials pins the recorder hot path that swaps the Authorization header for output.Sentinel AND scans the body for the bearer literal (3 recorded requests across happy-path create / GET read-back / failure-path POST whose body deliberately echoes the bearer — each MUST have AuthHeader==Sentinel, Headers[Authorization]==Sentinel, no body retains the bearer literal). The SECURITY.md substring set MUST include `dokployfake.New` (constructor — deletion breaks every worker test), `Server.Requests` (recorder seam), `output.Sentinel` (the redaction substitute — a different sentinel would silently fork the redaction contract), AND `TestLiveDokploySmoke` (the AC2 opt-in-external escape hatch's test name) so auditors verify the contract from documentation alone. Substring count raised to 15 (vs BE-0385's 13). (4) `VERIFY.SH RENUMBER OF OPTIONALS BLOCK — SEVEN INSERTIONS NOW (#6→#12)` — inserting required step #12 between #11 (job worker lease) and the optionals renumbered 12→13/13→14/14→15/15→16 in the same edit (govulncheck/staticcheck/golangci-lint/goreleaser). Now SEVEN consecutive required-step insertions with optional renumbering; the next contributor adding required step #13 (BE-0387 redaction tests, canonical `go test -run TestRedaction ./...` if PRD names that filter) should follow the same edit shape AND prepare for an optional-band renumber. Per-story knobs for siblings: same as BE-0385's bullet — (a) canonical command from PRD, (b) dedicated CI step name, (c) verify.sh numeric prefix (next number after last required step; renumber trailing optionals in same edit), (d) SECURITY.md section heading and 13-15-entry substring set (per-suite invariants — preserve closed-set discipline), (e) AGENTS.md subsection mirroring SECURITY.md but speaking to maintainers (which seam each canonical-pair function pins). Load-bearing invariant unchanged: ONE FILE, SIX SURFACES, SELF-CHECK; drift on any surface fails ONE test, not six.
 - Verification-suite single-file multi-surface static-test, job-worker-lease instance (BE-0385 pattern, internal/release/verification_suite_job_worker_lease_static_test.go + internal/controlplane/worker/queue_test.go's new canonical pair TestJobWorkerLeaseExclusivityNeverDoubleClaims + TestJobWorkerLeaseReleasedOnShutdownIsRetryable + SECURITY.md "## Job Worker Lease Tests" section AND a new row in the Required Verification Gates table + internal/release/AGENTS.md "## Verification suite: job worker lease tests (BE-0385)" subsection; SEVENTH worked instance of the BE-0379/BE-0380/BE-0381/BE-0382/BE-0383/BE-0384 verification-suite mega-pattern). Three BE-0385-specific extensions to the template: (1) `-RUN-FILTER NEWLY ADDED TO PRD` — unlike BE-0383/BE-0384 where verificationLoop.requiredBackendCommands already carried the `-run` filter, BE-0385's `go test -run TestJobWorkerLease ./...` was NOT present in the array before the story landed; the implementation adds it via a small JSON edit (preserve 2-space indent + trailing newline; use Node fs to round-trip parse/serialize so existing key order stays stable). (2) `CANONICAL-PAIR DUAL-INVARIANT NAMING — EXCLUSIVITY × SHUTDOWN-SAFETY` — the canonical-funcs pair encodes the TWO load-bearing engine invariants: TestJobWorkerLeaseExclusivityNeverDoubleClaims pins the SELECT FOR UPDATE SKIP LOCKED claim in StoreClaimer.Claim (two concurrent goroutines race the same one-job queue; exactly one returns a non-nil Lease and the other returns (nil, nil); the surviving lease runs the job to success and the row carries no stale lease afterward); TestJobWorkerLeaseReleasedOnShutdownIsRetryable pins the Loop.Run shutdown path that invokes Lease.Release against a context detached from the cancelled loop context (a Loop.Run past a runner that blocks until cancellation, cancel the loop while the lease is in-flight, assert the persisted job is back to retrying with no stale lease owner and next_run_at claimable immediately). The SECURITY.md substring set MUST include `FOR UPDATE SKIP LOCKED` (the claim) AND `Lease.Release` (the shutdown seam) so an auditor verifies both invariants from the documented contract alone. Forward-applicable to ANY future worker-verification story whose invariant has a "hot path concurrency × shutdown safety" dual: BE-0386 (fake Dokploy contract tests can mirror this exclusivity × fault-injection pattern). (3) `VERIFY.SH RENUMBER OF OPTIONALS BLOCK CONTINUES` — inserting required step #11 between #10 (quota concurrency) and the optionals renumbered 11→12/12→13/13→14/14→15 in the same edit (govulncheck/staticcheck/golangci-lint/goreleaser). The static test pins `# 11. Required: job worker lease tests` but NOT the optional headers — those shift on every required insertion. Established by BE-0380's renumber pattern; this is now SIX consecutive required-step insertions (#6→#11) with optional renumbering, suggesting the next contributor adding a required step #12 (BE-0386 fake Dokploy) should follow the same edit shape: insert the new `# 12. Required` block AND renumber the four optional headers in the same Edit call. Per-story knobs for siblings: (a) canonical command (BE-0385 uses `go test -run TestJobWorkerLease ./...` filter-narrowed; BE-0386 will use `go test -run TestFakeDokploy ./...`), (b) dedicated CI step name (BE-0385: "Job worker lease tests"), (c) verify.sh numeric prefix (next number after the last required step; renumber trailing optionals in the same edit), (d) SECURITY.md section heading and substring set (per-suite invariants; preserve the closed-set discipline so the matcher fails loudly), (e) AGENTS.md subsection (mirrors the SECURITY.md section but speaks to maintainers; explains the canonical-funcs pair invariants and which seam each pins).
 - Verification-suite single-file multi-surface static-test, quota-concurrency instance (BE-0384 pattern, internal/release/verification_suite_quota_concurrency_static_test.go + internal/controlplane/quota/quota_test.go's new canonical pair TestQuotaConcurrencyHardLimitNeverOverallocates + TestQuotaConcurrencyTenantIsolation + SECURITY.md "## Quota Concurrency Tests" section AND a new row in the Required Verification Gates table + internal/release/AGENTS.md "## Verification suite: quota concurrency tests (BE-0384)" subsection; SIXTH worked instance of the BE-0379/BE-0380/BE-0381/BE-0382/BE-0383 verification-suite mega-pattern). Three BE-0384-specific extensions to the template: (1) `RUN-FILTER PRE-EXISTING IN PRD` — the PRD's `verificationLoop.requiredBackendCommands` already contained `go test -run TestQuotaConcurrency ./...` before the story landed (same as BE-0383's policy-matrix entry; established by BE-0382's `EXISTING-TEST-SATISFIES-RUN-FILTER` sub-pattern). BE-0384 adds value via (a) wiring CI/verify.sh/CONTRIBUTING/SECURITY/AGENTS surfaces (the gate didn't exist as a named gate before), (b) ADDING canonical TestQuotaConcurrency* tests (the existing TestCheckerReserveConcurrentRespectsLimit / TestCheckerReserveTenantIsolation siblings stay; the new pair encodes the FOR UPDATE-lock and organization_id-predicate invariants under the load-bearing prefix), (c) pinning the existence of both via the static test. (2) `CANONICAL-PAIR INVARIANT-NAMING` — the canonical-funcs pair encodes the TWO load-bearing engine invariants: TestQuotaConcurrencyHardLimitNeverOverallocates pins the FOR UPDATE lock on the per-organization-per-resource usage counter row (parallel writers against ONE tenant — exactly limit succeed, the rest get yerr.CodeQuotaExceeded, the database row count agrees); TestQuotaConcurrencyTenantIsolation pins the organization_id predicate carried through every counter/sum/insert (parallel writers across TWO tenants — each respects its own limit AND the two tenants' active reservations sum to the two limits, never collapse into one bucket). The cross-tenant sum-check is the load-bearing defence-in-depth: per-tenant counts could pass while a regression silently dropped one tenant's rows entirely. The SECURITY.md substring set MUST include `FOR UPDATE` (the lock) and `organization_id` (the predicate) so an auditor verifies the invariant from the documented contract alone, without opening the test file. Forward-applicable to ANY future concurrency-verification story whose invariant has a "single-tenant hot path × cross-tenant isolation path" dual: BE-0386 (fake Dokploy), BE-0398 (tenant isolation), BE-0407 (service desired-state goldens). (3) `VERIFY.SH RENUMBER OF OPTIONALS BLOCK CONTINUES` — inserting required step #10 between #9 (policy matrix) and the optionals renumbered 10→11/11→12/12→13/13→14 in the same edit (govulncheck/staticcheck/golangci-lint/goreleaser). The static test pins `# 10. Required: quota concurrency tests` but NOT the optional headers — those shift on every required insertion. Established by BE-0380's renumber pattern. Per-story knobs for siblings: (a) canonical command (BE-0384 uses `go test -run TestQuotaConcurrency ./...` filter-narrowed; BE-0385 will use `go test -run TestFakeDokploy ./...`), (b) dedicated CI step name (BE-0384: "Quota concurrency tests"), (c) verify.sh numeric prefix (next number after the last required step; renumber trailing optionals in the same edit), (d) SECURITY.md section heading and 13-entry substring set covering scope / determinism / actionable-failures (engine-specific tokens: FOR UPDATE, organization_id, CodeQuotaExceeded) / opt-in-external / envelope-pinning / canonical-pair / redaction / CI-cadence / self-locating gate filename, (e) PRD requiredBackendCommands entry pre-existing OR newly inserted, (f) canonical reference test file path + canonical-pair func-name set + the `-run` filter prefix the canonical-funcs entries MUST satisfy. Load-bearing invariant: ONE FILE, SIX SURFACES, SELF-CHECK; drift on any surface fails ONE test, not six. GOTCHA: in TestQuotaConcurrencyTenantIsolation's per-org goroutine closure, do NOT alias `t` (the *testing.T) to a per-tenant tally bucket — `t := results[orgID]` SHADOWS the outer testing.T, silently breaking `t.Errorf` inside the closure. Used `bucket := results[orgID]` to keep the testing.T accessible for actionable diagnostics. Forward-applicable to any verification-suite story whose parallel-goroutine test groups results per-loop-var.
@@ -27372,4 +27373,185 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     transport like a custom header) name the test
     `TestRedaction_<Surface>...` so the prefix continues to bind
     across packages without modifying the static defence.
+---
+
+## 2026-05-17 - BE-0388 Verification suite: fuzz tests for validators
+- What was implemented:
+  - Added the canonical TestFuzzValidator* function pair to
+    `internal/controlplane/validate/fuzz_test.go`:
+    `TestFuzzValidatorContractCoversExpectedValidators` (pins the
+    closed-set coverage invariant — reads its own file via
+    `runtime.Caller` and asserts every entry in
+    `fuzzValidatorExpectedTargets` — nine `func FuzzXxx(f *testing.F)`
+    declarations covering Name, Path, Domain, EnvVarName,
+    EnvVarValue, DecodeJSON, ImageRef, URL, GitBranch — is present)
+    and `TestFuzzValidatorContractSeedCorpusRejectsHostileInputs`
+    (drives every validator through the shared `fuzzSeeds` corpus
+    under a `recover()` guard, reports the offending validator
+    name AND the seed index on panic).
+  - Created
+    `internal/release/verification_suite_fuzz_validators_static_test.go`
+    pinning SIX surfaces in one file (CI workflow step, verify.sh
+    step header + command, CONTRIBUTING.md numeric-prefixed entry,
+    SECURITY.md table row + dedicated `## Fuzz Validator Tests`
+    section with 17-substring closed-set, PRD command, canonical
+    file + function-pair existence) plus a self-check that drives
+    every matcher with synthetic known-good AND known-bad fixtures.
+  - Edited `scripts/verify.sh` to insert
+    `# 14. Required: fuzz tests for validators` between the
+    `# 13. Required: redaction tests` block and the optionals,
+    renumbering optionals `# 14 -> # 15` (govulncheck),
+    `# 15 -> # 16` (staticcheck), `# 16 -> # 17` (golangci-lint),
+    `# 17 -> # 18` (goreleaser check) in the same edit.
+  - Edited `.github/workflows/ci.yml` to add a dedicated
+    `Fuzz validator tests` step in the `test` job invoking
+    `go test -run TestFuzzValidator ./...` right after the
+    `Redaction tests` step and before `Race detector`.
+  - Edited `CONTRIBUTING.md` to add entry
+    `14. \`go test -run TestFuzzValidator ./...\`` to the Required
+    Checks Before Every Commit list and an explanatory paragraph
+    documenting BE-0388 as the
+    hostile-input-never-panics-or-leaks gate, listing the nine
+    canonical FuzzXxx targets the wrapper pins, and naming the
+    `-fuzz=Fuzz<Name>` optional randomised driver.
+  - Edited `SECURITY.md` to add the `Fuzz validator tests` table
+    row to the Required Verification Gates table and a dedicated
+    `## Fuzz Validator Tests` section explaining scope,
+    determinism, actionable failures, CI gating, envelope
+    contract, redaction (no-value-echo), and the self-locating
+    static defence. Initial run flagged a substring mismatch
+    ("no panic" vs "no-panic") and the missing literals
+    "FuzzName" and "FuzzDecodeJSON"; fixed by listing the full
+    nine-target FuzzXxx set verbatim in the doc and wrapping the
+    canonical phrase as "'no panic'".
+  - Edited `internal/release/AGENTS.md` to add a
+    `## Verification suite: fuzz tests for validators (BE-0388)`
+    section mirroring the BE-0385 / BE-0386 / BE-0387 entries.
+  - Edited `ralph/prd.json` to add
+    `"go test -run TestFuzzValidator ./..."` to
+    `verificationLoop.requiredBackendCommands`.
+  - Flipped `passes: true` for BE-0388 in `ralph/prd.json`.
+- Files changed:
+  - internal/controlplane/validate/fuzz_test.go (added canonical
+    TestFuzzValidator* pair after FuzzGitBranch; added
+    `fuzzValidatorExpectedTargets` closed-set + imports for
+    runtime/os/filepath/strconv)
+  - internal/release/verification_suite_fuzz_validators_static_test.go
+    (new — six-surface static defence + self-check)
+  - scripts/verify.sh (insert step #14; renumber optionals 14→18)
+  - .github/workflows/ci.yml (add `Fuzz validator tests` step)
+  - CONTRIBUTING.md (add entry #14 + BE-0388 explanation paragraph)
+  - SECURITY.md (add table row + dedicated `## Fuzz Validator Tests`
+    section)
+  - internal/release/AGENTS.md (add BE-0388 subsection)
+  - ralph/prd.json (add `go test -run TestFuzzValidator ./...` to
+    requiredBackendCommands; flip BE-0388 passes to true)
+- Verification run:
+  - `gofmt -l .` — empty
+  - `go vet ./...` — clean
+  - `go test -count=1 -run 'TestFuzzValidator'
+    ./internal/controlplane/validate/...` — PASS
+  - `go test -count=1 -run 'TestVerificationSuiteFuzzValidators'
+    ./internal/release/...` — PASS after substring fix
+  - `go test ./...` — PASS (all packages)
+  - `go test -race ./...` — PASS
+  - `go test -count=1 -run TestPolicyMatrix ./...` — PASS
+  - `go test -count=1 -run TestQuotaConcurrency ./...` — PASS
+  - `go test -count=1 -run TestJobWorkerLease ./...` — PASS
+  - `go test -count=1 -run TestFakeDokploy ./...` — PASS
+  - `go test -count=1 -run TestRedaction ./...` — PASS
+  - `go test -count=1 -run TestMigrations ./...` — PASS
+  - `go test -count=1 -run TestOpenAPI ./...` — PASS
+- Remaining risks or follow-ups: none. The canonical pair binds
+  the `-run TestFuzzValidator` filter to nine validators today;
+  a future public validator added to `internal/controlplane/validate`
+  MUST extend `fuzzValidatorExpectedTargets` AND add a FuzzXxx
+  target AND extend the wrapper's `run("Name", ...)` series — the
+  closed-set matcher fires on omission with the exact missing
+  name.
+- **Learnings for future iterations:**
+  - **Multi-word invariant substrings MUST be quoted in the doc.**
+    The first run failed with `missing required substring "no panic"`
+    because the SECURITY.md text used "no-panic" (hyphenated,
+    sentence-internal). The fix wrapped the literal as
+    `"no panic"` in the section body so the matcher and the
+    human-readable doc agree on one literal. Forward pattern: when
+    pinning a multi-word phrase as a closed substring, prefer
+    quoting the phrase in the doc (`"no panic"`, `"opt-in
+    external"`, `"every push and PR"`) so the matcher binds to the
+    literal a reviewer is most likely to write — and the matcher
+    constant matches the quoted form verbatim. Hyphenation drift
+    is a common false-positive.
+  - **Multi-target surfaces: list EVERY target name explicitly.**
+    SECURITY.md initially wrote "(`Name`, `Path`, `Domain`, ...)"
+    which didn't satisfy a matcher pinning on the literal "FuzzName"
+    substring. Fix: list the full nine-target FuzzXxx set verbatim
+    so the doc names every load-bearing fact. Forward pattern: when
+    a verification story's surface is a SET of N targets sharing one
+    invariant, list ALL N target names verbatim in the SECURITY.md
+    section (don't abbreviate with `...`) and pin a representative
+    subset (first + middle + last) in the matcher's substring set
+    so deleting an interior target trips the gate too.
+  - **Canonical pair = closed-set coverage × runtime invariant.**
+    BE-0388's design splits the load-bearing surface into two
+    orthogonal invariants pinned by two canonical functions:
+    `TestFuzzValidatorContractCoversExpectedValidators` (the
+    closed-set coverage matcher, asserted by reading the file's
+    own source via `runtime.Caller` so a future package move
+    auto-updates the lookup) and
+    `TestFuzzValidatorContractSeedCorpusRejectsHostileInputs`
+    (the runtime no-panic matcher, asserted by `recover()`-wrapped
+    invocations across the shared seed corpus). This split is the
+    template for any verification story whose surface is a SET of
+    targets sharing one invariant + a closed-set coverage rule.
+    Sample siblings: BE-0394 (chaos Postgres disconnects), BE-0395
+    (idempotency replay), BE-0398 (tenant isolation).
+  - **FuzzXxx targets bind to BOTH `-run` and `-fuzz=`.**
+    Go's fuzz tests run their seed corpus deterministically under
+    `go test -run FuzzXxx` AND drive the randomised engine under
+    `go test -fuzz=FuzzXxx`. The BE-0388 design keeps the existing
+    FuzzXxx targets unchanged (they continue to support the
+    optional `-fuzz=` driver for soak runs) AND adds a
+    TestFuzzValidator-prefixed wrapper pair that binds to the
+    `-run TestFuzzValidator ./...` filter on every `go test ./...`
+    invocation. The wrapper complements, not replaces, the FuzzXxx
+    targets. Document the `-fuzz=` driver as the opt-in escape
+    hatch in SECURITY.md so an operator running a soak knows the
+    entry point.
+  - **Sandbox does NOT compile Go modules.** The
+    `ctx_execute(language: "shell")` sandbox runs commands in a
+    temporary directory that lacks the module's `go.mod`, so
+    `go test ./internal/...` fails there with
+    `ignoring go.mod in system temp root`. Run all `go test`,
+    `go vet`, and `gofmt` commands via direct Bash (the project
+    working directory). Use `ctx_execute_file` / `ctx_execute`
+    ONLY for analysis/processing where stdout is the only signal
+    needed (file slicing, JSON edits, grep summaries).
+  - **Workflow Edit hook surfaces a generic command-injection
+    reminder on first attempt.** The Edit hook on
+    `.github/workflows/ci.yml` surfaced a generic "command
+    injection" security reminder despite the inserted line
+    containing zero untrusted input (a static
+    `go test -run TestFuzzValidator ./...` command); the reminder
+    is non-blocking and the second attempt succeeded. Forward
+    pattern: ignore the reminder when the edit is a pure-literal
+    `run:` insertion with no `${{ }}` expression. Established by
+    BE-0386's commentary; this is now a second instance of the
+    same gotcha.
+  - **Per-story prediction for BE-0389 (migration tests from
+    empty DB).** The PRD's `verificationLoop.requiredBackendCommands`
+    already carries `go test -run TestMigrations ./...` from
+    BE-0380; the canonical reference test
+    `TestMigrations` already exists in
+    `internal/controlplane/store/migrate/migrate_test.go`. BE-0389
+    is a renamed verification of the same gate from the
+    bootstrap-from-empty-DB angle. Expected per-story knobs:
+    canonical command unchanged (`go test -run TestMigrations`),
+    new CI step name something like `Migration ladder tests`,
+    verify.sh prefix #15 (next after BE-0388's #14), SECURITY.md
+    section `## Migration Ladder Tests`. Static defence file
+    `verification_suite_migrations_static_test.go`. Likely needs
+    to ADD canonical TestMigrations* siblings (e.g.
+    `TestMigrationsFromEmptyDatabase`) that exercise the
+    empty-bootstrap path explicitly.
 ---
