@@ -28993,3 +28993,24 @@ Searchable terms for follow-up: admin_break_glass_policy_test, ActionAdminBreakG
     both "seen" and "deleted" without violating the cursor-
     stability contract (no duplicate, no resurrection).
 ---
+
+## 2026-05-17 - BE-0140
+- Implemented contract tests for PUT /v1/projects/{project_id}/grants.
+- Files changed:
+  - internal/controlplane/httpapi/project_grants_put_contract_test.go (new) — three pinned contract invariants for the project-grants WRITE endpoint, structural twin of BE-0107/BE-0110 templates ported to project_grants_put.
+- Verification run:
+  - gofmt -w . (no diff)
+  - go vet ./... (clean)
+  - go mod tidy (no diff)
+  - go test ./... (all packages ok)
+  - go test -race ./... (all packages ok)
+  - go test -run "TestReplaceProjectGrants(ServerWritesResponseDataOnlyToResponseWriter|RequestLogRedactsBearerToken|ErrorEnvelopeDoesNotLeakDependencyCause)" ./internal/controlplane/httpapi/ -count=1 (pass)
+- Results: all green.
+- Remaining risks/follow-ups: none — direct write-side mirror of BE-0137 (the GET sibling), with the variables_put_contract_test.go's fourth submitted-secret-value pin omitted because grants carry no customer-submitted secret values (just opaque principal IDs and a role). Sibling WRITE endpoints BE-0146 (PUT project variables), BE-0167 (PUT environment grants), and BE-0170 (PUT environment variables — has secrets, so re-include the fourth pin) follow exactly the same template with the replacer/path/decoder substitutions.
+- **Learnings for future iterations:**
+  - The "PUT contract test triple" template for write endpoints that DO NOT carry customer-submitted secret values: server-writes-only-through-ResponseWriter + request-log-redacts-bearer-token (success+deny pair, deny via Principal.Disabled=true on a privileged identity) + error-envelope-does-not-leak-dependency-cause. The 4-test variables_put_contract_test.go template adds a fourth test (request-log-redacts-submitted-secret-value) but ONLY when the request body field set includes is_secret=true values. Project grants don't, so the triple is the right shape — same as the BE-0137 GET sibling.
+  - For mutation endpoints, the deny leg of the bearer-token redaction test should wire a fakeXxxReplacer{err: stderrors.New("replacer must not be called")} so a regression that bypasses policy and reaches the store layer fails as both "wrong status" AND "wrong replacer error in response" — two assertions for one regression. variables_put_contract_test.go documents this and project_grants_put_contract_test.go follows it.
+  - For project.grants.write (a CapAdmin action), the privileged success-leg identity comes from projectGrantsAdminIdentity (RoleAdmin) — NOT from principalForGrants which is RoleDeveloper. Developer is denied for CapAdmin actions, so principalForGrants is wrong for the happy-path; reserve it for the GET sibling (project.grants.read is CapRead and admits Developer).
+  - The Disabled=true escape hatch on a privileged identity (RoleAdmin) for the deny leg keeps the contract test decoupled from the role matrix: it asserts the redaction invariant without re-asserting which roles are admitted. The role matrix lives in projects_grants_put_policy_test.go (BE-0141).
+  - captureProcessOutput is the same shared helper from me_contract_test.go used across all *_contract_test.go files; it swaps os.Stdout/os.Stderr so its hosting test is NEVER t.Parallel(). The other two redaction/error tests in the triple are t.Parallel() (no os swap).
+---
