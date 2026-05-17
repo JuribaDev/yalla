@@ -1160,3 +1160,115 @@ either pair function name, update the matching constant in
 `verification_suite_fuzz_validators_static_test.go` in the
 same edit. The matchers fail loudly on drift; the assertion
 IS the contract.
+
+## Verification suite: migration tests from empty DB (BE-0389)
+
+`verification_suite_migrations_empty_db_static_test.go` is the
+single-file static defence for the migrations-from-empty-DB
+meta-contract: "every numbered `NNNN_*.up.sql` file in the
+embedded migrations directory surfaces as a loaded `Migration`,
+the embedded ladder applies cleanly to an empty Postgres
+database in order, the `schema_migrations` ledger ends with one
+clean row per migration, and a second `Up` is a no-op." The
+canonical reference migration test file is
+`internal/controlplane/store/migrate/migrate_test.go`, which
+declares the canonical pair
+`TestMigrationsEmptyDBContractCoversAllNumberedFiles` (pins
+the closed-set coverage invariant — every `NNNN_*.up.sql` file
+in the embedded migrations directory MUST surface as a loaded
+`Migration`, strictly ascending and gap-free from version 1,
+with a non-empty up SQL body and a 64-character sha256 hex
+checksum; runs without a Postgres dependency) and
+`TestMigrationsEmptyDBContractAppliesEmbeddedLadderToEmptyDatabase`
+(pins the applies-cleanly runtime invariant — a throwaway
+database accepts the embedded ladder in order, the
+`schema_migrations` ledger ends with one clean row per
+migration with correct embedded checksum and dirty=false, and
+a second `Up` is a no-op; skips cleanly when
+`YALLA_TEST_DATABASE_URL` is unset). The pair binds to the
+PRD's `-run TestMigrationsEmptyDB` filter via the
+`TestMigrationsEmptyDB` prefix, so a rename to a function whose
+name does not match the prefix silently de-gates the empty-DB
+suite. The first member exercises the embedded FS directly so
+it runs on every developer machine without Postgres; the
+second member exercises an isolated, throwaway database (one
+fresh database per test run, dropped on cleanup) so it never
+depends on shared state and is parallel-safe.
+
+The static test pins SIX surfaces in one file so a future
+contributor changing any one of them fails ONE test, not six:
+
+- `.github/workflows/ci.yml` — the `test` job's
+  `Migration tests from empty DB` step MUST run
+  `go test -run TestMigrationsEmptyDB ./...`. The dedicated
+  step is defence-in-depth on the same principle as BE-0380 /
+  BE-0381 / BE-0382 / BE-0383 / BE-0384 / BE-0385 / BE-0386 /
+  BE-0387 / BE-0388: a narrowing of the umbrella
+  `go test ./...` step would still leave the empty-DB gate
+  firing as a fast targeted failure.
+- `scripts/verify.sh` — the local commit gate's
+  `# 15. Required: migration tests from empty DB` block MUST
+  invoke the same canonical command. The numeric prefix is
+  part of the contract: a reorder must be a deliberate edit
+  to both the matching constant in this test file AND the
+  script. Inserting required step #15 between #14 (fuzz
+  validator tests) and the optionals renumbered 15→16 /
+  16→17 / 17→18 / 18→19 in the same edit (govulncheck /
+  staticcheck / golangci-lint / goreleaser). This is NINE
+  consecutive required-step insertions with optional
+  renumbering.
+- `CONTRIBUTING.md` — the Required Checks Before Every Commit
+  section MUST list the canonical command as entry
+  `15. \`go test -run TestMigrationsEmptyDB ./...\`` so
+  contributors know the gate before they open a PR. The
+  numeric prefix keeps verify.sh and CONTRIBUTING.md in
+  lockstep with BE-0379's `4. go test ./...`, BE-0380's
+  `6. go test ./internal/controlplane/store/...`, BE-0381's
+  `7. go test ./internal/controlplane/httpapi/...`, BE-0382's
+  `8. go test ./internal/controlplane/openapi/...`, BE-0383's
+  `9. go test -run TestPolicyMatrix ./...`, BE-0384's
+  `10. go test -run TestQuotaConcurrency ./...`, BE-0385's
+  `11. go test -run TestJobWorkerLease ./...`, BE-0386's
+  `12. go test -run TestFakeDokploy ./...`, BE-0387's
+  `13. go test -run TestRedaction ./...`, and BE-0388's
+  `14. go test -run TestFuzzValidator ./...`.
+- `SECURITY.md` — the Required Verification Gates table MUST
+  contain the `Migration tests from empty DB` row, AND a
+  dedicated `## Migration Tests From Empty DB` section MUST
+  explain the closed-set-coverage / applies-cleanly /
+  deterministic-by-default / actionable-failure /
+  opt-in-external / schema-version contracts so the public
+  security posture stays in lockstep with the migration
+  runner.
+- `ralph/prd.json` —
+  `verificationLoop.requiredBackendCommands` MUST list
+  `go test -run TestMigrationsEmptyDB ./...` so an AI agent
+  reading the PRD before picking up a story sees the gate
+  without needing to discover it from shell scripts or CI
+  workflows.
+- `internal/controlplane/store/migrate/migrate_test.go` — the
+  canonical reference migration test file MUST exist AND MUST
+  declare the function pair. The pair captures the two
+  load-bearing migration invariants the runner MUST keep:
+  every `NNNN_*.up.sql` file surfaces as a loaded `Migration`
+  (the closed-set coverage invariant pinned by walking the
+  embedded FS through the loader's filename grammar), and the
+  embedded ladder applies cleanly to an empty database
+  leaving the ledger in a clean state (the applies-cleanly
+  runtime invariant pinned by a throwaway database that
+  skips when `YALLA_TEST_DATABASE_URL` is unset).
+
+The self-check
+`TestVerificationSuiteMigrationsEmptyDBAnalyzerDetectsRegressions`
+drives every matcher with synthetic known-good AND known-bad
+fixtures so over-tightening (a legitimate change trips the
+analyser) and under-tightening (a real regression slips
+through) are both caught at the package-internal API. When
+changing the CI step name, the verify.sh header, the
+CONTRIBUTING.md numeric prefix, the SECURITY.md row or
+section, the PRD command, the canonical migration test file
+path, or either pair function name, update the matching
+constant in
+`verification_suite_migrations_empty_db_static_test.go` in the
+same edit. The matchers fail loudly on drift; the assertion
+IS the contract.

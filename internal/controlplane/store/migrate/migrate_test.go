@@ -5,7 +5,11 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"io/fs"
 	"os"
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -470,5 +474,264 @@ func assertFunction(t *testing.T, ctx context.Context, pool *pgxpool.Pool, name 
 	}
 	if exists != want {
 		t.Fatalf("function %q exists = %v, want %v", name, exists, want)
+	}
+}
+
+// --- BE-0389 canonical pair: migration tests from empty DB ---
+//
+// These two tests are the canonical pair the PRD's
+// `go test -run TestMigrationsEmptyDB ./...` filter binds to. They pin the
+// two load-bearing invariants the migration runner owes any operator who
+// boots a fresh Yalla control-plane database:
+//
+//  1. TestMigrationsEmptyDBContractCoversAllNumberedFiles — the closed-set
+//     coverage invariant. Every numbered `NNNN_*.up.sql` file in the
+//     embedded migrations directory MUST surface as a loaded Migration with
+//     a strictly ascending, gap-free version starting at 1 and a non-empty
+//     checksum. A new migration file added without re-running the loader
+//     (or a `0NNN_baseline.up.sql` accidentally renamed to a non-numbered
+//     form) trips this gate at the package-internal API with no Postgres
+//     dependency, so the regression surfaces on every developer machine.
+//  2. TestMigrationsEmptyDBContractAppliesEmbeddedLadderToEmptyDatabase —
+//     the empty-DB applies-cleanly invariant. A throwaway database (created
+//     by `testPool` when `YALLA_TEST_DATABASE_URL` is set; skipped
+//     otherwise) MUST accept every embedded migration in order, leave the
+//     schema_migrations ledger with one clean row per migration, the
+//     correct embedded checksum, dirty=false on every row, and an
+//     idempotent second `Up` that adds nothing. A real regression — a
+//     migration that fails on an empty database, leaks a partial row, or
+//     skips ahead — surfaces with the offending migration version AND
+//     resource identifier (`schema_migrations` row reference) so the
+//     operator can map the failure to the exact migration without
+//     re-running the suite locally.
+
+// migrationFilenamePattern mirrors the loader's filename grammar (see
+// LoadMigrations in migrate.go). The canonical-coverage test reads the
+// embedded FS through this pattern so a future filename-grammar change in
+// the loader is mirrored here in the same edit.
+var migrationFilenamePattern = regexp.MustCompile(`^(\d{4,})_([a-z0-9_]+)\.(up|down)\.sql$`)
+
+// TestMigrationsEmptyDBContractCoversAllNumberedFiles pins the closed-set
+// coverage invariant: every `NNNN_*.up.sql` file embedded in the binary
+// MUST surface as a loaded Migration, the versions MUST be strictly
+// ascending and gap-free starting at 1, and every loaded migration MUST
+// carry a non-empty up SQL body and a 64-character sha256 hex checksum.
+//
+// No live Postgres is required: this is a deterministic, sandbox-only
+// invariant that runs on every developer machine and on every CI runner.
+func TestMigrationsEmptyDBContractCoversAllNumberedFiles(t *testing.T) {
+	t.Parallel()
+
+	entries, err := fs.ReadDir(embeddedMigrations, migrationsDir)
+	if err != nil {
+		t.Fatalf("read embedded migrations dir %q: %v", migrationsDir, err)
+	}
+
+	// fileVersions collects the version numbers parsed from every
+	// well-formed `NNNN_*.up.sql` filename in the embedded directory.
+	// We assert below that this set matches the loaded migration set
+	// exactly — any drift (a file added without re-running the loader,
+	// a numbered file accidentally renamed to a non-numbered form, a
+	// duplicate version across two filenames) is a closed-set coverage
+	// regression and trips this gate with the offending filename
+	// reported as the failure context.
+	type fileRef struct {
+		version  int64
+		name     string
+		filename string
+	}
+	var ups []fileRef
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		matches := migrationFilenamePattern.FindStringSubmatch(e.Name())
+		if matches == nil {
+			// The loader is the authority on filename grammar; any file
+			// that does not match the pattern would trip
+			// LoadMigrations validation. We mirror the loader here so a
+			// future grammar change (e.g. a permissive `.sql` form)
+			// reaches both sides in the same edit.
+			t.Errorf("embedded migrations contain non-conforming file %q; the loader's filename grammar is `NNNN_name.{up,down}.sql` — re-run the loader fixtures if this is intentional",
+				e.Name())
+			continue
+		}
+		if matches[3] != "up" {
+			continue
+		}
+		v, err := strconv.ParseInt(matches[1], 10, 64)
+		if err != nil {
+			t.Errorf("embedded migration %q has unparseable version %q: %v",
+				e.Name(), matches[1], err)
+			continue
+		}
+		ups = append(ups, fileRef{version: v, name: matches[2], filename: e.Name()})
+	}
+	if len(ups) == 0 {
+		t.Fatal("embedded migrations directory contains no `NNNN_*.up.sql` files; the closed-set coverage gate has nothing to bind to — the embed glob in migrate.go has drifted")
+	}
+
+	sort.Slice(ups, func(i, j int) bool { return ups[i].version < ups[j].version })
+
+	// Strictly ascending, gap-free, starting at 1. A gap is a deployment
+	// hazard — the ledger uses version as the primary key and an
+	// operator inspecting the ladder must be able to assume contiguous
+	// versions.
+	for i, ref := range ups {
+		want := int64(i + 1)
+		if ref.version != want {
+			t.Errorf("embedded migrations contain a version gap at index %d: file %q has version %d, want %d (strictly ascending, gap-free, starting at 1)",
+				i, ref.filename, ref.version, want)
+		}
+	}
+
+	loaded, err := LoadMigrations(embeddedMigrations)
+	if err != nil {
+		t.Fatalf("LoadMigrations(embedded): %v", err)
+	}
+	if len(loaded) != len(ups) {
+		t.Fatalf("loaded migrations = %d, want %d (every `NNNN_*.up.sql` file MUST become a loaded Migration; mismatch indicates a loader or embed-glob regression)",
+			len(loaded), len(ups))
+	}
+	for i, m := range loaded {
+		ref := ups[i]
+		if m.Version != ref.version {
+			t.Errorf("loaded[%d].Version = %d, want %d (file %q); resource_id schema_migrations.version=%d",
+				i, m.Version, ref.version, ref.filename, ref.version)
+		}
+		if m.Name != ref.name {
+			t.Errorf("loaded[%d].Name = %q, want %q (file %q)",
+				i, m.Name, ref.name, ref.filename)
+		}
+		if strings.TrimSpace(m.UpSQL) == "" {
+			t.Errorf("loaded[%d] (file %q) has empty up SQL; an empty migration is a closed-set coverage regression — operators booting from empty would silently skip this version",
+				i, ref.filename)
+		}
+		if len(m.Checksum) != 64 {
+			t.Errorf("loaded[%d] (file %q) checksum = %q, want 64 hex chars",
+				i, ref.filename, m.Checksum)
+		}
+	}
+}
+
+// TestMigrationsEmptyDBContractAppliesEmbeddedLadderToEmptyDatabase pins
+// the empty-DB applies-cleanly invariant: the embedded migration ladder
+// MUST apply to an empty Postgres database from version 0 through to the
+// last embedded version, leaving the schema_migrations ledger with one
+// clean row per migration, the correct embedded checksum, dirty=false on
+// every row, and an idempotent second `Up` that adds nothing.
+//
+// Failures surface with the offending migration version AND the
+// resource_id (schema_migrations row reference) so the operator can map
+// the failure to the exact migration without re-running the suite
+// locally. The test skips when `YALLA_TEST_DATABASE_URL` is unset so the
+// suite stays green on machines without Postgres; CI sets the env var.
+func TestMigrationsEmptyDBContractAppliesEmbeddedLadderToEmptyDatabase(t *testing.T) {
+	t.Parallel()
+	pool := testPool(t)
+	ctx := context.Background()
+
+	m, err := New(pool, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	want := m.Migrations()
+	if len(want) == 0 {
+		t.Fatal("no embedded migrations; the empty-DB applies-cleanly gate has nothing to bind to")
+	}
+
+	if err := m.Up(ctx); err != nil {
+		t.Fatalf("Up(empty-db): %v", err)
+	}
+
+	// Read the ledger back in version-ascending order and assert the
+	// closed-set match: same length, same versions in order, same
+	// checksums, dirty=false on every row, and a non-zero applied_at
+	// that is not in the future.
+	rows, err := pool.Query(ctx,
+		`SELECT version, name, checksum, applied_at, dirty FROM schema_migrations ORDER BY version`)
+	if err != nil {
+		t.Fatalf("read schema_migrations: %v", err)
+	}
+	defer rows.Close()
+
+	type ledgerRow struct {
+		version   int64
+		name      string
+		checksum  string
+		appliedAt time.Time
+		dirty     bool
+	}
+	var got []ledgerRow
+	for rows.Next() {
+		var r ledgerRow
+		if err := rows.Scan(&r.version, &r.name, &r.checksum, &r.appliedAt, &r.dirty); err != nil {
+			t.Fatalf("scan schema_migrations row: %v", err)
+		}
+		got = append(got, r)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate schema_migrations: %v", err)
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("schema_migrations rows = %d, want %d (every embedded migration MUST land in the ledger after a clean empty-DB Up)",
+			len(got), len(want))
+	}
+	soon := time.Now().Add(time.Minute)
+	for i, r := range got {
+		w := want[i]
+		// resource_id: schema_migrations.version is the row identifier
+		// an operator can grep the failure for.
+		resourceID := "schema_migrations.version=" + strconv.FormatInt(r.version, 10)
+		if r.version != w.Version {
+			t.Errorf("ledger row %d: version = %d, want %d (resource_id %s)", i, r.version, w.Version, resourceID)
+		}
+		if r.name != w.Name {
+			t.Errorf("ledger row %d: name = %q, want %q (resource_id %s)", i, r.name, w.Name, resourceID)
+		}
+		if r.checksum != w.Checksum {
+			t.Errorf("ledger row %d: checksum = %q, want %q (resource_id %s) — a checksum mismatch on an empty-DB Up indicates the loader or embed glob drifted from the on-disk migration file",
+				i, r.checksum, w.Checksum, resourceID)
+		}
+		if r.dirty {
+			t.Errorf("ledger row %d: dirty = true, want false (resource_id %s) — a dirty row after an empty-DB Up means a migration started but did not finish; the transaction-per-migration contract was broken",
+				i, resourceID)
+		}
+		if r.appliedAt.IsZero() || r.appliedAt.After(soon) {
+			t.Errorf("ledger row %d: applied_at = %v, want a recent past timestamp (resource_id %s)",
+				i, r.appliedAt, resourceID)
+		}
+	}
+
+	// Second Up is a no-op (idempotency) — the ledger row count MUST
+	// stay equal to the embedded migration count.
+	if err := m.Up(ctx); err != nil {
+		t.Fatalf("second Up after empty-DB ladder: %v", err)
+	}
+	var rowCount int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&rowCount); err != nil {
+		t.Fatalf("count schema_migrations after second Up: %v", err)
+	}
+	if rowCount != len(want) {
+		t.Fatalf("schema_migrations rows after second Up = %d, want %d (Up MUST be idempotent on a fully-applied empty-DB ladder)",
+			rowCount, len(want))
+	}
+
+	// Status reports zero pending, current = last embedded version,
+	// dirty = false.
+	st, err := m.Status(ctx)
+	if err != nil {
+		t.Fatalf("Status after empty-DB Up: %v", err)
+	}
+	if len(st.Pending) != 0 {
+		t.Errorf("Status.Pending = %d, want 0", len(st.Pending))
+	}
+	if st.Dirty {
+		t.Errorf("Status.Dirty = true, want false")
+	}
+	wantCurrent := want[len(want)-1].Version
+	if st.Current != wantCurrent {
+		t.Errorf("Status.Current = %d, want %d (resource_id schema_migrations.version=%d)", st.Current, wantCurrent, wantCurrent)
 	}
 }

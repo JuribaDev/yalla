@@ -46,6 +46,7 @@ and they must all pass on every commit you propose:
 12. `go test -run TestFakeDokploy ./...`
 13. `go test -run TestRedaction ./...`
 14. `go test -run TestFuzzValidator ./...`
+15. `go test -run TestMigrationsEmptyDB ./...`
 
 `scripts/verify.sh` runs the full set in one command and is the local
 mirror of the `test` job in `.github/workflows/ci.yml`. Step 6 — the
@@ -120,6 +121,30 @@ a `recover()` guard so a regression surfaces with the offending
 validator AND the seed index. The optional randomised driver
 remains available as `go test -fuzz=Fuzz<Name>
 ./internal/controlplane/validate/...` for soak runs.
+Step 15 — the migrations-from-empty-DB suite bound by the
+`-run TestMigrationsEmptyDB` filter — is the empty-database
+bootstrap gate documented in BE-0389; the dedicated invocation is
+defence-in-depth on the same principle so a narrowing of the
+umbrella `go test ./...` step would still leave the migration-runner
+gate firing as a fast, targeted failure rather than buried inside
+the umbrella log. The canonical pair
+(`TestMigrationsEmptyDBContractCoversAllNumberedFiles` and
+`TestMigrationsEmptyDBContractAppliesEmbeddedLadderToEmptyDatabase`)
+lives in `internal/controlplane/store/migrate/migrate_test.go`. The
+first member pins the closed-set coverage invariant — every
+`NNNN_*.up.sql` file in the embedded migrations directory MUST
+surface as a loaded `Migration`, strictly ascending and gap-free
+from version 1 — and runs without a Postgres dependency so a
+new-file-missing-from-the-loader regression trips on every
+developer machine. The second member pins the applies-cleanly
+invariant — a throwaway database accepts the embedded ladder in
+order, the `schema_migrations` ledger ends with one clean row per
+migration (correct checksum, dirty=false), and a second `Up` is a
+no-op — and skips cleanly when `YALLA_TEST_DATABASE_URL` is unset
+so the suite stays green on machines without Postgres. Failures
+surface with the offending migration version AND the resource_id
+(`schema_migrations.version=N`) so an operator can map the failure
+to the exact migration without re-running the suite locally.
 
 ## Required Checks Before Every Release
 

@@ -78,6 +78,9 @@ jobs:
       - name: Fuzz validator tests
         run: go test -run TestFuzzValidator ./...
 
+      - name: Migration tests from empty DB
+        run: go test -run TestMigrationsEmptyDB ./...
+
       - name: Race detector
         run: go test -race ./...
 

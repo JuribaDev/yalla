@@ -252,7 +252,8 @@
       "go test -run TestFakeDokploy ./...",
       "go test -run TestJobWorkerLease ./...",
       "go test -run TestRedaction ./...",
-      "go test -run TestFuzzValidator ./..."
+      "go test -run TestFuzzValidator ./...",
+      "go test -run TestMigrationsEmptyDB ./..."
     ],
     "optionalWhenConfigured": [
       "goimports -w .",
@@ -8282,7 +8283,7 @@
       ],
       "type": "verification",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Test suite: migration tests from empty DB."
     },
     {

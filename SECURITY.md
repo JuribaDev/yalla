@@ -74,6 +74,7 @@ defined in `.github/workflows/ci.yml`:
 | Fake Dokploy contract tests | `go test -run TestFakeDokploy ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Redaction tests | `go test -run TestRedaction ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Fuzz validator tests | `go test -run TestFuzzValidator ./...` | `scripts/verify.sh`, CI | Every push and PR |
+| Migration tests from empty DB | `go test -run TestMigrationsEmptyDB ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Race detector | `go test -race ./...` | `scripts/verify.sh`, CI | Every push and PR |
 | Vulnerability scan | `govulncheck ./...` | CI `security` job | Every push and PR |
 | Lint suite | `staticcheck ./...` and `golangci-lint run ./...` | CI `security` job | Every push and PR |
@@ -1760,6 +1761,106 @@ contract operators and AI agents rely on:
   CONTRIBUTING entry, this section, the PRD command, and the
   canonical reference file are all pinned by
   `internal/release/verification_suite_fuzz_validators_static_test.go`.
+  A drift on any single surface (rename, renumber, deletion)
+  fails ONE test, not six.
+
+## Migration Tests From Empty DB
+
+Yalla's migrations-from-empty-DB suite is the bootstrap gate that
+ensures every fresh control-plane deploy can lay down the entire
+schema from version 0. The runner lives in
+`internal/controlplane/store/migrate` and the canonical command is
+`go test -run TestMigrationsEmptyDB ./...`. The wrapper pair
+(`TestMigrationsEmptyDBContractCoversAllNumberedFiles` and
+`TestMigrationsEmptyDBContractAppliesEmbeddedLadderToEmptyDatabase`)
+lives in `migrate_test.go` next to the existing baseline checks.
+The first member pins the closed-set coverage invariant — every
+`NNNN_*.up.sql` file in the embedded migrations directory MUST
+surface as a loaded `Migration`, strictly ascending and gap-free
+from version 1, with a non-empty up SQL body and a 64-character
+sha256 hex checksum — and runs without a Postgres dependency. The
+second member pins the applies-cleanly runtime invariant — a
+throwaway database created from `YALLA_TEST_DATABASE_URL` accepts
+the embedded ladder in order, the `schema_migrations` ledger ends
+with one clean row per migration (correct embedded checksum,
+dirty=false), and a second `Up` is a no-op — and skips cleanly
+when `YALLA_TEST_DATABASE_URL` is unset so the suite stays green
+on machines without Postgres. BE-0389 publishes the contract
+operators and AI agents rely on:
+
+- **Scope.** The suite exercises the migration runner against an
+  empty database — the load-bearing scenario every fresh deploy
+  starts with. The closed-set coverage member binds to the
+  canonical `NNNN_` filename grammar so a file added without the
+  loader picking it up — or a numbered file accidentally renamed
+  to a non-numbered form — trips the gate at the package-internal
+  API. The applies-cleanly member binds to the
+  `schema_migrations` ledger so a regression in the
+  transaction-per-migration contract (a partial row left after a
+  rollback, a migration that fails on an empty database, a
+  checksum drift from the on-disk file) surfaces with the
+  offending migration version AND the row reference an operator
+  can grep the failure log for.
+- **Determinism.** The closed-set coverage member is fully
+  deterministic — it walks the embedded FS and replays the same
+  filename grammar match on every run, no Postgres needed. The
+  applies-cleanly member uses an isolated, throwaway database
+  named with `crypto/rand` entropy (one fresh database per test
+  run; dropped on cleanup) so it never depends on shared state
+  and is parallel-safe. No live Dokploy is required; the opt-in
+  external smoke remains `YALLA_EXTERNAL_DOKPLOY=1 go test -run
+  TestLiveDokploySmoke ./...`. When `YALLA_TEST_DATABASE_URL` is
+  unset the applies-cleanly member skips cleanly — no false
+  failure on machines without Postgres.
+- **Actionable failures.** A failed coverage check reports the
+  offending filename (e.g. `0033_new_thing.up.sql`) and the
+  resolved version so the operator can map the failure to the
+  exact file without re-running the suite locally. A failed
+  apply reports the offending migration version AND the
+  resource_id (`schema_migrations.version=N`) so the operator
+  can trace the failure to the exact migration. When migrations
+  run through an admin endpoint or a worker job the resulting
+  envelope carries the request_id of the encompassing request;
+  the underlying runner surface itself is pure and has no
+  request context.
+- **CI gating.** `go test -run TestMigrationsEmptyDB ./...` runs
+  on `ubuntu-latest`, `macos-latest`, and `windows-latest` for
+  every push and every pull request via
+  `.github/workflows/ci.yml` (the `test` job's step
+  `Migration tests from empty DB`), and locally via
+  `scripts/verify.sh` (step
+  `# 15. Required: migration tests from empty DB`). Both must
+  pass before a commit lands in `main`. The same gate appears in
+  the verification-gates table above as the row
+  `| Migration tests from empty DB | go test -run TestMigrationsEmptyDB ./... | scripts/verify.sh, CI | Every push and PR |`,
+  in `CONTRIBUTING.md` under `## Required Checks Before Every
+  Commit`, and in `ralph/prd.json` under
+  `verificationLoop.requiredBackendCommands` so an AI agent
+  reading the PRD before picking up a story sees the gate
+  without needing to discover it from shell scripts or CI
+  workflows.
+- **Envelope contract.** When a migration failure surfaces
+  through an admin endpoint or worker job the resulting JSON
+  envelope uses `yalla.error.v1` with a typed migration error
+  code; the success path uses `yalla.output.v1`. The
+  empty-DB suite itself is pure — it asserts the runner
+  directly without going through an HTTP handler — so the
+  envelope contract is pinned by the HTTP handler contract
+  suite (BE-0381) and surfaces here only as the documented
+  downstream invariant.
+- **Redaction.** Migration SQL bodies never contain customer
+  secrets — the runner refuses to apply a migration whose
+  checksum mismatches the embedded file, so a "secret embedded
+  in a migration" regression cannot reach a production database
+  unobserved. Migration failure messages name the offending
+  version and filename, never the raw SQL body. The shared
+  `internal/output.Redactor` provides the structural net every
+  downstream caller uses so a leaked DSN or token in a
+  migration-runner log is impossible by construction.
+- **Self-locating.** The CI step, verify.sh step header,
+  CONTRIBUTING entry, this section, the PRD command, and the
+  canonical reference file are all pinned by
+  `internal/release/verification_suite_migrations_empty_db_static_test.go`.
   A drift on any single surface (rename, renumber, deletion)
   fails ONE test, not six.
 
