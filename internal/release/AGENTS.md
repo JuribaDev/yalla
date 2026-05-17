@@ -318,3 +318,85 @@ credential type to the `store` package, decide whether
 break-glass must stay away from it and (if so) extend
 `forbiddenCredMintIdentifiers` in the same edit; otherwise
 document why the new surface is access-only.
+
+## Verification suite: unit tests for every package (BE-0379)
+
+`verification_suite_unit_tests_static_test.go` is the load-bearing
+defence for the meta-contract "every Go package in this repo
+ships unit tests and the suite is gated on every push and PR." A
+silent erosion of that contract — a new package added without
+tests, the test step quietly removed from `ci.yml`, the
+verify.sh row reordered — defeats every downstream security
+gate in this file, because they are all `go test`-shaped
+invariants that only fire if `go test ./...` actually runs.
+
+The single file pins SIX surfaces in one place:
+
+- **Repo tree.** `findPackagesMissingTests` walks the repo from
+  `projectRoot` and reports every directory that has a non-test
+  `.go` file but no `*_test.go` file AND is not in
+  `allowedPackagesWithoutUnitTests`. The exemption set is a
+  closed map: every entry carries a rationale that points to
+  where coverage actually lives (release tests for
+  `cmd/yalla-api` boot, `internal/cli` tests for `cmd/yalla`
+  glue, `internal/controlplane/worker` tests for
+  `cmd/yalla-worker` loop logic, doc-only placeholder for
+  `internal/controlplane/jobs`). The companion test
+  `TestVerificationSuiteExemptionSetIsTight` asserts every
+  exempt directory (a) still exists and (b) still lacks tests,
+  so a stale exemption (a package that has since gained a
+  `*_test.go`) fails the build too.
+- **`.github/workflows/ci.yml`** — the test job's step
+  `- name: Unit and integration tests` MUST run
+  `go test ./...` and the matrix MUST cover `ubuntu-latest`,
+  `macos-latest`, and `windows-latest`. Dropping a host
+  silently narrows the per-developer-platform coverage; using
+  a narrower test pattern (e.g. `./internal/...`) silently
+  drops `cmd/*` and any future top-level package.
+- **`scripts/verify.sh`** — the canonical step header
+  `# 4. Required: tests` and the literal `go test ./...`
+  invocation MUST stay in lockstep with the CI gate so a
+  successful local run predicts a successful CI run.
+- **`CONTRIBUTING.md`** — the
+  `## Required Checks Before Every Commit` section MUST list
+  `` 4. `go test ./...` `` so a new contributor satisfies the
+  gate before opening a PR. The numeric prefix is part of the
+  contract — it keeps verify.sh and CONTRIBUTING.md aligned.
+- **`SECURITY.md`** — the public verification-gates table row
+  `| Tests | go test ./... | scripts/verify.sh, CI | Every push and PR |`
+  AND the dedicated `## Unit Test Suite` section MUST stay
+  present. The section is the operator-facing publication of
+  the determinism (`fake Dokploy`, `YALLA_EXTERNAL_DOKPLOY`
+  opt-in), actionable-failure (`request ID`), redaction
+  (`redacted`), and CI-cadence (`Every push and PR`) contracts;
+  every load-bearing substring is pinned by
+  `requiredSecuritySectionSubstrings`.
+- **`ralph/prd.json`** — the
+  `verificationLoop.requiredLocalCommands` array MUST contain
+  the literal `go test ./...` so an AI agent reading the PRD
+  before picking up a story sees the gate from the contract
+  document, not by inferring it from CI or shell scripts.
+
+Self-check (`TestVerificationSuiteUnitTestsAnalyzerDetectsRegressions`)
+drives every matcher with synthetic known-good AND known-bad
+fixtures: a tree where one package is non-exempt and untested;
+the same tree with the offender added to the exemption map; a
+tree where an ignored prefix wraps the offender; a fully-tested
+tree; a test-only directory; a synthetic SECURITY.md fixture
+missing one of the required substrings; a synthetic complete
+fixture; a synthetic PRD missing `go test ./...`; and the
+inverse. The self-check is what guarantees over-tightening (a
+matcher that flags a legitimate edit) and under-tightening (a
+matcher that misses a real regression) both fail visibly.
+
+When adding a new top-level command package or a new
+`internal/<area>` package, EITHER add a `*_test.go` file in the
+same edit OR add an entry to `allowedPackagesWithoutUnitTests`
+with a rationale that points to where the behaviour is actually
+covered. When changing the CI test step name, the verify.sh
+step header, the CONTRIBUTING.md numeric prefix, the
+SECURITY.md row, or the PRD verification-loop array, update the
+matching constant in `verification_suite_unit_tests_static_test.go`
+in the same edit. The matchers fail loudly on drift; do not
+"fix" them by relaxing the assertion — the assertion IS the
+contract.

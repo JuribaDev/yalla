@@ -858,6 +858,65 @@ substring of the stable projection text.
 prefixes only — never real `Authorization` bearer tokens, real
 Dokploy tokens, or real customer API keys.
 
+## Unit Test Suite
+
+Yalla's unit-and-integration test suite is the load-bearing
+foundation under every other security gate in this document. If
+`go test ./...` stops running on every push and PR, every
+downstream gate (SQL injection resistance, cookie hardening,
+backup encryption, rate-limit bypass resistance, ...) silently
+stops being enforced — they are all `go test`-shaped invariants.
+BE-0379 publishes the contract operators and AI agents rely on:
+
+- **Scope.** Every Go package in this repository ships a
+  `*_test.go` file. The single static defence is
+  `internal/release/verification_suite_unit_tests_static_test.go`,
+  which walks the repo and fails the build for any package that
+  contains non-test `.go` source without a matching `_test.go`
+  file AND is not in the closed exemption set
+  `allowedPackagesWithoutUnitTests`. Every exemption carries a
+  rationale that points to where the behaviour is actually
+  covered (release tests for `cmd/yalla-api` boot, `internal/cli`
+  for `cmd/yalla` glue, etc.); a stale exemption (an exempt
+  package that has since gained tests) fails the build too.
+- **Determinism.** The suite runs against deterministic fixtures
+  only. The HTTP, store, policy, quota, and worker layers are
+  exercised with fake Dokploy fixtures
+  (`internal/controlplane/dokploy` and
+  `internal/controlplane/worker` fakes); a live Dokploy smoke is
+  opt-in via `YALLA_EXTERNAL_DOKPLOY=1 go test -run
+  TestLiveDokploySmoke ./...` and never runs in the default gate.
+  Postgres integration tests run against an isolated migrated
+  database and never touch a shared instance.
+- **Actionable failures.** Every contract test surfaces the
+  failing request ID, resource ID, or envelope `code` and
+  `request_id` field in its diagnostic so an operator reading the
+  CI log can map the failure to the exact request without
+  re-running the suite locally. Per-endpoint tests pin the
+  `yalla.output.v1` / `yalla.error.v1` envelope shape so a wire
+  contract regression is caught before it ships.
+- **Redaction.** Test output, structured log capture, error
+  envelopes, audit metadata, and dry-run payloads MUST stay
+  redacted of secrets — bearer tokens, API keys, Dokploy tokens,
+  customer cookies, and rendered environment-variable values are
+  scrubbed by `internal/output.Redactor`. The redaction contract
+  is fuzzed in `internal/output/redact_fuzz_test.go` (BE-0359) so
+  a marker-bracketed value never survives the log path.
+- **CI gating.** `go test ./...` runs on `ubuntu-latest`,
+  `macos-latest`, and `windows-latest` for every push and every
+  pull request via `.github/workflows/ci.yml` (the `test` job's
+  step `Unit and integration tests`), and locally via
+  `scripts/verify.sh` (step `# 4. Required: tests`). Both must
+  pass before a commit lands in `main`. The same gate appears in
+  the verification-gates table above as the row
+  `| Tests | go test ./... | scripts/verify.sh, CI | Every push and PR |`,
+  in `CONTRIBUTING.md` under
+  `## Required Checks Before Every Commit`, and in
+  `ralph/prd.json` under
+  `verificationLoop.requiredLocalCommands` so an AI agent reading
+  the PRD before picking up a story sees the gate without needing
+  to discover it from shell scripts or CI workflows.
+
 ## Disclosure Timeline (Best Effort)
 
 1. **Day 0** — report received, acknowledgement sent.
