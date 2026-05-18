@@ -9801,7 +9801,7 @@
       ],
       "type": "tenant-isolation",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Tenant isolation for audit_events."
     },
     {
