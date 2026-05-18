@@ -35587,3 +35587,40 @@ change that widened Reason to caller-supplied data.
   - Error-contract stories after BE-0520 should mirror the existing `apierr` contract-test style: constructor normalization and taxonomy assertions first, then envelope status/schema/request_id/docs/redaction assertions.
   - MessageSpecific constructors should still normalize caller-provided message text before returning the typed error; renderer redaction is the backstop, not a substitute for deterministic constructor output.
 ---
+## 2026-05-19 01:34 +03 - BE-0522
+- What was implemented
+  - Added dedicated `E_QUOTA_EXCEEDED` error-contract coverage for status, taxonomy policy, retryability, optional hint behavior, yalla.error.v1 envelope shape, request_id, documentation URL, and redaction.
+  - Added stable quota detail keys in `apierr`: `resource` for the quota dimension and `limit` for the positive configured ceiling.
+  - Updated `apierr.QuotaExceeded` to attach machine-readable quota details while preserving the existing specific message and optional limit hint policy.
+  - Marked `BE-0522` as passing in `ralph/prd.json`.
+- Files changed
+  - `internal/controlplane/apierr/apierr.go`
+  - `internal/controlplane/apierr/apierr_test.go`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `go test ./internal/controlplane/apierr -run TestQuotaExceededContract -count=1` failed before implementation because the stable quota detail keys were missing.
+  - `go test ./internal/controlplane/apierr -run TestQuotaExceededContract -count=1`
+  - `go test ./internal/controlplane/apierr ./internal/controlplane/apienvelope ./internal/errors -count=1`
+  - `gofmt -w .`
+  - `goimports -w .` was not run because `goimports` is not installed in this environment.
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `go test -run TestQuotaConcurrency ./...`
+  - `golangci-lint run ./...`
+  - `staticcheck ./...` was not run because `staticcheck` is not installed in this environment.
+  - `govulncheck ./...` was not run because `govulncheck` is not installed in this environment.
+- Results
+  - Focused quota error-contract tests passed after implementation.
+  - Required formatting, module cleanup, full tests, race tests, focused control-plane tests, migration-pattern tests, quota-concurrency-pattern tests, and vet passed.
+  - `golangci-lint` passed with 0 issues.
+- Remaining risks or follow-ups
+  - No persistence, route, handler, worker, or Dokploy behavior changed.
+- **Learnings for future iterations:**
+  - `E_QUOTA_EXCEEDED` now carries `error.details.resource` and, when a positive ceiling is known, `error.details.limit`; future quota call sites should keep using `apierr.QuotaExceeded` rather than hand-building `yerr.CodeQuotaExceeded`.
+---

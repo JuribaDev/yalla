@@ -69,6 +69,18 @@ const DetailKeyRetryAfter = "retry_after"
 // the bucket dimension, so a 429 cannot leak who else shares the bucket.
 const DetailKeyRateLimitScope = "scope"
 
+// DetailKeyQuotaResource is the stable details key naming the quota dimension
+// that rejected the request. It carries the quota resource class only
+// ("services", "projects", etc.), never a tenant, resource id, or submitted
+// value.
+const DetailKeyQuotaResource = "resource"
+
+// DetailKeyQuotaLimit is the stable details key carrying the configured quota
+// ceiling that rejected the request. The value is a base-10 integer rendered as
+// a string so the wire shape stays JSON-friendly across clients that lack a
+// 64-bit numeric type.
+const DetailKeyQuotaLimit = "limit"
+
 // MessagePolicy classifies whether an error code's user-facing Message is
 // allowed to describe the specific failure.
 type MessagePolicy string
@@ -525,9 +537,11 @@ func QuotaExceeded(resource string, limit int64) *yerr.Error {
 	if resource == "" {
 		resource = "resource"
 	}
-	e := yerr.Newf(yerr.CodeQuotaExceeded, "quota exceeded for %s", resource)
+	e := yerr.Newf(yerr.CodeQuotaExceeded, "quota exceeded for %s", resource).
+		WithDetail(DetailKeyQuotaResource, resource)
 	if limit > 0 {
 		e = e.WithHintf("the configured limit is %d; release usage or request a higher quota", limit)
+		e = e.WithDetail(DetailKeyQuotaLimit, strconv.FormatInt(limit, 10))
 	}
 	return e
 }

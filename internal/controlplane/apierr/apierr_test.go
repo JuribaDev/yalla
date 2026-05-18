@@ -445,6 +445,60 @@ func TestQuotaExceeded(t *testing.T) {
 	}
 }
 
+func TestQuotaExceededContract(t *testing.T) {
+	t.Parallel()
+
+	const leaked = "Authorization: Bearer yka_quota_secret_token"
+	err := QuotaExceeded("  services  ", 10).WithHint("retry without " + leaked)
+	if err.Code != yerr.CodeQuotaExceeded {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeQuotaExceeded)
+	}
+	if err.Message != "quota exceeded for services" {
+		t.Fatalf("message = %q, want stable quota message", err.Message)
+	}
+	if got := err.Details[DetailKeyQuotaResource]; got != "services" {
+		t.Errorf("details[%q] = %q, want services", DetailKeyQuotaResource, got)
+	}
+	if got := err.Details[DetailKeyQuotaLimit]; got != "10" {
+		t.Errorf("details[%q] = %q, want 10", DetailKeyQuotaLimit, got)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 429 {
+			t.Errorf("HTTPStatus = %d, want 429", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageSpecific {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageSpecific)
+		}
+		if !entry.Retryable {
+			t.Error("E_QUOTA_EXCEEDED must be retryable")
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-quota-exceeded", err)
+	body := rec.Body.String()
+	if rec.Code != 429 {
+		t.Fatalf("status = %d, want 429; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-quota-exceeded"`) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeQuotaExceeded)) {
+		t.Errorf("envelope body missing schema, request id, or docs link: %s", body)
+	}
+	if !strings.Contains(body, `"resource":"services"`) ||
+		!strings.Contains(body, `"limit":"10"`) {
+		t.Errorf("envelope body missing quota details: %s", body)
+	}
+	if strings.Contains(body, "yka_quota_secret_token") || strings.Contains(body, "Bearer") {
+		t.Errorf("quota-exceeded envelope leaked credential material: %s", body)
+	}
+	if !strings.Contains(body, output.Sentinel) {
+		t.Errorf("expected redaction sentinel %q in quota-exceeded envelope: %s", output.Sentinel, body)
+	}
+}
+
 // TestDependencyErrorsAreDistinguished proves every dependency failure is
 // machine-distinguishable via DependencyOf — including the datastore and the
 // queue, which deliberately share the E_UNAVAILABLE code.

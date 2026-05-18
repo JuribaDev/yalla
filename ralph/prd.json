@@ -10827,8 +10827,8 @@
       ],
       "type": "error-contract",
       "priority": 1,
-      "passes": false,
-      "notes": "Stable error code: E_QUOTA_EXCEEDED."
+      "passes": true,
+      "notes": "Implemented stable E_QUOTA_EXCEEDED contract coverage: typed apierr.QuotaExceeded trims the quota dimension, maps to HTTP 429 through apienvelope, remains retryable with MessageSpecific policy, uses an optional limit hint only when a positive limit is known, emits machine-readable error.details resource and limit values, renders yalla.error.v1 with request_id and docs link, and redacts credential-looking text at the envelope boundary."
     },
     {
       "id": "BE-0523",
