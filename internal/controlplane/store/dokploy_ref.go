@@ -153,6 +153,45 @@ type DokployRefRepository struct{}
 // NewDokployRefRepository returns a stateless DokployRefRepository.
 func NewDokployRefRepository() *DokployRefRepository { return &DokployRefRepository{} }
 
+// DokployRefReader is the store-backed HTTP adapter for admin ref listing.
+// It composes the organization repository so a missing organization is a
+// stable not-found instead of an indistinguishable empty mapping list.
+type DokployRefReader struct {
+	store *Store
+	orgs  *OrganizationRepository
+	refs  *DokployRefRepository
+}
+
+// NewDokployRefReader builds a DokployRefReader over store.
+func NewDokployRefReader(s *Store) (*DokployRefReader, error) {
+	if s == nil {
+		return nil, errors.New("store: nil store")
+	}
+	return &DokployRefReader{
+		store: s,
+		orgs:  NewOrganizationRepository(),
+		refs:  NewDokployRefRepository(),
+	}, nil
+}
+
+// ListDokployRefs verifies organizationID exists and returns its mapping
+// rows in the repository's deterministic order.
+func (r *DokployRefReader) ListDokployRefs(ctx context.Context, organizationID string) ([]DokployRef, error) {
+	var refs []DokployRef
+	err := r.store.Read(ctx, func(ctx context.Context, q Querier) error {
+		if _, err := r.orgs.Get(ctx, q, organizationID); err != nil {
+			return err
+		}
+		var listErr error
+		refs, listErr = r.refs.ListByOrganization(ctx, q, organizationID)
+		return listErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	return refs, nil
+}
+
 // Insert persists ref as a new dokploy_refs row inside tx and returns the
 // committed row (including the database-assigned id, created_at, and
 // updated_at). The id column is GENERATED ALWAYS AS IDENTITY so the

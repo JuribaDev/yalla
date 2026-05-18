@@ -19,6 +19,7 @@ import (
 )
 
 var errNoDriftFindingReader = errors.New("httpapi: no drift finding reader configured")
+var errNoDokployRefReader = errors.New("httpapi: no dokploy ref reader configured")
 var errNoAdminDokployReconciler = errors.New("httpapi: no admin dokploy reconciler configured")
 var errNoAdminDokployImporter = errors.New("httpapi: no admin dokploy importer configured")
 
@@ -33,6 +34,14 @@ const (
 // organization and any supplied descendant filters before listing rows.
 type DriftFindingReader interface {
 	ListDriftFindings(ctx context.Context, organizationID string, query store.DriftFindingListQuery) ([]store.DriftFinding, error)
+}
+
+// DokployRefReader is the narrow read port for GET
+// /v1/admin/organizations/{org_id}/dokploy-refs. The store-backed adapter
+// verifies the target organization exists before listing tenant-scoped mapping
+// rows.
+type DokployRefReader interface {
+	ListDokployRefs(ctx context.Context, organizationID string) ([]store.DokployRef, error)
 }
 
 // AdminDokployReconciler is the narrow mutating port for POST
@@ -112,6 +121,11 @@ type listAdminDokployDriftPayload struct {
 	Findings []driftFindingResource `json:"findings"`
 }
 
+type listAdminDokployRefsPayload struct {
+	OrganizationID string               `json:"organization_id"`
+	Refs           []dokployRefResource `json:"refs"`
+}
+
 type adminDokployReconcileRequestBody struct {
 	OrganizationID string `json:"organization_id,omitempty"`
 	DryRun         bool   `json:"dry_run,omitempty"`
@@ -165,6 +179,17 @@ type driftFindingResource struct {
 	UpdatedAt         time.Time  `json:"updated_at"`
 }
 
+type dokployRefResource struct {
+	ID              int64     `json:"id"`
+	OrganizationID  string    `json:"organization_id"`
+	YallaKind       string    `json:"yalla_kind"`
+	YallaID         string    `json:"yalla_id"`
+	DokployResource string    `json:"dokploy_resource"`
+	DokployID       string    `json:"dokploy_id"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
 func driftFindingResourceOf(f store.DriftFinding) driftFindingResource {
 	return driftFindingResource{
 		ID:                f.ID,
@@ -187,6 +212,19 @@ func driftFindingResourceOf(f store.DriftFinding) driftFindingResource {
 		ResolvedByActorID: f.ResolvedByActorID,
 		CreatedAt:         f.CreatedAt,
 		UpdatedAt:         f.UpdatedAt,
+	}
+}
+
+func dokployRefResourceOf(ref store.DokployRef) dokployRefResource {
+	return dokployRefResource{
+		ID:              ref.ID,
+		OrganizationID:  ref.OrganizationID,
+		YallaKind:       ref.YallaKind.String(),
+		YallaID:         ref.YallaID,
+		DokployResource: ref.DokployResource.String(),
+		DokployID:       ref.DokployID,
+		CreatedAt:       ref.CreatedAt,
+		UpdatedAt:       ref.UpdatedAt,
 	}
 }
 
@@ -241,6 +279,39 @@ func listAdminDokployDriftHandler(reader DriftFindingReader) http.HandlerFunc {
 			out = append(out, driftFindingResourceOf(f))
 		}
 		apienvelope.WriteData(w, http.StatusOK, requestID(r), listAdminDokployDriftPayload{Findings: out})
+	}
+}
+
+func listAdminDokployRefsHandler(reader DokployRefReader) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := policy.PrincipalFromContext(r.Context()); !ok {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if reader == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoDokployRefReader))
+			return
+		}
+
+		orgID := r.PathValue("org_id")
+		if err := validateOrganizationIDField("org_id", orgID); err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		refs, err := reader.ListDokployRefs(r.Context(), orgID)
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		out := make([]dokployRefResource, 0, len(refs))
+		for _, ref := range refs {
+			out = append(out, dokployRefResourceOf(ref))
+		}
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), listAdminDokployRefsPayload{
+			OrganizationID: orgID,
+			Refs:           out,
+		})
 	}
 }
 

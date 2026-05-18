@@ -198,6 +198,7 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 	var jobRetrier JobRetrier
 	var jobCanceler JobCanceler
 	var driftFindings DriftFindingReader
+	var dokployRefs DokployRefReader
 	var adminDokployReconciler AdminDokployReconciler
 	var adminDokployImporter AdminDokployImporter
 	for _, opt := range routeOptions {
@@ -215,6 +216,9 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 		}
 		if v, ok := opt.(DriftFindingReader); ok {
 			driftFindings = v
+		}
+		if v, ok := opt.(DokployRefReader); ok {
+			dokployRefs = v
 		}
 		if v, ok := opt.(AdminDokployReconciler); ok {
 			adminDokployReconciler = v
@@ -2065,6 +2069,25 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// boundary.
 			resolver: serviceIDResolver,
 			handler:  deleteServiceBackupHandler(serviceBackupDeleter),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodGet,
+				Path:           "/v1/admin/organizations/{org_id}/dokploy-refs",
+				OperationID:    "listAdminOrganizationDokployRefs",
+				Summary:        "List organization Dokploy refs",
+				Description:    "Lists the tenant-scoped Yalla-to-Dokploy mapping rows for the organization named by the {org_id} path parameter. Action admin.read is required before any mapping row is read; support principals may target another organization through the policy engine's CapSupport cross-tenant exception, while non-support principals are denied before the handler reaches persistence. The store-backed reader verifies the target organization exists, so an unknown organization is a deterministic 404 rather than an empty mapping list.",
+				Tags:           []string{tagAdmin},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionAdminRead),
+				PathParams: []openapi.PathParam{{
+					Name:        "org_id",
+					Description: "The id of the organization whose Dokploy refs are listed.",
+				}},
+				SuccessDescription: "The organization's Dokploy mapping refs.",
+			},
+			resolver: organizationIDResolver,
+			handler:  listAdminDokployRefsHandler(dokployRefs),
 		},
 		{
 			endpoint: openapi.Endpoint{
