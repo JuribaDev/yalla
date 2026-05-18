@@ -10219,8 +10219,8 @@
       ],
       "type": "worker-job",
       "priority": 1,
-      "passes": false,
-      "notes": "Provisioning job type: start_service."
+      "passes": true,
+      "notes": "Implemented durable start_service execution through worker.Provisioner for the existing service.start job type plus the PRD start_service alias, with typed payload validation, tenant-scoped service desired-state reload, service-kind-specific Dokploy ref resolution, stale desired-version and deletion-scheduled refusal before any upstream call, terminal replay no-op for already-succeeded jobs, typed Dokploy StartService client support, fake Dokploy start route support, and fake-backed worker coverage for success/replay, retryable upstream failure, terminal stale/cross-tenant validation, cancellation, and redacted error_summary persistence. Required quality checks passed; golangci-lint passed with 0 issues. goimports, staticcheck, and govulncheck were not installed."
     },
     {
       "id": "BE-0491",

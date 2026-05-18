@@ -62,6 +62,15 @@ const JobTypeStopService = "service.stop"
 // JobTypeStopService.
 const JobTypeStopServiceAlias = "stop_service"
 
+// JobTypeStartService is the durable provisioning job enqueued by the public
+// service start endpoint. JobTypeStartServiceAlias accepts the PRD's
+// start_service spelling for forward compatibility with manually seeded jobs.
+const JobTypeStartService = "service.start"
+
+// JobTypeStartServiceAlias is accepted by the worker as an alias for
+// JobTypeStartService.
+const JobTypeStartServiceAlias = "start_service"
+
 // DokployClient is the narrow typed-client surface these worker jobs
 // needs. *dokploy.Client satisfies it in production; tests can supply fakes.
 type DokployClient interface {
@@ -72,6 +81,7 @@ type DokployClient interface {
 	DeployService(context.Context, dokploy.DeployServiceInput) (dokploy.Deployment, error)
 	RestartService(context.Context, dokploy.RestartServiceInput) (dokploy.ServiceStatus, error)
 	StopService(context.Context, dokploy.StopServiceInput) (dokploy.ServiceStatus, error)
+	StartService(context.Context, dokploy.StartServiceInput) (dokploy.ServiceStatus, error)
 }
 
 // EnsureDokployOrganizationPayload is the typed schema carried by
@@ -264,6 +274,15 @@ type RestartServicePayload struct {
 // StopServicePayload is the typed schema carried by provisioning_jobs.payload
 // for JobTypeStopService / JobTypeStopServiceAlias.
 type StopServicePayload struct {
+	OrganizationID string
+	ProjectID      string
+	EnvironmentID  string
+	ServiceID      string
+}
+
+// StartServicePayload is the typed schema carried by provisioning_jobs.payload
+// for JobTypeStartService / JobTypeStartServiceAlias.
+type StartServicePayload struct {
 	OrganizationID string
 	ProjectID      string
 	EnvironmentID  string
@@ -610,6 +629,61 @@ func ParseStopServicePayload(job store.ProvisioningJob) (StopServicePayload, err
 	}, nil
 }
 
+// ParseStartServicePayload validates a start-service job payload and returns a
+// terminal error for payload shapes retrying cannot repair.
+func ParseStartServicePayload(job store.ProvisioningJob) (StartServicePayload, error) {
+	var violations []apierr.FieldViolation
+	if job.JobType != JobTypeStartService && job.JobType != JobTypeStartServiceAlias {
+		violations = append(violations, apierr.FieldViolation{Field: "job_type", Reason: "must be service.start or start_service"})
+	}
+	if job.OrganizationID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "organization_id", Reason: "is required"})
+	}
+	if job.ProjectID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "project_id", Reason: "is required"})
+	}
+	if job.EnvironmentID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "environment_id", Reason: "is required"})
+	}
+	if job.ServiceID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "service_id", Reason: "is required"})
+	}
+
+	payloadOrgID := job.Payload["organization_id"]
+	if payloadOrgID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.organization_id", Reason: "is required"})
+	} else if job.OrganizationID != "" && payloadOrgID != job.OrganizationID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.organization_id", Reason: "must match the job organization_id"})
+	}
+	payloadProjectID := job.Payload["project_id"]
+	if payloadProjectID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.project_id", Reason: "is required"})
+	} else if job.ProjectID != "" && payloadProjectID != job.ProjectID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.project_id", Reason: "must match the job project_id"})
+	}
+	payloadEnvironmentID := job.Payload["environment_id"]
+	if payloadEnvironmentID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.environment_id", Reason: "is required"})
+	} else if job.EnvironmentID != "" && payloadEnvironmentID != job.EnvironmentID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.environment_id", Reason: "must match the job environment_id"})
+	}
+	payloadServiceID := job.Payload["service_id"]
+	if payloadServiceID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.service_id", Reason: "is required"})
+	} else if job.ServiceID != "" && payloadServiceID != job.ServiceID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.service_id", Reason: "must match the job service_id"})
+	}
+	if len(violations) > 0 {
+		return StartServicePayload{}, Terminal(apierr.InvalidInput(violations...))
+	}
+	return StartServicePayload{
+		OrganizationID: payloadOrgID,
+		ProjectID:      payloadProjectID,
+		EnvironmentID:  payloadEnvironmentID,
+		ServiceID:      payloadServiceID,
+	}, nil
+}
+
 func databaseEngineValid(engine string) bool {
 	switch engine {
 	case dokploy.EnginePostgres, dokploy.EngineMysql, dokploy.EngineMariadb, dokploy.EngineMongo, dokploy.EngineRedis:
@@ -723,6 +797,8 @@ func (p *Provisioner) Run(ctx context.Context, job store.ProvisioningJob) error 
 		return p.runRestartService(ctx, job)
 	case JobTypeStopService, JobTypeStopServiceAlias:
 		return p.runStopService(ctx, job)
+	case JobTypeStartService, JobTypeStartServiceAlias:
+		return p.runStartService(ctx, job)
 	default:
 		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
 			Field:  "job_type",
@@ -1165,6 +1241,36 @@ func (p *Provisioner) runStopService(ctx context.Context, job store.Provisioning
 	}
 	if status.ServiceID == "" {
 		return Terminal(apierr.Internal(errors.New("worker: stop_service resolved an empty Dokploy service id")))
+	}
+	return nil
+}
+
+func (p *Provisioner) runStartService(ctx context.Context, job store.ProvisioningJob) error {
+	if job.Status == store.JobStatusSucceeded {
+		return nil
+	}
+	payload, err := ParseStartServicePayload(job)
+	if err != nil {
+		return err
+	}
+
+	dokployServiceID, err := p.loadStartServiceTarget(ctx, job, payload)
+	if err != nil {
+		return err
+	}
+
+	status, startErr := p.client.StartService(ctx, dokploy.StartServiceInput{ServiceID: dokployServiceID})
+	if startErr != nil {
+		if interrupted(ctx, startErr) {
+			return startErr
+		}
+		if apierr.Retryable(startErr) {
+			return startErr
+		}
+		return Terminal(startErr)
+	}
+	if status.ServiceID == "" {
+		return Terminal(apierr.Internal(errors.New("worker: start_service resolved an empty Dokploy service id")))
 	}
 	return nil
 }
@@ -1626,6 +1732,63 @@ func (p *Provisioner) loadStopServiceTarget(ctx context.Context, job store.Provi
 		}
 		if dokployServiceID == "" {
 			return Terminal(apierr.Conflict("service Dokploy mapping is required before stopping a service"))
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return dokployServiceID, nil
+}
+
+func (p *Provisioner) loadStartServiceTarget(ctx context.Context, job store.ProvisioningJob, payload StartServicePayload) (string, error) {
+	var dokployServiceID string
+	err := p.store.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		svc, getErr := p.services.GetByID(ctx, q, payload.OrganizationID, payload.ServiceID)
+		if getErr != nil {
+			return Terminal(getErr)
+		}
+		if svc.OrganizationID != job.OrganizationID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.organization_id",
+				Reason: "must match the service organization_id",
+			}))
+		}
+		if svc.ProjectID != payload.ProjectID || svc.ProjectID != job.ProjectID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.project_id",
+				Reason: "must match the service project_id",
+			}))
+		}
+		if svc.EnvironmentID != payload.EnvironmentID || svc.EnvironmentID != job.EnvironmentID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.environment_id",
+				Reason: "must match the service environment_id",
+			}))
+		}
+		if svc.DeletionScheduledAt != nil {
+			return Terminal(apierr.Conflict("service is scheduled for deletion and cannot be started"))
+		}
+		if job.DesiredVersion > 0 && svc.Version != job.DesiredVersion {
+			return Terminal(apierr.ConflictStale(svc.Version))
+		}
+
+		wantResource, resourceErr := dokployResourceForServiceKind(svc.Kind, "start_service")
+		if resourceErr != nil {
+			return resourceErr
+		}
+		serviceRefs, listErr := p.refs.ListByYallaResource(ctx, q, job.OrganizationID, store.YallaKindService, svc.ID)
+		if listErr != nil {
+			return listErr
+		}
+		for _, ref := range serviceRefs {
+			if ref.DokployResource == wantResource {
+				dokployServiceID = ref.DokployID
+				break
+			}
+		}
+		if dokployServiceID == "" {
+			return Terminal(apierr.Conflict("service Dokploy mapping is required before starting a service"))
 		}
 		return nil
 	})

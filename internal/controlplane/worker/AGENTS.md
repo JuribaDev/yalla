@@ -55,9 +55,10 @@ Background provisioning/metering workers for the control plane.
   The current `services` row stores only the broad `database` kind, so the
   worker loads and verifies the service row for tenant/kind/version while using
   the persisted job payload as the concrete database-engine intent.
-- Runtime-control jobs such as `service.restart`/`restart_service` and
-  `service.stop`/`stop_service` should parse the same scoped payload
-  `(organization_id, project_id, environment_id, service_id)`, reload the
+- Runtime-control jobs such as `service.restart`/`restart_service`,
+  `service.stop`/`stop_service`, and `service.start`/`start_service` should
+  parse the same scoped payload `(organization_id, project_id, environment_id,
+  service_id)`, reload the
   service through the tenant-scoped repository, reject stale desired versions
   and deletion-scheduled services before any Dokploy call, resolve the
   service-kind-specific `dokploy_refs` row, then call the matching typed

@@ -396,6 +396,43 @@ func TestClientRestartService(t *testing.T) {
 	}
 }
 
+func TestClientStartService(t *testing.T) {
+	t.Parallel()
+	fake := dokployfake.New()
+	defer fake.Close()
+	c := newTestClient(t, fake)
+	ctx := context.Background()
+
+	orgID := mustOrg(t, c)
+	proj, _ := c.EnsureProject(ctx, dokploy.EnsureProjectInput{OrganizationID: orgID, Name: "store"})
+	env, _ := c.EnsureEnvironment(ctx, dokploy.EnsureEnvironmentInput{ProjectID: proj.ID, Name: "prod"})
+	svc, err := c.EnsureService(ctx, dokploy.EnsureServiceInput{
+		EnvironmentID: env.ID, Name: "api", Type: dokploy.ServiceApplication,
+	})
+	if err != nil {
+		t.Fatalf("create service: %v", err)
+	}
+	if _, err := c.StopService(ctx, dokploy.StopServiceInput{ServiceID: svc.ID}); err != nil {
+		t.Fatalf("seed stopped service: %v", err)
+	}
+
+	st, err := c.StartService(ctx, dokploy.StartServiceInput{ServiceID: svc.ID})
+	if err != nil {
+		t.Fatalf("StartService: %v", err)
+	}
+	if st.ServiceID != svc.ID || st.Status != dokployfake.StatusRunning {
+		t.Fatalf("StartService status = %+v, want service %q running", st, svc.ID)
+	}
+	reqs := fake.Requests()
+	last := reqs[len(reqs)-1]
+	if last.Method != http.MethodPost || last.Path != "/api/services/"+svc.ID+"/start" {
+		t.Fatalf("last request = %+v, want POST start", last)
+	}
+	if last.AuthHeader != output.Sentinel {
+		t.Fatalf("auth header was not redacted: %q", last.AuthHeader)
+	}
+}
+
 func TestClientStopService(t *testing.T) {
 	t.Parallel()
 	fake := dokployfake.New()

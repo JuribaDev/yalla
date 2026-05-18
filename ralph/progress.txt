@@ -1,5 +1,5 @@
 ## Codebase Patterns
-- Worker runtime-control jobs (BE-0488/BE-0489 pattern for `service.restart` / PRD alias `restart_service` and `service.stop` / PRD alias `stop_service`) extend `worker.Provisioner` with a typed payload parser carrying `(organization_id, project_id, environment_id, service_id)`, load the service through the tenant-scoped repository, verify payload scope against the persisted row, refuse stale `DesiredVersion` and `deletion_scheduled_at` before any Dokploy call, resolve the concrete service Dokploy ID from the service-kind-specific `dokploy_refs` row, and call a typed Dokploy runtime intent such as `RestartService` or `StopService`. The existing API enqueues dotted job kinds (`service.restart`, `service.stop`, and likely `service.start` sibling); keep accepting PRD underscore aliases (`restart_service`, `stop_service`, etc.) for compatibility with manually seeded jobs. Jobs with `Status == succeeded` should be no-op replays and must not issue another Dokploy POST; retryable upstream errors stay plain so the durable queue can persist a redacted `error_summary`.
+- Worker runtime-control jobs (BE-0488/BE-0489/BE-0490 pattern for `service.restart` / PRD alias `restart_service`, `service.stop` / PRD alias `stop_service`, and `service.start` / PRD alias `start_service`) extend `worker.Provisioner` with a typed payload parser carrying `(organization_id, project_id, environment_id, service_id)`, load the service through the tenant-scoped repository, verify payload scope against the persisted row, refuse stale `DesiredVersion` and `deletion_scheduled_at` before any Dokploy call, resolve the concrete service Dokploy ID from the service-kind-specific `dokploy_refs` row, and call a typed Dokploy runtime intent such as `RestartService`, `StopService`, or `StartService`. The existing API enqueues dotted job kinds (`service.restart`, `service.stop`, `service.start`); keep accepting PRD underscore aliases (`restart_service`, `stop_service`, `start_service`, etc.) for compatibility with manually seeded jobs. Jobs with `Status == succeeded` should be no-op replays and must not issue another Dokploy POST; retryable upstream errors stay plain so the durable queue can persist a redacted `error_summary`.
 - Worker deployment jobs (BE-0487 pattern for `service.deploy` / PRD alias `deploy_service`) extend `worker.Provisioner` with a typed payload parser that includes `deployment_id`, load the deployment and parent service through tenant-scoped repositories, verify payload scope against the persisted deployment row, resolve the concrete service Dokploy ID from the service-kind-specific `dokploy_refs` row, mark the deployment `running` before calling `DeployService`, mark it `succeeded` only after a succeeded upstream deployment, and return retryable errors while the upstream deployment is still pending/running or unavailable. Replays of already-succeeded deployments are no-op and must not issue another Dokploy POST; retryable upstream failures leave the deployment running without `finished_at` so the durable queue can retry. The existing API enqueues `service.deploy`; keep accepting the PRD `deploy_service` alias for compatibility.
 - Worker child ensure jobs (BE-0482/BE-0483/BE-0484 pattern for `ensure_project`, `ensure_environment`, and `ensure_application_service`) extend `worker.Provisioner` with a typed payload parser, validate the job scope fields against payload IDs, load the source-of-truth row through the tenant-scoped repository, check `DesiredVersion` before Dokploy calls and again before persisting refs, resolve the parent Dokploy ID from tenant-scoped `dokploy_refs`, call the typed Dokploy client through mapper-produced intents, and persist exactly one child `dokploy_refs` row. Replay should read the existing child ref, call the typed client with `ExistingID`, and leave the mapping table unchanged; malformed/stale/cross-tenant/missing desired state are `worker.Terminal`, retryable Dokploy errors stay plain, and queue-level tests should verify persisted `error_summary` stays redacted. Service-kind-specific jobs must also verify the source-of-truth `services.kind` before calling Dokploy and persist the matching Dokploy resource kind (`application`, `compose`, or `database`). `ensure_database_service` additionally validates the concrete engine in the durable job payload because the current `services` row stores only the broad `database` kind.
 - Worker provisioning jobs are implemented through `internal/controlplane/worker.Provisioner`: parse `provisioning_jobs.payload` into a typed schema, mark malformed/stale/cross-tenant desired state with `worker.Terminal`, load source-of-truth state from Postgres before Dokploy calls, and persist resolved upstream IDs through tenant-scoped `dokploy_refs`; replay should verify an existing ref instead of inserting a duplicate mapping.
@@ -775,8 +775,6 @@
     EnvVar.Secret flag selects both the length ceiling and the field-path
     segment (".secret[i]" vs "[i]"), so the path alone tells a caller which
     kind failed without inspecting the value.
----
-
 ## 2026-05-14 - BE-0002
 - What was implemented: Backend configuration contract for the control-plane API and worker.
   - internal/controlplane/config/config.go: Env* var name constants (stable contract), Profile type
@@ -33999,4 +33997,43 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - Stop is the confirmed sibling of the restart runtime-control pattern: same scoped payload, same tenant-scoped service reload, same service-kind Dokploy ref resolution, same succeeded-job replay no-op, but it calls `StopService` and the fake should report `StatusStopped`.
   - Adding a method to `worker.DokployClient` requires updating the `canceledClient` test double, the real typed Dokploy client, and the fake Dokploy route together.
+---
+## 2026-05-18 18:33 +03 - BE-0490
+- What was implemented
+  - Added durable `start_service` worker execution through `worker.Provisioner`, accepting both `service.start` and PRD alias `start_service`.
+  - Added typed start payload validation, tenant-scoped service reload, desired-version and deletion-scheduled guards, service-kind-specific Dokploy ref lookup, and succeeded-job replay no-op behavior.
+  - Added typed `dokploy.Client.StartService` plus fake Dokploy `POST /api/services/{id}/start` support that transitions runtime status to `running`.
+  - Added fake-backed worker coverage for success/replay, retryable upstream failure, stale desired state, cross-tenant payload validation, cancellation, and redacted persisted error summaries; added client coverage for StartService.
+- Files changed
+  - `internal/controlplane/worker/provisioner.go`
+  - `internal/controlplane/worker/provisioner_test.go`
+  - `internal/controlplane/worker/AGENTS.md`
+  - `internal/controlplane/dokploy/types.go`
+  - `internal/controlplane/dokploy/intents.go`
+  - `internal/controlplane/dokploy/dokployfake/resources.go`
+  - `internal/controlplane/dokploy/client_test.go`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `go test ./internal/controlplane/dokploy ./internal/controlplane/worker -run 'TestClientStartService|TestStartServicePayloadValidation|TestProvisionerStartService'` first failed on missing start-service symbols, then passed after implementation.
+  - `go test ./internal/controlplane/dokploy ./internal/controlplane/worker`
+  - `gofmt -w .`
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `go test -run TestFakeDokploy ./...`
+  - `golangci-lint run ./...`
+- Results
+  - All required and focused checks passed; `golangci-lint` reported `0 issues`.
+  - `goimports`, `staticcheck`, and `govulncheck` were not installed in this environment.
+- Remaining risks or follow-ups
+  - None for BE-0490; later runtime-control worker jobs should reuse the same scoped-payload pattern.
+- **Learnings for future iterations:**
+  - `service.start` is now the third runtime-control worker sibling; keep dotted API-enqueued job kinds and underscore PRD aliases in sync.
+  - Start/restart both transition fake Dokploy service status to `running`, but they remain separate typed intents and route paths so contract tests can distinguish them.
+  - Runtime-control worker tests should assert no Dokploy request happens for stale, cross-tenant, or canceled paths beyond the initial service-mapping seed.
 ---
