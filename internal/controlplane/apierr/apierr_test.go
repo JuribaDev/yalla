@@ -322,6 +322,50 @@ func TestNotFoundEchoesCallerIdentifierOnly(t *testing.T) {
 	}
 }
 
+func TestNotFoundContract(t *testing.T) {
+	t.Parallel()
+
+	const leaked = "Authorization: Bearer yka_not_found_secret_token"
+	err := NotFound("  project  ", "  proj_missing  ").WithHint("retry without " + leaked)
+	if err.Code != yerr.CodeNotFound {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeNotFound)
+	}
+	if err.Message != `project "proj_missing" not found` {
+		t.Fatalf("message = %q, want normalized resource/id not-found message", err.Message)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 404 {
+			t.Errorf("HTTPStatus = %d, want 404", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageSpecific {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageSpecific)
+		}
+		if entry.Retryable {
+			t.Error("E_NOT_FOUND must not be retryable")
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-not-found", err)
+	body := rec.Body.String()
+	if rec.Code != 404 {
+		t.Fatalf("status = %d, want 404; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-not-found"`) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeNotFound)) {
+		t.Errorf("envelope body missing schema, request id, or docs link: %s", body)
+	}
+	if strings.Contains(body, "yka_not_found_secret_token") || strings.Contains(body, "Bearer") {
+		t.Errorf("not-found envelope leaked credential material: %s", body)
+	}
+	if !strings.Contains(body, output.Sentinel) {
+		t.Errorf("expected redaction sentinel %q in not-found envelope: %s", output.Sentinel, body)
+	}
+}
+
 // TestInvalidInputSortsViolationsAndExposesFieldPaths proves validation errors
 // carry stable, deterministic field paths recoverable via ViolationsOf,
 // independent of caller argument order, and that the hint lists those paths.

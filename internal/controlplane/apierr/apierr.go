@@ -325,14 +325,16 @@ func ScopeRequired(scope string) *yerr.Error {
 
 // NotFound builds an E_NOT_FOUND error (HTTP 404). resource is the kind of
 // thing that was missing (for example "project"); id is the caller-supplied
-// identifier and is echoed back verbatim — callers must pass the request's own
-// identifier so the response never reflects another tenant's data.
+// identifier after surrounding whitespace normalization — callers must pass the
+// request's own identifier so the response never reflects another tenant's
+// data.
 func NotFound(resource, id string) *yerr.Error {
 	resource = strings.TrimSpace(resource)
+	id = strings.TrimSpace(id)
 	if resource == "" {
 		resource = "resource"
 	}
-	if strings.TrimSpace(id) == "" {
+	if id == "" {
 		return yerr.Newf(yerr.CodeNotFound, "%s not found", resource)
 	}
 	return yerr.Newf(yerr.CodeNotFound, "%s %q not found", resource, id)

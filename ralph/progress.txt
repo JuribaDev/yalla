@@ -35446,3 +35446,45 @@ change that widened Reason to caller-supplied data.
   - Admin import already follows the unpathed admin-route pattern: query-visible `organization_id` drives authorization before the handler reads the body, while the body can repeat the same tenant binding for typed clients.
   - Contract-only stories can usually add focused `_contract_test.go` coverage around public envelope, redaction, and process-stream invariants without changing handler code.
 ---
+## 2026-05-19 01:03 +03 - BE-0519
+- What was implemented
+  - Verified the stable `E_NOT_FOUND` backend error contract.
+  - Added focused contract coverage for `apierr.NotFound()` covering stable 404 status, message-specific catalog policy, non-retryability, `yalla.error.v1` envelope shape, `request_id`, documentation URL, and credential redaction.
+  - Normalized `apierr.NotFound()` identifiers with `strings.TrimSpace` so incidental caller whitespace does not become part of the public error message.
+  - Marked `BE-0519` as passing in `ralph/prd.json`.
+- Files changed
+  - `internal/controlplane/apierr/apierr.go`
+  - `internal/controlplane/apierr/apierr_test.go`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `go test ./internal/controlplane/apierr -run TestNotFoundContract -count=1` failed before implementation because the public message preserved surrounding whitespace in the identifier.
+  - `go test ./internal/controlplane/apierr -run 'TestNotFound(Contract|EchoesCallerIdentifierOnly)' -count=1`
+  - `go test ./internal/errors ./internal/controlplane/apienvelope ./internal/controlplane/apierr`
+  - `gofmt -w .`
+  - `goimports -w .` was not run because `goimports` is not installed.
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test ./internal/controlplane/...` initially failed once in `TestChaosDokployTimeoutsMapsToTypedTimeoutEnvelope` with fewer fake retry attempts than expected; the focused chaos test and full control-plane rerun passed.
+  - `go vet ./...`
+  - `go test -run TestMigrations ./...`
+  - `go test -run TestPolicyMatrix ./...`
+  - `go test -run TestQuotaConcurrency ./...`
+  - `go test -run TestFakeDokploy ./...`
+  - `go test -race ./...`
+  - `go test -race ./internal/controlplane/...`
+  - `golangci-lint run ./...`
+  - Direct `staticcheck ./...` and `govulncheck ./...` availability checks in the interactive shell did not find those tools.
+  - Pre-commit `scripts/verify.sh --strict --release` ran successfully, including focused backend suites, `govulncheck ./...`, `staticcheck ./...`, `golangci-lint run ./...`, GoReleaser config validation, and GoReleaser snapshot build.
+- Results
+  - Focused red/green tests passed after implementation.
+  - All required checks passed after rerunning the transient Dokploy chaos-test miss.
+  - `golangci-lint run ./...` passed with 0 issues.
+  - The strict pre-commit hook reported no vulnerabilities, no `staticcheck` issues, and all checks passed.
+- Remaining risks or follow-ups
+  - No persistence, migration, job, quota, Dokploy, or live dependency behavior was touched.
+  - The transient Dokploy chaos-test miss is unrelated to this error-contract change; it passed on focused rerun and full suite rerun.
+- **Learnings for future iterations:**
+  - `E_NOT_FOUND` is message-specific and non-retryable; keep messages limited to the resource kind plus the caller's own request identifier, never an identifier discovered from another tenant.
+  - Normalize resource kind and caller identifier at the constructor boundary so HTTP handlers and stores do not each invent their own not-found message shape.
+---
