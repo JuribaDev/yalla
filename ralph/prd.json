@@ -9250,7 +9250,7 @@
       ],
       "type": "repository",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Database table: project_grants."
     },
     {
