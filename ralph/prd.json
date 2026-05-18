@@ -9060,8 +9060,8 @@
       ],
       "type": "repository",
       "priority": 1,
-      "passes": false,
-      "notes": "Database table: memberships."
+      "passes": true,
+      "notes": "MembershipRepository CRUD primitives (Insert / Get / GetMember / ListByOrganization / UpdateRole / Delete) and the MembershipReader read adapter landed in internal/controlplane/store/membership.go alongside membership_test.go covering tenant-scoped Get/UpdateRole/Delete + ListByOrganization + GetMember. BE-0429 closed the CRUD-invariants gap with internal/controlplane/store/membership_repository_invariants_test.go: Insert returns the joined OrganizationMember with role_version=1, created_at=updated_at, and Email/UserDisplayName populated; duplicate (org,user) PK Insert is a typed apierr.Conflict with a non-empty user-facing message and the pre-existing row is untouched; UpdateRole refreshes updated_at via the memberships_set_updated_at BEFORE-UPDATE trigger and preserves created_at (the role_version atomic +1 anchor stays in membership_test.go); Insert rolls back when the outer Write closure returns an error; nil-Tx guards on Insert/UpdateRole/Delete render typed apierr.Internal."
     },
     {
       "id": "BE-0430",
