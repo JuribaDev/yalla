@@ -9630,7 +9630,7 @@
       ],
       "type": "repository",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Database table: deployment_events."
     },
     {
