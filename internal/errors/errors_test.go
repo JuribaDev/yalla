@@ -37,6 +37,7 @@ func TestCode_ExitCodeMappingIsStable(t *testing.T) {
 		{CodeDokployForbidden, 8},
 		{CodeDokployNotFound, 8},
 		{CodeDokployConflict, 8},
+		{CodeDokployRateLimited, 8},
 		{CodeDokployUnavailable, 8},
 		{CodeUpstreamBug, 8},
 		{CodeUnavailable, 8},
@@ -131,6 +132,22 @@ func TestDokployUnavailableDescriptionNamesUpstreamOutage(t *testing.T) {
 	const want = "upstream Dokploy provisioning backend is temporarily unavailable"
 	if got != want {
 		t.Fatalf("E_DOKPLOY_UNAVAILABLE description = %q, want %q", got, want)
+	}
+}
+
+func TestDokployRateLimitedDescriptionNamesUpstreamThrottle(t *testing.T) {
+	t.Parallel()
+
+	var got string
+	for _, doc := range AllCodes() {
+		if doc.Code == string(CodeDokployRateLimited) {
+			got = doc.Description
+			break
+		}
+	}
+	const want = "upstream Dokploy provisioning backend is rate limiting Yalla requests"
+	if got != want {
+		t.Fatalf("E_DOKPLOY_RATE_LIMITED description = %q, want %q", got, want)
 	}
 }
 

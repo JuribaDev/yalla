@@ -230,6 +230,25 @@ func TestClientForbiddenFailure(t *testing.T) {
 	}
 }
 
+func TestClientRateLimitedFailure(t *testing.T) {
+	t.Parallel()
+	fake := dokployfake.New()
+	defer fake.Close()
+	c := newTestClient(t, fake)
+	fake.QueueFault(dokployfake.StatusFault(http.StatusTooManyRequests))
+
+	_, err := c.EnsureOrganization(context.Background(), dokploy.EnsureOrganizationInput{Name: "acme"})
+	if code := codeOf(t, err); code != yerr.CodeDokployRateLimited {
+		t.Fatalf("code = %s, want %s", code, yerr.CodeDokployRateLimited)
+	}
+	if dep, ok := apierr.DependencyOf(err); !ok || dep != apierr.DependencyDokploy {
+		t.Fatalf("DependencyOf = %s, %v; want dokploy", dep, ok)
+	}
+	if !apierr.Retryable(err) {
+		t.Fatal("a Dokploy rate-limit error must be retryable")
+	}
+}
+
 // TestClientConflict maps a Dokploy 409 onto E_DOKPLOY_CONFLICT.
 func TestClientConflict(t *testing.T) {
 	t.Parallel()

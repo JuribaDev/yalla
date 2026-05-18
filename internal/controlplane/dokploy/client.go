@@ -315,7 +315,7 @@ func (c *Client) statusError(method, path string, status int, payload []byte) er
 	case http.StatusConflict:
 		return apierr.DokployConflict(detail)
 	case http.StatusTooManyRequests:
-		return apierr.DokployUnavailable(detail)
+		return apierr.DokployRateLimited(detail)
 	default:
 		return apierr.DokployUnavailable(detail)
 	}

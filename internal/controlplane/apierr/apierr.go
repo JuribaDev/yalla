@@ -15,9 +15,9 @@
 //   - Not found / conflict: NotFound, Conflict
 //   - Quota:                QuotaExceeded
 //   - Dependency failures:  DokployAuth, DokployForbidden, DokployNotFound,
-//     DokployConflict, DokployUnavailable, StoreUnavailable, QueueUnavailable,
-//     NetworkFailure, Timeout — each distinguishes which dependency failed via
-//     DependencyOf.
+//     DokployConflict, DokployRateLimited, DokployUnavailable,
+//     StoreUnavailable, QueueUnavailable, NetworkFailure, Timeout — each
+//     distinguishes which dependency failed via DependencyOf.
 //   - Internal:             Internal
 //
 // Two cross-cutting guarantees back the taxonomy:
@@ -156,6 +156,7 @@ var taxonomy = map[yerr.Code]struct {
 	yerr.CodeDokployForbidden:       {false, MessageGeneric, "the upstream Dokploy provisioning backend denied the requested operation"},
 	yerr.CodeDokployNotFound:        {false, MessageGeneric, "the upstream Dokploy provisioning backend could not find a required resource"},
 	yerr.CodeDokployConflict:        {false, MessageGeneric, "the upstream Dokploy provisioning backend reported a state conflict"},
+	yerr.CodeDokployRateLimited:     {true, MessageGeneric, "the upstream Dokploy provisioning backend is rate limiting Yalla requests"},
 	yerr.CodeDokployUnavailable:     {true, MessageGeneric, "the upstream Dokploy provisioning backend is temporarily unavailable"},
 	yerr.CodeUpstreamBug:            {false, MessageGeneric, "a known upstream Dokploy defect was encountered"},
 	yerr.CodeUnavailable:            {true, MessageGeneric, "a Yalla-owned dependency (datastore or job queue) is temporarily unavailable"},
@@ -593,6 +594,17 @@ func DokployNotFound(cause error) *yerr.Error {
 func DokployConflict(cause error) *yerr.Error {
 	return yerr.New(yerr.CodeDokployConflict, "the Dokploy provisioning backend reported a state conflict").
 		WithHint("contact Yalla support; the upstream provisioning state needs operator attention").
+		Wrap(&dependencyError{dep: DependencyDokploy, cause: cause})
+}
+
+// DokployRateLimited builds an E_DOKPLOY_RATE_LIMITED error (HTTP 502) for a
+// private Dokploy response that throttled Yalla's upstream provisioning
+// request. The public message is fixed and generic: it must never expose
+// upstream response bodies, rate-limit bucket identifiers, Dokploy tokens, or
+// customer-facing resource identifiers.
+func DokployRateLimited(cause error) *yerr.Error {
+	return yerr.New(yerr.CodeDokployRateLimited, "the Dokploy provisioning backend is rate limiting Yalla requests").
+		WithHint("this is a transient upstream throttle; retry after a short backoff").
 		Wrap(&dependencyError{dep: DependencyDokploy, cause: cause})
 }
 
