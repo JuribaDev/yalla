@@ -6,9 +6,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
+	"github.com/JuribaDev/yalla/internal/output"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -84,6 +86,11 @@ const (
 	EnforcementModeDisabled EnforcementMode = "disabled"
 )
 
+// ReservationStatus is the closed-set lifecycle the quota_reservations table
+// permits. Active reservations count against tenant headroom; terminal states
+// record how the reservation was settled.
+type ReservationStatus string
+
 // Reservation status values, mirroring the quota_reservations status CHECK.
 const (
 	ReservationStatusActive    = "active"
@@ -91,6 +98,61 @@ const (
 	ReservationStatusReleased  = "released"
 	ReservationStatusExpired   = "expired"
 )
+
+func (s ReservationStatus) String() string { return string(s) }
+
+// quotaReservationTransitions is the documented quota reservation lifecycle
+// table.
+var quotaReservationTransitions = map[ReservationStatus]map[ReservationStatus]struct{}{
+	ReservationStatusActive: {
+		ReservationStatusCommitted: {},
+		ReservationStatusReleased:  {},
+		ReservationStatusExpired:   {},
+	},
+	ReservationStatusCommitted: {},
+	ReservationStatusReleased:  {},
+	ReservationStatusExpired:   {},
+}
+
+// CanTransitionTo reports whether the quota reservation state machine permits
+// a status change from s to next.
+func (s ReservationStatus) CanTransitionTo(next ReservationStatus) bool {
+	allowed, ok := quotaReservationTransitions[s]
+	if !ok {
+		return false
+	}
+	_, ok = allowed[next]
+	return ok
+}
+
+func (s ReservationStatus) quotaReservationEventType() QuotaReservationEventType {
+	switch s {
+	case ReservationStatusActive:
+		return QuotaReservationEventTypeActive
+	case ReservationStatusCommitted:
+		return QuotaReservationEventTypeCommitted
+	case ReservationStatusReleased:
+		return QuotaReservationEventTypeReleased
+	case ReservationStatusExpired:
+		return QuotaReservationEventTypeExpired
+	default:
+		return ""
+	}
+}
+
+// QuotaReservationTransition is the audited state-machine mutation input for
+// a quota_reservations row. Actor and request fields are persisted into the
+// quota reservation event emitted atomically with the status update.
+type QuotaReservationTransition struct {
+	OrganizationID string
+	ReservationID  string
+	NextStatus     ReservationStatus
+	ActorID        string
+	ActorKind      string
+	RequestID      string
+	CorrelationID  string
+	Reason         string
+}
 
 // QuotaLimit is the effective limit for one resource within an organization:
 // the numeric ceiling plus how it is enforced. It is resolved from
@@ -163,6 +225,7 @@ type QuotaReservation struct {
 	Amount         int64
 	Status         string
 	JobID          string
+	RequestID      string
 	ExpiresAt      time.Time
 	SettledAt      time.Time
 	CreatedAt      time.Time
@@ -190,7 +253,7 @@ func NewQuotaRepository() *QuotaRepository { return &QuotaRepository{} }
 
 // quotaReservationColumns is the column list returned by every reservation
 // query, in the order scanQuotaReservation expects.
-const quotaReservationColumns = `id, organization_id, resource, amount, status, job_id, expires_at, settled_at, created_at, updated_at`
+const quotaReservationColumns = `id, organization_id, resource, amount, status, job_id, request_id, expires_at, settled_at, created_at, updated_at`
 
 // EffectiveLimit resolves the limit that applies to resource for organizationID
 // on the given plan. An organization override takes precedence over the plan
@@ -475,15 +538,80 @@ func (r *QuotaRepository) InsertReservation(ctx context.Context, tx *Tx, res Quo
 		jobID = &res.JobID
 	}
 	row := tx.QueryRow(ctx,
-		`INSERT INTO quota_reservations (id, organization_id, resource, amount, status, job_id, expires_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		`INSERT INTO quota_reservations (id, organization_id, resource, amount, status, job_id, request_id, expires_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		 RETURNING `+quotaReservationColumns,
-		res.ID, res.OrganizationID, string(res.Resource), res.Amount, res.Status, jobID, res.ExpiresAt)
+		res.ID, res.OrganizationID, string(res.Resource), res.Amount, res.Status, jobID, res.RequestID, res.ExpiresAt)
 	created, err := scanQuotaReservation(row)
 	if err != nil {
 		return QuotaReservation{}, mapWriteError(err, "a quota reservation with this id already exists")
 	}
 	return created, nil
+}
+
+// Transition moves a quota reservation through the documented reservation state
+// machine and appends the matching quota_reservation_events row in the same
+// transaction. Invalid edges return E_INVALID_STATE_TRANSITION before any
+// update, so the reservation row and timeline remain unchanged.
+func (r *QuotaRepository) Transition(ctx context.Context, tx *Tx, in QuotaReservationTransition) (QuotaReservation, QuotaReservationEvent, error) {
+	if tx == nil {
+		return QuotaReservation{}, QuotaReservationEvent{}, apierr.Internal(errors.New("store: QuotaRepository.Transition called with a nil transaction"))
+	}
+	orgID := strings.TrimSpace(in.OrganizationID)
+	reservationID := strings.TrimSpace(in.ReservationID)
+	next := in.NextStatus
+	if next.quotaReservationEventType() == "" {
+		return QuotaReservation{}, QuotaReservationEvent{}, apierr.InvalidStateTransition("quota_reservation", "", next.String())
+	}
+
+	current, err := scanQuotaReservation(tx.QueryRow(ctx,
+		`SELECT `+quotaReservationColumns+`
+		   FROM quota_reservations
+		  WHERE organization_id = $1 AND id = $2
+		  FOR UPDATE`,
+		orgID, reservationID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return QuotaReservation{}, QuotaReservationEvent{}, apierr.NotFound("quota_reservation", reservationID)
+	}
+	if err != nil {
+		return QuotaReservation{}, QuotaReservationEvent{}, apierr.StoreUnavailable(err)
+	}
+	currentStatus := ReservationStatus(current.Status)
+	if !currentStatus.CanTransitionTo(next) {
+		return QuotaReservation{}, QuotaReservationEvent{}, apierr.InvalidStateTransition("quota_reservation", current.Status, next.String())
+	}
+
+	updated, err := scanQuotaReservation(tx.QueryRow(ctx,
+		`UPDATE quota_reservations
+		    SET status = $3,
+		        settled_at = now()
+		  WHERE organization_id = $1 AND id = $2
+		  RETURNING `+quotaReservationColumns,
+		orgID, reservationID, next.String()))
+	if err != nil {
+		return QuotaReservation{}, QuotaReservationEvent{}, apierr.StoreUnavailable(err)
+	}
+
+	reason := output.NewRedactor().Redact(strings.TrimSpace(in.Reason))
+	event, err := NewQuotaReservationEventRepository().Append(ctx, tx, QuotaReservationEvent{
+		OrganizationID: orgID,
+		ReservationID:  reservationID,
+		EventType:      next.quotaReservationEventType(),
+		Message:        reason,
+		Metadata: map[string]string{
+			"actor_id":       strings.TrimSpace(in.ActorID),
+			"actor_kind":     strings.TrimSpace(in.ActorKind),
+			"previous_state": current.Status,
+			"next_state":     next.String(),
+			"reason":         reason,
+		},
+		RequestID:     strings.TrimSpace(in.RequestID),
+		CorrelationID: strings.TrimSpace(in.CorrelationID),
+	})
+	if err != nil {
+		return QuotaReservation{}, QuotaReservationEvent{}, err
+	}
+	return updated, event, nil
 }
 
 // scanQuotaReservation scans one reservation row in quotaReservationColumns
@@ -498,7 +626,7 @@ func scanQuotaReservation(row pgx.Row) (QuotaReservation, error) {
 	)
 	if err := row.Scan(
 		&res.ID, &res.OrganizationID, &resource, &res.Amount, &res.Status,
-		&jobID, &res.ExpiresAt, &settledAt, &res.CreatedAt, &res.UpdatedAt,
+		&jobID, &res.RequestID, &res.ExpiresAt, &settledAt, &res.CreatedAt, &res.UpdatedAt,
 	); err != nil {
 		return QuotaReservation{}, err
 	}

@@ -210,6 +210,14 @@ Postgres persistence for control-plane source-of-truth state.
   (`provisioning_jobs` lands later — a future migration adds the composite
   `(organization_id, job_id)` FK). It exposes `UNIQUE (organization_id, id)` as
   a composite-FK target.
+- Quota reservation lifecycle changes should go through
+  `QuotaRepository.Transition`: it locks `(organization_id, reservation_id)`,
+  validates the edge with `ReservationStatus.CanTransitionTo`, rejects invalid
+  edges as `E_INVALID_STATE_TRANSITION` before any write, updates
+  `quota_reservations.status`/`settled_at`, and appends the matching
+  `quota_reservation_events` row in the same transaction with actor/request/
+  previous/next/reason metadata. Redact free-text reason text before persisting
+  event message/metadata.
 - `usage_events` is **append-only**: no `updated_at`, no update trigger, signed
   `delta`. Its optional `reservation_id` link uses a composite FK
   `(organization_id, reservation_id)` → `quota_reservations` (MATCH SIMPLE), so
