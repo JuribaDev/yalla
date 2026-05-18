@@ -900,6 +900,9 @@ func assertBystanderByteIdentical(t *testing.T, label string, baseline, after st
 	if !equalStringSlices(after.Scopes, baseline.Scopes) {
 		t.Errorf("%s: bystander.scopes = %v, want %v", label, after.Scopes, baseline.Scopes)
 	}
+	if after.Status != baseline.Status {
+		t.Errorf("%s: bystander.status = %q, want %q — lifecycle state drifted on a peer tenant's key", label, after.Status, baseline.Status)
+	}
 	if after.CreatedBy != baseline.CreatedBy {
 		t.Errorf("%s: bystander.created_by = %q, want %q", label, after.CreatedBy, baseline.CreatedBy)
 	}

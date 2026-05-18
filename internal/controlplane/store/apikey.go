@@ -3,11 +3,80 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
+	"github.com/JuribaDev/yalla/internal/output"
 	"github.com/jackc/pgx/v5"
 )
+
+// APIKeyStatus is the closed-set lifecycle the api_keys table permits.
+type APIKeyStatus string
+
+const (
+	// APIKeyStatusActive records a credential that can authenticate when it is
+	// also within its expires_at bound.
+	APIKeyStatusActive APIKeyStatus = "active"
+	// APIKeyStatusRevoked records an explicitly disabled terminal key.
+	APIKeyStatusRevoked APIKeyStatus = "revoked"
+	// APIKeyStatusExpired records a terminal lifecycle projection for a key
+	// intentionally retired because its validity window elapsed.
+	APIKeyStatusExpired APIKeyStatus = "expired"
+)
+
+func (s APIKeyStatus) String() string { return string(s) }
+
+// apiKeyTransitions is the documented API key lifecycle table. API keys start
+// active, then move to one of the terminal non-authenticating states.
+var apiKeyTransitions = map[APIKeyStatus]map[APIKeyStatus]struct{}{
+	APIKeyStatusActive: {
+		APIKeyStatusRevoked: {},
+		APIKeyStatusExpired: {},
+	},
+	APIKeyStatusRevoked: {},
+	APIKeyStatusExpired: {},
+}
+
+// CanTransitionTo reports whether the API key state machine permits a status
+// change from s to next. Repository mutations call this before touching the
+// api_keys row.
+func (s APIKeyStatus) CanTransitionTo(next APIKeyStatus) bool {
+	allowed, ok := apiKeyTransitions[s]
+	if !ok {
+		return false
+	}
+	_, ok = allowed[next]
+	return ok
+}
+
+func (s APIKeyStatus) apiKeyEventType() APIKeyEventType {
+	switch s {
+	case APIKeyStatusActive:
+		return APIKeyEventTypeActive
+	case APIKeyStatusRevoked:
+		return APIKeyEventTypeRevoked
+	case APIKeyStatusExpired:
+		return APIKeyEventTypeExpired
+	default:
+		return ""
+	}
+}
+
+// APIKeyTransition is the audited state-machine mutation input for an api_keys
+// row. Actor and request fields are persisted into the api_key_events row
+// emitted atomically with the status update.
+type APIKeyTransition struct {
+	OrganizationID string
+	KeyID          string
+	NextStatus     APIKeyStatus
+	ActorID        string
+	ActorKind      string
+	RequestID      string
+	CorrelationID  string
+	Reason         string
+	Now            time.Time
+}
 
 // APIKey is the source-of-truth representation of a row in the api_keys table.
 // It is the persistence-layer shape; the HTTP request and response shapes are
@@ -22,6 +91,7 @@ type APIKey struct {
 	SecretHash     string
 	Name           string
 	Scopes         []string
+	Status         APIKeyStatus
 	// CreatedBy is the id of the user who minted the key, or "" when the key
 	// has no attributed creator (the api_keys.created_by column is nullable).
 	CreatedBy string
@@ -40,11 +110,11 @@ type APIKey struct {
 }
 
 // IsRevoked reports whether the key has been explicitly revoked.
-func (k APIKey) IsRevoked() bool { return k.RevokedAt != nil }
+func (k APIKey) IsRevoked() bool { return k.Status == APIKeyStatusRevoked || k.RevokedAt != nil }
 
 // IsExpired reports whether the key has a time bound that now is at or past.
 func (k APIKey) IsExpired(now time.Time) bool {
-	return k.ExpiresAt != nil && !now.Before(*k.ExpiresAt)
+	return k.Status == APIKeyStatusExpired || (k.ExpiresAt != nil && !now.Before(*k.ExpiresAt))
 }
 
 // IsUsable reports whether the key may be used to authenticate at now: it must
@@ -72,7 +142,7 @@ func NewAPIKeyRepository() *APIKeyRepository { return &APIKeyRepository{} }
 // apiKeyColumns is the column list returned by every api_keys query, in the
 // order scanAPIKey expects.
 const apiKeyColumns = `id, organization_id, prefix, secret_hash, name, scopes, ` +
-	`created_by, service_account_id, expires_at, revoked_at, last_used_at, created_at, updated_at`
+	`status, created_by, service_account_id, expires_at, revoked_at, last_used_at, created_at, updated_at`
 
 // scanAPIKey scans one api_keys row, in apiKeyColumns order, into an APIKey.
 func scanAPIKey(row pgx.Row) (APIKey, error) {
@@ -83,7 +153,7 @@ func scanAPIKey(row pgx.Row) (APIKey, error) {
 	)
 	if err := row.Scan(
 		&k.ID, &k.OrganizationID, &k.Prefix, &k.SecretHash, &k.Name, &k.Scopes,
-		&createdBy, &serviceAccountID, &k.ExpiresAt, &k.RevokedAt, &k.LastUsedAt, &k.CreatedAt, &k.UpdatedAt,
+		&k.Status, &createdBy, &serviceAccountID, &k.ExpiresAt, &k.RevokedAt, &k.LastUsedAt, &k.CreatedAt, &k.UpdatedAt,
 	); err != nil {
 		return APIKey{}, err
 	}
@@ -320,7 +390,8 @@ func (r *APIKeyRepository) Revoke(ctx context.Context, tx *Tx, organizationID, k
 	}
 	row := tx.QueryRow(ctx,
 		`UPDATE api_keys
-		    SET revoked_at = COALESCE(revoked_at, $3)
+		    SET revoked_at = COALESCE(revoked_at, $3),
+		        status = 'revoked'
 		  WHERE organization_id = $1 AND id = $2
 		 RETURNING `+apiKeyColumns,
 		organizationID, keyID, revokedAt)
@@ -332,6 +403,78 @@ func (r *APIKeyRepository) Revoke(ctx context.Context, tx *Tx, organizationID, k
 		return APIKey{}, mapWriteError(err, "the api key could not be revoked")
 	}
 	return revoked, nil
+}
+
+// Transition moves an API key through the documented lifecycle state machine
+// and appends the matching api_key_events row in the same transaction. Invalid
+// edges return E_INVALID_STATE_TRANSITION before any update, so the key row and
+// timeline remain unchanged.
+func (r *APIKeyRepository) Transition(ctx context.Context, tx *Tx, in APIKeyTransition) (APIKey, APIKeyEvent, error) {
+	if tx == nil {
+		return APIKey{}, APIKeyEvent{}, apierr.Internal(errors.New("store: APIKeyRepository.Transition called with a nil transaction"))
+	}
+	orgID := strings.TrimSpace(in.OrganizationID)
+	keyID := strings.TrimSpace(in.KeyID)
+	next := in.NextStatus
+	if next.apiKeyEventType() == "" {
+		return APIKey{}, APIKeyEvent{}, apierr.InvalidStateTransition("api_key", "", next.String())
+	}
+
+	current, err := scanAPIKey(tx.QueryRow(ctx,
+		`SELECT `+apiKeyColumns+`
+		   FROM api_keys
+		  WHERE organization_id = $1 AND id = $2
+		  FOR UPDATE`,
+		orgID, keyID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return APIKey{}, APIKeyEvent{}, apierr.NotFound("api_key", keyID)
+	}
+	if err != nil {
+		return APIKey{}, APIKeyEvent{}, apierr.StoreUnavailable(err)
+	}
+	if !current.Status.CanTransitionTo(next) {
+		return APIKey{}, APIKeyEvent{}, apierr.InvalidStateTransition("api_key", current.Status.String(), next.String())
+	}
+	now := in.Now.UTC()
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+
+	updated, err := scanAPIKey(tx.QueryRow(ctx,
+		`UPDATE api_keys
+		    SET status = $3,
+		        revoked_at = CASE
+		            WHEN $3 = 'revoked' THEN COALESCE(revoked_at, $4)
+		            ELSE revoked_at
+		        END
+		  WHERE organization_id = $1 AND id = $2
+		 RETURNING `+apiKeyColumns,
+		orgID, keyID, next.String(), now))
+	if err != nil {
+		return APIKey{}, APIKeyEvent{}, apierr.StoreUnavailable(err)
+	}
+
+	reason := output.NewRedactor().Redact(strings.TrimSpace(in.Reason))
+	event, err := NewAPIKeyEventRepository().Append(ctx, tx, APIKeyEvent{
+		OrganizationID: orgID,
+		KeyID:          keyID,
+		EventType:      next.apiKeyEventType(),
+		Message:        reason,
+		Metadata: map[string]string{
+			"actor_id":       strings.TrimSpace(in.ActorID),
+			"actor_kind":     strings.TrimSpace(in.ActorKind),
+			"previous_state": current.Status.String(),
+			"next_state":     next.String(),
+			"reason":         reason,
+		},
+		RequestID:     strings.TrimSpace(in.RequestID),
+		CorrelationID: strings.TrimSpace(in.CorrelationID),
+		OccurredAt:    now,
+	})
+	if err != nil {
+		return APIKey{}, APIKeyEvent{}, err
+	}
+	return updated, event, nil
 }
 
 // RotateCredential replaces the credential primitives (prefix and secret_hash)

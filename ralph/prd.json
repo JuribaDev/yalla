@@ -10561,7 +10561,7 @@
       ],
       "type": "state-machine",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Lifecycle state: api_key."
     },
     {

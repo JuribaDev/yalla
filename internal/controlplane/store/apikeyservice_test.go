@@ -975,6 +975,18 @@ func TestAPIKeyServiceRevokeMarksKeyAndAudits(t *testing.T) {
 		t.Errorf("Revoke renamed the key; name = %q, want %q (revocation must not edit other fields)",
 			revoked.Name, key.Name)
 	}
+	keyEvents := listAPIKeyEvents(t, s, target.ID, key.ID)
+	if len(keyEvents) != 1 {
+		t.Fatalf("api key lifecycle events = %d, want exactly the revoke transition", len(keyEvents))
+	}
+	keyEvent := keyEvents[0]
+	if keyEvent.EventType != store.APIKeyEventTypeRevoked {
+		t.Errorf("api key event type = %q, want %q", keyEvent.EventType, store.APIKeyEventTypeRevoked)
+	}
+	if keyEvent.RequestID != "req_revoke" || keyEvent.CorrelationID != "corr_revoke" {
+		t.Errorf("api key event correlation = (%q, %q), want (req_revoke, corr_revoke)",
+			keyEvent.RequestID, keyEvent.CorrelationID)
+	}
 
 	events := listAuditEvents(t, s, target.ID)
 	if len(events) != 1 {
@@ -1073,6 +1085,20 @@ func TestAPIKeyServiceRevokeAlreadyRevokedIsConflict(t *testing.T) {
 	if current.RevokedAt == nil || !current.RevokedAt.Equal(first) {
 		t.Errorf("row revoked_at = %v, want %v (first timestamp preserved)", current.RevokedAt, first)
 	}
+}
+
+func listAPIKeyEvents(t *testing.T, s *store.Store, organizationID, keyID string) []store.APIKeyEvent {
+	t.Helper()
+	events := store.NewAPIKeyEventRepository()
+	var out []store.APIKeyEvent
+	if err := s.Read(context.Background(), func(ctx context.Context, q store.Querier) error {
+		var err error
+		out, err = events.ListByAPIKey(ctx, q, organizationID, keyID)
+		return err
+	}); err != nil {
+		t.Fatalf("list api key events: %v", err)
+	}
+	return out
 }
 
 // TestAPIKeyServiceRevokeMissingKeyIsNotFound proves a well-formed but

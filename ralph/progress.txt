@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- API key state-machine stories use explicit `api_keys.status` plus the existing lifecycle stamps: `active -> revoked|expired`, with `revoked` and `expired` terminal. `APIKeyRepository.Transition` locks the tenant-scoped key row, rejects invalid edges with `E_INVALID_STATE_TRANSITION` before any write, updates status, stamps `revoked_at` for revoked transitions, and appends a redacted `api_key_events` row with actor/request/previous/next/reason metadata in the same transaction. Customer-facing revoke should call the transition path before appending its separate audit event so lifecycle timeline and audit timeline commit atomically.
 - Project state-machine stories use the same audited transition shape as environment/service state machines: `projects.status` has the lifecycle table `pending -> active/deleting`, `active -> suspended/deleting`, `suspended -> active/deleting`, `deleting -> active/deleted`, `deleted -> terminal`; `ProjectRepository.Transition` locks the tenant-scoped project row, rejects invalid edges with `E_INVALID_STATE_TRANSITION` before any write, updates status, and appends a redacted `project_events` row with actor/request/previous/next/reason metadata in the same transaction.
 - Bare-id job read endpoints (BE-0274 pattern, GET `/v1/jobs/{job_id}`) should authorize against the persisted job row's owning scope, not an org-root placeholder: the resolver reloads the tenant-scoped job through `store.JobReader.GetJob`, mirrors `ProjectID` / `EnvironmentID` / `ServiceID` into `policy.Scope`, then the handler performs the same tenant-scoped read for the response. This preserves project/environment/service-scoped grant containment while unknown or cross-tenant ids still collapse to the repository's `E_NOT_FOUND` path.
 - Job list endpoints (BE-0271 pattern, GET `/v1/jobs`) use an organization-root route with optional query filters `(project_id, environment_id, service_id, status, limit)`: `jobListResolver` mirrors supplied filters into `policy.Scope` before auth, the handler validates hierarchy shape before store access (`environment_id` requires `project_id`, `service_id` requires both), and `store.JobReader` verifies filtered parents tenant-scoped before delegating to `JobRepository.List` with a constant SQL statement whose optional predicates never interpolate caller input.
@@ -34842,4 +34843,53 @@ change that widened Reason to caller-supplied data.
   - Project lifecycle follows the same state table and audited transaction shape as environment/service lifecycle, with `project_events` storing redacted reason metadata.
   - Adding a status column to `projects` requires updating the shared `projectColumns` projection and `scanProject`; this keeps all existing repository reads on the same row shape.
   - State-machine tests should assert both transition table exhaustiveness and invalid-transition no-op behavior by checking unchanged version plus empty timeline.
+---
+## 2026-05-18 22:21 +03 - BE-0508
+- What was implemented
+  - Added the `api_key` lifecycle state machine: `active -> revoked|expired`, with `revoked` and `expired` terminal.
+  - Added migration `0044_api_key_state_machine` with `api_keys.status` and append-only `api_key_events`.
+  - Added `APIKeyRepository.Transition` to lock tenant-scoped rows, reject invalid edges with `E_INVALID_STATE_TRANSITION`, update status, stamp `revoked_at` for revoked transitions, and persist redacted lifecycle metadata.
+  - Updated customer-facing `APIKeyService.Revoke` to use the transition path before appending the existing audit event, so lifecycle event and audit event commit atomically.
+  - Added focused state-machine tests and pinned API key tenant-isolation bystander assertions to include `status`.
+- Files changed
+  - `internal/controlplane/store/apikey.go`
+  - `internal/controlplane/store/api_key_event.go`
+  - `internal/controlplane/store/api_key_state_machine_test.go`
+  - `internal/controlplane/store/apikeyservice.go`
+  - `internal/controlplane/store/apikeyservice_test.go`
+  - `internal/controlplane/store/api_key_tenant_isolation_test.go`
+  - `internal/controlplane/store/migrate/migrations/0044_api_key_state_machine.up.sql`
+  - `internal/controlplane/store/migrate/migrations/0044_api_key_state_machine.down.sql`
+  - `internal/controlplane/store/AGENTS.md`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `go test ./internal/controlplane/store -run 'TestAPIKey(StatusTransitionTable|RepositoryTransition)'` (red first, then green after implementation)
+  - `gofmt -w .`
+  - `goimports -w .` was not run because `goimports` is not installed
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `go test -run TestPolicyMatrix ./...`
+  - `go test -run TestQuotaConcurrency ./...`
+  - `go test -run TestFakeDokploy ./...`
+  - `golangci-lint run ./...`
+  - Pre-commit `scripts/verify.sh --strict --release`, including full tests, race tests, focused suites, `govulncheck`, `staticcheck`, `golangci-lint`, `goreleaser check`, and snapshot release build
+- Results
+  - Required checks passed.
+  - Focused persistence/state-machine suites passed.
+  - `golangci-lint` reported `0 issues`.
+  - Strict pre-commit verification passed; `govulncheck` reported no vulnerabilities.
+  - `BE-0508` marked `passes: true` in `ralph/prd.json`.
+- Remaining risks or follow-ups
+  - `goimports` is not installed in this runner.
+  - No live Dokploy smoke was run; this story is Postgres/source-of-truth only and normal tests use local fakes/skips.
+- **Learnings for future iterations:**
+  - API key lifecycle now has both a source-of-truth status and legacy lifecycle stamps; explicit state transitions should go through `APIKeyRepository.Transition`, while direct repository helpers such as `Revoke` remain low-level compatibility surfaces.
+  - Customer-facing revoke should keep the lifecycle event and audit event in the same transaction so the resource timeline and public audit trail cannot diverge.
+  - When adding a new observable lifecycle column to a tenant-scoped table, update existing byte-identical bystander helpers so cross-tenant mutation tests cover the new column.
 ---

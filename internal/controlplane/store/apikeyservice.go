@@ -545,7 +545,17 @@ func (svc *APIKeyService) Revoke(ctx context.Context, in RevokeAPIKeyInput, now 
 			return apierr.Conflict("api key is already revoked")
 		}
 
-		row, revErr := svc.apiKeys.Revoke(ctx, tx, organizationID, keyID, revokedAt)
+		row, _, revErr := svc.apiKeys.Transition(ctx, tx, APIKeyTransition{
+			OrganizationID: organizationID,
+			KeyID:          keyID,
+			NextStatus:     APIKeyStatusRevoked,
+			ActorID:        in.ActorID,
+			ActorKind:      in.ActorKind,
+			RequestID:      in.RequestID,
+			CorrelationID:  in.CorrelationID,
+			Reason:         "api key revoked",
+			Now:            revokedAt,
+		})
 		if revErr != nil {
 			return revErr
 		}

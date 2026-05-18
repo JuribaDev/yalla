@@ -65,6 +65,15 @@ Postgres persistence for control-plane source-of-truth state.
 - `api_keys` stores **only a hash** of the secret (`secret_hash`) plus the
   public `prefix`. No column ever holds a usable credential — the plaintext
   token is minted by `internal/controlplane/auth`, shown once, never persisted.
+- `api_keys.status` is the explicit lifecycle state machine
+  (`active -> revoked|expired`; terminal states do not transition). Lifecycle
+  changes should go through `APIKeyRepository.Transition`: it locks the
+  tenant-scoped row, rejects invalid edges with
+  `E_INVALID_STATE_TRANSITION` before any write, updates `api_keys.status`,
+  stamps `revoked_at` for the revoked transition, and appends an
+  `api_key_events` row with actor/request/previous/next/reason metadata in
+  the same transaction. Customer-facing revocation uses this transition path
+  before writing the separate audit event.
 - `APIKeyRepository.FindByPrefix` is the **one deliberate exception** to "scope
   by `organization_id` first": it is the authentication lookup, which runs
   before the caller's tenant is known. The `prefix` is globally `UNIQUE` and
