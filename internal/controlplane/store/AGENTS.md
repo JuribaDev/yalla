@@ -60,6 +60,16 @@ Postgres persistence for control-plane source-of-truth state.
   constraints — `internal/controlplane/domain` owns ID well-formedness, and
   `testutil` fixtures deliberately use independent prefixes.
 
+## Drift findings
+
+- `drift_findings.status` is the explicit lifecycle source of truth:
+  `open -> resolved`, with `resolved` terminal. Keep `resolved_at` and
+  `resolved_by_actor_id` as compatibility/audit stamps, but do lifecycle
+  mutations through `DriftFindingRepository.Transition` so invalid edges are
+  rejected before writes and a `drift_finding_events` row is appended in the
+  same transaction. The legacy `MarkResolved` helper also writes that event;
+  do not add another resolution path that updates the row without the timeline.
+
 ## API keys (`0003_api_keys`, `apikey.go`)
 
 - `api_keys` stores **only a hash** of the secret (`secret_hash`) plus the

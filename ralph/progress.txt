@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Drift finding state-machine stories use an explicit `drift_findings.status` lifecycle (`open -> resolved`, with `resolved` terminal) in addition to the existing `resolved_at` / `resolved_by_actor_id` stamps. `DriftFindingRepository.Transition` locks the tenant-scoped row, rejects invalid edges with `E_INVALID_STATE_TRANSITION` before any write, updates the resolution columns for terminal resolution, and appends a redacted `drift_finding_events` row with actor/request/previous/next/reason metadata in the same transaction. The legacy `MarkResolved` helper also writes the lifecycle event so it cannot bypass the timeline.
 - Bare-id job retry endpoints (BE-0277 pattern, POST `/v1/jobs/{job_id}/retry`) reuse `jobIDResolver` so policy is evaluated against the persisted job's owning scope before the mutating handler runs. The store-backed retry path leaves terminal source rows immutable and inserts a fresh queued clone for `failed`, `cancelled`, or `dead_letter` sources only; it scopes the caller's `idempotency_key` as `retry:<source_job_id>:<caller_key>`, copies non-secret payload refs, adds `retried_job_id` / `retry_requested_by`, appends a redacted `job.retry` audit event in the same transaction, and returns the queued retry job with `202 Accepted`. `succeeded`, `queued`, `running`, and `retrying` sources are stable conflicts; cross-tenant/unknown source ids remain tenant-scoped `E_NOT_FOUND`.
 - Bare-id job cancel endpoints (BE-0280 pattern, POST `/v1/jobs/{job_id}/cancel`) reuse `jobIDResolver` so action `job.cancel` is authorized against the persisted job's owning scope before mutation. The store-backed cancel path calls `JobRepository.Transition(..., JobStatusCancelled, ...)` inside `Store.Write`, so queued/running/retrying jobs follow the shared state-machine bookkeeping, terminal jobs fail with `E_INVALID_STATE_TRANSITION`, and cross-tenant/unknown ids remain tenant-scoped `E_NOT_FOUND`. Append the redacted `job.cancel` audit event in the same transaction as the lifecycle event and return the cancelled source row with `202 Accepted`.
 - Break-glass session state-machine stories use explicit `break_glass_sessions.status` plus the existing time/revocation stamps: `active -> revoked|expired`, with `revoked` and `expired` terminal. `BreakGlassRepository.Transition` locks the tenant-scoped session row, rejects invalid edges with `E_INVALID_STATE_TRANSITION` before any write, updates status/revocation columns, and appends a redacted `break_glass_session_events` row with actor/request/previous/next/reason metadata in the same transaction. Customer-facing revoke routes through this transition path while preserving the existing public conflict response for duplicate revocation attempts.
@@ -35041,4 +35042,51 @@ change that widened Reason to caller-supplied data.
   - Job cancel should reuse `JobRepository.Transition(..., JobStatusCancelled, ...)` rather than hand-updating lease/timestamp fields; the shared state machine owns cancellable source states and emits the immutable lifecycle event.
   - The same `fakeJobReader` test double can satisfy `JobReader`, `JobRetrier`, and `JobCanceler` because the HTTP route table discovers optional job mutation ports from the `routeOptions` list.
   - Terminal job cancellation currently surfaces as `E_INVALID_STATE_TRANSITION`, matching the shared provisioning-job transition contract.
+---
+## 2026-05-18 23:05 +03 - BE-0510
+- What was implemented
+  - Added the `drift_finding` lifecycle state machine: `open -> resolved`, with `resolved` terminal.
+  - Added migration `0046_drift_finding_state_machine` to backfill `drift_findings.status`, enforce status/resolution consistency, and create append-only `drift_finding_events`.
+  - Added `DriftFindingRepository.Transition` with tenant-scoped row locking, invalid-transition rejection before mutation, redacted event metadata, and atomic event append.
+  - Added `DriftFindingEventRepository` and kept legacy `MarkResolved` aligned by writing the lifecycle event in the same transaction.
+  - Marked BE-0510 `passes: true` in `ralph/prd.json`.
+- Files changed
+  - `internal/controlplane/store/drift_finding.go`
+  - `internal/controlplane/store/drift_finding_event.go`
+  - `internal/controlplane/store/drift_finding_state_machine_test.go`
+  - `internal/controlplane/store/migrate/migrations/0046_drift_finding_state_machine.up.sql`
+  - `internal/controlplane/store/migrate/migrations/0046_drift_finding_state_machine.down.sql`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `go test ./internal/controlplane/store -run 'TestDriftFinding.*Transition'` first failed as expected before implementation because status/event/transition symbols did not exist.
+  - `gofmt -w .`
+  - `goimports -w .` was not run because `goimports` is not installed.
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test ./internal/controlplane/store/...`
+  - `go test ./internal/controlplane/httpapi/...`
+  - `go test ./internal/controlplane/openapi/...`
+  - `go test -run TestMigrations ./...`
+  - `go test -run TestOpenAPI ./...`
+  - `go test -run TestPolicyMatrix ./...`
+  - `go test -run TestQuotaConcurrency ./...`
+  - `go test -run TestFakeDokploy ./...`
+  - `go test -run TestJobWorkerLease ./...`
+  - `go test -run TestRedaction ./...`
+  - `golangci-lint run ./...`
+  - `staticcheck ./...` was not run because `staticcheck` is not installed.
+  - `govulncheck ./...` was not run because `govulncheck` is not installed.
+- Results
+  - Required formatting, tests, race tests, vet, focused backend suites, and golangci-lint passed.
+  - Optional `goimports`, `staticcheck`, and `govulncheck` are unavailable in this environment.
+- Remaining risks or follow-ups
+  - No public drift-finding transition endpoint exists yet; future admin drift endpoints should route resolution through `DriftFindingRepository.Transition` or the legacy `MarkResolved` helper, both of which now record lifecycle events.
+- **Learnings for future iterations:**
+  - Drift findings now follow the same event-backed state-machine pattern as service/environment/project/API-key/break-glass lifecycles.
+  - Keep `resolved_at` and `resolved_by_actor_id` as compatibility stamps, but treat `drift_findings.status` as the explicit lifecycle source of truth.
 ---

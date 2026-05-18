@@ -7,11 +7,62 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
+	"github.com/JuribaDev/yalla/internal/output"
 	"github.com/jackc/pgx/v5"
 )
+
+// DriftFindingStatus is the closed-set lifecycle for a drift finding.
+// Open findings require triage; resolved findings are terminal historical
+// records. The transition table is deliberately small because the table is a
+// triage queue, not a workflow engine.
+type DriftFindingStatus string
+
+const (
+	// DriftFindingStatusOpen records a finding that still requires triage.
+	DriftFindingStatusOpen DriftFindingStatus = "open"
+	// DriftFindingStatusResolved records a terminal finding that was acknowledged
+	// or repaired by an operator/worker.
+	DriftFindingStatusResolved DriftFindingStatus = "resolved"
+)
+
+func (s DriftFindingStatus) String() string { return string(s) }
+
+// driftFindingTransitions is the documented drift finding lifecycle table.
+// Existing rows are backfilled from resolved_at: unresolved rows are open,
+// resolved rows are terminal.
+var driftFindingTransitions = map[DriftFindingStatus]map[DriftFindingStatus]struct{}{
+	DriftFindingStatusOpen: {
+		DriftFindingStatusResolved: {},
+	},
+	DriftFindingStatusResolved: {},
+}
+
+// CanTransitionTo reports whether the drift finding state machine permits a
+// status change from s to next. Repository mutations call this before touching
+// the drift_findings row.
+func (s DriftFindingStatus) CanTransitionTo(next DriftFindingStatus) bool {
+	allowed, ok := driftFindingTransitions[s]
+	if !ok {
+		return false
+	}
+	_, ok = allowed[next]
+	return ok
+}
+
+func (s DriftFindingStatus) driftFindingEventType() DriftFindingEventType {
+	switch s {
+	case DriftFindingStatusOpen:
+		return DriftFindingEventTypeOpen
+	case DriftFindingStatusResolved:
+		return DriftFindingEventTypeResolved
+	default:
+		return ""
+	}
+}
 
 // DriftKind is the closed-set classification a reconcile planner emits
 // for a row in the drift_findings table. The string values match the
@@ -179,6 +230,7 @@ const driftFindingListMaxLimit = 200
 type DriftFinding struct {
 	ID                string
 	OrganizationID    string
+	Status            DriftFindingStatus
 	Kind              DriftKind
 	Reason            DriftReason
 	Level             DriftLevel
@@ -198,6 +250,21 @@ type DriftFinding struct {
 	UpdatedAt         time.Time
 }
 
+// DriftFindingTransition is the audited state-machine mutation input for a
+// drift_findings row. Actor and request fields are persisted into the
+// drift_finding_events row emitted atomically with the status update.
+type DriftFindingTransition struct {
+	OrganizationID string
+	FindingID      string
+	NextStatus     DriftFindingStatus
+	ActorID        string
+	ActorKind      string
+	RequestID      string
+	CorrelationID  string
+	Reason         string
+	ResolvedAt     time.Time
+}
+
 // LogValue keeps a stray slog record that captures a DriftFinding safe.
 // Every field on the struct is non-secret by construction (the table's
 // schema cannot hold a token, key, cookie, or rendered env var value),
@@ -213,6 +280,7 @@ func (f DriftFinding) LogValue() slog.Value {
 	return slog.GroupValue(
 		slog.String("id", f.ID),
 		slog.String("organization_id", f.OrganizationID),
+		slog.String("status", f.Status.String()),
 		slog.String("kind", f.Kind.String()),
 		slog.String("reason", f.Reason.String()),
 		slog.String("level", f.Level.String()),
@@ -237,7 +305,7 @@ const driftFindingColumns = `id, organization_id, kind, reason, level,
 	project_id, environment_id, service_id, service_domain_id,
 	env_var_key, dokploy_resource_id, parent_dokploy_id,
 	request_id, correlation_id,
-	detected_at, resolved_at, resolved_by_actor_id,
+	detected_at, status, resolved_at, resolved_by_actor_id,
 	created_at, updated_at`
 
 // DriftFindingRepository is the persistence half of the drift_findings
@@ -459,7 +527,8 @@ func (r *DriftFindingRepository) MarkResolved(ctx context.Context, tx *Tx, organ
 	row := tx.QueryRow(ctx,
 		`UPDATE drift_findings
 		    SET resolved_at = $3,
-		        resolved_by_actor_id = $4
+		        resolved_by_actor_id = $4,
+		        status = 'resolved'
 		  WHERE organization_id = $1
 		    AND id = $2
 		    AND resolved_at IS NULL
@@ -488,7 +557,94 @@ func (r *DriftFindingRepository) MarkResolved(ctx context.Context, tx *Tx, organ
 	if err != nil {
 		return DriftFinding{}, mapWriteError(err, "drift finding could not be resolved due to a schema constraint")
 	}
+	if _, err := NewDriftFindingEventRepository().Append(ctx, tx, DriftFindingEvent{
+		OrganizationID: organizationID,
+		FindingID:      findingID,
+		EventType:      DriftFindingEventTypeResolved,
+		Message:        "resolved",
+		Metadata: map[string]string{
+			"actor_id":       resolverActorID,
+			"actor_kind":     "",
+			"previous_state": DriftFindingStatusOpen.String(),
+			"next_state":     DriftFindingStatusResolved.String(),
+			"reason":         "resolved",
+		},
+	}); err != nil {
+		return DriftFinding{}, err
+	}
 	return updated, nil
+}
+
+// Transition moves a drift finding through the documented drift_finding state
+// machine and appends the matching drift_finding_events row in the same
+// transaction. Invalid edges return E_INVALID_STATE_TRANSITION before any
+// update, so the finding row and timeline remain unchanged.
+func (r *DriftFindingRepository) Transition(ctx context.Context, tx *Tx, in DriftFindingTransition) (DriftFinding, DriftFindingEvent, error) {
+	if tx == nil {
+		return DriftFinding{}, DriftFindingEvent{}, apierr.Internal(errors.New("store: DriftFindingRepository.Transition called with a nil transaction"))
+	}
+	orgID := strings.TrimSpace(in.OrganizationID)
+	findingID := strings.TrimSpace(in.FindingID)
+	next := in.NextStatus
+	if next.driftFindingEventType() == "" {
+		return DriftFinding{}, DriftFindingEvent{}, apierr.InvalidStateTransition("drift_finding", "", next.String())
+	}
+
+	current, err := scanDriftFinding(tx.QueryRow(ctx,
+		`SELECT `+driftFindingColumns+`
+		   FROM drift_findings
+		  WHERE organization_id = $1 AND id = $2
+		  FOR UPDATE`,
+		orgID, findingID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return DriftFinding{}, DriftFindingEvent{}, apierr.NotFound("drift_finding", findingID)
+	}
+	if err != nil {
+		return DriftFinding{}, DriftFindingEvent{}, apierr.StoreUnavailable(err)
+	}
+	if !current.Status.CanTransitionTo(next) {
+		return DriftFinding{}, DriftFindingEvent{}, apierr.InvalidStateTransition("drift_finding", current.Status.String(), next.String())
+	}
+
+	resolvedAt := in.ResolvedAt
+	if next == DriftFindingStatusResolved && resolvedAt.IsZero() {
+		resolvedAt = time.Now().UTC()
+	}
+	actorID := strings.TrimSpace(in.ActorID)
+	actorKind := strings.TrimSpace(in.ActorKind)
+	row := tx.QueryRow(ctx,
+		`UPDATE drift_findings
+		    SET status = $3,
+		        resolved_at = CASE WHEN $3 = 'resolved' THEN $4 ELSE resolved_at END,
+		        resolved_by_actor_id = CASE WHEN $3 = 'resolved' THEN $5 ELSE resolved_by_actor_id END
+		  WHERE organization_id = $1 AND id = $2
+		  RETURNING `+driftFindingColumns,
+		orgID, findingID, next.String(), nullableOccurredAt(resolvedAt), actorID)
+	updated, err := scanDriftFinding(row)
+	if err != nil {
+		return DriftFinding{}, DriftFindingEvent{}, mapWriteError(err, "drift finding could not transition due to a schema constraint")
+	}
+
+	reason := output.NewRedactor().Redact(strings.TrimSpace(in.Reason))
+	event, err := NewDriftFindingEventRepository().Append(ctx, tx, DriftFindingEvent{
+		OrganizationID: orgID,
+		FindingID:      findingID,
+		EventType:      next.driftFindingEventType(),
+		Message:        reason,
+		Metadata: map[string]string{
+			"actor_id":       actorID,
+			"actor_kind":     actorKind,
+			"previous_state": current.Status.String(),
+			"next_state":     next.String(),
+			"reason":         reason,
+		},
+		RequestID:     strings.TrimSpace(in.RequestID),
+		CorrelationID: strings.TrimSpace(in.CorrelationID),
+	})
+	if err != nil {
+		return DriftFinding{}, DriftFindingEvent{}, err
+	}
+	return updated, event, nil
 }
 
 // scanDriftFinding scans one drift_findings row in driftFindingColumns
@@ -501,6 +657,7 @@ func scanDriftFinding(row scanRow) (DriftFinding, error) {
 		kindStr         string
 		reasonStr       string
 		levelStr        string
+		statusStr       string
 		projectID       *string
 		environmentID   *string
 		serviceID       *string
@@ -523,6 +680,7 @@ func scanDriftFinding(row scanRow) (DriftFinding, error) {
 		&f.RequestID,
 		&f.CorrelationID,
 		&f.DetectedAt,
+		&statusStr,
 		&resolvedAt,
 		&f.ResolvedByActorID,
 		&f.CreatedAt,
@@ -533,6 +691,7 @@ func scanDriftFinding(row scanRow) (DriftFinding, error) {
 	f.Kind = DriftKind(kindStr)
 	f.Reason = DriftReason(reasonStr)
 	f.Level = DriftLevel(levelStr)
+	f.Status = DriftFindingStatus(statusStr)
 	if projectID != nil {
 		f.ProjectID = *projectID
 	}
