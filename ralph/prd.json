@@ -6343,7 +6343,7 @@
       ],
       "type": "endpoint-admin",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "Endpoint belongs to the admin backend surface."
     },
     {

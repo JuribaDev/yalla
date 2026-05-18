@@ -188,6 +188,13 @@ shape and a new middleware that does not will fail the build.
    `CapRead` is `ReasonAllowedBySupport` and is intended, not a leak. See
    `organizationIDResolver` + `getOrganizationHandler`.
 
+   For unpathed admin routes whose tenant target is selected by request data,
+   put the authorization-visible `organization_id` in the query string and have
+   the resolver read that query parameter. The JSON body may repeat the same
+   organization id for typed clients, but body-only cross-tenant targets must
+   be rejected in the handler because `RequireAuth` cannot inspect the body
+   without consuming it before validation.
+
    **Deep-resource resolvers** (no `{org_id}` in the path, e.g.
    `/v1/projects/{project_id}`) pull the principal's home `OrganizationID`
    from the request context with `policy.PrincipalFromContext(r.Context())`

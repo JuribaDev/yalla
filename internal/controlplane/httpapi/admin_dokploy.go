@@ -11,10 +11,14 @@ import (
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
 	"github.com/JuribaDev/yalla/internal/controlplane/domain"
 	"github.com/JuribaDev/yalla/internal/controlplane/policy"
+	"github.com/JuribaDev/yalla/internal/controlplane/reconcile"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
+	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
+	"github.com/JuribaDev/yalla/internal/controlplane/validate"
 )
 
 var errNoDriftFindingReader = errors.New("httpapi: no drift finding reader configured")
+var errNoAdminDokployReconciler = errors.New("httpapi: no admin dokploy reconciler configured")
 
 const (
 	driftFindingListDefaultLimit = 50
@@ -28,8 +32,88 @@ type DriftFindingReader interface {
 	ListDriftFindings(ctx context.Context, organizationID string, query store.DriftFindingListQuery) ([]store.DriftFinding, error)
 }
 
+// AdminDokployReconciler is the narrow mutating port for POST
+// /v1/admin/dokploy/reconcile. Implementations own the concrete
+// store/Dokploy/audit transaction boundaries; the HTTP layer only validates
+// the target organization, forwards request correlation, and renders the
+// stable public result.
+type AdminDokployReconciler interface {
+	ReconcileDokploy(ctx context.Context, req AdminDokployReconcileRequest) (AdminDokployReconcileResult, error)
+}
+
+// AdminDokployReconcileRequest carries the validated reconcile target and
+// request correlation data from the HTTP layer into the concrete runner.
+type AdminDokployReconcileRequest struct {
+	OrganizationID string
+	ActorID        string
+	RequestID      string
+	CorrelationID  string
+	DryRun         bool
+}
+
+// AdminDokployReconcileResult is the stable runner summary projected into the
+// POST /v1/admin/dokploy/reconcile response envelope.
+type AdminDokployReconcileResult struct {
+	OrganizationID string
+	DryRun         bool
+	Repaired       int
+	Reviewed       int
+	Quarantined    int
+	Failures       []AdminDokployReconcileFailure
+}
+
+// AdminDokployReconcileFailure is a redaction-safe per-action failure summary.
+type AdminDokployReconcileFailure struct {
+	ActionType string `json:"action_type"`
+	DriftKind  string `json:"drift_kind"`
+	Reason     string `json:"reason"`
+	ServiceID  string `json:"service_id,omitempty"`
+	Error      string `json:"error,omitempty"`
+}
+
+// AdminDokployReconcileResultFromEngine converts the pure reconcile engine's
+// result into the HTTP runner result shape without exposing env-var values.
+func AdminDokployReconcileResultFromEngine(organizationID string, dryRun bool, result reconcile.Result) AdminDokployReconcileResult {
+	failures := make([]AdminDokployReconcileFailure, 0, len(result.Failures))
+	for _, f := range result.Failures {
+		failure := AdminDokployReconcileFailure{
+			ActionType: string(f.Action.Type),
+			DriftKind:  string(f.Action.Kind),
+			Reason:     string(f.Action.Reason),
+			ServiceID:  string(f.Action.Service.ServiceID),
+		}
+		if f.Err != nil {
+			failure.Error = f.Err.Error()
+		}
+		failures = append(failures, failure)
+	}
+	return AdminDokployReconcileResult{
+		OrganizationID: organizationID,
+		DryRun:         dryRun,
+		Repaired:       result.Repaired,
+		Reviewed:       result.Reviewed,
+		Quarantined:    result.Quarantined,
+		Failures:       failures,
+	}
+}
+
 type listAdminDokployDriftPayload struct {
 	Findings []driftFindingResource `json:"findings"`
+}
+
+type adminDokployReconcileRequestBody struct {
+	OrganizationID string `json:"organization_id,omitempty"`
+	DryRun         bool   `json:"dry_run,omitempty"`
+}
+
+type adminDokployReconcilePayload struct {
+	OrganizationID string                         `json:"organization_id"`
+	DryRun         bool                           `json:"dry_run"`
+	Repaired       int                            `json:"repaired"`
+	Reviewed       int                            `json:"reviewed"`
+	Quarantined    int                            `json:"quarantined"`
+	FailureCount   int                            `json:"failure_count"`
+	Failures       []AdminDokployReconcileFailure `json:"failures"`
 }
 
 type driftFindingResource struct {
@@ -134,6 +218,56 @@ func listAdminDokployDriftHandler(reader DriftFindingReader) http.HandlerFunc {
 	}
 }
 
+func reconcileAdminDokployHandler(reconciler AdminDokployReconciler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if reconciler == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoAdminDokployReconciler))
+			return
+		}
+
+		var body adminDokployReconcileRequestBody
+		if err := validate.DecodeJSON(r.Body, &body, 0); err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		orgID, err := parseAdminDokployReconcileTarget(r, p.OrganizationID, body.OrganizationID)
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		result, err := reconciler.ReconcileDokploy(r.Context(), AdminDokployReconcileRequest{
+			OrganizationID: orgID,
+			ActorID:        p.ID,
+			RequestID:      requestID(r),
+			CorrelationID:  telemetry.CorrelationID(r.Context()),
+			DryRun:         body.DryRun,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		if result.OrganizationID == "" {
+			result.OrganizationID = orgID
+		}
+		payload := adminDokployReconcilePayload{
+			OrganizationID: result.OrganizationID,
+			DryRun:         result.DryRun,
+			Repaired:       result.Repaired,
+			Reviewed:       result.Reviewed,
+			Quarantined:    result.Quarantined,
+			FailureCount:   len(result.Failures),
+			Failures:       result.Failures,
+		}
+		apienvelope.WriteData(w, http.StatusAccepted, requestID(r), payload)
+	}
+}
+
 func parseDriftFindingListQuery(r *http.Request, defaultOrganizationID string) (string, store.DriftFindingListQuery, error) {
 	values := r.URL.Query()
 	orgID := values.Get("organization_id")
@@ -172,4 +306,26 @@ func parseDriftFindingListQuery(r *http.Request, defaultOrganizationID string) (
 		return "", store.DriftFindingListQuery{}, apierr.InvalidInput(apierr.FieldViolation{Field: "service_id", Reason: "requires project_id and environment_id"})
 	}
 	return orgID, query, nil
+}
+
+func parseAdminDokployReconcileTarget(r *http.Request, defaultOrganizationID, bodyOrganizationID string) (string, error) {
+	queryOrganizationID := r.URL.Query().Get("organization_id")
+	orgID := queryOrganizationID
+	if orgID == "" {
+		orgID = defaultOrganizationID
+	}
+	if bodyOrganizationID != "" {
+		if queryOrganizationID != "" && bodyOrganizationID != queryOrganizationID {
+			return "", apierr.InvalidInput(apierr.FieldViolation{Field: "organization_id", Reason: "must match query organization_id"})
+		}
+		if queryOrganizationID == "" && bodyOrganizationID != defaultOrganizationID {
+			return "", apierr.InvalidInput(apierr.FieldViolation{Field: "organization_id", Reason: "must be supplied as a query parameter for cross-tenant reconciliation"})
+		}
+		orgID = bodyOrganizationID
+	}
+	parsed, err := domain.ParseID(orgID)
+	if err != nil || parsed.Kind() != domain.KindOrganization {
+		return "", apierr.InvalidInput(apierr.FieldViolation{Field: "organization_id", Reason: "must be a valid organization id"})
+	}
+	return orgID, nil
 }

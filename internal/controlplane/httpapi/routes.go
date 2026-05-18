@@ -198,6 +198,7 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 	var jobRetrier JobRetrier
 	var jobCanceler JobCanceler
 	var driftFindings DriftFindingReader
+	var adminDokployReconciler AdminDokployReconciler
 	for _, opt := range routeOptions {
 		if v, ok := opt.(PreviewCreator); ok {
 			previewCreator = v
@@ -213,6 +214,9 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 		}
 		if v, ok := opt.(DriftFindingReader); ok {
 			driftFindings = v
+		}
+		if v, ok := opt.(AdminDokployReconciler); ok {
+			adminDokployReconciler = v
 		}
 	}
 
@@ -2072,6 +2076,22 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			},
 			resolver: adminDokployDriftResolver,
 			handler:  listAdminDokployDriftHandler(driftFindings),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodPost,
+				Path:               "/v1/admin/dokploy/reconcile",
+				OperationID:        "reconcileAdminDokploy",
+				Summary:            "Run Dokploy reconciliation",
+				Description:        "Runs the support-only reconciliation workflow for the organization named by the optional organization_id query parameter, defaulting to the authenticated principal's home organization. The JSON body may repeat organization_id for typed clients and may set dry_run. Cross-tenant reconciliation must name the target organization in the query parameter so action admin.reconcile is authorized against the real tenant before any reconcile work runs.",
+				Tags:               []string{tagAdmin},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionAdminReconcile),
+				SuccessStatus:      http.StatusAccepted,
+				SuccessDescription: "The reconciliation run summary.",
+			},
+			resolver: adminDokployDriftResolver,
+			handler:  reconcileAdminDokployHandler(adminDokployReconciler),
 		},
 		{
 			endpoint: openapi.Endpoint{

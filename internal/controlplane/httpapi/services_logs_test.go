@@ -101,6 +101,7 @@ func listServiceLogs(handler http.Handler, serviceID, token, rawQuery string) *h
 		target += "?" + rawQuery
 	}
 	req := httptest.NewRequest(http.MethodGet, target, nil)
+	req.Header.Set("X-Request-Id", "req_service_logs")
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}

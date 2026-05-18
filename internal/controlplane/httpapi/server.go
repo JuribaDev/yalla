@@ -124,6 +124,7 @@ func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter, me
 	var previewCreator PreviewCreator
 	var jobReader JobReader
 	var driftFindings DriftFindingReader
+	var adminDokployReconciler AdminDokployReconciler
 	for _, opt := range routeOptions {
 		switch v := opt.(type) {
 		case PreviewCreator:
@@ -132,6 +133,8 @@ func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter, me
 			jobReader = v
 		case DriftFindingReader:
 			driftFindings = v
+		case AdminDokployReconciler:
+			adminDokployReconciler = v
 		}
 	}
 
@@ -143,7 +146,7 @@ func NewHandler(build runtime.BuildInfo, readiness runtime.ReadinessReporter, me
 		backupReporter = backup.Unconfigured()
 	}
 
-	table := newRouteTable(build, readiness, meta, backupReporter, orgs, creator, updater, deleter, members, memberCreator, memberUpdater, memberRemover, limits, limitsUpdater, usage, auditEvents, orgVariables, orgVariableReplacer, orgVariablePatcher, orgVariableDeleter, apiKeys, apiKeyCreator, apiKeyUpdater, apiKeyRevoker, apiKeyRotator, projects, projectCreator, projectUpdater, projectDeleter, projectRestorer, projectGrants, projectGrantReplacer, projectVariables, projectVariableReplacer, projectEnvironments, environmentCreator, environmentReader, environmentUpdater, environmentDeleter, environmentCloner, environmentGrants, environmentGrantReplacer, environmentVariables, environmentVariableReplacer, environmentServices, environmentServiceCreator, services, serviceUpdater, serviceDeleter, serviceRestorer, serviceRestarter, serviceStarter, serviceStopper, serviceLogReader, serviceMetricsReader, serviceDomainReader, serviceDomainCreator, serviceDomainUpdater, serviceDomainDeleter, serviceBackupReader, serviceBackupCreator, serviceBackupUpdater, serviceBackupRunner, serviceBackupDeleter, serviceVariables, serviceVariableReplacer, deploymentCreator, deploymentLister, deploymentGetter, deploymentCanceler, deploymentRollbacker, breakGlass, previewCreator, jobReader, driftFindings)
+	table := newRouteTable(build, readiness, meta, backupReporter, orgs, creator, updater, deleter, members, memberCreator, memberUpdater, memberRemover, limits, limitsUpdater, usage, auditEvents, orgVariables, orgVariableReplacer, orgVariablePatcher, orgVariableDeleter, apiKeys, apiKeyCreator, apiKeyUpdater, apiKeyRevoker, apiKeyRotator, projects, projectCreator, projectUpdater, projectDeleter, projectRestorer, projectGrants, projectGrantReplacer, projectVariables, projectVariableReplacer, projectEnvironments, environmentCreator, environmentReader, environmentUpdater, environmentDeleter, environmentCloner, environmentGrants, environmentGrantReplacer, environmentVariables, environmentVariableReplacer, environmentServices, environmentServiceCreator, services, serviceUpdater, serviceDeleter, serviceRestorer, serviceRestarter, serviceStarter, serviceStopper, serviceLogReader, serviceMetricsReader, serviceDomainReader, serviceDomainCreator, serviceDomainUpdater, serviceDomainDeleter, serviceBackupReader, serviceBackupCreator, serviceBackupUpdater, serviceBackupRunner, serviceBackupDeleter, serviceVariables, serviceVariableReplacer, deploymentCreator, deploymentLister, deploymentGetter, deploymentCanceler, deploymentRollbacker, breakGlass, previewCreator, jobReader, driftFindings, adminDokployReconciler)
 
 	// Generate the OpenAPI document once, from the route table, at startup.
 	doc := openAPIDocument(build, table)
