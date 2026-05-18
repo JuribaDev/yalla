@@ -6229,8 +6229,8 @@
       ],
       "type": "endpoint-jobs",
       "priority": 2,
-      "passes": false,
-      "notes": "Endpoint belongs to the jobs backend surface."
+      "passes": true,
+      "notes": "Implemented POST /v1/jobs/{job_id}/cancel with action job.cancel, persisted job-scope authorization via the existing bare job resolver, typed request/response DTOs, state-machine-backed transition to cancelled for queued/running/retrying jobs, allowed audit events in the same transaction, redacted reason metadata, OpenAPI registration, HTTP unit coverage, and Postgres-backed transition/tenant/state guard coverage."
     },
     {
       "id": "BE-0281",

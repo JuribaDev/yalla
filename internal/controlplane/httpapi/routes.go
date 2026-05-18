@@ -196,6 +196,7 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 	var previewCreator PreviewCreator
 	var jobReader JobReader
 	var jobRetrier JobRetrier
+	var jobCanceler JobCanceler
 	for _, opt := range routeOptions {
 		if v, ok := opt.(PreviewCreator); ok {
 			previewCreator = v
@@ -205,6 +206,9 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 		}
 		if v, ok := opt.(JobRetrier); ok {
 			jobRetrier = v
+		}
+		if v, ok := opt.(JobCanceler); ok {
+			jobCanceler = v
 		}
 	}
 
@@ -1372,6 +1376,26 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			},
 			resolver: jobIDResolver(jobReader),
 			handler:  retryJobHandler(jobRetrier),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodPost,
+				Path:           "/v1/jobs/{job_id}/cancel",
+				OperationID:    "cancelJob",
+				Summary:        "Cancel a provisioning job",
+				Description:    "Cancels the queued, running, or retrying provisioning job named by the {job_id} path parameter. The authorization resolver first resolves the job inside the authenticated principal's tenant and evaluates action job.cancel against the row's owning scope (organization, project, environment, or service) so scoped deploy grants can cancel only jobs they actually cover. The optional request body reason is redacted before persistence. A cross-tenant or unknown job id reaches the tenant-scoped repository lookup as the principal's home organization and surfaces as a deterministic 404, never another tenant's job. Terminal jobs reject cancellation through the provisioning-job state machine. The response carries source-of-truth job metadata only: structural resource ids, closed-set status, retry/lease bookkeeping, redacted error_summary, non-secret payload references, and request/correlation ids.",
+				Tags:           []string{tagJobs},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionJobCancel),
+				PathParams: []openapi.PathParam{{
+					Name:        "job_id",
+					Description: "The id of the provisioning job to cancel.",
+				}},
+				SuccessStatus:      http.StatusAccepted,
+				SuccessDescription: "The cancelled provisioning job.",
+			},
+			resolver: jobIDResolver(jobReader),
+			handler:  cancelJobHandler(jobCanceler),
 		},
 		{
 			endpoint: openapi.Endpoint{

@@ -40,6 +40,19 @@ type RetryProvisioningJobInput struct {
 	CorrelationID  string
 }
 
+// CancelProvisioningJobInput names a queued, running, or retrying job to move
+// to the terminal cancelled state through the customer-facing API.
+type CancelProvisioningJobInput struct {
+	OrganizationID string
+	JobID          string
+	Reason         string
+	ActorID        string
+	ActorKind      string
+	ActorOrgID     string
+	RequestID      string
+	CorrelationID  string
+}
+
 // NewJobReader builds a JobReader over store.
 func NewJobReader(s *Store) (*JobReader, error) {
 	if s == nil {
@@ -210,6 +223,67 @@ func (r *JobReader) RetryJob(ctx context.Context, in RetryProvisioningJobInput) 
 	return out, nil
 }
 
+// CancelJob transitions a cancellable provisioning job to cancelled and
+// appends the job.cancel audit record in the same transaction. The underlying
+// JobRepository state machine owns which source states are cancellable.
+func (r *JobReader) CancelJob(ctx context.Context, in CancelProvisioningJobInput) (ProvisioningJob, error) {
+	validated, err := validateCancelProvisioningJobInput(in)
+	if err != nil {
+		return ProvisioningJob{}, err
+	}
+
+	var out ProvisioningJob
+	err = r.store.Write(ctx, func(ctx context.Context, tx *Tx) error {
+		cancelled, err := r.jobs.Transition(ctx, tx, validated.OrganizationID, validated.JobID, JobStatusCancelled, JobTransition{
+			ErrorSummary:  validated.Reason,
+			Reason:        validated.Reason,
+			ActorID:       validated.ActorID,
+			ActorKind:     validated.ActorKind,
+			RequestID:     validated.RequestID,
+			CorrelationID: validated.CorrelationID,
+		})
+		if err != nil {
+			return err
+		}
+		event := AuditEvent{
+			OrganizationID: validated.ActorOrgID,
+			ActorID:        validated.ActorID,
+			ActorKind:      validated.ActorKind,
+			Action:         "job.cancel",
+			ResourceKind:   string(domain.KindJob),
+			ResourceID:     cancelled.ID,
+			Decision:       AuditDecisionAllowed,
+			Reason:         "authorization granted for job.cancel",
+			RequestID:      validated.RequestID,
+			CorrelationID:  validated.CorrelationID,
+			Metadata: map[string]string{
+				"job_id":   cancelled.ID,
+				"job_type": cancelled.JobType,
+				"status":   cancelled.Status.String(),
+				"reason":   redactJobError(validated.Reason),
+			},
+		}
+		if cancelled.ProjectID != "" {
+			event.Metadata["project_id"] = cancelled.ProjectID
+		}
+		if cancelled.EnvironmentID != "" {
+			event.Metadata["environment_id"] = cancelled.EnvironmentID
+		}
+		if cancelled.ServiceID != "" {
+			event.Metadata["service_id"] = cancelled.ServiceID
+		}
+		if _, err := r.audit.Append(ctx, tx, event); err != nil {
+			return err
+		}
+		out = cancelled
+		return nil
+	})
+	if err != nil {
+		return ProvisioningJob{}, err
+	}
+	return out, nil
+}
+
 // RetryableByRequest reports whether a customer-facing POST /v1/jobs/{id}/retry
 // may re-issue this terminal row as a new queued job.
 func (s JobStatus) RetryableByRequest() bool {
@@ -256,6 +330,38 @@ func validateRetryProvisioningJobInput(in RetryProvisioningJobInput) (RetryProvi
 	}
 	if len(violations) > 0 {
 		return RetryProvisioningJobInput{}, apierr.InvalidInput(violations...)
+	}
+	return in, nil
+}
+
+func validateCancelProvisioningJobInput(in CancelProvisioningJobInput) (CancelProvisioningJobInput, error) {
+	in.OrganizationID = strings.TrimSpace(in.OrganizationID)
+	in.JobID = strings.TrimSpace(in.JobID)
+	in.Reason = strings.TrimSpace(in.Reason)
+	in.ActorID = strings.TrimSpace(in.ActorID)
+	in.ActorKind = strings.TrimSpace(in.ActorKind)
+	in.ActorOrgID = strings.TrimSpace(in.ActorOrgID)
+	in.RequestID = strings.TrimSpace(in.RequestID)
+	in.CorrelationID = strings.TrimSpace(in.CorrelationID)
+
+	var violations []apierr.FieldViolation
+	if in.OrganizationID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "organization_id", Reason: "must not be blank"})
+	}
+	if in.JobID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "job_id", Reason: "must not be blank"})
+	}
+	if len(in.Reason) > 512 {
+		violations = append(violations, apierr.FieldViolation{Field: "reason", Reason: "must be at most 512 characters"})
+	}
+	if in.ActorOrgID == "" {
+		return CancelProvisioningJobInput{}, apierr.Internal(errors.New("store: CancelJob requires an actor organization for the audit record"))
+	}
+	if in.ActorID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "requested_by", Reason: "must not be blank"})
+	}
+	if len(violations) > 0 {
+		return CancelProvisioningJobInput{}, apierr.InvalidInput(violations...)
 	}
 	return in, nil
 }

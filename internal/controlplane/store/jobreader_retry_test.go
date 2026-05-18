@@ -158,3 +158,111 @@ func TestJobReaderRetryJobTenantAndStateGuards(t *testing.T) {
 		t.Fatalf("RetryJob(succeeded) code = %s, want %s; err=%v", ye.Code, yerr.CodeConflict, err)
 	}
 }
+
+func TestJobReaderCancelJobTransitionsAndAudits(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	repo := store.NewJobRepository()
+	reader, err := store.NewJobReader(s)
+	if err != nil {
+		t.Fatalf("new job reader: %v", err)
+	}
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	org := seedOrg(t, db, f, "CancelOrg")
+	proj := seedProject(t, db, f, org, "cancel-api")
+	source := insertJob(ctx, t, s, repo, func() store.ProvisioningJob {
+		j := jobFixture(org.ID, "cancel_source")
+		j.ProjectID = proj.ID
+		j.Payload = map[string]string{"project_id": proj.ID}
+		return j
+	}())
+
+	cancelled, err := reader.CancelJob(ctx, store.CancelProvisioningJobInput{
+		OrganizationID: source.OrganizationID,
+		JobID:          source.ID,
+		Reason:         "operator cancelled token=secret",
+		ActorID:        "usr_cancel",
+		ActorKind:      "usr",
+		ActorOrgID:     org.ID,
+		RequestID:      "req_cancel",
+		CorrelationID:  "corr_cancel",
+	})
+	if err != nil {
+		t.Fatalf("cancel job: %v", err)
+	}
+	if cancelled.ID != source.ID || cancelled.Status != store.JobStatusCancelled || cancelled.FinishedAt.IsZero() {
+		t.Fatalf("cancelled job = %+v, want same row in cancelled terminal state", cancelled)
+	}
+	if cancelled.ErrorSummary == "" || strings.Contains(cancelled.ErrorSummary, "token=secret") {
+		t.Fatalf("cancelled error summary = %q, want redacted non-empty reason", cancelled.ErrorSummary)
+	}
+
+	var audits []store.AuditEvent
+	if err := s.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		var readErr error
+		audits, readErr = store.NewAuditRepository().ListByOrganization(ctx, q, org.ID, 10)
+		return readErr
+	}); err != nil {
+		t.Fatalf("read audit events: %v", err)
+	}
+	if len(audits) != 1 {
+		t.Fatalf("audit count = %d, want 1 allowed mutation audit", len(audits))
+	}
+	audit := audits[0]
+	if audit.Action != "job.cancel" || audit.ResourceID != source.ID || audit.Metadata["job_id"] != source.ID {
+		t.Fatalf("audit = %+v, want job.cancel for source", audit)
+	}
+	if got := audit.Metadata["reason"]; strings.Contains(got, "token=secret") {
+		t.Fatalf("audit reason leaked secret: %q", got)
+	}
+}
+
+func TestJobReaderCancelJobTenantAndStateGuards(t *testing.T) {
+	t.Parallel()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	repo := store.NewJobRepository()
+	reader, err := store.NewJobReader(s)
+	if err != nil {
+		t.Fatalf("new job reader: %v", err)
+	}
+	f := testutil.NewFactory(t)
+	ctx := context.Background()
+
+	orgA := seedOrg(t, db, f, "CancelA")
+	orgB := seedOrg(t, db, f, "CancelB")
+	jobA := insertJob(ctx, t, s, repo, jobFixture(orgA.ID, "cancel_tenant_a"))
+	running := transitionJob(ctx, t, s, repo, orgA.ID, jobA.ID, store.JobStatusRunning, store.JobTransition{
+		LeaseOwner:    "worker-1",
+		LeaseDuration: time.Minute,
+		Now:           time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC),
+	})
+	succeeded := transitionJob(ctx, t, s, repo, orgA.ID, running.ID, store.JobStatusSucceeded, store.JobTransition{
+		Now: time.Date(2026, 5, 18, 12, 1, 0, 0, time.UTC),
+	})
+
+	_, err = reader.CancelJob(ctx, store.CancelProvisioningJobInput{
+		OrganizationID: orgB.ID,
+		JobID:          succeeded.ID,
+		ActorID:        "usr_cancel",
+		ActorKind:      "usr",
+		ActorOrgID:     orgB.ID,
+	})
+	if ye := yerr.From(err); ye.Code != yerr.CodeNotFound {
+		t.Fatalf("CancelJob(cross tenant) code = %s, want %s; err=%v", ye.Code, yerr.CodeNotFound, err)
+	}
+
+	_, err = reader.CancelJob(ctx, store.CancelProvisioningJobInput{
+		OrganizationID: orgA.ID,
+		JobID:          succeeded.ID,
+		ActorID:        "usr_cancel",
+		ActorKind:      "usr",
+		ActorOrgID:     orgA.ID,
+	})
+	if ye := yerr.From(err); ye.Code != yerr.CodeInvalidStateTransition {
+		t.Fatalf("CancelJob(succeeded) code = %s, want %s; err=%v", ye.Code, yerr.CodeInvalidStateTransition, err)
+	}
+}

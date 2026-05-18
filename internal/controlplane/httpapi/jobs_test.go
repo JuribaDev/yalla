@@ -22,17 +22,20 @@ import (
 )
 
 type fakeJobReader struct {
-	jobs       []store.ProvisioningJob
-	job        store.ProvisioningJob
-	retryJob   store.ProvisioningJob
-	err        error
-	callCount  *int
-	got        *store.ListProvisioningJobsInput
-	getCalls   *int
-	getOrgID   *string
-	getJobID   *string
-	retryCalls *int
-	retryGot   *store.RetryProvisioningJobInput
+	jobs        []store.ProvisioningJob
+	job         store.ProvisioningJob
+	retryJob    store.ProvisioningJob
+	cancelJob   store.ProvisioningJob
+	err         error
+	callCount   *int
+	got         *store.ListProvisioningJobsInput
+	getCalls    *int
+	getOrgID    *string
+	getJobID    *string
+	retryCalls  *int
+	retryGot    *store.RetryProvisioningJobInput
+	cancelCalls *int
+	cancelGot   *store.CancelProvisioningJobInput
 }
 
 func (f fakeJobReader) ListJobs(_ context.Context, in store.ListProvisioningJobsInput) ([]store.ProvisioningJob, error) {
@@ -76,6 +79,22 @@ func (f fakeJobReader) RetryJob(_ context.Context, in store.RetryProvisioningJob
 	}
 	if f.retryJob.ID != "" {
 		return f.retryJob, nil
+	}
+	return f.job, nil
+}
+
+func (f fakeJobReader) CancelJob(_ context.Context, in store.CancelProvisioningJobInput) (store.ProvisioningJob, error) {
+	if f.cancelCalls != nil {
+		*f.cancelCalls = *f.cancelCalls + 1
+	}
+	if f.cancelGot != nil {
+		*f.cancelGot = in
+	}
+	if f.err != nil {
+		return store.ProvisioningJob{}, f.err
+	}
+	if f.cancelJob.ID != "" {
+		return f.cancelJob, nil
 	}
 	return f.job, nil
 }
@@ -856,6 +875,239 @@ func TestRetryJobDocumentsRouteInOpenAPI(t *testing.T) {
 	}
 	if post.RequiredAction != string(policy.ActionJobRetry) {
 		t.Errorf("x-required-action = %q, want %q", post.RequiredAction, policy.ActionJobRetry)
+	}
+	if _, ok := post.Responses["202"]; !ok {
+		t.Error("responses[202] missing")
+	}
+	if len(post.PathParams) == 0 || post.PathParams[0].Name != "job_id" {
+		t.Fatalf("path params = %+v, want job_id", post.PathParams)
+	}
+}
+
+func TestCancelJobSuccessAuthorizesAgainstResolvedJobScope(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 18, 15, 0, 0, 0, time.UTC)
+	var getCalls, cancelCalls int
+	var cancelGot store.CancelProvisioningJobInput
+	reader := fakeJobReader{
+		getCalls:    &getCalls,
+		cancelCalls: &cancelCalls,
+		cancelGot:   &cancelGot,
+		job: store.ProvisioningJob{
+			ID:             "job_0123456789abcdefghjkmnpqrs",
+			OrganizationID: "org_jobs",
+			ProjectID:      "proj_jobs",
+			EnvironmentID:  "env_jobs",
+			ServiceID:      "svc_jobs",
+			Status:         store.JobStatusQueued,
+		},
+		cancelJob: store.ProvisioningJob{
+			ID:             "job_0123456789abcdefghjkmnpqrs",
+			OrganizationID: "org_jobs",
+			JobType:        "ensure_application_service",
+			ProjectID:      "proj_jobs",
+			EnvironmentID:  "env_jobs",
+			ServiceID:      "svc_jobs",
+			DesiredVersion: 7,
+			IdempotencyKey: "create-service",
+			Status:         store.JobStatusCancelled,
+			MaxAttempts:    20,
+			NextRunAt:      now,
+			ErrorSummary:   "operator cancelled",
+			Payload:        map[string]string{"service_id": "svc_jobs"},
+			RequestID:      "req_original",
+			CorrelationID:  "corr_original",
+			CreatedAt:      now,
+			UpdatedAt:      now,
+			FinishedAt:     now,
+		},
+	}
+	principal := policy.Principal{
+		ID: "sa_jobs", Kind: domain.KindServiceAccount, OrganizationID: "org_jobs",
+		Grants: []policy.Grant{{
+			Scope: policy.Scope{OrganizationID: "org_jobs", ProjectID: "proj_jobs", EnvironmentID: "env_jobs", ServiceID: "svc_jobs"},
+			Role:  policy.RoleCI,
+		}},
+	}
+	h := newJobsTestHandler(fakeAuthenticator{identity: auth.Identity{Principal: principal}}, reader)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/jobs/job_0123456789abcdefghjkmnpqrs/cancel", strings.NewReader(`{"reason":"operator cancelled"}`))
+	req.Header.Set("Authorization", "Bearer test")
+	req.Header.Set("X-Request-Id", "req_jobs_cancel")
+	req.Header.Set("X-Correlation-Id", "corr_jobs_cancel")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body %s", rec.Code, rec.Body.String())
+	}
+	if getCalls != 1 {
+		t.Fatalf("GetJob calls = %d, want resolver lookup only", getCalls)
+	}
+	if cancelCalls != 1 {
+		t.Fatalf("CancelJob calls = %d, want 1", cancelCalls)
+	}
+	if cancelGot.OrganizationID != "org_jobs" || cancelGot.JobID != "job_0123456789abcdefghjkmnpqrs" || cancelGot.Reason != "operator cancelled" {
+		t.Fatalf("CancelJob input = %+v, want principal org, path job id, and reason", cancelGot)
+	}
+	if cancelGot.ActorID != "sa_jobs" || cancelGot.ActorKind != string(domain.KindServiceAccount) || cancelGot.ActorOrgID != "org_jobs" {
+		t.Fatalf("CancelJob actor = (%q,%q,%q), want authenticated principal", cancelGot.ActorID, cancelGot.ActorKind, cancelGot.ActorOrgID)
+	}
+	if cancelGot.RequestID != "req_jobs_cancel" || cancelGot.CorrelationID != "corr_jobs_cancel" {
+		t.Fatalf("CancelJob correlation = (%q,%q), want inbound ids", cancelGot.RequestID, cancelGot.CorrelationID)
+	}
+	var env struct {
+		SchemaVersion string `json:"schema_version"`
+		OK            bool   `json:"ok"`
+		RequestID     string `json:"request_id"`
+		Data          struct {
+			CancelledJobID string `json:"cancelled_job_id"`
+			Job            struct {
+				ID         string  `json:"id"`
+				Status     string  `json:"status"`
+				RequestID  string  `json:"request_id"`
+				FinishedAt *string `json:"finished_at"`
+			} `json:"job"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode response: %v; body %s", err, rec.Body.String())
+	}
+	if env.SchemaVersion != "yalla.output.v1" || !env.OK || env.RequestID != "req_jobs_cancel" {
+		t.Fatalf("envelope = %+v", env)
+	}
+	if env.Data.CancelledJobID != "job_0123456789abcdefghjkmnpqrs" || env.Data.Job.ID != "job_0123456789abcdefghjkmnpqrs" || env.Data.Job.Status != "cancelled" || env.Data.Job.FinishedAt == nil {
+		t.Fatalf("cancel payload = %+v", env.Data)
+	}
+}
+
+func TestCancelJobInvalidRequestRejectedBeforeCanceler(t *testing.T) {
+	t.Parallel()
+
+	var cancelCalls int
+	reader := fakeJobReader{cancelCalls: &cancelCalls, job: store.ProvisioningJob{
+		ID:             "job_0123456789abcdefghjkmnpqrs",
+		OrganizationID: "org_jobs",
+		Status:         store.JobStatusQueued,
+	}}
+	h := newJobsTestHandler(fakeAuthenticator{identity: auth.Identity{Principal: policy.Principal{
+		ID: "usr_jobs", Kind: domain.KindUser, OrganizationID: "org_jobs", Role: policy.RoleOwner,
+	}}}, reader)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/jobs/job_0123456789abcdefghjkmnpqrs/cancel", strings.NewReader(`{"reason":123}`))
+	req.Header.Set("Authorization", "Bearer test")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
+	}
+	if cancelCalls != 0 {
+		t.Fatalf("CancelJob calls = %d, want 0", cancelCalls)
+	}
+	decodeError(t, rec, string(yerr.CodeInvalidInput))
+}
+
+func TestCancelJobUnauthenticatedSkipsResolverAndCanceler(t *testing.T) {
+	t.Parallel()
+
+	var getCalls, cancelCalls int
+	h := newJobsTestHandler(fakeAuthenticator{err: auth.ErrNoCredentials}, fakeJobReader{getCalls: &getCalls, cancelCalls: &cancelCalls})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/jobs/job_0123456789abcdefghjkmnpqrs/cancel", strings.NewReader(`{"reason":"operator cancelled"}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401; body %s", rec.Code, rec.Body.String())
+	}
+	if getCalls != 0 || cancelCalls != 0 {
+		t.Fatalf("calls = (get=%d cancel=%d), want none", getCalls, cancelCalls)
+	}
+	decodeError(t, rec, string(yerr.CodeAuth))
+}
+
+func TestCancelJobUnauthorizedWhenGrantDoesNotCoverResolvedScope(t *testing.T) {
+	t.Parallel()
+
+	var getCalls, cancelCalls int
+	reader := fakeJobReader{getCalls: &getCalls, cancelCalls: &cancelCalls, job: store.ProvisioningJob{
+		ID:             "job_0123456789abcdefghjkmnpqrs",
+		OrganizationID: "org_jobs",
+		ProjectID:      "proj_jobs",
+		Status:         store.JobStatusQueued,
+	}}
+	principal := policy.Principal{
+		ID: "sa_jobs", Kind: domain.KindServiceAccount, OrganizationID: "org_jobs",
+		Grants: []policy.Grant{{Scope: policy.Scope{OrganizationID: "org_jobs", ProjectID: "proj_sibling"}, Role: policy.RoleAdmin}},
+	}
+	h := newJobsTestHandler(fakeAuthenticator{identity: auth.Identity{Principal: principal}}, reader)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/jobs/job_0123456789abcdefghjkmnpqrs/cancel", strings.NewReader(`{"reason":"operator cancelled"}`))
+	req.Header.Set("Authorization", "Bearer test")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body %s", rec.Code, rec.Body.String())
+	}
+	if getCalls != 1 || cancelCalls != 0 {
+		t.Fatalf("calls = (get=%d cancel=%d), want resolver only", getCalls, cancelCalls)
+	}
+	decodeError(t, rec, string(yerr.CodeForbidden))
+}
+
+func TestCancelJobNotFoundPropagatesEnvelope(t *testing.T) {
+	t.Parallel()
+
+	h := newJobsTestHandler(fakeAuthenticator{identity: auth.Identity{Principal: policy.Principal{
+		ID: "usr_jobs", Kind: domain.KindUser, OrganizationID: "org_jobs", Role: policy.RoleOwner,
+	}}}, fakeJobReader{err: apierr.NotFound("provisioning job", "job_0123456789abcdefghjkmnpqrt")})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/jobs/job_0123456789abcdefghjkmnpqrt/cancel", strings.NewReader(`{"reason":"operator cancelled"}`))
+	req.Header.Set("Authorization", "Bearer test")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body %s", rec.Code, rec.Body.String())
+	}
+	decodeError(t, rec, string(yerr.CodeNotFound))
+}
+
+func TestCancelJobDocumentsRouteInOpenAPI(t *testing.T) {
+	t.Parallel()
+
+	h := newJobsTestHandler(fakeAuthenticator{}, fakeJobReader{})
+
+	req := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("openapi.json status = %d, want 200; body %s", rec.Code, rec.Body.String())
+	}
+	var doc struct {
+		Paths map[string]map[string]struct {
+			OperationID    string                  `json:"operationId"`
+			RequiredAction string                  `json:"x-required-action"`
+			PathParams     []struct{ Name string } `json:"parameters"`
+			Responses      map[string]struct{}     `json:"responses"`
+		} `json:"paths"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("decode openapi.json: %v; body %s", err, rec.Body.String())
+	}
+	post, ok := doc.Paths["/v1/jobs/{job_id}/cancel"]["post"]
+	if !ok {
+		t.Fatalf("POST /v1/jobs/{job_id}/cancel missing from openapi.json: %s", rec.Body.String())
+	}
+	if post.OperationID != "cancelJob" {
+		t.Errorf("operationId = %q, want cancelJob", post.OperationID)
+	}
+	if post.RequiredAction != string(policy.ActionJobCancel) {
+		t.Errorf("x-required-action = %q, want %q", post.RequiredAction, policy.ActionJobCancel)
 	}
 	if _, ok := post.Responses["202"]; !ok {
 		t.Error("responses[202] missing")

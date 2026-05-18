@@ -18,6 +18,7 @@ import (
 
 var errNoJobReader = errors.New("httpapi: no job reader configured")
 var errNoJobRetrier = errors.New("httpapi: no job retrier configured")
+var errNoJobCanceler = errors.New("httpapi: no job canceler configured")
 
 const (
 	jobListDefaultLimit = 50
@@ -36,6 +37,12 @@ type JobRetrier interface {
 	RetryJob(ctx context.Context, in store.RetryProvisioningJobInput) (store.ProvisioningJob, error)
 }
 
+// JobCanceler is the narrow mutation port POST /v1/jobs/{job_id}/cancel
+// depends on. *store.JobReader satisfies it in production; tests use fakes.
+type JobCanceler interface {
+	CancelJob(ctx context.Context, in store.CancelProvisioningJobInput) (store.ProvisioningJob, error)
+}
+
 type listJobsPayload struct {
 	Jobs []jobResource `json:"jobs"`
 }
@@ -49,9 +56,18 @@ type retryJobRequest struct {
 	Reason         string `json:"reason,omitempty"`
 }
 
+type cancelJobRequest struct {
+	Reason string `json:"reason,omitempty"`
+}
+
 type retryJobPayload struct {
 	Job          jobResource `json:"job"`
 	RetriedJobID string      `json:"retried_job_id"`
+}
+
+type cancelJobPayload struct {
+	Job            jobResource `json:"job"`
+	CancelledJobID string      `json:"cancelled_job_id"`
 }
 
 type jobResource struct {
@@ -265,6 +281,53 @@ func retryJobHandler(retrier JobRetrier) http.HandlerFunc {
 		apienvelope.WriteData(w, http.StatusAccepted, requestID(r), retryJobPayload{
 			Job:          jobResourceOf(job),
 			RetriedJobID: jobID,
+		})
+	}
+}
+
+func cancelJobHandler(canceler JobCanceler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if canceler == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoJobCanceler))
+			return
+		}
+		jobID := r.PathValue("job_id")
+		id, err := domain.ParseID(jobID)
+		if err != nil || id.Kind() != domain.KindJob {
+			apienvelope.WriteError(w, requestID(r), apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "job_id",
+				Reason: "must be a valid job id",
+			}))
+			return
+		}
+		var req cancelJobRequest
+		if err := validate.DecodeJSON(r.Body, &req, 0); err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		correlation := telemetry.FromContext(r.Context())
+		job, err := canceler.CancelJob(r.Context(), store.CancelProvisioningJobInput{
+			OrganizationID: p.OrganizationID,
+			JobID:          jobID,
+			Reason:         req.Reason,
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		apienvelope.WriteData(w, http.StatusAccepted, requestID(r), cancelJobPayload{
+			Job:            jobResourceOf(job),
+			CancelledJobID: jobID,
 		})
 	}
 }
