@@ -6419,8 +6419,8 @@
       ],
       "type": "test-admin",
       "priority": 2,
-      "passes": false,
-      "notes": "Contract coverage for POST /v1/admin/dokploy/import."
+      "passes": true,
+      "notes": "Added focused contract tests for POST /v1/admin/dokploy/import covering response-writer-only output, exact request_id propagation on validation/auth error envelopes, denied-request log redaction, and dependency-cause redaction."
     },
     {
       "id": "BE-0291",
