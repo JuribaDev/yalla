@@ -122,6 +122,11 @@ const JobTypeSyncDomains = "sync_domains"
 // effective Yalla variable hierarchy into a Dokploy service environment.
 const JobTypeSyncVariables = "sync_variables"
 
+// JobTypeReconcileService is the durable provisioning job that converges one
+// service-scoped desired state into Dokploy: service mapping, variables, and
+// domains.
+const JobTypeReconcileService = "reconcile_service"
+
 // JobTypeRunBackup is the durable provisioning job that triggers one
 // service_backups policy against the mapped Dokploy service.
 const JobTypeRunBackup = "run_backup"
@@ -1105,6 +1110,16 @@ type SyncVariablesPayload struct {
 	Engine         string
 }
 
+// ReconcileServicePayload is the typed schema carried by
+// provisioning_jobs.payload for JobTypeReconcileService.
+type ReconcileServicePayload struct {
+	OrganizationID string
+	ProjectID      string
+	EnvironmentID  string
+	ServiceID      string
+	Engine         string
+}
+
 // RunBackupPayload is the typed schema carried by provisioning_jobs.payload
 // for JobTypeRunBackup.
 type RunBackupPayload struct {
@@ -1173,6 +1188,62 @@ func ParseSyncVariablesPayload(job store.ProvisioningJob) (SyncVariablesPayload,
 		return SyncVariablesPayload{}, Terminal(apierr.InvalidInput(violations...))
 	}
 	return SyncVariablesPayload{
+		OrganizationID: payloadOrgID,
+		ProjectID:      payloadProjectID,
+		EnvironmentID:  payloadEnvironmentID,
+		ServiceID:      payloadServiceID,
+		Engine:         job.Payload["engine"],
+	}, nil
+}
+
+// ParseReconcileServicePayload validates a reconcile_service job payload and
+// returns a terminal error for payload shapes retrying cannot repair.
+func ParseReconcileServicePayload(job store.ProvisioningJob) (ReconcileServicePayload, error) {
+	var violations []apierr.FieldViolation
+	if job.JobType != JobTypeReconcileService {
+		violations = append(violations, apierr.FieldViolation{Field: "job_type", Reason: "must be reconcile_service"})
+	}
+	if job.OrganizationID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "organization_id", Reason: "is required"})
+	}
+	if job.ProjectID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "project_id", Reason: "is required"})
+	}
+	if job.EnvironmentID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "environment_id", Reason: "is required"})
+	}
+	if job.ServiceID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "service_id", Reason: "is required"})
+	}
+
+	payloadOrgID := job.Payload["organization_id"]
+	if payloadOrgID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.organization_id", Reason: "is required"})
+	} else if job.OrganizationID != "" && payloadOrgID != job.OrganizationID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.organization_id", Reason: "must match the job organization_id"})
+	}
+	payloadProjectID := job.Payload["project_id"]
+	if payloadProjectID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.project_id", Reason: "is required"})
+	} else if job.ProjectID != "" && payloadProjectID != job.ProjectID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.project_id", Reason: "must match the job project_id"})
+	}
+	payloadEnvironmentID := job.Payload["environment_id"]
+	if payloadEnvironmentID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.environment_id", Reason: "is required"})
+	} else if job.EnvironmentID != "" && payloadEnvironmentID != job.EnvironmentID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.environment_id", Reason: "must match the job environment_id"})
+	}
+	payloadServiceID := job.Payload["service_id"]
+	if payloadServiceID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.service_id", Reason: "is required"})
+	} else if job.ServiceID != "" && payloadServiceID != job.ServiceID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.service_id", Reason: "must match the job service_id"})
+	}
+	if len(violations) > 0 {
+		return ReconcileServicePayload{}, Terminal(apierr.InvalidInput(violations...))
+	}
+	return ReconcileServicePayload{
 		OrganizationID: payloadOrgID,
 		ProjectID:      payloadProjectID,
 		EnvironmentID:  payloadEnvironmentID,
@@ -1576,6 +1647,8 @@ func (p *Provisioner) Run(ctx context.Context, job store.ProvisioningJob) error 
 		return p.runSyncDomains(ctx, job)
 	case JobTypeSyncVariables:
 		return p.runSyncVariables(ctx, job)
+	case JobTypeReconcileService:
+		return p.runReconcileService(ctx, job)
 	case JobTypeRunBackup:
 		return p.runBackup(ctx, job)
 	case JobTypeRestoreBackup:
@@ -2328,6 +2401,106 @@ func (p *Provisioner) runSyncVariables(ctx context.Context, job store.Provisioni
 	return nil
 }
 
+func (p *Provisioner) runReconcileService(ctx context.Context, job store.ProvisioningJob) error {
+	if job.Status == store.JobStatusSucceeded {
+		return nil
+	}
+	payload, err := ParseReconcileServicePayload(job)
+	if err != nil {
+		return err
+	}
+
+	target, err := p.loadReconcileServiceTarget(ctx, job, payload)
+	if err != nil {
+		return err
+	}
+
+	svcID, parseErr := domain.ParseID(target.Service.ID)
+	if parseErr != nil || svcID.Kind() != domain.KindService {
+		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "service_id",
+			Reason: "must be a valid service id",
+		}))
+	}
+	envID, parseErr := domain.ParseID(target.Service.EnvironmentID)
+	if parseErr != nil || envID.Kind() != domain.KindEnvironment {
+		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "environment_id",
+			Reason: "must be a valid environment id",
+		}))
+	}
+
+	in, err := p.mapper.Service(target.ParentDokployID, dokploy.YallaService{
+		ID:            svcID,
+		EnvironmentID: envID,
+		Label:         target.Service.DisplayName,
+		Type:          target.ServiceType,
+		Engine:        target.Engine,
+		DokployID:     target.ExistingDokployID,
+	})
+	if err != nil {
+		return Terminal(err)
+	}
+
+	ensured, ensureErr := p.client.EnsureService(ctx, in)
+	if ensureErr != nil {
+		if interrupted(ctx, ensureErr) {
+			return ensureErr
+		}
+		if apierr.Retryable(ensureErr) {
+			return ensureErr
+		}
+		return Terminal(ensureErr)
+	}
+	if ensured.ID == "" {
+		return Terminal(apierr.Internal(errors.New("worker: reconcile_service resolved an empty Dokploy service id")))
+	}
+	if err := p.persistReconcileServiceRef(ctx, job, payload, target.DokployResource, ensured.ID); err != nil {
+		return err
+	}
+
+	syncErr := p.client.SyncVariables(ctx, dokploy.SyncVariablesInput{
+		ServiceID: ensured.ID,
+		Type:      target.ServiceType,
+		Engine:    target.Engine,
+		Env:       target.Env,
+	})
+	if syncErr != nil {
+		if interrupted(ctx, syncErr) {
+			return syncErr
+		}
+		if apierr.Retryable(syncErr) {
+			return syncErr
+		}
+		return Terminal(syncErr)
+	}
+
+	for _, domainTarget := range target.Domains {
+		ensuredDomain, ensureErr := p.client.EnsureDomain(ctx, dokploy.EnsureDomainInput{
+			ExistingID: domainTarget.ExistingDokployID,
+			ServiceID:  ensured.ID,
+			Host:       domainTarget.Domain.Hostname,
+			HTTPS:      domainTarget.Domain.HTTPS,
+		})
+		if ensureErr != nil {
+			if interrupted(ctx, ensureErr) {
+				return ensureErr
+			}
+			if apierr.Retryable(ensureErr) {
+				return ensureErr
+			}
+			return Terminal(ensureErr)
+		}
+		if ensuredDomain.ID == "" {
+			return Terminal(apierr.Internal(errors.New("worker: reconcile_service resolved an empty Dokploy domain id")))
+		}
+		if err := p.persistServiceDomainRef(ctx, job, payload.syncDomainsPayload(), domainTarget.Domain.ID, ensuredDomain.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (p *Provisioner) runBackup(ctx context.Context, job store.ProvisioningJob) error {
 	if job.Status == store.JobStatusSucceeded {
 		return nil
@@ -2443,6 +2616,17 @@ type syncVariablesTarget struct {
 	ServiceType      dokploy.ServiceType
 	Engine           string
 	Env              string
+}
+
+type reconcileServiceTarget struct {
+	Service           store.Service
+	ParentDokployID   string
+	ExistingDokployID string
+	DokployResource   store.DokployResource
+	ServiceType       dokploy.ServiceType
+	Engine            string
+	Env               string
+	Domains           []syncDomainTarget
 }
 
 type runBackupTarget struct {
@@ -3515,6 +3699,133 @@ func (p *Provisioner) loadSyncVariablesTarget(ctx context.Context, job store.Pro
 	return target, nil
 }
 
+func (p *Provisioner) loadReconcileServiceTarget(ctx context.Context, job store.ProvisioningJob, payload ReconcileServicePayload) (reconcileServiceTarget, error) {
+	var target reconcileServiceTarget
+	err := p.store.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		svc, getErr := p.services.GetByID(ctx, q, payload.OrganizationID, payload.ServiceID)
+		if getErr != nil {
+			return Terminal(getErr)
+		}
+		if svc.OrganizationID != job.OrganizationID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.organization_id",
+				Reason: "must match the service organization_id",
+			}))
+		}
+		if svc.ProjectID != payload.ProjectID || svc.ProjectID != job.ProjectID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.project_id",
+				Reason: "must match the service project_id",
+			}))
+		}
+		if svc.EnvironmentID != payload.EnvironmentID || svc.EnvironmentID != job.EnvironmentID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.environment_id",
+				Reason: "must match the service environment_id",
+			}))
+		}
+		if svc.DeletionScheduledAt != nil {
+			return Terminal(apierr.Conflict("service is scheduled for deletion and cannot be reconciled"))
+		}
+		if job.DesiredVersion > 0 && svc.Version != job.DesiredVersion {
+			return Terminal(apierr.ConflictStale(svc.Version))
+		}
+
+		parentRefs, listErr := p.refs.ListByYallaResource(ctx, q, job.OrganizationID, store.YallaKindEnvironment, svc.EnvironmentID)
+		if listErr != nil {
+			return listErr
+		}
+		for _, ref := range parentRefs {
+			if ref.DokployResource == store.DokployResourceEnvironment {
+				target.ParentDokployID = ref.DokployID
+				break
+			}
+		}
+		if target.ParentDokployID == "" {
+			return Terminal(apierr.Conflict("parent Dokploy environment mapping is required before reconciling a service"))
+		}
+
+		wantResource, resourceErr := dokployResourceForServiceKind(svc.Kind, "reconcile_service")
+		if resourceErr != nil {
+			return resourceErr
+		}
+		serviceType, engine, kindErr := dokploySyncKindForService(svc, payload.Engine)
+		if kindErr != nil {
+			return kindErr
+		}
+		target.Service = svc
+		target.DokployResource = wantResource
+		target.ServiceType = serviceType
+		target.Engine = engine
+
+		serviceRefs, listErr := p.refs.ListByYallaResource(ctx, q, job.OrganizationID, store.YallaKindService, svc.ID)
+		if listErr != nil {
+			return listErr
+		}
+		for _, ref := range serviceRefs {
+			if ref.DokployResource == wantResource {
+				target.ExistingDokployID = ref.DokployID
+				break
+			}
+		}
+
+		orgVars, err := p.orgVariables.ListByOrganization(ctx, q, payload.OrganizationID)
+		if err != nil {
+			return err
+		}
+		projectVars, err := p.projVariables.ListByProject(ctx, q, payload.OrganizationID, payload.ProjectID)
+		if err != nil {
+			return err
+		}
+		envVars, err := p.envVariables.ListByEnvironment(ctx, q, payload.OrganizationID, payload.EnvironmentID)
+		if err != nil {
+			return err
+		}
+		serviceVars, err := p.svcVariables.ListByService(ctx, q, payload.OrganizationID, payload.ServiceID)
+		if err != nil {
+			return err
+		}
+		resolved, err := p.resolver.Resolve(variables.ResolveInput{
+			OrganizationVariables: scopedOrganizationVariables(orgVars),
+			ProjectVariables:      scopedProjectVariables(projectVars),
+			EnvironmentVariables:  scopedEnvironmentVariables(envVars),
+			ServiceVariables:      scopedServiceVariables(serviceVars),
+		}, variables.Options{})
+		if err != nil {
+			return Terminal(err)
+		}
+		target.Env = renderDotenv(resolved.Variables)
+
+		domains, listErr := p.domains.ListByService(ctx, q, job.OrganizationID, svc.ID)
+		if listErr != nil {
+			return listErr
+		}
+		target.Domains = make([]syncDomainTarget, 0, len(domains))
+		for _, domainRow := range domains {
+			domainRefs, refsErr := p.refs.ListByYallaResource(ctx, q, job.OrganizationID, store.YallaKindServiceDomain, domainRow.ID)
+			if refsErr != nil {
+				return refsErr
+			}
+			var existingDokployID string
+			for _, ref := range domainRefs {
+				if ref.DokployResource == store.DokployResourceDomain {
+					existingDokployID = ref.DokployID
+					break
+				}
+			}
+			target.Domains = append(target.Domains, syncDomainTarget{
+				Domain:            domainRow,
+				ExistingDokployID: existingDokployID,
+			})
+		}
+		return nil
+	})
+	if err != nil {
+		return reconcileServiceTarget{}, err
+	}
+	return target, nil
+}
+
 func (p *Provisioner) loadRunBackupTarget(ctx context.Context, job store.ProvisioningJob, payload RunBackupPayload) (runBackupTarget, error) {
 	var target runBackupTarget
 	err := p.store.Read(ctx, func(ctx context.Context, q store.Querier) error {
@@ -4241,6 +4552,69 @@ func (p *Provisioner) persistDatabaseServiceRef(ctx context.Context, job store.P
 	})
 }
 
+func (p *Provisioner) persistReconcileServiceRef(ctx context.Context, job store.ProvisioningJob, payload ReconcileServicePayload, resource store.DokployResource, dokployID string) error {
+	return p.store.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		svc, err := p.services.GetByID(ctx, tx, payload.OrganizationID, payload.ServiceID)
+		if err != nil {
+			return Terminal(err)
+		}
+		if svc.OrganizationID != job.OrganizationID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.organization_id",
+				Reason: "must match the service organization_id",
+			}))
+		}
+		if svc.ProjectID != payload.ProjectID || svc.ProjectID != job.ProjectID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.project_id",
+				Reason: "must match the service project_id",
+			}))
+		}
+		if svc.EnvironmentID != payload.EnvironmentID || svc.EnvironmentID != job.EnvironmentID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.environment_id",
+				Reason: "must match the service environment_id",
+			}))
+		}
+		wantResource, resourceErr := dokployResourceForServiceKind(svc.Kind, "reconcile_service")
+		if resourceErr != nil {
+			return resourceErr
+		}
+		if resource != wantResource {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "service.kind",
+				Reason: "must match the service Dokploy resource",
+			}))
+		}
+		if svc.DeletionScheduledAt != nil {
+			return Terminal(apierr.Conflict("service is scheduled for deletion and cannot be reconciled"))
+		}
+		if job.DesiredVersion > 0 && svc.Version != job.DesiredVersion {
+			return Terminal(apierr.ConflictStale(svc.Version))
+		}
+		refs, err := p.refs.ListByYallaResource(ctx, tx, job.OrganizationID, store.YallaKindService, payload.ServiceID)
+		if err != nil {
+			return err
+		}
+		for _, ref := range refs {
+			if ref.DokployResource == resource {
+				return nil
+			}
+		}
+		_, err = p.refs.Insert(ctx, tx, store.DokployRef{
+			OrganizationID:  job.OrganizationID,
+			YallaKind:       store.YallaKindService,
+			YallaID:         payload.ServiceID,
+			DokployResource: resource,
+			DokployID:       dokployID,
+		})
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
 func (p *Provisioner) persistProjectRef(ctx context.Context, job store.ProvisioningJob, payload EnsureProjectPayload, dokployID string) error {
 	return p.store.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
 		project, err := p.projects.Get(ctx, tx, payload.OrganizationID, payload.ProjectID)
@@ -4432,4 +4806,13 @@ func (p *Provisioner) markBackupFailed(ctx context.Context, payload RunBackupPay
 		}
 		return nil
 	})
+}
+
+func (p ReconcileServicePayload) syncDomainsPayload() SyncDomainsPayload {
+	return SyncDomainsPayload{
+		OrganizationID: p.OrganizationID,
+		ProjectID:      p.ProjectID,
+		EnvironmentID:  p.EnvironmentID,
+		ServiceID:      p.ServiceID,
+	}
 }

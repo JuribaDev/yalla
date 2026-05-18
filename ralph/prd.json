@@ -10428,8 +10428,8 @@
       ],
       "type": "worker-job",
       "priority": 1,
-      "passes": false,
-      "notes": "Provisioning job type: reconcile_service."
+      "passes": true,
+      "notes": "Implemented reconcile_service durable worker execution with typed payload validation, tenant-scoped desired-state reload, stale/cross-scope refusal, idempotent service/domain ref persistence on replay, typed Dokploy EnsureService/SyncVariables/EnsureDomain use, cancellation handling, retryable upstream failure handling, and redacted queue error-summary coverage."
     },
     {
       "id": "BE-0502",

@@ -119,6 +119,14 @@ Background provisioning/metering workers for the control plane.
   call the typed Dokploy `SyncVariables` intent. Fake Dokploy request recording
   must redact the rendered `env` field because it contains plaintext effective
   values.
+- Service reconciliation jobs (`reconcile_service`) use the same scoped payload
+  as `sync_variables`, but converge the full service surface in one durable
+  pass: reload the service, reject stale/deletion-scheduled state, resolve the
+  parent environment ref, call typed Dokploy `EnsureService`, persist the
+  service ref idempotently, sync effective variables, then ensure each desired
+  service domain with per-domain `dokploy_refs`. Persist the service ref before
+  variable/domain calls so retries after a partial upstream success fetch the
+  existing service instead of creating a duplicate.
 - Backup run jobs (`run_backup`) use the scoped payload
   `(organization_id, project_id, environment_id, service_id, backup_id)`, reload
   both the service and `service_backups` row through tenant-scoped repositories,

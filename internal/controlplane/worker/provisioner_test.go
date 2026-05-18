@@ -3416,6 +3416,404 @@ func TestProvisionerSyncVariablesCancellationIsNotTerminal(t *testing.T) {
 	}
 }
 
+func TestReconcileServicePayloadValidation(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name    string
+		job     store.ProvisioningJob
+		wantErr bool
+	}{
+		{
+			name: "valid application",
+			job: store.ProvisioningJob{
+				OrganizationID: "org_valid",
+				ProjectID:      "proj_valid",
+				EnvironmentID:  "env_valid",
+				ServiceID:      "svc_valid",
+				JobType:        worker.JobTypeReconcileService,
+				Payload: map[string]string{
+					"organization_id": "org_valid",
+					"project_id":      "proj_valid",
+					"environment_id":  "env_valid",
+					"service_id":      "svc_valid",
+				},
+			},
+		},
+		{
+			name: "valid database",
+			job: store.ProvisioningJob{
+				OrganizationID: "org_valid",
+				ProjectID:      "proj_valid",
+				EnvironmentID:  "env_valid",
+				ServiceID:      "svc_valid",
+				JobType:        worker.JobTypeReconcileService,
+				Payload: map[string]string{
+					"organization_id": "org_valid",
+					"project_id":      "proj_valid",
+					"environment_id":  "env_valid",
+					"service_id":      "svc_valid",
+					"engine":          dokploy.EnginePostgres,
+				},
+			},
+		},
+		{
+			name: "missing service",
+			job: store.ProvisioningJob{
+				OrganizationID: "org_valid",
+				ProjectID:      "proj_valid",
+				EnvironmentID:  "env_valid",
+				ServiceID:      "svc_valid",
+				JobType:        worker.JobTypeReconcileService,
+				Payload: map[string]string{
+					"organization_id": "org_valid",
+					"project_id":      "proj_valid",
+					"environment_id":  "env_valid",
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "cross tenant payload",
+			job: store.ProvisioningJob{
+				OrganizationID: "org_valid",
+				ProjectID:      "proj_valid",
+				EnvironmentID:  "env_valid",
+				ServiceID:      "svc_valid",
+				JobType:        worker.JobTypeReconcileService,
+				Payload: map[string]string{
+					"organization_id": "org_other",
+					"project_id":      "proj_valid",
+					"environment_id":  "env_valid",
+					"service_id":      "svc_valid",
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "cross service payload",
+			job: store.ProvisioningJob{
+				OrganizationID: "org_valid",
+				ProjectID:      "proj_valid",
+				EnvironmentID:  "env_valid",
+				ServiceID:      "svc_valid",
+				JobType:        worker.JobTypeReconcileService,
+				Payload: map[string]string{
+					"organization_id": "org_valid",
+					"project_id":      "proj_valid",
+					"environment_id":  "env_valid",
+					"service_id":      "svc_other",
+				},
+			},
+			wantErr: true,
+		},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := worker.ParseReconcileServicePayload(tc.job)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("ParseReconcileServicePayload returned nil, want validation error")
+				}
+				if !worker.IsTerminal(err) {
+					t.Fatalf("validation error is not terminal: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseReconcileServicePayload returned %v, want nil", err)
+			}
+		})
+	}
+}
+
+func TestProvisionerReconcileServiceEnsuresServiceVariablesAndDomains(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	provider := secrets.NewPlaintext()
+	org := insertWorkerOrg(ctx, t, dataStore, "acme")
+	project := insertWorkerProject(ctx, t, dataStore, org, "api")
+	env := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+	svc := insertWorkerService(ctx, t, dataStore, env, "api", store.ServiceKindApplication)
+	domainRow := insertWorkerServiceDomain(ctx, t, dataStore, svc, "api.acme.test")
+	insertWorkerOrganizationVariable(ctx, t, dataStore, org, "REGION", "us-east-1", false, provider)
+	insertWorkerServiceVariable(ctx, t, dataStore, svc, "DATABASE_URL", "postgres://reconcile-service-secret", true, provider)
+
+	fake := dokployfake.New()
+	defer fake.Close()
+	client := newWorkerDokployClient(t, fake)
+	if err := pRunEnsureEnvironmentWithParent(ctx, t, dataStore, client, org, project, env); err != nil {
+		t.Fatalf("seed parent dokploy environment: %v", err)
+	}
+
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:   dataStore,
+		Client:  client,
+		Mapper:  dokploy.NewMapper(),
+		Secrets: provider,
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+
+	job := reconcileServiceJob(svc)
+	if err := p.Run(ctx, job); err != nil {
+		t.Fatalf("Run reconcile_service: %v", err)
+	}
+
+	refs := listServiceRefs(ctx, t, dataStore, svc.OrganizationID, svc.ID)
+	if len(refs) != 1 || refs[0].DokployResource != store.DokployResourceApplication || refs[0].DokployID != "app_1" {
+		t.Fatalf("service refs = %+v, want one app_1 mapping", refs)
+	}
+	domainRefs := listServiceDomainRefs(ctx, t, dataStore, svc.OrganizationID, domainRow.ID)
+	if len(domainRefs) != 1 || domainRefs[0].DokployResource != store.DokployResourceDomain || domainRefs[0].DokployID != "domain_1" {
+		t.Fatalf("domain refs = %+v, want one domain_1 mapping", domainRefs)
+	}
+	gotEnv := fake.ApplicationEnv("app_1")
+	for _, want := range []string{"DATABASE_URL=postgres://reconcile-service-secret", "REGION=us-east-1"} {
+		if !strings.Contains(gotEnv, want) {
+			t.Fatalf("reconciled env = %q, missing %q", gotEnv, want)
+		}
+	}
+
+	reqs := fake.Requests()
+	if len(reqs) != 6 ||
+		reqs[3].Method != http.MethodPost || reqs[3].Path != "/api/applications" ||
+		reqs[4].Method != http.MethodPost || reqs[4].Path != "/application.saveEnvironment" ||
+		reqs[5].Method != http.MethodPost || reqs[5].Path != "/api/domains" {
+		t.Fatalf("fake requests = %+v, want parent seeds then service/env/domain reconciliation", reqs)
+	}
+	if strings.Contains(reqs[4].Body, "postgres://reconcile-service-secret") || reqs[4].AuthHeader != output.Sentinel {
+		t.Fatalf("reconcile_service request recording leaked secret material: %+v", reqs[4])
+	}
+
+	if err := p.Run(ctx, job); err != nil {
+		t.Fatalf("replayed Run reconcile_service: %v", err)
+	}
+	if refs := listServiceRefs(ctx, t, dataStore, svc.OrganizationID, svc.ID); len(refs) != 1 {
+		t.Fatalf("after replay service refs = %d, want 1", len(refs))
+	}
+	if refs := listServiceDomainRefs(ctx, t, dataStore, svc.OrganizationID, domainRow.ID); len(refs) != 1 {
+		t.Fatalf("after replay domain refs = %d, want 1", len(refs))
+	}
+	reqs = fake.Requests()
+	if len(reqs) != 9 ||
+		reqs[6].Method != http.MethodGet || reqs[6].Path != "/api/applications/app_1" ||
+		reqs[7].Method != http.MethodPost || reqs[7].Path != "/application.saveEnvironment" ||
+		reqs[8].Method != http.MethodGet || reqs[8].Path != "/api/domains/domain_1" {
+		t.Fatalf("replayed reconcile_service fake requests = %+v, want idempotent GET/sync/GET", reqs)
+	}
+}
+
+func TestProvisionerReconcileServiceRetryableFailureDoesNotPersistMapping(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	org := insertWorkerOrg(ctx, t, dataStore, "acme")
+	project := insertWorkerProject(ctx, t, dataStore, org, "api")
+	env := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+	svc := insertWorkerService(ctx, t, dataStore, env, "api", store.ServiceKindApplication)
+
+	fake := dokployfake.New()
+	defer fake.Close()
+	client := newWorkerDokployClient(t, fake)
+	if err := pRunEnsureEnvironmentWithParent(ctx, t, dataStore, client, org, project, env); err != nil {
+		t.Fatalf("seed parent dokploy environment: %v", err)
+	}
+	fake.QueueFault(dokployfake.StatusFault(http.StatusInternalServerError))
+
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: client,
+		Mapper: dokploy.NewMapper(),
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+
+	err = p.Run(ctx, reconcileServiceJob(svc))
+	if err == nil {
+		t.Fatal("Run reconcile_service returned nil, want retryable error")
+	}
+	if worker.IsTerminal(err) {
+		t.Fatalf("Run reconcile_service error is terminal, want retryable: %v", err)
+	}
+	if refs := listServiceRefs(ctx, t, dataStore, svc.OrganizationID, svc.ID); len(refs) != 0 {
+		t.Fatalf("service refs after retryable failure = %+v, want none", refs)
+	}
+}
+
+func TestProvisionerReconcileServiceRefusesStaleDesiredVersion(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	org := insertWorkerOrg(ctx, t, dataStore, "acme")
+	project := insertWorkerProject(ctx, t, dataStore, org, "api")
+	env := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+	svc := insertWorkerService(ctx, t, dataStore, env, "api", store.ServiceKindApplication)
+
+	fake := dokployfake.New()
+	defer fake.Close()
+	client := newWorkerDokployClient(t, fake)
+	if err := pRunEnsureEnvironmentWithParent(ctx, t, dataStore, client, org, project, env); err != nil {
+		t.Fatalf("seed parent dokploy environment: %v", err)
+	}
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: client,
+		Mapper: dokploy.NewMapper(),
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+
+	job := reconcileServiceJob(svc)
+	job.DesiredVersion = svc.Version - 1
+	err = p.Run(ctx, job)
+	if err == nil || !worker.IsTerminal(err) {
+		t.Fatalf("Run stale reconcile_service = %v, want terminal error", err)
+	}
+	if reqs := fake.Requests(); len(reqs) != 3 {
+		t.Fatalf("stale reconcile_service issued Dokploy requests: %+v", reqs)
+	}
+}
+
+func TestProvisionerReconcileServiceCancellationIsNotTerminal(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	org := insertWorkerOrg(ctx, t, dataStore, "acme")
+	project := insertWorkerProject(ctx, t, dataStore, org, "api")
+	env := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+	svc := insertWorkerService(ctx, t, dataStore, env, "api", store.ServiceKindApplication)
+	insertWorkerEnvironmentRef(ctx, t, dataStore, env, "env_cancelled")
+
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: canceledClient{},
+		Mapper: dokploy.NewMapper(),
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+	err = p.Run(ctx, reconcileServiceJob(svc))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run reconcile_service cancellation = %v, want context.Canceled", err)
+	}
+	if worker.IsTerminal(err) {
+		t.Fatalf("Run reconcile_service cancellation is terminal: %v", err)
+	}
+}
+
+func TestReconcileServiceRetryableFailurePersistsRedactedErrorSummary(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	org := insertWorkerOrg(ctx, t, dataStore, "acme")
+	project := insertWorkerProject(ctx, t, dataStore, org, "api")
+	env := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+	svc := insertWorkerService(ctx, t, dataStore, env, "api", store.ServiceKindApplication)
+
+	fake := dokployfake.New()
+	defer fake.Close()
+	client := newWorkerDokployClient(t, fake)
+	if err := pRunEnsureEnvironmentWithParent(ctx, t, dataStore, client, org, project, env); err != nil {
+		t.Fatalf("seed parent dokploy environment: %v", err)
+	}
+	fake.QueueFault(dokployfake.StatusFault(http.StatusInternalServerError))
+
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: client,
+		Mapper: dokploy.NewMapper(),
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+
+	jobs := store.NewJobRepository()
+	enqueued := reconcileServiceJob(svc)
+	if err := dataStore.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		_, err := jobs.Insert(ctx, tx, enqueued)
+		return err
+	}); err != nil {
+		t.Fatalf("insert reconcile_service job: %v", err)
+	}
+
+	claimer, err := worker.NewStoreClaimer(worker.StoreClaimerConfig{
+		Store:         dataStore,
+		Runner:        p,
+		Owner:         "worker-reconcile-service-redaction-test",
+		LeaseDuration: time.Minute,
+		Backoff:       worker.Backoff{Base: time.Second, Max: time.Second},
+		Now:           func() time.Time { return time.Unix(1700000000, 0).UTC() },
+	})
+	if err != nil {
+		t.Fatalf("NewStoreClaimer: %v", err)
+	}
+	lease, err := claimer.Claim(ctx)
+	if err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+	if lease == nil {
+		t.Fatal("Claim returned nil lease")
+	}
+	if err := lease.Run(ctx); err != nil {
+		t.Fatalf("lease.Run: %v", err)
+	}
+
+	var persisted store.ProvisioningJob
+	if err := dataStore.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		var getErr error
+		persisted, getErr = jobs.Get(ctx, q, enqueued.OrganizationID, enqueued.ID)
+		return getErr
+	}); err != nil {
+		t.Fatalf("read persisted job: %v", err)
+	}
+	if persisted.Status != store.JobStatusRetrying {
+		t.Fatalf("persisted status = %s, want retrying", persisted.Status)
+	}
+	if persisted.ErrorSummary == "" {
+		t.Fatal("persisted error summary is empty")
+	}
+	if strings.Contains(persisted.ErrorSummary, fake.Token()) {
+		t.Fatalf("persisted error summary leaked Dokploy token: %q", persisted.ErrorSummary)
+	}
+	if strings.Contains(persisted.ErrorSummary, "Authorization") {
+		t.Fatalf("persisted error summary leaked auth header name: %q", persisted.ErrorSummary)
+	}
+	if refs := listServiceRefs(ctx, t, dataStore, svc.OrganizationID, svc.ID); len(refs) != 0 {
+		t.Fatalf("service refs after failed reconcile = %+v, want none", refs)
+	}
+}
+
 func TestProvisionerRunBackupMarksBackupSucceeded(t *testing.T) {
 	t.Parallel()
 
@@ -8000,6 +8398,27 @@ func syncVariablesJob(svc store.Service) store.ProvisioningJob {
 		},
 		RequestID:     "req_sync_variables_test",
 		CorrelationID: "corr_sync_variables_test",
+	}
+}
+
+func reconcileServiceJob(svc store.Service) store.ProvisioningJob {
+	return store.ProvisioningJob{
+		ID:             "job_reconcile_service_test",
+		OrganizationID: svc.OrganizationID,
+		ProjectID:      svc.ProjectID,
+		EnvironmentID:  svc.EnvironmentID,
+		ServiceID:      svc.ID,
+		JobType:        worker.JobTypeReconcileService,
+		DesiredVersion: svc.Version,
+		IdempotencyKey: "reconcile-service-" + svc.ID,
+		Payload: map[string]string{
+			"organization_id": svc.OrganizationID,
+			"project_id":      svc.ProjectID,
+			"environment_id":  svc.EnvironmentID,
+			"service_id":      svc.ID,
+		},
+		RequestID:     "req_reconcile_service_test",
+		CorrelationID: "corr_reconcile_service_test",
 	}
 }
 
