@@ -9345,8 +9345,8 @@
       ],
       "type": "tenant-isolation",
       "priority": 1,
-      "passes": false,
-      "notes": "Tenant isolation for environment_grants."
+      "passes": true,
+      "notes": "Landed internal/controlplane/store/environment_grant_tenant_isolation_test.go covering 7 cross-tenant byte-identical-bystander cases on the (organization_id, environment_id) tenant predicate of ListByEnvironment, Upsert (INSERT and ON CONFLICT DO UPDATE branches with a shared (principal_id, service_id) scope tuple), and both DeleteByEnvironmentExceptIDs codepaths (nil-keep clear and id-NOT-IN-ANY subset), plus shared-scope-tuple per-tenant uniqueness and the indistinguishability projection between cross-tenant and unknown environment_id. Reuses the package-level helpers (newEnvironmentGrantID / upsertEnvironmentGrant / listEnvironmentGrantsOrFail from BE-0443; stringPtrEqual / fmtStringPtr from BE-0440). go vet, go test ./..., and go test -race ./... pass."
     },
     {
       "id": "BE-0445",
