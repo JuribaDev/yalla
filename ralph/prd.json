@@ -5963,8 +5963,8 @@
       ],
       "type": "test-preview",
       "priority": 2,
-      "passes": false,
-      "notes": "Contract coverage for GET /v1/projects/{project_id}/previews."
+      "passes": true,
+      "notes": "Contract coverage landed at internal/controlplane/httpapi/project_previews_get_contract_test.go for request_id propagation, invalid-input envelope, stdout/stderr silence, structured-log redaction, dependency-cause redaction, and existing OpenAPI/success/error coverage."
     },
     {
       "id": "BE-0267",
