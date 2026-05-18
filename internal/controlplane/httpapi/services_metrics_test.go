@@ -102,6 +102,7 @@ func listServiceMetrics(handler http.Handler, serviceID, token, rawQuery string)
 		target += "?" + rawQuery
 	}
 	req := httptest.NewRequest(http.MethodGet, target, nil)
+	req.Header.Set("X-Request-Id", "req-service-metrics-test")
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}

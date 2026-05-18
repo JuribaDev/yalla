@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
+	"github.com/JuribaDev/yalla/internal/output"
 )
 
 // DeploymentSource is the closed-set Dokploy-aligned taxonomy of customer
@@ -148,6 +149,8 @@ const deploymentColumns = `id, organization_id, project_id, environment_id, serv
 // cursor parameter rather than relax this ceiling.
 const deploymentListMaxRows = 200
 
+var deploymentErrorRedactor = output.NewRedactor()
+
 // DeploymentRepository is the persistence half of the deployments
 // surface. Every read and every write is tenant-scoped: the
 // organization_id leg of the predicate is non-optional, so a missing
@@ -233,6 +236,109 @@ func (r *DeploymentRepository) GetByID(ctx context.Context, q Querier, organizat
 		return Deployment{}, apierr.StoreUnavailable(err)
 	}
 	return d, nil
+}
+
+// MarkRunning moves a queued or already-running deployment into the running
+// state. The update is tenant-scoped and keeps started_at stable across
+// retries. expectedVersion gates only the queued->running transition: once a
+// worker has already marked the row running, a retry of the same durable job
+// may continue even though the running transition bumped the row version.
+func (r *DeploymentRepository) MarkRunning(ctx context.Context, tx *Tx, organizationID, deploymentID string, expectedVersion int64) (Deployment, error) {
+	if tx == nil {
+		return Deployment{}, apierr.Internal(errors.New("store: DeploymentRepository.MarkRunning called with a nil transaction"))
+	}
+	row := tx.QueryRow(ctx,
+		`UPDATE deployments
+		    SET status = 'running',
+		        started_at = COALESCE(started_at, now())
+		  WHERE organization_id = $1
+		    AND id = $2
+		    AND status IN ('queued', 'running')
+		    AND (status = 'running' OR $3 <= 0 OR version = $3)
+		  RETURNING `+deploymentColumns,
+		organizationID, deploymentID, expectedVersion)
+	d, err := scanDeployment(row)
+	if err == nil {
+		return d, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return Deployment{}, apierr.StoreUnavailable(err)
+	}
+	current, getErr := r.GetByID(ctx, tx, organizationID, deploymentID)
+	if getErr != nil {
+		return Deployment{}, getErr
+	}
+	if expectedVersion > 0 && current.Status == DeploymentStatusQueued && current.Version != expectedVersion {
+		return Deployment{}, apierr.ConflictStale(current.Version)
+	}
+	return Deployment{}, apierr.Conflict("the deployment is in a terminal state and cannot be started")
+}
+
+// MarkSucceeded moves a running deployment into the terminal succeeded state.
+func (r *DeploymentRepository) MarkSucceeded(ctx context.Context, tx *Tx, organizationID, deploymentID string) (Deployment, error) {
+	if tx == nil {
+		return Deployment{}, apierr.Internal(errors.New("store: DeploymentRepository.MarkSucceeded called with a nil transaction"))
+	}
+	row := tx.QueryRow(ctx,
+		`UPDATE deployments
+		    SET status = 'succeeded',
+		        error_code = '',
+		        error_message = '',
+		        finished_at = now()
+		  WHERE organization_id = $1
+		    AND id = $2
+		    AND status = 'running'
+		  RETURNING `+deploymentColumns,
+		organizationID, deploymentID)
+	d, err := scanDeployment(row)
+	if err == nil {
+		return d, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return Deployment{}, apierr.StoreUnavailable(err)
+	}
+	current, getErr := r.GetByID(ctx, tx, organizationID, deploymentID)
+	if getErr != nil {
+		return Deployment{}, getErr
+	}
+	if current.Status == DeploymentStatusSucceeded {
+		return current, nil
+	}
+	return Deployment{}, apierr.Conflict("the deployment is not running and cannot be marked succeeded")
+}
+
+// MarkFailed moves a running deployment into the terminal failed state with a
+// redacted error summary.
+func (r *DeploymentRepository) MarkFailed(ctx context.Context, tx *Tx, organizationID, deploymentID, code, message string) (Deployment, error) {
+	if tx == nil {
+		return Deployment{}, apierr.Internal(errors.New("store: DeploymentRepository.MarkFailed called with a nil transaction"))
+	}
+	row := tx.QueryRow(ctx,
+		`UPDATE deployments
+		    SET status = 'failed',
+		        error_code = $3,
+		        error_message = $4,
+		        finished_at = now()
+		  WHERE organization_id = $1
+		    AND id = $2
+		    AND status = 'running'
+		  RETURNING `+deploymentColumns,
+		organizationID, deploymentID, code, deploymentErrorRedactor.Redact(message))
+	d, err := scanDeployment(row)
+	if err == nil {
+		return d, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return Deployment{}, apierr.StoreUnavailable(err)
+	}
+	current, getErr := r.GetByID(ctx, tx, organizationID, deploymentID)
+	if getErr != nil {
+		return Deployment{}, getErr
+	}
+	if current.Status == DeploymentStatusFailed {
+		return current, nil
+	}
+	return Deployment{}, apierr.Conflict("the deployment is not running and cannot be marked failed")
 }
 
 // FindByIdempotencyKey returns the deployment a previous request

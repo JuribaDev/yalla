@@ -693,6 +693,104 @@ func TestEnsureDatabaseServicePayloadValidation(t *testing.T) {
 	}
 }
 
+func TestDeployServicePayloadValidation(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name    string
+		job     store.ProvisioningJob
+		wantErr bool
+	}{
+		{
+			name: "valid service deploy job",
+			job: store.ProvisioningJob{
+				OrganizationID: "org_valid",
+				ProjectID:      "proj_valid",
+				EnvironmentID:  "env_valid",
+				ServiceID:      "svc_valid",
+				JobType:        worker.JobTypeDeployService,
+				Payload: map[string]string{
+					"organization_id": "org_valid",
+					"project_id":      "proj_valid",
+					"environment_id":  "env_valid",
+					"service_id":      "svc_valid",
+					"deployment_id":   "dep_valid",
+				},
+			},
+		},
+		{
+			name: "valid prd alias",
+			job: store.ProvisioningJob{
+				OrganizationID: "org_valid",
+				ProjectID:      "proj_valid",
+				EnvironmentID:  "env_valid",
+				ServiceID:      "svc_valid",
+				JobType:        worker.JobTypeDeployServiceAlias,
+				Payload: map[string]string{
+					"organization_id": "org_valid",
+					"project_id":      "proj_valid",
+					"environment_id":  "env_valid",
+					"service_id":      "svc_valid",
+					"deployment_id":   "dep_valid",
+				},
+			},
+		},
+		{
+			name: "missing deployment id",
+			job: store.ProvisioningJob{
+				OrganizationID: "org_valid",
+				ProjectID:      "proj_valid",
+				EnvironmentID:  "env_valid",
+				ServiceID:      "svc_valid",
+				JobType:        worker.JobTypeDeployService,
+				Payload: map[string]string{
+					"organization_id": "org_valid",
+					"project_id":      "proj_valid",
+					"environment_id":  "env_valid",
+					"service_id":      "svc_valid",
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "cross tenant payload",
+			job: store.ProvisioningJob{
+				OrganizationID: "org_valid",
+				ProjectID:      "proj_valid",
+				EnvironmentID:  "env_valid",
+				ServiceID:      "svc_valid",
+				JobType:        worker.JobTypeDeployService,
+				Payload: map[string]string{
+					"organization_id": "org_other",
+					"project_id":      "proj_valid",
+					"environment_id":  "env_valid",
+					"service_id":      "svc_valid",
+					"deployment_id":   "dep_valid",
+				},
+			},
+			wantErr: true,
+		},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := worker.ParseDeployServicePayload(tc.job)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("ParseDeployServicePayload returned nil, want validation error")
+				}
+				if !worker.IsTerminal(err) {
+					t.Fatalf("validation error is not terminal: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseDeployServicePayload returned %v, want nil", err)
+			}
+		})
+	}
+}
+
 func TestProvisionerEnsuresDokployOrganizationAndPersistsMapping(t *testing.T) {
 	t.Parallel()
 
@@ -1086,6 +1184,118 @@ func TestProvisionerEnsuresDatabaseServiceAndPersistsMapping(t *testing.T) {
 	reqs = fake.Requests()
 	if len(reqs) != 5 || reqs[4].Method != http.MethodGet || reqs[4].Path != "/api/databases/db_1" {
 		t.Fatalf("after replay fake requests = %+v, want fifth GET /api/databases/db_1", reqs)
+	}
+}
+
+func TestProvisionerDeploysServiceAndMarksDeploymentSucceeded(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	org := insertWorkerOrg(ctx, t, dataStore, "acme")
+	project := insertWorkerProject(ctx, t, dataStore, org, "api")
+	env := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+	svc := insertWorkerService(ctx, t, dataStore, env, "api", store.ServiceKindApplication)
+	deployment := insertWorkerDeployment(ctx, t, dataStore, svc)
+
+	fake := dokployfake.New()
+	defer fake.Close()
+	client := newWorkerDokployClient(t, fake)
+	if err := pRunEnsureApplicationServiceWithParent(ctx, t, dataStore, client, org, project, env, svc); err != nil {
+		t.Fatalf("seed service dokploy mapping: %v", err)
+	}
+
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: client,
+		Mapper: dokploy.NewMapper(),
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+
+	job := deployServiceJob(deployment)
+	if err := p.Run(ctx, job); err != nil {
+		t.Fatalf("Run deploy service: %v", err)
+	}
+
+	got := getWorkerDeployment(ctx, t, dataStore, deployment.OrganizationID, deployment.ID)
+	if got.Status != store.DeploymentStatusSucceeded {
+		t.Fatalf("deployment status = %q, want succeeded", got.Status)
+	}
+	if got.StartedAt == nil || got.FinishedAt == nil {
+		t.Fatalf("deployment timestamps = started %v finished %v, want both stamped", got.StartedAt, got.FinishedAt)
+	}
+	if got.ErrorCode != "" || got.ErrorMessage != "" {
+		t.Fatalf("deployment error = (%q, %q), want empty", got.ErrorCode, got.ErrorMessage)
+	}
+
+	reqs := fake.Requests()
+	if len(reqs) != 5 || reqs[4].Method != http.MethodPost || reqs[4].Path != "/api/deployments" {
+		t.Fatalf("fake requests = %+v, want service seed then POST /api/deployments", reqs)
+	}
+	if strings.Contains(reqs[4].Body, fake.Token()) || reqs[4].AuthHeader != output.Sentinel {
+		t.Fatalf("deployment request recording leaked credentials: %+v", reqs[4])
+	}
+
+	if err := p.Run(ctx, job); err != nil {
+		t.Fatalf("replayed Run deploy service: %v", err)
+	}
+	reqs = fake.Requests()
+	if len(reqs) != 5 {
+		t.Fatalf("replayed deploy issued another Dokploy request: %+v", reqs)
+	}
+}
+
+func TestProvisionerDeployServiceRetryableFailureKeepsDeploymentRetryable(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	org := insertWorkerOrg(ctx, t, dataStore, "acme")
+	project := insertWorkerProject(ctx, t, dataStore, org, "api")
+	env := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+	svc := insertWorkerService(ctx, t, dataStore, env, "api", store.ServiceKindApplication)
+	deployment := insertWorkerDeployment(ctx, t, dataStore, svc)
+
+	fake := dokployfake.New()
+	defer fake.Close()
+	client := newWorkerDokployClient(t, fake)
+	if err := pRunEnsureApplicationServiceWithParent(ctx, t, dataStore, client, org, project, env, svc); err != nil {
+		t.Fatalf("seed service dokploy mapping: %v", err)
+	}
+	fake.QueueFault(dokployfake.StatusFault(http.StatusInternalServerError))
+
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: client,
+		Mapper: dokploy.NewMapper(),
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+
+	err = p.Run(ctx, deployServiceJob(deployment))
+	if err == nil {
+		t.Fatal("Run returned nil, want retryable Dokploy error")
+	}
+	if worker.IsTerminal(err) {
+		t.Fatalf("Run returned terminal error for retryable upstream failure: %v", err)
+	}
+	if !apierr.Retryable(err) {
+		t.Fatalf("Run error is not marked retryable: %v", err)
+	}
+	got := getWorkerDeployment(ctx, t, dataStore, deployment.OrganizationID, deployment.ID)
+	if got.Status != store.DeploymentStatusRunning || got.FinishedAt != nil {
+		t.Fatalf("deployment after retryable failure = status %q finished %v, want running without finished_at", got.Status, got.FinishedAt)
 	}
 }
 
@@ -1975,6 +2185,54 @@ func TestProvisionerEnsureDatabaseServiceRefusesStaleDesiredVersion(t *testing.T
 	}
 }
 
+func TestProvisionerDeployServiceRefusesStaleDesiredVersion(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	org := insertWorkerOrg(ctx, t, dataStore, "acme")
+	project := insertWorkerProject(ctx, t, dataStore, org, "api")
+	env := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+	svc := insertWorkerService(ctx, t, dataStore, env, "api", store.ServiceKindApplication)
+	deployment := insertWorkerDeployment(ctx, t, dataStore, svc)
+
+	fake := dokployfake.New()
+	defer fake.Close()
+	client := newWorkerDokployClient(t, fake)
+	if err := pRunEnsureApplicationServiceWithParent(ctx, t, dataStore, client, org, project, env, svc); err != nil {
+		t.Fatalf("seed service dokploy mapping: %v", err)
+	}
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: client,
+		Mapper: dokploy.NewMapper(),
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+
+	job := deployServiceJob(deployment)
+	job.DesiredVersion = deployment.Version - 1
+	err = p.Run(ctx, job)
+	if err == nil {
+		t.Fatal("Run returned nil, want stale deployment desired-state error")
+	}
+	if !worker.IsTerminal(err) {
+		t.Fatalf("stale desired-state error is not terminal: %v", err)
+	}
+	got := getWorkerDeployment(ctx, t, dataStore, deployment.OrganizationID, deployment.ID)
+	if got.Status != store.DeploymentStatusQueued {
+		t.Fatalf("deployment status after stale job = %q, want queued", got.Status)
+	}
+	if reqs := fake.Requests(); len(reqs) != 4 {
+		t.Fatalf("stale deploy called Dokploy beyond service seed: %+v", reqs)
+	}
+}
+
 func TestProvisionerEnsureProjectMissingProjectIsTerminalNotFound(t *testing.T) {
 	t.Parallel()
 
@@ -2424,6 +2682,46 @@ func TestProvisionerEnsureDatabaseServiceCancellationIsNotTerminal(t *testing.T)
 	}
 }
 
+func TestProvisionerDeployServiceCancellationIsNotTerminal(t *testing.T) {
+	t.Parallel()
+
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: canceledClient{},
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+	err = p.Run(ctx, store.ProvisioningJob{
+		OrganizationID: "org_valid",
+		ProjectID:      "proj_valid",
+		EnvironmentID:  "env_valid",
+		ServiceID:      "svc_valid",
+		JobType:        worker.JobTypeDeployService,
+		Payload: map[string]string{
+			"organization_id": "org_valid",
+			"project_id":      "proj_valid",
+			"environment_id":  "env_valid",
+			"service_id":      "svc_valid",
+			"deployment_id":   "dep_valid",
+		},
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run error = %v, want context.Canceled", err)
+	}
+	if worker.IsTerminal(err) {
+		t.Fatalf("cancellation error is terminal: %v", err)
+	}
+}
+
 func TestProvisionerEnsureDokployOrganizationRetryableFailureDoesNotPersistMapping(t *testing.T) {
 	t.Parallel()
 
@@ -2551,6 +2849,10 @@ func (canceledClient) EnsureEnvironment(context.Context, dokploy.EnsureEnvironme
 
 func (canceledClient) EnsureService(context.Context, dokploy.EnsureServiceInput) (dokploy.Service, error) {
 	return dokploy.Service{}, context.Canceled
+}
+
+func (canceledClient) DeployService(context.Context, dokploy.DeployServiceInput) (dokploy.Deployment, error) {
+	return dokploy.Deployment{}, context.Canceled
 }
 
 func newWorkerDokployClient(t *testing.T, fake *dokployfake.Server) *dokploy.Client {
@@ -2698,6 +3000,28 @@ func ensureDatabaseServiceJob(svc store.Service, engine string) store.Provisioni
 	}
 }
 
+func deployServiceJob(dep store.Deployment) store.ProvisioningJob {
+	return store.ProvisioningJob{
+		ID:             "job_deploy_service_test",
+		OrganizationID: dep.OrganizationID,
+		ProjectID:      dep.ProjectID,
+		EnvironmentID:  dep.EnvironmentID,
+		ServiceID:      dep.ServiceID,
+		JobType:        worker.JobTypeDeployService,
+		DesiredVersion: dep.Version,
+		IdempotencyKey: "deploy-service-" + dep.ID,
+		Payload: map[string]string{
+			"organization_id": dep.OrganizationID,
+			"project_id":      dep.ProjectID,
+			"environment_id":  dep.EnvironmentID,
+			"service_id":      dep.ServiceID,
+			"deployment_id":   dep.ID,
+		},
+		RequestID:     "req_deploy_service_test",
+		CorrelationID: "corr_deploy_service_test",
+	}
+}
+
 func pRunEnsureOrg(ctx context.Context, t *testing.T, s *store.Store, client *dokploy.Client, org store.Organization) error {
 	t.Helper()
 	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
@@ -2741,6 +3065,22 @@ func pRunEnsureEnvironmentWithParent(ctx context.Context, t *testing.T, s *store
 		return err
 	}
 	return p.Run(ctx, ensureEnvironmentJob(env))
+}
+
+func pRunEnsureApplicationServiceWithParent(ctx context.Context, t *testing.T, s *store.Store, client *dokploy.Client, org store.Organization, project store.Project, env store.Environment, svc store.Service) error {
+	t.Helper()
+	if err := pRunEnsureEnvironmentWithParent(ctx, t, s, client, org, project, env); err != nil {
+		return err
+	}
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  s,
+		Client: client,
+		Mapper: dokploy.NewMapper(),
+	})
+	if err != nil {
+		return err
+	}
+	return p.Run(ctx, ensureApplicationServiceJob(svc))
 }
 
 func insertWorkerProject(ctx context.Context, t *testing.T, s *store.Store, org store.Organization, label string) store.Project {
@@ -2813,6 +3153,46 @@ func insertWorkerService(ctx context.Context, t *testing.T, s *store.Store, env 
 		t.Fatalf("insert service: %v", err)
 	}
 	return svc
+}
+
+func insertWorkerDeployment(ctx context.Context, t *testing.T, s *store.Store, svc store.Service) store.Deployment {
+	t.Helper()
+	repo := store.NewDeploymentRepository()
+	var dep store.Deployment
+	if err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		var err error
+		dep, err = repo.Insert(ctx, tx, store.Deployment{
+			ID:             domain.MustNewID(domain.KindDeployment).String(),
+			OrganizationID: svc.OrganizationID,
+			ProjectID:      svc.ProjectID,
+			EnvironmentID:  svc.EnvironmentID,
+			ServiceID:      svc.ID,
+			Source:         store.DeploymentSourceManual,
+			SourceRef:      "manual worker test",
+			RequestedBy:    "usr_worker_test",
+			IdempotencyKey: "idem-worker-" + svc.ID,
+			RequestID:      "req_worker_deployment_test",
+			CorrelationID:  "corr_worker_deployment_test",
+		})
+		return err
+	}); err != nil {
+		t.Fatalf("insert deployment: %v", err)
+	}
+	return dep
+}
+
+func getWorkerDeployment(ctx context.Context, t *testing.T, s *store.Store, organizationID, deploymentID string) store.Deployment {
+	t.Helper()
+	repo := store.NewDeploymentRepository()
+	var dep store.Deployment
+	if err := s.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		var err error
+		dep, err = repo.GetByID(ctx, q, organizationID, deploymentID)
+		return err
+	}); err != nil {
+		t.Fatalf("get deployment: %v", err)
+	}
+	return dep
 }
 
 func listOrgRefs(ctx context.Context, t *testing.T, s *store.Store, organizationID string) []store.DokployRef {

@@ -10162,8 +10162,8 @@
       ],
       "type": "worker-job",
       "priority": 1,
-      "passes": false,
-      "notes": "Provisioning job type: deploy_service."
+      "passes": true,
+      "notes": "Implemented durable deploy_service execution through worker.Provisioner for the existing service.deploy job type plus the PRD deploy_service alias, with typed payload validation, tenant-scoped deployment/service desired-state reload, service Dokploy ref resolution, stale desired-version checks, idempotent replay after succeeded deployments, running/succeeded/failed deployment lifecycle persistence, fake Dokploy coverage for success/replay and retryable upstream failure, terminal stale validation, cancellation, and redacted request recording. Required quality checks passed."
     },
     {
       "id": "BE-0488",

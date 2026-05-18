@@ -34,6 +34,16 @@ const JobTypeEnsureComposeService = "ensure_compose_service"
 // tenant's Dokploy database mapping exist for a database service.
 const JobTypeEnsureDatabaseService = "ensure_database_service"
 
+// JobTypeDeployService is the durable provisioning job enqueued by the public
+// deployment endpoints. The persisted API contract historically uses
+// service.deploy; JobTypeDeployServiceAlias accepts the PRD's deploy_service
+// spelling for forward compatibility with manually seeded jobs.
+const JobTypeDeployService = "service.deploy"
+
+// JobTypeDeployServiceAlias is accepted by the worker as an alias for
+// JobTypeDeployService.
+const JobTypeDeployServiceAlias = "deploy_service"
+
 // DokployClient is the narrow typed-client surface these worker jobs
 // needs. *dokploy.Client satisfies it in production; tests can supply fakes.
 type DokployClient interface {
@@ -41,6 +51,7 @@ type DokployClient interface {
 	EnsureProject(context.Context, dokploy.EnsureProjectInput) (dokploy.Project, error)
 	EnsureEnvironment(context.Context, dokploy.EnsureEnvironmentInput) (dokploy.Environment, error)
 	EnsureService(context.Context, dokploy.EnsureServiceInput) (dokploy.Service, error)
+	DeployService(context.Context, dokploy.DeployServiceInput) (dokploy.Deployment, error)
 }
 
 // EnsureDokployOrganizationPayload is the typed schema carried by
@@ -208,6 +219,16 @@ type EnsureDatabaseServicePayload struct {
 	EnvironmentID  string
 	ServiceID      string
 	Engine         string
+}
+
+// DeployServicePayload is the typed schema carried by provisioning_jobs.payload
+// for JobTypeDeployService / JobTypeDeployServiceAlias.
+type DeployServicePayload struct {
+	OrganizationID string
+	ProjectID      string
+	EnvironmentID  string
+	ServiceID      string
+	DeploymentID   string
 }
 
 // ParseEnsureApplicationServicePayload validates job's typed payload and
@@ -380,6 +401,66 @@ func ParseEnsureDatabaseServicePayload(job store.ProvisioningJob) (EnsureDatabas
 	}, nil
 }
 
+// ParseDeployServicePayload validates a deploy-service job payload and returns
+// a terminal error for payload shapes retrying cannot repair.
+func ParseDeployServicePayload(job store.ProvisioningJob) (DeployServicePayload, error) {
+	var violations []apierr.FieldViolation
+	if job.JobType != JobTypeDeployService && job.JobType != JobTypeDeployServiceAlias {
+		violations = append(violations, apierr.FieldViolation{Field: "job_type", Reason: "must be service.deploy or deploy_service"})
+	}
+	if job.OrganizationID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "organization_id", Reason: "is required"})
+	}
+	if job.ProjectID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "project_id", Reason: "is required"})
+	}
+	if job.EnvironmentID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "environment_id", Reason: "is required"})
+	}
+	if job.ServiceID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "service_id", Reason: "is required"})
+	}
+
+	payloadOrgID := job.Payload["organization_id"]
+	if payloadOrgID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.organization_id", Reason: "is required"})
+	} else if job.OrganizationID != "" && payloadOrgID != job.OrganizationID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.organization_id", Reason: "must match the job organization_id"})
+	}
+	payloadProjectID := job.Payload["project_id"]
+	if payloadProjectID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.project_id", Reason: "is required"})
+	} else if job.ProjectID != "" && payloadProjectID != job.ProjectID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.project_id", Reason: "must match the job project_id"})
+	}
+	payloadEnvironmentID := job.Payload["environment_id"]
+	if payloadEnvironmentID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.environment_id", Reason: "is required"})
+	} else if job.EnvironmentID != "" && payloadEnvironmentID != job.EnvironmentID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.environment_id", Reason: "must match the job environment_id"})
+	}
+	payloadServiceID := job.Payload["service_id"]
+	if payloadServiceID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.service_id", Reason: "is required"})
+	} else if job.ServiceID != "" && payloadServiceID != job.ServiceID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.service_id", Reason: "must match the job service_id"})
+	}
+	payloadDeploymentID := job.Payload["deployment_id"]
+	if payloadDeploymentID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.deployment_id", Reason: "is required"})
+	}
+	if len(violations) > 0 {
+		return DeployServicePayload{}, Terminal(apierr.InvalidInput(violations...))
+	}
+	return DeployServicePayload{
+		OrganizationID: payloadOrgID,
+		ProjectID:      payloadProjectID,
+		EnvironmentID:  payloadEnvironmentID,
+		ServiceID:      payloadServiceID,
+		DeploymentID:   payloadDeploymentID,
+	}, nil
+}
+
 func databaseEngineValid(engine string) bool {
 	switch engine {
 	case dokploy.EnginePostgres, dokploy.EngineMysql, dokploy.EngineMariadb, dokploy.EngineMongo, dokploy.EngineRedis:
@@ -396,6 +477,7 @@ type ProvisionerConfig struct {
 	Projects      *store.ProjectRepository
 	Environments  *store.EnvironmentRepository
 	Services      *store.ServiceRepository
+	Deployments   *store.DeploymentRepository
 	Refs          *store.DokployRefRepository
 	Mapper        *dokploy.Mapper
 	Client        DokployClient
@@ -408,6 +490,7 @@ type Provisioner struct {
 	projects      *store.ProjectRepository
 	environments  *store.EnvironmentRepository
 	services      *store.ServiceRepository
+	deployments   *store.DeploymentRepository
 	refs          *store.DokployRefRepository
 	mapper        *dokploy.Mapper
 	client        DokployClient
@@ -441,6 +524,10 @@ func NewProvisioner(cfg ProvisionerConfig) (*Provisioner, error) {
 	if services == nil {
 		services = store.NewServiceRepository()
 	}
+	deployments := cfg.Deployments
+	if deployments == nil {
+		deployments = store.NewDeploymentRepository()
+	}
 	refs := cfg.Refs
 	if refs == nil {
 		refs = store.NewDokployRefRepository()
@@ -455,6 +542,7 @@ func NewProvisioner(cfg ProvisionerConfig) (*Provisioner, error) {
 		projects:      projects,
 		environments:  environments,
 		services:      services,
+		deployments:   deployments,
 		refs:          refs,
 		mapper:        mapper,
 		client:        cfg.Client,
@@ -480,6 +568,8 @@ func (p *Provisioner) Run(ctx context.Context, job store.ProvisioningJob) error 
 		return p.runEnsureComposeService(ctx, job)
 	case JobTypeEnsureDatabaseService:
 		return p.runEnsureDatabaseService(ctx, job)
+	case JobTypeDeployService, JobTypeDeployServiceAlias:
+		return p.runDeployService(ctx, job)
 	default:
 		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
 			Field:  "job_type",
@@ -809,6 +899,61 @@ func (p *Provisioner) runEnsureDatabaseService(ctx context.Context, job store.Pr
 	}
 
 	return p.persistDatabaseServiceRef(ctx, job, payload, ensured.ID)
+}
+
+func (p *Provisioner) runDeployService(ctx context.Context, job store.ProvisioningJob) error {
+	payload, err := ParseDeployServicePayload(job)
+	if err != nil {
+		return err
+	}
+
+	deployment, dokployServiceID, err := p.loadDeploymentTarget(ctx, job, payload)
+	if err != nil {
+		return err
+	}
+	if deployment.Status == store.DeploymentStatusSucceeded {
+		return nil
+	}
+
+	if err := p.markDeploymentRunning(ctx, job, payload); err != nil {
+		return err
+	}
+
+	upstream, deployErr := p.client.DeployService(ctx, dokploy.DeployServiceInput{ServiceID: dokployServiceID})
+	if deployErr != nil {
+		if interrupted(ctx, deployErr) {
+			return deployErr
+		}
+		if apierr.Retryable(deployErr) {
+			return deployErr
+		}
+		_ = p.markDeploymentFailed(ctx, job, payload, "dokploy_error", deployErr.Error())
+		return Terminal(deployErr)
+	}
+	if upstream.ID == "" {
+		err := apierr.Internal(errors.New("worker: deploy_service resolved an empty Dokploy deployment id"))
+		_ = p.markDeploymentFailed(ctx, job, payload, "internal", err.Error())
+		return Terminal(err)
+	}
+	switch upstream.Status {
+	case "", dokploy.DeploymentSucceeded:
+		return p.markDeploymentSucceeded(ctx, job, payload)
+	case dokploy.DeploymentPending, dokploy.DeploymentRunning:
+		return apierr.DokployUnavailable(errors.New("dokploy deployment is still running"))
+	case dokploy.DeploymentFailed:
+		err := apierr.DokployUnavailable(errors.New("dokploy deployment failed"))
+		if markErr := p.markDeploymentFailed(ctx, job, payload, "dokploy_failed", err.Error()); markErr != nil {
+			return markErr
+		}
+		return Terminal(err)
+	default:
+		err := apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "dokploy_deployment.status",
+			Reason: "must be pending, running, succeeded, or failed",
+		})
+		_ = p.markDeploymentFailed(ctx, job, payload, "dokploy_invalid_status", err.Error())
+		return Terminal(err)
+	}
 }
 
 func (p *Provisioner) loadOrganizationTarget(ctx context.Context, job store.ProvisioningJob, payload EnsureDokployOrganizationPayload) (store.Organization, string, error) {
@@ -1163,6 +1308,103 @@ func (p *Provisioner) loadDatabaseServiceTarget(ctx context.Context, job store.P
 	return svc, parentDokployID, existingDokployID, nil
 }
 
+func (p *Provisioner) loadDeploymentTarget(ctx context.Context, job store.ProvisioningJob, payload DeployServicePayload) (store.Deployment, string, error) {
+	var (
+		deployment       store.Deployment
+		dokployServiceID string
+	)
+	err := p.store.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		var getErr error
+		deployment, getErr = p.deployments.GetByID(ctx, q, payload.OrganizationID, payload.DeploymentID)
+		if getErr != nil {
+			return Terminal(getErr)
+		}
+		if deployment.OrganizationID != job.OrganizationID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.organization_id",
+				Reason: "must match the deployment organization_id",
+			}))
+		}
+		if deployment.ProjectID != payload.ProjectID || deployment.ProjectID != job.ProjectID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.project_id",
+				Reason: "must match the deployment project_id",
+			}))
+		}
+		if deployment.EnvironmentID != payload.EnvironmentID || deployment.EnvironmentID != job.EnvironmentID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.environment_id",
+				Reason: "must match the deployment environment_id",
+			}))
+		}
+		if deployment.ServiceID != payload.ServiceID || deployment.ServiceID != job.ServiceID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.service_id",
+				Reason: "must match the deployment service_id",
+			}))
+		}
+		if deployment.Status == store.DeploymentStatusSucceeded {
+			return nil
+		}
+		if deployment.Status != store.DeploymentStatusQueued && deployment.Status != store.DeploymentStatusRunning {
+			return Terminal(apierr.Conflict("deployment is in a terminal state and cannot be deployed"))
+		}
+		if job.DesiredVersion > 0 && deployment.Status == store.DeploymentStatusQueued && deployment.Version != job.DesiredVersion {
+			return Terminal(apierr.ConflictStale(deployment.Version))
+		}
+
+		svc, getErr := p.services.GetByID(ctx, q, payload.OrganizationID, payload.ServiceID)
+		if getErr != nil {
+			return Terminal(getErr)
+		}
+		if svc.ProjectID != deployment.ProjectID || svc.EnvironmentID != deployment.EnvironmentID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.service_id",
+				Reason: "must match the deployment parent service",
+			}))
+		}
+
+		wantResource, resourceErr := dokployResourceForServiceKind(svc.Kind)
+		if resourceErr != nil {
+			return resourceErr
+		}
+		serviceRefs, listErr := p.refs.ListByYallaResource(ctx, q, job.OrganizationID, store.YallaKindService, svc.ID)
+		if listErr != nil {
+			return listErr
+		}
+		for _, ref := range serviceRefs {
+			if ref.DokployResource == wantResource {
+				dokployServiceID = ref.DokployID
+				break
+			}
+		}
+		if dokployServiceID == "" {
+			return Terminal(apierr.Conflict("service Dokploy mapping is required before deploying a service"))
+		}
+		return nil
+	})
+	if err != nil {
+		return store.Deployment{}, "", err
+	}
+	return deployment, dokployServiceID, nil
+}
+
+func dokployResourceForServiceKind(kind string) (store.DokployResource, error) {
+	switch kind {
+	case store.ServiceKindApplication:
+		return store.DokployResourceApplication, nil
+	case store.ServiceKindCompose:
+		return store.DokployResourceCompose, nil
+	case store.ServiceKindDatabase:
+		return store.DokployResourceDatabase, nil
+	default:
+		return "", Terminal(apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "service.kind",
+			Reason: "must be application, compose, or database for deploy_service",
+		}))
+	}
+}
+
 func (p *Provisioner) persistOrganizationRef(ctx context.Context, job store.ProvisioningJob, payload EnsureDokployOrganizationPayload, dokployID string) error {
 	return p.store.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
 		org, err := p.organizations.Get(ctx, tx, payload.OrganizationID)
@@ -1440,6 +1682,58 @@ func (p *Provisioner) persistProjectRef(ctx context.Context, job store.Provision
 		})
 		if err != nil {
 			return err
+		}
+		return nil
+	})
+}
+
+func (p *Provisioner) markDeploymentRunning(ctx context.Context, job store.ProvisioningJob, payload DeployServicePayload) error {
+	return p.store.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		current, err := p.deployments.GetByID(ctx, tx, job.OrganizationID, payload.DeploymentID)
+		if err != nil {
+			return Terminal(err)
+		}
+		if current.Status == store.DeploymentStatusSucceeded {
+			return nil
+		}
+		if current.ProjectID != payload.ProjectID || current.EnvironmentID != payload.EnvironmentID || current.ServiceID != payload.ServiceID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.deployment_id",
+				Reason: "must match the job resource scope",
+			}))
+		}
+		_, err = p.deployments.MarkRunning(ctx, tx, job.OrganizationID, payload.DeploymentID, job.DesiredVersion)
+		if err != nil {
+			if apierr.Retryable(err) {
+				return err
+			}
+			return Terminal(err)
+		}
+		return nil
+	})
+}
+
+func (p *Provisioner) markDeploymentSucceeded(ctx context.Context, job store.ProvisioningJob, payload DeployServicePayload) error {
+	return p.store.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		_, err := p.deployments.MarkSucceeded(ctx, tx, job.OrganizationID, payload.DeploymentID)
+		if err != nil {
+			if apierr.Retryable(err) {
+				return err
+			}
+			return Terminal(err)
+		}
+		return nil
+	})
+}
+
+func (p *Provisioner) markDeploymentFailed(ctx context.Context, job store.ProvisioningJob, payload DeployServicePayload, code, message string) error {
+	return p.store.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		_, err := p.deployments.MarkFailed(ctx, tx, job.OrganizationID, payload.DeploymentID, code, message)
+		if err != nil {
+			if apierr.Retryable(err) {
+				return err
+			}
+			return Terminal(err)
 		}
 		return nil
 	})
