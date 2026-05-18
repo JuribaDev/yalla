@@ -344,6 +344,26 @@ Postgres persistence for control-plane source-of-truth state.
   the test file's package-doc comment so a future reader does not look for
   a missing test. The story-template file for this pattern is
   `organization_tenant_isolation_test.go` (BE-0426).
+- **Secret-bearing column extension** (BE-0434 pattern,
+  `api_key_tenant_isolation_test.go`): when the table carries a column
+  holding a secret (e.g. `api_keys.secret_hash`, or `variables.value`
+  when `is_secret=true`), the byte-identical-snapshot rule extends with
+  two extra probes. (a) A raw-SQL
+  `SELECT <secret_column> FROM <table> WHERE id=$1` probe that bypasses
+  the typed read path — a regression that scanned a non-secret column
+  into the struct, or skipped the secret field on `Get`, would otherwise
+  pass the typed snapshot check while the underlying row drifted.
+  (b) A `strings.Contains(err.Error(), secretNeedle)` redaction probe
+  over every cross-tenant typed error's `Error()`, `Message`, and `Hint`
+  for every tenant-scoped mutation surface, ensuring a future
+  error-formatter regression cannot embed the row body and hand a peer
+  tenant's credential to a probing caller. For a cross-tenant
+  INSERT-conflict path on a globally-UNIQUE column (e.g.
+  `api_keys.prefix`), add a `SELECT COUNT(*) FROM <table>` global probe
+  AND a `WHERE <secret_column> = $1` needle-absence probe AFTER the
+  conflicting Insert — the per-id probe alone cannot prove the
+  rolled-back row did not land in some other tenant's slot, because the
+  failing row's id is unknown to the probe.
 - A state-machine table (`provisioning_jobs`, `store/job.go`) keeps the
   authoritative transition graph in Go (`JobStatus.CanTransitionTo`, backed by
   the `jobTransitions` map) and lets the DB CHECK only the *closed status set*
