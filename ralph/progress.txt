@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Bare-id job retry endpoints (BE-0277 pattern, POST `/v1/jobs/{job_id}/retry`) reuse `jobIDResolver` so policy is evaluated against the persisted job's owning scope before the mutating handler runs. The store-backed retry path leaves terminal source rows immutable and inserts a fresh queued clone for `failed`, `cancelled`, or `dead_letter` sources only; it scopes the caller's `idempotency_key` as `retry:<source_job_id>:<caller_key>`, copies non-secret payload refs, adds `retried_job_id` / `retry_requested_by`, appends a redacted `job.retry` audit event in the same transaction, and returns the queued retry job with `202 Accepted`. `succeeded`, `queued`, `running`, and `retrying` sources are stable conflicts; cross-tenant/unknown source ids remain tenant-scoped `E_NOT_FOUND`.
 - Break-glass session state-machine stories use explicit `break_glass_sessions.status` plus the existing time/revocation stamps: `active -> revoked|expired`, with `revoked` and `expired` terminal. `BreakGlassRepository.Transition` locks the tenant-scoped session row, rejects invalid edges with `E_INVALID_STATE_TRANSITION` before any write, updates status/revocation columns, and appends a redacted `break_glass_session_events` row with actor/request/previous/next/reason metadata in the same transaction. Customer-facing revoke routes through this transition path while preserving the existing public conflict response for duplicate revocation attempts.
 - API key state-machine stories use explicit `api_keys.status` plus the existing lifecycle stamps: `active -> revoked|expired`, with `revoked` and `expired` terminal. `APIKeyRepository.Transition` locks the tenant-scoped key row, rejects invalid edges with `E_INVALID_STATE_TRANSITION` before any write, updates status, stamps `revoked_at` for revoked transitions, and appends a redacted `api_key_events` row with actor/request/previous/next/reason metadata in the same transaction. Customer-facing revoke should call the transition path before appending its separate audit event so lifecycle timeline and audit timeline commit atomically.
 - Project state-machine stories use the same audited transition shape as environment/service state machines: `projects.status` has the lifecycle table `pending -> active/deleting`, `active -> suspended/deleting`, `suspended -> active/deleting`, `deleting -> active/deleted`, `deleted -> terminal`; `ProjectRepository.Transition` locks the tenant-scoped project row, rejects invalid edges with `E_INVALID_STATE_TRANSITION` before any write, updates status, and appends a redacted `project_events` row with actor/request/previous/next/reason metadata in the same transaction.
@@ -34977,4 +34978,45 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - For jobs read endpoints, keep endpoint-behavior tests in `jobs_test.go` and put remaining public-contract assertions such as process-stream silence, log redaction, dependency-cause redaction, and OpenAPI metadata in a sibling `jobs_*_contract_test.go` file.
   - `GET /v1/jobs/{job_id}` uses the reader twice on the happy path: once in `jobIDResolver` to derive the owning scope for policy, and once in the handler to render the tenant-scoped response.
+---
+## 2026-05-18 22:47 +03 - BE-0277
+- What was implemented
+  - Added `POST /v1/jobs/{job_id}/retry` with action `job.retry`, stable `202 Accepted` yalla.output.v1 response, typed request body (`idempotency_key`, optional `reason`), and OpenAPI route metadata.
+  - Added store-backed retry orchestration: tenant-scoped source job lookup, retryability guard for `failed` / `cancelled` / `dead_letter`, per-source idempotency, fresh queued clone insertion, non-secret retry payload metadata, and an allowed `job.retry` audit event committed in the same transaction.
+  - Added HTTP unit coverage for success, invalid request, unauthenticated, unauthorized scoped-grant denial, not found, and OpenAPI registration.
+  - Added Postgres-backed coverage for clone shape, idempotent replay, audit metadata redaction, cross-tenant not-found behavior, and succeeded-job conflict behavior.
+- Files changed
+  - `internal/controlplane/httpapi/jobs.go`
+  - `internal/controlplane/httpapi/jobs_test.go`
+  - `internal/controlplane/httpapi/routes.go`
+  - `internal/controlplane/store/jobreader.go`
+  - `internal/controlplane/store/jobreader_retry_test.go`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `gofmt -w .`
+  - `goimports -w .` (not installed)
+  - `go mod tidy`
+  - `go test ./internal/controlplane/httpapi -run 'Test(RetryJob|GetJob|ListJobs)'`
+  - `go test ./internal/controlplane/store -run 'TestJobReaderRetryJob'`
+  - `go test ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test -run TestPolicyMatrix ./...`
+  - `go test -run TestFakeDokploy ./...`
+  - `golangci-lint run ./...`
+  - `staticcheck ./...` (not installed)
+  - `govulncheck ./...` (not installed)
+- Results
+  - All available required and optional checks passed.
+  - `goimports`, `staticcheck`, and `govulncheck` are not installed in this environment.
+- Remaining risks or follow-ups
+  - BE-0278 contract-story coverage remains pending as its own PRD item; this implementation includes focused HTTP tests but does not mark BE-0278 complete.
+  - Denied authorization decisions are still handled by the existing HTTP authorization boundary; this story records the allowed mutating retry audit event in the retry transaction.
+- **Learnings for future iterations:**
+  - Job retry should create a new queued job rather than mutate a terminal source row; the job lifecycle state machine remains append-only/terminal for the source.
+  - The existing `jobIDResolver` is reusable for job mutating verbs because it reloads the source job and mirrors its owning project/environment/service scope into policy before the handler runs.
+  - Idempotent retry keys should be scoped with the source job id before they reach `provisioning_jobs.organization_id,idempotency_key` uniqueness, avoiding collisions with unrelated job-producing API calls.
 ---

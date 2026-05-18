@@ -12,9 +12,12 @@ import (
 	"github.com/JuribaDev/yalla/internal/controlplane/domain"
 	"github.com/JuribaDev/yalla/internal/controlplane/policy"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
+	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
+	"github.com/JuribaDev/yalla/internal/controlplane/validate"
 )
 
 var errNoJobReader = errors.New("httpapi: no job reader configured")
+var errNoJobRetrier = errors.New("httpapi: no job retrier configured")
 
 const (
 	jobListDefaultLimit = 50
@@ -27,12 +30,28 @@ type JobReader interface {
 	GetJob(ctx context.Context, organizationID, jobID string) (store.ProvisioningJob, error)
 }
 
+// JobRetrier is the narrow mutation port POST /v1/jobs/{job_id}/retry depends
+// on. *store.JobReader satisfies it in production; tests use fakes.
+type JobRetrier interface {
+	RetryJob(ctx context.Context, in store.RetryProvisioningJobInput) (store.ProvisioningJob, error)
+}
+
 type listJobsPayload struct {
 	Jobs []jobResource `json:"jobs"`
 }
 
 type getJobPayload struct {
 	Job jobResource `json:"job"`
+}
+
+type retryJobRequest struct {
+	IdempotencyKey string `json:"idempotency_key"`
+	Reason         string `json:"reason,omitempty"`
+}
+
+type retryJobPayload struct {
+	Job          jobResource `json:"job"`
+	RetriedJobID string      `json:"retried_job_id"`
 }
 
 type jobResource struct {
@@ -199,6 +218,54 @@ func getJobHandler(reader JobReader) http.HandlerFunc {
 			return
 		}
 		apienvelope.WriteData(w, http.StatusOK, requestID(r), getJobPayload{Job: jobResourceOf(job)})
+	}
+}
+
+func retryJobHandler(retrier JobRetrier) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if retrier == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoJobRetrier))
+			return
+		}
+		jobID := r.PathValue("job_id")
+		id, err := domain.ParseID(jobID)
+		if err != nil || id.Kind() != domain.KindJob {
+			apienvelope.WriteError(w, requestID(r), apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "job_id",
+				Reason: "must be a valid job id",
+			}))
+			return
+		}
+		var req retryJobRequest
+		if err := validate.DecodeJSON(r.Body, &req, 0); err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		correlation := telemetry.FromContext(r.Context())
+		job, err := retrier.RetryJob(r.Context(), store.RetryProvisioningJobInput{
+			OrganizationID: p.OrganizationID,
+			JobID:          jobID,
+			IdempotencyKey: req.IdempotencyKey,
+			Reason:         req.Reason,
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		apienvelope.WriteData(w, http.StatusAccepted, requestID(r), retryJobPayload{
+			Job:          jobResourceOf(job),
+			RetriedJobID: jobID,
+		})
 	}
 }
 

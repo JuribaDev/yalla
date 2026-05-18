@@ -195,12 +195,16 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 	build = build.Normalized()
 	var previewCreator PreviewCreator
 	var jobReader JobReader
+	var jobRetrier JobRetrier
 	for _, opt := range routeOptions {
-		switch v := opt.(type) {
-		case PreviewCreator:
+		if v, ok := opt.(PreviewCreator); ok {
 			previewCreator = v
-		case JobReader:
+		}
+		if v, ok := opt.(JobReader); ok {
 			jobReader = v
+		}
+		if v, ok := opt.(JobRetrier); ok {
+			jobRetrier = v
 		}
 	}
 
@@ -1348,6 +1352,26 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			},
 			resolver: jobIDResolver(jobReader),
 			handler:  getJobHandler(jobReader),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodPost,
+				Path:           "/v1/jobs/{job_id}/retry",
+				OperationID:    "retryJob",
+				Summary:        "Retry a provisioning job",
+				Description:    "Re-issues the failed, cancelled, or dead-lettered provisioning job named by the {job_id} path parameter as a fresh queued job. The authorization resolver first resolves the source job inside the authenticated principal's tenant and evaluates action job.retry against the row's owning scope (organization, project, environment, or service) so scoped deploy grants can retry only jobs they actually cover. The request body carries a caller idempotency_key scoped to this source job plus an optional redacted reason; a retry with the same key returns the same queued retry job rather than duplicating a Dokploy mutation. A cross-tenant or unknown job id reaches the tenant-scoped repository lookup as the principal's home organization and surfaces as a deterministic 404, never another tenant's job. Succeeded, queued, running, and retrying jobs are rejected with a stable conflict because there is no terminal failure to re-issue. The response carries source-of-truth job metadata only: structural resource ids, closed-set status, retry/lease bookkeeping, redacted error_summary, non-secret payload references, and request/correlation ids.",
+				Tags:           []string{tagJobs},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionJobRetry),
+				PathParams: []openapi.PathParam{{
+					Name:        "job_id",
+					Description: "The id of the provisioning job to retry.",
+				}},
+				SuccessStatus:      http.StatusAccepted,
+				SuccessDescription: "The queued retry job.",
+			},
+			resolver: jobIDResolver(jobReader),
+			handler:  retryJobHandler(jobRetrier),
 		},
 		{
 			endpoint: openapi.Endpoint{

@@ -22,14 +22,17 @@ import (
 )
 
 type fakeJobReader struct {
-	jobs      []store.ProvisioningJob
-	job       store.ProvisioningJob
-	err       error
-	callCount *int
-	got       *store.ListProvisioningJobsInput
-	getCalls  *int
-	getOrgID  *string
-	getJobID  *string
+	jobs       []store.ProvisioningJob
+	job        store.ProvisioningJob
+	retryJob   store.ProvisioningJob
+	err        error
+	callCount  *int
+	got        *store.ListProvisioningJobsInput
+	getCalls   *int
+	getOrgID   *string
+	getJobID   *string
+	retryCalls *int
+	retryGot   *store.RetryProvisioningJobInput
 }
 
 func (f fakeJobReader) ListJobs(_ context.Context, in store.ListProvisioningJobsInput) ([]store.ProvisioningJob, error) {
@@ -57,6 +60,22 @@ func (f fakeJobReader) GetJob(_ context.Context, organizationID, jobID string) (
 	}
 	if f.err != nil {
 		return store.ProvisioningJob{}, f.err
+	}
+	return f.job, nil
+}
+
+func (f fakeJobReader) RetryJob(_ context.Context, in store.RetryProvisioningJobInput) (store.ProvisioningJob, error) {
+	if f.retryCalls != nil {
+		*f.retryCalls = *f.retryCalls + 1
+	}
+	if f.retryGot != nil {
+		*f.retryGot = in
+	}
+	if f.err != nil {
+		return store.ProvisioningJob{}, f.err
+	}
+	if f.retryJob.ID != "" {
+		return f.retryJob, nil
 	}
 	return f.job, nil
 }
@@ -612,5 +631,236 @@ func TestGetJobDocumentsRouteInOpenAPI(t *testing.T) {
 	}
 	if _, ok := get.Responses["200"]; !ok {
 		t.Error("responses[200] missing")
+	}
+}
+
+func TestRetryJobSuccessAuthorizesAgainstResolvedJobScope(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 18, 14, 0, 0, 0, time.UTC)
+	var getCalls, retryCalls int
+	var retryGot store.RetryProvisioningJobInput
+	reader := fakeJobReader{
+		getCalls:   &getCalls,
+		retryCalls: &retryCalls,
+		retryGot:   &retryGot,
+		job: store.ProvisioningJob{
+			ID:             "job_0123456789abcdefghjkmnpqrs",
+			OrganizationID: "org_jobs",
+			ProjectID:      "proj_jobs",
+			EnvironmentID:  "env_jobs",
+			ServiceID:      "svc_jobs",
+			Status:         store.JobStatusFailed,
+		},
+		retryJob: store.ProvisioningJob{
+			ID:             "job_1123456789abcdefghjkmnpqrs",
+			OrganizationID: "org_jobs",
+			JobType:        "ensure_application_service",
+			ProjectID:      "proj_jobs",
+			EnvironmentID:  "env_jobs",
+			ServiceID:      "svc_jobs",
+			DesiredVersion: 7,
+			IdempotencyKey: "retry:job_0123456789abcdefghjkmnpqrs:retry-once",
+			Status:         store.JobStatusQueued,
+			MaxAttempts:    20,
+			NextRunAt:      now,
+			Payload:        map[string]string{"retried_job_id": "job_0123456789abcdefghjkmnpqrs"},
+			RequestID:      "req_jobs_retry",
+			CorrelationID:  "corr_jobs_retry",
+			CreatedAt:      now,
+			UpdatedAt:      now,
+		},
+	}
+	principal := policy.Principal{
+		ID: "sa_jobs", Kind: domain.KindServiceAccount, OrganizationID: "org_jobs",
+		Grants: []policy.Grant{{
+			Scope: policy.Scope{OrganizationID: "org_jobs", ProjectID: "proj_jobs", EnvironmentID: "env_jobs", ServiceID: "svc_jobs"},
+			Role:  policy.RoleCI,
+		}},
+	}
+	h := newJobsTestHandler(fakeAuthenticator{identity: auth.Identity{Principal: principal}}, reader)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/jobs/job_0123456789abcdefghjkmnpqrs/retry", strings.NewReader(`{"idempotency_key":"retry-once","reason":"operator requested retry"}`))
+	req.Header.Set("Authorization", "Bearer test")
+	req.Header.Set("X-Request-Id", "req_jobs_retry")
+	req.Header.Set("X-Correlation-Id", "corr_jobs_retry")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body %s", rec.Code, rec.Body.String())
+	}
+	if getCalls != 1 {
+		t.Fatalf("GetJob calls = %d, want resolver lookup only", getCalls)
+	}
+	if retryCalls != 1 {
+		t.Fatalf("RetryJob calls = %d, want 1", retryCalls)
+	}
+	if retryGot.OrganizationID != "org_jobs" || retryGot.JobID != "job_0123456789abcdefghjkmnpqrs" || retryGot.IdempotencyKey != "retry-once" {
+		t.Fatalf("RetryJob input = %+v, want principal org, path job id, and request key", retryGot)
+	}
+	if retryGot.ActorID != "sa_jobs" || retryGot.ActorKind != string(domain.KindServiceAccount) || retryGot.ActorOrgID != "org_jobs" {
+		t.Fatalf("RetryJob actor = (%q,%q,%q), want authenticated principal", retryGot.ActorID, retryGot.ActorKind, retryGot.ActorOrgID)
+	}
+	if retryGot.RequestID != "req_jobs_retry" || retryGot.CorrelationID != "corr_jobs_retry" {
+		t.Fatalf("RetryJob correlation = (%q,%q), want inbound ids", retryGot.RequestID, retryGot.CorrelationID)
+	}
+	var env struct {
+		SchemaVersion string `json:"schema_version"`
+		OK            bool   `json:"ok"`
+		RequestID     string `json:"request_id"`
+		Data          struct {
+			RetriedJobID string `json:"retried_job_id"`
+			Job          struct {
+				ID        string            `json:"id"`
+				Status    string            `json:"status"`
+				Payload   map[string]string `json:"payload"`
+				RequestID string            `json:"request_id"`
+			} `json:"job"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode response: %v; body %s", err, rec.Body.String())
+	}
+	if env.SchemaVersion != "yalla.output.v1" || !env.OK || env.RequestID != "req_jobs_retry" {
+		t.Fatalf("envelope = %+v", env)
+	}
+	if env.Data.RetriedJobID != "job_0123456789abcdefghjkmnpqrs" || env.Data.Job.ID != "job_1123456789abcdefghjkmnpqrs" || env.Data.Job.Status != "queued" {
+		t.Fatalf("retry payload = %+v", env.Data)
+	}
+}
+
+func TestRetryJobInvalidRequestRejectedBeforeRetrier(t *testing.T) {
+	t.Parallel()
+
+	var retryCalls int
+	reader := fakeJobReader{retryCalls: &retryCalls, job: store.ProvisioningJob{
+		ID:             "job_0123456789abcdefghjkmnpqrs",
+		OrganizationID: "org_jobs",
+		Status:         store.JobStatusFailed,
+	}}
+	h := newJobsTestHandler(fakeAuthenticator{identity: auth.Identity{Principal: policy.Principal{
+		ID: "usr_jobs", Kind: domain.KindUser, OrganizationID: "org_jobs", Role: policy.RoleOwner,
+	}}}, reader)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/jobs/job_0123456789abcdefghjkmnpqrs/retry", strings.NewReader(`{"idempotency_key":123}`))
+	req.Header.Set("Authorization", "Bearer test")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
+	}
+	if retryCalls != 0 {
+		t.Fatalf("RetryJob calls = %d, want 0", retryCalls)
+	}
+	decodeError(t, rec, string(yerr.CodeInvalidInput))
+}
+
+func TestRetryJobUnauthenticatedSkipsResolverAndRetrier(t *testing.T) {
+	t.Parallel()
+
+	var getCalls, retryCalls int
+	h := newJobsTestHandler(fakeAuthenticator{err: auth.ErrNoCredentials}, fakeJobReader{getCalls: &getCalls, retryCalls: &retryCalls})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/jobs/job_0123456789abcdefghjkmnpqrs/retry", strings.NewReader(`{"idempotency_key":"retry-once"}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401; body %s", rec.Code, rec.Body.String())
+	}
+	if getCalls != 0 || retryCalls != 0 {
+		t.Fatalf("calls = (get=%d retry=%d), want none", getCalls, retryCalls)
+	}
+	decodeError(t, rec, string(yerr.CodeAuth))
+}
+
+func TestRetryJobUnauthorizedWhenGrantDoesNotCoverResolvedScope(t *testing.T) {
+	t.Parallel()
+
+	var getCalls, retryCalls int
+	reader := fakeJobReader{getCalls: &getCalls, retryCalls: &retryCalls, job: store.ProvisioningJob{
+		ID:             "job_0123456789abcdefghjkmnpqrs",
+		OrganizationID: "org_jobs",
+		ProjectID:      "proj_jobs",
+		Status:         store.JobStatusFailed,
+	}}
+	principal := policy.Principal{
+		ID: "sa_jobs", Kind: domain.KindServiceAccount, OrganizationID: "org_jobs",
+		Grants: []policy.Grant{{Scope: policy.Scope{OrganizationID: "org_jobs", ProjectID: "proj_sibling"}, Role: policy.RoleAdmin}},
+	}
+	h := newJobsTestHandler(fakeAuthenticator{identity: auth.Identity{Principal: principal}}, reader)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/jobs/job_0123456789abcdefghjkmnpqrs/retry", strings.NewReader(`{"idempotency_key":"retry-once"}`))
+	req.Header.Set("Authorization", "Bearer test")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body %s", rec.Code, rec.Body.String())
+	}
+	if getCalls != 1 || retryCalls != 0 {
+		t.Fatalf("calls = (get=%d retry=%d), want resolver only", getCalls, retryCalls)
+	}
+	decodeError(t, rec, string(yerr.CodeForbidden))
+}
+
+func TestRetryJobNotFoundPropagatesEnvelope(t *testing.T) {
+	t.Parallel()
+
+	h := newJobsTestHandler(fakeAuthenticator{identity: auth.Identity{Principal: policy.Principal{
+		ID: "usr_jobs", Kind: domain.KindUser, OrganizationID: "org_jobs", Role: policy.RoleOwner,
+	}}}, fakeJobReader{err: apierr.NotFound("provisioning job", "job_0123456789abcdefghjkmnpqrt")})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/jobs/job_0123456789abcdefghjkmnpqrt/retry", strings.NewReader(`{"idempotency_key":"retry-once"}`))
+	req.Header.Set("Authorization", "Bearer test")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body %s", rec.Code, rec.Body.String())
+	}
+	decodeError(t, rec, string(yerr.CodeNotFound))
+}
+
+func TestRetryJobDocumentsRouteInOpenAPI(t *testing.T) {
+	t.Parallel()
+
+	h := newJobsTestHandler(fakeAuthenticator{}, fakeJobReader{})
+
+	req := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("openapi.json status = %d, want 200; body %s", rec.Code, rec.Body.String())
+	}
+	var doc struct {
+		Paths map[string]map[string]struct {
+			OperationID    string                  `json:"operationId"`
+			RequiredAction string                  `json:"x-required-action"`
+			PathParams     []struct{ Name string } `json:"parameters"`
+			Responses      map[string]struct{}     `json:"responses"`
+		} `json:"paths"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("decode openapi.json: %v; body %s", err, rec.Body.String())
+	}
+	post, ok := doc.Paths["/v1/jobs/{job_id}/retry"]["post"]
+	if !ok {
+		t.Fatalf("POST /v1/jobs/{job_id}/retry missing from openapi.json: %s", rec.Body.String())
+	}
+	if post.OperationID != "retryJob" {
+		t.Errorf("operationId = %q, want retryJob", post.OperationID)
+	}
+	if post.RequiredAction != string(policy.ActionJobRetry) {
+		t.Errorf("x-required-action = %q, want %q", post.RequiredAction, policy.ActionJobRetry)
+	}
+	if _, ok := post.Responses["202"]; !ok {
+		t.Error("responses[202] missing")
+	}
+	if len(post.PathParams) == 0 || post.PathParams[0].Name != "job_id" {
+		t.Fatalf("path params = %+v, want job_id", post.PathParams)
 	}
 }

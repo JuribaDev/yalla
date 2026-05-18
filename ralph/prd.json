@@ -6172,8 +6172,8 @@
       ],
       "type": "endpoint-jobs",
       "priority": 2,
-      "passes": false,
-      "notes": "Endpoint belongs to the jobs backend surface."
+      "passes": true,
+      "notes": "Implemented POST /v1/jobs/{job_id}/retry with action job.retry, persisted job-scope authorization via the existing bare job resolver, typed request/response DTOs, fresh queued retry job creation from failed/cancelled/dead_letter source rows, per-source idempotency keys, allowed audit events, redacted reason metadata, OpenAPI registration, HTTP unit coverage, and Postgres-backed retry clone/tenant/state guard coverage."
     },
     {
       "id": "BE-0278",
