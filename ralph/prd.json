@@ -4481,8 +4481,8 @@
       ],
       "type": "test-service",
       "priority": 2,
-      "passes": false,
-      "notes": "Contract coverage for PATCH /v1/services/{service_id}."
+      "passes": true,
+      "notes": "Closure-of-contract suite added at internal/controlplane/httpapi/services_update_contract_test.go (3 named tests: ServerWritesResponseDataOnlyToResponseWriter, RequestLogRedactsBearerToken, ErrorEnvelopeDoesNotLeakDependencyCause). Structural twin of environments_update_contract_test.go (BE-0158) and services_get_contract_test.go (BE-0185)."
     },
     {
       "id": "BE-0189",

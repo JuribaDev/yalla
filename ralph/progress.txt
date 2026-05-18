@@ -32368,3 +32368,69 @@ change that widened Reason to caller-supplied data.
   - **Per-endpoint *HandlerForWithLogger helper is mandatory for the redaction leg** (BE-0185 / BE-0182 / BE-0179 / BE-0176 pattern): the contract suite's base getServiceHandlerFor bakes in authForSvcGet which only accepts "a-valid-token", so the contract secret would never reach the handler. The closure file declares its own getServiceHandlerForWithLogger(id, authErr, reader, logger) that uses fakeAuthenticator{identity, err} and injects the caller-supplied logger. Mirror the sibling's helper verbatim, substituting only the endpoint's port (ServiceReader here vs EnvironmentReader for BE-0155) and keeping every zero-value fake byte-identical so a future NewHandler arglist reorder updates all callers in one diff.
   - **Bare-id services route inherits the no-secret-on-wire property from environmentService** (BE-0185): GET /v1/services/{service_id} renders the canonical row through environmentServiceOf, whose wire shape is id, organization_id, project_id, environment_id, slug, display_name, kind, version, created_at, updated_at, and an optional deletion_scheduled_at. None of those are bearer- or secret-bearing, so the redaction tests only need to prove the BEARER doesn't leak; there is no "submitted-secret redaction" leg (cf. BE-0176 for endpoints whose body carries secret values). This property is shared with environments_get / projects_get / project_environments_get / api_keys_get's wire shapes.
 ---
+
+## 2026-05-18 - BE-0188
+- Added closure-of-contract test suite for PATCH /v1/services/{service_id}.
+- Files changed:
+  - internal/controlplane/httpapi/services_update_contract_test.go (new)
+  - ralph/prd.json (BE-0188 -> passes: true)
+- Three named tests close the three contract criteria not asserted by
+  services_update_test.go (BE-0187) or services_update_policy_test.go
+  (BE-0189):
+    TestUpdateServiceServerWritesResponseDataOnlyToResponseWriter
+      (proves the served PATCH writes nothing to process stdout/stderr;
+      response data goes through the http.ResponseWriter alone; the
+      structured logger goes to its own sink — captureProcessOutput
+      swap requires the test be non-parallel).
+    TestUpdateServiceRequestLogRedactsBearerToken
+      (success-path AND authorization-failure-path parallel subtests
+      pin the bearer is neither logged nor echoed in the response
+      body; the deny-leg updater errors if invoked, proving policy
+      short-circuits before the port so no "updater error" log can be
+      the leak source).
+    TestUpdateServiceErrorEnvelopeDoesNotLeakDependencyCause
+      (a StoreUnavailable-wrapped cause carrying a bare datastore
+      address "10.0.0.5:5432" surfaces as a typed E_UNAVAILABLE
+      envelope whose body contains neither the wrapped cause string
+      nor the datastore address).
+- Verification:
+  - gofmt -l: clean
+  - go vet ./...: clean
+  - go test ./...: PASS
+  - go test -race ./...: PASS
+  - go test -run '<the three tests>' ./internal/controlplane/httpapi: PASS
+- Remaining risks or follow-ups: none. The PATCH /v1/services/{service_id}
+  surface now has full closure-of-contract parity with the GET
+  variant (BE-0185) and the environments PATCH variant (BE-0158).
+- **Learnings for future iterations:**
+  - Sixth confirmed instance of the closure-of-contract three-test
+    template established by BE-0152 / BE-0155 / BE-0158 / BE-0128 /
+    BE-0185. The template scales cleanly to any single-resource
+    {resource_id} endpoint (GET or PATCH) whose primary test file
+    already proves status / envelope / not-found / cross-tenant /
+    OpenAPI, leaving exactly the three contract gaps above to close.
+  - All reusable helpers existed already in services_update_test.go
+    (fakeServiceUpdater, canonicalUpdatedSvc, updateServiceHandlerFor,
+    patchService, decodeUpdateService) — the contract file only had
+    to add ONE new helper (updateServiceHandlerForWithLogger) to
+    thread a slog logger into NewHandler. This is the pattern: the
+    primary `..._test.go` file always owns the canonical row, the
+    fake port, the no-logger handler builder, and the request helper;
+    the `..._contract_test.go` file only adds the logger-threaded
+    handler builder and the two recognisable constants
+    (..._ContractSecret bearer, ..._ContractBody PATCH JSON). Future
+    PATCH/PUT/POST contract closures (BE-0191 DELETE, BE-0194 POST
+    restore, BE-0197 GET rendered, BE-0200 GET variables, ...) should
+    apply this same minimal-helper-introduction rule.
+  - The captureProcessOutput swap is a global os.Stdout/os.Stderr
+    swap, so the ServerWritesResponseDataOnlyToResponseWriter test
+    MUST NOT be t.Parallel(); the other two tests in the file MAY be.
+    Order matters in the file: the non-parallel test is conventionally
+    first.
+  - decodeUpdateService (in services_update_test.go) already pins the
+    yalla.output.v1 / request_id / ok-true envelope invariants, so
+    the contract test's happy-path assertions can reuse it verbatim
+    and only assert the projection-into-body invariants relevant to
+    "response data goes through the body, never stdout/stderr"
+    (.id / .project_id / .environment_id).
+---
