@@ -10808,8 +10808,8 @@
       ],
       "type": "error-contract",
       "priority": 1,
-      "passes": false,
-      "notes": "Stable error code: E_IDEMPOTENCY_CONFLICT."
+      "passes": true,
+      "notes": "Implemented stable E_IDEMPOTENCY_CONFLICT contract coverage: typed apierr.IdempotencyConflict constructor trims caller-provided message text, keeps the fixed remediation hint, maps to HTTP 409 through apienvelope, remains non-retryable with MessageSpecific policy, renders yalla.error.v1 with request_id and docs link, and redacts credential-looking text at the envelope boundary."
     },
     {
       "id": "BE-0522",

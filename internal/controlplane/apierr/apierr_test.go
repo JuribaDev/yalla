@@ -598,6 +598,53 @@ func TestConflictContract(t *testing.T) {
 	}
 }
 
+func TestIdempotencyConflictContract(t *testing.T) {
+	t.Parallel()
+
+	const secret = "Authorization: Bearer idempotency-secret-token"
+	err := IdempotencyConflict("  idempotency key reused; retry without " + secret + "  ")
+	if err.Code != yerr.CodeIdempotencyConflict {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeIdempotencyConflict)
+	}
+	if strings.HasPrefix(err.Message, " ") || strings.HasSuffix(err.Message, " ") {
+		t.Fatalf("message = %q, want trimmed stable message text", err.Message)
+	}
+	if err.Hint != "replay the original request unchanged, or retry with a new Idempotency-Key" {
+		t.Fatalf("hint = %q, want fixed idempotency remediation hint", err.Hint)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 409 {
+			t.Errorf("HTTPStatus = %d, want 409", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageSpecific {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageSpecific)
+		}
+		if entry.Retryable {
+			t.Error("E_IDEMPOTENCY_CONFLICT must not be retryable")
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-idempotency-conflict", err)
+	body := rec.Body.String()
+	if rec.Code != 409 {
+		t.Fatalf("status = %d, want 409; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-idempotency-conflict"`) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeIdempotencyConflict)) {
+		t.Errorf("envelope body missing schema, request id, or docs link: %s", body)
+	}
+	if strings.Contains(body, "idempotency-secret-token") || strings.Contains(body, "Bearer") {
+		t.Errorf("idempotency-conflict envelope leaked credential material: %s", body)
+	}
+	if !strings.Contains(body, output.Sentinel) {
+		t.Errorf("expected redaction sentinel %q in body: %s", output.Sentinel, body)
+	}
+}
+
 func TestRetryable(t *testing.T) {
 	t.Parallel()
 

@@ -415,7 +415,8 @@ func CurrentVersionOf(err error) (int64, bool) {
 // how to recover: replay the original request unchanged, or choose a fresh
 // key.
 func IdempotencyConflict(message string) *yerr.Error {
-	if strings.TrimSpace(message) == "" {
+	message = strings.TrimSpace(message)
+	if message == "" {
 		message = "the idempotency key was already used for a different request"
 	}
 	return yerr.New(yerr.CodeIdempotencyConflict, message).

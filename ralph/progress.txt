@@ -35577,3 +35577,13 @@ change that widened Reason to caller-supplied data.
   - Admin read endpoint contract suites should pin both success-path and denied-path request log redaction, because the auth middleware rejects before the endpoint reader runs.
   - For GET endpoints, stream-isolation coverage can reuse the shared `captureProcessOutput` helper from `me_contract_test.go`.
 ---
+## 2026-05-19 01:28 +03 - BE-0521
+- What was implemented: Added dedicated E_IDEMPOTENCY_CONFLICT error-contract coverage and normalized `apierr.IdempotencyConflict` message handling so caller-provided text is trimmed before rendering. The contract pins HTTP 409, MessageSpecific policy, non-retryable behavior, fixed remediation hint, yalla.error.v1 envelope shape, request_id, documentation URL, and renderer redaction of credential-looking text.
+- Files changed: `internal/controlplane/apierr/apierr.go`, `internal/controlplane/apierr/apierr_test.go`, `ralph/prd.json`, `ralph/progress.txt`.
+- Verification run: `go test ./internal/controlplane/apierr -run TestIdempotencyConflictContract -count=1` failed before implementation with the expected untrimmed-message assertion; after implementation it passed. Also ran `gofmt -w .`, `go mod tidy`, `go test ./internal/controlplane/apierr -run TestIdempotencyConflictContract -count=1`, `go test ./internal/controlplane/apienvelope ./internal/controlplane/httpapi -run 'Test(WriteError|StatusForCode|RequireIdempotency)' -count=1`, `go test ./...`, `go vet ./...`, `go test -race ./...`, `go test ./internal/controlplane/...`, `golangci-lint run ./...`, and the repository pre-commit `scripts/verify.sh --strict --release` hook.
+- Results: All run checks passed. `goimports` was not installed on PATH; the pre-commit hook also completed `govulncheck`, `staticcheck`, `goreleaser check`, and snapshot release verification successfully.
+- Remaining risks or follow-ups: None for BE-0521; later error-contract stories should continue adding one dedicated constructor/envelope contract test per stable code.
+- **Learnings for future iterations:**
+  - Error-contract stories after BE-0520 should mirror the existing `apierr` contract-test style: constructor normalization and taxonomy assertions first, then envelope status/schema/request_id/docs/redaction assertions.
+  - MessageSpecific constructors should still normalize caller-provided message text before returning the typed error; renderer redaction is the backstop, not a substitute for deterministic constructor output.
+---
