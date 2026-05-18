@@ -8,7 +8,8 @@ client.
 
 - `dokploy` (this package) holds the typed Dokploy client wrapper (`Client`):
   Yalla intents (`EnsureProject`, `EnsureService`, `DeployService`,
-  `ReadDeploymentLogs`, `RemoveService`, ...) mapped onto Dokploy operations.
+  `ReadDeploymentLogs`, `RemoveEnvironment`, `RemoveService`, ...) mapped onto
+  Dokploy operations.
   The Dokploy token is injected into the `Client` via `Config.Token` and is
   never exposed by any method; `Client.LogValue` redacts it.
 - `dokployfake` is the deterministic, in-memory HTTP test double. It is the
@@ -31,7 +32,8 @@ client.
   400 -> `Invalid`, 401/403 -> `Internal` (a Yalla misconfig, non-retryable),
   404 -> `NotFound`, 409 -> `Conflict`. The redacted upstream body is wrapped as
   the log-only cause, never placed in a client-facing `Message`.
-- `RemoveService` treats a Dokploy 404 as success — teardown is idempotent.
+- `RemoveEnvironment` and `RemoveService` treat a Dokploy 404 as success —
+  teardown is idempotent.
 - The `Client` carries an `output.Redactor` seeded with the token; any error
   built from upstream response data is run through it before being wrapped.
 - Correlation IDs from `telemetry.FromContext` are forwarded to Dokploy as

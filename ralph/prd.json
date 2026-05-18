@@ -10276,8 +10276,8 @@
       ],
       "type": "worker-job",
       "priority": 1,
-      "passes": false,
-      "notes": "Provisioning job type: delete_environment."
+      "passes": true,
+      "notes": "Implemented delete_environment worker job with typed payload validation, tenant-scoped desired-state reload, stale/cross-tenant terminal failures, idempotent Dokploy environment teardown, fake Dokploy coverage, and redacted retry persistence tests."
     },
     {
       "id": "BE-0494",

@@ -189,6 +189,12 @@ type StopServiceInput struct {
 	ServiceID string
 }
 
+// RemoveEnvironmentInput names the environment to remove.
+type RemoveEnvironmentInput struct {
+	// EnvironmentID is the environment to remove; required.
+	EnvironmentID string
+}
+
 // RemoveServiceInput names the service to remove.
 type RemoveServiceInput struct {
 	// ServiceID is the service to remove; required.

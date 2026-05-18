@@ -70,6 +70,13 @@ Background provisioning/metering workers for the control plane.
   expected lifecycle path. Call the typed Dokploy `RemoveService` intent; it is
   already idempotent for upstream 404s, so do not add raw Dokploy DELETE calls
   or handler-side Dokploy access.
+- Environment teardown jobs (`environment.delete`/`delete_environment`) use the
+  scoped payload `(organization_id, project_id, environment_id)`, reload the
+  environment through `EnvironmentRepository.GetByID`, verify job/payload scope
+  and `DesiredVersion`, resolve the `environment` `dokploy_refs` row, and call
+  the typed Dokploy `RemoveEnvironment` intent. A job already marked
+  `succeeded` is a replay no-op, and an upstream 404 is idempotent success in
+  the typed client.
 - Integration tests are `package worker_test`, use `testutil.RequireMigratedDB`,
   and `t.Skip` when `YALLA_TEST_DATABASE_URL` is unset. A concurrent-claim test
   must retry-until-drained with a deadline guard — a job locked by a peer's

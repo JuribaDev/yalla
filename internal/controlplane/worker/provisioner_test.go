@@ -978,6 +978,94 @@ func TestDeleteServicePayloadValidation(t *testing.T) {
 	}
 }
 
+func TestDeleteEnvironmentPayloadValidation(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name    string
+		job     store.ProvisioningJob
+		wantErr bool
+	}{
+		{
+			name: "valid",
+			job: store.ProvisioningJob{
+				OrganizationID: "org_valid",
+				ProjectID:      "proj_valid",
+				EnvironmentID:  "env_valid",
+				JobType:        worker.JobTypeDeleteEnvironment,
+				Payload: map[string]string{
+					"organization_id": "org_valid",
+					"project_id":      "proj_valid",
+					"environment_id":  "env_valid",
+				},
+			},
+		},
+		{
+			name: "alias",
+			job: store.ProvisioningJob{
+				OrganizationID: "org_valid",
+				ProjectID:      "proj_valid",
+				EnvironmentID:  "env_valid",
+				JobType:        worker.JobTypeDeleteEnvironmentAlias,
+				Payload: map[string]string{
+					"organization_id": "org_valid",
+					"project_id":      "proj_valid",
+					"environment_id":  "env_valid",
+				},
+			},
+		},
+		{
+			name: "service id must be empty",
+			job: store.ProvisioningJob{
+				OrganizationID: "org_valid",
+				ProjectID:      "proj_valid",
+				EnvironmentID:  "env_valid",
+				ServiceID:      "svc_invalid",
+				JobType:        worker.JobTypeDeleteEnvironment,
+				Payload: map[string]string{
+					"organization_id": "org_valid",
+					"project_id":      "proj_valid",
+					"environment_id":  "env_valid",
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "cross tenant payload",
+			job: store.ProvisioningJob{
+				OrganizationID: "org_valid",
+				ProjectID:      "proj_valid",
+				EnvironmentID:  "env_valid",
+				JobType:        worker.JobTypeDeleteEnvironment,
+				Payload: map[string]string{
+					"organization_id": "org_other",
+					"project_id":      "proj_valid",
+					"environment_id":  "env_valid",
+				},
+			},
+			wantErr: true,
+		},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := worker.ParseDeleteEnvironmentPayload(tc.job)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("ParseDeleteEnvironmentPayload returned nil, want validation error")
+				}
+				if !worker.IsTerminal(err) {
+					t.Fatalf("validation error is not terminal: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseDeleteEnvironmentPayload returned %v, want nil", err)
+			}
+		})
+	}
+}
+
 func TestRollbackServicePayloadValidation(t *testing.T) {
 	t.Parallel()
 
@@ -1995,6 +2083,55 @@ func TestProvisionerDeleteServiceSuccessAndReplay(t *testing.T) {
 	}
 }
 
+func TestProvisionerDeleteEnvironmentSuccessAndReplay(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	org := insertWorkerOrg(ctx, t, dataStore, "acme")
+	project := insertWorkerProject(ctx, t, dataStore, org, "api")
+	env := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+
+	fake := dokployfake.New()
+	defer fake.Close()
+	client := newWorkerDokployClient(t, fake)
+	if err := pRunEnsureEnvironmentWithParent(ctx, t, dataStore, client, org, project, env); err != nil {
+		t.Fatalf("seed environment dokploy mapping: %v", err)
+	}
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: client,
+		Mapper: dokploy.NewMapper(),
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+
+	job := deleteEnvironmentJob(env)
+	if err := p.Run(ctx, job); err != nil {
+		t.Fatalf("Run delete environment: %v", err)
+	}
+	reqs := fake.Requests()
+	if len(reqs) != 4 || reqs[3].Method != http.MethodDelete || reqs[3].Path != "/api/environments/env_1" {
+		t.Fatalf("fake requests = %+v, want env seed then DELETE /api/environments/env_1", reqs)
+	}
+	if strings.Contains(reqs[3].Body, fake.Token()) || reqs[3].AuthHeader != output.Sentinel {
+		t.Fatalf("delete request recording leaked credentials: %+v", reqs[3])
+	}
+
+	job.Status = store.JobStatusSucceeded
+	if err := p.Run(ctx, job); err != nil {
+		t.Fatalf("replayed succeeded delete environment job: %v", err)
+	}
+	if reqs := fake.Requests(); len(reqs) != 4 {
+		t.Fatalf("replayed succeeded delete issued another Dokploy request: %+v", reqs)
+	}
+}
+
 func TestProvisionerDeleteServiceRetryableFailure(t *testing.T) {
 	t.Parallel()
 
@@ -2027,6 +2164,48 @@ func TestProvisionerDeleteServiceRetryableFailure(t *testing.T) {
 	}
 
 	err = p.Run(ctx, deleteServiceJob(svc))
+	if err == nil {
+		t.Fatal("Run returned nil, want retryable Dokploy error")
+	}
+	if worker.IsTerminal(err) {
+		t.Fatalf("Run returned terminal error for retryable upstream failure: %v", err)
+	}
+	if !apierr.Retryable(err) {
+		t.Fatalf("Run error is not marked retryable: %v", err)
+	}
+}
+
+func TestProvisionerDeleteEnvironmentRetryableFailure(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	org := insertWorkerOrg(ctx, t, dataStore, "acme")
+	project := insertWorkerProject(ctx, t, dataStore, org, "api")
+	env := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+
+	fake := dokployfake.New()
+	defer fake.Close()
+	client := newWorkerDokployClient(t, fake)
+	if err := pRunEnsureEnvironmentWithParent(ctx, t, dataStore, client, org, project, env); err != nil {
+		t.Fatalf("seed environment dokploy mapping: %v", err)
+	}
+	fake.QueueFault(dokployfake.StatusFault(http.StatusInternalServerError))
+
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: client,
+		Mapper: dokploy.NewMapper(),
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+
+	err = p.Run(ctx, deleteEnvironmentJob(env))
 	if err == nil {
 		t.Fatal("Run returned nil, want retryable Dokploy error")
 	}
@@ -2081,6 +2260,48 @@ func TestProvisionerDeleteServiceRefusesStaleDesiredVersion(t *testing.T) {
 	}
 }
 
+func TestProvisionerDeleteEnvironmentRefusesStaleDesiredVersion(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	org := insertWorkerOrg(ctx, t, dataStore, "acme")
+	project := insertWorkerProject(ctx, t, dataStore, org, "api")
+	env := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+
+	fake := dokployfake.New()
+	defer fake.Close()
+	client := newWorkerDokployClient(t, fake)
+	if err := pRunEnsureEnvironmentWithParent(ctx, t, dataStore, client, org, project, env); err != nil {
+		t.Fatalf("seed environment dokploy mapping: %v", err)
+	}
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: client,
+		Mapper: dokploy.NewMapper(),
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+
+	job := deleteEnvironmentJob(env)
+	job.DesiredVersion = env.Version - 1
+	err = p.Run(ctx, job)
+	if err == nil {
+		t.Fatal("Run returned nil, want stale desired-state error")
+	}
+	if !worker.IsTerminal(err) {
+		t.Fatalf("stale desired-state error is not terminal: %v", err)
+	}
+	if reqs := fake.Requests(); len(reqs) != 3 {
+		t.Fatalf("stale delete called Dokploy beyond environment seed: %+v", reqs)
+	}
+}
+
 func TestProvisionerDeleteServiceCrossTenantPayloadIsTerminal(t *testing.T) {
 	t.Parallel()
 
@@ -2124,6 +2345,48 @@ func TestProvisionerDeleteServiceCrossTenantPayloadIsTerminal(t *testing.T) {
 	}
 }
 
+func TestProvisionerDeleteEnvironmentCrossTenantPayloadIsTerminal(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	org := insertWorkerOrg(ctx, t, dataStore, "acme")
+	project := insertWorkerProject(ctx, t, dataStore, org, "api")
+	env := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+
+	fake := dokployfake.New()
+	defer fake.Close()
+	client := newWorkerDokployClient(t, fake)
+	if err := pRunEnsureEnvironmentWithParent(ctx, t, dataStore, client, org, project, env); err != nil {
+		t.Fatalf("seed environment dokploy mapping: %v", err)
+	}
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: client,
+		Mapper: dokploy.NewMapper(),
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+
+	job := deleteEnvironmentJob(env)
+	job.Payload["organization_id"] = "org_other"
+	err = p.Run(ctx, job)
+	if err == nil {
+		t.Fatal("Run returned nil, want terminal validation error")
+	}
+	if !worker.IsTerminal(err) {
+		t.Fatalf("cross-tenant payload error is not terminal: %v", err)
+	}
+	if reqs := fake.Requests(); len(reqs) != 3 {
+		t.Fatalf("cross-tenant delete called Dokploy beyond environment seed: %+v", reqs)
+	}
+}
+
 func TestProvisionerDeleteServiceCancellationIsNotTerminal(t *testing.T) {
 	t.Parallel()
 
@@ -2149,6 +2412,38 @@ func TestProvisionerDeleteServiceCancellationIsNotTerminal(t *testing.T) {
 	}
 
 	err = p.Run(ctx, deleteServiceJob(svc))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run error = %v, want context.Canceled", err)
+	}
+	if worker.IsTerminal(err) {
+		t.Fatalf("cancellation error is terminal: %v", err)
+	}
+}
+
+func TestProvisionerDeleteEnvironmentCancellationIsNotTerminal(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	org := insertWorkerOrg(ctx, t, dataStore, "acme")
+	project := insertWorkerProject(ctx, t, dataStore, org, "api")
+	env := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+	insertWorkerEnvironmentRef(ctx, t, dataStore, env, "env_cancel")
+
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: canceledClient{},
+		Mapper: dokploy.NewMapper(),
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+
+	err = p.Run(ctx, deleteEnvironmentJob(env))
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run error = %v, want context.Canceled", err)
 	}
@@ -2201,6 +2496,86 @@ func TestDeleteServiceRetryableFailurePersistsRedactedErrorSummary(t *testing.T)
 		Store:         dataStore,
 		Runner:        p,
 		Owner:         "worker-delete-redaction-test",
+		LeaseDuration: time.Minute,
+		Backoff:       worker.Backoff{Base: time.Second, Max: time.Second},
+		Now:           func() time.Time { return time.Unix(1700000000, 0).UTC() },
+	})
+	if err != nil {
+		t.Fatalf("NewStoreClaimer: %v", err)
+	}
+	lease, err := claimer.Claim(ctx)
+	if err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+	if lease == nil {
+		t.Fatal("Claim returned nil lease")
+	}
+	if err := lease.Run(ctx); err != nil {
+		t.Fatalf("lease.Run: %v", err)
+	}
+
+	var persisted store.ProvisioningJob
+	if err := dataStore.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		var getErr error
+		persisted, getErr = jobs.Get(ctx, q, enqueued.OrganizationID, enqueued.ID)
+		return getErr
+	}); err != nil {
+		t.Fatalf("read persisted job: %v", err)
+	}
+	if persisted.Status != store.JobStatusRetrying {
+		t.Fatalf("persisted status = %s, want retrying", persisted.Status)
+	}
+	if strings.Contains(persisted.ErrorSummary, fake.Token()) {
+		t.Fatalf("error summary leaked token: %q", persisted.ErrorSummary)
+	}
+	if !strings.Contains(persisted.ErrorSummary, "Dokploy") {
+		t.Fatalf("error summary = %q, want redacted Dokploy failure context", persisted.ErrorSummary)
+	}
+}
+
+func TestDeleteEnvironmentRetryableFailurePersistsRedactedErrorSummary(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	org := insertWorkerOrg(ctx, t, dataStore, "acme")
+	project := insertWorkerProject(ctx, t, dataStore, org, "api")
+	env := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+
+	fake := dokployfake.New()
+	defer fake.Close()
+	client := newWorkerDokployClient(t, fake)
+	if err := pRunEnsureEnvironmentWithParent(ctx, t, dataStore, client, org, project, env); err != nil {
+		t.Fatalf("seed environment dokploy mapping: %v", err)
+	}
+	fake.QueueFault(dokployfake.StatusFault(http.StatusInternalServerError))
+
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: client,
+		Mapper: dokploy.NewMapper(),
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+
+	jobs := store.NewJobRepository()
+	enqueued := deleteEnvironmentJob(env)
+	if err := dataStore.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		_, err := jobs.Insert(ctx, tx, enqueued)
+		return err
+	}); err != nil {
+		t.Fatalf("insert delete_environment job: %v", err)
+	}
+
+	claimer, err := worker.NewStoreClaimer(worker.StoreClaimerConfig{
+		Store:         dataStore,
+		Runner:        p,
+		Owner:         "worker-delete-environment-redaction-test",
 		LeaseDuration: time.Minute,
 		Backoff:       worker.Backoff{Base: time.Second, Max: time.Second},
 		Now:           func() time.Time { return time.Unix(1700000000, 0).UTC() },
@@ -4865,6 +5240,10 @@ func (canceledClient) RemoveService(context.Context, dokploy.RemoveServiceInput)
 	return context.Canceled
 }
 
+func (canceledClient) RemoveEnvironment(context.Context, dokploy.RemoveEnvironmentInput) error {
+	return context.Canceled
+}
+
 func newWorkerDokployClient(t *testing.T, fake *dokployfake.Server) *dokploy.Client {
 	t.Helper()
 	client, err := dokploy.New(dokploy.Config{
@@ -5137,6 +5516,25 @@ func deleteServiceJob(svc store.Service) store.ProvisioningJob {
 	}
 }
 
+func deleteEnvironmentJob(env store.Environment) store.ProvisioningJob {
+	return store.ProvisioningJob{
+		ID:             "job_delete_environment_test",
+		OrganizationID: env.OrganizationID,
+		ProjectID:      env.ProjectID,
+		EnvironmentID:  env.ID,
+		JobType:        worker.JobTypeDeleteEnvironment,
+		DesiredVersion: env.Version,
+		IdempotencyKey: "delete-environment-" + env.ID,
+		Payload: map[string]string{
+			"organization_id": env.OrganizationID,
+			"project_id":      env.ProjectID,
+			"environment_id":  env.ID,
+		},
+		RequestID:     "req_delete_environment_test",
+		CorrelationID: "corr_delete_environment_test",
+	}
+}
+
 func pRunEnsureOrg(ctx context.Context, t *testing.T, s *store.Store, client *dokploy.Client, org store.Organization) error {
 	t.Helper()
 	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
@@ -5312,6 +5710,26 @@ func insertWorkerServiceRef(ctx context.Context, t *testing.T, s *store.Store, s
 		return err
 	}); err != nil {
 		t.Fatalf("insert service dokploy ref: %v", err)
+	}
+	return ref
+}
+
+func insertWorkerEnvironmentRef(ctx context.Context, t *testing.T, s *store.Store, env store.Environment, dokployID string) store.DokployRef {
+	t.Helper()
+	repo := store.NewDokployRefRepository()
+	var ref store.DokployRef
+	if err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		var err error
+		ref, err = repo.Insert(ctx, tx, store.DokployRef{
+			OrganizationID:  env.OrganizationID,
+			YallaKind:       store.YallaKindEnvironment,
+			YallaID:         env.ID,
+			DokployResource: store.DokployResourceEnvironment,
+			DokployID:       dokployID,
+		})
+		return err
+	}); err != nil {
+		t.Fatalf("insert environment dokploy ref: %v", err)
 	}
 	return ref
 }

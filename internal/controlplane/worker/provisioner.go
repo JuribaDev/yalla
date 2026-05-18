@@ -89,6 +89,16 @@ const JobTypeDeleteService = "service.delete"
 // JobTypeDeleteService.
 const JobTypeDeleteServiceAlias = "delete_service"
 
+// JobTypeDeleteEnvironment is the durable provisioning job enqueued by
+// environment deletion workflows. JobTypeDeleteEnvironmentAlias accepts the
+// PRD's delete_environment spelling for compatibility with manually seeded
+// jobs.
+const JobTypeDeleteEnvironment = "environment.delete"
+
+// JobTypeDeleteEnvironmentAlias is accepted by the worker as an alias for
+// JobTypeDeleteEnvironment.
+const JobTypeDeleteEnvironmentAlias = "delete_environment"
+
 // DokployClient is the narrow typed-client surface these worker jobs
 // needs. *dokploy.Client satisfies it in production; tests can supply fakes.
 type DokployClient interface {
@@ -102,6 +112,7 @@ type DokployClient interface {
 	StopService(context.Context, dokploy.StopServiceInput) (dokploy.ServiceStatus, error)
 	StartService(context.Context, dokploy.StartServiceInput) (dokploy.ServiceStatus, error)
 	RemoveService(context.Context, dokploy.RemoveServiceInput) error
+	RemoveEnvironment(context.Context, dokploy.RemoveEnvironmentInput) error
 }
 
 // EnsureDokployOrganizationPayload is the typed schema carried by
@@ -327,6 +338,15 @@ type DeleteServicePayload struct {
 	ProjectID      string
 	EnvironmentID  string
 	ServiceID      string
+}
+
+// DeleteEnvironmentPayload is the typed schema carried by
+// provisioning_jobs.payload for JobTypeDeleteEnvironment /
+// JobTypeDeleteEnvironmentAlias.
+type DeleteEnvironmentPayload struct {
+	OrganizationID string
+	ProjectID      string
+	EnvironmentID  string
 }
 
 // ParseEnsureApplicationServicePayload validates job's typed payload and
@@ -834,6 +854,54 @@ func ParseDeleteServicePayload(job store.ProvisioningJob) (DeleteServicePayload,
 	}, nil
 }
 
+// ParseDeleteEnvironmentPayload validates a delete-environment job payload and
+// returns a terminal error for payload shapes retrying cannot repair.
+func ParseDeleteEnvironmentPayload(job store.ProvisioningJob) (DeleteEnvironmentPayload, error) {
+	var violations []apierr.FieldViolation
+	if job.JobType != JobTypeDeleteEnvironment && job.JobType != JobTypeDeleteEnvironmentAlias {
+		violations = append(violations, apierr.FieldViolation{Field: "job_type", Reason: "must be environment.delete or delete_environment"})
+	}
+	if job.OrganizationID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "organization_id", Reason: "is required"})
+	}
+	if job.ProjectID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "project_id", Reason: "is required"})
+	}
+	if job.EnvironmentID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "environment_id", Reason: "is required"})
+	}
+	if job.ServiceID != "" {
+		violations = append(violations, apierr.FieldViolation{Field: "service_id", Reason: "must be empty for this job type"})
+	}
+
+	payloadOrgID := job.Payload["organization_id"]
+	if payloadOrgID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.organization_id", Reason: "is required"})
+	} else if job.OrganizationID != "" && payloadOrgID != job.OrganizationID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.organization_id", Reason: "must match the job organization_id"})
+	}
+	payloadProjectID := job.Payload["project_id"]
+	if payloadProjectID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.project_id", Reason: "is required"})
+	} else if job.ProjectID != "" && payloadProjectID != job.ProjectID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.project_id", Reason: "must match the job project_id"})
+	}
+	payloadEnvironmentID := job.Payload["environment_id"]
+	if payloadEnvironmentID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.environment_id", Reason: "is required"})
+	} else if job.EnvironmentID != "" && payloadEnvironmentID != job.EnvironmentID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.environment_id", Reason: "must match the job environment_id"})
+	}
+	if len(violations) > 0 {
+		return DeleteEnvironmentPayload{}, Terminal(apierr.InvalidInput(violations...))
+	}
+	return DeleteEnvironmentPayload{
+		OrganizationID: payloadOrgID,
+		ProjectID:      payloadProjectID,
+		EnvironmentID:  payloadEnvironmentID,
+	}, nil
+}
+
 func databaseEngineValid(engine string) bool {
 	switch engine {
 	case dokploy.EnginePostgres, dokploy.EngineMysql, dokploy.EngineMariadb, dokploy.EngineMongo, dokploy.EngineRedis:
@@ -953,6 +1021,8 @@ func (p *Provisioner) Run(ctx context.Context, job store.ProvisioningJob) error 
 		return p.runStartService(ctx, job)
 	case JobTypeDeleteService, JobTypeDeleteServiceAlias:
 		return p.runDeleteService(ctx, job)
+	case JobTypeDeleteEnvironment, JobTypeDeleteEnvironmentAlias:
+		return p.runDeleteEnvironment(ctx, job)
 	default:
 		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
 			Field:  "job_type",
@@ -1474,6 +1544,33 @@ func (p *Provisioner) runDeleteService(ctx context.Context, job store.Provisioni
 	}
 
 	removeErr := p.client.RemoveService(ctx, dokploy.RemoveServiceInput{ServiceID: dokployServiceID})
+	if removeErr != nil {
+		if interrupted(ctx, removeErr) {
+			return removeErr
+		}
+		if apierr.Retryable(removeErr) {
+			return removeErr
+		}
+		return Terminal(removeErr)
+	}
+	return nil
+}
+
+func (p *Provisioner) runDeleteEnvironment(ctx context.Context, job store.ProvisioningJob) error {
+	if job.Status == store.JobStatusSucceeded {
+		return nil
+	}
+	payload, err := ParseDeleteEnvironmentPayload(job)
+	if err != nil {
+		return err
+	}
+
+	dokployEnvironmentID, err := p.loadDeleteEnvironmentTarget(ctx, job, payload)
+	if err != nil {
+		return err
+	}
+
+	removeErr := p.client.RemoveEnvironment(ctx, dokploy.RemoveEnvironmentInput{EnvironmentID: dokployEnvironmentID})
 	if removeErr != nil {
 		if interrupted(ctx, removeErr) {
 			return removeErr
@@ -2118,6 +2215,50 @@ func (p *Provisioner) loadDeleteServiceTarget(ctx context.Context, job store.Pro
 		return "", err
 	}
 	return dokployServiceID, nil
+}
+
+func (p *Provisioner) loadDeleteEnvironmentTarget(ctx context.Context, job store.ProvisioningJob, payload DeleteEnvironmentPayload) (string, error) {
+	var dokployEnvironmentID string
+	err := p.store.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		env, getErr := p.environments.GetByID(ctx, q, payload.OrganizationID, payload.EnvironmentID)
+		if getErr != nil {
+			return Terminal(getErr)
+		}
+		if env.OrganizationID != job.OrganizationID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.organization_id",
+				Reason: "must match the environment organization_id",
+			}))
+		}
+		if env.ProjectID != payload.ProjectID || env.ProjectID != job.ProjectID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.project_id",
+				Reason: "must match the environment project_id",
+			}))
+		}
+		if job.DesiredVersion > 0 && env.Version != job.DesiredVersion {
+			return Terminal(apierr.ConflictStale(env.Version))
+		}
+
+		envRefs, listErr := p.refs.ListByYallaResource(ctx, q, job.OrganizationID, store.YallaKindEnvironment, env.ID)
+		if listErr != nil {
+			return listErr
+		}
+		for _, ref := range envRefs {
+			if ref.DokployResource == store.DokployResourceEnvironment {
+				dokployEnvironmentID = ref.DokployID
+				break
+			}
+		}
+		if dokployEnvironmentID == "" {
+			return Terminal(apierr.Conflict("environment Dokploy mapping is required before deleting an environment"))
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return dokployEnvironmentID, nil
 }
 
 func (p *Provisioner) loadDeploymentTarget(ctx context.Context, job store.ProvisioningJob, payload DeployServicePayload) (store.Deployment, string, error) {

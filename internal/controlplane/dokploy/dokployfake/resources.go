@@ -130,6 +130,7 @@ func (s *Server) newMux() *http.ServeMux {
 
 	mux.HandleFunc("POST /api/environments", s.createEnvironment)
 	mux.HandleFunc("GET /api/environments/{id}", s.getEnvironment)
+	mux.HandleFunc("DELETE /api/environments/{id}", s.deleteEnvironment)
 
 	mux.HandleFunc("POST /api/applications", s.createService(ServiceApplication))
 	mux.HandleFunc("GET /api/applications/{id}", s.getService)
@@ -334,6 +335,38 @@ func (s *Server) getEnvironment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, e)
+}
+
+// deleteEnvironment removes an environment plus services, domains, and
+// deployments below it. The fake still answers 404 for an unknown ID so the
+// client's idempotent teardown mapping is exercised.
+func (s *Server) deleteEnvironment(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	id := r.PathValue("id")
+	if _, ok := s.resources.environments[id]; !ok {
+		writeError(w, http.StatusNotFound, "not_found", "no such environment")
+		return
+	}
+	delete(s.resources.environments, id)
+	for serviceID, svc := range s.resources.services {
+		if svc.EnvironmentID != id {
+			continue
+		}
+		delete(s.resources.services, serviceID)
+		for domainID, d := range s.resources.domains {
+			if d.ServiceID == serviceID {
+				delete(s.resources.domains, domainID)
+			}
+		}
+		for deploymentID, d := range s.resources.deployments {
+			if d.ServiceID == serviceID {
+				delete(s.resources.deployments, deploymentID)
+			}
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // --- Services (application / compose / database) -------------------------

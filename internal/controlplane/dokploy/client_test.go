@@ -359,6 +359,33 @@ func TestClientRemoveServiceIsIdempotent(t *testing.T) {
 	}
 }
 
+// TestClientRemoveEnvironmentIsIdempotent proves environment teardown succeeds
+// whether or not the upstream environment still exists.
+func TestClientRemoveEnvironmentIsIdempotent(t *testing.T) {
+	t.Parallel()
+	fake := dokployfake.New()
+	defer fake.Close()
+	c := newTestClient(t, fake)
+	ctx := context.Background()
+
+	orgID := mustOrg(t, c)
+	proj, _ := c.EnsureProject(ctx, dokploy.EnsureProjectInput{OrganizationID: orgID, Name: "store"})
+	env, err := c.EnsureEnvironment(ctx, dokploy.EnsureEnvironmentInput{ProjectID: proj.ID, Name: "prod"})
+	if err != nil {
+		t.Fatalf("create environment: %v", err)
+	}
+
+	if err := c.RemoveEnvironment(ctx, dokploy.RemoveEnvironmentInput{EnvironmentID: env.ID}); err != nil {
+		t.Fatalf("first RemoveEnvironment: %v", err)
+	}
+	if err := c.RemoveEnvironment(ctx, dokploy.RemoveEnvironmentInput{EnvironmentID: env.ID}); err != nil {
+		t.Fatalf("second RemoveEnvironment must be idempotent, got: %v", err)
+	}
+	if _, err := c.EnsureEnvironment(ctx, dokploy.EnsureEnvironmentInput{ExistingID: env.ID}); codeOf(t, err) != yerr.CodeNotFound {
+		t.Fatalf("removed environment still readable: %v", err)
+	}
+}
+
 func TestClientRestartService(t *testing.T) {
 	t.Parallel()
 	fake := dokployfake.New()

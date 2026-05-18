@@ -300,6 +300,24 @@ func (c *Client) RemoveService(ctx context.Context, in RemoveServiceInput) error
 	return err
 }
 
+// RemoveEnvironment removes an environment. Removal is idempotent: an
+// environment that is already gone (Dokploy answers 404) is reported as
+// success, so a retried teardown job never fails on its second pass.
+func (c *Client) RemoveEnvironment(ctx context.Context, in RemoveEnvironmentInput) error {
+	if v := requireFields(field{"environment_id", in.EnvironmentID}); v != nil {
+		return v
+	}
+	err := c.del(ctx, "/api/environments/"+url.PathEscape(strings.TrimSpace(in.EnvironmentID)))
+	if err == nil {
+		return nil
+	}
+	var ye *yerr.Error
+	if stderrors.As(err, &ye) && ye.Code == yerr.CodeNotFound {
+		return nil
+	}
+	return err
+}
+
 // serviceCollection maps a ServiceType to its Dokploy REST collection segment.
 func serviceCollection(t ServiceType) string {
 	switch t {
