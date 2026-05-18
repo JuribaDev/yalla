@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -72,6 +73,84 @@ const (
 
 // String returns the canonical wire value.
 func (s DeploymentStatus) String() string { return string(s) }
+
+// deploymentTransitions is the documented deployment state machine. A
+// deployment starts queued, may be accepted by the worker as running, and then
+// enters exactly one terminal state. Cancel is allowed before or during
+// execution; terminal states have no outgoing edges.
+var deploymentTransitions = map[DeploymentStatus]map[DeploymentStatus]struct{}{
+	DeploymentStatusQueued: {
+		DeploymentStatusRunning:   {},
+		DeploymentStatusCancelled: {},
+	},
+	DeploymentStatusRunning: {
+		DeploymentStatusSucceeded:  {},
+		DeploymentStatusFailed:     {},
+		DeploymentStatusCancelled:  {},
+		DeploymentStatusRolledBack: {},
+	},
+	DeploymentStatusSucceeded:  {},
+	DeploymentStatusFailed:     {},
+	DeploymentStatusCancelled:  {},
+	DeploymentStatusRolledBack: {},
+}
+
+// CanTransitionTo reports whether the deployment state machine permits a
+// status change from s to next. It is the pure transition table that repository
+// mutations use before writing a row.
+func (s DeploymentStatus) CanTransitionTo(next DeploymentStatus) bool {
+	allowed, ok := deploymentTransitions[s]
+	if !ok {
+		return false
+	}
+	_, ok = allowed[next]
+	return ok
+}
+
+func (s DeploymentStatus) deploymentEventType() DeploymentEventType {
+	switch s {
+	case DeploymentStatusQueued:
+		return DeploymentEventTypeQueued
+	case DeploymentStatusRunning:
+		return DeploymentEventTypeRunning
+	case DeploymentStatusSucceeded:
+		return DeploymentEventTypeSucceeded
+	case DeploymentStatusFailed:
+		return DeploymentEventTypeFailed
+	case DeploymentStatusCancelled:
+		return DeploymentEventTypeCancelled
+	case DeploymentStatusRolledBack:
+		return DeploymentEventTypeRolledBack
+	default:
+		return ""
+	}
+}
+
+func (s DeploymentStatus) terminal() bool {
+	switch s {
+	case DeploymentStatusSucceeded, DeploymentStatusFailed, DeploymentStatusCancelled, DeploymentStatusRolledBack:
+		return true
+	default:
+		return false
+	}
+}
+
+// DeploymentTransition is the audited state-machine mutation input for a
+// deployments row. Actor and correlation fields are persisted into the
+// deployment event emitted atomically with the status update.
+type DeploymentTransition struct {
+	OrganizationID  string
+	DeploymentID    string
+	NextStatus      DeploymentStatus
+	ExpectedVersion *int64
+	ActorID         string
+	ActorKind       string
+	RequestID       string
+	CorrelationID   string
+	Reason          string
+	ErrorCode       string
+	ErrorMessage    string
+}
 
 // Deployment is the source-of-truth representation of a row in the
 // deployments table. A deployment captures the customer intent to
@@ -236,6 +315,89 @@ func (r *DeploymentRepository) GetByID(ctx context.Context, q Querier, organizat
 		return Deployment{}, apierr.StoreUnavailable(err)
 	}
 	return d, nil
+}
+
+// Transition moves a deployment through the documented deployment state
+// machine and appends the matching deployment_events row in the same
+// transaction. Invalid edges return E_INVALID_STATE_TRANSITION before any
+// update, so the deployment row and timeline remain unchanged.
+func (r *DeploymentRepository) Transition(ctx context.Context, tx *Tx, in DeploymentTransition) (Deployment, DeploymentEvent, error) {
+	if tx == nil {
+		return Deployment{}, DeploymentEvent{}, apierr.Internal(errors.New("store: DeploymentRepository.Transition called with a nil transaction"))
+	}
+	orgID := strings.TrimSpace(in.OrganizationID)
+	deploymentID := strings.TrimSpace(in.DeploymentID)
+	next := in.NextStatus
+	if next.deploymentEventType() == "" {
+		return Deployment{}, DeploymentEvent{}, apierr.InvalidStateTransition("deployment", "", next.String())
+	}
+
+	current, err := scanDeployment(tx.QueryRow(ctx,
+		`SELECT `+deploymentColumns+`
+		   FROM deployments
+		  WHERE organization_id = $1 AND id = $2
+		  FOR UPDATE`,
+		orgID, deploymentID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Deployment{}, DeploymentEvent{}, apierr.NotFound("deployment", deploymentID)
+	}
+	if err != nil {
+		return Deployment{}, DeploymentEvent{}, apierr.StoreUnavailable(err)
+	}
+	if in.ExpectedVersion != nil && current.Version != *in.ExpectedVersion {
+		return Deployment{}, DeploymentEvent{}, apierr.ConflictStale(current.Version)
+	}
+	if !current.Status.CanTransitionTo(next) {
+		return Deployment{}, DeploymentEvent{}, apierr.InvalidStateTransition("deployment", current.Status.String(), next.String())
+	}
+
+	errorCode := strings.TrimSpace(in.ErrorCode)
+	errorMessage := deploymentErrorRedactor.Redact(strings.TrimSpace(in.ErrorMessage))
+	if next != DeploymentStatusFailed {
+		errorCode = ""
+		errorMessage = ""
+	}
+
+	updated, err := scanDeployment(tx.QueryRow(ctx,
+		`UPDATE deployments
+		    SET status = $3,
+		        started_at = CASE
+		            WHEN $3 = 'running' THEN COALESCE(started_at, now())
+		            ELSE started_at
+		        END,
+		        finished_at = CASE
+		            WHEN $4 THEN now()
+		            ELSE NULL
+		        END,
+		        error_code = $5,
+		        error_message = $6
+		  WHERE organization_id = $1 AND id = $2
+		  RETURNING `+deploymentColumns,
+		orgID, deploymentID, next.String(), next.terminal(), errorCode, errorMessage))
+	if err != nil {
+		return Deployment{}, DeploymentEvent{}, apierr.StoreUnavailable(err)
+	}
+
+	reason := deploymentErrorRedactor.Redact(strings.TrimSpace(in.Reason))
+	event, err := NewDeploymentEventRepository().Append(ctx, tx, DeploymentEvent{
+		OrganizationID: orgID,
+		DeploymentID:   deploymentID,
+		EventType:      next.deploymentEventType(),
+		Message:        reason,
+		Metadata: map[string]string{
+			"actor_id":       strings.TrimSpace(in.ActorID),
+			"actor_kind":     strings.TrimSpace(in.ActorKind),
+			"previous_state": current.Status.String(),
+			"next_state":     next.String(),
+			"reason":         reason,
+		},
+		RequestID:     strings.TrimSpace(in.RequestID),
+		CorrelationID: strings.TrimSpace(in.CorrelationID),
+	})
+	if err != nil {
+		return Deployment{}, DeploymentEvent{}, err
+	}
+	return updated, event, nil
 }
 
 // MarkRunning moves a queued or already-running deployment into the running

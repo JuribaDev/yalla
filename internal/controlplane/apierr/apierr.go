@@ -123,24 +123,25 @@ var taxonomy = map[yerr.Code]struct {
 	policy      MessagePolicy
 	description string
 }{
-	yerr.CodeInvalidInput:        {false, MessageSpecific, "request payload, path, or query parameter was rejected by validation"},
-	yerr.CodeAuth:                {false, MessageSpecific, "authentication failed or no credentials were supplied"},
-	yerr.CodeForbidden:           {false, MessageSpecific, "the principal is authenticated but not authorized for the action"},
-	yerr.CodeNotFound:            {false, MessageSpecific, "the requested resource does not exist or is not visible to the principal"},
-	yerr.CodeConflict:            {false, MessageSpecific, "the request conflicts with the current state of the resource"},
-	yerr.CodeIdempotencyConflict: {false, MessageSpecific, "an idempotency key was reused for a request that differs from the original"},
-	yerr.CodeQuotaExceeded:       {true, MessageSpecific, "an organization quota or plan limit is exhausted"},
-	yerr.CodeRateLimited:         {true, MessageSpecific, "the caller exceeded a request rate limit; back off and retry"},
-	yerr.CodeUnsupported:         {false, MessageSpecific, "the requested operation is not supported by this build"},
-	yerr.CodeServer:              {true, MessageGeneric, "the upstream Dokploy provisioning backend returned an error"},
-	yerr.CodeUpstreamBug:         {false, MessageGeneric, "a known upstream Dokploy defect was encountered"},
-	yerr.CodeUnavailable:         {true, MessageGeneric, "a Yalla-owned dependency (datastore or job queue) is temporarily unavailable"},
-	yerr.CodeNetwork:             {true, MessageGeneric, "a network failure occurred while contacting a dependency"},
-	yerr.CodeTimeout:             {true, MessageGeneric, "a dependency call exceeded its timeout"},
-	yerr.CodeCanceled:            {false, MessageGeneric, "the request was canceled before completion"},
-	yerr.CodeConfig:              {false, MessageGeneric, "the service is misconfigured"},
-	yerr.CodeInternal:            {false, MessageGeneric, "an unexpected internal error occurred"},
-	yerr.CodeUnknown:             {false, MessageGeneric, "an unclassified internal error occurred"},
+	yerr.CodeInvalidInput:           {false, MessageSpecific, "request payload, path, or query parameter was rejected by validation"},
+	yerr.CodeAuth:                   {false, MessageSpecific, "authentication failed or no credentials were supplied"},
+	yerr.CodeForbidden:              {false, MessageSpecific, "the principal is authenticated but not authorized for the action"},
+	yerr.CodeNotFound:               {false, MessageSpecific, "the requested resource does not exist or is not visible to the principal"},
+	yerr.CodeConflict:               {false, MessageSpecific, "the request conflicts with the current state of the resource"},
+	yerr.CodeInvalidStateTransition: {false, MessageSpecific, "the requested lifecycle transition is not allowed by the resource state machine"},
+	yerr.CodeIdempotencyConflict:    {false, MessageSpecific, "an idempotency key was reused for a request that differs from the original"},
+	yerr.CodeQuotaExceeded:          {true, MessageSpecific, "an organization quota or plan limit is exhausted"},
+	yerr.CodeRateLimited:            {true, MessageSpecific, "the caller exceeded a request rate limit; back off and retry"},
+	yerr.CodeUnsupported:            {false, MessageSpecific, "the requested operation is not supported by this build"},
+	yerr.CodeServer:                 {true, MessageGeneric, "the upstream Dokploy provisioning backend returned an error"},
+	yerr.CodeUpstreamBug:            {false, MessageGeneric, "a known upstream Dokploy defect was encountered"},
+	yerr.CodeUnavailable:            {true, MessageGeneric, "a Yalla-owned dependency (datastore or job queue) is temporarily unavailable"},
+	yerr.CodeNetwork:                {true, MessageGeneric, "a network failure occurred while contacting a dependency"},
+	yerr.CodeTimeout:                {true, MessageGeneric, "a dependency call exceeded its timeout"},
+	yerr.CodeCanceled:               {false, MessageGeneric, "the request was canceled before completion"},
+	yerr.CodeConfig:                 {false, MessageGeneric, "the service is misconfigured"},
+	yerr.CodeInternal:               {false, MessageGeneric, "an unexpected internal error occurred"},
+	yerr.CodeUnknown:                {false, MessageGeneric, "an unclassified internal error occurred"},
 }
 
 // Lookup returns the catalogue entry for code. The boolean is false for any
@@ -301,6 +302,25 @@ func Conflict(message string) *yerr.Error {
 		message = "request conflicts with the current resource state"
 	}
 	return yerr.New(yerr.CodeConflict, message)
+}
+
+// InvalidStateTransition builds an E_INVALID_STATE_TRANSITION error (HTTP 409)
+// for a lifecycle edge rejected by a resource's documented state machine.
+func InvalidStateTransition(resource, from, to string) *yerr.Error {
+	resource = strings.TrimSpace(resource)
+	from = strings.TrimSpace(from)
+	to = strings.TrimSpace(to)
+	if resource == "" {
+		resource = "resource"
+	}
+	message := "invalid state transition"
+	if from != "" && to != "" {
+		message = resource + " cannot transition from " + from + " to " + to
+	}
+	return yerr.New(yerr.CodeInvalidStateTransition, message).
+		WithDetail("resource", resource).
+		WithDetail("previous_state", from).
+		WithDetail("next_state", to)
 }
 
 // ConflictStale builds an E_CONFLICT error (HTTP 409) for a stale write —

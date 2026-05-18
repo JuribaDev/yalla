@@ -583,6 +583,12 @@ Postgres persistence for control-plane source-of-truth state.
   timestamps) from the target status — a caller passes an options struct
   (`JobTransition`), never a full row, so it cannot produce a CHECK-violating
   shape.
+- Deployment lifecycle transitions follow the same pure-table pattern via
+  `DeploymentStatus.CanTransitionTo`, but invalid edges surface as the public
+  `E_INVALID_STATE_TRANSITION` code. Use `DeploymentRepository.Transition` for
+  new lifecycle writers so the status update and matching `deployment_events`
+  append commit atomically with actor/request/previous/next/reason metadata;
+  redact free-text reason and error summaries before persistence.
 - When a migration **wires a foreign key an earlier migration deferred** (e.g.
   `0008` adds `quota_reservations.job_id -> provisioning_jobs` that `0006` left
   unconstrained), add it with a plain `ALTER TABLE ... ADD CONSTRAINT` in the

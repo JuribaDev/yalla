@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Deployment state-machine stories use a pure `DeploymentStatus.CanTransitionTo` table plus an atomic repository `Transition` method: lock the tenant-scoped deployment row, reject impossible edges with `E_INVALID_STATE_TRANSITION` before any write, update lifecycle timestamps/error fields, and append the matching `deployment_events` row in the same transaction with actor/request/previous/next/reason metadata. Redact free-text reason/error summaries before persisting event message/metadata.
 - Worker Dokploy import jobs (BE-0502 pattern for `import_dokploy_resource`) are organization-scoped only and use a typed payload `(organization_id, yalla_organization_id, dokploy_organization_id[, assignment_dokploy_org_id])`. The worker reloads the Yalla organization from Postgres, rejects stale desired versions before scanning Dokploy, then delegates classification/apply to `migrateimport.Importer` through a store-backed repository adapter. Each imported project/environment/service row and its `dokploy_refs` mapping are inserted in the same transaction, so replay after partial success classifies existing refs as `skip_already_imported` and creates only missing descendants. Scanner/Dokploy failures stay retryable unless cancellation interrupted the context; malformed/cross-tenant/stale desired state is `worker.Terminal`.
 - Worker service reconciliation jobs (BE-0501 pattern for `reconcile_service`) use one service-scoped payload `(organization_id, project_id, environment_id, service_id[, engine])`, reload the service and all dependent desired state through tenant-scoped repositories, verify payload scope plus `DesiredVersion`, reject deletion-scheduled services, resolve the parent environment `dokploy_refs` row, call typed Dokploy `EnsureService`, persist the service ref idempotently, render effective variables through the variables resolver, call typed `SyncVariables`, then ensure each desired `service_domain` with idempotent per-domain refs. A job already marked `succeeded` is a no-op; retryable upstream errors stay plain so the durable queue can persist a redacted `error_summary`.
 - Worker preview teardown jobs (BE-0500 pattern for `delete_preview_environment`) extend `worker.Provisioner` with a typed scoped payload `(organization_id, project_id, environment_id, preview_id)`, load the `preview_environments` wrapper and wrapped `environments.kind=preview` clone through tenant-scoped repositories, verify payload scope and preview-row `DesiredVersion`, resolve the clone's `environment` `dokploy_refs` row, call the typed Dokploy `RemoveEnvironment` intent only when an upstream mapping exists, then delete the mapping and hard-delete the preview wrapper in one transaction. A job already marked `succeeded` is a no-op; a replay after cleanup treats a missing preview wrapper as success and does not issue another Dokploy call. Retryable upstream errors stay plain so the durable queue can persist a redacted `error_summary`; stale/cross-tenant/malformed desired state is `worker.Terminal`.
@@ -34435,4 +34436,46 @@ change that widened Reason to caller-supplied data.
   - `migrateimport.Importer` can be reused directly by workers as long as the concrete repository adapter keeps tenant scope from the job organization and inserts Yalla rows plus `dokploy_refs` in one transaction.
   - Import replays should rely on existing ref classification (`skip_already_imported`) instead of special replay flags; that keeps partial-success retries deterministic.
   - `provisioning_jobs.payload` is still `map[string]string`, so import jobs carry only stable non-secret identifiers and the worker reconstructs the richer `OwnerAssignment` internally.
+---
+## 2026-05-18 20:53 +03 - BE-0503
+- What was implemented
+  - Added the documented deployment lifecycle transition table via `DeploymentStatus.CanTransitionTo`.
+  - Added `E_INVALID_STATE_TRANSITION` to the shared error taxonomy, API envelope HTTP mapping, exit-code mapping, and apierr constructor surface.
+  - Added `DeploymentRepository.Transition`, which locks a tenant-scoped deployment row, validates expected version and allowed edge, updates status/timestamps/redacted error fields, and appends the matching `deployment_events` row in the same transaction with actor, request_id, previous_state, next_state, and redacted reason metadata.
+  - Added focused tests for all allowed deployment edges, representative denied transition behavior, no-mutation/no-event guarantees on invalid edges, and transition event persistence.
+- Files changed
+  - `internal/errors/errors.go`
+  - `internal/errors/errors_test.go`
+  - `internal/controlplane/apienvelope/apienvelope.go`
+  - `internal/controlplane/apierr/apierr.go`
+  - `internal/controlplane/apierr/apierr_test.go`
+  - `internal/controlplane/store/deployment.go`
+  - `internal/controlplane/store/deployment_state_machine_test.go`
+  - `internal/controlplane/store/AGENTS.md`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `go test ./internal/controlplane/store -run 'TestDeployment(StatusTransitionTable|RepositoryTransition)'` first failed with missing symbols for the new state-machine API and error code, then passed after implementation.
+  - `gofmt -w .`
+  - `goimports -w .` was not run because `goimports` is not installed.
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `go test -run TestDeploymentStatusTransitionTable ./internal/controlplane/store`
+  - `golangci-lint run ./...`
+  - `staticcheck ./...` was not run because `staticcheck` is not installed.
+  - `govulncheck ./...` was not run because `govulncheck` is not installed.
+  - After doc/progress updates: `gofmt -w . && go mod tidy && go test ./...`; `go test -race ./...`; `go vet ./...`.
+- Results
+  - All required checks passed.
+  - `golangci-lint run ./...` passed with 0 issues.
+- Remaining risks or follow-ups
+  - Existing legacy deployment mutators (`MarkRunning`, `MarkSucceeded`, `MarkFailed`, `Cancel`) remain available for current worker/API call sites. New state-machine work should prefer `Transition` so lifecycle changes and deployment_events remain atomic.
+- **Learnings for future iterations:**
+  - `deployment_events` already has the right append-only tenant-scoped shape for lifecycle history; actor/previous/next/reason can be carried in redacted metadata without a migration.
+  - Adding a stable error code requires updating `internal/errors`, `apienvelope.StatusForCode`, `apierr` taxonomy/constructors, and tests together.
 ---

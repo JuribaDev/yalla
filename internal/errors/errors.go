@@ -37,6 +37,11 @@ const (
 	CodeForbidden    Code = "E_FORBIDDEN"
 	CodeNotFound     Code = "E_NOT_FOUND"
 	CodeConflict     Code = "E_CONFLICT"
+	// CodeInvalidStateTransition marks a lifecycle transition that is not
+	// allowed by the resource's documented state machine. It is distinct from
+	// CodeConflict so agents can tell "retry with a fresh version" apart from
+	// "this edge is impossible from the current state".
+	CodeInvalidStateTransition Code = "E_INVALID_STATE_TRANSITION"
 	// CodeIdempotencyConflict marks a request that reused an idempotency key
 	// for a request that does not match the one the key was first claimed for.
 	// It is distinct from CodeConflict (a generic state collision): it always
@@ -77,27 +82,28 @@ type CodeDoc struct {
 // Code constant requires adding an entry here so the manifest stays
 // complete (the manifest test enforces parity).
 var codeDescriptions = map[Code]string{
-	CodeUnknown:             "uncategorised internal failure",
-	CodeInternal:            "internal error in yalla itself",
-	CodeUsage:               "command-line usage error (unknown flag, bad subcommand, etc.)",
-	CodeInvalidInput:        "request payload, flag value, or registry filter rejected",
-	CodeConfig:              "configuration is missing, malformed, or incomplete",
-	CodeOrphan:              "operation left Dokploy or Docker resources behind",
-	CodeAuth:                "authentication failed or no credentials supplied",
-	CodeForbidden:           "credentials are valid but not authorised for the action",
-	CodeNotFound:            "resource, operationId, or schema does not exist",
-	CodeConflict:            "request rejected because of a precondition or state conflict",
-	CodeIdempotencyConflict: "idempotency key reused for a request that differs from the original",
-	CodeRateLimited:         "upstream rate limit hit; back off and retry",
-	CodeQuotaExceeded:       "request rejected because an organization quota or plan limit is exhausted",
-	CodeServer:              "upstream Dokploy server returned an error",
-	CodeUpstreamBug:         "known upstream Dokploy bug encountered; use the documented workaround",
-	CodeNetwork:             "transport-level network failure reaching Dokploy",
-	CodeUnavailable:         "a Yalla-owned dependency (datastore or job queue) is temporarily unavailable",
-	CodeTimeout:             "request exceeded the configured timeout",
-	CodeCanceled:            "context canceled (e.g. SIGINT)",
-	CodeNoInput:             "interactive prompt required but --no-input was set",
-	CodeUnsupported:         "operation not supported by the current build or transport",
+	CodeUnknown:                "uncategorised internal failure",
+	CodeInternal:               "internal error in yalla itself",
+	CodeUsage:                  "command-line usage error (unknown flag, bad subcommand, etc.)",
+	CodeInvalidInput:           "request payload, flag value, or registry filter rejected",
+	CodeConfig:                 "configuration is missing, malformed, or incomplete",
+	CodeOrphan:                 "operation left Dokploy or Docker resources behind",
+	CodeAuth:                   "authentication failed or no credentials supplied",
+	CodeForbidden:              "credentials are valid but not authorised for the action",
+	CodeNotFound:               "resource, operationId, or schema does not exist",
+	CodeConflict:               "request rejected because of a precondition or state conflict",
+	CodeInvalidStateTransition: "requested lifecycle transition is not allowed by the resource state machine",
+	CodeIdempotencyConflict:    "idempotency key reused for a request that differs from the original",
+	CodeRateLimited:            "upstream rate limit hit; back off and retry",
+	CodeQuotaExceeded:          "request rejected because an organization quota or plan limit is exhausted",
+	CodeServer:                 "upstream Dokploy server returned an error",
+	CodeUpstreamBug:            "known upstream Dokploy bug encountered; use the documented workaround",
+	CodeNetwork:                "transport-level network failure reaching Dokploy",
+	CodeUnavailable:            "a Yalla-owned dependency (datastore or job queue) is temporarily unavailable",
+	CodeTimeout:                "request exceeded the configured timeout",
+	CodeCanceled:               "context canceled (e.g. SIGINT)",
+	CodeNoInput:                "interactive prompt required but --no-input was set",
+	CodeUnsupported:            "operation not supported by the current build or transport",
 }
 
 // AllCodes returns the canonical, sorted list of every stable error code
@@ -110,7 +116,7 @@ func AllCodes() []CodeDoc {
 	codes := []Code{
 		CodeUnknown, CodeInternal, CodeUsage, CodeInvalidInput,
 		CodeConfig, CodeOrphan, CodeAuth, CodeForbidden, CodeNotFound,
-		CodeConflict, CodeIdempotencyConflict, CodeRateLimited, CodeQuotaExceeded,
+		CodeConflict, CodeInvalidStateTransition, CodeIdempotencyConflict, CodeRateLimited, CodeQuotaExceeded,
 		CodeServer, CodeUpstreamBug,
 		CodeNetwork, CodeUnavailable, CodeTimeout, CodeCanceled, CodeNoInput, CodeUnsupported,
 	}
@@ -153,7 +159,7 @@ func (c Code) ExitCode() int {
 		return 4
 	case CodeNotFound:
 		return 5
-	case CodeConflict, CodeIdempotencyConflict:
+	case CodeConflict, CodeInvalidStateTransition, CodeIdempotencyConflict:
 		return 6
 	case CodeRateLimited, CodeQuotaExceeded:
 		return 7

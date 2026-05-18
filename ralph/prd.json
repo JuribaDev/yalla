@@ -10466,8 +10466,8 @@
       ],
       "type": "state-machine",
       "priority": 1,
-      "passes": false,
-      "notes": "Lifecycle state: deployment."
+      "passes": true,
+      "notes": "Implemented documented DeploymentStatus transition table, E_INVALID_STATE_TRANSITION taxonomy mapping, and atomic DeploymentRepository.Transition writes that update deployment status plus append deployment_events metadata with actor, request_id, previous_state, next_state, and redacted reason. Focused state-machine and repository tests cover allowed edges, denied edges, no-mutation behavior, and event persistence."
     },
     {
       "id": "BE-0504",
