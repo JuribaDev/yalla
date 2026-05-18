@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Repository CRUD invariants for a **multi-table resource FAMILY whose physical realization is one table per scope in the Organization -> Project -> Environment -> Service hierarchy, sharing identical CHECK / FK / CASCADE / bump_version / set_updated_at invariants but with per-scope mutation surfaces** (BE-0449 pattern, internal/controlplane/store/{organization,project,environment,service}_variable_repository_invariants_test.go). A PRD note that reads "Database table: <name>" can refer to such a family (variables = 4 scope tables, quota_* = 3 ledger tables) — when the family is hierarchical, ship one *_repository_invariants_test.go per physical table rather than collapsing into a single mega-file, because per-scope mutation surfaces diverge (organization_variables uniquely exposes UpdateMutable + DeleteByKey on top of the bulk-replace surface; project / environment / service variables expose only the bulk Upsert + DeleteByXxxExceptKeys pair). Each file in the family extends the BE-0447 grant-table invariants template with three uniform substitutions: (a) the Upsert payload struct is the scope's XxxVariableUpsert (Value, IsSecret, SecretProvider, SecretKeyID, SecretCiphertext) instead of role + principal_kind; (b) a brand-new secret_columns_consistent CHECK-violation test is added (IsSecret=true with non-empty Value triggers the secret branch's `value=''` clause and surfaces as typed apierr.Conflict — exhaustively probing the OTHER drift directions is needless because the repository's nullableSecretColumns helper makes them structurally impossible from the caller side); (c) the leaf-scope variants (env / service) add a cross-tenant composite-FK test mirroring BE-0447's service-grant cross-tenant proof. Every *_test.go file under internal/controlplane/store/ shares the same store_test package, so the per-scope helpers MUST get distinct names — newOrganizationVariableID / newEnvironmentVariableID / newServiceVariableID, upsertOrganizationVariable / upsertEnvironmentVariable / upsertServiceVariable, listOrganizationVariablesOrFail / listEnvironmentVariablesOrFail / listServiceVariablesOrFail, and organizationVariableTxRollbackSentinel / projectVariableTxRollbackSentinel / environmentVariableTxRollbackSentinel / serviceVariableTxRollbackSentinel. The project-variables file is the smallest because project_variable_test.go already covers Upsert INSERT/UPDATE happy paths, cross-tenant rejection, the bulk delete surface, and the nil-Tx guards — its invariants file pins ONLY the row-shape and lifecycle invariants the existing tests do not anchor (version=1 default, byte-equal created_at == updated_at, ON CONFLICT id+created_at preservation, PK reuse -> Conflict, secret CHECK violation, ON DELETE CASCADE, Upsert tx-rollback). Forward-applicable to any future multi-table family at this hierarchy (a hypothetical KindOrganizationSetting / KindProjectSetting / KindEnvironmentSetting / KindServiceSetting feature would inherit this 4-file template structure).
 - Repository CRUD invariants test file for a **tenant-scoped LEAF-grant table whose ONLY mutation surface is an INSERT...ON CONFLICT DO UPDATE upsert PLUS a bulk DELETE-by-exclusion, with a database-managed version column, NO nullable scope pointer below the parent FK, and a composite FK to a leaf-entity parent (organization_id, service_id) -> services** (BE-0447 pattern, internal/controlplane/store/service_grant_repository_invariants_test.go). Structural reduction of the BE-0443 environment_grant_repository_invariants_test.go template: every leg that exercised a nullable *string scope pointer collapses or drops out — the round-trip pointer test is replaced by a service-account-principal-kind test (the closed-set CHECK leg still needs proving), the NULLS-FIRST ordering assertion in ListByService is gone (two-column ORDER BY principal_id, id), the empty-string-COALESCE dedup equivalence leg is gone (no COALESCE in the unique index), and the upsert/replace input struct drops the trailing *string field. The Upsert signature is six-positional `(id, organization_id, parent_id, principal_id, principal_kind, role)`; the ON CONFLICT branch keys on the three-tuple `(organization_id, parent_id, principal_id)`. The principal-kind cross-smuggling invariant MUST be preserved verbatim (re-upsert with a different caller-supplied principal_kind for the same principal_id; assert persisted kind = baseline). The duplicate-PK test must use a DIFFERENT principal_id so the ON CONFLICT branch does NOT match and the PRIMARY KEY (id) uniqueness violation is exercised instead of the upsert path. The ON DELETE CASCADE proof must delete the parent via raw SQL (the ServiceRepository.ScheduleDeletion is a SOFT delete and would NOT trigger CASCADE). The Upsert rollback proof reduces to ListByService-only because no per-id Get exists; ListByService is the only observation surface for a grant row. NEW Kind constant in domain/id.go MUST be added to BOTH the const block AND the canonical `kinds` map at the bottom — Valid() and the ID parser read from the map, not the const list, so a missing map entry silently breaks NewID(KindFoo) with ErrUnknownKind. For brand-new tables, services already exposes UNIQUE (organization_id, id) from migration 0002 so NO companion ALTER TABLE is needed on the parent (UNLIKE BE-0435 api_keys parent). Forward-applicable to any future grant table whose parent IS the leaf of the Organization -> Project -> Environment -> Service hierarchy or whose parent is otherwise structurally leaf-like (a hypothetical KindDeploymentGrant / KindJobGrant would inherit this template).
 - Repository CRUD invariants test file for a **tenant-scoped child table whose ONLY mutation surface is an INSERT...ON CONFLICT DO UPDATE upsert PLUS a bulk DELETE-by-exclusion (no per-id Get, no per-id Delete, no traditional UPDATE), with a database-managed version column, optional nullable scoping pointers, and a composite FK to a parent (organization_id, project_id) -> projects** (BE-0439 pattern, internal/controlplane/store/project_grant_repository_invariants_test.go). Two structural divergences from BE-0435 (api_key_scope_repository_invariants_test.go) are load-bearing: (1) the Upsert ON CONFLICT branch must be tested with a DIFFERENT caller-supplied id AND a DIFFERENT caller-supplied principal_kind to prove BOTH the caller-id-is-ignored guarantee AND the cross-kind-smuggling-impossible guarantee — the principal_kind column is NOT part of the scope tuple, so an existing row stays at its current principal_kind even when the caller passes a different kind for the same principal_id; a single Role-only update test would silently pass while a regression that promoted principal_kind to a SET clause still went undetected. (2) The Upsert rollback proof reduces to ListByProject-only because the repository exposes no per-id Get for grants — ListByProject is the ONLY observation surface for a grant row, so it is the load-bearing leak channel a partial commit would surface through, and an absent Get assertion is a deliberate file boundary, not a gap. Insert duplicate-id test must use a DIFFERENT principal_id so the ON CONFLICT (org, proj, principal, env, svc) branch does NOT match and the PRIMARY KEY (id) uniqueness violation is exercised — otherwise the upsert path silently swallows the duplicate id. DeleteByProjectExceptIDs has TWO codepaths in the repository (len(keepIDs)==0 -> unconditional DELETE; len>0 -> DELETE WHERE id NOT IN (ANY $3::text[])), so BOTH must be exercised independently — the empty-keep test must additionally use a fresh seed after the nil-keep clear AND assert the empty-slice ([]string{}) form is identical to nil at the wire (the repository documents nil and empty as identical, so a regression that diverged them would surface here). ON DELETE CASCADE from projects is the project-grant analogue of api_key_scope's ON DELETE CASCADE from api_keys: use raw `DELETE FROM projects WHERE id=$1` (NOT the repository's ScheduleDeletion, which is a SOFT delete and would NOT trigger CASCADE) and observe via ListByProject. Helper `newProjectGrantID(f, label)` synthesises a `pgrnt_<token_n>` id by rewriting f.Project's `prj_<token_n>` prefix — the testutil.Factory only stamps known domain prefixes and there is no f.ProjectGrant, so prefix-rewriting is the cleanest way to mint factory-unique ids without reaching into domain.NewID(domain.KindProjectGrant). The sibling project_grant_test.go's `seedProjectGrant` raw-SQL helper is kept intentionally separate: that file's tests exercise the read path against rows the schema (not the repository) inserted, so a regression that broke INSERT would still let the read tests pass — by contrast THIS file's `upsertProjectGrant` exercises the repository's INSERT path, so the two seed surfaces are complementary, not duplicates.
 - Repository CRUD invariants test file for a **tenant-scoped table whose mutation surface spans FOUR distinct UPDATE paths (Update / UpdateDisplayName / ScheduleDeletion / Restore) PLUS Insert, with a database-managed version column AND a nullable soft-delete column (deletion_scheduled_at)** (BE-0437 pattern, internal/controlplane/store/project_repository_invariants_test.go): this is the BE-0425 organization template extended with the second-UPDATE-path projection (UpdateDisplayName must run the dual-anchor AND prove the path-specific WHERE/SET isolation — the row's slug must be untouched since the SET clause is `SET display_name = $3` only) and the BE-0431 inverse-soft-delete projection (Restore must dual-anchor AND clear deletion_scheduled_at back to NULL — the trigger fires on any UPDATE so a forgotten `SET deletion_scheduled_at = NULL` clause would still pass the version/timestamp anchors, making the "deletion_scheduled_at is nil after Restore" assertion the load-bearing one). Insert rollback proof must span ALL read surfaces the rolled-back row touches: by-id Get, by-org ListByOrganization, AND CountByOrganization (the count the quota layer reads), so a future refactor that switched Insert to a SAVEPOINT or autonomous transaction would leak the row into a quota check even though Get reports NotFound. The nil-Tx typed-Internal guard only needs to close the ONE mutation path the existing tests did not cover (here UpdateDisplayName) — duplicating Insert/Update/ScheduleDeletion/Restore guards already proved elsewhere is noise. Test fixtures compose seedOrg + projectFixture(f.Project(org, label)) + insertProject helpers from project_test.go; do not re-implement them at package scope.
@@ -31546,4 +31547,96 @@ change that widened Reason to caller-supplied data.
   - Local-dev Postgres connectivity workaround for the documented "container has no published port" gotcha: spin up an alpine/socat sidecar on the SAME docker network and publish a host port forwarding to `yalla-postgres-1:5432`. One-liner: `NET=$(docker inspect yalla-postgres-1 -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}'); docker run -d --rm --name yalla-pg-forward --network "$NET" -p 15432:15432 alpine/socat tcp-listen:15432,fork,reuseaddr tcp:yalla-postgres-1:5432`. Then `YALLA_TEST_DATABASE_URL=postgres://yalla:yalla@127.0.0.1:15432/yalla?sslmode=disable go test ...`. Drop the sidecar with `docker rm -f yalla-pg-forward`. This unblocks running integration tests locally in dev envs where macOS-to-docker-bridge-network direct IP routing is blocked (the 75-second `connect: operation timed out` symptom on `docker inspect`-discovered IPs). CI still runs against its own isolated migrated DB and does not need the sidecar.
   - The bystander byte-identity assertion's two trigger-anchored columns (Version and UpdatedAt) are the load-bearing leak channel for grant tables — direct column writes can look correct on a no-op or partial-tenant-leak path, but the BEFORE-UPDATE trigger ALWAYS refreshes updated_at and the bump trigger ALWAYS increments version on EVERY matched UPDATE, so either drifting on the bystander surface is independently sufficient to surface a missing tenant predicate. Asserting BOTH against the baseline (not just one) catches the case where a regression migrates one trigger but not the other.
   - Naming: every *_tenant_isolation_test.go file under internal/controlplane/store/ shares the same `store_test` package, so file-scope helpers (`getServiceGrantFromListOrFail`, `assertServiceGrantByteIdentical`) MUST have unique names across the directory. Before adding a helper, grep `^func ` across siblings in the dir to prevent a same-package collision. The shared `stringPtrEqual` / `fmtStringPtr` helpers from project_grant_tenant_isolation_test.go are package-visible by design — if a future tenant-isolation test needs them, reuse verbatim; do not redeclare.
+---
+
+## 2026-05-18 - BE-0449
+- Implemented BE-0449 "Repository: variables CRUD and invariants" by adding four
+  *_repository_invariants_test.go files under internal/controlplane/store/ — one
+  per variables scope (organization / project / environment / service). The story
+  note "Database table: variables." refers to the four-table variables resource
+  family the Dokploy precedence renderer composes, so the BE-0443 / BE-0447 grant-
+  table invariants template is replicated once per scope rather than collapsed
+  into one file.
+- Files added:
+  - internal/controlplane/store/organization_variable_repository_invariants_test.go
+    (16 t.Parallel tests covering Upsert INSERT row-shape, Upsert ON CONFLICT
+    UPDATE branch identity preservation, FK-to-organizations -> Conflict, PK
+    reuse under a different (organization_id, key) tuple -> Conflict, secret-
+    columns-consistent CHECK violations -> Conflict, UpdateMutable identity +
+    bump_version + set_updated_at + NotFound + secret->plain transition,
+    DeleteByOrganizationExceptKeys nil/empty/subset/tenant-scoped, ON DELETE
+    CASCADE from organizations, Upsert tx-rollback proof, and nil-Tx guards on
+    Upsert / UpdateMutable / DeleteByKey / DeleteByOrganizationExceptKeys).
+  - internal/controlplane/store/project_variable_repository_invariants_test.go
+    (6 tests complementing project_variable_test.go's pre-existing Upsert /
+    DeleteByProjectExceptKeys coverage — pins row-shape on INSERT, ON CONFLICT
+    UPDATE branch identity preservation, PK reuse -> Conflict, secret CHECK
+    violation -> Conflict, ON DELETE CASCADE from projects, Upsert tx-rollback).
+  - internal/controlplane/store/environment_variable_repository_invariants_test.go
+    (12 tests — environment_variable_test.go only covered ListByEnvironment;
+    this file pins the full Upsert + DeleteByEnvironmentExceptKeys mutation
+    surface).
+  - internal/controlplane/store/service_variable_repository_invariants_test.go
+    (12 tests — same gap as environment_variable_test.go; covers Upsert + Delete
+    full surface).
+- Verification:
+  - gofmt -w on all four new files — clean.
+  - go vet ./... — clean.
+  - go build ./... — clean.
+  - go mod tidy — no changes.
+  - go test ./... — PASS (DB-backed cases skip cleanly without YALLA_TEST_DATABASE_URL).
+  - go test -race ./... — PASS (no data races, no test failures).
+  - go test ./internal/controlplane/store/ -run 'VariableRepository' -count=1 -v
+    reports the new tests by name (12 / 16 / 6 / 12 across the four files); all
+    DB-backed cases SKIP with the standard "YALLA_TEST_DATABASE_URL not set"
+    message; the four nil-Tx pure unit tests on the org variable repo PASS
+    (these are the only non-DB tests in the suite).
+- Local Docker Postgres has no published port (the same contract documented in
+  BE-0001 / BE-0443 / BE-0447 / BE-0448), so the DB-backed cases skip rather
+  than run locally; CI is expected to expose YALLA_TEST_DATABASE_URL and run
+  them against an isolated migrated Postgres.
+- Remaining risks / follow-ups:
+  - BE-0450 ("Repository tenant isolation: variables") is the paired story —
+    will add *_tenant_isolation_test.go files mirroring the bystander-byte-
+    equality template established by BE-0440 / BE-0444 / BE-0448.
+  - The story does not touch HTTP or service layer; the variable feature
+    endpoints (BE-0106..BE-0117 / BE-0142..BE-0147 / BE-0172..BE-0177 /
+    BE-0199..) are unaffected and remain green.
+- Learnings for future iterations:
+  - "Database table: <name>" in PRD notes can refer to a multi-table resource
+    family (variables = 4 scope tables; quota = quota_policies / quota_usage /
+    quota_reservations). When in doubt, mirror the BE-0443/BE-0445/BE-0447
+    template across each physical table in the family rather than collapsing
+    into one file — every *_test.go under internal/controlplane/store/ shares
+    the same store_test package, so cross-scope helpers (newXxxID, upsertXxx,
+    listXxxOrFail, xxxTxRollbackSentinel) MUST get distinct names per scope to
+    avoid same-package collisions.
+  - The variables tables and the grant tables follow nearly identical CHECK /
+    FK / CASCADE / bump_version / set_updated_at invariants — the BE-0447
+    service_grant_repository_invariants_test.go template extends almost 1:1
+    to a variables repository, with three substitutions: (a) Value /
+    IsSecret / secret-tuple takes the place of role + principal_kind on the
+    Upsert struct; (b) the secret-columns-consistent CHECK adds a brand-new
+    CHECK-violation test (IsSecret=true with non-empty Value triggers the
+    branch); (c) organization_variables additionally exposes UpdateMutable +
+    DeleteByKey (no other scope has them), so the org file is roughly twice
+    the size of the others.
+  - The factory id helper pattern (rewrite the prefix of f.Organization /
+    f.Project / f.Environment / f.Service so the per-test counter mints a
+    unique non-canonical id like "ovar_<token_n>" / "pvar_<token_n>" /
+    "evar_<token_n>" / "svar_<token_n>") is the standard way to synthesize
+    repository-test ids without relying on domain.NewID — it survives a
+    factory refactor and never collides with the parent resource's own id
+    namespace.
+  - The Postgres now() clock advances at microsecond resolution, so a "set
+    updated_at refreshed" assertion that uses time.Sleep(time.Millisecond)
+    between baseline and override is the canonical pattern (matches the
+    BE-0443 / BE-0447 templates verbatim). Without the sleep, the Equal-by-
+    accident path can mask a regression that fails to refresh updated_at.
+  - Tx rollback proofs must reduce to a Read-surface assertion (ListByXxx)
+    rather than a per-id Get, because the variable repositories' only public
+    read surface for un-keyed observation is the list endpoint — the same
+    structural constraint that applies to the grant repositories. Sentinel
+    error types MUST be locally defined and uniquely named per file to avoid
+    same-package collisions across the store_test files.
 ---

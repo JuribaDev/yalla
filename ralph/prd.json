@@ -9440,8 +9440,8 @@
       ],
       "type": "repository",
       "priority": 1,
-      "passes": false,
-      "notes": "Database table: variables."
+      "passes": true,
+      "notes": "Database table: variables. BE-0449 covers all four variable scopes (organization_variables, project_variables, environment_variables, service_variables) at the repository invariants seam. Added four new *_repository_invariants_test.go files under internal/controlplane/store/ pinning: Upsert INSERT row shape (version=1, byte-equal created_at/updated_at, identifiers echoed verbatim); Upsert ON CONFLICT UPDATE branch (caller-supplied id ignored, bump_version increments, set_updated_at refreshes, created_at preserved); cross-tenant / unknown parent FK -> typed apierr.Conflict; duplicate PRIMARY KEY id under a different scope -> typed Conflict; secret-columns-consistent CHECK violation (IsSecret=true with non-empty Value) -> typed Conflict; OrganizationVariableRepository.UpdateMutable preserves identity, bumps version, refreshes updated_at, surfaces NotFound for unknown key, and clears the secret tuple on secret->plain transitions; DeleteByXxxExceptKeys nil/empty keep clears all, subset keep retains only listed keys, cross-tenant scope deletes nothing; ON DELETE CASCADE from the parent (organizations / projects / environments / services) removes children; Upsert rolls back when the surrounding Write closure returns a non-nil error (visible at ListByXxx); nil-Tx guards on every mutating method return typed apierr.Internal. gofmt, go vet, go build, go mod tidy, go test ./..., and go test -race ./... all green; DB-backed cases skip cleanly when YALLA_TEST_DATABASE_URL is unset (local Docker postgres has no published port, matching BE-0001/BE-0443/BE-0447 contract)."
     },
     {
       "id": "BE-0450",
