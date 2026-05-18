@@ -34733,3 +34733,36 @@ change that widened Reason to caller-supplied data.
   - The existing `NewHandler` variadic preview extension can be generalized as typed route options to add optional late-story dependencies without sweeping every test call site.
   - Job list filters should verify parent rows in `store.JobReader` before listing so cross-tenant or mismatched parent filters return typed not-found instead of an ambiguous empty list.
 ---
+
+## 2026-05-18 21:59 +03 - BE-0272
+- What was implemented
+  - Added contract coverage for `GET /v1/jobs` around OpenAPI registration, request-id propagation on dependency errors, stdout/stderr silence, structured-log bearer-token redaction, invalid-credential redaction, authorization-failure redaction, and wrapped dependency-cause redaction.
+  - Reused the existing jobs-list handler tests and added logger-injected handler wiring for the contract assertions.
+  - Marked `BE-0272` as `passes: true` in `ralph/prd.json`.
+- Files changed
+  - `internal/controlplane/httpapi/jobs_test.go`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `go test ./internal/controlplane/httpapi -run 'TestListJobs'`
+  - `gofmt -w .`
+  - `goimports -w .` (not installed locally)
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `golangci-lint run ./...`
+  - `staticcheck ./...` (not installed locally)
+  - `govulncheck ./...` (not installed locally)
+- Results
+  - Focused jobs-list HTTP API tests passed.
+  - Required formatting, module cleanup, tests, race detector, and vet passed.
+  - `golangci-lint` passed with 0 issues.
+  - `goimports`, `staticcheck`, and `govulncheck` could not be run because they are not installed in this shell.
+- Remaining risks or follow-ups
+  - `GET /v1/jobs/{job_id}`, retry, and cancel remain separate unfinished PRD stories.
+- **Learnings for future iterations:**
+  - Jobs-list contract tests can reuse the existing route-option `JobReader` wiring and only need a logger-injected helper to pin stream silence and request-log redaction.
+  - For query-only list endpoints, dependency-cause redaction tests should assert both the wrapped store cause and credential sentinels stay out of the `yalla.error.v1` envelope.
+---
