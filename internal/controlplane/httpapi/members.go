@@ -386,7 +386,7 @@ func updateMemberHandler(updater MembershipUpdater) http.HandlerFunc {
 		}
 		// A PATCH with no role field is itself a client error: the only
 		// mutable field on a membership today is role, so a patch that
-		// names no field is a no-op. Surface it as 400 E_INVALID_INPUT
+		// names no field is a no-op. Surface it as 400 E_VALIDATION
 		// naming the role field — the same shape the store layer would
 		// reject a blank role with, kept consistent at the boundary so
 		// agents see one stable contract for "patch with no field".

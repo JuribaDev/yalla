@@ -286,7 +286,7 @@ func TestUpdateProjectStaleIfMatchReturnsConflict(t *testing.T) {
 // an organization_id field in the body: tenant isolation on this endpoint
 // is structural — the handler always builds the store input from the
 // authenticated principal's home organization and the path project_id —
-// and an unknown field is a stable 400 E_INVALID_INPUT so a stale schema
+// and an unknown field is a stable 400 E_VALIDATION so a stale schema
 // or typo cannot be silently dropped.
 func TestUpdateProjectRejectsBodyOrgID(t *testing.T) {
 	t.Parallel()
@@ -300,11 +300,11 @@ func TestUpdateProjectRejectsBodyOrgID(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_INVALID_INPUT")
+	decodeError(t, rec, "E_VALIDATION")
 }
 
 // TestUpdateProjectMalformedBodyIsValidationError proves a malformed JSON
-// body is a stable 400 E_INVALID_INPUT and never reaches the updater.
+// body is a stable 400 E_VALIDATION and never reaches the updater.
 func TestUpdateProjectMalformedBodyIsValidationError(t *testing.T) {
 	t.Parallel()
 
@@ -317,7 +317,7 @@ func TestUpdateProjectMalformedBodyIsValidationError(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_INVALID_INPUT")
+	decodeError(t, rec, "E_VALIDATION")
 }
 
 // TestUpdateProjectNotFoundIsTyped404 proves a NotFound from the store
@@ -359,7 +359,7 @@ func TestUpdateProjectMissingCredentialsIs401(t *testing.T) {
 
 // TestUpdateProjectInvalidIfMatchHeader proves a weak ETag, a "*", a
 // multi-value list, or a non-numeric token in If-Match is a stable 400
-// E_INVALID_INPUT — never reaches the updater — so a client cannot smuggle
+// E_VALIDATION — never reaches the updater — so a client cannot smuggle
 // a malformed precondition past the parser.
 func TestUpdateProjectInvalidIfMatchHeader(t *testing.T) {
 	t.Parallel()
@@ -387,7 +387,7 @@ func TestUpdateProjectInvalidIfMatchHeader(t *testing.T) {
 			if rec.Code != http.StatusBadRequest {
 				t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 			}
-			decodeError(t, rec, "E_INVALID_INPUT")
+			decodeError(t, rec, "E_VALIDATION")
 		})
 	}
 }

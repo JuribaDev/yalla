@@ -232,8 +232,8 @@ func TestUpdateAPIKeyRejectsEmptyPatch(t *testing.T) {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "E_INVALID_INPUT") {
-		t.Errorf("body does not name E_INVALID_INPUT: %s", body)
+	if !strings.Contains(body, "E_VALIDATION") {
+		t.Errorf("body does not name E_VALIDATION: %s", body)
 	}
 }
 

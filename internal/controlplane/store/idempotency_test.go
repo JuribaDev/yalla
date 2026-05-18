@@ -374,7 +374,7 @@ func TestIdempotencyClaimValidation(t *testing.T) {
 			_, _, e := repo.Claim(ctx, tx, store.IdempotencyRecord{OrganizationID: org.ID})
 			return e
 		})
-		wantErrCode(t, err, yerr.CodeInvalidInput)
+		wantErrCode(t, err, yerr.CodeValidation)
 	})
 
 	t.Run("complete with a nil transaction is internal", func(t *testing.T) {

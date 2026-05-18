@@ -243,7 +243,7 @@ func TestOrganizationVariableServiceDeleteRejectsBlankOrgID(t *testing.T) {
 	if err == nil {
 		t.Fatalf("Delete returned no error for blank organization id, want InvalidInput")
 	}
-	if got, want := yerr.From(err).Code, yerr.CodeInvalidInput; got != want {
+	if got, want := yerr.From(err).Code, yerr.CodeValidation; got != want {
 		t.Errorf("error code = %q, want %q; err = %v", got, want, err)
 	}
 }
@@ -269,7 +269,7 @@ func TestOrganizationVariableServiceDeleteRejectsNonPOSIXKey(t *testing.T) {
 	if err == nil {
 		t.Fatalf("Delete returned no error for non-POSIX key, want InvalidInput")
 	}
-	if got, want := yerr.From(err).Code, yerr.CodeInvalidInput; got != want {
+	if got, want := yerr.From(err).Code, yerr.CodeValidation; got != want {
 		t.Errorf("error code = %q, want %q; err = %v", got, want, err)
 	}
 }

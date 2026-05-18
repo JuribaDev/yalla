@@ -14,6 +14,7 @@ func TestCode_ExitCodeMappingIsStable(t *testing.T) {
 	}{
 		{"", 0},
 		{CodeUsage, 2},
+		{CodeValidation, 2},
 		{CodeInvalidInput, 2},
 		{CodeConfig, 3},
 		{CodeOrphan, 3},

@@ -303,7 +303,7 @@ func TestListAuditEventsForwardsLimitToReader(t *testing.T) {
 }
 
 // TestListAuditEventsRejectsMalformedLimit proves a non-integer ?limit=
-// is rejected as a stable 400 E_INVALID_INPUT before any database work
+// is rejected as a stable 400 E_VALIDATION before any database work
 // runs, and the rejection echoes the field path the agent can read to
 // pinpoint which parameter was wrong without leaking the submitted
 // value.
@@ -327,7 +327,7 @@ func TestListAuditEventsRejectsMalformedLimit(t *testing.T) {
 }
 
 // TestListAuditEventsRejectsOutOfRangeLimit proves a ?limit= outside the
-// stable [1, 200] range is rejected as a stable 400 E_INVALID_INPUT,
+// stable [1, 200] range is rejected as a stable 400 E_VALIDATION,
 // matching the repository's hard ceiling so an agent can never request
 // more than the documented cap.
 func TestListAuditEventsRejectsOutOfRangeLimit(t *testing.T) {

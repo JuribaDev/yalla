@@ -263,7 +263,7 @@ func TestCSRFAuthenticatedSuccessIssuesNoSetCookie(t *testing.T) {
 
 // TestCSRFValidationFailureIssuesNoSetCookie proves the 400
 // validation-error surface carries no `Set-Cookie` header. The
-// envelope is `yalla.error.v1` E_INVALID_INPUT (malformed JSON
+// envelope is `yalla.error.v1` E_VALIDATION (malformed JSON
 // rejected by the decoder), and the cookie sentinel must not be
 // reflected into the error message — body-echo of a `Cookie` header
 // value into an error envelope would be both a redaction regression
@@ -289,7 +289,7 @@ func TestCSRFValidationFailureIssuesNoSetCookie(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_INVALID_INPUT")
+	decodeError(t, rec, "E_VALIDATION")
 	assertNoSetCookie(t, rec)
 	assertNoCookieEchoInBody(t, rec)
 }

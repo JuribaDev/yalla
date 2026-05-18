@@ -285,7 +285,7 @@ func TestRunServiceBackupEmptyBodyAccepted(t *testing.T) {
 
 // TestRunServiceBackupValidationFailure proves a validation error
 // returned by the runner (for example, an id whose Kind prefix is
-// invalid) surfaces as a typed 400 with code E_INVALID_INPUT and a
+// invalid) surfaces as a typed 400 with code E_VALIDATION and a
 // stable yalla.error.v1 envelope. The handler must propagate it
 // without echoing the submitted id.
 func TestRunServiceBackupValidationFailure(t *testing.T) {
@@ -313,7 +313,7 @@ func TestRunServiceBackupValidationFailure(t *testing.T) {
 		t.Errorf("runner call count = %d, want 1 (handler delegates validation to the orchestrator)",
 			callCount)
 	}
-	decodeError(t, rec, string(yerr.CodeInvalidInput))
+	decodeError(t, rec, string(yerr.CodeValidation))
 }
 
 // TestRunServiceBackupUnauthenticated proves a request with no

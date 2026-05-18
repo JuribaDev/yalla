@@ -237,8 +237,8 @@ func TestProjectServiceCreateValidationFailure(t *testing.T) {
 	in.DisplayName = ""
 
 	_, createErr := svc.Create(context.Background(), in)
-	if ye := yerr.From(createErr); ye.Code != yerr.CodeInvalidInput {
-		t.Fatalf("Create(invalid) error code = %v, want %s", createErr, yerr.CodeInvalidInput)
+	if ye := yerr.From(createErr); ye.Code != yerr.CodeValidation {
+		t.Fatalf("Create(invalid) error code = %v, want %s", createErr, yerr.CodeValidation)
 	}
 	if violations, ok := apierr.ViolationsOf(createErr); !ok || len(violations) == 0 {
 		t.Errorf("Create(invalid) carried no field violations: ok=%v", ok)
@@ -479,8 +479,8 @@ func TestProjectServiceUpdateRejectsEmptyPatch(t *testing.T) {
 	if updErr == nil {
 		t.Fatal("empty-patch Update error = nil, want InvalidInput")
 	}
-	if ye := yerr.From(updErr); ye.Code != yerr.CodeInvalidInput {
-		t.Fatalf("empty-patch Update error code = %v, want %s", updErr, yerr.CodeInvalidInput)
+	if ye := yerr.From(updErr); ye.Code != yerr.CodeValidation {
+		t.Fatalf("empty-patch Update error code = %v, want %s", updErr, yerr.CodeValidation)
 	}
 }
 
@@ -576,7 +576,7 @@ func TestProjectServiceUpdateInvalidSlug(t *testing.T) {
 	if updErr == nil {
 		t.Fatal("invalid-slug Update error = nil, want InvalidInput")
 	}
-	if ye := yerr.From(updErr); ye.Code != yerr.CodeInvalidInput {
-		t.Fatalf("invalid-slug Update code = %v, want %s", updErr, yerr.CodeInvalidInput)
+	if ye := yerr.From(updErr); ye.Code != yerr.CodeValidation {
+		t.Fatalf("invalid-slug Update code = %v, want %s", updErr, yerr.CodeValidation)
 	}
 }

@@ -56,7 +56,7 @@ func TestCatalogIsSortedAndCoversCategories(t *testing.T) {
 		}
 	}
 	required := []yerr.Code{
-		yerr.CodeAuthenticationRequired, yerr.CodeAuthInvalid, yerr.CodeAuthExpired, yerr.CodeAuth, yerr.CodeForbidden, yerr.CodeInvalidInput,
+		yerr.CodeAuthenticationRequired, yerr.CodeAuthInvalid, yerr.CodeAuthExpired, yerr.CodeAuth, yerr.CodeForbidden, yerr.CodeValidation,
 		yerr.CodeNotFound, yerr.CodeConflict, yerr.CodeInvalidStateTransition, yerr.CodeIdempotencyConflict,
 		yerr.CodeQuotaExceeded,
 		yerr.CodeServer, yerr.CodeUnavailable, yerr.CodeNetwork,
@@ -98,8 +98,8 @@ func TestConstructorsEmitCataloguedCodes(t *testing.T) {
 		{"conflict", Conflict(""), yerr.CodeConflict, 409},
 		{"invalid state transition", InvalidStateTransition("deployment", "queued", "succeeded"), yerr.CodeInvalidStateTransition, 409},
 		{"idempotency conflict", IdempotencyConflict(""), yerr.CodeIdempotencyConflict, 409},
-		{"invalid input", InvalidInput(FieldViolation{Field: "name", Reason: "required"}), yerr.CodeInvalidInput, 400},
-		{"invalid", Invalid(""), yerr.CodeInvalidInput, 400},
+		{"invalid input", InvalidInput(FieldViolation{Field: "name", Reason: "required"}), yerr.CodeValidation, 400},
+		{"invalid", Invalid(""), yerr.CodeValidation, 400},
 		{"quota exceeded", QuotaExceeded("services", 5), yerr.CodeQuotaExceeded, 429},
 		{"rate limited", RateLimited("organization", 3*time.Second), yerr.CodeRateLimited, 429},
 		{"dokploy unavailable", DokployUnavailable(stderrors.New("x")), yerr.CodeServer, 502},
@@ -333,8 +333,8 @@ func TestInvalidInputSortsViolationsAndExposesFieldPaths(t *testing.T) {
 		FieldViolation{Field: "", Reason: ""}, // dropped
 		FieldViolation{Field: "metadata.name", Reason: "required"},
 	)
-	if err.Code != yerr.CodeInvalidInput {
-		t.Fatalf("code = %q, want E_INVALID_INPUT", err.Code)
+	if err.Code != yerr.CodeValidation {
+		t.Fatalf("code = %q, want E_VALIDATION", err.Code)
 	}
 	violations, ok := ViolationsOf(err)
 	if !ok {
@@ -359,8 +359,8 @@ func TestInvalidInputWithNoUsableViolationsDegrades(t *testing.T) {
 	t.Parallel()
 
 	err := InvalidInput(FieldViolation{}, FieldViolation{Field: "  "})
-	if err.Code != yerr.CodeInvalidInput {
-		t.Fatalf("code = %q, want E_INVALID_INPUT", err.Code)
+	if err.Code != yerr.CodeValidation {
+		t.Fatalf("code = %q, want E_VALIDATION", err.Code)
 	}
 	if _, ok := ViolationsOf(err); ok {
 		t.Error("ViolationsOf must be false when no usable violations were supplied")

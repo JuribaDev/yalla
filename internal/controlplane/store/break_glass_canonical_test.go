@@ -15,7 +15,7 @@ package store
 //     deterministically: either an accept (a populated
 //     BreakGlassSession with ExpiresAt = StartedAt + TTL, capped at
 //     breakGlassMaxTTL) or a typed *yerr.Error of code
-//     CodeInvalidInput carrying a FieldViolation that names the
+//     CodeValidation carrying a FieldViolation that names the
 //     offending field path (organization_id, actor_id, actor_kind,
 //     reason, or ttl). The table is also exhaustive: every documented
 //     rule in the validator MUST be covered by at least one rejecting
@@ -63,7 +63,7 @@ package store
 //     scenario. A regression that removed any rule fails the
 //     exhaustiveness self-check at the head of the test.
 //  2. Every rejecting scenario yields a typed *yerr.Error with
-//     Code == CodeInvalidInput AND a FieldViolation naming the
+//     Code == CodeValidation AND a FieldViolation naming the
 //     expected field path. A regression that started returning a
 //     generic Internal error, or that named a different field path,
 //     fails the per-row assertion.
@@ -123,7 +123,7 @@ const breakGlassDefaultTTL = 30 * time.Minute
 
 // breakGlassExpect predicts the outcome of one scenario row.
 // accept=true MUST yield a BreakGlassSession; accept=false MUST yield
-// a typed *yerr.Error of code CodeInvalidInput carrying a violation
+// a typed *yerr.Error of code CodeValidation carrying a violation
 // under the named field path. cappedTTL=true asserts the accepted
 // session's ExpiresAt-StartedAt collapsed to breakGlassMaxTTL.
 type breakGlassExpect struct {
@@ -554,19 +554,19 @@ func breakGlassCheckOutcome(row breakGlassScenario, in StartBreakGlassInput, ses
 		return nil
 	}
 
-	// Reject-path checks: typed *yerr.Error with Code == CodeInvalidInput,
+	// Reject-path checks: typed *yerr.Error with Code == CodeValidation,
 	// a FieldViolation under the expected field path, and zero echo
 	// of the seeded marker in the error message.
 	if err == nil {
 		return &breakGlassContentionFailure{
 			rowName: row.name,
-			message: fmt.Sprintf("buildSessionToCreate(%q) error = nil, want CodeInvalidInput on field %q", row.name, row.expect.field),
+			message: fmt.Sprintf("buildSessionToCreate(%q) error = nil, want CodeValidation on field %q", row.name, row.expect.field),
 		}
 	}
 	if !isInvalidInputErrorOn(err, row.expect.field) {
 		return &breakGlassContentionFailure{
 			rowName: row.name,
-			message: fmt.Sprintf("buildSessionToCreate(%q) error = %v, want CodeInvalidInput on field %q", row.name, err, row.expect.field),
+			message: fmt.Sprintf("buildSessionToCreate(%q) error = %v, want CodeValidation on field %q", row.name, err, row.expect.field),
 		}
 	}
 	// Redaction canary: every scenario seeds the secret marker into
@@ -603,14 +603,14 @@ func breakGlassCheckOutcome(row breakGlassScenario, in StartBreakGlassInput, ses
 		}
 	}
 	// Belt-and-braces #2: confirm the typed-error code is the
-	// documented CodeInvalidInput. isInvalidInputErrorOn already
+	// documented CodeValidation. isInvalidInputErrorOn already
 	// checks this, but a redundant guard here documents the
 	// invariant clearly.
 	var ye *yerr.Error
-	if !asYerr(err, &ye) || ye.Code != yerr.CodeInvalidInput {
+	if !asYerr(err, &ye) || ye.Code != yerr.CodeValidation {
 		return &breakGlassContentionFailure{
 			rowName: row.name,
-			message: fmt.Sprintf("buildSessionToCreate(%q) error = %v, want a *yerr.Error with Code == %q", row.name, err, yerr.CodeInvalidInput),
+			message: fmt.Sprintf("buildSessionToCreate(%q) error = %v, want a *yerr.Error with Code == %q", row.name, err, yerr.CodeValidation),
 		}
 	}
 	return nil

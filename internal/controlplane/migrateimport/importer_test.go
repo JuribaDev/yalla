@@ -859,7 +859,7 @@ func isInvalidInput(err error, wantField string) bool {
 	if !stderrors.As(err, &ye) {
 		return false
 	}
-	if ye.Code != yerr.CodeInvalidInput {
+	if ye.Code != yerr.CodeValidation {
 		return false
 	}
 	violations, ok := apierr.ViolationsOf(err)

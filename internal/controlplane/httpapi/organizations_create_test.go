@@ -155,7 +155,7 @@ func TestCreateOrganizationForwardsActorAndRequest(t *testing.T) {
 }
 
 // TestCreateOrganizationMalformedBodyIsValidationError proves a syntactically
-// broken body is a stable 400 E_INVALID_INPUT and never reaches the store layer.
+// broken body is a stable 400 E_VALIDATION and never reaches the store layer.
 func TestCreateOrganizationMalformedBodyIsValidationError(t *testing.T) {
 	t.Parallel()
 
@@ -168,11 +168,11 @@ func TestCreateOrganizationMalformedBodyIsValidationError(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_INVALID_INPUT")
+	decodeError(t, rec, "E_VALIDATION")
 }
 
 // TestCreateOrganizationUnknownFieldIsValidationError proves the body is
-// strictly decoded: an unknown field is a stable 400 E_INVALID_INPUT, so a
+// strictly decoded: an unknown field is a stable 400 E_VALIDATION, so a
 // client typo or a stale schema cannot be silently dropped.
 func TestCreateOrganizationUnknownFieldIsValidationError(t *testing.T) {
 	t.Parallel()
@@ -186,7 +186,7 @@ func TestCreateOrganizationUnknownFieldIsValidationError(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_INVALID_INPUT")
+	decodeError(t, rec, "E_VALIDATION")
 }
 
 // TestCreateOrganizationInvalidInput proves a request the store layer rejects
@@ -207,7 +207,7 @@ func TestCreateOrganizationInvalidInput(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_INVALID_INPUT")
+	decodeError(t, rec, "E_VALIDATION")
 }
 
 // TestCreateOrganizationUnauthenticated proves a request with no credential is

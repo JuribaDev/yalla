@@ -522,8 +522,8 @@ func TestServiceAccountServiceCreateValidationFailure(t *testing.T) {
 	in.DisplayName = ""
 
 	_, createErr := svc.Create(context.Background(), in)
-	if ye := yerr.From(createErr); ye.Code != yerr.CodeInvalidInput {
-		t.Fatalf("Create(invalid) error code = %v, want %s", createErr, yerr.CodeInvalidInput)
+	if ye := yerr.From(createErr); ye.Code != yerr.CodeValidation {
+		t.Fatalf("Create(invalid) error code = %v, want %s", createErr, yerr.CodeValidation)
 	}
 	if violations, ok := apierr.ViolationsOf(createErr); !ok || len(violations) == 0 {
 		t.Errorf("Create(invalid) carried no field violations: ok=%v", ok)

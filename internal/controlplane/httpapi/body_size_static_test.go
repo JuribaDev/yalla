@@ -39,7 +39,7 @@ import (
 // The companion runtime test, `body_size_test.go`, exercises the same
 // invariant end-to-end through `NewHandler` against a real `POST
 // /v1/organizations` request — an oversized body is a stable 400
-// `E_INVALID_INPUT` with the canonical "exceeds the maximum allowed size"
+// `E_VALIDATION` with the canonical "exceeds the maximum allowed size"
 // message and the orchestrator is never reached.
 
 // TestRequestBodyAccessIsAlwaysSizeBounded walks every non-test .go file in
@@ -269,7 +269,7 @@ var requestBodyReceiverNames = map[string]bool{
 //  1. Argument 0 of `validate.DecodeJSON(<r>.Body, &dst, max)` — the
 //     canonical body decoder, which caps the read at
 //     `validate.DefaultMaxBodyBytes` (1 MiB) and rejects an oversized body
-//     as a typed `apierr.Invalid` (E_INVALID_INPUT).
+//     as a typed `apierr.Invalid` (E_VALIDATION).
 //  2. Argument 0 of `io.LimitReader(<r>.Body, <cap>)` — the explicit
 //     bounded-wrap shape the idempotency middleware uses to hash the
 //     request body before dispatching the wrapped handler. The subsequent

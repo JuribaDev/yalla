@@ -166,8 +166,8 @@ func TestDeleteProjectPreviewMalformedIfMatchIsValidationFailure(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
 		t.Fatalf("decode error envelope: %v; body %s", err, rec.Body.String())
 	}
-	if env.Error.Code != string(yerr.CodeInvalidInput) {
-		t.Fatalf("error code = %s, want E_INVALID_INPUT", env.Error.Code)
+	if env.Error.Code != string(yerr.CodeValidation) {
+		t.Fatalf("error code = %s, want E_VALIDATION", env.Error.Code)
 	}
 }
 

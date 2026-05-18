@@ -27,7 +27,7 @@ func fieldsOf(t *testing.T, fn func(c *validate.Collector)) (fields map[string]s
 	return fields, err
 }
 
-// assertInvalidInput asserts err is a catalogued E_INVALID_INPUT error whose
+// assertInvalidInput asserts err is a catalogued E_VALIDATION error whose
 // recovered violations match the expected field paths exactly.
 func assertInvalidInput(t *testing.T, err error, wantFields ...string) {
 	t.Helper()
@@ -38,8 +38,8 @@ func assertInvalidInput(t *testing.T, err error, wantFields ...string) {
 	if !stderrors.As(err, &ye) {
 		t.Fatalf("expected *yerr.Error, got %T", err)
 	}
-	if ye.Code != yerr.CodeInvalidInput {
-		t.Fatalf("expected code %s, got %s", yerr.CodeInvalidInput, ye.Code)
+	if ye.Code != yerr.CodeValidation {
+		t.Fatalf("expected code %s, got %s", yerr.CodeValidation, ye.Code)
 	}
 	violations, ok := apierr.ViolationsOf(err)
 	if !ok {
@@ -492,8 +492,8 @@ func TestDecodeJSON(t *testing.T) {
 				t.Fatalf("DecodeJSON(%q) = nil, want error", tt.body)
 			}
 			var ye *yerr.Error
-			if !stderrors.As(err, &ye) || ye.Code != yerr.CodeInvalidInput {
-				t.Fatalf("DecodeJSON(%q) = %v, want E_INVALID_INPUT", tt.body, err)
+			if !stderrors.As(err, &ye) || ye.Code != yerr.CodeValidation {
+				t.Fatalf("DecodeJSON(%q) = %v, want E_VALIDATION", tt.body, err)
 			}
 			// The body must never appear in the error.
 			if strings.Contains(err.Error(), "garbage") {

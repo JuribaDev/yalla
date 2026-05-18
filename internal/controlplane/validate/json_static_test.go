@@ -36,7 +36,7 @@ import (
 //     while the API acts on another — classic JSON smuggling.
 //
 //  4. The error path renders via `decodeError(...)` which produces a
-//     `apierr.Invalid` (E_INVALID_INPUT, HTTP 400) with a fixed-string
+//     `apierr.Invalid` (E_VALIDATION, HTTP 400) with a fixed-string
 //     message. Anything else risks echoing the submitted body into the
 //     response — a secret pasted into a malformed payload would leak
 //     through a verbose `encoding/json` error.

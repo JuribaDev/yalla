@@ -172,7 +172,7 @@ func TestCloneEnvironmentHappyPathForwardsPrincipalAndBody(t *testing.T) {
 }
 
 // TestCloneEnvironmentRejectsMalformedBody proves an oversized, malformed,
-// or unknown-field body is a stable 400 E_INVALID_INPUT before the cloner
+// or unknown-field body is a stable 400 E_VALIDATION before the cloner
 // runs — the malformed body is a client error, not a silent pass-through.
 func TestCloneEnvironmentRejectsMalformedBody(t *testing.T) {
 	t.Parallel()

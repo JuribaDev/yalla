@@ -111,7 +111,7 @@ func TestListProjectPreviewsInvalidInputEnvelope(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	env := decodeError(t, rec, "E_INVALID_INPUT")
+	env := decodeError(t, rec, "E_VALIDATION")
 	if env.SchemaVersion != "yalla.error.v1" {
 		t.Errorf("schema_version = %q, want yalla.error.v1", env.SchemaVersion)
 	}

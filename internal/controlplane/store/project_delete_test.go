@@ -450,8 +450,8 @@ func TestProjectServiceScheduleDeletionBlankInput(t *testing.T) {
 			if err == nil {
 				t.Fatalf("%s: error = nil, want InvalidInput", tc.name)
 			}
-			if ye := yerr.From(err); ye.Code != yerr.CodeInvalidInput {
-				t.Errorf("%s: code = %v, want %s", tc.name, err, yerr.CodeInvalidInput)
+			if ye := yerr.From(err); ye.Code != yerr.CodeValidation {
+				t.Errorf("%s: code = %v, want %s", tc.name, err, yerr.CodeValidation)
 			}
 		})
 	}

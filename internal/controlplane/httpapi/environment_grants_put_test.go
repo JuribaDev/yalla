@@ -295,7 +295,7 @@ func TestReplaceEnvironmentGrantsRejectsMissingGrantsField(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
-	_ = decodeError(t, rec, "E_INVALID_INPUT")
+	_ = decodeError(t, rec, "E_VALIDATION")
 	if callCount != 0 {
 		t.Errorf("replacer call count = %d, want 0 (a missing grants field never reaches the store)", callCount)
 	}
@@ -317,7 +317,7 @@ func TestReplaceEnvironmentGrantsRejectsMalformedJSON(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
-	_ = decodeError(t, rec, "E_INVALID_INPUT")
+	_ = decodeError(t, rec, "E_VALIDATION")
 	if callCount != 0 {
 		t.Errorf("replacer call count = %d, want 0 (a malformed body never reaches the store)", callCount)
 	}
@@ -438,7 +438,7 @@ func TestReplaceEnvironmentGrantsPropagatesInvalidInputFromStore(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
-	_ = decodeError(t, rec, "E_INVALID_INPUT")
+	_ = decodeError(t, rec, "E_VALIDATION")
 }
 
 // TestReplaceEnvironmentGrantsForwardsStoreUnavailableAsTypedFiveHundred

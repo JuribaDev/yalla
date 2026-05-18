@@ -341,7 +341,7 @@ func TestCreateServiceBackupRequestIDPropagates(t *testing.T) {
 }
 
 // TestCreateServiceBackupValidationFailure proves a malformed
-// schedule value surfaces as a typed 400 with code E_INVALID_INPUT
+// schedule value surfaces as a typed 400 with code E_VALIDATION
 // and a stable yalla.error.v1 envelope. The fake creator returns the
 // store-layer's validation error so the test verifies the handler
 // propagates it as the correct envelope without touching the
@@ -369,7 +369,7 @@ func TestCreateServiceBackupValidationFailure(t *testing.T) {
 		t.Errorf("creator call count = %d, want 1 (the handler delegates validation to the orchestrator)",
 			callCount)
 	}
-	decodeError(t, rec, string(yerr.CodeInvalidInput))
+	decodeError(t, rec, string(yerr.CodeValidation))
 }
 
 // TestCreateServiceBackupMalformedJSON proves an unknown-field body
@@ -396,7 +396,7 @@ func TestCreateServiceBackupMalformedJSON(t *testing.T) {
 		t.Errorf("creator call count = %d, want 0 — strict-decode failures must precede the creator",
 			callCount)
 	}
-	decodeError(t, rec, string(yerr.CodeInvalidInput))
+	decodeError(t, rec, string(yerr.CodeValidation))
 }
 
 // TestCreateServiceBackupUnauthenticated proves a request with no

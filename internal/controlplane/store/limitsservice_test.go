@@ -265,8 +265,8 @@ func TestLimitsServiceInvalidInputNeverOpensTransaction(t *testing.T) {
 		ActorKind:      "usr",
 		ActorOrgID:     org.ID,
 	})
-	if ye := yerr.From(err); ye.Code != yerr.CodeInvalidInput {
-		t.Fatalf("error code = %v, want %s", err, yerr.CodeInvalidInput)
+	if ye := yerr.From(err); ye.Code != yerr.CodeValidation {
+		t.Fatalf("error code = %v, want %s", err, yerr.CodeValidation)
 	}
 	if events := listAuditEvents(t, s, org.ID); len(events) != 0 {
 		t.Errorf("audit events = %d after invalid input, want 0", len(events))

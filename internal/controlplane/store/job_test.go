@@ -535,8 +535,8 @@ func TestJobRepositoryTransitionToRunningRequiresLease(t *testing.T) {
 		_, transErr := repo.Transition(ctx, tx, org.ID, job.ID, store.JobStatusRunning, store.JobTransition{})
 		return transErr
 	})
-	if ye := yerr.From(err); ye.Code != yerr.CodeInvalidInput {
-		t.Fatalf("claim without a lease error code = %v, want %s", err, yerr.CodeInvalidInput)
+	if ye := yerr.From(err); ye.Code != yerr.CodeValidation {
+		t.Fatalf("claim without a lease error code = %v, want %s", err, yerr.CodeValidation)
 	}
 }
 

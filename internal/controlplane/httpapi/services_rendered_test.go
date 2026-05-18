@@ -284,7 +284,7 @@ func TestGetServiceRenderedPropagatesRequestID(t *testing.T) {
 
 // TestGetServiceRenderedInvalidServiceIDIsValidationError proves the
 // path parameter is validated before any source-of-truth read. A
-// malformed id is a deterministic 400 E_INVALID_INPUT and the reader
+// malformed id is a deterministic 400 E_VALIDATION and the reader
 // is never reached, so invalid input cannot become a cross-tenant
 // existence probe or a misleading rendered preview.
 func TestGetServiceRenderedInvalidServiceIDIsValidationError(t *testing.T) {
@@ -304,7 +304,7 @@ func TestGetServiceRenderedInvalidServiceIDIsValidationError(t *testing.T) {
 	if callCount != 0 {
 		t.Errorf("reader was reached (calls=%d), want validation to short-circuit before persistence", callCount)
 	}
-	decodeError(t, rec, string(yerr.CodeInvalidInput))
+	decodeError(t, rec, string(yerr.CodeValidation))
 }
 
 // TestGetServiceRenderedKindMapping proves the rendered.type field

@@ -85,7 +85,7 @@ var envelopeRedactor = output.NewRedactor()
 // for it. The mapping is deterministic and part of the public contract:
 // agents and scripts may rely on these pairings.
 //
-//	E_INVALID_INPUT, E_USAGE                  -> 400 Bad Request
+//	E_VALIDATION, E_INVALID_INPUT, E_USAGE -> 400 Bad Request
 //	E_AUTHENTICATION_REQUIRED,
 //	E_AUTH_INVALID, E_AUTH_EXPIRED, E_AUTH  -> 401 Unauthorized
 //	E_FORBIDDEN                               -> 403 Forbidden
@@ -102,7 +102,7 @@ var envelopeRedactor = output.NewRedactor()
 //	everything else (E_INTERNAL, E_CONFIG, …) -> 500 Internal Server Error
 func StatusForCode(code yerr.Code) int {
 	switch code {
-	case yerr.CodeInvalidInput, yerr.CodeUsage, yerr.CodeScopeRequired:
+	case yerr.CodeValidation, yerr.CodeInvalidInput, yerr.CodeUsage, yerr.CodeScopeRequired:
 		return http.StatusBadRequest
 	case yerr.CodeAuthenticationRequired, yerr.CodeAuthInvalid, yerr.CodeAuthExpired, yerr.CodeAuth:
 		return http.StatusUnauthorized

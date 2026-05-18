@@ -10,7 +10,7 @@ import (
 	yerr "github.com/JuribaDev/yalla/internal/errors"
 )
 
-// invalidInputViolations asserts err is a typed E_INVALID_INPUT error and
+// invalidInputViolations asserts err is a typed E_VALIDATION error and
 // returns its field violations for inspection.
 func invalidInputViolations(t *testing.T, err error) []apierr.FieldViolation {
 	t.Helper()
@@ -21,8 +21,8 @@ func invalidInputViolations(t *testing.T, err error) []apierr.FieldViolation {
 	if !stderrors.As(err, &ye) {
 		t.Fatalf("error is not a *yerr.Error: %v", err)
 	}
-	if ye.Code != yerr.CodeInvalidInput {
-		t.Fatalf("error code = %q, want %q", ye.Code, yerr.CodeInvalidInput)
+	if ye.Code != yerr.CodeValidation {
+		t.Fatalf("error code = %q, want %q", ye.Code, yerr.CodeValidation)
 	}
 	v, _ := apierr.ViolationsOf(err)
 	if len(v) == 0 {

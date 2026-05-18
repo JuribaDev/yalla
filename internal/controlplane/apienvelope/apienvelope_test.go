@@ -97,9 +97,9 @@ func TestWriteErrorDerivesStatusAndEnvelope(t *testing.T) {
 	}{
 		{
 			name:       "validation failure",
-			err:        yerr.New(yerr.CodeInvalidInput, "name is required").WithHint("provide a non-empty name"),
+			err:        yerr.New(yerr.CodeValidation, "name is required").WithHint("provide a non-empty name"),
 			wantStatus: http.StatusBadRequest,
-			wantCode:   "E_INVALID_INPUT",
+			wantCode:   "E_VALIDATION",
 		},
 		{
 			name:       "authentication failure",
@@ -175,7 +175,7 @@ func TestStatusForCode(t *testing.T) {
 		code yerr.Code
 		want int
 	}{
-		{yerr.CodeInvalidInput, http.StatusBadRequest},
+		{yerr.CodeValidation, http.StatusBadRequest},
 		{yerr.CodeUsage, http.StatusBadRequest},
 		{yerr.CodeAuthenticationRequired, http.StatusUnauthorized},
 		{yerr.CodeAuthInvalid, http.StatusUnauthorized},

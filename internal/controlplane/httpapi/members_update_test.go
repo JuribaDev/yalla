@@ -155,7 +155,7 @@ func TestUpdateMemberForwardsActorAndPath(t *testing.T) {
 }
 
 // TestUpdateMemberMalformedBodyIsValidationError proves a syntactically
-// broken body is a stable 400 E_INVALID_INPUT and never reaches the store
+// broken body is a stable 400 E_VALIDATION and never reaches the store
 // layer.
 func TestUpdateMemberMalformedBodyIsValidationError(t *testing.T) {
 	t.Parallel()
@@ -169,11 +169,11 @@ func TestUpdateMemberMalformedBodyIsValidationError(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_INVALID_INPUT")
+	decodeError(t, rec, "E_VALIDATION")
 }
 
 // TestUpdateMemberUnknownFieldIsValidationError proves the body is strictly
-// decoded: an unknown field is a stable 400 E_INVALID_INPUT, so a client
+// decoded: an unknown field is a stable 400 E_VALIDATION, so a client
 // typo or a stale schema cannot be silently dropped.
 func TestUpdateMemberUnknownFieldIsValidationError(t *testing.T) {
 	t.Parallel()
@@ -188,12 +188,12 @@ func TestUpdateMemberUnknownFieldIsValidationError(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_INVALID_INPUT")
+	decodeError(t, rec, "E_VALIDATION")
 }
 
 // TestUpdateMemberMissingRoleIsValidationError proves a PATCH that names no
 // updatable field — today, no role field — is itself a client error: the
-// boundary rejects it as a stable 400 E_INVALID_INPUT naming the role field,
+// boundary rejects it as a stable 400 E_VALIDATION naming the role field,
 // without ever reaching the store layer.
 func TestUpdateMemberMissingRoleIsValidationError(t *testing.T) {
 	t.Parallel()
@@ -207,12 +207,12 @@ func TestUpdateMemberMissingRoleIsValidationError(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_INVALID_INPUT")
+	decodeError(t, rec, "E_VALIDATION")
 }
 
 // TestUpdateMemberInvalidRoleIsValidationError proves a request the store
 // layer rejects — an unknown role — surfaces as the typed 400
-// E_INVALID_INPUT the validator produces.
+// E_VALIDATION the validator produces.
 func TestUpdateMemberInvalidRoleIsValidationError(t *testing.T) {
 	t.Parallel()
 
@@ -229,7 +229,7 @@ func TestUpdateMemberInvalidRoleIsValidationError(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_INVALID_INPUT")
+	decodeError(t, rec, "E_VALIDATION")
 }
 
 // TestUpdateMemberNotFound proves a {member_id} that names no row — and a

@@ -174,7 +174,7 @@ func TestUpdateOrganizationForwardsActorAndPatch(t *testing.T) {
 }
 
 // TestUpdateOrganizationMalformedBodyIsValidationError proves a syntactically
-// invalid request body is a stable 400 E_INVALID_INPUT and never reaches the
+// invalid request body is a stable 400 E_VALIDATION and never reaches the
 // store layer.
 func TestUpdateOrganizationMalformedBodyIsValidationError(t *testing.T) {
 	t.Parallel()
@@ -188,11 +188,11 @@ func TestUpdateOrganizationMalformedBodyIsValidationError(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_INVALID_INPUT")
+	decodeError(t, rec, "E_VALIDATION")
 }
 
 // TestUpdateOrganizationUnknownFieldIsValidationError proves the body is
-// strictly decoded: an unknown field is a stable 400 E_INVALID_INPUT, so a
+// strictly decoded: an unknown field is a stable 400 E_VALIDATION, so a
 // client typo or a stale schema cannot be silently dropped.
 func TestUpdateOrganizationUnknownFieldIsValidationError(t *testing.T) {
 	t.Parallel()
@@ -206,12 +206,12 @@ func TestUpdateOrganizationUnknownFieldIsValidationError(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_INVALID_INPUT")
+	decodeError(t, rec, "E_VALIDATION")
 }
 
 // TestUpdateOrganizationInvalidInput proves a request the store layer rejects —
 // an invalid slug, a blank display name, or a patch that names no field —
-// surfaces as the typed 400 E_INVALID_INPUT the validator produces.
+// surfaces as the typed 400 E_VALIDATION the validator produces.
 func TestUpdateOrganizationInvalidInput(t *testing.T) {
 	t.Parallel()
 
@@ -227,7 +227,7 @@ func TestUpdateOrganizationInvalidInput(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_INVALID_INPUT")
+	decodeError(t, rec, "E_VALIDATION")
 }
 
 // TestUpdateOrganizationCrossTenantIsForbidden proves a principal patching an

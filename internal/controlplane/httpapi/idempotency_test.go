@@ -213,7 +213,7 @@ func TestRequireIdempotencyInvalidKey(t *testing.T) {
 			if rec.Code != http.StatusBadRequest {
 				t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 			}
-			decodeError(t, rec, "E_INVALID_INPUT")
+			decodeError(t, rec, "E_VALIDATION")
 			if next.ran != 0 {
 				t.Error("handler ran for a request with a malformed idempotency key")
 			}
@@ -422,7 +422,7 @@ func TestRequireIdempotencyRecordsClientErrors(t *testing.T) {
 		err      *yerr.Error
 		wantCode string
 	}{
-		{"validation failure", http.StatusBadRequest, apierr.Invalid("name is required"), "E_INVALID_INPUT"},
+		{"validation failure", http.StatusBadRequest, apierr.Invalid("name is required"), "E_VALIDATION"},
 		{"authorization failure", http.StatusForbidden, apierr.Forbidden("not allowed"), "E_FORBIDDEN"},
 		{"not found", http.StatusNotFound, apierr.NotFound("project", "p1"), "E_NOT_FOUND"},
 	}

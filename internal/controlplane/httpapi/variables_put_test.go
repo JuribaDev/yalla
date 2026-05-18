@@ -229,7 +229,7 @@ func TestReplaceOrgVariablesRejectsMissingVariablesField(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_INVALID_INPUT")
+	decodeError(t, rec, "E_VALIDATION")
 	if got.OrganizationID != "" {
 		t.Errorf("replacer was reached for an invalid request: %+v", got)
 	}
@@ -251,7 +251,7 @@ func TestReplaceOrgVariablesRejectsMalformedJSON(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_INVALID_INPUT")
+	decodeError(t, rec, "E_VALIDATION")
 	if got.OrganizationID != "" {
 		t.Errorf("replacer was reached for a malformed request: %+v", got)
 	}
@@ -274,7 +274,7 @@ func TestReplaceOrgVariablesRejectsUnknownField(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_INVALID_INPUT")
+	decodeError(t, rec, "E_VALIDATION")
 	if got.OrganizationID != "" {
 		t.Errorf("replacer was reached for an unknown-field request: %+v", got)
 	}
@@ -369,7 +369,7 @@ func TestReplaceOrgVariablesPropagatesInvalidInputFromStore(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_INVALID_INPUT")
+	decodeError(t, rec, "E_VALIDATION")
 }
 
 // TestReplaceOrgVariablesForwardsStoreUnavailableAsTypedFiveHundred

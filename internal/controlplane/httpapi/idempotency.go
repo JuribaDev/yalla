@@ -27,7 +27,7 @@ import (
 //
 //   - A safe method (GET, HEAD, OPTIONS, TRACE) or an unsafe request with no
 //     Idempotency-Key passes straight through — idempotency is opt-in.
-//   - A malformed Idempotency-Key is 400 E_INVALID_INPUT.
+//   - A malformed Idempotency-Key is 400 E_VALIDATION.
 //   - The first request for a key claims it, runs the handler, and records the
 //     rendered response envelope. A retry with the same key and the same
 //     request replays that recorded envelope verbatim (with an

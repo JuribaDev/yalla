@@ -247,8 +247,8 @@ func TestJobRepositoryInsertValidationFailures(t *testing.T) {
 	}
 	for name, in := range cases {
 		_, err := repo.Insert(context.Background(), &Tx{}, in)
-		if ye := yerr.From(err); ye.Code != yerr.CodeInvalidInput {
-			t.Errorf("%s: Insert error code = %v, want %s", name, err, yerr.CodeInvalidInput)
+		if ye := yerr.From(err); ye.Code != yerr.CodeValidation {
+			t.Errorf("%s: Insert error code = %v, want %s", name, err, yerr.CodeValidation)
 		}
 	}
 }

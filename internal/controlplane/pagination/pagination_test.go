@@ -29,8 +29,8 @@ func asAPIErr(t *testing.T, err error) *yerr.Error {
 func requireInvalidInput(t *testing.T, err error, expectField string) {
 	t.Helper()
 	ye := asAPIErr(t, err)
-	if ye.Code != yerr.CodeInvalidInput {
-		t.Fatalf("expected code %s, got %s", yerr.CodeInvalidInput, ye.Code)
+	if ye.Code != yerr.CodeValidation {
+		t.Fatalf("expected code %s, got %s", yerr.CodeValidation, ye.Code)
 	}
 	violations, ok := apierr.ViolationsOf(err)
 	if !ok || len(violations) == 0 {

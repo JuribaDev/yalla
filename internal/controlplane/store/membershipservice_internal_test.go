@@ -69,8 +69,8 @@ func TestValidateMembershipAddRejectsInvalidInput(t *testing.T) {
 
 			_, _, _, err := validateMembershipAdd(tc.in)
 			ye := yerr.From(err)
-			if ye.Code != yerr.CodeInvalidInput {
-				t.Fatalf("error code = %v, want %s; got %v", ye.Code, yerr.CodeInvalidInput, err)
+			if ye.Code != yerr.CodeValidation {
+				t.Fatalf("error code = %v, want %s; got %v", ye.Code, yerr.CodeValidation, err)
 			}
 			violations, ok := apierr.ViolationsOf(err)
 			if !ok || len(violations) == 0 {
@@ -160,8 +160,8 @@ func TestValidateMembershipUpdateRejectsInvalidInput(t *testing.T) {
 
 			_, _, _, err := validateMembershipUpdate(tc.in)
 			ye := yerr.From(err)
-			if ye.Code != yerr.CodeInvalidInput {
-				t.Fatalf("error code = %v, want %s; got %v", ye.Code, yerr.CodeInvalidInput, err)
+			if ye.Code != yerr.CodeValidation {
+				t.Fatalf("error code = %v, want %s; got %v", ye.Code, yerr.CodeValidation, err)
 			}
 			violations, ok := apierr.ViolationsOf(err)
 			if !ok || len(violations) == 0 {
@@ -271,8 +271,8 @@ func TestValidateMembershipRemoveRejectsInvalidInput(t *testing.T) {
 
 			_, _, err := validateMembershipRemove(tc.in)
 			ye := yerr.From(err)
-			if ye.Code != yerr.CodeInvalidInput {
-				t.Fatalf("error code = %v, want %s; got %v", ye.Code, yerr.CodeInvalidInput, err)
+			if ye.Code != yerr.CodeValidation {
+				t.Fatalf("error code = %v, want %s; got %v", ye.Code, yerr.CodeValidation, err)
 			}
 			violations, ok := apierr.ViolationsOf(err)
 			if !ok || len(violations) == 0 {

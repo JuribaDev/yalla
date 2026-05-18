@@ -85,8 +85,8 @@ func TestPlan_ValidationFailure(t *testing.T) {
 			if err == nil {
 				t.Fatalf("Plan(%q) = nil error; want validation failure", tc.id)
 			}
-			if got := errCode(err); got != yerr.CodeInvalidInput {
-				t.Errorf("error code = %q; want %q", got, yerr.CodeInvalidInput)
+			if got := errCode(err); got != yerr.CodeValidation {
+				t.Errorf("error code = %q; want %q", got, yerr.CodeValidation)
 			}
 			if violations, ok := apierr.ViolationsOf(err); !ok || len(violations) == 0 {
 				t.Errorf("expected typed FieldViolations; got %+v / ok=%v", violations, ok)

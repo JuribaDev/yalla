@@ -291,7 +291,7 @@ func TestUpdateServiceIfMatchHeader(t *testing.T) {
 // this endpoint is structural — the handler always builds the store
 // input from the authenticated principal's home organization and the
 // path service_id — and an unknown field is a stable 400
-// E_INVALID_INPUT so a stale schema or typo cannot be silently
+// E_VALIDATION so a stale schema or typo cannot be silently
 // dropped.
 func TestUpdateServiceRejectsBodyOrgID(t *testing.T) {
 	t.Parallel()
@@ -305,11 +305,11 @@ func TestUpdateServiceRejectsBodyOrgID(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_INVALID_INPUT")
+	decodeError(t, rec, "E_VALIDATION")
 }
 
 // TestUpdateServiceMalformedBodyIsValidationError proves a malformed
-// JSON body is a stable 400 E_INVALID_INPUT and never reaches the
+// JSON body is a stable 400 E_VALIDATION and never reaches the
 // updater.
 func TestUpdateServiceMalformedBodyIsValidationError(t *testing.T) {
 	t.Parallel()
@@ -323,7 +323,7 @@ func TestUpdateServiceMalformedBodyIsValidationError(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_INVALID_INPUT")
+	decodeError(t, rec, "E_VALIDATION")
 }
 
 // TestUpdateServiceNotFoundIsTyped404 proves a NotFound from the
@@ -399,7 +399,7 @@ func TestUpdateServiceForbiddenForViewer(t *testing.T) {
 
 // TestUpdateServiceInvalidInputFromStoreIsTyped400 proves a
 // validation failure from the store layer surfaces as a deterministic
-// 400 E_INVALID_INPUT — for example, an empty patch (slug+display_name
+// 400 E_VALIDATION — for example, an empty patch (slug+display_name
 // both nil) caught by buildServiceUpdate.
 func TestUpdateServiceInvalidInputFromStoreIsTyped400(t *testing.T) {
 	t.Parallel()
@@ -416,7 +416,7 @@ func TestUpdateServiceInvalidInputFromStoreIsTyped400(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_INVALID_INPUT")
+	decodeError(t, rec, "E_VALIDATION")
 }
 
 // TestUpdateServiceMissingUpdaterIsInternal proves a wiring error —

@@ -438,8 +438,8 @@ func TestEnvironmentServiceCloneValidationFailure(t *testing.T) {
 			if err == nil {
 				t.Fatalf("%s: error = nil, want InvalidInput", tc.name)
 			}
-			if ye := yerr.From(err); ye.Code != yerr.CodeInvalidInput {
-				t.Fatalf("%s: code = %v, want %s", tc.name, err, yerr.CodeInvalidInput)
+			if ye := yerr.From(err); ye.Code != yerr.CodeValidation {
+				t.Fatalf("%s: code = %v, want %s", tc.name, err, yerr.CodeValidation)
 			}
 			violations, ok := apierr.ViolationsOf(err)
 			if !ok || len(violations) == 0 {

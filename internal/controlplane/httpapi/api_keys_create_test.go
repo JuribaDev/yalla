@@ -208,7 +208,7 @@ func TestCreateAPIKeyMalformedExpiresAtIsTyped400(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_INVALID_INPUT")
+	decodeError(t, rec, "E_VALIDATION")
 	body := rec.Body.String()
 	if !strings.Contains(body, "expires_at") {
 		t.Errorf("error body %q does not name the offending field", body)
@@ -246,13 +246,13 @@ func TestCreateAPIKeyMalformedBodyIsTyped400(t *testing.T) {
 			if rec.Code != http.StatusBadRequest {
 				t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 			}
-			decodeError(t, rec, "E_INVALID_INPUT")
+			decodeError(t, rec, "E_VALIDATION")
 		})
 	}
 }
 
 // TestCreateAPIKeyValidationFailureFromStore proves a typed InvalidInput
-// from the store-layer validator surfaces as 400 E_INVALID_INPUT, never
+// from the store-layer validator surfaces as 400 E_VALIDATION, never
 // disguised as a 500 or a success — the AC's "validation failure" path.
 func TestCreateAPIKeyValidationFailureFromStore(t *testing.T) {
 	t.Parallel()
@@ -270,7 +270,7 @@ func TestCreateAPIKeyValidationFailureFromStore(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_INVALID_INPUT")
+	decodeError(t, rec, "E_VALIDATION")
 }
 
 // TestCreateAPIKeyOrgNotFound proves an unknown organization id surfaces

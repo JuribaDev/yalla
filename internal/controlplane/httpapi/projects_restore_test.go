@@ -203,7 +203,7 @@ func TestRestoreProjectForwardsIfMatchVersion(t *testing.T) {
 }
 
 // TestRestoreProjectRejectsMalformedIfMatch proves a weak/wildcard/multi
-// If-Match value is a stable 400 E_INVALID_INPUT before the restorer runs —
+// If-Match value is a stable 400 E_VALIDATION before the restorer runs —
 // the malformed precondition is a client error, not a silent
 // next-write-wins pass-through.
 func TestRestoreProjectRejectsMalformedIfMatch(t *testing.T) {

@@ -208,7 +208,7 @@ func TestListJobsRejectsInvalidQueryBeforeReader(t *testing.T) {
 	if calls != 0 {
 		t.Fatalf("reader call count = %d, want 0", calls)
 	}
-	decodeError(t, rec, string(yerr.CodeInvalidInput))
+	decodeError(t, rec, string(yerr.CodeValidation))
 }
 
 func TestListJobsUnauthenticated(t *testing.T) {
@@ -546,7 +546,7 @@ func TestGetJobInvalidIDRejectedBeforeReader(t *testing.T) {
 	if calls != 0 {
 		t.Fatalf("GetJob calls = %d, want 0", calls)
 	}
-	decodeError(t, rec, string(yerr.CodeInvalidInput))
+	decodeError(t, rec, string(yerr.CodeValidation))
 }
 
 func TestGetJobUnauthenticatedSkipsReader(t *testing.T) {
@@ -773,7 +773,7 @@ func TestRetryJobInvalidRequestRejectedBeforeRetrier(t *testing.T) {
 	if retryCalls != 0 {
 		t.Fatalf("RetryJob calls = %d, want 0", retryCalls)
 	}
-	decodeError(t, rec, string(yerr.CodeInvalidInput))
+	decodeError(t, rec, string(yerr.CodeValidation))
 }
 
 func TestRetryJobUnauthenticatedSkipsResolverAndRetrier(t *testing.T) {
@@ -1006,7 +1006,7 @@ func TestCancelJobInvalidRequestRejectedBeforeCanceler(t *testing.T) {
 	if cancelCalls != 0 {
 		t.Fatalf("CancelJob calls = %d, want 0", cancelCalls)
 	}
-	decodeError(t, rec, string(yerr.CodeInvalidInput))
+	decodeError(t, rec, string(yerr.CodeValidation))
 }
 
 func TestCancelJobUnauthenticatedSkipsResolverAndCanceler(t *testing.T) {

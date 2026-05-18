@@ -200,8 +200,8 @@ func TestPostBreakGlassRejectsMissingReason(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
-	if code := decodeErrorCode(t, rec.Body.Bytes()); code != "E_INVALID_INPUT" {
-		t.Errorf("error code = %q, want E_INVALID_INPUT", code)
+	if code := decodeErrorCode(t, rec.Body.Bytes()); code != "E_VALIDATION" {
+		t.Errorf("error code = %q, want E_VALIDATION", code)
 	}
 	if strings.Contains(rec.Body.String(), "INCIDENT") {
 		t.Errorf("body leaked request data: %s", rec.Body.String())
@@ -218,8 +218,8 @@ func TestPostBreakGlassRejectsMissingTTL(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rec.Code)
 	}
-	if code := decodeErrorCode(t, rec.Body.Bytes()); code != "E_INVALID_INPUT" {
-		t.Errorf("error code = %q, want E_INVALID_INPUT", code)
+	if code := decodeErrorCode(t, rec.Body.Bytes()); code != "E_VALIDATION" {
+		t.Errorf("error code = %q, want E_VALIDATION", code)
 	}
 }
 

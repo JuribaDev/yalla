@@ -186,7 +186,7 @@ func TestListAdminDokployDriftRejectsInvalidQuery(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_INVALID_INPUT")
+	decodeError(t, rec, "E_VALIDATION")
 	if reader.calls != 0 {
 		t.Fatalf("reader calls = %d, want 0 on validation failure", reader.calls)
 	}

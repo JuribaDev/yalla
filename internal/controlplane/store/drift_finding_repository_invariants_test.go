@@ -551,7 +551,7 @@ func TestDriftFindingAppendValidationRejectsBadInput(t *testing.T) {
 				_, aErr := repo.Append(ctx, tx, fixture)
 				return aErr
 			})
-			wantErrCode(t, err, yerr.CodeInvalidInput)
+			wantErrCode(t, err, yerr.CodeValidation)
 		})
 	}
 }
@@ -1046,7 +1046,7 @@ func TestDriftFindingMarkResolvedValidationRejectsBadInput(t *testing.T) {
 				_, rErr := repo.MarkResolved(ctx, tx, tc.org, tc.id, tc.actor, tc.stamp)
 				return rErr
 			})
-			wantErrCode(t, err, yerr.CodeInvalidInput)
+			wantErrCode(t, err, yerr.CodeValidation)
 		})
 	}
 }

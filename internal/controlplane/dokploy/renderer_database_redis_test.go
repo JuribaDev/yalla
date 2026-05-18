@@ -351,8 +351,8 @@ func TestRenderDatabaseRedisValidationFailures(t *testing.T) {
 			}
 
 			var ye *yerr.Error
-			if !yerrAs(err, &ye) || ye.Code != yerr.CodeInvalidInput {
-				t.Fatalf("error = %v, want E_INVALID_INPUT", err)
+			if !yerrAs(err, &ye) || ye.Code != yerr.CodeValidation {
+				t.Fatalf("error = %v, want E_VALIDATION", err)
 			}
 
 			violations, ok := apierr.ViolationsOf(err)

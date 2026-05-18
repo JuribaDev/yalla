@@ -327,8 +327,8 @@ func TestPreviewEnvironmentServiceCreateValidationCollectsFields(t *testing.T) {
 		ActorOrgID:          "org_missing",
 	}
 	_, err := (&store.PreviewEnvironmentService{}).Create(context.Background(), svcInput)
-	if yerr.From(err).Code != yerr.CodeInvalidInput {
-		t.Fatalf("Create invalid input error = %v, want E_INVALID_INPUT", err)
+	if yerr.From(err).Code != yerr.CodeValidation {
+		t.Fatalf("Create invalid input error = %v, want E_VALIDATION", err)
 	}
 	violations, ok := apierr.ViolationsOf(err)
 	if !ok {

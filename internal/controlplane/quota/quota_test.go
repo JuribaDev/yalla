@@ -88,8 +88,8 @@ func TestCheckerReserveValidationFailure(t *testing.T) {
 			if err == nil {
 				t.Fatal("Reserve error = nil, want a validation failure")
 			}
-			if yerr.From(err).Code != yerr.CodeInvalidInput {
-				t.Fatalf("Reserve code = %v, want %s", yerr.From(err).Code, yerr.CodeInvalidInput)
+			if yerr.From(err).Code != yerr.CodeValidation {
+				t.Fatalf("Reserve code = %v, want %s", yerr.From(err).Code, yerr.CodeValidation)
 			}
 			violations, ok := apierr.ViolationsOf(err)
 			if !ok || len(violations) == 0 {

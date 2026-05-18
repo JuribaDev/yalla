@@ -280,7 +280,7 @@ func TestCreateServiceDeploymentRequestIDPropagates(t *testing.T) {
 
 // TestCreateServiceDeploymentValidationFailure proves a malformed
 // request body (a non-canonical source value, here) surfaces as a
-// typed 400 with code E_INVALID_INPUT and a stable yalla.error.v1
+// typed 400 with code E_VALIDATION and a stable yalla.error.v1
 // envelope. The fake creator returns a pre-validation error so the
 // test verifies the handler propagates it as the correct envelope
 // without touching the store-layer orchestration semantics.
@@ -307,7 +307,7 @@ func TestCreateServiceDeploymentValidationFailure(t *testing.T) {
 		t.Errorf("creator call count = %d, want 1 (the handler delegates validation to the orchestrator)",
 			callCount)
 	}
-	decodeError(t, rec, string(yerr.CodeInvalidInput))
+	decodeError(t, rec, string(yerr.CodeValidation))
 }
 
 // TestCreateServiceDeploymentMalformedJSON proves an oversized,
@@ -334,7 +334,7 @@ func TestCreateServiceDeploymentMalformedJSON(t *testing.T) {
 		t.Errorf("creator call count = %d, want 0 — strict-decode failures must precede the creator",
 			callCount)
 	}
-	decodeError(t, rec, string(yerr.CodeInvalidInput))
+	decodeError(t, rec, string(yerr.CodeValidation))
 }
 
 // TestCreateServiceDeploymentUnauthenticated proves a request with

@@ -30,7 +30,7 @@ import (
 
 // TestRequestBodyLimitOversizedBodyIsRejected proves the load-bearing
 // validation contract: a JSON body whose length exceeds
-// `validate.DefaultMaxBodyBytes` (1 MiB) is a stable 400 `E_INVALID_INPUT`
+// `validate.DefaultMaxBodyBytes` (1 MiB) is a stable 400 `E_VALIDATION`
 // with the canonical "exceeds the maximum allowed size" message, the
 // `yalla.error.v1` envelope, and a non-empty `request_id`. The
 // orchestrator never runs — the creator is wired to fail loudly if the
@@ -63,7 +63,7 @@ func TestRequestBodyLimitOversizedBodyIsRejected(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	env := decodeError(t, rec, "E_INVALID_INPUT")
+	env := decodeError(t, rec, "E_VALIDATION")
 	const wantMsg = "exceeds the maximum allowed size"
 	if !strings.Contains(env.Error.Message, wantMsg) {
 		t.Errorf("error.message = %q, want substring %q", env.Error.Message, wantMsg)
@@ -136,7 +136,7 @@ func TestRequestBodyLimitDoesNotBypassAuth(t *testing.T) {
 }
 
 // TestRequestBodyLimitMissingBodyIsValidationError proves a request with
-// an empty body is a stable 400 `E_INVALID_INPUT` with the canonical
+// an empty body is a stable 400 `E_VALIDATION` with the canonical
 // "must not be empty" message, the symmetric lower-edge of the body-size
 // contract. A handler that silently accepted an empty body would skip the
 // orchestrator's input validation entirely. This is the "not-found"-style
@@ -155,7 +155,7 @@ func TestRequestBodyLimitMissingBodyIsValidationError(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	env := decodeError(t, rec, "E_INVALID_INPUT")
+	env := decodeError(t, rec, "E_VALIDATION")
 	const wantMsg = "must not be empty"
 	if !strings.Contains(env.Error.Message, wantMsg) {
 		t.Errorf("error.message = %q, want substring %q", env.Error.Message, wantMsg)

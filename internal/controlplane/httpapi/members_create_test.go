@@ -143,7 +143,7 @@ func TestAddMemberForwardsActorAndPath(t *testing.T) {
 }
 
 // TestAddMemberMalformedBodyIsValidationError proves a syntactically broken
-// body is a stable 400 E_INVALID_INPUT and never reaches the store layer.
+// body is a stable 400 E_VALIDATION and never reaches the store layer.
 func TestAddMemberMalformedBodyIsValidationError(t *testing.T) {
 	t.Parallel()
 
@@ -156,11 +156,11 @@ func TestAddMemberMalformedBodyIsValidationError(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_INVALID_INPUT")
+	decodeError(t, rec, "E_VALIDATION")
 }
 
 // TestAddMemberUnknownFieldIsValidationError proves the body is strictly
-// decoded: an unknown field is a stable 400 E_INVALID_INPUT, so a client
+// decoded: an unknown field is a stable 400 E_VALIDATION, so a client
 // typo or a stale schema cannot be silently dropped.
 func TestAddMemberUnknownFieldIsValidationError(t *testing.T) {
 	t.Parallel()
@@ -175,12 +175,12 @@ func TestAddMemberUnknownFieldIsValidationError(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_INVALID_INPUT")
+	decodeError(t, rec, "E_VALIDATION")
 }
 
 // TestAddMemberInvalidInputIsValidationError proves a request the store
 // layer rejects — an invalid role or user id — surfaces as the typed 400
-// E_INVALID_INPUT the validator produces.
+// E_VALIDATION the validator produces.
 func TestAddMemberInvalidInputIsValidationError(t *testing.T) {
 	t.Parallel()
 
@@ -197,7 +197,7 @@ func TestAddMemberInvalidInputIsValidationError(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_INVALID_INPUT")
+	decodeError(t, rec, "E_VALIDATION")
 }
 
 // TestAddMemberUserNotFound proves the targeted not-found path: a user_id

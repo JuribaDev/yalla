@@ -106,8 +106,8 @@ func TestNewStoreClaimerValidation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			_, err := worker.NewStoreClaimer(tc.cfg)
-			if ye := yerr.From(err); ye.Code != yerr.CodeInvalidInput {
-				t.Fatalf("NewStoreClaimer(%s) error code = %v, want %s", tc.name, err, yerr.CodeInvalidInput)
+			if ye := yerr.From(err); ye.Code != yerr.CodeValidation {
+				t.Fatalf("NewStoreClaimer(%s) error code = %v, want %s", tc.name, err, yerr.CodeValidation)
 			}
 		})
 	}

@@ -250,7 +250,7 @@ func TestCancelServiceDeploymentForwardsIfMatch(t *testing.T) {
 }
 
 // TestCancelServiceDeploymentRejectsMalformedIfMatch proves a weak
-// If-Match value is a stable 400 E_INVALID_INPUT before the canceler
+// If-Match value is a stable 400 E_VALIDATION before the canceler
 // runs — the malformed precondition is a client error, not a silent
 // next-write-wins pass-through.
 func TestCancelServiceDeploymentRejectsMalformedIfMatch(t *testing.T) {

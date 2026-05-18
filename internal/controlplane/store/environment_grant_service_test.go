@@ -407,8 +407,8 @@ func TestEnvironmentGrantServiceReplaceRejectsInvalidPrincipalKind(t *testing.T)
 		t.Fatalf("Replace(invalid kind) = nil err; want apierr.InvalidInput")
 	}
 	var ye *yerr.Error
-	if !errors.As(err, &ye) || ye.Code != yerr.CodeInvalidInput {
-		t.Fatalf("err = %v; want yerr CodeInvalidInput", err)
+	if !errors.As(err, &ye) || ye.Code != yerr.CodeValidation {
+		t.Fatalf("err = %v; want yerr CodeValidation", err)
 	}
 	if _, ok := violationFor(err, "grants[0].principal_kind"); !ok {
 		t.Errorf("err = %v; want a FieldViolation naming grants[0].principal_kind", err)
@@ -453,8 +453,8 @@ func TestEnvironmentGrantServiceReplaceRejectsUnknownRole(t *testing.T) {
 		t.Fatalf("Replace(unknown role) = nil err; want InvalidInput")
 	}
 	var ye *yerr.Error
-	if !errors.As(err, &ye) || ye.Code != yerr.CodeInvalidInput {
-		t.Fatalf("err = %v; want yerr CodeInvalidInput", err)
+	if !errors.As(err, &ye) || ye.Code != yerr.CodeValidation {
+		t.Fatalf("err = %v; want yerr CodeValidation", err)
 	}
 	if _, ok := violationFor(err, "grants[0].role"); !ok {
 		t.Errorf("err = %v; want a FieldViolation naming grants[0].role", err)
@@ -491,8 +491,8 @@ func TestEnvironmentGrantServiceReplaceRejectsDuplicateScopeTuple(t *testing.T) 
 		t.Fatalf("Replace(duplicate scope) = nil err; want InvalidInput")
 	}
 	var ye *yerr.Error
-	if !errors.As(err, &ye) || ye.Code != yerr.CodeInvalidInput {
-		t.Fatalf("err = %v; want yerr CodeInvalidInput", err)
+	if !errors.As(err, &ye) || ye.Code != yerr.CodeValidation {
+		t.Fatalf("err = %v; want yerr CodeValidation", err)
 	}
 }
 

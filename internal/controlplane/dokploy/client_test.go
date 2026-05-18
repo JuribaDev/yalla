@@ -146,7 +146,7 @@ func mustOrg(t *testing.T, c *dokploy.Client) string {
 }
 
 // TestClientValidationFailure proves obviously invalid intents are rejected
-// locally as E_INVALID_INPUT with structured field paths, never reaching
+// locally as E_VALIDATION with structured field paths, never reaching
 // Dokploy.
 func TestClientValidationFailure(t *testing.T) {
 	t.Parallel()
@@ -158,8 +158,8 @@ func TestClientValidationFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("EnsureProject with blank fields returned nil error")
 	}
-	if code := codeOf(t, err); code != yerr.CodeInvalidInput {
-		t.Fatalf("code = %s, want %s", code, yerr.CodeInvalidInput)
+	if code := codeOf(t, err); code != yerr.CodeValidation {
+		t.Fatalf("code = %s, want %s", code, yerr.CodeValidation)
 	}
 	violations, ok := apierr.ViolationsOf(err)
 	if !ok || len(violations) != 2 {
@@ -171,7 +171,7 @@ func TestClientValidationFailure(t *testing.T) {
 
 	if _, err := c.EnsureService(context.Background(), dokploy.EnsureServiceInput{
 		EnvironmentID: "env_1", Name: "x", Type: "bogus",
-	}); codeOf(t, err) != yerr.CodeInvalidInput {
+	}); codeOf(t, err) != yerr.CodeValidation {
 		t.Fatalf("EnsureService with bad type: %v", err)
 	}
 }

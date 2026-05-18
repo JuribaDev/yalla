@@ -40,7 +40,7 @@ import (
 // TestJSONHardeningUnknownFieldIsRejected proves the
 // `DisallowUnknownFields()` hardening fires end-to-end. A body that
 // includes an extra key the schema does not declare is a stable 400
-// `E_INVALID_INPUT` with the canonical "contains an unknown field" message
+// `E_VALIDATION` with the canonical "contains an unknown field" message
 // — and the unknown key's NAME is not echoed back. encoding/json's raw
 // error message embeds the key (`json: unknown field "<name>"`); the
 // hardening explicitly catches that case in `decodeError` and rewrites it
@@ -62,7 +62,7 @@ func TestJSONHardeningUnknownFieldIsRejected(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	env := decodeError(t, rec, "E_INVALID_INPUT")
+	env := decodeError(t, rec, "E_VALIDATION")
 	const wantMsg = "contains an unknown field"
 	if !strings.Contains(env.Error.Message, wantMsg) {
 		t.Errorf("error.message = %q, want substring %q", env.Error.Message, wantMsg)
@@ -74,7 +74,7 @@ func TestJSONHardeningUnknownFieldIsRejected(t *testing.T) {
 
 // TestJSONHardeningTrailingDataIsRejected proves the `dec.More()`
 // trailing-data hardening fires end-to-end. A body that concatenates two
-// JSON values (`{"a":1}{"b":2}`) is a stable 400 `E_INVALID_INPUT` with the
+// JSON values (`{"a":1}{"b":2}`) is a stable 400 `E_VALIDATION` with the
 // canonical "must contain a single JSON value" message. Without this
 // check, a proxy or WAF could observe the first value while the API acts
 // on the second — JSON smuggling. The orchestrator must NOT be reached.
@@ -94,7 +94,7 @@ func TestJSONHardeningTrailingDataIsRejected(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	env := decodeError(t, rec, "E_INVALID_INPUT")
+	env := decodeError(t, rec, "E_VALIDATION")
 	const wantMsg = "must contain a single JSON value"
 	if !strings.Contains(env.Error.Message, wantMsg) {
 		t.Errorf("error.message = %q, want substring %q", env.Error.Message, wantMsg)
@@ -106,7 +106,7 @@ func TestJSONHardeningTrailingDataIsRejected(t *testing.T) {
 
 // TestJSONHardeningMalformedJSONIsRejected proves the syntax-error
 // hardening fires end-to-end. A body that is structurally invalid JSON is
-// a stable 400 `E_INVALID_INPUT` with the canonical "not valid JSON"
+// a stable 400 `E_VALIDATION` with the canonical "not valid JSON"
 // message — the rewritten, fixed-string variant that does NOT include
 // `encoding/json`'s parser-position diagnostics (which can quote the
 // offending byte). A secret pasted into the broken JSON must not appear in
@@ -127,7 +127,7 @@ func TestJSONHardeningMalformedJSONIsRejected(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	env := decodeError(t, rec, "E_INVALID_INPUT")
+	env := decodeError(t, rec, "E_VALIDATION")
 	// Either the syntax-error branch or the truncation branch is acceptable
 	// — the unterminated body can race either path depending on the read
 	// pattern. Both branches use a fixed-string message that excludes the
@@ -146,7 +146,7 @@ func TestJSONHardeningMalformedJSONIsRejected(t *testing.T) {
 // TestJSONHardeningWrongTypeIsRejected proves the
 // `json.UnmarshalTypeError` hardening fires end-to-end. A body that gives
 // a declared field the wrong JSON type (a number where a string is
-// expected) is a stable 400 `E_INVALID_INPUT` with a field-level violation
+// expected) is a stable 400 `E_VALIDATION` with a field-level violation
 // — and the offending VALUE is never echoed. encoding/json's raw type
 // error embeds the value; the hardening's `apierr.InvalidInput` path
 // emits only the field name and the classification "has the wrong JSON
@@ -169,7 +169,7 @@ func TestJSONHardeningWrongTypeIsRejected(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	env := decodeError(t, rec, "E_INVALID_INPUT")
+	env := decodeError(t, rec, "E_VALIDATION")
 	if strings.Contains(rec.Body.String(), sentinel) {
 		t.Errorf("response body echoes the wrong-typed value %q — value-leak surface", sentinel)
 	}

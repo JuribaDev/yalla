@@ -216,7 +216,7 @@ func TestResolveSecretDowngradeRejectedByDefault(t *testing.T) {
 		t.Fatalf("expected InvalidInput, got nil")
 	}
 	var ye *yerr.Error
-	if !errors.As(err, &ye) || ye.Code != yerr.CodeInvalidInput {
+	if !errors.As(err, &ye) || ye.Code != yerr.CodeValidation {
 		t.Fatalf("expected InvalidInput, got %T %v", err, err)
 	}
 	vs, ok := apierr.ViolationsOf(err)

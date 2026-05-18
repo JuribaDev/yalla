@@ -129,7 +129,7 @@ allowed shapes are:
 
 1. `validate.DecodeJSON(r.Body, &dst, 0)` — the canonical body decoder. It
    caps the read at `validate.DefaultMaxBodyBytes` (1 MiB) and surfaces an
-   oversized body as a typed `apierr.Invalid` (HTTP 400, `E_INVALID_INPUT`)
+   oversized body as a typed `apierr.Invalid` (HTTP 400, `E_VALIDATION`)
    with the fixed-string message `"request body exceeds the maximum allowed
    size"`. Every mutating handler (`POST`, `PUT`, `PATCH`, `DELETE` with a
    body) uses this exact shape.
@@ -321,7 +321,7 @@ through the `If-Match` request header and reject a stale write with a typed
 - `parseIfMatchVersion(r) (*int64, error)` decodes the header. It accepts the
   RFC 7232 strong-ETag form `"<n>"` and a lenient unquoted integer; weak
   ETags (`W/"..."`), `*`, multi-value lists, and non-positive integers are
-  rejected as 400 `E_INVALID_INPUT` before the request reaches the store.
+  rejected as 400 `E_VALIDATION` before the request reaches the store.
 - `writeOrganizationETag(w, org.Version)` mirrors the row's authoritative
   version into the `ETag` response header. Call it on every success path
   (GET/POST/PATCH/DELETE/list) so the body's `version` field and the header
@@ -386,7 +386,7 @@ just writes the int64 — despite the historical name), render through
 `apienvelope.WriteData` with `http.StatusOK`. The request DTO exposes only
 the partially-updatable fields as `*string` (nil = field omitted, leave
 unchanged); the strict JSON decoder rejects an unknown `organization_id`
-field as a stable 400 `E_INVALID_INPUT`, so tenant isolation is structural
+field as a stable 400 `E_VALIDATION`, so tenant isolation is structural
 — the handler always builds the store input from `principal.OrganizationID`
 and the path id, never from the body. The store-layer orchestrator (e.g.
 `store.ProjectService.Update`) validates everything BEFORE opening the

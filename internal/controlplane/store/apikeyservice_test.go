@@ -362,8 +362,8 @@ func TestAPIKeyServiceCreateInvalidInputDoesNotOpenTransaction(t *testing.T) {
 	if err == nil {
 		t.Fatal("Create returned nil, want InvalidInput")
 	}
-	if ye := yerr.From(err); ye.Code != yerr.CodeInvalidInput {
-		t.Errorf("Create code = %s, want %s", ye.Code, yerr.CodeInvalidInput)
+	if ye := yerr.From(err); ye.Code != yerr.CodeValidation {
+		t.Errorf("Create code = %s, want %s", ye.Code, yerr.CodeValidation)
 	}
 
 	reader, _ := store.NewAPIKeyReader(s)
@@ -809,8 +809,8 @@ func TestAPIKeyServiceUpdateEmptyPatchIsInvalid(t *testing.T) {
 	if err == nil {
 		t.Fatal("Update(empty patch) error = nil, want InvalidInput")
 	}
-	if ye := yerr.From(err); ye.Code != yerr.CodeInvalidInput {
-		t.Errorf("Update code = %s, want %s", ye.Code, yerr.CodeInvalidInput)
+	if ye := yerr.From(err); ye.Code != yerr.CodeValidation {
+		t.Errorf("Update code = %s, want %s", ye.Code, yerr.CodeValidation)
 	}
 
 	// The rejection is pre-transaction, so no audit row is appended.
@@ -1237,8 +1237,8 @@ func TestAPIKeyServiceRevokeInvalidIDsAreRejected(t *testing.T) {
 			if err == nil {
 				t.Fatalf("Revoke(%s) error = nil, want InvalidInput", name)
 			}
-			if ye := yerr.From(err); ye.Code != yerr.CodeInvalidInput {
-				t.Errorf("Revoke(%s) code = %s, want %s", name, ye.Code, yerr.CodeInvalidInput)
+			if ye := yerr.From(err); ye.Code != yerr.CodeValidation {
+				t.Errorf("Revoke(%s) code = %s, want %s", name, ye.Code, yerr.CodeValidation)
 			}
 		})
 	}
@@ -1704,8 +1704,8 @@ func TestAPIKeyServiceRotateInvalidIDsAreRejected(t *testing.T) {
 			if err == nil {
 				t.Fatalf("Rotate(%s) error = nil, want InvalidInput", name)
 			}
-			if ye := yerr.From(err); ye.Code != yerr.CodeInvalidInput {
-				t.Errorf("Rotate(%s) code = %s, want %s", name, ye.Code, yerr.CodeInvalidInput)
+			if ye := yerr.From(err); ye.Code != yerr.CodeValidation {
+				t.Errorf("Rotate(%s) code = %s, want %s", name, ye.Code, yerr.CodeValidation)
 			}
 		})
 	}

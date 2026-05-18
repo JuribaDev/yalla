@@ -486,8 +486,8 @@ func TestMembershipServiceUpdateMemberInvalidIsValidationError(t *testing.T) {
 		ActorOrgID:     actor.ID,
 	})
 	var ye *yerr.Error
-	if !stderrors.As(err, &ye) || ye.Code != yerr.CodeInvalidInput {
-		t.Fatalf("UpdateMember error = %v, want a typed E_INVALID_INPUT", err)
+	if !stderrors.As(err, &ye) || ye.Code != yerr.CodeValidation {
+		t.Fatalf("UpdateMember error = %v, want a typed E_VALIDATION", err)
 	}
 
 	reader, err := store.NewMembershipReader(s)
@@ -750,8 +750,8 @@ func TestMembershipServiceRemoveInvalidIsValidationError(t *testing.T) {
 		ActorOrgID:     actor.ID,
 	})
 	var ye *yerr.Error
-	if !stderrors.As(err, &ye) || ye.Code != yerr.CodeInvalidInput {
-		t.Fatalf("Remove error = %v, want a typed E_INVALID_INPUT", err)
+	if !stderrors.As(err, &ye) || ye.Code != yerr.CodeValidation {
+		t.Fatalf("Remove error = %v, want a typed E_VALIDATION", err)
 	}
 
 	reader, err := store.NewMembershipReader(s)

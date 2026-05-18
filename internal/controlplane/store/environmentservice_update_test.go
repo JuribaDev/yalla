@@ -181,8 +181,8 @@ func TestEnvironmentServiceUpdateRejectsEmptyPatch(t *testing.T) {
 		t.Fatalf("Update with empty patch returned no error; want InvalidInput")
 	}
 	var ye *yerr.Error
-	if !errors.As(err, &ye) || ye.Code != yerr.CodeInvalidInput {
-		t.Fatalf("err = %v (%T); want yerr CodeInvalidInput", err, err)
+	if !errors.As(err, &ye) || ye.Code != yerr.CodeValidation {
+		t.Fatalf("err = %v (%T); want yerr CodeValidation", err, err)
 	}
 
 	events := listEnvironmentAuditEvents(t, s, org.ID)
@@ -215,8 +215,8 @@ func TestEnvironmentServiceUpdateRejectsInvalidSlug(t *testing.T) {
 		t.Fatalf("Update with invalid slug returned no error; want InvalidInput")
 	}
 	var ye *yerr.Error
-	if !errors.As(err, &ye) || ye.Code != yerr.CodeInvalidInput {
-		t.Fatalf("err = %v (%T); want yerr CodeInvalidInput", err, err)
+	if !errors.As(err, &ye) || ye.Code != yerr.CodeValidation {
+		t.Fatalf("err = %v (%T); want yerr CodeValidation", err, err)
 	}
 	if strings.Contains(err.Error(), leakyValue) {
 		t.Errorf("InvalidInput leaked the submitted slug value: %v", err)
@@ -410,8 +410,8 @@ func TestEnvironmentServiceUpdateRejectsBlankOrgID(t *testing.T) {
 		t.Fatalf("Update(blank org) returned no error; want InvalidInput")
 	}
 	var ye *yerr.Error
-	if !errors.As(err, &ye) || ye.Code != yerr.CodeInvalidInput {
-		t.Fatalf("err = %v (%T); want yerr CodeInvalidInput", err, err)
+	if !errors.As(err, &ye) || ye.Code != yerr.CodeValidation {
+		t.Fatalf("err = %v (%T); want yerr CodeValidation", err, err)
 	}
 	// The blank-field check must not leak the actor org back through the
 	// validation message — the violation names organization_id, never the

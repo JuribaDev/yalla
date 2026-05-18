@@ -189,7 +189,7 @@ func TestCreateEnvironmentServiceHappyPath(t *testing.T) {
 
 // TestCreateEnvironmentServiceValidationFailure proves a malformed
 // request body (an empty slug, here) surfaces as a typed 400 with code
-// E_INVALID_INPUT, the creator is never reached, and the response
+// E_VALIDATION, the creator is never reached, and the response
 // envelope is a stable yalla.error.v1. The body sent uses an empty
 // slug — the store-layer validateCreateServiceInput would reject it
 // with a typed FieldViolation. The fake creator returns that
@@ -219,7 +219,7 @@ func TestCreateEnvironmentServiceValidationFailure(t *testing.T) {
 		t.Errorf("creator call count = %d, want 1 (the handler delegates validation to the orchestrator)",
 			callCount)
 	}
-	decodeError(t, rec, string(yerr.CodeInvalidInput))
+	decodeError(t, rec, string(yerr.CodeValidation))
 }
 
 // TestCreateEnvironmentServiceUnauthenticated proves a request with

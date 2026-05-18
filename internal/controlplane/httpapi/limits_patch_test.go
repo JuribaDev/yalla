@@ -195,7 +195,7 @@ func TestUpdateLimitsRejectsMissingLimitValue(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_INVALID_INPUT")
+	decodeError(t, rec, "E_VALIDATION")
 	if got.OrganizationID != "" {
 		t.Errorf("updater was reached for an invalid request: %+v", got)
 	}
@@ -218,7 +218,7 @@ func TestUpdateLimitsRejectsEmptyLimitsArray(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_INVALID_INPUT")
+	decodeError(t, rec, "E_VALIDATION")
 	if got.OrganizationID != "" {
 		t.Errorf("updater was reached for an empty patch: %+v", got)
 	}

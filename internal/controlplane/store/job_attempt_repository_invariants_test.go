@@ -603,9 +603,9 @@ func TestJobAttemptRepositoryAppendApplicationValidationRejectsBadInput(t *testi
 				_, aErr := attemptRepo.Append(ctx, tx, attempt)
 				return aErr
 			})
-			if ye := yerr.From(err); ye.Code != yerr.CodeInvalidInput {
+			if ye := yerr.From(err); ye.Code != yerr.CodeValidation {
 				t.Fatalf("Append(%s) error = %v, want code %s (application-layer validation chokepoint)",
-					name, err, yerr.CodeInvalidInput)
+					name, err, yerr.CodeValidation)
 			}
 		})
 	}

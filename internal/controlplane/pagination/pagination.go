@@ -9,7 +9,7 @@
 //
 //   - Limit is parsed once with stable defaults and a hard server-side
 //     ceiling; out-of-range or malformed limits return a typed
-//     apierr.InvalidInput (HTTP 400 E_INVALID_INPUT) before any database
+//     apierr.InvalidInput (HTTP 400 E_VALIDATION) before any database
 //     work runs. The submitted string is never echoed back, only the
 //     classification and accepted range, so a typo cannot become a
 //     reflection-style content channel.
@@ -51,7 +51,7 @@ import (
 const DefaultLimit = 50
 
 // MaxLimit is the hard server-side ceiling on ?limit=. A larger value is
-// rejected as a stable 400 E_INVALID_INPUT before any database work
+// rejected as a stable 400 E_VALIDATION before any database work
 // runs. Endpoints may pick a lower ceiling via ParseOptions.MaxLimit but
 // never a higher one — the package clamps MaxLimit to this value.
 const MaxLimit = 200
@@ -97,9 +97,9 @@ func (d SortDirection) IsValid() bool {
 //   - DefaultSort empty  -> no default sort (Params.Sort stays empty)
 //   - DefaultDirection   -> DirectionDescending unless overridden
 //   - SortAllowList nil  -> any ?sort= value is rejected as
-//     E_INVALID_INPUT
+//     E_VALIDATION
 //   - FilterAllowList nil -> any ?filter.* query is rejected as
-//     E_INVALID_INPUT
+//     E_VALIDATION
 type ParseOptions struct {
 	DefaultLimit     int
 	MaxLimit         int

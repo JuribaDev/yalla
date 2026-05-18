@@ -244,7 +244,7 @@ func FuzzEnvVarValue(f *testing.F) {
 
 // FuzzDecodeJSON asserts DecodeJSON never panics on arbitrary bytes — covering
 // malformed JSON, truncated bodies, and binary garbage — and that any failure
-// is a typed E_INVALID_INPUT error.
+// is a typed E_VALIDATION error.
 func FuzzDecodeJSON(f *testing.F) {
 	for _, s := range []string{
 		``, `{}`, `{"name":"ok"}`, `{"name":`, `[1,2,3]`, `null`,
@@ -262,8 +262,8 @@ func FuzzDecodeJSON(f *testing.F) {
 			return
 		}
 		var ye *yerr.Error
-		if !stderrors.As(err, &ye) || ye.Code != yerr.CodeInvalidInput {
-			t.Fatalf("DecodeJSON returned a non-E_INVALID_INPUT error: %v", err)
+		if !stderrors.As(err, &ye) || ye.Code != yerr.CodeValidation {
+			t.Fatalf("DecodeJSON returned a non-E_VALIDATION error: %v", err)
 		}
 	})
 }

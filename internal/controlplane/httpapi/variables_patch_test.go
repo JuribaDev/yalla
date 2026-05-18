@@ -251,7 +251,7 @@ func TestPatchOrgVariableForwardsIsSecretOnly(t *testing.T) {
 // TestPatchOrgVariableRejectsEmptyBody proves the missing-field guard:
 // a PATCH whose body names neither value nor is_secret is rejected as
 // a stable 400, the patcher is never reached, and the error envelope
-// carries the documented E_INVALID_INPUT code.
+// carries the documented E_VALIDATION code.
 func TestPatchOrgVariableRejectsEmptyBody(t *testing.T) {
 	t.Parallel()
 
@@ -265,7 +265,7 @@ func TestPatchOrgVariableRejectsEmptyBody(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_INVALID_INPUT")
+	decodeError(t, rec, "E_VALIDATION")
 	if got.OrganizationID != "" || got.Key != "" {
 		t.Errorf("patcher was reached for an empty-body request: %+v", got)
 	}
@@ -287,7 +287,7 @@ func TestPatchOrgVariableRejectsMalformedJSON(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_INVALID_INPUT")
+	decodeError(t, rec, "E_VALIDATION")
 	if got.OrganizationID != "" {
 		t.Errorf("patcher was reached for a malformed request: %+v", got)
 	}
@@ -311,7 +311,7 @@ func TestPatchOrgVariableRejectsUnknownField(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_INVALID_INPUT")
+	decodeError(t, rec, "E_VALIDATION")
 	if got.OrganizationID != "" {
 		t.Errorf("patcher was reached for an unknown-field request: %+v", got)
 	}

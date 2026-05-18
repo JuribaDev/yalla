@@ -72,8 +72,8 @@ func TestBuildOrganizationToCreateRejectsInvalidInput(t *testing.T) {
 			t.Parallel()
 
 			_, err := buildOrganizationToCreate(tc.in)
-			if ye := yerr.From(err); ye.Code != yerr.CodeInvalidInput {
-				t.Fatalf("error code = %v, want %s", err, yerr.CodeInvalidInput)
+			if ye := yerr.From(err); ye.Code != yerr.CodeValidation {
+				t.Fatalf("error code = %v, want %s", err, yerr.CodeValidation)
 			}
 			violations, ok := apierr.ViolationsOf(err)
 			if !ok || len(violations) == 0 {
@@ -143,8 +143,8 @@ func TestBuildOrganizationUpdateRejectsEmptyPatch(t *testing.T) {
 	t.Parallel()
 
 	_, err := buildOrganizationUpdate(UpdateOrganizationInput{})
-	if ye := yerr.From(err); ye.Code != yerr.CodeInvalidInput {
-		t.Fatalf("error code = %v, want %s — a patch that names no field is a client error", err, yerr.CodeInvalidInput)
+	if ye := yerr.From(err); ye.Code != yerr.CodeValidation {
+		t.Fatalf("error code = %v, want %s — a patch that names no field is a client error", err, yerr.CodeValidation)
 	}
 	if violations, ok := apierr.ViolationsOf(err); !ok || len(violations) == 0 {
 		t.Fatalf("error carries no field violations: %v", err)
@@ -172,8 +172,8 @@ func TestBuildOrganizationUpdateRejectsInvalidFields(t *testing.T) {
 			t.Parallel()
 
 			_, err := buildOrganizationUpdate(tc.in)
-			if ye := yerr.From(err); ye.Code != yerr.CodeInvalidInput {
-				t.Fatalf("error code = %v, want %s", err, yerr.CodeInvalidInput)
+			if ye := yerr.From(err); ye.Code != yerr.CodeValidation {
+				t.Fatalf("error code = %v, want %s", err, yerr.CodeValidation)
 			}
 			violations, ok := apierr.ViolationsOf(err)
 			if !ok || len(violations) == 0 {

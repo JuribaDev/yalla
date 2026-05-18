@@ -205,8 +205,8 @@ func TestEnvironmentServiceCreateValidationFailure(t *testing.T) {
 	in.DisplayName = ""
 
 	_, createErr := svc.Create(context.Background(), in)
-	if ye := yerr.From(createErr); ye.Code != yerr.CodeInvalidInput {
-		t.Fatalf("Create(invalid) error code = %v, want %s", createErr, yerr.CodeInvalidInput)
+	if ye := yerr.From(createErr); ye.Code != yerr.CodeValidation {
+		t.Fatalf("Create(invalid) error code = %v, want %s", createErr, yerr.CodeValidation)
 	}
 	violations, ok := apierr.ViolationsOf(createErr)
 	if !ok || len(violations) == 0 {

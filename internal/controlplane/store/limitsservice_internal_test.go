@@ -42,8 +42,8 @@ func TestBuildLimitsUpdateRejectsEmpty(t *testing.T) {
 	t.Parallel()
 
 	_, err := buildLimitsUpdate(nil)
-	if ye := yerr.From(err); ye.Code != yerr.CodeInvalidInput {
-		t.Fatalf("error = %v, want %s", err, yerr.CodeInvalidInput)
+	if ye := yerr.From(err); ye.Code != yerr.CodeValidation {
+		t.Fatalf("error = %v, want %s", err, yerr.CodeValidation)
 	}
 	violations, _ := apierr.ViolationsOf(err)
 	if len(violations) != 1 || violations[0].Field != "limits" {
@@ -94,8 +94,8 @@ func TestBuildLimitsUpdateRejectsInvalidInput(t *testing.T) {
 			t.Parallel()
 
 			_, err := buildLimitsUpdate(tc.in)
-			if ye := yerr.From(err); ye.Code != yerr.CodeInvalidInput {
-				t.Fatalf("error code = %v, want %s", err, yerr.CodeInvalidInput)
+			if ye := yerr.From(err); ye.Code != yerr.CodeValidation {
+				t.Fatalf("error code = %v, want %s", err, yerr.CodeValidation)
 			}
 			violations, ok := apierr.ViolationsOf(err)
 			if !ok || len(violations) == 0 {

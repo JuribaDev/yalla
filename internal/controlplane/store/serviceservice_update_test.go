@@ -213,8 +213,8 @@ func TestServiceServiceUpdateRejectsEmptyPatch(t *testing.T) {
 		t.Fatalf("Update with empty patch returned no error; want InvalidInput")
 	}
 	var ye *yerr.Error
-	if !errors.As(err, &ye) || ye.Code != yerr.CodeInvalidInput {
-		t.Fatalf("err = %v (%T); want yerr CodeInvalidInput", err, err)
+	if !errors.As(err, &ye) || ye.Code != yerr.CodeValidation {
+		t.Fatalf("err = %v (%T); want yerr CodeValidation", err, err)
 	}
 
 	events := listServiceAuditEvents(t, s, org.ID)
@@ -248,8 +248,8 @@ func TestServiceServiceUpdateRejectsInvalidSlug(t *testing.T) {
 		t.Fatalf("Update with invalid slug returned no error; want InvalidInput")
 	}
 	var ye *yerr.Error
-	if !errors.As(err, &ye) || ye.Code != yerr.CodeInvalidInput {
-		t.Fatalf("err = %v (%T); want yerr CodeInvalidInput", err, err)
+	if !errors.As(err, &ye) || ye.Code != yerr.CodeValidation {
+		t.Fatalf("err = %v (%T); want yerr CodeValidation", err, err)
 	}
 	if strings.Contains(err.Error(), leakyValue) {
 		t.Errorf("InvalidInput leaked the submitted slug value: %v", err)
@@ -446,8 +446,8 @@ func TestServiceServiceUpdateRejectsBlankOrgID(t *testing.T) {
 		t.Fatalf("Update(blank org) returned no error; want InvalidInput")
 	}
 	var ye *yerr.Error
-	if !errors.As(err, &ye) || ye.Code != yerr.CodeInvalidInput {
-		t.Fatalf("err = %v (%T); want yerr CodeInvalidInput", err, err)
+	if !errors.As(err, &ye) || ye.Code != yerr.CodeValidation {
+		t.Fatalf("err = %v (%T); want yerr CodeValidation", err, err)
 	}
 	if strings.Contains(err.Error(), "org_acme") {
 		t.Errorf("InvalidInput leaked actor org: %v", err)

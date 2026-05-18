@@ -205,7 +205,7 @@ func TestDeleteEnvironmentForwardsIfMatchVersion(t *testing.T) {
 }
 
 // TestDeleteEnvironmentRejectsMalformedIfMatch proves a weak/wildcard/multi
-// If-Match value is a stable 400 E_INVALID_INPUT before the deleter runs —
+// If-Match value is a stable 400 E_VALIDATION before the deleter runs —
 // the malformed precondition is a client error, not a silent next-write-wins
 // pass-through.
 func TestDeleteEnvironmentRejectsMalformedIfMatch(t *testing.T) {

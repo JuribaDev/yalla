@@ -31,7 +31,7 @@ const (
 	// can not waste a transaction reading thousands of lines.
 	serviceLogsDefaultLimit = 100
 	// serviceLogsMaxLimit is the hard ceiling for ?limit=. A request
-	// asking for more is rejected as a typed 400 E_INVALID_INPUT
+	// asking for more is rejected as a typed 400 E_VALIDATION
 	// before any database work runs.
 	serviceLogsMaxLimit = 1000
 )
@@ -92,7 +92,7 @@ type listServiceLogsPayload struct {
 // parseServiceLogsLimit resolves the effective page size from the
 // optional ?limit= query parameter. An absent parameter resolves to
 // the handler default; a malformed, non-positive, or larger-than-
-// ceiling value is rejected as a stable 400 E_INVALID_INPUT before
+// ceiling value is rejected as a stable 400 E_VALIDATION before
 // any database work runs. The error path never echoes the submitted
 // string — only the classification and the accepted range — so a
 // typo can never become a reflection-style content channel. Mirrors
@@ -154,7 +154,7 @@ func parseServiceLogsLimit(raw string) (int, error) {
 // The endpoint accepts an optional ?limit= query parameter in the
 // range [1, 1000]; an absent value defaults to 100. A malformed,
 // non-positive, or larger-than-ceiling value is rejected as a stable
-// 400 E_INVALID_INPUT before any database work runs.
+// 400 E_VALIDATION before any database work runs.
 //
 // The response carries no credential material: the placeholder
 // reader never produces content from secret-bearing tables, and the

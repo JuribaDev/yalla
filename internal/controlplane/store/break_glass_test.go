@@ -170,8 +170,8 @@ func TestBreakGlassServiceStartSessionRejectsBlankReason(t *testing.T) {
 		t.Fatalf("StartSession(blank reason) expected an error")
 	}
 	var ye *yerr.Error
-	if !errors.As(err, &ye) || ye.Code != yerr.CodeInvalidInput {
-		t.Fatalf("error code = %v, want %v", err, yerr.CodeInvalidInput)
+	if !errors.As(err, &ye) || ye.Code != yerr.CodeValidation {
+		t.Fatalf("error code = %v, want %v", err, yerr.CodeValidation)
 	}
 
 	// No row was written.

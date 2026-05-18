@@ -171,7 +171,7 @@ func sortedMetadata(m map[string]string) map[string]string {
 // parseAuditEventLimit resolves the effective page size from the
 // optional ?limit= query parameter. An absent parameter resolves to the
 // handler default; a malformed, non-positive, or larger-than-ceiling
-// value is rejected as a stable 400 E_INVALID_INPUT before any database
+// value is rejected as a stable 400 E_VALIDATION before any database
 // work runs. The error path never echoes the submitted string — only the
 // classification and the accepted range — so a typo can never become a
 // reflection-style content channel.

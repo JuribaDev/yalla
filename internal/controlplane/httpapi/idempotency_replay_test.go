@@ -24,7 +24,7 @@ import (
 //     coverage invariant. The scenario table the burst harness iterates over
 //     enumerates every outcome category an unsafe handler can produce that
 //     the idempotency middleware MUST record and replay: a successful
-//     202 yalla.output.v1 envelope, a 400 E_INVALID_INPUT validation
+//     202 yalla.output.v1 envelope, a 400 E_VALIDATION validation
 //     failure, a 403 E_FORBIDDEN authorization failure, and a 404
 //     E_NOT_FOUND not-found failure. For each scenario the test asserts
 //     the wrapped handler runs exactly once, the second response's
@@ -125,7 +125,7 @@ func TestIdempotencyReplayCoversCallSites(t *testing.T) {
 			},
 			wantStatus:     http.StatusBadRequest,
 			wantSchemaVer:  replaySchemaVersionError,
-			wantErrorCode:  "E_INVALID_INPUT",
+			wantErrorCode:  "E_VALIDATION",
 			coverageReason: "AC: validation failure",
 		},
 		{

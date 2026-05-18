@@ -124,7 +124,7 @@ var taxonomy = map[yerr.Code]struct {
 	policy      MessagePolicy
 	description string
 }{
-	yerr.CodeInvalidInput:           {false, MessageSpecific, "request payload, path, or query parameter was rejected by validation"},
+	yerr.CodeValidation:             {false, MessageSpecific, "request payload, path, or query parameter was rejected by validation"},
 	yerr.CodeAuthenticationRequired: {false, MessageSpecific, "no usable authentication credentials were supplied"},
 	yerr.CodeAuthInvalid:            {false, MessageGeneric, "authentication credentials were supplied but could not be authenticated"},
 	yerr.CodeAuthExpired:            {false, MessageGeneric, "authentication credentials were supplied but have expired"},
@@ -419,7 +419,7 @@ func IdempotencyConflict(message string) *yerr.Error {
 		WithHint("replay the original request unchanged, or retry with a new Idempotency-Key")
 }
 
-// InvalidInput builds an E_INVALID_INPUT error (HTTP 400) from one or more
+// InvalidInput builds an E_VALIDATION error (HTTP 400) from one or more
 // field violations. Violations are de-duplicated of blank entries and sorted
 // deterministically so the message, hint, and recovered slice never depend on
 // caller argument order. The structured violations are recoverable via
@@ -448,19 +448,19 @@ func InvalidInput(violations ...FieldViolation) *yerr.Error {
 	for i, v := range cleaned {
 		parts[i] = v.String()
 	}
-	return yerr.New(yerr.CodeInvalidInput, "request validation failed").
+	return yerr.New(yerr.CodeValidation, "request validation failed").
 		WithHint(strings.Join(parts, "; ")).
 		Wrap(&validationError{violations: cleaned})
 }
 
-// Invalid builds an E_INVALID_INPUT error (HTTP 400) from a free-form message,
+// Invalid builds an E_VALIDATION error (HTTP 400) from a free-form message,
 // for validation failures that are not tied to a specific request field. The
 // message must not contain the submitted value of any secret field.
 func Invalid(message string) *yerr.Error {
 	if strings.TrimSpace(message) == "" {
 		message = "request is invalid"
 	}
-	return yerr.New(yerr.CodeInvalidInput, message)
+	return yerr.New(yerr.CodeValidation, message)
 }
 
 // RateLimited builds an E_RATE_LIMITED error (HTTP 429) for a request that

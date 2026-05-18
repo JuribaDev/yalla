@@ -216,7 +216,7 @@ func TestRetryJobErrorEnvelopePropagatesRequestID(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	env := decodeError(t, rec, string(yerr.CodeInvalidInput))
+	env := decodeError(t, rec, string(yerr.CodeValidation))
 	if env.RequestID != "req_jobs_retry_invalid_contract" {
 		t.Errorf("request_id = %q, want req_jobs_retry_invalid_contract", env.RequestID)
 	}

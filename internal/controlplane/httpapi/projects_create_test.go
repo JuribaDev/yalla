@@ -309,8 +309,8 @@ func TestCreateProjectInvalidInputPropagates(t *testing.T) {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
 	env := decodeCreateProjectError(t, rec)
-	if env.Error.Code != string(yerr.CodeInvalidInput) {
-		t.Errorf("error code = %q, want %s", env.Error.Code, yerr.CodeInvalidInput)
+	if env.Error.Code != string(yerr.CodeValidation) {
+		t.Errorf("error code = %q, want %s", env.Error.Code, yerr.CodeValidation)
 	}
 }
 

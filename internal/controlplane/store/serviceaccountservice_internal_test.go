@@ -85,8 +85,8 @@ func TestValidateCreateServiceAccountInputRejectsEachField(t *testing.T) {
 			if err == nil {
 				t.Fatalf("validateCreateServiceAccountInput(%s) error = nil, want InvalidInput", tc.name)
 			}
-			if ye := yerr.From(err); ye.Code != yerr.CodeInvalidInput {
-				t.Fatalf("error code = %s, want %s", ye.Code, yerr.CodeInvalidInput)
+			if ye := yerr.From(err); ye.Code != yerr.CodeValidation {
+				t.Fatalf("error code = %s, want %s", ye.Code, yerr.CodeValidation)
 			}
 			violations, ok := apierr.ViolationsOf(err)
 			if !ok {

@@ -161,8 +161,8 @@ func TestOrganizationServiceCreateInvalidInputNeverOpensTransaction(t *testing.T
 		ActorKind:   "usr",
 		ActorOrgID:  actor.ID,
 	})
-	if ye := yerr.From(err); ye.Code != yerr.CodeInvalidInput {
-		t.Fatalf("invalid-slug Create error = %v, want %s", err, yerr.CodeInvalidInput)
+	if ye := yerr.From(err); ye.Code != yerr.CodeValidation {
+		t.Fatalf("invalid-slug Create error = %v, want %s", err, yerr.CodeValidation)
 	}
 	if events := listAuditEvents(t, s, actor.ID); len(events) != 0 {
 		t.Errorf("audit events = %d, want zero — an invalid request must never open a transaction", len(events))
@@ -350,8 +350,8 @@ func TestOrganizationServiceUpdateInvalidInputNeverOpensTransaction(t *testing.T
 		ActorKind:      "usr",
 		ActorOrgID:     org.ID,
 	})
-	if ye := yerr.From(err); ye.Code != yerr.CodeInvalidInput {
-		t.Fatalf("invalid-slug Update error = %v, want %s", err, yerr.CodeInvalidInput)
+	if ye := yerr.From(err); ye.Code != yerr.CodeValidation {
+		t.Fatalf("invalid-slug Update error = %v, want %s", err, yerr.CodeValidation)
 	}
 	if events := listAuditEvents(t, s, org.ID); len(events) != 0 {
 		t.Errorf("audit events = %d, want zero — an invalid request must never open a transaction", len(events))

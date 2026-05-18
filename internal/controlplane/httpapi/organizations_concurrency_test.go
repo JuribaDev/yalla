@@ -149,7 +149,7 @@ func TestUpdateOrganizationParsesIfMatchHeader(t *testing.T) {
 }
 
 // TestUpdateOrganizationRejectsMalformedIfMatch proves a malformed If-Match
-// is rejected with a typed 400 E_INVALID_INPUT before the request reaches
+// is rejected with a typed 400 E_VALIDATION before the request reaches
 // the store layer, so an unparseable precondition can never silently
 // degrade to "no precondition".
 func TestUpdateOrganizationRejectsMalformedIfMatch(t *testing.T) {
@@ -184,8 +184,8 @@ func TestUpdateOrganizationRejectsMalformedIfMatch(t *testing.T) {
 				t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 			}
 			env := decodeOrganizationError(t, rec)
-			if env.Error.Code != string(yerr.CodeInvalidInput) {
-				t.Errorf("error.code = %q, want %s", env.Error.Code, yerr.CodeInvalidInput)
+			if env.Error.Code != string(yerr.CodeValidation) {
+				t.Errorf("error.code = %q, want %s", env.Error.Code, yerr.CodeValidation)
 			}
 			if captured.OrganizationID != "" {
 				t.Errorf("updater was reached with captured = %+v, want a 400 raised before the store layer", captured)
@@ -306,8 +306,8 @@ func TestDeleteOrganizationRejectsMalformedIfMatch(t *testing.T) {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
 	env := decodeOrganizationError(t, rec)
-	if env.Error.Code != string(yerr.CodeInvalidInput) {
-		t.Errorf("error.code = %q, want %s", env.Error.Code, yerr.CodeInvalidInput)
+	if env.Error.Code != string(yerr.CodeValidation) {
+		t.Errorf("error.code = %q, want %s", env.Error.Code, yerr.CodeValidation)
 	}
 	if captured.OrganizationID != "" {
 		t.Errorf("deleter reached with captured = %+v, want a 400 raised before the store layer", captured)

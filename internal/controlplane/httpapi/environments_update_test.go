@@ -255,7 +255,7 @@ func int64Ptr(v int64) *int64 { return &v }
 // this endpoint is structural — the handler always builds the store
 // input from the authenticated principal's home organization and the
 // path environment_id — and an unknown field is a stable 400
-// E_INVALID_INPUT so a stale schema or typo cannot be silently dropped.
+// E_VALIDATION so a stale schema or typo cannot be silently dropped.
 func TestUpdateEnvironmentRejectsBodyOrgID(t *testing.T) {
 	t.Parallel()
 
@@ -268,11 +268,11 @@ func TestUpdateEnvironmentRejectsBodyOrgID(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_INVALID_INPUT")
+	decodeError(t, rec, "E_VALIDATION")
 }
 
 // TestUpdateEnvironmentMalformedBodyIsValidationError proves a
-// malformed JSON body is a stable 400 E_INVALID_INPUT and never
+// malformed JSON body is a stable 400 E_VALIDATION and never
 // reaches the updater.
 func TestUpdateEnvironmentMalformedBodyIsValidationError(t *testing.T) {
 	t.Parallel()
@@ -286,7 +286,7 @@ func TestUpdateEnvironmentMalformedBodyIsValidationError(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_INVALID_INPUT")
+	decodeError(t, rec, "E_VALIDATION")
 }
 
 // TestUpdateEnvironmentNotFoundIsTyped404 proves a NotFound from the
@@ -362,7 +362,7 @@ func TestUpdateEnvironmentForbiddenForViewer(t *testing.T) {
 
 // TestUpdateEnvironmentInvalidInputFromStoreIsTyped400 proves a
 // validation failure from the store layer surfaces as a deterministic
-// 400 E_INVALID_INPUT — for example, an empty patch (slug+display_name
+// 400 E_VALIDATION — for example, an empty patch (slug+display_name
 // both nil) caught by buildEnvironmentUpdate.
 func TestUpdateEnvironmentInvalidInputFromStoreIsTyped400(t *testing.T) {
 	t.Parallel()
@@ -379,7 +379,7 @@ func TestUpdateEnvironmentInvalidInputFromStoreIsTyped400(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_INVALID_INPUT")
+	decodeError(t, rec, "E_VALIDATION")
 }
 
 // TestUpdateEnvironmentMissingUpdaterIsInternal proves a wiring error

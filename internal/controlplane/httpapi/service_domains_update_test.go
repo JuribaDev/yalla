@@ -484,7 +484,7 @@ func TestUpdateServiceDomainInvalidInputIsTyped400(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_INVALID_INPUT")
+	decodeError(t, rec, "E_VALIDATION")
 }
 
 // TestUpdateServiceDomainUnauthenticatedIs401 proves an absent or

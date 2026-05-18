@@ -239,8 +239,8 @@ func TestBuildAPIKeyToCreateRejectsBadInput(t *testing.T) {
 				t.Fatal("buildAPIKeyToCreate error = nil, want InvalidAPIKeyInput")
 			}
 			ye := yerr.From(err)
-			if ye.Code != yerr.CodeInvalidInput {
-				t.Fatalf("buildAPIKeyToCreate code = %s, want %s", ye.Code, yerr.CodeInvalidInput)
+			if ye.Code != yerr.CodeValidation {
+				t.Fatalf("buildAPIKeyToCreate code = %s, want %s", ye.Code, yerr.CodeValidation)
 			}
 			violations, ok := apierr.ViolationsOf(err)
 			if !ok {
@@ -460,8 +460,8 @@ func TestBuildAPIKeyUpdateRejectsEmptyPatch(t *testing.T) {
 		t.Fatal("buildAPIKeyUpdate(empty) error = nil, want InvalidInput")
 	}
 	ye := yerr.From(err)
-	if ye.Code != yerr.CodeInvalidInput {
-		t.Fatalf("buildAPIKeyUpdate code = %s, want %s", ye.Code, yerr.CodeInvalidInput)
+	if ye.Code != yerr.CodeValidation {
+		t.Fatalf("buildAPIKeyUpdate code = %s, want %s", ye.Code, yerr.CodeValidation)
 	}
 }
 
@@ -483,8 +483,8 @@ func TestBuildAPIKeyUpdateRejectsBlankName(t *testing.T) {
 				t.Fatal("buildAPIKeyUpdate(blank name) error = nil, want InvalidInput")
 			}
 			ye := yerr.From(err)
-			if ye.Code != yerr.CodeInvalidInput {
-				t.Fatalf("buildAPIKeyUpdate code = %s, want %s", ye.Code, yerr.CodeInvalidInput)
+			if ye.Code != yerr.CodeValidation {
+				t.Fatalf("buildAPIKeyUpdate code = %s, want %s", ye.Code, yerr.CodeValidation)
 			}
 			violations, _ := apierr.ViolationsOf(err)
 			if !hasField(violations, "name") {
@@ -507,8 +507,8 @@ func TestBuildAPIKeyUpdateRejectsControlCharName(t *testing.T) {
 		t.Fatal("buildAPIKeyUpdate(control char) error = nil, want InvalidInput")
 	}
 	ye := yerr.From(err)
-	if ye.Code != yerr.CodeInvalidInput {
-		t.Fatalf("buildAPIKeyUpdate code = %s, want %s", ye.Code, yerr.CodeInvalidInput)
+	if ye.Code != yerr.CodeValidation {
+		t.Fatalf("buildAPIKeyUpdate code = %s, want %s", ye.Code, yerr.CodeValidation)
 	}
 }
 
@@ -521,8 +521,8 @@ func TestBuildAPIKeyUpdateRejectsOversizeName(t *testing.T) {
 		t.Fatal("buildAPIKeyUpdate(oversize name) error = nil, want InvalidInput")
 	}
 	ye := yerr.From(err)
-	if ye.Code != yerr.CodeInvalidInput {
-		t.Fatalf("buildAPIKeyUpdate code = %s, want %s", ye.Code, yerr.CodeInvalidInput)
+	if ye.Code != yerr.CodeValidation {
+		t.Fatalf("buildAPIKeyUpdate code = %s, want %s", ye.Code, yerr.CodeValidation)
 	}
 	// The rejection must never echo the long string back into an error
 	// message that could land in a log line.
@@ -544,7 +544,7 @@ func TestBuildAPIKeyUpdateRejectsMalformedScope(t *testing.T) {
 		t.Fatal("buildAPIKeyUpdate(malformed scope) error = nil, want InvalidInput")
 	}
 	ye := yerr.From(err)
-	if ye.Code != yerr.CodeInvalidInput {
-		t.Fatalf("buildAPIKeyUpdate code = %s, want %s", ye.Code, yerr.CodeInvalidInput)
+	if ye.Code != yerr.CodeValidation {
+		t.Fatalf("buildAPIKeyUpdate code = %s, want %s", ye.Code, yerr.CodeValidation)
 	}
 }

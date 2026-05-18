@@ -314,7 +314,7 @@ func TestOrganizationVariableServicePatchRejectsEmptyPatch(t *testing.T) {
 	if err == nil {
 		t.Fatalf("Patch with no fields returned no error")
 	}
-	if got, want := yerr.From(err).Code, yerr.CodeInvalidInput; got != want {
+	if got, want := yerr.From(err).Code, yerr.CodeValidation; got != want {
 		t.Errorf("error code = %q, want %q", got, want)
 	}
 }
@@ -342,7 +342,7 @@ func TestOrganizationVariableServicePatchRejectsNonPOSIXKey(t *testing.T) {
 	if err == nil {
 		t.Fatalf("Patch with non-POSIX key returned no error")
 	}
-	if got, want := yerr.From(err).Code, yerr.CodeInvalidInput; got != want {
+	if got, want := yerr.From(err).Code, yerr.CodeValidation; got != want {
 		t.Errorf("error code = %q, want %q", got, want)
 	}
 }
@@ -385,7 +385,7 @@ func TestOrganizationVariableServicePatchRejectsDemotionOverflow(t *testing.T) {
 	if err == nil {
 		t.Fatalf("demotion of an oversized secret returned no error")
 	}
-	if got, want := yerr.From(err).Code, yerr.CodeInvalidInput; got != want {
+	if got, want := yerr.From(err).Code, yerr.CodeValidation; got != want {
 		t.Errorf("error code = %q, want %q", got, want)
 	}
 
@@ -441,7 +441,7 @@ func TestOrganizationVariableServicePatchRejectsNULByte(t *testing.T) {
 	if err == nil {
 		t.Fatalf("Patch with NUL byte returned no error")
 	}
-	if got, want := yerr.From(err).Code, yerr.CodeInvalidInput; got != want {
+	if got, want := yerr.From(err).Code, yerr.CodeValidation; got != want {
 		t.Errorf("error code = %q, want %q", got, want)
 	}
 }

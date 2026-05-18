@@ -362,8 +362,8 @@ func TestServiceVariableServiceReplaceInvalidInputNeverOpensTransaction(t *testi
 				t.Fatalf("Replace(%s) returned no error; want InvalidInput", tc.name)
 			}
 			var ye *yerr.Error
-			if !errors.As(err, &ye) || ye.Code != yerr.CodeInvalidInput {
-				t.Errorf("Replace(%s) error = %v, want CodeInvalidInput", tc.name, err)
+			if !errors.As(err, &ye) || ye.Code != yerr.CodeValidation {
+				t.Errorf("Replace(%s) error = %v, want CodeValidation", tc.name, err)
 			}
 			for _, item := range tc.variables {
 				if item.Value != "" && strings.Contains(err.Error(), item.Value) {

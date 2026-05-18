@@ -248,7 +248,7 @@ func TestListServiceLogsCustomLimitForwarded(t *testing.T) {
 
 // TestListServiceLogsInvalidLimit proves a malformed, non-positive,
 // or larger-than-ceiling limit is rejected as a typed 400
-// E_INVALID_INPUT before any reader call runs. The reader must
+// E_VALIDATION before any reader call runs. The reader must
 // never see a request that did not pass limit validation.
 func TestListServiceLogsInvalidLimit(t *testing.T) {
 	t.Parallel()
@@ -276,7 +276,7 @@ func TestListServiceLogsInvalidLimit(t *testing.T) {
 			if rec.Code != http.StatusBadRequest {
 				t.Fatalf("status = %d, want 400 for invalid limit; body %s", rec.Code, rec.Body.String())
 			}
-			decodeError(t, rec, string(yerr.CodeInvalidInput))
+			decodeError(t, rec, string(yerr.CodeValidation))
 			if captured.OrganizationID != "" || captured.ServiceID != "" {
 				t.Errorf("reader was called for an invalid limit; got %+v — it must never run", captured)
 			}

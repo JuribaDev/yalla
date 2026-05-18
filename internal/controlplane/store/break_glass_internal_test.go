@@ -94,7 +94,7 @@ func TestBuildSessionToCreateRejectsBlankReason(t *testing.T) {
 		t.Fatalf("buildSessionToCreate(blank reason) expected an error")
 	}
 	if !isInvalidInputErrorOn(err, "reason") {
-		t.Fatalf("error = %v, want E_INVALID_INPUT on reason", err)
+		t.Fatalf("error = %v, want E_VALIDATION on reason", err)
 	}
 }
 
@@ -108,7 +108,7 @@ func TestBuildSessionToCreateRejectsOversizeReason(t *testing.T) {
 
 	_, err := svc.buildSessionToCreate(in, now)
 	if !isInvalidInputErrorOn(err, "reason") {
-		t.Fatalf("error = %v, want E_INVALID_INPUT on reason", err)
+		t.Fatalf("error = %v, want E_VALIDATION on reason", err)
 	}
 }
 
@@ -122,7 +122,7 @@ func TestBuildSessionToCreateRejectsMissingOrganization(t *testing.T) {
 
 	_, err := svc.buildSessionToCreate(in, now)
 	if !isInvalidInputErrorOn(err, "organization_id") {
-		t.Fatalf("error = %v, want E_INVALID_INPUT on organization_id", err)
+		t.Fatalf("error = %v, want E_VALIDATION on organization_id", err)
 	}
 }
 
@@ -136,7 +136,7 @@ func TestBuildSessionToCreateRejectsMissingActor(t *testing.T) {
 
 	_, err := svc.buildSessionToCreate(in, now)
 	if !isInvalidInputErrorOn(err, "actor_id") {
-		t.Fatalf("error = %v, want E_INVALID_INPUT on actor_id", err)
+		t.Fatalf("error = %v, want E_VALIDATION on actor_id", err)
 	}
 }
 
@@ -150,7 +150,7 @@ func TestBuildSessionToCreateRejectsBadActorKind(t *testing.T) {
 
 	_, err := svc.buildSessionToCreate(in, now)
 	if !isInvalidInputErrorOn(err, "actor_kind") {
-		t.Fatalf("error = %v, want E_INVALID_INPUT on actor_kind", err)
+		t.Fatalf("error = %v, want E_VALIDATION on actor_kind", err)
 	}
 }
 
@@ -165,7 +165,7 @@ func TestBuildSessionToCreateRejectsNonPositiveTTL(t *testing.T) {
 		in.TTL = ttl
 		_, err := svc.buildSessionToCreate(in, now)
 		if !isInvalidInputErrorOn(err, "ttl") {
-			t.Fatalf("ttl=%v error = %v, want E_INVALID_INPUT on ttl", ttl, err)
+			t.Fatalf("ttl=%v error = %v, want E_VALIDATION on ttl", ttl, err)
 		}
 	}
 }
@@ -311,7 +311,7 @@ func isInvalidInputErrorOn(err error, field string) bool {
 	if !errors.As(err, &ye) {
 		return false
 	}
-	if ye.Code != yerr.CodeInvalidInput {
+	if ye.Code != yerr.CodeValidation {
 		return false
 	}
 	vs, ok := apierr.ViolationsOf(err)

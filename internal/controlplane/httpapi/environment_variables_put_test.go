@@ -279,7 +279,7 @@ func TestReplaceEnvironmentVariablesRejectsMissingVariablesField(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
-	_ = decodeError(t, rec, string(yerr.CodeInvalidInput))
+	_ = decodeError(t, rec, string(yerr.CodeValidation))
 	// The error must name the offending field so an agent can correct the
 	// body shape without re-reading the OpenAPI document. The renderer
 	// emits the field path inside the hint as "<field>: <reason>".
@@ -308,7 +308,7 @@ func TestReplaceEnvironmentVariablesRejectsMalformedJSON(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
-	_ = decodeError(t, rec, string(yerr.CodeInvalidInput))
+	_ = decodeError(t, rec, string(yerr.CodeValidation))
 	if callCount != 0 {
 		t.Errorf("replacer call count = %d, want 0 (a malformed body never reaches the store)", callCount)
 	}
@@ -484,7 +484,7 @@ func TestReplaceEnvironmentVariablesPropagatesInvalidInputFromStore(t *testing.T
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
-	_ = decodeError(t, rec, string(yerr.CodeInvalidInput))
+	_ = decodeError(t, rec, string(yerr.CodeValidation))
 	if !strings.Contains(rec.Body.String(), "variables[0].key") {
 		t.Errorf("invalid-input body does not name the offending field path: %s", rec.Body.String())
 	}

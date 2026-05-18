@@ -27,9 +27,14 @@ type Code string
 // Stable error codes. Every visible failure must classify as one of these so
 // the JSON envelope and exit code remain deterministic.
 const (
-	CodeUnknown      Code = "E_UNKNOWN"
-	CodeInternal     Code = "E_INTERNAL"
-	CodeUsage        Code = "E_USAGE"
+	CodeUnknown  Code = "E_UNKNOWN"
+	CodeInternal Code = "E_INTERNAL"
+	CodeUsage    Code = "E_USAGE"
+	// CodeValidation marks request payload, path, query, or compatibility
+	// contract validation failures in the backend API. It is distinct from
+	// CodeInvalidInput so backend agents can switch on the public API contract
+	// without inheriting older CLI terminology.
+	CodeValidation   Code = "E_VALIDATION"
 	CodeInvalidInput Code = "E_INVALID_INPUT"
 	CodeConfig       Code = "E_CONFIG"
 	CodeOrphan       Code = "E_ORPHAN"
@@ -101,6 +106,7 @@ var codeDescriptions = map[Code]string{
 	CodeUnknown:                "uncategorised internal failure",
 	CodeInternal:               "internal error in yalla itself",
 	CodeUsage:                  "command-line usage error (unknown flag, bad subcommand, etc.)",
+	CodeValidation:             "request payload, path, or query parameter rejected by backend validation",
 	CodeInvalidInput:           "request payload, flag value, or registry filter rejected",
 	CodeConfig:                 "configuration is missing, malformed, or incomplete",
 	CodeOrphan:                 "operation left Dokploy or Docker resources behind",
@@ -134,7 +140,7 @@ var codeDescriptions = map[Code]string{
 // mutate it without bleeding back into the registry.
 func AllCodes() []CodeDoc {
 	codes := []Code{
-		CodeUnknown, CodeInternal, CodeUsage, CodeInvalidInput,
+		CodeUnknown, CodeInternal, CodeUsage, CodeValidation, CodeInvalidInput,
 		CodeConfig, CodeOrphan, CodeAuthenticationRequired, CodeAuthInvalid, CodeAuthExpired, CodeAuth, CodeForbidden, CodeScopeRequired, CodeNotFound,
 		CodeConflict, CodeInvalidStateTransition, CodeIdempotencyConflict, CodeRateLimited, CodeQuotaExceeded,
 		CodeServer, CodeUpstreamBug,
@@ -171,7 +177,7 @@ func (c Code) ExitCode() int {
 	switch c {
 	case "":
 		return 0
-	case CodeUsage, CodeInvalidInput, CodeScopeRequired:
+	case CodeUsage, CodeValidation, CodeInvalidInput, CodeScopeRequired:
 		return 2
 	case CodeConfig, CodeOrphan:
 		return 3

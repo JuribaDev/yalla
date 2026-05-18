@@ -271,8 +271,8 @@ func TestOrganizationServiceScheduleDeletionBlankOrganizationID(t *testing.T) {
 		ActorKind:      "usr",
 		ActorOrgID:     actor.ID,
 	})
-	if ye := yerr.From(err); ye.Code != yerr.CodeInvalidInput {
-		t.Fatalf("blank-id ScheduleDeletion error = %v, want %s", err, yerr.CodeInvalidInput)
+	if ye := yerr.From(err); ye.Code != yerr.CodeValidation {
+		t.Fatalf("blank-id ScheduleDeletion error = %v, want %s", err, yerr.CodeValidation)
 	}
 	if events := listAuditEvents(t, s, actor.ID); len(events) != 0 {
 		t.Errorf("audit events = %d, want zero — an invalid request must never open a transaction", len(events))
