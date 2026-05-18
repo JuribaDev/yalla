@@ -9858,8 +9858,8 @@
       ],
       "type": "repository",
       "priority": 1,
-      "passes": false,
-      "notes": "Database table: drift_findings."
+      "passes": true,
+      "notes": "Database table: drift_findings. Repository + invariants tests landed alongside a new migration (0037_drift_findings) since drift_findings was not yet on disk. The repository surface is Append / GetByID / ListByOrganization / MarkResolved -- a finding's only legal state-transition is to be resolved. Closed kind / reason / level taxonomies mirror reconcile.DriftKind / DriftReason / ResourceLevel. Optional resource legs (project_id / environment_id / service_id / service_domain_id) use MATCH SIMPLE composite FKs so an organization-level finding is legal but a scoped finding is pinned to its tenant. drift_findings_resolved_consistent CHECK ties resolved_at to a non-empty resolved_by_actor_id. gofmt, go build, go vet, go test ./internal/controlplane/store/... pass; go test -race -run TestDriftFinding passes. Pre-existing apikey/environment test failures are unrelated to this story (reproduced on a clean tree before the new files landed)."
     },
     {
       "id": "BE-0472",
