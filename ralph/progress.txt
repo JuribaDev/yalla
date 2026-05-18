@@ -1,4 +1,6 @@
 ## Codebase Patterns
+- New customer-data resource = full vertical when it is the FIRST story for that table (BE-0435 pattern, api_key_scopes migration 0033, store/api_key_scope.go, api_key_scope_repository_invariants_test.go): this story is allowed to land migration + repository + first-pass tests because no prior story touched the table (no migration, no repo, no port, no handler, no wiring). The migration declares the table tenant-scoped at the database via the composite FK pattern established by project_grants / environment_grants — and when the parent table never exposed UNIQUE (organization_id, id) (api_keys was such a table) the SAME migration adds the constraint to the parent so the child's composite FK has a target; this is a safe additive change because the parent's PK already makes id unique and the new UNIQUE merely pairs it with organization_id. Repository follows the membership.go / project_grant.go pattern: stateless struct, *Tx for mutations with nil-Tx -> typed apierr.Internal, Querier for reads, pgx.ErrNoRows -> apierr.NotFound, mapWriteError for constraint-violation -> apierr.Conflict, tag.RowsAffected() == 0 -> apierr.NotFound on Delete. Tests combine CRUD + row-shape invariants in one file since no prior tests exist; tenant-isolation byte-identical-bystander proof is deferred to the paired BE-0436 (tenant-isolation) story that always follows.
+- Test fixture caveat for api_keys-related seeding (BE-0435 learning, internal/controlplane/store/api_key_scope_repository_invariants_test.go seedAPIKeyForScopes): testutil.Factory.APIKey stamps a per-FACTORY prefix `yk_<token[:8]>`, NOT a per-key prefix. Two keys minted from the same factory get the same Prefix value, which collides with the api_keys_prefix_key UNIQUE constraint when two are inserted in the same test. Always derive the persisted prefix as `key.Prefix + "_" + key.ID` (or similar per-row salt) — never use `key.Prefix + "_" + label` because the same label is reused across orgs in tenant-isolation fixtures and the label is not unique.
 - Repository for a **global identity table** with no organization_id and no version column (BE-0427 pattern, internal/controlplane/store/user.go): follow OrganizationRepository's shape (Get-by-own-id, scanX helper, nil-Tx guard → apierr.Internal) but drop the optimistic-concurrency If-Match path entirely; add a separate GetInOrganization(organizationID, userID) that JOINs against memberships so tenant-scoped reads return NotFound (the same shape an unknown id produces) for non-members and cross-tenant requesters. Delete uses RowsAffected() == 0 → apierr.NotFound (mirrors api_keys.Revoke). Conflict mapping for citext UNIQUE columns goes through mapWriteError with a non-sensitive user-facing message.
 - Test-helper naming caveat at package store_test (BE-0427 learning): every *_test.go file under internal/controlplane/store/ shares the same package, so duplicate top-level helpers (`seedUser`, `seedMembership`, `seedOrg`, ...) collide at compile time — grep `func seedX` before adding a helper. seedUser already exists in apikey_test.go and returns only the user.ID; tests that need the full row should add a distinct seedUserRow helper that returns testutil.User.
 - Tenant-isolation tests for a **global identity table** (BE-0428 pattern, internal/controlplane/store/user_tenant_isolation_test.go): byte-identical-snapshot proof for a table that has no organization_id and no version column. The BE-0426 organization template still applies, but three substitutions are mandatory: (a) drop the stale-If-Match/Update-with-mismatched-version test — there is no version column on the row, so optimistic-concurrency leak surfaces do not exist at this layer (session-token revocation lives on memberships.role_version and is covered by membership_test.go). (b) Add a CONFLICT-PATH BYTE-IDENTICAL test that snapshots BOTH the conflicting target AND the bystander — because the citext UNIQUE constraint on email fires AFTER the UPDATE row is locked and the BEFORE-UPDATE trigger has run, a regression where the trigger stamps updated_at before the constraint rolls back the write would surface on EITHER row; in BE-0426 there is no equivalent "global UNIQUE column outside the WHERE-id" surface to test. (c) Replace "list-by-parent must NotFound for cross-tenant parent ids" with "GetInOrganization-with-unknown-id and GetInOrganization-with-non-member-id produce indistinguishable NotFound shapes (same Code, same Hint)" — the membership join replaces the parent-id-WHERE filter, and existence-leak via Code/Hint divergence is the analogous failure mode. The DELETE-cascade test should snapshot BOTH userB AND userB's memberships count (asymmetric across tenants: the deleted user's memberships in EVERY tenant cascade away via memberships.user_id ON DELETE CASCADE, while bystander users in any tenant keep theirs). Document the deliberate ABSENCE of list-by-parent and soft-delete tests in the file's package-doc comment so a future reader does not look for a missing test (mirrors BE-0426's "tenant-root tables have no ListByParent" note).
@@ -30801,3 +30803,150 @@ change that widened Reason to caller-supplied data.
   - `equalTimePtr` is already defined in api_key_repository_invariants_test.go (same store_test package); the new file reuses it (no redefinition collision). Adding `equalStringSlices` is safe because no other *_test.go file under internal/controlplane/store/ defines it (grep confirmed). The naming-collision gotcha first documented under BE-0427 remains live for every new helper.
 ---
 
+
+## 2026-05-18 — BE-0435 Repository: api_key_scopes CRUD and invariants
+- What was implemented
+  - Added `internal/controlplane/store/migrate/migrations/0033_api_key_scopes.up.sql`
+    and `0033_api_key_scopes.down.sql`. The up migration ALTERS api_keys
+    to expose UNIQUE (organization_id, id) (the composite-FK target the
+    child needs) and CREATES api_key_scopes — a tenant-scoped child of
+    api_keys carrying one capability string per row. The schema design
+    mirrors the established project_grants conventions: composite FK
+    (organization_id, api_key_id) -> api_keys (organization_id, id) ON
+    DELETE CASCADE makes a cross-tenant row structurally
+    unrepresentable; UNIQUE (organization_id, id) exposes the row to
+    future per-row PATCH/DELETE endpoints; UNIQUE
+    (organization_id, api_key_id, scope) prevents two rows with the
+    same scope on the same key; bigint version + bump_version() trigger
+    from 0011 maintains optimistic concurrency; CHECK
+    (length(scope) BETWEEN 1 AND 64) is the database-side defence the
+    apikeyservice scope validator already enforces at the wire.
+  - Added `internal/controlplane/store/api_key_scope.go`: APIKeyScope
+    struct mirroring the row body (ID, OrganizationID, APIKeyID, Scope,
+    Version, CreatedAt, UpdatedAt) plus APIKeyScopeRepository with the
+    six tenant-scoped methods Insert / Get / ListByAPIKey /
+    ListByOrganization / UpdateScope / Delete. Mutations require *Tx
+    (nil-Tx renders typed apierr.Internal), reads accept Querier so the
+    same method works against either Store.Read or an open Store.Write
+    tx. Get returns apierr.NotFound on pgx.ErrNoRows; UpdateScope does
+    the same; Delete reports NotFound via tag.RowsAffected() == 0
+    (mirroring api_keys.Revoke's idempotent-tag pattern). Conflict
+    mapping for both the duplicate (api_key_id, scope) tuple AND the
+    cross-tenant / unknown api_key_id composite-FK violation goes
+    through mapWriteError with a non-sensitive message.
+  - Added `internal/controlplane/store/api_key_scope_repository_invariants_test.go`
+    — 14 t.Parallel tests covering both CRUD invariants and row-shape
+    invariants in one file (no pre-existing api_key_scope_test.go):
+      * `TestAPIKeyScopeRepositoryInsertReturnsRowWithTimestamps` —
+        Insert returns row with version=1, non-zero created_at ==
+        updated_at, and verbatim caller-supplied fields.
+      * `TestAPIKeyScopeRepositoryInsertDuplicateScopeReturnsTypedConflict`
+        — the (organization_id, api_key_id, scope) UNIQUE constraint
+        surfaces as apierr.Conflict.
+      * `TestAPIKeyScopeRepositoryInsertCrossTenantAPIKeyReturnsTypedConflict`
+        — the composite FK rejects a cross-tenant api_key_id AND an
+        unknown api_key_id with the same typed apierr.Conflict.
+      * `TestAPIKeyScopeRepositoryGetIsTenantScoped` — cross-tenant
+        scope id and unknown id both produce indistinguishable
+        apierr.NotFound shapes.
+      * `TestAPIKeyScopeRepositoryListByAPIKeyIsTenantScoped` —
+        cross-tenant api_key_id returns empty list, own tenant
+        returns deterministic (scope, id) ordering.
+      * `TestAPIKeyScopeRepositoryListByOrganizationIsTenantScoped` —
+        organization-wide list never reveals another tenant's rows.
+      * `TestAPIKeyScopeRepositoryUpdateScopeRefreshesUpdatedAtAndBumpsVersion`
+        — dual-anchor: trigger refreshes updated_at, bumps version,
+        preserves created_at, leaves id/org/api_key_id byte-identical.
+      * `TestAPIKeyScopeRepositoryUpdateScopeNotFound` — UPDATE WHERE
+        with no match -> pgx.ErrNoRows -> apierr.NotFound (not
+        Conflict).
+      * `TestAPIKeyScopeRepositoryUpdateScopeDuplicateReturnsTypedConflict`
+        — renaming onto an existing (api_key_id, scope) tuple -> typed
+        Conflict.
+      * `TestAPIKeyScopeRepositoryDeleteSucceedsAndIsIdempotentTagged`
+        — happy-path Delete returns nil; cross-tenant Delete returns
+        NotFound while the row remains visible to the owner; a second
+        Delete of an already-removed row returns NotFound (idempotent
+        at the wire).
+      * `TestAPIKeyScopeRepositoryAPIKeyDeleteCascades` — ON DELETE
+        CASCADE on the composite FK removes all child scope rows when
+        the parent api_keys row is deleted.
+      * `TestAPIKeyScopeRepositoryInsertRollsBackOnTxRollback` —
+        Insert followed by a closure error rolls back; subsequent Get
+        and ListByAPIKey both report no rows (apiKeyScopeTxRollbackSentinel
+        is the typed sentinel; name distinct from other *_test.go
+        sentinels per the BE-0429 store_test package collision rule).
+      * `TestAPIKeyScopeRepositoryInsertWithoutTxIsTypedInternal`,
+        `TestAPIKeyScopeRepositoryUpdateScopeWithoutTxIsTypedInternal`,
+        `TestAPIKeyScopeRepositoryDeleteWithoutTxIsTypedInternal` —
+        nil-Tx guards on all three mutation paths render typed
+        yerr.CodeInternal (not nil-pointer panic).
+- Files changed
+  - `internal/controlplane/store/migrate/migrations/0033_api_key_scopes.up.sql` (new)
+  - `internal/controlplane/store/migrate/migrations/0033_api_key_scopes.down.sql` (new)
+  - `internal/controlplane/store/api_key_scope.go` (new)
+  - `internal/controlplane/store/api_key_scope_repository_invariants_test.go` (new, 14 tests)
+  - `ralph/prd.json` (BE-0435 -> passes:true, notes updated)
+  - `ralph/progress.txt` (this entry + two new Codebase Patterns lines above)
+- Verification run
+  - `gofmt -l` on new Go files — clean
+  - `go vet ./internal/controlplane/store/...` — clean
+  - `go build ./...` — clean
+  - `go mod tidy` — clean
+  - `go test ./internal/controlplane/store/migrate/` — PASS (the
+    migration loader picks up 0033 automatically; up/down pairing
+    closed-set tests pass)
+  - `YALLA_TEST_DATABASE_URL=... go test -count=1 -run
+    'TestAPIKeyScopeRepository' ./internal/controlplane/store/` —
+    14/14 PASS
+  - Race detector with the same filter — 14/14 PASS
+  - Existing api_keys CRUD tests
+    (`TestAPIKeyRepository|TestAPIKeyPlaintextIsNeverPersisted|TestAPIKeyLifecycleHelpers`)
+    still PASS — the ALTER TABLE on api_keys for UNIQUE
+    (organization_id, id) is a safe additive change.
+- Pre-existing failures observed under full-suite go test ./...
+  (unrelated to BE-0435):
+  `TestAPIKeyServiceCreate*` and `TestEnvironmentServiceCreate*`
+  return E_INVALID_INPUT — these are service-layer tests that feed
+  factory IDs (`org_<token><seq>`) to handlers whose validation calls
+  `domain.ParseID`, and the factory's non-canonical prefix is
+  rejected. The AGENTS.md note in `internal/controlplane/store/`
+  spells this out: tests against services must use `domain.NewID(...)`
+  fixtures via `seedDomainOrg`. Reproduces with all BE-0435 files
+  removed.
+  `TestEnvironmentRepoListByProjectReturnsDeterministicOrdering` and
+  `TestEnvironmentReaderRejectsCrossTenantProjectID` are similarly
+  pre-existing and reproduce with BE-0435 files removed.
+- Remaining risks/follow-ups: none for BE-0435. BE-0436 (api_key_scopes
+  tenant isolation, the byte-identical-bystander proof for cross-tenant
+  Get/Update/Delete and the secret-bearing column extension rules from
+  BE-0434 applied where applicable) is the natural next story.
+- **Learnings for future iterations:**
+  - When a "Repository: X CRUD and invariants" story names a table that
+    does NOT yet exist (no migration, no repo, no port), it is correct
+    to land the migration + repository + tests in one story rather than
+    decompose. This is the BE-0136 "full vertical when no foundation
+    exists" pattern applied to a repository-only story.
+  - The api_keys table never exposed UNIQUE (organization_id, id) because
+    no child table needed the composite FK target until now. Adding the
+    constraint in the same migration that creates the first child table
+    is the correct moment — earlier would have been speculation, later
+    would force a separate migration. The pattern generalises: when
+    creating the first child of a tenant-scoped table that lacks
+    UNIQUE (organization_id, id), add the constraint in the child's
+    migration.
+  - testutil.Factory.APIKey returns a per-FACTORY prefix
+    (`yk_<token[:8]>`), NOT a per-key prefix. Two APIKey rows from the
+    same factory collide on the api_keys_prefix_key UNIQUE constraint
+    if their persisted prefix is not salted further. Salting with the
+    key.ID (or another per-row token) is the safe pattern; salting
+    with a caller-supplied `label` is NOT safe because labels are
+    deliberately reused across orgs in tenant-isolation fixtures.
+  - The store_test package has accumulated several typed transaction
+    rollback sentinel structs (apiKeyTxRollbackSentinel,
+    membershipTxRollbackSentinel, serviceAccountTxRollbackSentinel,
+    errSentinel in user_repository_invariants_test.go) — every new
+    invariants file that needs a rollback sentinel MUST coin a distinct
+    type name to avoid a compile collision. apiKeyScopeTxRollbackSentinel
+    is the BE-0435 choice.
+---

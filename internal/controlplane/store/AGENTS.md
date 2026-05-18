@@ -72,6 +72,34 @@ Postgres persistence for control-plane source-of-truth state.
   report `apierr.NotFound` via `tag.RowsAffected() == 0` — a cross-tenant id
   simply does not match. `Revoke` is idempotent (`COALESCE(revoked_at, $3)`).
 
+## API key scopes (`0033_api_key_scopes`, `api_key_scope.go`)
+
+- `api_key_scopes` is a tenant-scoped child of `api_keys` carrying one
+  capability string per row, the long-term source of truth a future per-scope
+  endpoint will mutate without rewriting the embedded `api_keys.scopes text[]`
+  array. The embedded array stays authoritative for the authentication read
+  path until that endpoint lands; the two surfaces coexist deliberately.
+- Migration `0033` ALSO adds `UNIQUE (organization_id, id)` to `api_keys` so
+  the child can use the composite-FK pattern `(organization_id, api_key_id) ->
+  api_keys (organization_id, id) ON DELETE CASCADE`. This is the
+  **adopt-the-constraint-when-the-first-child-lands** pattern: when creating
+  the first child of a tenant-scoped table that lacks
+  `UNIQUE (organization_id, id)`, add the constraint in the child's migration
+  (safe additive change because the parent's PK already makes id unique).
+- The schema-side `CHECK (length(scope) BETWEEN 1 AND 64)` mirrors the wire
+  validator in `apikeyservice.go` (`apiKeyScopeMaxLen`); a future caller that
+  forgets the validator cannot persist an out-of-band scope.
+- `APIKeyScopeRepository` follows the `MembershipRepository` /
+  `ProjectGrantRepository` shape: stateless struct, `*Tx` for mutations
+  (nil-Tx -> typed `apierr.Internal`), `Querier` for reads,
+  `pgx.ErrNoRows` -> `apierr.NotFound` on `Get`/`UpdateScope`, `Delete` via
+  `tag.RowsAffected() == 0` -> `apierr.NotFound` (mirrors `api_keys.Revoke`'s
+  idempotent-tag pattern). Conflict mapping for BOTH the duplicate
+  `(api_key_id, scope)` tuple AND the cross-tenant / unknown `api_key_id`
+  composite-FK violation goes through `mapWriteError` — both are
+  constraint-violation class 23 errors and both surface as
+  `apierr.Conflict`.
+
 ## Service accounts (`0004_service_accounts`, `serviceaccount.go`, `serviceaccountservice.go`)
 
 - `service_accounts` is a tenant-scoped table for **non-human principals** (CI
