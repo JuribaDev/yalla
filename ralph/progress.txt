@@ -35547,3 +35547,33 @@ change that widened Reason to caller-supplied data.
   - Error-contract stories can be completed with focused taxonomy/envelope tests when the code path already exists; still verify a red phase by asserting a missing contract detail rather than only adding tests that pass immediately.
   - Use context-specific PRD edits when marking stories complete; a broad `"passes": false` patch can hit an earlier unfinished story.
 ---
+## 2026-05-19 01:24 +03 - BE-0293
+- What was implemented
+  - Added missing public-contract coverage for `GET /v1/admin/organizations/{org_id}/dokploy-refs`.
+  - Covered response stream isolation (no stdout/stderr writes), explicit `request_id` propagation on validation and auth error envelopes, request-log redaction for bearer/query secret material, and denied-request bearer redaction.
+  - Marked `BE-0293` as passing in `ralph/prd.json`.
+- Files changed
+  - `internal/controlplane/httpapi/admin_dokploy_refs_test.go`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `go test ./internal/controlplane/httpapi -run 'TestListAdminDokployRefs'`
+  - `gofmt -w .`
+  - `goimports -w .` was not run because `goimports` is not installed in this environment.
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `golangci-lint run ./...`
+  - `staticcheck ./...` was not run because `staticcheck` is not installed in this environment.
+  - `govulncheck ./...` was not run because `govulncheck` is not installed in this environment.
+- Results
+  - Focused Dokploy refs contract tests passed.
+  - Required formatting, module cleanup, full tests, race tests, and vet passed.
+  - `golangci-lint` passed with 0 issues.
+- Remaining risks or follow-ups
+  - No production code changed; risk is limited to test coverage.
+- **Learnings for future iterations:**
+  - Admin read endpoint contract suites should pin both success-path and denied-path request log redaction, because the auth middleware rejects before the endpoint reader runs.
+  - For GET endpoints, stream-isolation coverage can reuse the shared `captureProcessOutput` helper from `me_contract_test.go`.
+---
