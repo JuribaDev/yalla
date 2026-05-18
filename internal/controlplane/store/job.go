@@ -164,6 +164,19 @@ type ProvisioningJob struct {
 	FinishedAt     time.Time
 }
 
+// ListProvisioningJobsInput carries the bounded filters for customer-facing
+// provisioning-job list reads. OrganizationID is mandatory and is always the
+// leftmost tenant predicate; project/environment/service/status filters narrow
+// the already-tenant-scoped set.
+type ListProvisioningJobsInput struct {
+	OrganizationID string
+	ProjectID      string
+	EnvironmentID  string
+	ServiceID      string
+	Status         JobStatus
+	Limit          int
+}
+
 // JobTransition carries the fields a single state transition may change. Which
 // fields are honoured depends on the target status; the repository derives the
 // lease, attempt-count, and timestamp bookkeeping from the target status so a
@@ -371,16 +384,28 @@ func (r *JobRepository) FindByIdempotencyKey(ctx context.Context, q Querier, org
 // the result. It accepts a Querier so it works against a read-only or an open
 // write transaction.
 func (r *JobRepository) ListByOrganization(ctx context.Context, q Querier, organizationID string, limit int) ([]ProvisioningJob, error) {
-	if limit <= 0 || limit > jobListMaxLimit {
-		limit = jobListMaxLimit
+	return r.List(ctx, q, ListProvisioningJobsInput{OrganizationID: organizationID, Limit: limit})
+}
+
+// List returns the most recent provisioning jobs for the supplied tenant and
+// optional resource/status filters, newest first. The read is always scoped by
+// organization_id before any narrower filter is applied, so a foreign job can
+// never appear through a guessed project, environment, service, or job id.
+func (r *JobRepository) List(ctx context.Context, q Querier, in ListProvisioningJobsInput) ([]ProvisioningJob, error) {
+	if in.Limit <= 0 || in.Limit > jobListMaxLimit {
+		in.Limit = jobListMaxLimit
 	}
 	rows, err := q.Query(ctx,
 		`SELECT `+provisioningJobColumns+`
 		   FROM provisioning_jobs
 		  WHERE organization_id = $1
+		    AND ($2 = '' OR project_id = $2)
+		    AND ($3 = '' OR environment_id = $3)
+		    AND ($4 = '' OR service_id = $4)
+		    AND ($5 = '' OR status = $5)
 		  ORDER BY created_at DESC, id DESC
-		  LIMIT $2`,
-		organizationID, limit)
+		  LIMIT $6`,
+		in.OrganizationID, in.ProjectID, in.EnvironmentID, in.ServiceID, string(in.Status), in.Limit)
 	if err != nil {
 		return nil, apierr.StoreUnavailable(err)
 	}

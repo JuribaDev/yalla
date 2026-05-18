@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Job list endpoints (BE-0271 pattern, GET `/v1/jobs`) use an organization-root route with optional query filters `(project_id, environment_id, service_id, status, limit)`: `jobListResolver` mirrors supplied filters into `policy.Scope` before auth, the handler validates hierarchy shape before store access (`environment_id` requires `project_id`, `service_id` requires both), and `store.JobReader` verifies filtered parents tenant-scoped before delegating to `JobRepository.List` with a constant SQL statement whose optional predicates never interpolate caller input.
 - Environment state-machine stories use a pure `EnvironmentStatus.CanTransitionTo` table plus an atomic repository `Transition` method: lock the tenant-scoped environment row, reject impossible edges with `E_INVALID_STATE_TRANSITION` before any write, update `environments.status`, and append the matching `environment_events` row in the same transaction with actor/request/previous/next/reason metadata. Redact free-text reason text before persisting event message/metadata.
 - Service state-machine stories use a pure `ServiceStatus.CanTransitionTo` table plus an atomic repository `Transition` method: lock the tenant-scoped service row, reject impossible edges with `E_INVALID_STATE_TRANSITION` before any write, update `services.status`, and append the matching `service_events` row in the same transaction with actor/request/previous/next/reason metadata. Redact free-text reason text before persisting event message/metadata.
 - Preview delete endpoints (BE-0268 pattern, DELETE `/v1/projects/{project_id}/previews/{preview_id}`) should stay parent-project scoped: route through `projectIDResolver` with action `preview.delete`, handler forwards principal org + path project/preview ids plus optional `If-Match`, store service verifies the tenant-scoped parent project and preview row before side effects, rejects stale/already-scheduled state, calls `PreviewEnvironmentRepository.ScheduleDeletion`, enqueues `delete_preview_environment`, and appends a redaction-safe `preview.delete` audit event in the same transaction. Return `202 Accepted` with the scheduled preview snapshot and ETag because teardown is durable but worker-driven.
@@ -34685,4 +34686,50 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - DELETE contract-test stories can layer a dedicated `*_contract_test.go` file beside focused endpoint tests to pin request-correlation, stdout/stderr silence, log redaction, and dependency-cause redaction without changing production code.
   - For DELETE preview invalid-input coverage, malformed `If-Match` is the stable request-boundary failure because the route has opaque path parameters and no body; assert the envelope does not echo the malformed header bytes.
+---
+
+## 2026-05-18 21:48 +03 - BE-0271
+- What was implemented
+  - Added authenticated `GET /v1/jobs` with `job.read`, stable `yalla.output.v1` / `yalla.error.v1` envelopes, query filters for project/environment/service/status/limit, and OpenAPI route metadata from the route table.
+  - Added `store.JobReader` and filtered `JobRepository.List` so list reads are tenant-scoped, parent filters are verified before listing, and SQL remains a constant expression with parameterized optional predicates.
+  - Wired the production API binary to the new job reader and kept the existing preview optional route wiring compatible through typed route options.
+  - Added contract tests for success, validation failure, unauthenticated, authorization denial, and typed not-found propagation, plus a store integration test for scoped/status filtering.
+- Files changed
+  - `cmd/yalla-api/main.go`
+  - `internal/controlplane/httpapi/jobs.go`
+  - `internal/controlplane/httpapi/jobs_test.go`
+  - `internal/controlplane/httpapi/routes.go`
+  - `internal/controlplane/httpapi/server.go`
+  - `internal/controlplane/store/job.go`
+  - `internal/controlplane/store/job_list_test.go`
+  - `internal/controlplane/store/jobreader.go`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `gofmt -w .`
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./...`
+  - `go test -race ./internal/controlplane/...`
+  - `go vet ./...`
+  - `go test -run TestMigrations ./...`
+  - `go test -run TestPolicyMatrix ./...`
+  - `go test -run TestFakeDokploy ./...`
+  - `go test -run TestQuotaConcurrency ./...`
+  - `go test -run TestRedaction ./...`
+  - `go test -run TestOpenAPI ./...`
+  - `golangci-lint run ./...`
+  - Pre-commit `scripts/verify.sh --strict --release` reran the strict release suite, including optional `govulncheck`, `staticcheck`, `golangci-lint`, `goreleaser check`, and snapshot release checks.
+- Results
+  - All commands above passed.
+  - `goimports` was not installed in the interactive shell PATH, so it could not be run directly.
+  - Pre-commit strict release verification passed, including optional `govulncheck` (no vulnerabilities), `staticcheck`, `golangci-lint`, and GoReleaser snapshot checks.
+- Remaining risks or follow-ups
+  - `GET /v1/jobs/{job_id}`, retry, and cancel remain separate unfinished PRD stories.
+  - Cursor pagination is still future work; this story follows the existing bounded `limit` list convention.
+- **Learnings for future iterations:**
+  - Store static analysis rejects dynamic SQL variables even when caller values are parameterized; optional filters should use a constant SQL statement with parameterized guard predicates.
+  - The existing `NewHandler` variadic preview extension can be generalized as typed route options to add optional late-story dependencies without sweeping every test call site.
+  - Job list filters should verify parent rows in `store.JobReader` before listing so cross-tenant or mismatched parent filters return typed not-found instead of an ambiguous empty list.
 ---
