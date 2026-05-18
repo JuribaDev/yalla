@@ -33515,3 +33515,14 @@ change that widened Reason to caller-supplied data.
     package scope today (verified via grep on `^func twoOrgs`); a
     future sibling that wants a different two-org shape will need to
     pick a name that does not collide.
+---
+## 2026-05-18 15:33 +03 - BE-0474
+- What was implemented: Added repository tenant-isolation coverage for `break_glass_sessions`, including overlapping two-tenant fixtures, cross-tenant append bystander checks, primary-key collision conflict/no-leak behavior, tenant-scoped list ordering/limit behavior, cross-tenant Get/MarkRevoked side-effect-free checks, and organization cascade isolation across active and revoked sessions.
+- Files changed: `internal/controlplane/store/break_glass_repository_tenant_isolation_test.go`, `ralph/prd.json`, `ralph/progress.txt`.
+- Verification run: `gofmt -w .`; `go mod tidy`; `go test ./internal/controlplane/store -run 'TestBreakGlassRepository.*(AppendOnOrgADoesNotTouchOrgBRows|AppendCrossTenantIDCollisionIsConflictAndDoesNotLeak|ListByOrganizationIsTenantScopedWithLifecycleSpread|GetAndMarkRevokedCrossTenantAreSideEffectFree|OrganizationDeleteCascadeIsTenantScoped)'`; `go test ./...`; `go test -race ./...`; `go vet ./...`; `go test ./internal/controlplane/...`; `go test -race ./internal/controlplane/...`; `go test -run TestMigrations ./...`; `golangci-lint run ./...`.
+- Results: All executed checks passed. `goimports`, `staticcheck`, and `govulncheck` were not installed in this environment.
+- Remaining risks or follow-ups: No production code changes were needed; this story is test coverage proving the existing tenant-scoped repository contract. Postgres-backed tests still depend on `YALLA_TEST_DATABASE_URL`; when unset, the shared harness skips them as designed.
+- **Learnings for future iterations:**
+  - `break_glass_sessions` tenant-isolation coverage should exercise both active and revoked rows because `MarkRevoked` is the only repository state transition.
+  - The strongest no-leak probe for this table is an overlapping actor/request/correlation shape across tenants plus byte-identical raw row reloads for every foreign-tenant bystander.
+---
