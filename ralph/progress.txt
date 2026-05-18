@@ -35659,3 +35659,37 @@ change that widened Reason to caller-supplied data.
   - Break-glass session creation is currently org-rooted. Do not let project/environment/service-scoped grants authorize it by mirroring descendant query parameters into the resolver unless the persisted session model is extended to carry the same descendant scope.
   - For unpathed admin break-glass creates, cross-tenant targeting belongs in the query string so `RequireAuth` can authorize the target before body validation or persistence.
 ---
+## 2026-05-19 01:47:24 +03 - BE-0296
+- What was implemented
+  - Added focused public contract tests for `POST /v1/admin/break-glass`.
+  - Covered success envelope shape, error envelope shape, request_id propagation, unauthenticated/unauthorized/invalid/not-found paths, stdout/stderr isolation, structured log redaction, bearer-token non-echo, and OpenAPI operation registration.
+  - Marked `BE-0296` as passing in `ralph/prd.json`.
+- Files changed
+  - `internal/controlplane/httpapi/admin_break_glass_contract_test.go`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `gofmt -w .`
+  - `goimports -w .` was not run because `goimports` is not installed.
+  - `go mod tidy`
+  - `go test ./internal/controlplane/httpapi -run 'TestPostAdminBreakGlass'`
+  - `go test ./internal/controlplane/httpapi -run 'TestPostAdminBreakGlass|TestBreakGlass'`
+  - `go test -run TestBreakGlass ./...`
+  - `go test ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./...`
+  - `go test -race ./internal/controlplane/...`
+  - `go vet ./...`
+  - `golangci-lint run ./...`
+  - Pre-commit `scripts/verify.sh --strict --release`
+- Results
+  - All required checks passed.
+  - `golangci-lint run ./...` passed with `0 issues`.
+  - Direct `staticcheck` and `govulncheck` binaries are not on `PATH`, but the pre-commit verification script ran its optional `govulncheck`, `staticcheck`, `golangci-lint`, and GoReleaser snapshot checks successfully.
+- Remaining risks or follow-ups
+  - This story is test-only; no production route behavior was changed.
+  - Untracked `ralph/codex-output/` files existed before this iteration and were left untouched.
+- **Learnings for future iterations:**
+  - Admin break-glass contract tests can use the same fake controller plus real `NewHandler`/`policy.NewEngine` shape as the existing break-glass suite; no Postgres or live Dokploy dependency is needed for this HTTP contract story.
+  - `golangci-lint` enforces checked type assertions in OpenAPI document tests; decode into typed structs where possible and check any `map[string]any` assertions explicitly.
+---

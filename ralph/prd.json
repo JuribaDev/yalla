@@ -6533,8 +6533,8 @@
       ],
       "type": "test-admin",
       "priority": 2,
-      "passes": false,
-      "notes": "Contract coverage for POST /v1/admin/break-glass."
+      "passes": true,
+      "notes": "Contract coverage for POST /v1/admin/break-glass. Added admin route contract tests for success/error envelopes, request_id propagation, stdout/stderr isolation, log/token redaction, unauthorized/invalid/not-found paths, and OpenAPI operation registration."
     },
     {
       "id": "BE-0297",
