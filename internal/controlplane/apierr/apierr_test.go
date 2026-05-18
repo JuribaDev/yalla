@@ -59,7 +59,7 @@ func TestCatalogIsSortedAndCoversCategories(t *testing.T) {
 		yerr.CodeAuthenticationRequired, yerr.CodeAuthInvalid, yerr.CodeAuthExpired, yerr.CodeAuth, yerr.CodeForbidden, yerr.CodeValidation,
 		yerr.CodeNotFound, yerr.CodeConflict, yerr.CodeInvalidStateTransition, yerr.CodeIdempotencyConflict,
 		yerr.CodeQuotaExceeded,
-		yerr.CodeServer, yerr.CodeDokployAuth, yerr.CodeDokployForbidden, yerr.CodeDokployNotFound, yerr.CodeDokployUnavailable, yerr.CodeUnavailable, yerr.CodeNetwork,
+		yerr.CodeServer, yerr.CodeDokployAuth, yerr.CodeDokployForbidden, yerr.CodeDokployNotFound, yerr.CodeDokployConflict, yerr.CodeDokployUnavailable, yerr.CodeUnavailable, yerr.CodeNetwork,
 		yerr.CodeTimeout, yerr.CodeInternal,
 	}
 	for _, code := range required {
@@ -105,6 +105,7 @@ func TestConstructorsEmitCataloguedCodes(t *testing.T) {
 		{"dokploy auth", DokployAuth(stderrors.New("x")), yerr.CodeDokployAuth, 502},
 		{"dokploy forbidden", DokployForbidden(stderrors.New("x")), yerr.CodeDokployForbidden, 502},
 		{"dokploy not found", DokployNotFound(stderrors.New("x")), yerr.CodeDokployNotFound, 502},
+		{"dokploy conflict", DokployConflict(stderrors.New("x")), yerr.CodeDokployConflict, 502},
 		{"dokploy unavailable", DokployUnavailable(stderrors.New("x")), yerr.CodeDokployUnavailable, 502},
 		{"store unavailable", StoreUnavailable(stderrors.New("x")), yerr.CodeUnavailable, 503},
 		{"queue unavailable", QueueUnavailable(stderrors.New("x")), yerr.CodeUnavailable, 503},
@@ -273,6 +274,54 @@ func TestDokployForbiddenContract(t *testing.T) {
 	}
 	if strings.Contains(body, "dkp_forbidden_secret_token_value") || strings.Contains(body, "Bearer") {
 		t.Errorf("dokploy-forbidden envelope leaked credential material: %s", body)
+	}
+}
+
+func TestDokployConflictContract(t *testing.T) {
+	t.Parallel()
+
+	const leaked = "Authorization: Bearer dkp_conflict_secret_token_value"
+	cause := stderrors.New("dokploy state conflict included token: " + leaked)
+	err := DokployConflict(cause).WithHint("retry without " + leaked)
+	if err.Code != yerr.CodeDokployConflict {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeDokployConflict)
+	}
+	if err.Message != "the Dokploy provisioning backend reported a state conflict" {
+		t.Fatalf("message = %q, want fixed generic upstream-conflict message", err.Message)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 502 {
+			t.Errorf("HTTPStatus = %d, want 502", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageGeneric {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageGeneric)
+		}
+		if entry.Retryable {
+			t.Error("E_DOKPLOY_CONFLICT must not be retryable")
+		}
+	}
+	if dep, ok := DependencyOf(err); !ok || dep != DependencyDokploy {
+		t.Fatalf("DependencyOf = %q, %v; want %q, true", dep, ok, DependencyDokploy)
+	}
+	if !stderrors.Is(err, cause) {
+		t.Fatal("DokployConflict must preserve the cause for server-side logging")
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-dokploy-conflict", err)
+	body := rec.Body.String()
+	if rec.Code != 502 {
+		t.Fatalf("status = %d, want 502; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-dokploy-conflict"`) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeDokployConflict)) {
+		t.Errorf("envelope body missing schema, request id, or docs link: %s", body)
+	}
+	if strings.Contains(body, "dkp_conflict_secret_token_value") || strings.Contains(body, "Bearer") {
+		t.Errorf("dokploy-conflict envelope leaked credential material: %s", body)
 	}
 }
 
@@ -661,6 +710,8 @@ func TestDependencyErrorsAreDistinguished(t *testing.T) {
 		{"dokploy", DokployUnavailable(stderrors.New("x")), DependencyDokploy, yerr.CodeDokployUnavailable},
 		{"dokploy auth", DokployAuth(stderrors.New("x")), DependencyDokploy, yerr.CodeDokployAuth},
 		{"dokploy forbidden", DokployForbidden(stderrors.New("x")), DependencyDokploy, yerr.CodeDokployForbidden},
+		{"dokploy not found", DokployNotFound(stderrors.New("x")), DependencyDokploy, yerr.CodeDokployNotFound},
+		{"dokploy conflict", DokployConflict(stderrors.New("x")), DependencyDokploy, yerr.CodeDokployConflict},
 		{"store", StoreUnavailable(stderrors.New("x")), DependencyStore, yerr.CodeUnavailable},
 		{"queue", QueueUnavailable(stderrors.New("x")), DependencyQueue, yerr.CodeUnavailable},
 		{"network", NetworkFailure(stderrors.New("x")), DependencyNetwork, yerr.CodeNetwork},

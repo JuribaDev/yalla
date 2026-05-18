@@ -36,6 +36,7 @@ func TestCode_ExitCodeMappingIsStable(t *testing.T) {
 		{CodeDokployAuth, 8},
 		{CodeDokployForbidden, 8},
 		{CodeDokployNotFound, 8},
+		{CodeDokployConflict, 8},
 		{CodeDokployUnavailable, 8},
 		{CodeUpstreamBug, 8},
 		{CodeUnavailable, 8},
@@ -98,6 +99,22 @@ func TestDokployForbiddenDescriptionNamesUpstreamPermissionRejection(t *testing.
 	const want = "upstream Dokploy provisioning backend denied the requested operation"
 	if got != want {
 		t.Fatalf("E_DOKPLOY_FORBIDDEN description = %q, want %q", got, want)
+	}
+}
+
+func TestDokployConflictDescriptionNamesUpstreamStateConflict(t *testing.T) {
+	t.Parallel()
+
+	var got string
+	for _, doc := range AllCodes() {
+		if doc.Code == string(CodeDokployConflict) {
+			got = doc.Description
+			break
+		}
+	}
+	const want = "upstream Dokploy provisioning backend reported a state conflict"
+	if got != want {
+		t.Fatalf("E_DOKPLOY_CONFLICT description = %q, want %q", got, want)
 	}
 }
 

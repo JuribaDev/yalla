@@ -15,8 +15,9 @@
 //   - Not found / conflict: NotFound, Conflict
 //   - Quota:                QuotaExceeded
 //   - Dependency failures:  DokployAuth, DokployForbidden, DokployNotFound,
-//     DokployUnavailable, StoreUnavailable, QueueUnavailable, NetworkFailure,
-//     Timeout — each distinguishes which dependency failed via DependencyOf.
+//     DokployConflict, DokployUnavailable, StoreUnavailable, QueueUnavailable,
+//     NetworkFailure, Timeout — each distinguishes which dependency failed via
+//     DependencyOf.
 //   - Internal:             Internal
 //
 // Two cross-cutting guarantees back the taxonomy:
@@ -154,6 +155,7 @@ var taxonomy = map[yerr.Code]struct {
 	yerr.CodeDokployAuth:            {false, MessageGeneric, "the upstream Dokploy provisioning backend rejected Yalla credentials"},
 	yerr.CodeDokployForbidden:       {false, MessageGeneric, "the upstream Dokploy provisioning backend denied the requested operation"},
 	yerr.CodeDokployNotFound:        {false, MessageGeneric, "the upstream Dokploy provisioning backend could not find a required resource"},
+	yerr.CodeDokployConflict:        {false, MessageGeneric, "the upstream Dokploy provisioning backend reported a state conflict"},
 	yerr.CodeDokployUnavailable:     {true, MessageGeneric, "the upstream Dokploy provisioning backend is temporarily unavailable"},
 	yerr.CodeUpstreamBug:            {false, MessageGeneric, "a known upstream Dokploy defect was encountered"},
 	yerr.CodeUnavailable:            {true, MessageGeneric, "a Yalla-owned dependency (datastore or job queue) is temporarily unavailable"},
@@ -579,6 +581,17 @@ func DokployForbidden(cause error) *yerr.Error {
 // customer-facing resource exists.
 func DokployNotFound(cause error) *yerr.Error {
 	return yerr.New(yerr.CodeDokployNotFound, "the Dokploy provisioning backend could not find a required resource").
+		WithHint("contact Yalla support; the upstream provisioning state needs operator attention").
+		Wrap(&dependencyError{dep: DependencyDokploy, cause: cause})
+}
+
+// DokployConflict builds an E_DOKPLOY_CONFLICT error (HTTP 502) for a private
+// Dokploy response that rejected the operation because the upstream state
+// conflicted with Yalla's desired action. The public message is fixed and
+// generic: it must never expose upstream response bodies, resource identifiers,
+// Dokploy tokens, or whether a particular customer-facing resource exists.
+func DokployConflict(cause error) *yerr.Error {
+	return yerr.New(yerr.CodeDokployConflict, "the Dokploy provisioning backend reported a state conflict").
 		WithHint("contact Yalla support; the upstream provisioning state needs operator attention").
 		Wrap(&dependencyError{dep: DependencyDokploy, cause: cause})
 }

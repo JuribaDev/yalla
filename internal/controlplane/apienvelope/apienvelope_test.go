@@ -194,6 +194,7 @@ func TestStatusForCode(t *testing.T) {
 		{yerr.CodeServer, http.StatusBadGateway},
 		{yerr.CodeDokployAuth, http.StatusBadGateway},
 		{yerr.CodeDokployForbidden, http.StatusBadGateway},
+		{yerr.CodeDokployConflict, http.StatusBadGateway},
 		{yerr.CodeDokployUnavailable, http.StatusBadGateway},
 		{yerr.CodeUpstreamBug, http.StatusBadGateway},
 		{yerr.CodeNetwork, http.StatusBadGateway},

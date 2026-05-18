@@ -230,7 +230,7 @@ func TestClientForbiddenFailure(t *testing.T) {
 	}
 }
 
-// TestClientConflict maps a Dokploy 409 onto E_CONFLICT.
+// TestClientConflict maps a Dokploy 409 onto E_DOKPLOY_CONFLICT.
 func TestClientConflict(t *testing.T) {
 	t.Parallel()
 	fake := dokployfake.New()
@@ -242,8 +242,11 @@ func TestClientConflict(t *testing.T) {
 		t.Fatalf("first create: %v", err)
 	}
 	_, err := c.EnsureProject(context.Background(), dokploy.EnsureProjectInput{OrganizationID: orgID, Name: "store"})
-	if code := codeOf(t, err); code != yerr.CodeConflict {
-		t.Fatalf("code = %s, want %s", code, yerr.CodeConflict)
+	if code := codeOf(t, err); code != yerr.CodeDokployConflict {
+		t.Fatalf("code = %s, want %s", code, yerr.CodeDokployConflict)
+	}
+	if apierr.Retryable(err) {
+		t.Fatal("an upstream Dokploy conflict must not be retryable")
 	}
 }
 

@@ -313,7 +313,7 @@ func (c *Client) statusError(method, path string, status int, payload []byte) er
 	case http.StatusNotFound:
 		return apierr.DokployNotFound(detail)
 	case http.StatusConflict:
-		return apierr.Conflict("the Dokploy resource already exists").Wrap(detail)
+		return apierr.DokployConflict(detail)
 	case http.StatusTooManyRequests:
 		return apierr.DokployUnavailable(detail)
 	default:
