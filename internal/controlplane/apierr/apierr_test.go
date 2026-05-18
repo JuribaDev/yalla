@@ -652,6 +652,68 @@ func TestConflictContract(t *testing.T) {
 	}
 }
 
+func TestInvalidStateTransitionContract(t *testing.T) {
+	t.Parallel()
+
+	const secret = "Authorization: Bearer transition-secret-token"
+	err := InvalidStateTransition(" deployment ", " queued "+secret, " succeeded ")
+	if err.Code != yerr.CodeInvalidStateTransition {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeInvalidStateTransition)
+	}
+	if err.Message != "deployment cannot transition from queued "+secret+" to succeeded" {
+		t.Fatalf("message = %q, want stable resource/from/to message", err.Message)
+	}
+	if err.Hint != "refresh the resource state and choose a supported lifecycle transition" {
+		t.Fatalf("hint = %q, want fixed lifecycle remediation hint", err.Hint)
+	}
+	if got := err.Details["resource"]; got != "deployment" {
+		t.Errorf("details.resource = %q, want deployment", got)
+	}
+	if got := err.Details["previous_state"]; got != "queued "+secret {
+		t.Errorf("details.previous_state = %q, want queued state", got)
+	}
+	if got := err.Details["next_state"]; got != "succeeded" {
+		t.Errorf("details.next_state = %q, want succeeded", got)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 409 {
+			t.Errorf("HTTPStatus = %d, want 409", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageSpecific {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageSpecific)
+		}
+		if entry.Retryable {
+			t.Error("E_INVALID_STATE_TRANSITION must not be retryable")
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-invalid-transition", err)
+	body := rec.Body.String()
+	if rec.Code != 409 {
+		t.Fatalf("status = %d, want 409; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-invalid-transition"`) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeInvalidStateTransition)) {
+		t.Errorf("envelope body missing schema, request id, or docs link: %s", body)
+	}
+	if !strings.Contains(body, `"code":"E_INVALID_STATE_TRANSITION"`) ||
+		!strings.Contains(body, `"resource":"deployment"`) ||
+		!strings.Contains(body, `"previous_state":"queued Authorization: `+output.Sentinel+`"`) ||
+		!strings.Contains(body, `"next_state":"succeeded"`) {
+		t.Errorf("envelope body missing invalid-transition fields/details: %s", body)
+	}
+	if strings.Contains(body, "transition-secret-token") || strings.Contains(body, "Bearer") {
+		t.Errorf("invalid-state-transition envelope leaked credential material: %s", body)
+	}
+	if !strings.Contains(body, output.Sentinel) {
+		t.Errorf("expected redaction sentinel %q in body: %s", output.Sentinel, body)
+	}
+}
+
 func TestIdempotencyConflictContract(t *testing.T) {
 	t.Parallel()
 

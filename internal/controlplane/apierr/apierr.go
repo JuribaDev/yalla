@@ -376,6 +376,7 @@ func InvalidStateTransition(resource, from, to string) *yerr.Error {
 		message = resource + " cannot transition from " + from + " to " + to
 	}
 	return yerr.New(yerr.CodeInvalidStateTransition, message).
+		WithHint("refresh the resource state and choose a supported lifecycle transition").
 		WithDetail("resource", resource).
 		WithDetail("previous_state", from).
 		WithDetail("next_state", to)

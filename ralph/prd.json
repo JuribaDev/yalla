@@ -10865,8 +10865,8 @@
       ],
       "type": "error-contract",
       "priority": 1,
-      "passes": false,
-      "notes": "Stable error code: E_INVALID_STATE_TRANSITION."
+      "passes": true,
+      "notes": "Implemented stable E_INVALID_STATE_TRANSITION contract coverage: typed apierr.InvalidStateTransition trims resource/state inputs, emits a fixed lifecycle remediation hint, includes machine-readable resource/previous_state/next_state details, maps to HTTP 409 through apienvelope, remains non-retryable with MessageSpecific policy, renders yalla.error.v1 with request_id and docs link, redacts credential-looking text at the envelope boundary, and pins the status mapping directly in apienvelope tests."
     },
     {
       "id": "BE-0525",

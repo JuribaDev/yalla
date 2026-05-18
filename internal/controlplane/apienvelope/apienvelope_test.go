@@ -185,6 +185,7 @@ func TestStatusForCode(t *testing.T) {
 		{yerr.CodeScopeRequired, http.StatusBadRequest},
 		{yerr.CodeNotFound, http.StatusNotFound},
 		{yerr.CodeConflict, http.StatusConflict},
+		{yerr.CodeInvalidStateTransition, http.StatusConflict},
 		{yerr.CodeIdempotencyConflict, http.StatusConflict},
 		{yerr.CodeRateLimited, http.StatusTooManyRequests},
 		{yerr.CodeQuotaExceeded, http.StatusTooManyRequests},
