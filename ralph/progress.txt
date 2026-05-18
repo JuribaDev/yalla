@@ -35842,3 +35842,46 @@ change that widened Reason to caller-supplied data.
   - Admin break-glass terminate follows the same query-scoped target pattern as admin break-glass start: `organization_id` must be authorization-visible before the handler mutates data, and absence defaults to the principal's home organization.
   - The store-backed revoke path already appends the elevated-access audit event and lifecycle event atomically, so the admin route should stay a thin wrapper over `BreakGlassController.Revoke`.
 ---
+## 2026-05-19 02:17 +03 - BE-0526
+- What was implemented
+  - Added the stable `E_DOKPLOY_AUTH` error contract for private Dokploy credential/permission rejection.
+  - Catalogued the code in `internal/errors`, `apierr`, and `apienvelope` with HTTP 502, non-retryable dependency semantics, generic public messaging, documentation URL rendering, and redaction coverage.
+  - Switched the typed Dokploy client 401/403 upstream mapping from generic `E_INTERNAL` to `apierr.DokployAuth`, preserving the redacted upstream cause for server-side diagnostics only.
+  - Updated the opt-in live Dokploy smoke assertion and the Dokploy package guidance to reflect the new typed mapping.
+  - Marked `BE-0526` as passing in `ralph/prd.json`.
+- Files changed
+  - `internal/errors/errors.go`
+  - `internal/errors/errors_test.go`
+  - `internal/controlplane/apierr/apierr.go`
+  - `internal/controlplane/apierr/apierr_test.go`
+  - `internal/controlplane/apienvelope/apienvelope.go`
+  - `internal/controlplane/apienvelope/apienvelope_test.go`
+  - `internal/controlplane/dokploy/client.go`
+  - `internal/controlplane/dokploy/client_test.go`
+  - `internal/controlplane/dokploy/live_dokploy_smoke_test.go`
+  - `internal/controlplane/dokploy/AGENTS.md`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `go test ./internal/errors ./internal/controlplane/apierr ./internal/controlplane/apienvelope ./internal/controlplane/dokploy` first failed on missing `CodeDokployAuth` / `DokployAuth` constructor, proving the new contract tests were red before implementation.
+  - `gofmt -w .`
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestFakeDokploy ./...`
+  - `golangci-lint run ./...`
+  - Pre-commit `scripts/verify.sh --strict --release`
+- Results
+  - All required and installed optional checks passed.
+  - Pre-commit strict release verification passed, including `govulncheck`, `staticcheck`, `golangci-lint`, GoReleaser config check, snapshot release build, and the configured focused suites.
+  - `goimports` was not installed.
+  - `staticcheck` and `govulncheck` were not on the interactive shell path, but the pre-commit verification environment resolved and ran both successfully.
+- Remaining risks or follow-ups
+  - The next Dokploy-specific error contracts (`E_DOKPLOY_FORBIDDEN`, `E_DOKPLOY_NOT_FOUND`, etc.) should follow the same multi-file pattern: `internal/errors` constant/docs/exit code, `apierr` taxonomy + constructor, `apienvelope` status case, envelope redaction tests, and typed client mapping where applicable.
+- **Learnings for future iterations:**
+  - Dokploy upstream 401/403 is now a first-class `E_DOKPLOY_AUTH` dependency error, not `E_INTERNAL` and never customer-facing `E_AUTH` / `E_FORBIDDEN`.
+  - This code is non-retryable, carries `DependencyDokploy`, maps to HTTP 502, and uses a fixed generic public message while preserving the redacted upstream body/token rejection only as the wrapped cause.
+---

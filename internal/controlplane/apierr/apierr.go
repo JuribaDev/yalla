@@ -14,7 +14,7 @@
 //   - Validation:           InvalidInput (with field paths), Invalid
 //   - Not found / conflict: NotFound, Conflict
 //   - Quota:                QuotaExceeded
-//   - Dependency failures:  DokployUnavailable, StoreUnavailable,
+//   - Dependency failures:  DokployAuth, DokployUnavailable, StoreUnavailable,
 //     QueueUnavailable, NetworkFailure, Timeout — each distinguishes which
 //     dependency failed via DependencyOf.
 //   - Internal:             Internal
@@ -151,6 +151,7 @@ var taxonomy = map[yerr.Code]struct {
 	yerr.CodeRateLimited:            {true, MessageSpecific, "the caller exceeded a request rate limit; back off and retry"},
 	yerr.CodeUnsupported:            {false, MessageSpecific, "the requested operation is not supported by this build"},
 	yerr.CodeServer:                 {true, MessageGeneric, "the upstream Dokploy provisioning backend returned an error"},
+	yerr.CodeDokployAuth:            {false, MessageGeneric, "the upstream Dokploy provisioning backend rejected Yalla credentials"},
 	yerr.CodeDokployUnavailable:     {true, MessageGeneric, "the upstream Dokploy provisioning backend is temporarily unavailable"},
 	yerr.CodeUpstreamBug:            {false, MessageGeneric, "a known upstream Dokploy defect was encountered"},
 	yerr.CodeUnavailable:            {true, MessageGeneric, "a Yalla-owned dependency (datastore or job queue) is temporarily unavailable"},
@@ -546,6 +547,16 @@ func QuotaExceeded(resource string, limit int64) *yerr.Error {
 		e = e.WithDetail(DetailKeyQuotaLimit, strconv.FormatInt(limit, 10))
 	}
 	return e
+}
+
+// DokployAuth builds an E_DOKPLOY_AUTH error (HTTP 502) for a private Dokploy
+// response that rejected Yalla's own upstream credentials or permissions. The
+// public message is fixed and generic: it must never expose the Dokploy token,
+// upstream response body, or whether a particular upstream key exists.
+func DokployAuth(cause error) *yerr.Error {
+	return yerr.New(yerr.CodeDokployAuth, "the Dokploy provisioning backend rejected Yalla credentials").
+		WithHint("contact Yalla support; the upstream provisioning credentials need operator attention").
+		Wrap(&dependencyError{dep: DependencyDokploy, cause: cause})
 }
 
 // DokployUnavailable builds an E_DOKPLOY_UNAVAILABLE error (HTTP 502) for a

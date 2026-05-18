@@ -193,8 +193,8 @@ func TestClientNotFound(t *testing.T) {
 }
 
 // TestClientAuthorizationFailure maps a Dokploy credential rejection onto a
-// non-retryable internal error: it is a Yalla misconfiguration, not something
-// the customer or a retry can fix.
+// non-retryable upstream-auth error: it is a Yalla misconfiguration, not
+// something the customer or a retry can fix.
 func TestClientAuthorizationFailure(t *testing.T) {
 	t.Parallel()
 	fake := dokployfake.New()
@@ -204,8 +204,8 @@ func TestClientAuthorizationFailure(t *testing.T) {
 	})
 
 	_, err := c.EnsureOrganization(context.Background(), dokploy.EnsureOrganizationInput{Name: "acme"})
-	if code := codeOf(t, err); code != yerr.CodeInternal {
-		t.Fatalf("code = %s, want %s", code, yerr.CodeInternal)
+	if code := codeOf(t, err); code != yerr.CodeDokployAuth {
+		t.Fatalf("code = %s, want %s", code, yerr.CodeDokployAuth)
 	}
 	if apierr.Retryable(err) {
 		t.Fatal("a credential-rejection error must not be retryable")

@@ -307,10 +307,7 @@ func (c *Client) statusError(method, path string, status int, payload []byte) er
 	case http.StatusBadRequest:
 		return apierr.Invalid("the Dokploy provisioning request was rejected").Wrap(detail)
 	case http.StatusUnauthorized, http.StatusForbidden:
-		// The Dokploy backend rejected Yalla's own credentials. This is an
-		// internal Yalla misconfiguration the customer cannot act on and that
-		// a retry will not fix, so it is a non-retryable internal error.
-		return apierr.Internal(detail)
+		return apierr.DokployAuth(detail)
 	case http.StatusNotFound:
 		return apierr.NotFound("dokploy resource", "").Wrap(detail)
 	case http.StatusConflict:

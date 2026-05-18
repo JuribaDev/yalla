@@ -229,7 +229,7 @@ func TestLiveDokploySmokeExercisesLiveEndpoint(t *testing.T) {
 			t.Errorf("smoke leaked bearer token %q in error message %q; the Dokploy client redactor MUST strip it before the wire", sentinelToken, msg)
 		}
 		// The error MUST be a typed yerr.Error. The Dokploy client classifies
-		// a 401/403 from the upstream as `CodeInternal` because Yalla's own
+		// a 401/403 from the upstream as `CodeDokployAuth` because Yalla's own
 		// credentials were rejected — that is an internal misconfiguration
 		// the customer cannot act on. The smoke pins that contract: if a
 		// regression ever surfaced a 401 as a customer-actionable
@@ -239,8 +239,8 @@ func TestLiveDokploySmokeExercisesLiveEndpoint(t *testing.T) {
 		if !errors.As(err, &ye) {
 			t.Fatalf("expected typed *yerr.Error; got %T (%v)", err, err)
 		}
-		if ye.Code != yerr.CodeInternal {
-			t.Errorf("expected upstream 401 to surface as CodeInternal (Yalla's credentials rejected); got %s", ye.Code)
+		if ye.Code != yerr.CodeDokployAuth {
+			t.Errorf("expected upstream 401 to surface as CodeDokployAuth (Yalla's credentials rejected); got %s", ye.Code)
 		}
 		// And the server must have actually seen the bearer header — that
 		// proves the smoke wired the token through end-to-end.
