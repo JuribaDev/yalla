@@ -171,6 +171,12 @@ type RestartServiceInput struct {
 	ServiceID string
 }
 
+// RollbackServiceInput names the service to roll back.
+type RollbackServiceInput struct {
+	// ServiceID is the service to roll back; required.
+	ServiceID string
+}
+
 // StartServiceInput names the service to start.
 type StartServiceInput struct {
 	// ServiceID is the service to start; required.

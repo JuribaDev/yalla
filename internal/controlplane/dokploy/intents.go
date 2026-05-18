@@ -198,6 +198,19 @@ func (c *Client) RestartService(ctx context.Context, in RestartServiceInput) (Se
 	return st, nil
 }
 
+// RollbackService rolls a service back and returns its post-command runtime
+// status as reported by Dokploy.
+func (c *Client) RollbackService(ctx context.Context, in RollbackServiceInput) (ServiceStatus, error) {
+	if v := requireFields(field{"service_id", in.ServiceID}); v != nil {
+		return ServiceStatus{}, v
+	}
+	var st ServiceStatus
+	if err := c.post(ctx, "/api/services/"+url.PathEscape(strings.TrimSpace(in.ServiceID))+"/rollback", nil, &st); err != nil {
+		return ServiceStatus{}, err
+	}
+	return st, nil
+}
+
 // StartService starts a service and returns its post-command runtime status as
 // reported by Dokploy.
 func (c *Client) StartService(ctx context.Context, in StartServiceInput) (ServiceStatus, error) {
