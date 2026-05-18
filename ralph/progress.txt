@@ -967,6 +967,7 @@
   - `go test -run TestQuotaConcurrency ./...`
   - `go test -run TestFakeDokploy ./...`
   - `golangci-lint run ./...`
+  - Pre-commit `scripts/verify.sh --strict --release`, including full tests, race tests, focused suites, `govulncheck`, `staticcheck`, `golangci-lint`, `goreleaser check`, and snapshot release build
 - Results
   - All listed commands passed.
   - `goimports`, `staticcheck`, and `govulncheck` are not installed in this environment, so they were not run.
@@ -34939,4 +34940,41 @@ change that widened Reason to caller-supplied data.
   - API key lifecycle now has both a source-of-truth status and legacy lifecycle stamps; explicit state transitions should go through `APIKeyRepository.Transition`, while direct repository helpers such as `Revoke` remain low-level compatibility surfaces.
   - Customer-facing revoke should keep the lifecycle event and audit event in the same transaction so the resource timeline and public audit trail cannot diverge.
   - When adding a new observable lifecycle column to a tenant-scoped table, update existing byte-identical bystander helpers so cross-tenant mutation tests cover the new column.
+---
+## 2026-05-18 22:37 +03 - BE-0275
+- What was implemented
+  - Added public contract coverage for `GET /v1/jobs/{job_id}`.
+  - New tests pin response data being written only through `http.ResponseWriter`, bearer-token redaction in structured request logs and response bodies, wrapped dependency-cause redaction in error envelopes, and OpenAPI contract metadata for auth/security plus `{job_id}` path parameter documentation.
+  - Marked `BE-0275` as passing in `ralph/prd.json`.
+- Files changed
+  - `internal/controlplane/httpapi/jobs_get_contract_test.go`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `gofmt -w internal/controlplane/httpapi/jobs_get_contract_test.go && go test ./internal/controlplane/httpapi -run 'TestGetJob'`
+  - `gofmt -w .`
+  - `goimports -w .` was not run because `goimports` is not installed
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `go test -run TestPolicyMatrix ./...`
+  - `go test -run TestQuotaConcurrency ./...`
+  - `go test -run TestFakeDokploy ./...`
+  - `golangci-lint run ./...`
+- Results
+  - Required checks passed.
+  - Focused HTTP, control-plane, migration, policy, quota, and fake-Dokploy suites passed.
+  - `golangci-lint` reported `0 issues`.
+  - Strict pre-commit verification passed; `govulncheck` reported no vulnerabilities.
+  - `BE-0275` marked `passes: true` in `ralph/prd.json`.
+- Remaining risks or follow-ups
+  - `goimports` is not installed in this runner.
+  - No live Dokploy smoke was run; this is HTTP contract-test coverage and normal tests do not require live Dokploy.
+- **Learnings for future iterations:**
+  - For jobs read endpoints, keep endpoint-behavior tests in `jobs_test.go` and put remaining public-contract assertions such as process-stream silence, log redaction, dependency-cause redaction, and OpenAPI metadata in a sibling `jobs_*_contract_test.go` file.
+  - `GET /v1/jobs/{job_id}` uses the reader twice on the happy path: once in `jobIDResolver` to derive the owning scope for policy, and once in the handler to render the tenant-scoped response.
 ---

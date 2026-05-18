@@ -6134,8 +6134,8 @@
       ],
       "type": "test-jobs",
       "priority": 2,
-      "passes": false,
-      "notes": "Contract coverage for GET /v1/jobs/{job_id}."
+      "passes": true,
+      "notes": "Contract coverage for GET /v1/jobs/{job_id}. Added internal/controlplane/httpapi/jobs_get_contract_test.go to pin response-writer-only output, bearer redaction in request logs and responses, dependency-cause redaction in error envelopes, and OpenAPI security/path-parameter metadata. Existing jobs_test.go covers success/error envelopes, request_id propagation, unauthenticated, unauthorized, invalid input, not found, and route registration."
     },
     {
       "id": "BE-0276",
