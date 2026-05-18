@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Repository CRUD invariants test file for a **tenant-scoped table whose mutation surface spans FOUR distinct UPDATE paths (Update / UpdateDisplayName / ScheduleDeletion / Restore) PLUS Insert, with a database-managed version column AND a nullable soft-delete column (deletion_scheduled_at)** (BE-0437 pattern, internal/controlplane/store/project_repository_invariants_test.go): this is the BE-0425 organization template extended with the second-UPDATE-path projection (UpdateDisplayName must run the dual-anchor AND prove the path-specific WHERE/SET isolation — the row's slug must be untouched since the SET clause is `SET display_name = $3` only) and the BE-0431 inverse-soft-delete projection (Restore must dual-anchor AND clear deletion_scheduled_at back to NULL — the trigger fires on any UPDATE so a forgotten `SET deletion_scheduled_at = NULL` clause would still pass the version/timestamp anchors, making the "deletion_scheduled_at is nil after Restore" assertion the load-bearing one). Insert rollback proof must span ALL read surfaces the rolled-back row touches: by-id Get, by-org ListByOrganization, AND CountByOrganization (the count the quota layer reads), so a future refactor that switched Insert to a SAVEPOINT or autonomous transaction would leak the row into a quota check even though Get reports NotFound. The nil-Tx typed-Internal guard only needs to close the ONE mutation path the existing tests did not cover (here UpdateDisplayName) — duplicating Insert/Update/ScheduleDeletion/Restore guards already proved elsewhere is noise. Test fixtures compose seedOrg + projectFixture(f.Project(org, label)) + insertProject helpers from project_test.go; do not re-implement them at package scope.
 - Repository tenant-isolation test file for a **tenant-scoped child table with a database-managed version column, a composite FK to a parent api_keys row, and NO secret-bearing column** (BE-0436 pattern, internal/controlplane/store/api_key_scope_tenant_isolation_test.go). The BE-0430 membership_tenant_isolation_test.go shape is the closest template; four substitutions are mandatory: (a) the cross-tenant indistinguishability probe uses the SAME (Code, Hint) anchor pattern, but on a single id column rather than a composite key — both the cross-tenant scope id and an unknown scope id under the prober's tenant must render byte-identical typed NotFound; (b) the byte-identical-bystander assertion carries TWO independent trigger anchors (api_key_scopes_set_updated_at AND api_key_scopes_bump_version) instead of memberships' one (memberships_set_updated_at + role_version-only-via-UpdateRole). Both must be asserted because a regression could drift one without the other; (c) the load-bearing worst-case fixture is the shared-scope-text fixture (both tenants own a scope row with the SAME scope text on their OWN respective keys) because the (organization_id, api_key_id, scope) UNIQUE constraint is per-tenant, so the WHERE filter is the only thing keeping the rows apart at the read path — every byte-identical-bystander test uses this fixture as a result; (d) ListByAPIKey is a SECOND tenant-scoped list path (the parent api_key_id is the secondary tenant-scoping anchor) and must be tested both for cross-tenant api_key_id (returns empty non-nil slice) AND indistinguishable from an unknown api_key_id under the prober's tenant. The api_key_scopes table has NO secret-bearing column (the scope text itself is the customer-facing capability string), so the BE-0434 raw-secret_hash probe has no analogue and the byte-identical-bystander assertion alone covers every observable column. Helpers seedAPIKeyForScopes / newAPIKeyScope / insertAPIKeyScope are reused from api_key_scope_repository_invariants_test.go in the same store_test package — sibling-file test name collisions (e.g. TestAPIKeyScopeRepositoryListByAPIKeyIsTenantScoped from BE-0435) MUST be checked with `grep '^func Test'` on the sibling invariants file before adding new test names. Future tenant-scoped child tables with a version column and no secret-bearing column (variables.value when is_secret=false, future per-scope capability tables, scoped grant link tables not yet sharded out) should reuse THIS file as the template; if the row body carries a secret-bearing column add the BE-0434 raw-column probe on top.
 - New customer-data resource = full vertical when it is the FIRST story for that table (BE-0435 pattern, api_key_scopes migration 0033, store/api_key_scope.go, api_key_scope_repository_invariants_test.go): this story is allowed to land migration + repository + first-pass tests because no prior story touched the table (no migration, no repo, no port, no handler, no wiring). The migration declares the table tenant-scoped at the database via the composite FK pattern established by project_grants / environment_grants — and when the parent table never exposed UNIQUE (organization_id, id) (api_keys was such a table) the SAME migration adds the constraint to the parent so the child's composite FK has a target; this is a safe additive change because the parent's PK already makes id unique and the new UNIQUE merely pairs it with organization_id. Repository follows the membership.go / project_grant.go pattern: stateless struct, *Tx for mutations with nil-Tx -> typed apierr.Internal, Querier for reads, pgx.ErrNoRows -> apierr.NotFound, mapWriteError for constraint-violation -> apierr.Conflict, tag.RowsAffected() == 0 -> apierr.NotFound on Delete. Tests combine CRUD + row-shape invariants in one file since no prior tests exist; tenant-isolation byte-identical-bystander proof is deferred to the paired BE-0436 (tenant-isolation) story that always follows.
 - Test fixture caveat for api_keys-related seeding (BE-0435 learning, internal/controlplane/store/api_key_scope_repository_invariants_test.go seedAPIKeyForScopes): testutil.Factory.APIKey stamps a per-FACTORY prefix `yk_<token[:8]>`, NOT a per-key prefix. Two keys minted from the same factory get the same Prefix value, which collides with the api_keys_prefix_key UNIQUE constraint when two are inserted in the same test. Always derive the persisted prefix as `key.Prefix + "_" + key.ID` (or similar per-row salt) — never use `key.Prefix + "_" + label` because the same label is reused across orgs in tenant-isolation fixtures and the label is not unique.
@@ -30983,4 +30984,154 @@ change that widened Reason to caller-supplied data.
   - The BE-0435 invariants file already covers `TestAPIKeyScopeRepositoryGetIsTenantScoped` / `TestAPIKeyScopeRepositoryListByAPIKeyIsTenantScoped` / `TestAPIKeyScopeRepositoryListByOrganizationIsTenantScoped` as plain "cross-tenant id returns the right shape" tests. The BE-0436 tenant-isolation file must NOT redeclare those names — `go vet` will catch it (the api_key_scope_tenant_isolation_test.go file ran into `TestAPIKeyScopeRepositoryListByAPIKeyIsTenantScoped` redeclaration on first compile). Future paired-CRUD/tenant-isolation stories should grep the sibling invariants file for `^func Test` before naming new tests.
   - The byte-identical-bystander pattern for api_key_scopes carries TWO independent trigger anchors (`api_key_scopes_set_updated_at` and `api_key_scopes_bump_version`) — neither alone is sufficient, both together catch missing tenant predicates even when the column writes look correct. The `assertScopeByteIdentical` helper asserts both plus id/org/api_key_id/scope/created_at.
   - The shared-scope-text fixture (both tenants carry a row with the SAME scope text on their OWN respective keys) is the load-bearing worst-case fixture for api_key_scopes tenant isolation: the (organization_id, api_key_id, scope) UNIQUE constraint allows it, so any List/Update/Delete regression that resolved its WHERE clause by scope text alone — or by id alone — would leak rather than fail with a duplicate-tuple error.
+---
+
+## 2026-05-18 — BE-0437 Repository: projects CRUD and invariants
+- What was implemented
+  - Added `internal/controlplane/store/project_repository_invariants_test.go`
+    — the BE-0425 / BE-0433 invariants-file template adapted for the projects
+    table. projects is the first invariants-file target with FOUR distinct
+    UPDATE paths (Update / UpdateDisplayName / ScheduleDeletion / Restore)
+    on top of Insert, a database-managed version column maintained by the
+    projects_bump_version trigger, AND a nullable soft-delete column
+    (deletion_scheduled_at), so the file projects the full dual-anchor
+    (version+1, updated_at refreshed, created_at preserved) through every
+    UPDATE path AND adds the two path-specific invariants the dual-anchor
+    alone does not catch:
+      1. UpdateDisplayName must leave slug untouched — its `SET display_name
+         = $3` clause is the only one that can move on this path, and a
+         regression that copy-pasted the Update SET list would still pass
+         version/timestamp anchors.
+      2. Restore must clear deletion_scheduled_at back to NULL — the
+         trigger fires on any UPDATE, so a forgotten `SET
+         deletion_scheduled_at = NULL` clause would still pass
+         version/timestamp anchors. The "DeletionScheduledAt is nil after
+         Restore" assertion is the load-bearing one.
+  - Eight new t.Parallel tests, all proving CRUD invariants the existing
+    project_test.go / project_delete_test.go / project_restore_test.go did
+    not cover (those files exercise tenant-scoping, NotFound,
+    duplicate-slug, stale-If-Match, and the recordingAuthorizer/quota/jobs
+    service-level paths; the repository's row-shape and per-UPDATE-path
+    lifecycle contract was effectively untested):
+      * TestProjectRepositoryInsertReturnsRowAtVersion1WithTimestamps —
+        Insert returns the row the table actually committed: version is 1
+        (the optimistic-concurrency baseline), created_at and updated_at
+        are both non-zero AND byte-equal on the fresh row (no UPDATE has
+        fired yet, so projects_bump_version has not run), and
+        deletion_scheduled_at is nil. Cross-checks the returned row
+        against a subsequent Get.
+      * TestProjectRepositoryUpdateBumpsVersionAndRefreshesUpdatedAt —
+        full dual-anchor for the generic Update path: version advances by
+        EXACTLY one (the existing TestProjectRepositoryUpdateApplies only
+        asserts `>`), updated_at refreshes >= baseline, created_at is
+        preserved byte-for-byte, deletion_scheduled_at stays nil on a
+        live row.
+      * TestProjectRepositoryUpdateWithMatchingIfMatchSucceeds — positive
+        optimistic-concurrency anchor: a matching If-Match version
+        succeeds with version+1, so a regression that always classified
+        version-checked UPDATEs as stale would be caught here. The
+        stale-If-Match path is covered by the pre-existing
+        TestProjectRepositoryUpdateStaleVersion.
+      * TestProjectRepositoryUpdateDisplayNameBumpsVersionAndPreservesSlug
+        — UpdateDisplayName had NO tests in project_test.go at all. This
+        test proves it runs the dual-anchor (version+1, updated_at
+        refreshed, created_at preserved) AND that slug is untouched, AND
+        cross-checks the returned row against a subsequent Get so the
+        path's `SET display_name = $3`-only invariant survives the
+        round-trip through Postgres.
+      * TestProjectRepositoryScheduleDeletionBumpsVersionAndStampsDeletionScheduledAt
+        — adds the dual-anchor proof on top of the existing
+        TestProjectRepositoryScheduleDeletion (which only checks the row's
+        id and that deletion_scheduled_at is non-nil). Adds the
+        deletion_scheduled_at >= baseline.UpdatedAt time-ordering anchor
+        AND the identity-preservation anchor (slug and display_name must
+        be unchanged — ScheduleDeletion is a soft-delete stamp, not a
+        rename).
+      * TestProjectRepositoryRestoreBumpsVersionAndClearsDeletionScheduledAt
+        — the inverse of ScheduleDeletion. Adds the dual-anchor proof and
+        proves Restore clears deletion_scheduled_at back to NULL (the
+        load-bearing assertion for the path, since the trigger would
+        otherwise mask a forgotten SET clause). Cross-checks via Get.
+      * TestProjectRepositoryInsertRollsBackOnTxRollback — proves Insert
+        participates in the surrounding tx as the unit of work: when the
+        outer Write closure returns a sentinel error AFTER a successful
+        Insert, the row must disappear from EVERY read surface — Get (by
+        id), ListByOrganization (the org-wide view), AND
+        CountByOrganization (the count the quota layer reads). A future
+        refactor that switched Insert to a SAVEPOINT or autonomous tx
+        would let the row leak into the quota check even though Get
+        reports NotFound, and this triple-surface assertion catches it.
+      * TestProjectRepositoryUpdateDisplayNameWithoutTxIsTypedInternal —
+        closes the nil-Tx typed-Internal matrix. The Insert / Update /
+        ScheduleDeletion / Restore nil-Tx guards were already covered by
+        TestProjectRepositoryInsertRejectsNilTx (project_test.go),
+        TestProjectRepositoryUpdateRejectsNilTx (project_test.go),
+        TestProjectRepositoryScheduleDeletionRejectsNilTx
+        (project_delete_test.go), and
+        TestProjectRepositoryRestoreRejectsNilTx (project_restore_test.go);
+        UpdateDisplayName was the one mutation path without a typed-code
+        assertion. No new database fixtures are needed for this case.
+  - One new package-scoped sentinel: projectTxRollbackSentinel — local to
+    this test file so callers cannot rely on its identity. Name is
+    intentionally distinct from apiKeyTxRollbackSentinel /
+    apiKeyScopeTxRollbackSentinel / membershipTxRollbackSentinel /
+    serviceAccountTxRollbackSentinel / errSentinel to avoid a collision
+    at package store_test scope.
+- Files changed
+  - internal/controlplane/store/project_repository_invariants_test.go (new)
+  - ralph/prd.json (BE-0437 passes:true + notes)
+  - ralph/progress.txt (this entry + new Codebase Patterns line)
+- Verification
+  - gofmt -l: clean
+  - goimports: not installed (documented; same as prior stories)
+  - go mod tidy: no diff to go.mod/go.sum
+  - go vet ./...: clean
+  - go build ./...: clean
+  - go test ./... (without YALLA_TEST_DATABASE_URL): all packages PASS
+    (integration tests skip as expected)
+  - go test -race -count=1 ./internal/controlplane/store/ (without DB):
+    PASS in 1.573s
+  - Targeted go test -run on the eight new tests with
+    YALLA_TEST_DATABASE_URL=postgres://yalla:yalla@127.0.0.1:5432/yalla
+    against an isolated, freshly migrated Postgres database
+    (testutil.RequireMigratedDB): all eight PASS in 1.121s.
+- Pre-existing flaky / failing tests (NOT introduced by this story; same
+  list as documented under BE-0432 + BE-0433 + BE-0436):
+  TestAPIKeyServiceCreate*, TestAPIKeyServiceCreateDoesNotPersistPlaintext,
+  TestAPIKeyServiceCreateMissingOrgIsNotFound,
+  TestAPIKeyServiceCreateUnknownServiceAccountIsNotFound,
+  TestAPIKeyServiceCreateCrossTenantServiceAccountIsNotFound,
+  TestAPIKeyServiceCreateWithServiceAccountAndExpiry,
+  TestAPIKeyReaderGetAPIKey, TestOrganizationVariableServicePatch*,
+  TestProjectVariableServiceReplaceCrossTenantProjectIsNotFound,
+  TestEnvironmentServiceCreate*, TestEnvironmentRepoGetByIDReturnsRow,
+  TestEnvironmentReaderRejectsCrossTenantProjectID,
+  TestEnvironmentRepoListByProjectReturnsDeterministicOrdering. Confirmed
+  unrelated by running the same targeted set in isolation — same
+  failures appear without the new file in play.
+- Remaining risks/follow-ups
+  - None for BE-0437. The next paired story BE-0438
+    (Repository tenant isolation: projects) will add a sibling
+    project_tenant_isolation_test.go using the BE-0428/BE-0430/BE-0432/BE-0436
+    byte-identical-bystander-snapshot template, anchored across the
+    Update / UpdateDisplayName / ScheduleDeletion / Restore mutation
+    surface plus the Get / ListByOrganization / CountByOrganization read
+    surface this story already covers for rollback.
+- Learnings for future iterations
+  - When a repository has multiple UPDATE paths (Update vs. UpdateDisplayName
+    vs. ScheduleDeletion vs. Restore), each path needs its own dual-anchor
+    test AND its own path-specific invariant (slug-preserved, DSA-stamped,
+    DSA-cleared, etc.) because the database trigger projection alone does
+    not catch a copy-pasted SET clause that touches the wrong column. The
+    dual-anchor proves the trigger fired correctly; the path-specific
+    column-isolation assertion proves the SQL touched the right rows.
+  - Insert-rollback proofs for a table the quota layer reads must span all
+    three read surfaces: by-id Get, by-org ListByOrganization, AND
+    CountByOrganization. Asserting only the by-id NotFound leaves a
+    SAVEPOINT-style regression invisible to the quota check.
+  - The nil-Tx typed-Internal matrix only needs to close the mutation
+    paths the existing tests did not cover. Re-asserting guards already
+    proved elsewhere is noise that drowns the actual gap. Always
+    cross-check existing project_test.go / *_delete_test.go /
+    *_restore_test.go before writing nil-Tx tests in the invariants file.
 ---

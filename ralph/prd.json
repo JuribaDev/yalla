@@ -9212,8 +9212,8 @@
       ],
       "type": "repository",
       "priority": 1,
-      "passes": false,
-      "notes": "Database table: projects."
+      "passes": true,
+      "notes": "Added internal/controlplane/store/project_repository_invariants_test.go with eight new t.Parallel tests covering the row-shape and lifecycle invariants the existing project_test.go / project_delete_test.go / project_restore_test.go did not anchor: Insert returns version=1 with byte-equal created_at == updated_at and nil deletion_scheduled_at; Update / UpdateDisplayName / ScheduleDeletion / Restore each prove the full dual-anchor (version+1, updated_at refreshed, created_at preserved) plus their path-specific column invariants (UpdateDisplayName preserves slug; ScheduleDeletion stamps deletion_scheduled_at on/after the update boundary; Restore clears it back to NULL; identity fields preserved on both); a matching-If-Match Update anchors the positive optimistic-concurrency path; Insert participates in the surrounding tx as the unit of work (rolls back across Get / List / Count); and a typed nil-Tx guard on UpdateDisplayName closes the only Project mutation path that did not yet have a typed-code assertion. All eight pass against an isolated, freshly migrated Postgres. gofmt / go vet / go test ./... / go test -race ./internal/controlplane/store/ all clean. Pre-existing flaky tests in apikeyservice / environmentservice / variable services are unrelated and documented in prior progress."
     },
     {
       "id": "BE-0438",
