@@ -217,6 +217,10 @@ Postgres persistence for control-plane source-of-truth state.
   `expires_at`. Lifecycle fields (`status`, `deletion_scheduled_at`) move
   through `ScheduleDeletion` or later worker-owned transitions; hard
   `DeleteByID` is for worker cleanup after Dokploy teardown.
+- Read paths intentionally include rows after `ScheduleDeletion` marks them
+  `status='deleting'`; tenant-isolation tests for preview environments must
+  include a scheduled-deletion row so soft-deleted previews cannot leak across
+  `(organization_id, project_id)` boundaries.
 - The table uses `penv_` ids (`domain.KindPreviewEnvironment`) and composite
   FKs to `environments (organization_id, project_id, id)` for both the preview
   clone and source environment. Migration `0038` also has a trigger enforcing
