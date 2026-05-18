@@ -44,6 +44,15 @@ const JobTypeDeployService = "service.deploy"
 // JobTypeDeployService.
 const JobTypeDeployServiceAlias = "deploy_service"
 
+// JobTypeRestartService is the durable provisioning job enqueued by the public
+// service restart endpoint. JobTypeRestartServiceAlias accepts the PRD's
+// restart_service spelling for forward compatibility with manually seeded jobs.
+const JobTypeRestartService = "service.restart"
+
+// JobTypeRestartServiceAlias is accepted by the worker as an alias for
+// JobTypeRestartService.
+const JobTypeRestartServiceAlias = "restart_service"
+
 // DokployClient is the narrow typed-client surface these worker jobs
 // needs. *dokploy.Client satisfies it in production; tests can supply fakes.
 type DokployClient interface {
@@ -52,6 +61,7 @@ type DokployClient interface {
 	EnsureEnvironment(context.Context, dokploy.EnsureEnvironmentInput) (dokploy.Environment, error)
 	EnsureService(context.Context, dokploy.EnsureServiceInput) (dokploy.Service, error)
 	DeployService(context.Context, dokploy.DeployServiceInput) (dokploy.Deployment, error)
+	RestartService(context.Context, dokploy.RestartServiceInput) (dokploy.ServiceStatus, error)
 }
 
 // EnsureDokployOrganizationPayload is the typed schema carried by
@@ -229,6 +239,16 @@ type DeployServicePayload struct {
 	EnvironmentID  string
 	ServiceID      string
 	DeploymentID   string
+}
+
+// RestartServicePayload is the typed schema carried by
+// provisioning_jobs.payload for JobTypeRestartService /
+// JobTypeRestartServiceAlias.
+type RestartServicePayload struct {
+	OrganizationID string
+	ProjectID      string
+	EnvironmentID  string
+	ServiceID      string
 }
 
 // ParseEnsureApplicationServicePayload validates job's typed payload and
@@ -461,6 +481,61 @@ func ParseDeployServicePayload(job store.ProvisioningJob) (DeployServicePayload,
 	}, nil
 }
 
+// ParseRestartServicePayload validates a restart-service job payload and
+// returns a terminal error for payload shapes retrying cannot repair.
+func ParseRestartServicePayload(job store.ProvisioningJob) (RestartServicePayload, error) {
+	var violations []apierr.FieldViolation
+	if job.JobType != JobTypeRestartService && job.JobType != JobTypeRestartServiceAlias {
+		violations = append(violations, apierr.FieldViolation{Field: "job_type", Reason: "must be service.restart or restart_service"})
+	}
+	if job.OrganizationID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "organization_id", Reason: "is required"})
+	}
+	if job.ProjectID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "project_id", Reason: "is required"})
+	}
+	if job.EnvironmentID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "environment_id", Reason: "is required"})
+	}
+	if job.ServiceID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "service_id", Reason: "is required"})
+	}
+
+	payloadOrgID := job.Payload["organization_id"]
+	if payloadOrgID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.organization_id", Reason: "is required"})
+	} else if job.OrganizationID != "" && payloadOrgID != job.OrganizationID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.organization_id", Reason: "must match the job organization_id"})
+	}
+	payloadProjectID := job.Payload["project_id"]
+	if payloadProjectID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.project_id", Reason: "is required"})
+	} else if job.ProjectID != "" && payloadProjectID != job.ProjectID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.project_id", Reason: "must match the job project_id"})
+	}
+	payloadEnvironmentID := job.Payload["environment_id"]
+	if payloadEnvironmentID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.environment_id", Reason: "is required"})
+	} else if job.EnvironmentID != "" && payloadEnvironmentID != job.EnvironmentID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.environment_id", Reason: "must match the job environment_id"})
+	}
+	payloadServiceID := job.Payload["service_id"]
+	if payloadServiceID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.service_id", Reason: "is required"})
+	} else if job.ServiceID != "" && payloadServiceID != job.ServiceID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.service_id", Reason: "must match the job service_id"})
+	}
+	if len(violations) > 0 {
+		return RestartServicePayload{}, Terminal(apierr.InvalidInput(violations...))
+	}
+	return RestartServicePayload{
+		OrganizationID: payloadOrgID,
+		ProjectID:      payloadProjectID,
+		EnvironmentID:  payloadEnvironmentID,
+		ServiceID:      payloadServiceID,
+	}, nil
+}
+
 func databaseEngineValid(engine string) bool {
 	switch engine {
 	case dokploy.EnginePostgres, dokploy.EngineMysql, dokploy.EngineMariadb, dokploy.EngineMongo, dokploy.EngineRedis:
@@ -570,6 +645,8 @@ func (p *Provisioner) Run(ctx context.Context, job store.ProvisioningJob) error 
 		return p.runEnsureDatabaseService(ctx, job)
 	case JobTypeDeployService, JobTypeDeployServiceAlias:
 		return p.runDeployService(ctx, job)
+	case JobTypeRestartService, JobTypeRestartServiceAlias:
+		return p.runRestartService(ctx, job)
 	default:
 		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
 			Field:  "job_type",
@@ -956,6 +1033,36 @@ func (p *Provisioner) runDeployService(ctx context.Context, job store.Provisioni
 	}
 }
 
+func (p *Provisioner) runRestartService(ctx context.Context, job store.ProvisioningJob) error {
+	if job.Status == store.JobStatusSucceeded {
+		return nil
+	}
+	payload, err := ParseRestartServicePayload(job)
+	if err != nil {
+		return err
+	}
+
+	dokployServiceID, err := p.loadRestartServiceTarget(ctx, job, payload)
+	if err != nil {
+		return err
+	}
+
+	status, restartErr := p.client.RestartService(ctx, dokploy.RestartServiceInput{ServiceID: dokployServiceID})
+	if restartErr != nil {
+		if interrupted(ctx, restartErr) {
+			return restartErr
+		}
+		if apierr.Retryable(restartErr) {
+			return restartErr
+		}
+		return Terminal(restartErr)
+	}
+	if status.ServiceID == "" {
+		return Terminal(apierr.Internal(errors.New("worker: restart_service resolved an empty Dokploy service id")))
+	}
+	return nil
+}
+
 func (p *Provisioner) loadOrganizationTarget(ctx context.Context, job store.ProvisioningJob, payload EnsureDokployOrganizationPayload) (store.Organization, string, error) {
 	var (
 		org        store.Organization
@@ -1308,6 +1415,63 @@ func (p *Provisioner) loadDatabaseServiceTarget(ctx context.Context, job store.P
 	return svc, parentDokployID, existingDokployID, nil
 }
 
+func (p *Provisioner) loadRestartServiceTarget(ctx context.Context, job store.ProvisioningJob, payload RestartServicePayload) (string, error) {
+	var dokployServiceID string
+	err := p.store.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		svc, getErr := p.services.GetByID(ctx, q, payload.OrganizationID, payload.ServiceID)
+		if getErr != nil {
+			return Terminal(getErr)
+		}
+		if svc.OrganizationID != job.OrganizationID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.organization_id",
+				Reason: "must match the service organization_id",
+			}))
+		}
+		if svc.ProjectID != payload.ProjectID || svc.ProjectID != job.ProjectID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.project_id",
+				Reason: "must match the service project_id",
+			}))
+		}
+		if svc.EnvironmentID != payload.EnvironmentID || svc.EnvironmentID != job.EnvironmentID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.environment_id",
+				Reason: "must match the service environment_id",
+			}))
+		}
+		if svc.DeletionScheduledAt != nil {
+			return Terminal(apierr.Conflict("service is scheduled for deletion and cannot be restarted"))
+		}
+		if job.DesiredVersion > 0 && svc.Version != job.DesiredVersion {
+			return Terminal(apierr.ConflictStale(svc.Version))
+		}
+
+		wantResource, resourceErr := dokployResourceForServiceKind(svc.Kind, "restart_service")
+		if resourceErr != nil {
+			return resourceErr
+		}
+		serviceRefs, listErr := p.refs.ListByYallaResource(ctx, q, job.OrganizationID, store.YallaKindService, svc.ID)
+		if listErr != nil {
+			return listErr
+		}
+		for _, ref := range serviceRefs {
+			if ref.DokployResource == wantResource {
+				dokployServiceID = ref.DokployID
+				break
+			}
+		}
+		if dokployServiceID == "" {
+			return Terminal(apierr.Conflict("service Dokploy mapping is required before restarting a service"))
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return dokployServiceID, nil
+}
+
 func (p *Provisioner) loadDeploymentTarget(ctx context.Context, job store.ProvisioningJob, payload DeployServicePayload) (store.Deployment, string, error) {
 	var (
 		deployment       store.Deployment
@@ -1364,7 +1528,7 @@ func (p *Provisioner) loadDeploymentTarget(ctx context.Context, job store.Provis
 			}))
 		}
 
-		wantResource, resourceErr := dokployResourceForServiceKind(svc.Kind)
+		wantResource, resourceErr := dokployResourceForServiceKind(svc.Kind, "deploy_service")
 		if resourceErr != nil {
 			return resourceErr
 		}
@@ -1389,7 +1553,7 @@ func (p *Provisioner) loadDeploymentTarget(ctx context.Context, job store.Provis
 	return deployment, dokployServiceID, nil
 }
 
-func dokployResourceForServiceKind(kind string) (store.DokployResource, error) {
+func dokployResourceForServiceKind(kind, jobName string) (store.DokployResource, error) {
 	switch kind {
 	case store.ServiceKindApplication:
 		return store.DokployResourceApplication, nil
@@ -1400,7 +1564,7 @@ func dokployResourceForServiceKind(kind string) (store.DokployResource, error) {
 	default:
 		return "", Terminal(apierr.InvalidInput(apierr.FieldViolation{
 			Field:  "service.kind",
-			Reason: "must be application, compose, or database for deploy_service",
+			Reason: "must be application, compose, or database for " + jobName,
 		}))
 	}
 }

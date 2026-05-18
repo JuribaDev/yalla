@@ -165,6 +165,12 @@ type DeployServiceInput struct {
 	ServiceID string
 }
 
+// RestartServiceInput names the service to restart.
+type RestartServiceInput struct {
+	// ServiceID is the service to restart; required.
+	ServiceID string
+}
+
 // RemoveServiceInput names the service to remove.
 type RemoveServiceInput struct {
 	// ServiceID is the service to remove; required.

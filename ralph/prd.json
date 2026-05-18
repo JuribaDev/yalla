@@ -10181,8 +10181,8 @@
       ],
       "type": "worker-job",
       "priority": 1,
-      "passes": false,
-      "notes": "Provisioning job type: restart_service."
+      "passes": true,
+      "notes": "Implemented durable restart_service execution through worker.Provisioner for the existing service.restart job type plus the PRD restart_service alias, with typed payload validation, tenant-scoped service desired-state reload, service-kind-specific Dokploy ref resolution, stale desired-version and deletion-scheduled refusal before any upstream call, terminal replay no-op for already-succeeded jobs, typed Dokploy RestartService client support, fake Dokploy restart route support, and fake-backed worker coverage for success/replay, retryable upstream failure, terminal stale/cross-tenant validation, cancellation, and redacted error_summary persistence. Required quality checks passed; golangci-lint passed with 0 issues, and the strict pre-commit verifier passed govulncheck, staticcheck, GoReleaser check, and snapshot release. goimports was not installed."
     },
     {
       "id": "BE-0489",
