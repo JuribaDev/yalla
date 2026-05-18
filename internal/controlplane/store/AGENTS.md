@@ -456,6 +456,72 @@ Postgres persistence for control-plane source-of-truth state.
   conflicting Insert — the per-id probe alone cannot prove the
   rolled-back row did not land in some other tenant's slot, because the
   failing row's id is unknown to the probe.
+- **Claim-protocol + nullable-completion-columns extension** (BE-0470
+  pattern, `idempotency_repository_tenant_isolation_test.go`): when a
+  tenant-scoped table's repository surface is a claim protocol (Claim
+  upsert / Complete state-transitioning UPDATE / Release
+  state-conditioned DELETE / Find composite-tuple read) where every
+  mutating WHERE has `organization_id` as the leading column of a
+  composite predicate tuple AND the row body carries nullable
+  completion columns distinguished by nil-ness under a
+  completion-consistent CHECK, the byte-identical-snapshot rule
+  extends with four extra probes. (a) Every mutating surface needs
+  its own `OnOrgADoesNotTouchOrgB` test — Claim, Complete, Release.
+  The Complete probe asserts that `Complete(orgA, orgB's
+  principal+key)` falls off the `organization_id` leg of the WHERE
+  before the status leg runs and surfaces `apierr.Conflict` ("no
+  longer pending") WITHOUT touching orgB's row. The Release probe
+  asserts the dual: Release is "safe to call defensively" and returns
+  `nil` on a zero-row DELETE, so the cross-tenant Release must return
+  nil AND leave orgB's pending row byte-identical AND the per-tenant
+  count unchanged — three separate assertions because a regression
+  that dropped `organization_id` from the Release WHERE would delete
+  orgB's row, which the bystander byte-identity loader catches as a
+  missing-row error inside `loadIdempotencyRowByID`'s `t.Fatalf`. The
+  forged Complete envelope MUST carry a recognisable canary string
+  (e.g. `"forged":"orgA-tries-to-complete-orgB-claim"`) so a future
+  reader sees immediately what the test was protecting against, and
+  so the canary doubles as a redaction-leak probe across the typed
+  error's `Error()` / `Message` / `Hint`. (b) The byte-identity
+  comparator MUST switch on pointer nil-ness FIRST and dereference
+  value SECOND for every nullable column. A naive field-equality
+  loop would silently round-trip a regression that flipped a pending
+  row's NULL completion columns to zero-value scalars
+  (`response_status=0`, `response_body=[]byte{}`,
+  `completed_at=epoch`). The pattern: switch on `(after==nil,
+  baseline==nil)` into three branches — both-nil OK, one-nil diff
+  "nil-ness drifted", both-non-nil dereference-compare — and emit a
+  fmt-printer-pair (`fmtIntPtr` / `fmtTimePtr`) so the diagnostic
+  reads `before=<nil> after=200` rather than pointer noise.
+  Forward-applicable to every future tenant-isolation file whose row
+  carries nullable columns: `job_attempts` (nullable `error_summary`
+  / `finished_at` / `result`), `quota_reservations` (nullable
+  `released_at` / `job_id`), `break_glass_sessions` (nullable
+  `revoked_at`). (c) The Claim "mirror tuple" probe is the
+  load-bearing per-tenant uniqueness assertion of the `ON CONFLICT`
+  target. orgB seeds a row at `(orgB, usr_mirror, mirror-key)`; orgA
+  Claims a row at `(orgA, usr_mirror, mirror-key)` — same
+  `(principal_id, idempotency_key)`, different `organization_id`. A
+  regression that dropped `organization_id` from the `ON CONFLICT`
+  target would resolve the conflict onto orgB's mirror-tuple row and
+  silently rewrite it through the `DO UPDATE` branch — the worst-case
+  cross-tenant data-corruption shape. The assertion: orgA's Claim
+  returns `owned=true` (fresh INSERT, never `DO UPDATE` on a foreign
+  row), orgA's new row carries orgA's `organization_id` and a
+  distinct id, AND orgB's mirror row remains byte-identical. The
+  seed comment for the mirror row MUST explicitly call out the
+  rationale because the failure mode is the kind a future reader
+  rationalises away. (d) The Claim cross-tenant id-collision probe
+  MUST (i) use DIFFERENT `(principal_id, idempotency_key)` tuples
+  across the two tenants so the `ON CONFLICT` target does NOT match
+  and the PK violation flows through `mapWriteError`, and (ii) carry
+  a GLOBAL row-count probe (`SELECT count(*) FROM <table>` with no
+  WHERE) in addition to the per-tenant counts. The per-tenant probe
+  alone cannot prove the failing row's absence because the failing
+  INSERT's `organization_id` is unknown to the probe — a regression
+  that landed the row in a third unrelated tenant's slot would pass
+  the per-tenant probe. The story-template file for this pattern is
+  `idempotency_repository_tenant_isolation_test.go` (BE-0470).
 - A state-machine table (`provisioning_jobs`, `store/job.go`) keeps the
   authoritative transition graph in Go (`JobStatus.CanTransitionTo`, backed by
   the `jobTransitions` map) and lets the DB CHECK only the *closed status set*
