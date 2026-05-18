@@ -191,6 +191,22 @@ Postgres persistence for control-plane source-of-truth state.
   Quota accounting rows (`quota_usage`, `quota_reservations`) are **not** domain
   resources — `newQuotaID` mints their ids locally, no `domain.Kind`.
 
+## Service backups (`0024_service_backups`, `service_backup.go`)
+
+- The PRD may call this surface `backup_schedules`; the actual source-of-truth
+  table is `service_backups`, and the quota dimension is
+  `backup_schedules`. The row is service-scoped desired-state policy plus
+  worker-projected run state; it stores no backup artefacts or secrets.
+- `ServiceBackupRepository` follows the service-scoped leaf-table shape:
+  `Insert`, `GetByID`, `ListByService`, `Update`, `MarkPending`, and
+  `DeleteByID` all predicate on `(organization_id, service_id[, id])`.
+  `Update` only writes customer policy fields
+  `(display_name, schedule, retention_count, enabled)` and must preserve
+  worker state `(status, last_run_at, last_succeeded_at)`.
+- A zero `RetentionCount` on `Insert` means "omitted" and is normalized to the
+  stable default `7`; negative or out-of-range values still flow to the
+  database CHECK and surface as typed `E_CONFLICT`.
+
 ## Audit log (`0007_audit_events`, `audit.go`)
 
 - `audit_events` is the **immutable** audit log: one row per security-relevant

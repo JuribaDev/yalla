@@ -9972,8 +9972,8 @@
       ],
       "type": "repository",
       "priority": 1,
-      "passes": false,
-      "notes": "Database table: backup_schedules."
+      "passes": true,
+      "notes": "Database table: service_backups (quota dimension backup_schedules). Added BE-0477 repository invariant coverage for Insert/Get/List/Update/MarkPending/Delete, typed constraint/conflict paths, optimistic versioning, timestamp preservation, transaction rollback, and nil-Tx guards; fixed Insert so omitted retention_count (0) normalizes to the stable default 7 instead of violating the CHECK constraint."
     },
     {
       "id": "BE-0478",

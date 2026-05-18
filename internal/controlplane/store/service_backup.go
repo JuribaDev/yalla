@@ -266,12 +266,16 @@ func (r *ServiceBackupRepository) Insert(ctx context.Context, tx *Tx, b ServiceB
 	if status == "" {
 		status = ServiceBackupStatusPending
 	}
+	retentionCount := b.RetentionCount
+	if retentionCount == 0 {
+		retentionCount = serviceBackupDefaultRetentionCount
+	}
 	row := tx.QueryRow(ctx,
 		`INSERT INTO service_backups
 		    (id, organization_id, service_id, display_name, schedule, retention_count, enabled, status)
 		  VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		  RETURNING `+serviceBackupColumns,
-		b.ID, b.OrganizationID, b.ServiceID, b.DisplayName, b.Schedule, b.RetentionCount, b.Enabled, status)
+		b.ID, b.OrganizationID, b.ServiceID, b.DisplayName, b.Schedule, retentionCount, b.Enabled, status)
 	created, err := scanServiceBackup(row)
 	if err != nil {
 		return ServiceBackup{}, mapWriteError(err, "a service backup with this id already exists")
