@@ -40,6 +40,11 @@ Background provisioning/metering workers for the control plane.
   Postgres before calling Dokploy, and persist resulting Dokploy IDs only
   through tenant-scoped `dokploy_refs` rows. Replays should read an existing
   ref and verify the upstream resource instead of inserting a second mapping.
+- Child ensure jobs (for example `ensure_project`) must resolve their parent
+  Dokploy ID from `dokploy_refs` before mapping the child intent. A missing
+  parent mapping is a terminal source-of-truth conflict for that job; a replay
+  with the child ref already present should call Dokploy with `ExistingID` and
+  leave the mapping table unchanged.
 - Integration tests are `package worker_test`, use `testutil.RequireMigratedDB`,
   and `t.Skip` when `YALLA_TEST_DATABASE_URL` is unset. A concurrent-claim test
   must retry-until-drained with a deadline guard — a job locked by a peer's

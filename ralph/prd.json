@@ -10067,8 +10067,8 @@
       ],
       "type": "worker-job",
       "priority": 1,
-      "passes": false,
-      "notes": "Provisioning job type: ensure_project."
+      "passes": true,
+      "notes": "Provisioning job type: ensure_project. Implemented in worker.Provisioner with typed EnsureProjectPayload validation, source-of-truth project load, parent Dokploy organization ref lookup, stale-version and cross-tenant terminal refusal, idempotent existing-project replay via dokploy_refs, fake Dokploy success/retry/cancellation/not-found coverage, and queue-level redacted error_summary verification."
     },
     {
       "id": "BE-0483",
