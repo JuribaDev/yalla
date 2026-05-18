@@ -6362,7 +6362,7 @@
       ],
       "type": "test-admin",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Contract coverage for POST /v1/admin/dokploy/reconcile."
     },
     {

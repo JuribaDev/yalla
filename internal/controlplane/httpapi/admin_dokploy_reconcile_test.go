@@ -123,6 +123,47 @@ func TestReconcileAdminDokployRunsForAuthorizedTarget(t *testing.T) {
 	}
 }
 
+func TestReconcileAdminDokployRendersEmptyFailuresAsArray(t *testing.T) {
+	t.Parallel()
+
+	orgID := string(domain.MustNewID(domain.KindOrganization))
+	reconciler := &fakeAdminDokployReconciler{result: AdminDokployReconcileResult{
+		OrganizationID: orgID,
+		DryRun:         true,
+	}}
+	h := adminReconcileHandlerFor(fakeAuthenticator{identity: auth.Identity{
+		Principal: adminDriftPrincipal(orgID, policy.RoleSupport),
+		Method:    auth.MethodAPIKey,
+	}}, reconciler)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/admin/dokploy/reconcile?organization_id="+orgID, strings.NewReader(`{"organization_id":"`+orgID+`","dry_run":true}`))
+	req.Header.Set("Authorization", "Bearer yk_test_admin_reconcile")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body %s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		Data struct {
+			FailureCount int               `json:"failure_count"`
+			Failures     []json.RawMessage `json:"failures"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode response: %v; body %s", err, rec.Body.String())
+	}
+	if env.Data.FailureCount != 0 {
+		t.Fatalf("failure_count = %d, want 0", env.Data.FailureCount)
+	}
+	if env.Data.Failures == nil {
+		t.Fatalf("failures rendered as null, want empty array; body %s", rec.Body.String())
+	}
+	if len(env.Data.Failures) != 0 {
+		t.Fatalf("failures length = %d, want 0", len(env.Data.Failures))
+	}
+}
+
 func TestReconcileAdminDokployRejectsInvalidInput(t *testing.T) {
 	t.Parallel()
 

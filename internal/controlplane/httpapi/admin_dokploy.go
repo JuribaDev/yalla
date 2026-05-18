@@ -255,14 +255,18 @@ func reconcileAdminDokployHandler(reconciler AdminDokployReconciler) http.Handle
 		if result.OrganizationID == "" {
 			result.OrganizationID = orgID
 		}
+		failures := result.Failures
+		if failures == nil {
+			failures = []AdminDokployReconcileFailure{}
+		}
 		payload := adminDokployReconcilePayload{
 			OrganizationID: result.OrganizationID,
 			DryRun:         result.DryRun,
 			Repaired:       result.Repaired,
 			Reviewed:       result.Reviewed,
 			Quarantined:    result.Quarantined,
-			FailureCount:   len(result.Failures),
-			Failures:       result.Failures,
+			FailureCount:   len(failures),
+			Failures:       failures,
 		}
 		apienvelope.WriteData(w, http.StatusAccepted, requestID(r), payload)
 	}
