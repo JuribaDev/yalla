@@ -35090,3 +35090,12 @@ change that widened Reason to caller-supplied data.
   - Drift findings now follow the same event-backed state-machine pattern as service/environment/project/API-key/break-glass lifecycles.
   - Keep `resolved_at` and `resolved_by_actor_id` as compatibility stamps, but treat `drift_findings.status` as the explicit lifecycle source of truth.
 ---
+## 2026-05-18 23:10 +03 - BE-0281
+- What was implemented: Added public API contract tests for `POST /v1/jobs/{job_id}/cancel`, covering stdout/stderr silence, request-log bearer-token redaction on success/authn/authz paths, dependency-cause redaction, error-envelope request_id propagation, and authenticated OpenAPI metadata for the cancel operation. Marked BE-0281 passing in `ralph/prd.json`.
+- Files changed: `internal/controlplane/httpapi/jobs_cancel_contract_test.go`, `ralph/prd.json`, `ralph/progress.txt`.
+- Verification run: `go test ./internal/controlplane/httpapi -run 'TestCancelJob.*(Contract|ResponseData|RequestLog|ErrorEnvelope|OpenAPI|Success|Invalid|Unauthenticated|Unauthorized|NotFound)' -count=1`; `gofmt -w .`; `go mod tidy`; `go test ./...`; `go test -race ./...`; `go vet ./...`; `go test ./internal/controlplane/...`; `go test -race ./internal/controlplane/...`; `go test -run TestMigrations ./...`; `go test -run TestPolicyMatrix ./...`; `golangci-lint run ./...`; pre-commit `scripts/verify.sh --strict --release`.
+- Results: All listed commands passed. `golangci-lint` reported 0 issues. The strict verifier also passed optional `govulncheck`, `staticcheck`, `goreleaser check`, and snapshot release. `goimports` was not installed on PATH.
+- Remaining risks or follow-ups: This was a contract-test story only; no production endpoint code changed. Integration/database provisioning fixtures were not needed because the endpoint implementation and store behavior were covered by BE-0280, and this story exercised the public httptest contract with fakes.
+- **Learnings for future iterations:**
+  - Contract-test siblings for already-implemented job verbs can mirror `jobs_retry_contract_test.go`: keep handler behavior tests in `jobs_test.go`, and put public-surface invariants such as stdout/stderr silence, log redaction, dependency-cause redaction, request_id propagation, and OpenAPI auth metadata in a separate `*_contract_test.go`.
+---
