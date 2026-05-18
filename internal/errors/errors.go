@@ -120,7 +120,7 @@ var codeDescriptions = map[Code]string{
 	CodeConflict:               "request rejected because of a precondition or state conflict",
 	CodeInvalidStateTransition: "requested lifecycle transition is not allowed by the resource state machine",
 	CodeIdempotencyConflict:    "idempotency key reused for a request that differs from the original",
-	CodeRateLimited:            "upstream rate limit hit; back off and retry",
+	CodeRateLimited:            "request rejected because the caller exceeded a request rate limit",
 	CodeQuotaExceeded:          "request rejected because an organization quota or plan limit is exhausted",
 	CodeServer:                 "upstream Dokploy server returned an error",
 	CodeUpstreamBug:            "known upstream Dokploy bug encountered; use the documented workaround",

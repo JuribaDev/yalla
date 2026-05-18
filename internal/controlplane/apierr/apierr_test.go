@@ -889,6 +889,61 @@ func TestRateLimitedDoesNotEchoSecretScope(t *testing.T) {
 	}
 }
 
+func TestRateLimitedContract(t *testing.T) {
+	t.Parallel()
+
+	const leaked = "Authorization: Bearer yka_rate_limit_secret_token"
+	err := RateLimited("  organization  ", 1500*time.Millisecond).
+		WithHint("retry later without " + leaked)
+	if err.Code != yerr.CodeRateLimited {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeRateLimited)
+	}
+	if err.Message != "rate limit exceeded for organization" {
+		t.Fatalf("message = %q, want stable rate-limit message", err.Message)
+	}
+	if got := err.Details[DetailKeyRateLimitScope]; got != "organization" {
+		t.Errorf("details[%q] = %q, want organization", DetailKeyRateLimitScope, got)
+	}
+	if got := err.Details[DetailKeyRetryAfter]; got != "2" {
+		t.Errorf("details[%q] = %q, want 2", DetailKeyRetryAfter, got)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 429 {
+			t.Errorf("HTTPStatus = %d, want 429", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageSpecific {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageSpecific)
+		}
+		if !entry.Retryable {
+			t.Error("E_RATE_LIMITED must be retryable")
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-rate-limited", err)
+	body := rec.Body.String()
+	if rec.Code != 429 {
+		t.Fatalf("status = %d, want 429; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-rate-limited"`) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeRateLimited)) {
+		t.Errorf("envelope body missing schema, request id, or docs link: %s", body)
+	}
+	if !strings.Contains(body, `"scope":"organization"`) ||
+		!strings.Contains(body, `"retry_after":"2"`) {
+		t.Errorf("envelope body missing rate-limit details: %s", body)
+	}
+	if strings.Contains(body, "yka_rate_limit_secret_token") || strings.Contains(body, "Bearer") {
+		t.Errorf("rate-limited envelope leaked credential material: %s", body)
+	}
+	if !strings.Contains(body, output.Sentinel) {
+		t.Errorf("expected redaction sentinel %q in rate-limited envelope: %s", output.Sentinel, body)
+	}
+}
+
 // TestRetryAfterOfHandlesUnrelatedErrors proves the recovery helper returns
 // false for a non-typed error, a typed error of a different code, and a
 // nil receiver — so callers can switch on it safely.

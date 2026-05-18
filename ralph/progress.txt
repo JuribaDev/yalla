@@ -35693,3 +35693,39 @@ change that widened Reason to caller-supplied data.
   - Admin break-glass contract tests can use the same fake controller plus real `NewHandler`/`policy.NewEngine` shape as the existing break-glass suite; no Postgres or live Dokploy dependency is needed for this HTTP contract story.
   - `golangci-lint` enforces checked type assertions in OpenAPI document tests; decode into typed structs where possible and check any `map[string]any` assertions explicitly.
 ---
+## 2026-05-19 01:52 +03 - BE-0523
+- What was implemented
+  - Completed the `E_RATE_LIMITED` backend error contract.
+  - Corrected the shared `AllCodes()` manifest description so it describes caller request-rate limiting instead of upstream rate limiting.
+  - Added focused contract coverage for `apierr.RateLimited`: stable 429 mapping, `MessageSpecific` policy, retryable taxonomy entry, structured `scope` and `retry_after` details, docs URL, request ID, and envelope redaction.
+  - Marked `BE-0523` as passing in `ralph/prd.json`.
+- Files changed
+  - `internal/errors/errors.go`
+  - `internal/errors/errors_test.go`
+  - `internal/controlplane/apierr/apierr_test.go`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `go test ./internal/errors -run TestRateLimitedDescriptionNamesCallerRateLimit -count=1` first failed with the previous upstream-oriented description.
+  - `gofmt -w .`
+  - `goimports -w .` was not run because `goimports` is not installed in this environment.
+  - `go mod tidy`
+  - `go test ./internal/errors -run TestRateLimitedDescriptionNamesCallerRateLimit -count=1`
+  - `go test ./internal/controlplane/apierr -run TestRateLimitedContract -count=1`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `golangci-lint run ./...`
+  - Pre-commit `scripts/verify.sh --strict --release`
+- Results
+  - All required Go checks passed.
+  - `golangci-lint run ./...` passed with `0 issues`.
+  - Pre-commit strict release verification passed, including its optional `govulncheck`, `staticcheck`, `golangci-lint`, GoReleaser config check, and GoReleaser snapshot build.
+  - Direct `goimports` is not installed in this environment, so it was not run outside the hook.
+- Remaining risks or follow-ups
+  - None for this story.
+- **Learnings for future iterations:**
+  - `E_RATE_LIMITED` is a customer-facing throughput cap, not a Dokploy/upstream dependency failure; keep upstream rate-limit semantics for the later Dokploy-specific error-code stories.
+  - The shared `internal/errors.AllCodes()` manifest description is part of the public contract and should be pinned alongside backend `apierr` envelope tests.
+---

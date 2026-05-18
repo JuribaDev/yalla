@@ -10846,8 +10846,8 @@
       ],
       "type": "error-contract",
       "priority": 1,
-      "passes": false,
-      "notes": "Stable error code: E_RATE_LIMITED."
+      "passes": true,
+      "notes": "Implemented stable E_RATE_LIMITED contract coverage: typed apierr.RateLimited trims the limiter bucket dimension, rounds retry_after up to whole seconds, clamps non-positive retry hints to one second, maps to HTTP 429 through apienvelope, remains retryable with MessageSpecific policy, emits machine-readable error.details scope and retry_after values, renders yalla.error.v1 with request_id and docs link, redacts credential-looking text at the envelope boundary, and publishes a caller-rate-limit description through the shared error manifest."
     },
     {
       "id": "BE-0524",

@@ -49,6 +49,22 @@ func TestCode_ExitCodeMappingIsStable(t *testing.T) {
 	}
 }
 
+func TestRateLimitedDescriptionNamesCallerRateLimit(t *testing.T) {
+	t.Parallel()
+
+	var got string
+	for _, doc := range AllCodes() {
+		if doc.Code == string(CodeRateLimited) {
+			got = doc.Description
+			break
+		}
+	}
+	const want = "request rejected because the caller exceeded a request rate limit"
+	if got != want {
+		t.Fatalf("E_RATE_LIMITED description = %q, want %q", got, want)
+	}
+}
+
 func TestNewAndError(t *testing.T) {
 	t.Parallel()
 	e := New(CodeNotFound, "project foo not found")
