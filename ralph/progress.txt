@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Repository tenant-isolation tests for a **multi-table resource FAMILY whose physical realization is one table per scope in the Organization -> Project -> Environment -> Service hierarchy AND whose row body carries SECRET-BEARING columns (value plaintext + sealed-secret tuple)** (BE-0450 pattern, internal/controlplane/store/{organization,project,environment,service}_variable_tenant_isolation_test.go). Mirrors the BE-0449 per-scope split of the invariants tests: when the family is hierarchical with diverging mutation surfaces (organization variant exposes per-key GetByKey + DeleteByKey + UpdateMutable on top of the bulk Upsert + DeleteByXxxExceptKeys pair; project/environment/service variants expose ONLY the bulk pair), ship one *_tenant_isolation_test.go per physical table. The project/environment/service files converge on a uniform 8-test shape: ListByX-correct-across-tenants, ListByX-cross-tenant-scope-returns-empty, ListByX-isolates-shared-key, Upsert-INSERT-bystander-byte-identical, Upsert-UPDATE-bystander-byte-identical, DeleteByXExceptKeys-clear-all-bystander, DeleteByXExceptKeys-keep-subset-bystander, Upsert-same-key-in-two-tenants-both-succeed. The organization file ADDS four per-key tests that have no analog in the other three: GetByKey-cross-tenant-returns-NotFound (with error-surface no-value-echo), DeleteByKey-on-orgA-bystander (plus second-DeleteByKey-on-now-gone-key-returns-NotFound-no-value-echo), UpdateMutable-on-orgA-bystander (Version bumps on orgA, orgB stays byte-identical), UpdateMutable-cross-tenant-key-returns-NotFound-no-value-echo-bystander-byte-identical. THE LOAD-BEARING DIVERGENCE from the BE-0448 grant tenant-isolation template is the byte-identical-bystander projection: variables MUST anchor BOTH Value AND the (SecretProvider, SecretKeyID, SecretCiphertext) tuple AND the IsSecret flag, because variables carry secret-bearing columns that grants do not — a regression that stamped orgA's payload onto orgB's row or that re-sealed orgB's row with orgA's secret bytes would otherwise slip past every identity-column check. bytes.Equal (stdlib) is the right SecretCiphertext compare helper; no custom one needed. Helper REUSE strategy across the family: organization/environment/service tenant-isolation files reuse newXVariableID / upsertXVariable / listXVariablesOrFail defined in their sibling BE-0449 invariants files (same store_test package); the project file DEFINES its own newProjectVariableID(f, org, label) / upsertProjectVariable / listProjectVariablesOrFail because project_variable_repository_invariants_test.go inlines its helpers (no shared symbols to reuse). The project helper signature takes f + org because f.Project requires an org to synthesise the id — the org/env/service helpers use a factory-counter-only or fake-parent scheme. Picking the wrong helper shape at call sites is the most common compile failure when porting tests across the family. Each file defines getXVariableFromListOrFail and assertXVariableByteIdentical with distinct names to avoid same-package collisions across store_test. The containsValue substring helper for the error-surface no-value-echo assertions is defined in the organization file (only organization-scope per-key methods can RETURN errors with message/hint text); env/service/project paths surface their failures via FK Conflict or PK Conflict, both of which are invariants-file legs (not tenant-isolation legs). The "Upsert-same-key-in-two-tenants-both-succeed" test is structurally necessary as the positive-direction pair for the bystander byte-identical proofs — without it, a regression that resolved the conflict on (scope_id, key) alone would still pass every bystander check (the bystander INSERTs first, the peer Upsert then hits PK uniqueness or no conflict at all). OrganizationVariableRepository.ListByOrganization returns a NIL slice on no-rows (unlike its project/environment/service siblings which use make([]T, 0)) — the tenant-isolation contract is "len == 0", not "non-nil"; the org-scope test documents this divergence in a comment and DOES NOT assert non-nil. Forward-applicable to any future multi-table secret-bearing family at this hierarchy.
 - Repository CRUD invariants for a **multi-table resource FAMILY whose physical realization is one table per scope in the Organization -> Project -> Environment -> Service hierarchy, sharing identical CHECK / FK / CASCADE / bump_version / set_updated_at invariants but with per-scope mutation surfaces** (BE-0449 pattern, internal/controlplane/store/{organization,project,environment,service}_variable_repository_invariants_test.go). A PRD note that reads "Database table: <name>" can refer to such a family (variables = 4 scope tables, quota_* = 3 ledger tables) — when the family is hierarchical, ship one *_repository_invariants_test.go per physical table rather than collapsing into a single mega-file, because per-scope mutation surfaces diverge (organization_variables uniquely exposes UpdateMutable + DeleteByKey on top of the bulk-replace surface; project / environment / service variables expose only the bulk Upsert + DeleteByXxxExceptKeys pair). Each file in the family extends the BE-0447 grant-table invariants template with three uniform substitutions: (a) the Upsert payload struct is the scope's XxxVariableUpsert (Value, IsSecret, SecretProvider, SecretKeyID, SecretCiphertext) instead of role + principal_kind; (b) a brand-new secret_columns_consistent CHECK-violation test is added (IsSecret=true with non-empty Value triggers the secret branch's `value=''` clause and surfaces as typed apierr.Conflict — exhaustively probing the OTHER drift directions is needless because the repository's nullableSecretColumns helper makes them structurally impossible from the caller side); (c) the leaf-scope variants (env / service) add a cross-tenant composite-FK test mirroring BE-0447's service-grant cross-tenant proof. Every *_test.go file under internal/controlplane/store/ shares the same store_test package, so the per-scope helpers MUST get distinct names — newOrganizationVariableID / newEnvironmentVariableID / newServiceVariableID, upsertOrganizationVariable / upsertEnvironmentVariable / upsertServiceVariable, listOrganizationVariablesOrFail / listEnvironmentVariablesOrFail / listServiceVariablesOrFail, and organizationVariableTxRollbackSentinel / projectVariableTxRollbackSentinel / environmentVariableTxRollbackSentinel / serviceVariableTxRollbackSentinel. The project-variables file is the smallest because project_variable_test.go already covers Upsert INSERT/UPDATE happy paths, cross-tenant rejection, the bulk delete surface, and the nil-Tx guards — its invariants file pins ONLY the row-shape and lifecycle invariants the existing tests do not anchor (version=1 default, byte-equal created_at == updated_at, ON CONFLICT id+created_at preservation, PK reuse -> Conflict, secret CHECK violation, ON DELETE CASCADE, Upsert tx-rollback). Forward-applicable to any future multi-table family at this hierarchy (a hypothetical KindOrganizationSetting / KindProjectSetting / KindEnvironmentSetting / KindServiceSetting feature would inherit this 4-file template structure).
 - Repository CRUD invariants test file for a **tenant-scoped LEAF-grant table whose ONLY mutation surface is an INSERT...ON CONFLICT DO UPDATE upsert PLUS a bulk DELETE-by-exclusion, with a database-managed version column, NO nullable scope pointer below the parent FK, and a composite FK to a leaf-entity parent (organization_id, service_id) -> services** (BE-0447 pattern, internal/controlplane/store/service_grant_repository_invariants_test.go). Structural reduction of the BE-0443 environment_grant_repository_invariants_test.go template: every leg that exercised a nullable *string scope pointer collapses or drops out — the round-trip pointer test is replaced by a service-account-principal-kind test (the closed-set CHECK leg still needs proving), the NULLS-FIRST ordering assertion in ListByService is gone (two-column ORDER BY principal_id, id), the empty-string-COALESCE dedup equivalence leg is gone (no COALESCE in the unique index), and the upsert/replace input struct drops the trailing *string field. The Upsert signature is six-positional `(id, organization_id, parent_id, principal_id, principal_kind, role)`; the ON CONFLICT branch keys on the three-tuple `(organization_id, parent_id, principal_id)`. The principal-kind cross-smuggling invariant MUST be preserved verbatim (re-upsert with a different caller-supplied principal_kind for the same principal_id; assert persisted kind = baseline). The duplicate-PK test must use a DIFFERENT principal_id so the ON CONFLICT branch does NOT match and the PRIMARY KEY (id) uniqueness violation is exercised instead of the upsert path. The ON DELETE CASCADE proof must delete the parent via raw SQL (the ServiceRepository.ScheduleDeletion is a SOFT delete and would NOT trigger CASCADE). The Upsert rollback proof reduces to ListByService-only because no per-id Get exists; ListByService is the only observation surface for a grant row. NEW Kind constant in domain/id.go MUST be added to BOTH the const block AND the canonical `kinds` map at the bottom — Valid() and the ID parser read from the map, not the const list, so a missing map entry silently breaks NewID(KindFoo) with ErrUnknownKind. For brand-new tables, services already exposes UNIQUE (organization_id, id) from migration 0002 so NO companion ALTER TABLE is needed on the parent (UNLIKE BE-0435 api_keys parent). Forward-applicable to any future grant table whose parent IS the leaf of the Organization -> Project -> Environment -> Service hierarchy or whose parent is otherwise structurally leaf-like (a hypothetical KindDeploymentGrant / KindJobGrant would inherit this template).
 - Repository CRUD invariants test file for a **tenant-scoped child table whose ONLY mutation surface is an INSERT...ON CONFLICT DO UPDATE upsert PLUS a bulk DELETE-by-exclusion (no per-id Get, no per-id Delete, no traditional UPDATE), with a database-managed version column, optional nullable scoping pointers, and a composite FK to a parent (organization_id, project_id) -> projects** (BE-0439 pattern, internal/controlplane/store/project_grant_repository_invariants_test.go). Two structural divergences from BE-0435 (api_key_scope_repository_invariants_test.go) are load-bearing: (1) the Upsert ON CONFLICT branch must be tested with a DIFFERENT caller-supplied id AND a DIFFERENT caller-supplied principal_kind to prove BOTH the caller-id-is-ignored guarantee AND the cross-kind-smuggling-impossible guarantee — the principal_kind column is NOT part of the scope tuple, so an existing row stays at its current principal_kind even when the caller passes a different kind for the same principal_id; a single Role-only update test would silently pass while a regression that promoted principal_kind to a SET clause still went undetected. (2) The Upsert rollback proof reduces to ListByProject-only because the repository exposes no per-id Get for grants — ListByProject is the ONLY observation surface for a grant row, so it is the load-bearing leak channel a partial commit would surface through, and an absent Get assertion is a deliberate file boundary, not a gap. Insert duplicate-id test must use a DIFFERENT principal_id so the ON CONFLICT (org, proj, principal, env, svc) branch does NOT match and the PRIMARY KEY (id) uniqueness violation is exercised — otherwise the upsert path silently swallows the duplicate id. DeleteByProjectExceptIDs has TWO codepaths in the repository (len(keepIDs)==0 -> unconditional DELETE; len>0 -> DELETE WHERE id NOT IN (ANY $3::text[])), so BOTH must be exercised independently — the empty-keep test must additionally use a fresh seed after the nil-keep clear AND assert the empty-slice ([]string{}) form is identical to nil at the wire (the repository documents nil and empty as identical, so a regression that diverged them would surface here). ON DELETE CASCADE from projects is the project-grant analogue of api_key_scope's ON DELETE CASCADE from api_keys: use raw `DELETE FROM projects WHERE id=$1` (NOT the repository's ScheduleDeletion, which is a SOFT delete and would NOT trigger CASCADE) and observe via ListByProject. Helper `newProjectGrantID(f, label)` synthesises a `pgrnt_<token_n>` id by rewriting f.Project's `prj_<token_n>` prefix — the testutil.Factory only stamps known domain prefixes and there is no f.ProjectGrant, so prefix-rewriting is the cleanest way to mint factory-unique ids without reaching into domain.NewID(domain.KindProjectGrant). The sibling project_grant_test.go's `seedProjectGrant` raw-SQL helper is kept intentionally separate: that file's tests exercise the read path against rows the schema (not the repository) inserted, so a regression that broke INSERT would still let the read tests pass — by contrast THIS file's `upsertProjectGrant` exercises the repository's INSERT path, so the two seed surfaces are complementary, not duplicates.
@@ -31640,3 +31641,175 @@ change that widened Reason to caller-supplied data.
     error types MUST be locally defined and uniquely named per file to avoid
     same-package collisions across the store_test files.
 ---
+
+## 2026-05-18 - BE-0450
+- Implemented: Tenant-isolation tests for the variables family
+  (organization_variables, project_variables, environment_variables,
+  service_variables). One *_tenant_isolation_test.go file per scope
+  (mirrors the BE-0449 per-scope split of the invariants tests since
+  the family is hierarchical with diverging mutation surfaces).
+- Files changed:
+  - Added:
+    internal/controlplane/store/organization_variable_tenant_isolation_test.go
+    internal/controlplane/store/project_variable_tenant_isolation_test.go
+    internal/controlplane/store/environment_variable_tenant_isolation_test.go
+    internal/controlplane/store/service_variable_tenant_isolation_test.go
+  - Modified PRD: ralph/prd.json (BE-0450 passes=true)
+  - Modified progress: ralph/progress.txt
+- What each file proves:
+  - ListByX across two tenants returns correct rows (cross-row identity
+    diverges on EVERY anchor: id, organization_id, scope_id, key, value).
+  - ListByX with a cross-tenant scope id (real scope owned by orgB)
+    yields an empty result under orgA — the indistinguishability
+    invariant (same empty shape as unknown-scope-under-own-tenant).
+  - ListByX with the same key in two tenants on their own scopes
+    isolates: both tenants see their own row, no overlap on id or
+    value.
+  - Upsert INSERT bystander byte-identical: orgA inserting on its own
+    scope with the SAME key as orgB's pre-seeded row leaves orgB's row
+    byte-identical across id, scope_id, key, value, is_secret,
+    secret_provider, secret_key_id, secret_ciphertext, version,
+    created_at, updated_at.
+  - Upsert UPDATE bystander byte-identical: orgA re-upserting its OWN
+    (orgA, scope, key) tuple fires ON CONFLICT DO UPDATE on its own
+    row only; orgB's same-key bystander on its own scope is
+    byte-identical.
+  - DeleteByXExceptKeys clear-all (nil keepKeys): orgA's whole-scope
+    clear leaves orgB's bystander byte-identical.
+  - DeleteByXExceptKeys keep-subset: orgA's "DELETE WHERE key NOT IN
+    ANY(...)" with orgB's key deliberately NOT in keepKeys leaves
+    orgB's bystander byte-identical.
+  - Upsert same key in two tenants both succeed (proves the UNIQUE
+    conflict target is per-tenant, not global).
+- Organization-scope file ADDITIONALLY exercises the per-key surfaces
+  that only exist on OrganizationVariableRepository:
+  - GetByKey cross-tenant returns NotFound — indistinguishable from
+    unknown-key-under-own-tenant, no error field echoes orgB's value.
+  - DeleteByKey on orgA does not touch orgB's same-key bystander; a
+    second DeleteByKey(orgA) on the now-gone key returns NotFound
+    with no value-echo.
+  - UpdateMutable on orgA does not touch orgB's same-key bystander
+    (Version bumps on orgA, orgB stays byte-identical).
+  - UpdateMutable cross-tenant on a key that exists ONLY in orgB
+    returns NotFound and leaves orgB's row byte-identical to its
+    baseline (the attempted hijack value does not land).
+- Helper reuse vs. new helpers:
+  - organization / environment / service files REUSE the
+    newXVariableID / upsertXVariable / listXVariablesOrFail helpers
+    defined in the BE-0449 invariants files (same store_test
+    package).
+  - project file DEFINES its own newProjectVariableID /
+    upsertProjectVariable / listProjectVariablesOrFail because
+    project_variable_repository_invariants_test.go inlines its
+    helpers (no shared symbols available).
+  - Each file defines a per-scope getXVariableFromListOrFail and
+    assertXVariableByteIdentical with distinct names to avoid
+    same-package collisions across store_test.
+  - containsValue substring helper for error-surface
+    no-value-echo assertions is defined in the organization file
+    (only organization-scope per-key methods can RETURN errors with
+    message/hint text); env/service/project paths surface errors via
+    NotFound on Upsert FK violation or Conflict, neither of which is
+    on the surface here (those are invariants-file legs).
+  - bytes.Equal from stdlib is used for secret_ciphertext byte
+    comparison — no custom helper.
+- Bystander byte-identical projection EXPLICITLY anchors:
+  Value AND SecretProvider AND SecretKeyID AND SecretCiphertext on
+  every variable scope. The variable tables differ from grants:
+  grants carry no secret-bearing column, but variables carry value
+  (for is_secret=false) and (secret_provider, secret_key_id,
+  secret_ciphertext) tuple (for is_secret=true). A regression that
+  swapped orgA's payload onto orgB's row — or that stamped orgA's
+  secret bytes onto orgB's is_secret=false row — surfaces through
+  these per-column anchors even when identity columns look correct.
+  Also anchored: trigger-managed updated_at AND trigger-bumped
+  version (the bump_version trigger increments on EVERY matched
+  UPDATE — drifting on a peer tenant's row is independently
+  sufficient evidence of a missing tenant predicate).
+- Verification run:
+  - gofmt -w (all 4 new files)
+  - go vet ./... (clean — no warnings)
+  - go mod tidy (no changes)
+  - go test -count=1 -timeout=240s -run
+    'TestProjectVariableRepository|TestEnvironmentVariableRepository|TestServiceVariableRepository|TestOrganizationVariableRepository'
+    ./internal/controlplane/store/... — PASS (4.875s)
+  - go test -count=1 -race -timeout=300s -run
+    '<new-test-name-pattern>' ./internal/controlplane/store/ — PASS
+    (4.102s)
+- Results: All new tests pass under both regular and -race modes.
+  Pre-existing failures in TestAPIKeyServiceCreate /
+  TestAPIKeyReaderGetAPIKey / TestProjectVariableServiceReplaceCross
+  TenantProjectIsNotFound exist on the baseline branch (verified by
+  stashing the new files and re-running; same failures). They are
+  NOT regressions from this story and are out of scope for BE-0450.
+- Tools not installed (consistent with prior iterations):
+  goimports, golangci-lint, staticcheck, govulncheck.
+- Remaining risks / follow-ups:
+  - The OrganizationVariableRepository.ListByOrganization returns a
+    NIL slice on no-rows (unlike its project/environment/service
+    siblings which use make([]T, 0)). The org-scope test documents
+    this divergence in a comment but does NOT assert non-nil. A
+    future stories that unifies the empty-slice contract across the
+    variable family could pre-allocate the slice in ListByOrganization
+    (same as the other three repositories) and the org-scope test's
+    documentation comment becomes the migration anchor.
+  - The pre-existing TestAPIKeyServiceCreate / TestAPIKeyReader
+    GetAPIKey / TestProjectVariableServiceReplaceCrossTenantProject
+    IsNotFound failures are real but out of scope here; a follow-up
+    story (or one of the existing BE-XXX entries in the PRD) should
+    pin those.
+- Learnings for future iterations:
+  - The "per-scope tenant-isolation test file per physical table in
+    the hierarchy" pattern (this story) MIRRORS the BE-0449 per-scope
+    invariants split. When the family is hierarchical with diverging
+    mutation surfaces (organization variant has GetByKey / DeleteByKey
+    / UpdateMutable that the other three lack), ship one
+    *_tenant_isolation_test.go per physical table. The organization-
+    scope file is the largest because it has additional per-key
+    surfaces to anchor; the project/environment/service files
+    converge on a uniform 8-test shape (ListByX-correct,
+    ListByX-cross-tenant-empty, ListByX-shared-key, Upsert-INSERT-
+    bystander, Upsert-UPDATE-bystander, DeleteByXExceptKeys-clear-
+    all-bystander, DeleteByXExceptKeys-keep-subset-bystander,
+    Upsert-same-key-both-succeed).
+  - The variables family adds a NEW projection leg the grant family
+    did not have: secret-bearing columns. The byte-identical-
+    bystander projection MUST include Value AND the
+    (SecretProvider, SecretKeyID, SecretCiphertext) tuple, plus the
+    IsSecret flag. The cross-tenant error-surface no-echo invariant
+    becomes load-bearing on the organization-scope per-key methods
+    (GetByKey / DeleteByKey / UpdateMutable can all return errors
+    whose message / hint could echo a peer tenant's value).
+  - When reusing helpers from a sibling invariants file (same
+    store_test package), check whether the helper signature uses a
+    factory-only mint (newOrganizationVariableID(f, label)) vs. a
+    factory + organization mint (newProjectVariableID(f, org, label)).
+    The project-scope helper synthesises its id via f.Project(org,
+    label).ID — it needs an org. The organization/environment/service
+    helpers use a fake-parent or factory-counter-only scheme. Picking
+    the wrong helper shape at call sites is the most common compile
+    failure when porting tests across the family.
+  - OrganizationVariableRepository.ListByOrganization returns a NIL
+    slice for no-rows; the other three variable repositories use
+    make([]T, 0). The contract should be "len == 0 on no-rows"
+    (not "non-nil"). Asserting non-nil on the org-scope file
+    causes a deterministic test failure — the existing
+    TestOrganizationVariableReaderReturnsEmptyForUnknownOrg in
+    organization_variable_test.go correctly only checks len.
+  - bytes.Equal (stdlib) is fine for SecretCiphertext byte compare;
+    no custom helper is needed.
+  - Use stderrors.As + yerr.From for typed-code assertions on
+    repository errors. apierr.NotFound returns *yerr.Error with
+    Code == yerr.CodeNotFound. The pattern is consistent across the
+    package and lets future tests assert ye.Code without dragging
+    apierr.Is helpers into the test surface.
+  - For per-tenant per-key UNIQUE constraints (organization_id,
+    [parent_id,] key), the "same key in two tenants both succeed"
+    test is structurally necessary to anchor that the conflict
+    target IS per-tenant — without it, a regression that resolved
+    the conflict on (parent_id, key) alone would still pass every
+    bystander test (because the bystander would have been INSERTed
+    successfully first, and the peer Upsert would simply hit the
+    PK uniqueness check or hit no conflict at all). The
+    same-key-both-succeed test is the positive-direction proof
+    that pairs with the bystander byte-identical proofs.
