@@ -9079,8 +9079,8 @@
       ],
       "type": "tenant-isolation",
       "priority": 1,
-      "passes": false,
-      "notes": "Tenant isolation for memberships."
+      "passes": true,
+      "notes": "Tenant isolation for memberships. Repository-layer cross-row safety proven by internal/controlplane/store/membership_tenant_isolation_test.go: byte-identical-snapshot proofs for Get/GetMember row swaps, UpdateRole and Delete bystander-row preservation across two tenants for the SAME user, conflict-path Insert bystander preservation, ListByOrganization disjoint-count and shared-user isolation, and cross-tenant vs unknown-pair NotFound shape indistinguishability (Code+Hint). memberships has no soft-delete column; absence documented in the test file package comment."
     },
     {
       "id": "BE-0431",
