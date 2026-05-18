@@ -584,6 +584,115 @@ func TestEnsureComposeServicePayloadValidation(t *testing.T) {
 	}
 }
 
+func TestEnsureDatabaseServicePayloadValidation(t *testing.T) {
+	t.Parallel()
+
+	validJob := store.ProvisioningJob{
+		OrganizationID: "org_valid",
+		ProjectID:      "proj_valid",
+		EnvironmentID:  "env_valid",
+		ServiceID:      "svc_valid",
+		JobType:        worker.JobTypeEnsureDatabaseService,
+		Payload: map[string]string{
+			"organization_id": "org_valid",
+			"project_id":      "proj_valid",
+			"environment_id":  "env_valid",
+			"service_id":      "svc_valid",
+			"engine":          dokploy.EnginePostgres,
+		},
+	}
+
+	for _, tc := range []struct {
+		name    string
+		mutate  func(*store.ProvisioningJob)
+		wantErr bool
+	}{
+		{name: "valid"},
+		{
+			name: "missing payload service",
+			mutate: func(job *store.ProvisioningJob) {
+				delete(job.Payload, "service_id")
+			},
+			wantErr: true,
+		},
+		{
+			name: "cross tenant payload",
+			mutate: func(job *store.ProvisioningJob) {
+				job.Payload["organization_id"] = "org_other"
+			},
+			wantErr: true,
+		},
+		{
+			name: "cross project payload",
+			mutate: func(job *store.ProvisioningJob) {
+				job.Payload["project_id"] = "proj_other"
+			},
+			wantErr: true,
+		},
+		{
+			name: "cross environment payload",
+			mutate: func(job *store.ProvisioningJob) {
+				job.Payload["environment_id"] = "env_other"
+			},
+			wantErr: true,
+		},
+		{
+			name: "cross service payload",
+			mutate: func(job *store.ProvisioningJob) {
+				job.Payload["service_id"] = "svc_other"
+			},
+			wantErr: true,
+		},
+		{
+			name: "missing engine",
+			mutate: func(job *store.ProvisioningJob) {
+				delete(job.Payload, "engine")
+			},
+			wantErr: true,
+		},
+		{
+			name: "unsupported engine",
+			mutate: func(job *store.ProvisioningJob) {
+				job.Payload["engine"] = "sqlite"
+			},
+			wantErr: true,
+		},
+		{
+			name: "wrong job type",
+			mutate: func(job *store.ProvisioningJob) {
+				job.JobType = worker.JobTypeEnsureComposeService
+			},
+			wantErr: true,
+		},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			job := validJob
+			job.Payload = map[string]string{}
+			for k, v := range validJob.Payload {
+				job.Payload[k] = v
+			}
+			if tc.mutate != nil {
+				tc.mutate(&job)
+			}
+			_, err := worker.ParseEnsureDatabaseServicePayload(job)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("ParseEnsureDatabaseServicePayload returned nil, want validation error")
+				}
+				if !worker.IsTerminal(err) {
+					t.Fatalf("validation error is not terminal: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseEnsureDatabaseServicePayload returned %v, want nil", err)
+			}
+		})
+	}
+}
+
 func TestProvisionerEnsuresDokployOrganizationAndPersistsMapping(t *testing.T) {
 	t.Parallel()
 
@@ -907,6 +1016,76 @@ func TestProvisionerEnsuresComposeServiceAndPersistsMapping(t *testing.T) {
 	reqs = fake.Requests()
 	if len(reqs) != 5 || reqs[4].Method != http.MethodGet || reqs[4].Path != "/api/compose/cmp_1" {
 		t.Fatalf("after replay fake requests = %+v, want fifth GET /api/compose/cmp_1", reqs)
+	}
+}
+
+func TestProvisionerEnsuresDatabaseServiceAndPersistsMapping(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	org := insertWorkerOrg(ctx, t, dataStore, "acme")
+	project := insertWorkerProject(ctx, t, dataStore, org, "api")
+	env := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+	svc := insertWorkerService(ctx, t, dataStore, env, "primary", store.ServiceKindDatabase)
+
+	fake := dokployfake.New()
+	defer fake.Close()
+	client := newWorkerDokployClient(t, fake)
+	if err := pRunEnsureEnvironmentWithParent(ctx, t, dataStore, client, org, project, env); err != nil {
+		t.Fatalf("seed parent dokploy environment: %v", err)
+	}
+
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: client,
+		Mapper: dokploy.NewMapper(),
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+
+	job := ensureDatabaseServiceJob(svc, dokploy.EnginePostgres)
+	if err := p.Run(ctx, job); err != nil {
+		t.Fatalf("Run ensure_database_service: %v", err)
+	}
+
+	refs := listServiceRefs(ctx, t, dataStore, svc.OrganizationID, svc.ID)
+	if len(refs) != 1 {
+		t.Fatalf("dokploy refs count = %d, want 1", len(refs))
+	}
+	if refs[0].YallaKind != store.YallaKindService ||
+		refs[0].YallaID != svc.ID ||
+		refs[0].DokployResource != store.DokployResourceDatabase ||
+		refs[0].DokployID != "db_1" {
+		t.Fatalf("unexpected dokploy ref: %+v", refs[0])
+	}
+
+	reqs := fake.Requests()
+	if len(reqs) != 4 || reqs[3].Method != http.MethodPost || reqs[3].Path != "/api/databases" {
+		t.Fatalf("fake requests = %+v, want org/project/environment seeds then POST /api/databases", reqs)
+	}
+	if reqs[3].AuthHeader != output.Sentinel {
+		t.Fatalf("auth header was not redacted: %q", reqs[3].AuthHeader)
+	}
+	if !strings.Contains(reqs[3].Body, `"engine":"postgres"`) {
+		t.Fatalf("database create body did not carry postgres engine: %s", reqs[3].Body)
+	}
+
+	if err := p.Run(ctx, job); err != nil {
+		t.Fatalf("replayed Run ensure_database_service: %v", err)
+	}
+	refs = listServiceRefs(ctx, t, dataStore, svc.OrganizationID, svc.ID)
+	if len(refs) != 1 {
+		t.Fatalf("after replay dokploy refs count = %d, want 1", len(refs))
+	}
+	reqs = fake.Requests()
+	if len(reqs) != 5 || reqs[4].Method != http.MethodGet || reqs[4].Path != "/api/databases/db_1" {
+		t.Fatalf("after replay fake requests = %+v, want fifth GET /api/databases/db_1", reqs)
 	}
 }
 
@@ -1262,6 +1441,52 @@ func TestProvisionerEnsureComposeServiceRetryableFailureDoesNotPersistMapping(t 
 	}
 }
 
+func TestProvisionerEnsureDatabaseServiceRetryableFailureDoesNotPersistMapping(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	org := insertWorkerOrg(ctx, t, dataStore, "acme")
+	project := insertWorkerProject(ctx, t, dataStore, org, "api")
+	env := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+	svc := insertWorkerService(ctx, t, dataStore, env, "primary", store.ServiceKindDatabase)
+
+	fake := dokployfake.New()
+	defer fake.Close()
+	client := newWorkerDokployClient(t, fake)
+	if err := pRunEnsureEnvironmentWithParent(ctx, t, dataStore, client, org, project, env); err != nil {
+		t.Fatalf("seed parent dokploy environment: %v", err)
+	}
+	fake.QueueFault(dokployfake.StatusFault(http.StatusInternalServerError))
+
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: client,
+		Mapper: dokploy.NewMapper(),
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+
+	err = p.Run(ctx, ensureDatabaseServiceJob(svc, dokploy.EnginePostgres))
+	if err == nil {
+		t.Fatal("Run returned nil, want retryable Dokploy error")
+	}
+	if worker.IsTerminal(err) {
+		t.Fatalf("Run returned terminal error for retryable upstream failure: %v", err)
+	}
+	if !apierr.Retryable(err) {
+		t.Fatalf("Run error is not marked retryable: %v", err)
+	}
+	if refs := listServiceRefs(ctx, t, dataStore, svc.OrganizationID, svc.ID); len(refs) != 0 {
+		t.Fatalf("dokploy refs count after failed ensure = %d, want 0", len(refs))
+	}
+}
+
 func TestEnsureApplicationServiceRetryableFailurePersistsRedactedErrorSummary(t *testing.T) {
 	t.Parallel()
 
@@ -1393,6 +1618,93 @@ func TestEnsureComposeServiceRetryableFailurePersistsRedactedErrorSummary(t *tes
 		Store:         dataStore,
 		Runner:        p,
 		Owner:         "worker-compose-redaction-test",
+		LeaseDuration: time.Minute,
+		Backoff:       worker.Backoff{Base: time.Second, Max: time.Second},
+		Now:           func() time.Time { return time.Unix(1700000000, 0).UTC() },
+	})
+	if err != nil {
+		t.Fatalf("NewStoreClaimer: %v", err)
+	}
+	lease, err := claimer.Claim(ctx)
+	if err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+	if lease == nil {
+		t.Fatal("Claim returned nil lease")
+	}
+	if err := lease.Run(ctx); err != nil {
+		t.Fatalf("lease.Run: %v", err)
+	}
+
+	var persisted store.ProvisioningJob
+	if err := dataStore.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		var getErr error
+		persisted, getErr = jobs.Get(ctx, q, enqueued.OrganizationID, enqueued.ID)
+		return getErr
+	}); err != nil {
+		t.Fatalf("read persisted job: %v", err)
+	}
+	if persisted.Status != store.JobStatusRetrying {
+		t.Fatalf("persisted status = %s, want retrying", persisted.Status)
+	}
+	if persisted.ErrorSummary == "" {
+		t.Fatal("persisted error summary is empty")
+	}
+	if strings.Contains(persisted.ErrorSummary, fake.Token()) {
+		t.Fatalf("persisted error summary leaked Dokploy token: %q", persisted.ErrorSummary)
+	}
+	if strings.Contains(persisted.ErrorSummary, "Authorization") {
+		t.Fatalf("persisted error summary leaked auth header name: %q", persisted.ErrorSummary)
+	}
+	if refs := listServiceRefs(ctx, t, dataStore, svc.OrganizationID, svc.ID); len(refs) != 0 {
+		t.Fatalf("dokploy refs count after failed ensure = %d, want 0", len(refs))
+	}
+}
+
+func TestEnsureDatabaseServiceRetryableFailurePersistsRedactedErrorSummary(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	org := insertWorkerOrg(ctx, t, dataStore, "acme")
+	project := insertWorkerProject(ctx, t, dataStore, org, "api")
+	env := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+	svc := insertWorkerService(ctx, t, dataStore, env, "primary", store.ServiceKindDatabase)
+
+	fake := dokployfake.New()
+	defer fake.Close()
+	client := newWorkerDokployClient(t, fake)
+	if err := pRunEnsureEnvironmentWithParent(ctx, t, dataStore, client, org, project, env); err != nil {
+		t.Fatalf("seed parent dokploy environment: %v", err)
+	}
+	fake.QueueFault(dokployfake.StatusFault(http.StatusInternalServerError))
+
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: client,
+		Mapper: dokploy.NewMapper(),
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+
+	jobs := store.NewJobRepository()
+	enqueued := ensureDatabaseServiceJob(svc, dokploy.EnginePostgres)
+	if err := dataStore.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		_, err := jobs.Insert(ctx, tx, enqueued)
+		return err
+	}); err != nil {
+		t.Fatalf("insert ensure_database_service job: %v", err)
+	}
+
+	claimer, err := worker.NewStoreClaimer(worker.StoreClaimerConfig{
+		Store:         dataStore,
+		Runner:        p,
+		Owner:         "worker-database-redaction-test",
 		LeaseDuration: time.Minute,
 		Backoff:       worker.Backoff{Base: time.Second, Max: time.Second},
 		Now:           func() time.Time { return time.Unix(1700000000, 0).UTC() },
@@ -1601,6 +1913,52 @@ func TestProvisionerEnsureComposeServiceRefusesStaleDesiredVersion(t *testing.T)
 	}
 
 	job := ensureComposeServiceJob(svc)
+	job.DesiredVersion = svc.Version - 1
+	err = p.Run(ctx, job)
+	if err == nil {
+		t.Fatal("Run returned nil, want stale desired-state error")
+	}
+	if !worker.IsTerminal(err) {
+		t.Fatalf("stale desired-state error is not terminal: %v", err)
+	}
+	if refs := listServiceRefs(ctx, t, dataStore, svc.OrganizationID, svc.ID); len(refs) != 0 {
+		t.Fatalf("dokploy refs count after stale job = %d, want 0", len(refs))
+	}
+	if reqs := fake.Requests(); len(reqs) != 3 {
+		t.Fatalf("stale job called Dokploy beyond parent seed: %+v", reqs)
+	}
+}
+
+func TestProvisionerEnsureDatabaseServiceRefusesStaleDesiredVersion(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	org := insertWorkerOrg(ctx, t, dataStore, "acme")
+	project := insertWorkerProject(ctx, t, dataStore, org, "api")
+	env := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+	svc := insertWorkerService(ctx, t, dataStore, env, "primary", store.ServiceKindDatabase)
+
+	fake := dokployfake.New()
+	defer fake.Close()
+	client := newWorkerDokployClient(t, fake)
+	if err := pRunEnsureEnvironmentWithParent(ctx, t, dataStore, client, org, project, env); err != nil {
+		t.Fatalf("seed parent dokploy environment: %v", err)
+	}
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: client,
+		Mapper: dokploy.NewMapper(),
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+
+	job := ensureDatabaseServiceJob(svc, dokploy.EnginePostgres)
 	job.DesiredVersion = svc.Version - 1
 	err = p.Run(ctx, job)
 	if err == nil {
@@ -1832,6 +2190,50 @@ func TestProvisionerEnsureComposeServiceWrongKindIsTerminalValidation(t *testing
 	}
 }
 
+func TestProvisionerEnsureDatabaseServiceWrongKindIsTerminalValidation(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	org := insertWorkerOrg(ctx, t, dataStore, "acme")
+	project := insertWorkerProject(ctx, t, dataStore, org, "api")
+	env := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+	svc := insertWorkerService(ctx, t, dataStore, env, "api", store.ServiceKindApplication)
+
+	fake := dokployfake.New()
+	defer fake.Close()
+	client := newWorkerDokployClient(t, fake)
+	if err := pRunEnsureEnvironmentWithParent(ctx, t, dataStore, client, org, project, env); err != nil {
+		t.Fatalf("seed parent dokploy environment: %v", err)
+	}
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: client,
+		Mapper: dokploy.NewMapper(),
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+
+	err = p.Run(ctx, ensureDatabaseServiceJob(svc, dokploy.EnginePostgres))
+	if err == nil {
+		t.Fatal("Run returned nil, want wrong-kind validation error")
+	}
+	if !worker.IsTerminal(err) {
+		t.Fatalf("wrong-kind error is not terminal: %v", err)
+	}
+	if refs := listServiceRefs(ctx, t, dataStore, svc.OrganizationID, svc.ID); len(refs) != 0 {
+		t.Fatalf("dokploy refs count after wrong-kind job = %d, want 0", len(refs))
+	}
+	if reqs := fake.Requests(); len(reqs) != 3 {
+		t.Fatalf("wrong-kind job called Dokploy beyond parent seed: %+v", reqs)
+	}
+}
+
 func TestProvisionerEnsureProjectCancellationIsNotTerminal(t *testing.T) {
 	t.Parallel()
 
@@ -1972,6 +2374,46 @@ func TestProvisionerEnsureComposeServiceCancellationIsNotTerminal(t *testing.T) 
 			"project_id":      "proj_valid",
 			"environment_id":  "env_valid",
 			"service_id":      "svc_valid",
+		},
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run error = %v, want context.Canceled", err)
+	}
+	if worker.IsTerminal(err) {
+		t.Fatalf("cancellation error is terminal: %v", err)
+	}
+}
+
+func TestProvisionerEnsureDatabaseServiceCancellationIsNotTerminal(t *testing.T) {
+	t.Parallel()
+
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: canceledClient{},
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+	err = p.Run(ctx, store.ProvisioningJob{
+		OrganizationID: "org_valid",
+		ProjectID:      "proj_valid",
+		EnvironmentID:  "env_valid",
+		ServiceID:      "svc_valid",
+		JobType:        worker.JobTypeEnsureDatabaseService,
+		Payload: map[string]string{
+			"organization_id": "org_valid",
+			"project_id":      "proj_valid",
+			"environment_id":  "env_valid",
+			"service_id":      "svc_valid",
+			"engine":          dokploy.EnginePostgres,
 		},
 	})
 	if !errors.Is(err, context.Canceled) {
@@ -2231,6 +2673,28 @@ func ensureComposeServiceJob(svc store.Service) store.ProvisioningJob {
 		},
 		RequestID:     "req_compose_service_test",
 		CorrelationID: "corr_compose_service_test",
+	}
+}
+
+func ensureDatabaseServiceJob(svc store.Service, engine string) store.ProvisioningJob {
+	return store.ProvisioningJob{
+		ID:             "job_database_service_test",
+		OrganizationID: svc.OrganizationID,
+		ProjectID:      svc.ProjectID,
+		EnvironmentID:  svc.EnvironmentID,
+		ServiceID:      svc.ID,
+		JobType:        worker.JobTypeEnsureDatabaseService,
+		DesiredVersion: svc.Version,
+		IdempotencyKey: "ensure-database-service-" + svc.ID,
+		Payload: map[string]string{
+			"organization_id": svc.OrganizationID,
+			"project_id":      svc.ProjectID,
+			"environment_id":  svc.EnvironmentID,
+			"service_id":      svc.ID,
+			"engine":          engine,
+		},
+		RequestID:     "req_database_service_test",
+		CorrelationID: "corr_database_service_test",
 	}
 }
 

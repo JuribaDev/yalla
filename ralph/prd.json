@@ -10143,8 +10143,8 @@
       ],
       "type": "worker-job",
       "priority": 1,
-      "passes": false,
-      "notes": "Provisioning job type: ensure_database_service."
+      "passes": true,
+      "notes": "Implemented durable ensure_database_service execution through worker.Provisioner with typed payload validation, closed-set database engine validation, tenant-scoped database service desired-state reload, parent environment mapping lookup, idempotent Dokploy database ensure/replay, stale desired-version checks before and after upstream calls, database mapping persistence, fake Dokploy coverage for success/replay, retryable failure, terminal validation/stale paths, cancellation, and redacted queue error persistence. Required quality checks passed."
     },
     {
       "id": "BE-0487",

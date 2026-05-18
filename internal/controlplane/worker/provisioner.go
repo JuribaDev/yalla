@@ -30,6 +30,10 @@ const JobTypeEnsureApplicationService = "ensure_application_service"
 // tenant's Dokploy compose mapping exist for a compose service.
 const JobTypeEnsureComposeService = "ensure_compose_service"
 
+// JobTypeEnsureDatabaseService is the durable provisioning job that makes the
+// tenant's Dokploy database mapping exist for a database service.
+const JobTypeEnsureDatabaseService = "ensure_database_service"
+
 // DokployClient is the narrow typed-client surface these worker jobs
 // needs. *dokploy.Client satisfies it in production; tests can supply fakes.
 type DokployClient interface {
@@ -196,6 +200,16 @@ type EnsureComposeServicePayload struct {
 	ServiceID      string
 }
 
+// EnsureDatabaseServicePayload is the typed schema carried by
+// provisioning_jobs.payload for JobTypeEnsureDatabaseService.
+type EnsureDatabaseServicePayload struct {
+	OrganizationID string
+	ProjectID      string
+	EnvironmentID  string
+	ServiceID      string
+	Engine         string
+}
+
 // ParseEnsureApplicationServicePayload validates job's typed payload and
 // returns a terminal error for payload shapes retrying cannot repair.
 func ParseEnsureApplicationServicePayload(job store.ProvisioningJob) (EnsureApplicationServicePayload, error) {
@@ -306,6 +320,75 @@ func ParseEnsureComposeServicePayload(job store.ProvisioningJob) (EnsureComposeS
 	}, nil
 }
 
+// ParseEnsureDatabaseServicePayload validates job's typed payload and returns a
+// terminal error for payload shapes retrying cannot repair.
+func ParseEnsureDatabaseServicePayload(job store.ProvisioningJob) (EnsureDatabaseServicePayload, error) {
+	var violations []apierr.FieldViolation
+	if job.JobType != JobTypeEnsureDatabaseService {
+		violations = append(violations, apierr.FieldViolation{Field: "job_type", Reason: "must be ensure_database_service"})
+	}
+	if job.OrganizationID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "organization_id", Reason: "is required"})
+	}
+	if job.ProjectID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "project_id", Reason: "is required"})
+	}
+	if job.EnvironmentID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "environment_id", Reason: "is required"})
+	}
+	if job.ServiceID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "service_id", Reason: "is required"})
+	}
+
+	payloadOrgID := job.Payload["organization_id"]
+	if payloadOrgID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.organization_id", Reason: "is required"})
+	} else if job.OrganizationID != "" && payloadOrgID != job.OrganizationID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.organization_id", Reason: "must match the job organization_id"})
+	}
+	payloadProjectID := job.Payload["project_id"]
+	if payloadProjectID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.project_id", Reason: "is required"})
+	} else if job.ProjectID != "" && payloadProjectID != job.ProjectID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.project_id", Reason: "must match the job project_id"})
+	}
+	payloadEnvironmentID := job.Payload["environment_id"]
+	if payloadEnvironmentID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.environment_id", Reason: "is required"})
+	} else if job.EnvironmentID != "" && payloadEnvironmentID != job.EnvironmentID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.environment_id", Reason: "must match the job environment_id"})
+	}
+	payloadServiceID := job.Payload["service_id"]
+	if payloadServiceID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.service_id", Reason: "is required"})
+	} else if job.ServiceID != "" && payloadServiceID != job.ServiceID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.service_id", Reason: "must match the job service_id"})
+	}
+	engine := job.Payload["engine"]
+	if !databaseEngineValid(engine) {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.engine", Reason: "must be postgres, mysql, mariadb, mongo, or redis"})
+	}
+	if len(violations) > 0 {
+		return EnsureDatabaseServicePayload{}, Terminal(apierr.InvalidInput(violations...))
+	}
+	return EnsureDatabaseServicePayload{
+		OrganizationID: payloadOrgID,
+		ProjectID:      payloadProjectID,
+		EnvironmentID:  payloadEnvironmentID,
+		ServiceID:      payloadServiceID,
+		Engine:         engine,
+	}, nil
+}
+
+func databaseEngineValid(engine string) bool {
+	switch engine {
+	case dokploy.EnginePostgres, dokploy.EngineMysql, dokploy.EngineMariadb, dokploy.EngineMongo, dokploy.EngineRedis:
+		return true
+	default:
+		return false
+	}
+}
+
 // ProvisionerConfig configures a Provisioner.
 type ProvisionerConfig struct {
 	Store         *store.Store
@@ -395,6 +478,8 @@ func (p *Provisioner) Run(ctx context.Context, job store.ProvisioningJob) error 
 		return p.runEnsureApplicationService(ctx, job)
 	case JobTypeEnsureComposeService:
 		return p.runEnsureComposeService(ctx, job)
+	case JobTypeEnsureDatabaseService:
+		return p.runEnsureDatabaseService(ctx, job)
 	default:
 		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
 			Field:  "job_type",
@@ -669,6 +754,61 @@ func (p *Provisioner) runEnsureComposeService(ctx context.Context, job store.Pro
 	}
 
 	return p.persistComposeServiceRef(ctx, job, payload, ensured.ID)
+}
+
+func (p *Provisioner) runEnsureDatabaseService(ctx context.Context, job store.ProvisioningJob) error {
+	payload, err := ParseEnsureDatabaseServicePayload(job)
+	if err != nil {
+		return err
+	}
+
+	svc, parentDokployID, existingID, err := p.loadDatabaseServiceTarget(ctx, job, payload)
+	if err != nil {
+		return err
+	}
+
+	svcID, parseErr := domain.ParseID(svc.ID)
+	if parseErr != nil || svcID.Kind() != domain.KindService {
+		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "service_id",
+			Reason: "must be a valid service id",
+		}))
+	}
+	envID, parseErr := domain.ParseID(svc.EnvironmentID)
+	if parseErr != nil || envID.Kind() != domain.KindEnvironment {
+		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "environment_id",
+			Reason: "must be a valid environment id",
+		}))
+	}
+
+	in, err := p.mapper.Service(parentDokployID, dokploy.YallaService{
+		ID:            svcID,
+		EnvironmentID: envID,
+		Label:         svc.DisplayName,
+		Type:          dokploy.ServiceDatabase,
+		Engine:        payload.Engine,
+		DokployID:     existingID,
+	})
+	if err != nil {
+		return Terminal(err)
+	}
+
+	ensured, ensureErr := p.client.EnsureService(ctx, in)
+	if ensureErr != nil {
+		if interrupted(ctx, ensureErr) {
+			return ensureErr
+		}
+		if apierr.Retryable(ensureErr) {
+			return ensureErr
+		}
+		return Terminal(ensureErr)
+	}
+	if ensured.ID == "" {
+		return Terminal(apierr.Internal(errors.New("worker: ensure_database_service resolved an empty Dokploy database id")))
+	}
+
+	return p.persistDatabaseServiceRef(ctx, job, payload, ensured.ID)
 }
 
 func (p *Provisioner) loadOrganizationTarget(ctx context.Context, job store.ProvisioningJob, payload EnsureDokployOrganizationPayload) (store.Organization, string, error) {
@@ -953,6 +1093,76 @@ func (p *Provisioner) loadComposeServiceTarget(ctx context.Context, job store.Pr
 	return svc, parentDokployID, existingDokployID, nil
 }
 
+func (p *Provisioner) loadDatabaseServiceTarget(ctx context.Context, job store.ProvisioningJob, payload EnsureDatabaseServicePayload) (store.Service, string, string, error) {
+	var (
+		svc               store.Service
+		parentDokployID   string
+		existingDokployID string
+	)
+	err := p.store.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		var getErr error
+		svc, getErr = p.services.GetByID(ctx, q, payload.OrganizationID, payload.ServiceID)
+		if getErr != nil {
+			return Terminal(getErr)
+		}
+		if svc.OrganizationID != job.OrganizationID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.organization_id",
+				Reason: "must match the service organization_id",
+			}))
+		}
+		if svc.ProjectID != payload.ProjectID || svc.ProjectID != job.ProjectID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.project_id",
+				Reason: "must match the service project_id",
+			}))
+		}
+		if svc.EnvironmentID != payload.EnvironmentID || svc.EnvironmentID != job.EnvironmentID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.environment_id",
+				Reason: "must match the service environment_id",
+			}))
+		}
+		if svc.Kind != store.ServiceKindDatabase {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "service.kind",
+				Reason: "must be database for ensure_database_service",
+			}))
+		}
+		if job.DesiredVersion > 0 && svc.Version != job.DesiredVersion {
+			return Terminal(apierr.ConflictStale(svc.Version))
+		}
+		envRefs, listErr := p.refs.ListByYallaResource(ctx, q, job.OrganizationID, store.YallaKindEnvironment, svc.EnvironmentID)
+		if listErr != nil {
+			return listErr
+		}
+		for _, ref := range envRefs {
+			if ref.DokployResource == store.DokployResourceEnvironment {
+				parentDokployID = ref.DokployID
+				break
+			}
+		}
+		if parentDokployID == "" {
+			return Terminal(apierr.Conflict("parent Dokploy environment mapping is required before ensuring a database service"))
+		}
+		serviceRefs, listErr := p.refs.ListByYallaResource(ctx, q, job.OrganizationID, store.YallaKindService, svc.ID)
+		if listErr != nil {
+			return listErr
+		}
+		for _, ref := range serviceRefs {
+			if ref.DokployResource == store.DokployResourceDatabase {
+				existingDokployID = ref.DokployID
+				return nil
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return store.Service{}, "", "", err
+	}
+	return svc, parentDokployID, existingDokployID, nil
+}
+
 func (p *Provisioner) persistOrganizationRef(ctx context.Context, job store.ProvisioningJob, payload EnsureDokployOrganizationPayload, dokployID string) error {
 	return p.store.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
 		org, err := p.organizations.Get(ctx, tx, payload.OrganizationID)
@@ -1132,6 +1342,62 @@ func (p *Provisioner) persistComposeServiceRef(ctx context.Context, job store.Pr
 			YallaKind:       store.YallaKindService,
 			YallaID:         payload.ServiceID,
 			DokployResource: store.DokployResourceCompose,
+			DokployID:       dokployID,
+		})
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+func (p *Provisioner) persistDatabaseServiceRef(ctx context.Context, job store.ProvisioningJob, payload EnsureDatabaseServicePayload, dokployID string) error {
+	return p.store.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		svc, err := p.services.GetByID(ctx, tx, payload.OrganizationID, payload.ServiceID)
+		if err != nil {
+			return Terminal(err)
+		}
+		if svc.OrganizationID != job.OrganizationID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.organization_id",
+				Reason: "must match the service organization_id",
+			}))
+		}
+		if svc.ProjectID != payload.ProjectID || svc.ProjectID != job.ProjectID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.project_id",
+				Reason: "must match the service project_id",
+			}))
+		}
+		if svc.EnvironmentID != payload.EnvironmentID || svc.EnvironmentID != job.EnvironmentID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.environment_id",
+				Reason: "must match the service environment_id",
+			}))
+		}
+		if svc.Kind != store.ServiceKindDatabase {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "service.kind",
+				Reason: "must be database for ensure_database_service",
+			}))
+		}
+		if job.DesiredVersion > 0 && svc.Version != job.DesiredVersion {
+			return Terminal(apierr.ConflictStale(svc.Version))
+		}
+		refs, err := p.refs.ListByYallaResource(ctx, tx, job.OrganizationID, store.YallaKindService, payload.ServiceID)
+		if err != nil {
+			return err
+		}
+		for _, ref := range refs {
+			if ref.DokployResource == store.DokployResourceDatabase {
+				return nil
+			}
+		}
+		_, err = p.refs.Insert(ctx, tx, store.DokployRef{
+			OrganizationID:  job.OrganizationID,
+			YallaKind:       store.YallaKindService,
+			YallaID:         payload.ServiceID,
+			DokployResource: store.DokployResourceDatabase,
 			DokployID:       dokployID,
 		})
 		if err != nil {

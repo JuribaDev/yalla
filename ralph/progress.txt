@@ -1,5 +1,5 @@
 ## Codebase Patterns
-- Worker child ensure jobs (BE-0482/BE-0483/BE-0484 pattern for `ensure_project`, `ensure_environment`, and `ensure_application_service`) extend `worker.Provisioner` with a typed payload parser, validate the job scope fields against payload IDs, load the source-of-truth row through the tenant-scoped repository, check `DesiredVersion` before Dokploy calls and again before persisting refs, resolve the parent Dokploy ID from tenant-scoped `dokploy_refs`, call the typed Dokploy client through mapper-produced intents, and persist exactly one child `dokploy_refs` row. Replay should read the existing child ref, call the typed client with `ExistingID`, and leave the mapping table unchanged; malformed/stale/cross-tenant/missing desired state are `worker.Terminal`, retryable Dokploy errors stay plain, and queue-level tests should verify persisted `error_summary` stays redacted. Service-kind-specific jobs must also verify the source-of-truth `services.kind` before calling Dokploy and persist the matching Dokploy resource kind (`application`, `compose`, or `database`).
+- Worker child ensure jobs (BE-0482/BE-0483/BE-0484 pattern for `ensure_project`, `ensure_environment`, and `ensure_application_service`) extend `worker.Provisioner` with a typed payload parser, validate the job scope fields against payload IDs, load the source-of-truth row through the tenant-scoped repository, check `DesiredVersion` before Dokploy calls and again before persisting refs, resolve the parent Dokploy ID from tenant-scoped `dokploy_refs`, call the typed Dokploy client through mapper-produced intents, and persist exactly one child `dokploy_refs` row. Replay should read the existing child ref, call the typed client with `ExistingID`, and leave the mapping table unchanged; malformed/stale/cross-tenant/missing desired state are `worker.Terminal`, retryable Dokploy errors stay plain, and queue-level tests should verify persisted `error_summary` stays redacted. Service-kind-specific jobs must also verify the source-of-truth `services.kind` before calling Dokploy and persist the matching Dokploy resource kind (`application`, `compose`, or `database`). `ensure_database_service` additionally validates the concrete engine in the durable job payload because the current `services` row stores only the broad `database` kind.
 - Worker provisioning jobs are implemented through `internal/controlplane/worker.Provisioner`: parse `provisioning_jobs.payload` into a typed schema, mark malformed/stale/cross-tenant desired state with `worker.Terminal`, load source-of-truth state from Postgres before Dokploy calls, and persist resolved upstream IDs through tenant-scoped `dokploy_refs`; replay should verify an existing ref instead of inserting a duplicate mapping.
 - Repository tenant-isolation tests for a **project-scoped preview lifecycle wrapper with Insert + GetByID + ListByProject + Update + ScheduleDeletion + DeleteByID, database-owned version/timestamps, and soft-delete state visible on read paths** (BE-0480 pattern, internal/controlplane/store/preview_environment_repository_tenant_isolation_test.go for preview_environments). Seed two complete Organization -> Project -> source Environment + preview-kind wrapped Environment chains, use overlapping-looking DisplayName/ChangeRef fixtures, assert ListByProject renders only the caller's stable page and returns a non-nil empty slice for `(orgA, projB)`, assert Get/Update/ScheduleDeletion/Delete using orgA with orgB's `(project_id, preview_id)` return typed `E_NOT_FOUND`, byte-compare both orgA and orgB bystanders after failed cross-tenant writes, and explicitly schedule deletion on orgB to prove soft-deleted preview rows remain tenant-scoped on both list and direct-id read paths. Add a global-PK collision probe across tenants because `preview_environments.id` is globally unique even though all normal reads/writes are tenant-scoped; the conflict must leave the prior owner byte-identical and create no row for the requester.
 - Repository CRUD-and-invariants tests for a **project-scoped preview lifecycle table whose row points at both a preview-kind environment clone and a source environment, carries soft-delete lifecycle state, and exposes Insert + GetByID + ListByProject + Update + ScheduleDeletion + DeleteByID** (BE-0479 pattern, internal/controlplane/store/preview_environment_repository_invariants_test.go for preview_environments). The table is tenant-scoped by direct `(organization_id, project_id)` predicates and composite FKs to `environments (organization_id, project_id, id)`, uses `penv_` IDs via `domain.KindPreviewEnvironment`, and adds a trigger to enforce that the wrapped environment row has `kind='preview'` because a FK cannot express referenced-row-body predicates. It keeps status/deletion state out of customer metadata Update, and uses ScheduleDeletion (`status='deleting'`, `deletion_scheduled_at=COALESCE(..., now())`) for API teardown while preserving hard DeleteByID for worker cleanup after Dokploy teardown. Forward-applicable to future project-scoped lifecycle rows that wrap a concrete hierarchy resource with worker-owned status: test row shape/default status, deterministic `(created_at,id)` list ordering, optimistic conflicts, soft-delete lifecycle, hard-delete cleanup, constraint conflicts, referenced-row-body trigger conflicts, rollback, nil-Tx guards, and database-owned version/timestamps.
@@ -33841,4 +33841,41 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - `ensure_compose_service` follows the same service-kind worker pattern as `ensure_application_service`, with the only resource-specific differences being `store.ServiceKindCompose`, `dokploy.ServiceCompose`, `store.DokployResourceCompose`, `/api/compose`, and deterministic fake IDs like `cmp_1`.
   - Service-kind ensure jobs should validate the source-of-truth `services.kind` before Dokploy calls and again before persisting refs, so an upstream call cannot cause a ref write after desired-state drift.
+---
+## 2026-05-18 17:47 +03 - BE-0486
+- What was implemented
+  - Added durable `ensure_database_service` execution to `worker.Provisioner`.
+  - Added typed payload parsing and validation for `ensure_database_service`, including job/payload scope consistency and closed-set engine validation (`postgres`, `mysql`, `mariadb`, `mongo`, `redis`).
+  - Added tenant-scoped database service desired-state reload, service kind verification, parent environment Dokploy ref lookup, idempotent database ensure/replay through the typed Dokploy client, stale desired-version checks before and after upstream calls, and `dokploy_refs` persistence with `dokploy_resource='database'`.
+  - Added fake Dokploy coverage for success/replay, retryable upstream failure, terminal validation/stale/wrong-kind paths, cancellation, and redacted queue error persistence.
+  - Documented the database-service engine payload convention in `internal/controlplane/worker/AGENTS.md`.
+- Files changed
+  - `internal/controlplane/worker/provisioner.go`
+  - `internal/controlplane/worker/provisioner_test.go`
+  - `internal/controlplane/worker/AGENTS.md`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `gofmt -w .`
+  - `goimports -w .` (not installed)
+  - `go mod tidy`
+  - `go test ./internal/controlplane/worker -run 'TestEnsureDatabaseService|TestProvisionerEnsure(Database|.*Database)' -count=1`
+  - `go test ./internal/controlplane/worker -count=1`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestFakeDokploy ./...`
+  - `golangci-lint run ./...`
+  - `staticcheck ./...` (not installed)
+  - `govulncheck ./...` (not installed)
+- Results
+  - All installed required and optional checks passed.
+  - `goimports`, `staticcheck`, and `govulncheck` are not installed in this environment.
+- Remaining risks or follow-ups
+  - The current `services` table stores only broad `kind='database'`; the concrete database engine is persisted in the durable job payload for this worker path. A future finer-grained desired-state schema should migrate that engine into source-of-truth service configuration and update this worker to read it from there.
+- **Learnings for future iterations:**
+  - `ensure_database_service` follows the application/compose service-kind worker shape, with resource-specific values `store.ServiceKindDatabase`, `dokploy.ServiceDatabase`, `store.DokployResourceDatabase`, `/api/databases`, and deterministic fake IDs like `db_1`.
+  - Database ensure jobs must validate the concrete engine before calling the mapper because `dokploy.Mapper.Service` requires `Engine` for `ServiceDatabase`.
 ---
