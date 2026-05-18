@@ -9364,8 +9364,8 @@
       ],
       "type": "repository",
       "priority": 1,
-      "passes": false,
-      "notes": "Database table: services."
+      "passes": true,
+      "notes": "Added internal/controlplane/store/service_repository_invariants_test.go (9 tests + 2 file-scope helpers + 1 typed rollback sentinel) covering ServiceRepository CRUD row-shape and lifecycle invariants for Insert, Update, ScheduleDeletion, and Restore. Tests prove: Insert returns row at version=1 with byte-equal created_at/updated_at and nil deletion_scheduled_at; Update bumps version by exactly +1, refreshes updated_at, preserves created_at AND the composite (organization_id, project_id, environment_id) tenant key AND the immutable Dokploy taxonomy 'kind' (Update's SET clause must touch slug/display_name only); Update with matching If-Match succeeds; ScheduleDeletion bumps version, refreshes updated_at, preserves identity (slug/display_name/kind) and tenant key, and stamps deletion_scheduled_at at or after baseline.UpdatedAt; Restore is the inverse \u2014 bumps version, refreshes updated_at, preserves identity and tenant key, and clears deletion_scheduled_at back to NULL; Insert participates in the surrounding transaction (closure error rolls back the row, invisible at GetByID and ListByEnvironment); Insert/Update/ScheduleDeletion nil-Tx guards render typed apierr.Internal (Restore's nil-Tx guard already covered by TestServiceRepositoryRestoreRejectsNilTx in service_restore_test.go). gofmt, go vet, go build, go mod tidy, go test ./..., and go test -race ./... all green; new tests skip when YALLA_TEST_DATABASE_URL is unset (local Postgres container has no published port, matching BE-0001/BE-0443/BE-0444 contract)."
     },
     {
       "id": "BE-0446",
