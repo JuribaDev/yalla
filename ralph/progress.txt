@@ -31289,3 +31289,26 @@ change that widened Reason to caller-supplied data.
   - test name collision check: `grep '^func Test' internal/controlplane/store/project_grant_test.go` BEFORE adding new test names. project_grant_test.go uses `TestProjectGrantRepo*` (singular Repo) and `TestProjectGrantReader*` prefixes; this file uses `TestProjectGrantRepository*` (full Repository) — no collisions but the naming difference is intentional.
   - Pre-existing DB-flaky observation: the store-package integration tests show parallel-execution flakies that look like global-fixture/factory state contention (E_INVALID_INPUT validation failures and audit-metadata-empty failures), reproducible on baseline without my changes. Future stories that need a clean -race signal against the DB should run with -p 1 -parallel 1 OR file a separate investigation story; do not block on this baseline issue.
 ---
+
+## 2026-05-18 - BE-0170
+- Added public-API contract test file for PUT /v1/environments/{environment_id}/grants at internal/controlplane/httpapi/environment_grants_put_contract_test.go. Three pins, modelled byte-for-byte on the BE-0140 project-grants twin (project_grants_put_contract_test.go) with environment-grants identifiers and a distinct bearer-secret marker:
+  - TestReplaceEnvironmentGrantsServerWritesResponseDataOnlyToResponseWriter — captureProcessOutput proves the HTTP server never writes to os.Stdout/os.Stderr; the post-write grants snapshot is carried only by the response body; the structured logger is the only sanctioned out-of-band writer and goes to its own buffer; the replacer captured input proves the {environment_id} path parameter reached the store layer.
+  - TestReplaceEnvironmentGrantsRequestLogRedactsBearerToken — sub-tests for both the success path (RoleAdmin) and the authorization-failure path (Principal.Disabled=true short-circuits policy with 403); asserts that neither the JSON-handler log buffer nor the response body ever contains replaceEnvironmentGrantsContractSecret; the deny-leg replacer is wired to error on any call so a denied request that bypassed policy would fail loudly.
+  - TestReplaceEnvironmentGrantsErrorEnvelopeDoesNotLeakDependencyCause — apierr.StoreUnavailable(cause) yields a typed 503 E_UNAVAILABLE envelope; the wrapped cause string ("connection refused dialing 10.0.0.5:5432") AND the bare datastore address ("10.0.0.5") are both verified absent from the response body.
+- New per-file helper replaceEnvironmentGrantsHandlerForWithLogger(id, authErr, replacer, logger) mirrors the project-grants twin — it threads a caller-supplied *slog.Logger into NewHandler at the logger position (penultimate arg) so the contract redaction tests can inspect what gets logged without disturbing the existing replaceEnvironmentGrantsHandlerFor(id, authErr, replacer) helper used by environment_grants_put_test.go.
+- Reused shared helpers from elsewhere in the package: captureProcessOutput (me_contract_test.go), decodeError (middleware_test.go), and the existing putEnvironmentGrants / decodeReplaceEnvironmentGrants / environmentGrantsAdminIdentity / fakeEnvironmentGrantReplacer machinery from environment_grants_put_test.go.
+- Verification:
+  - gofmt -w internal/controlplane/httpapi/environment_grants_put_contract_test.go — clean
+  - go vet ./... — clean, no output
+  - go build ./... — clean
+  - go mod tidy — no change
+  - go test -run 'TestReplaceEnvironmentGrants' ./internal/controlplane/httpapi/... — ok 0.598s
+  - go test ./internal/controlplane/httpapi/... — ok 1.250s
+  - go test -race ./internal/controlplane/httpapi/... — ok 9.059s
+  - go test ./... — all 41 packages ok
+  - go test -race ./... — all 41 packages ok, no FAIL, no DATA RACE
+- Risks/follow-ups: none for the story itself. The deliberate omission of a "submitted-secret-value redaction" pin (vs the BE-0110 variables-put twin) is intentional and documented in the file header — environment grant bodies carry no customer-submitted secret values.
+- **Learnings for future iterations:**
+  - PUT-replace contract-test triple for a grants endpoint (BE-0170 confirms BE-0140 generalises): when a PUT-replace-grants endpoint already has a unit-level *_put_test.go covering wire shape / validation / deny / not-found / store-error / unwired-port and a sibling *_put_policy_test.go covering the role matrix, the public-API contract story reduces to exactly THREE pins (server-only-writes-via-ResponseWriter, log-and-body-redaction-on-success-and-deny, error-envelope-does-not-leak-dep-cause). The "submitted-secret-value redaction" pin from the BE-0110 variables-put twin has no analogue because a grant body carries no customer-submitted secrets — only opaque identifiers and a role. The deny-leg replacer MUST error on any call so a regression that wires the replacer behind the policy gate fails loudly.
+  - Per-file WithLogger handler helper pattern (BE-0140 -> BE-0170 clone): the contract file ships its own replace<Resource>HandlerForWithLogger(id, authErr, replacer, logger) variant — it does NOT alter the existing handler-helper signature in the sibling *_put_test.go. The only structural difference is the penultimate NewHandler argument: nil becomes the caller-supplied *slog.Logger. This keeps the BE-0169-class file unaffected (no sweep of unrelated call sites) and the contract file's logger-driven tests fully self-contained.
+---
