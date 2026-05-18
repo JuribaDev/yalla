@@ -10124,8 +10124,8 @@
       ],
       "type": "worker-job",
       "priority": 1,
-      "passes": false,
-      "notes": "Provisioning job type: ensure_compose_service."
+      "passes": true,
+      "notes": "Implemented durable ensure_compose_service execution through worker.Provisioner with typed payload validation, tenant-scoped compose service desired-state reload, parent environment mapping lookup, idempotent Dokploy compose ensure/replay, stale desired-version checks before and after upstream calls, compose mapping persistence, fake Dokploy coverage for success/replay, retryable failure, terminal validation/stale paths, cancellation, and redacted queue error persistence. Required quality checks passed."
     },
     {
       "id": "BE-0486",
