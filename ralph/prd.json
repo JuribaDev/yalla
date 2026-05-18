@@ -4367,8 +4367,8 @@
       ],
       "type": "test-service",
       "priority": 2,
-      "passes": false,
-      "notes": "Contract coverage for POST /v1/environments/{environment_id}/services."
+      "passes": true,
+      "notes": "Contract coverage for POST /v1/environments/{environment_id}/services. Closed by environment_services_create_contract_test.go (process-output isolation, bearer-token redaction on success+deny paths, error envelope does not leak wrapped dependency cause)."
     },
     {
       "id": "BE-0183",
