@@ -2,7 +2,7 @@
 // shared by every Yalla control-plane resource.
 //
 // These primitives are a public compatibility contract. Resource ID prefixes
-// (org_, usr_, sa_, key_, proj_, env_, svc_, dep_, job_, ovar_), the ID
+// (org_, usr_, sa_, key_, proj_, env_, svc_, dep_, job_, penv_, ovar_), the ID
 // encoding, the slug normalisation rules, and the Dokploy-name layout are all
 // treated as stable: changing them is a breaking change for stored data,
 // audit records, and any agent or CLI that parses them.
@@ -50,6 +50,12 @@ const (
 	KindService        Kind = "svc"
 	KindDeployment     Kind = "dep"
 	KindJob            Kind = "job"
+	// KindPreviewEnvironment is one row in the project-scoped preview
+	// environment lifecycle table. The row points at the actual environment
+	// clone and carries preview-specific metadata/status, so API callers can
+	// address previews without exposing the broader environment mutation
+	// surface.
+	KindPreviewEnvironment Kind = "penv"
 	// KindOrganizationVariable is one row in the organization-scoped variables
 	// surface — the lowest-precedence layer of the
 	// Organization -> Project -> Environment -> Service variable hierarchy the
@@ -165,6 +171,7 @@ var kinds = map[Kind]struct{}{
 	KindService:              {},
 	KindDeployment:           {},
 	KindJob:                  {},
+	KindPreviewEnvironment:   {},
 	KindOrganizationVariable: {},
 	KindProjectGrant:         {},
 	KindEnvironmentGrant:     {},

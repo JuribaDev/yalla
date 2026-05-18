@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Repository CRUD-and-invariants tests for a **project-scoped preview lifecycle table whose row points at both a preview-kind environment clone and a source environment, carries soft-delete lifecycle state, and exposes Insert + GetByID + ListByProject + Update + ScheduleDeletion + DeleteByID** (BE-0479 pattern, internal/controlplane/store/preview_environment_repository_invariants_test.go for preview_environments). The table is tenant-scoped by direct `(organization_id, project_id)` predicates and composite FKs to `environments (organization_id, project_id, id)`, uses `penv_` IDs via `domain.KindPreviewEnvironment`, and adds a trigger to enforce that the wrapped environment row has `kind='preview'` because a FK cannot express referenced-row-body predicates. It keeps status/deletion state out of customer metadata Update, and uses ScheduleDeletion (`status='deleting'`, `deletion_scheduled_at=COALESCE(..., now())`) for API teardown while preserving hard DeleteByID for worker cleanup after Dokploy teardown. Forward-applicable to future project-scoped lifecycle rows that wrap a concrete hierarchy resource with worker-owned status: test row shape/default status, deterministic `(created_at,id)` list ordering, optimistic conflicts, soft-delete lifecycle, hard-delete cleanup, constraint conflicts, referenced-row-body trigger conflicts, rollback, nil-Tx guards, and database-owned version/timestamps.
 - Repository CRUD-and-invariants tests for `service_backups` / PRD `backup_schedules` (BE-0477 pattern, internal/controlplane/store/service_backup_repository_invariants_test.go): this is a service-scoped desired-state leaf table with worker-projected run state. The repository surface is Insert + GetByID + ListByService + Update + MarkPending + DeleteByID; every query predicates on `(organization_id, service_id[, id])`. Insert treats `RetentionCount == 0` as omitted and normalizes it to the stable default 7, while negative/out-of-range retention still relies on the DB CHECK and maps to typed `E_CONFLICT`. Update must only write customer policy fields `(display_name, schedule, retention_count, enabled)` and preserve worker state `(status, last_run_at, last_succeeded_at)`; MarkPending is the narrow worker-signal transition and should bump version via trigger. DeleteByID is hard delete with optional If-Match, returning the deleted row snapshot. Forward-applicable to future service-scoped policy rows with worker-owned status columns: test default normalization, deterministic list ordering, optimistic conflicts, timestamp/version triggers, CHECK/FK conflicts, rollback, nil-Tx guards, and preservation of worker-owned columns during customer updates.
 - Repository tenant-isolation tests for a **service-scoped hard-delete leaf table with Insert + GetByID + ListByService + Update + DeleteByID and optimistic version triggers** (BE-0476 pattern, internal/controlplane/store/service_domain_repository_tenant_isolation_test.go for service_domains). Seed two full Organization -> Project -> Environment -> Service chains, use overlapping-looking but globally unique (hostname, path) fixtures, assert ListByService returns only the caller tenant's stable page and a non-nil empty slice for a cross-tenant service_id, assert Get/Update/Delete using orgA with orgB's service/domain ids return typed E_NOT_FOUND, and byte-compare both orgA and orgB bystanders after failed cross-tenant mutations so missing organization predicates show up as version/updated_at drift. For service_domains specifically, an empty create path is intentionally normalized by the service layer to "/" and the database allows it; do not treat blank path as a DB CHECK conflict in repository constraint tests.
 - Repository CRUD-and-invariants tests for a **tenant-scoped service leaf table whose public surface is Insert + GetByID + ListByService + Update + DeleteByID, whose row has database-owned version/created_at/updated_at, and whose parent link is the composite `(organization_id, service_id)` FK** (BE-0475 pattern, internal/controlplane/store/service_domain_repository_invariants_test.go for service_domains). The reusable shape is: seed the Organization -> Project -> Environment -> Service chain with existing helpers, insert through the typed repository rather than raw SQL, assert version=1 and created_at==updated_at on INSERT, assert Update bumps version and advances updated_at while preserving created_at and identity fields, assert matching If-Match succeeds while stale If-Match on Update/Delete returns typed `E_CONFLICT`, assert DeleteByID returns the final row and removes it, and cover CHECK/FK/UNIQUE violations, transaction rollback, parent cascade, deterministic ListByService ordering, and nil-Tx guards. Forward-applicable to future service-scoped leaf tables with hard-delete lifecycle and optimistic concurrency.
@@ -33661,4 +33662,43 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - `ServiceBackupRepository.MarkPending` is part of the tenant-isolation surface because backup-run endpoints use it as the worker-visible state transition; test it alongside CRUD even though the PRD wording says read/update/delete/list.
   - For service-scoped leaf-table tenant tests, byte-compare both the caller tenant peer row and the foreign-tenant target row after failed cross-tenant mutations. This catches both dropped `organization_id` predicates and accidental same-tenant bystander updates.
+---
+## 2026-05-18 16:30 +03 - BE-0479
+- What was implemented
+  - Added migration `0038_preview_environments` for the project-scoped preview lifecycle table with composite tenant FKs to `environments`, status CHECK, soft-delete marker, version trigger, updated_at trigger, preview-kind enforcement trigger, and deterministic project indexes.
+  - Added `domain.KindPreviewEnvironment` (`penv_`) and `PreviewEnvironmentRepository` with `Insert`, `GetByID`, `ListByProject`, `Update`, `ScheduleDeletion`, and `DeleteByID`.
+  - Added repository invariant tests for insert row shape/defaults, persisted reads, deterministic listing, optimistic concurrency, metadata update boundaries, soft deletion, hard deletion, constraint conflicts, transaction rollback, and nil-Tx guards.
+  - Marked BE-0479 `passes: true` in `ralph/prd.json`.
+- Files changed
+  - `internal/controlplane/domain/id.go`
+  - `internal/controlplane/store/migrate/migrations/0038_preview_environments.up.sql`
+  - `internal/controlplane/store/migrate/migrations/0038_preview_environments.down.sql`
+  - `internal/controlplane/store/preview_environment.go`
+  - `internal/controlplane/store/preview_environment_repository_invariants_test.go`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `go test ./internal/controlplane/store -run TestPreviewEnvironmentRepositoryInsertRowShape`
+  - `gofmt -w internal/controlplane/domain/id.go internal/controlplane/store/preview_environment.go internal/controlplane/store/preview_environment_repository_invariants_test.go`
+  - `go test ./internal/controlplane/store ./internal/controlplane/store/migrate -run 'TestPreviewEnvironmentRepository|TestMigrations|TestMigration'`
+  - `goimports -w .` not run because `goimports` is not installed
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `golangci-lint run ./...`
+  - Manual `staticcheck ./...` / `govulncheck ./...` checks were not on PATH, then both ran through the strict pre-commit verification script.
+  - `scripts/verify.sh --strict --release` via the pre-commit hook: includes gofmt, go mod tidy, go vet, go test ./..., go test -race ./..., focused backend gates, `govulncheck`, `staticcheck`, `golangci-lint`, `goreleaser check`, and a snapshot release build.
+- Results
+  - Required checks passed: `go test ./...`, `go test -race ./...`, and `go vet ./...`.
+  - Focused persistence/migration checks passed; strict pre-commit verification reported all checks passed, `govulncheck` found no vulnerabilities, and `golangci-lint` passed with `0 issues`.
+- Remaining risks or follow-ups
+  - Tenant-isolation coverage is intentionally left to BE-0480.
+- **Learnings for future iterations:**
+  - `preview_environments` is a wrapper lifecycle table around a concrete `environments.kind='preview'` clone; repository queries should scope directly by `(organization_id, project_id)` rather than infer tenant through the wrapped environment.
+  - Use a trigger for referenced-row-body invariants like "wrapped environment must be kind=preview"; composite FKs prove tenant/project alignment but cannot inspect the referenced row's `kind` column.
+  - Customer metadata updates should not write `status` or `deletion_scheduled_at`; those lifecycle fields move through `ScheduleDeletion` and later worker-owned transitions.
 ---

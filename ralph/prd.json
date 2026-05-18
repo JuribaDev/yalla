@@ -10010,8 +10010,8 @@
       ],
       "type": "repository",
       "priority": 1,
-      "passes": false,
-      "notes": "Database table: preview_environments."
+      "passes": true,
+      "notes": "Database table: preview_environments. Added migration 0038 for the project-scoped preview lifecycle table, including composite tenant FKs and a trigger that requires the wrapped environment row to have kind=preview. Added typed PreviewEnvironmentRepository CRUD/list/schedule-deletion/hard-delete methods, penv_ domain IDs, and repository invariant coverage for row shape, deterministic listing, optimistic concurrency, soft delete lifecycle, hard delete, constraints, transaction rollback, and nil-Tx guards."
     },
     {
       "id": "BE-0480",

@@ -207,6 +207,22 @@ Postgres persistence for control-plane source-of-truth state.
   stable default `7`; negative or out-of-range values still flow to the
   database CHECK and surface as typed `E_CONFLICT`.
 
+## Preview environments (`0038_preview_environments`, `preview_environment.go`)
+
+- `preview_environments` is a project-scoped lifecycle wrapper around the real
+  cloned `environments` row. Repository methods predicate directly on
+  `(organization_id, project_id[, id])`; do not infer tenant scope solely from
+  the wrapped environment id.
+- Customer metadata updates write only `display_name`, `change_ref`, and
+  `expires_at`. Lifecycle fields (`status`, `deletion_scheduled_at`) move
+  through `ScheduleDeletion` or later worker-owned transitions; hard
+  `DeleteByID` is for worker cleanup after Dokploy teardown.
+- The table uses `penv_` ids (`domain.KindPreviewEnvironment`) and composite
+  FKs to `environments (organization_id, project_id, id)` for both the preview
+  clone and source environment. Migration `0038` also has a trigger enforcing
+  that the wrapped environment row has `kind='preview'`; plain FKs cannot
+  express that row-body invariant.
+
 ## Audit log (`0007_audit_events`, `audit.go`)
 
 - `audit_events` is the **immutable** audit log: one row per security-relevant
