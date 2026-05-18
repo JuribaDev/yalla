@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Service state-machine stories use a pure `ServiceStatus.CanTransitionTo` table plus an atomic repository `Transition` method: lock the tenant-scoped service row, reject impossible edges with `E_INVALID_STATE_TRANSITION` before any write, update `services.status`, and append the matching `service_events` row in the same transaction with actor/request/previous/next/reason metadata. Redact free-text reason text before persisting event message/metadata.
 - Preview delete endpoints (BE-0268 pattern, DELETE `/v1/projects/{project_id}/previews/{preview_id}`) should stay parent-project scoped: route through `projectIDResolver` with action `preview.delete`, handler forwards principal org + path project/preview ids plus optional `If-Match`, store service verifies the tenant-scoped parent project and preview row before side effects, rejects stale/already-scheduled state, calls `PreviewEnvironmentRepository.ScheduleDeletion`, enqueues `delete_preview_environment`, and appends a redaction-safe `preview.delete` audit event in the same transaction. Return `202 Accepted` with the scheduled preview snapshot and ETag because teardown is durable but worker-driven.
 - Provisioning job state-machine stories use a pure `JobStatus.CanTransitionTo` table plus an atomic repository `Transition` method: lock the tenant-scoped job row, reject impossible edges with `E_INVALID_STATE_TRANSITION` before any write, derive lease/attempt/timestamp bookkeeping from the target status, and append the matching `provisioning_job_events` row in the same transaction with actor/request/previous/next/reason metadata. Redact free-text reason/error summaries before persisting event message/metadata.
 - Deployment state-machine stories use a pure `DeploymentStatus.CanTransitionTo` table plus an atomic repository `Transition` method: lock the tenant-scoped deployment row, reject impossible edges with `E_INVALID_STATE_TRANSITION` before any write, update lifecycle timestamps/error fields, and append the matching `deployment_events` row in the same transaction with actor/request/previous/next/reason metadata. Redact free-text reason/error summaries before persisting event message/metadata.
@@ -34599,4 +34600,45 @@ change that widened Reason to caller-supplied data.
   - Preview teardown is a scheduled delete, not a hard delete: the API should return the preview row in deleting state with deletion_scheduled_at and let the worker remove Dokploy state and hard-delete the wrapper later.
   - The project-scoped preview route should authorize at the parent project boundary; preview_id is validated and resolved only inside the tenant-scoped store service.
   - goimports is not installed on PATH in this runner. staticcheck/govulncheck were not directly available through `command -v`, but the repository verification hook ran its optional staticcheck/govulncheck steps successfully.
+---
+## 2026-05-18 21:24 +03 - BE-0505
+- What was implemented
+  - Added the service lifecycle state machine: `pending -> active|deleting`, `active -> suspended|deleting`, `suspended -> active|deleting`, `deleting -> active|deleted`, and terminal `deleted`.
+  - Added migration `0041_service_state_machine` with `services.status` and append-only tenant-scoped `service_events`.
+  - Added `ServiceRepository.Transition` to lock the tenant-scoped service row, reject invalid edges with `E_INVALID_STATE_TRANSITION` before mutation, update status, and append service event metadata atomically.
+  - Added focused tests for the complete transition table, accepted transition event persistence, and denied transition no-mutation/no-event behavior.
+  - Marked BE-0505 passes=true in `ralph/prd.json`.
+- Files changed
+  - internal/controlplane/store/service.go
+  - internal/controlplane/store/service_event.go
+  - internal/controlplane/store/service_state_machine_test.go
+  - internal/controlplane/store/migrate/migrations/0041_service_state_machine.up.sql
+  - internal/controlplane/store/migrate/migrations/0041_service_state_machine.down.sql
+  - ralph/prd.json
+  - ralph/progress.txt
+- Verification run
+  - gofmt -w .
+  - goimports -w . (not installed locally)
+  - go mod tidy
+  - go test ./...
+  - go test -race ./...
+  - go vet ./...
+  - go test ./internal/controlplane/...
+  - go test -race ./internal/controlplane/...
+  - go test -run TestMigrations ./...
+  - go test -run TestPolicyMatrix ./...
+  - go test -run TestQuotaConcurrency ./...
+  - go test -run TestFakeDokploy ./...
+  - golangci-lint run ./...
+  - staticcheck ./... (not installed / not on PATH)
+  - govulncheck ./... (not installed / not on PATH)
+- Results
+  - All required checks passed.
+  - `golangci-lint run ./...` passed with 0 issues after adding exported comments for the new status/event constants.
+  - Focused state-machine tests passed against isolated migrated Postgres.
+- Remaining risks or follow-ups
+  - Existing customer-facing service delete/restore surfaces still drive `deletion_scheduled_at`; future lifecycle endpoint/worker stories should decide when those paths should also call `ServiceRepository.Transition` to emit `service_events`.
+- **Learnings for future iterations:**
+  - Adding a lifecycle state to an existing table can remain backward-compatible by adding a `NOT NULL DEFAULT` status column and keeping the public HTTP projection unchanged unless the PRD story explicitly changes the API contract.
+  - State-machine event tables should mirror the deployment/job pattern: append-only table, composite `(organization_id, resource_id)` FK, oldest-first list query, and redacted free-text reason stored in both message and metadata.
 ---

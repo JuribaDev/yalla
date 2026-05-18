@@ -10504,8 +10504,8 @@
       ],
       "type": "state-machine",
       "priority": 1,
-      "passes": false,
-      "notes": "Lifecycle state: service."
+      "passes": true,
+      "notes": "Implemented documented ServiceStatus transition table with services.status, append-only service_events, ServiceRepository.Transition enforcing E_INVALID_STATE_TRANSITION before mutation, redacted reason metadata, and focused tests for the transition matrix, event persistence, and denied-transition no-mutation behavior."
     },
     {
       "id": "BE-0506",

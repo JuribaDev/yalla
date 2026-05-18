@@ -3,12 +3,103 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
+	"github.com/JuribaDev/yalla/internal/output"
 )
+
+// ServiceStatus is the closed-set lifecycle the services table permits.
+// The service state machine records customer/worker intent for the service row
+// itself; Dokploy runtime state remains a separate upstream concern.
+type ServiceStatus string
+
+const (
+	// ServiceStatusPending records a service created before provisioning has converged.
+	ServiceStatusPending ServiceStatus = "pending"
+	// ServiceStatusActive records the normal live mutable service lifecycle state.
+	ServiceStatusActive ServiceStatus = "active"
+	// ServiceStatusSuspended records a reversible hold on a service.
+	ServiceStatusSuspended ServiceStatus = "suspended"
+	// ServiceStatusDeleting records accepted teardown intent.
+	ServiceStatusDeleting ServiceStatus = "deleting"
+	// ServiceStatusDeleted records the terminal service lifecycle state.
+	ServiceStatusDeleted ServiceStatus = "deleted"
+)
+
+func (s ServiceStatus) String() string { return string(s) }
+
+// serviceTransitions is the documented service lifecycle table. Existing rows
+// default to active. Pending is reserved for services created before their
+// first successful provisioning pass, active is the normal mutable state,
+// suspended is a reversible operator/customer hold, deleting is teardown
+// intent, and deleted is terminal.
+var serviceTransitions = map[ServiceStatus]map[ServiceStatus]struct{}{
+	ServiceStatusPending: {
+		ServiceStatusActive:   {},
+		ServiceStatusDeleting: {},
+	},
+	ServiceStatusActive: {
+		ServiceStatusSuspended: {},
+		ServiceStatusDeleting:  {},
+	},
+	ServiceStatusSuspended: {
+		ServiceStatusActive:   {},
+		ServiceStatusDeleting: {},
+	},
+	ServiceStatusDeleting: {
+		ServiceStatusActive:  {},
+		ServiceStatusDeleted: {},
+	},
+	ServiceStatusDeleted: {},
+}
+
+// CanTransitionTo reports whether the service state machine permits a status
+// change from s to next. Repository mutations call this before touching the
+// services row.
+func (s ServiceStatus) CanTransitionTo(next ServiceStatus) bool {
+	allowed, ok := serviceTransitions[s]
+	if !ok {
+		return false
+	}
+	_, ok = allowed[next]
+	return ok
+}
+
+func (s ServiceStatus) serviceEventType() ServiceEventType {
+	switch s {
+	case ServiceStatusPending:
+		return ServiceEventTypePending
+	case ServiceStatusActive:
+		return ServiceEventTypeActive
+	case ServiceStatusSuspended:
+		return ServiceEventTypeSuspended
+	case ServiceStatusDeleting:
+		return ServiceEventTypeDeleting
+	case ServiceStatusDeleted:
+		return ServiceEventTypeDeleted
+	default:
+		return ""
+	}
+}
+
+// ServiceTransition is the audited state-machine mutation input for a services
+// row. Actor and request fields are persisted into the service event emitted
+// atomically with the status update.
+type ServiceTransition struct {
+	OrganizationID  string
+	ServiceID       string
+	NextStatus      ServiceStatus
+	ExpectedVersion *int64
+	ActorID         string
+	ActorKind       string
+	RequestID       string
+	CorrelationID   string
+	Reason          string
+}
 
 // Service is the source-of-truth representation of a row in the
 // services table. A service belongs to exactly one environment and
@@ -47,6 +138,7 @@ type Service struct {
 	Slug                string
 	DisplayName         string
 	Kind                string
+	Status              ServiceStatus
 	Version             int64
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
@@ -56,7 +148,7 @@ type Service struct {
 // serviceColumns is the SELECT projection used by every read in this
 // repository. Keeping it as a single string keeps the column list in
 // lockstep with scanService.
-const serviceColumns = `id, organization_id, project_id, environment_id, slug, display_name, kind, version, created_at, updated_at, deletion_scheduled_at`
+const serviceColumns = `id, organization_id, project_id, environment_id, slug, display_name, kind, status, version, created_at, updated_at, deletion_scheduled_at`
 
 // serviceListMaxRows caps how many rows a single ListByEnvironment
 // call returns. An unbounded query can never be issued by accident; an
@@ -244,6 +336,72 @@ func (r *ServiceRepository) Update(ctx context.Context, tx *Tx, s Service, ifMat
 	return updated, nil
 }
 
+// Transition moves a service through the documented service state machine and
+// appends the matching service_events row in the same transaction. Invalid
+// edges return E_INVALID_STATE_TRANSITION before any update, so the service row
+// and timeline remain unchanged.
+func (r *ServiceRepository) Transition(ctx context.Context, tx *Tx, in ServiceTransition) (Service, ServiceEvent, error) {
+	if tx == nil {
+		return Service{}, ServiceEvent{}, apierr.Internal(errors.New("store: ServiceRepository.Transition called with a nil transaction"))
+	}
+	orgID := strings.TrimSpace(in.OrganizationID)
+	serviceID := strings.TrimSpace(in.ServiceID)
+	next := in.NextStatus
+	if next.serviceEventType() == "" {
+		return Service{}, ServiceEvent{}, apierr.InvalidStateTransition("service", "", next.String())
+	}
+
+	current, err := scanService(tx.QueryRow(ctx,
+		`SELECT `+serviceColumns+`
+		   FROM services
+		  WHERE organization_id = $1 AND id = $2
+		  FOR UPDATE`,
+		orgID, serviceID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Service{}, ServiceEvent{}, apierr.NotFound("service", serviceID)
+	}
+	if err != nil {
+		return Service{}, ServiceEvent{}, apierr.StoreUnavailable(err)
+	}
+	if in.ExpectedVersion != nil && current.Version != *in.ExpectedVersion {
+		return Service{}, ServiceEvent{}, apierr.ConflictStale(current.Version)
+	}
+	if !current.Status.CanTransitionTo(next) {
+		return Service{}, ServiceEvent{}, apierr.InvalidStateTransition("service", current.Status.String(), next.String())
+	}
+
+	updated, err := scanService(tx.QueryRow(ctx,
+		`UPDATE services
+		    SET status = $3
+		  WHERE organization_id = $1 AND id = $2
+		  RETURNING `+serviceColumns,
+		orgID, serviceID, next.String()))
+	if err != nil {
+		return Service{}, ServiceEvent{}, apierr.StoreUnavailable(err)
+	}
+
+	reason := output.NewRedactor().Redact(strings.TrimSpace(in.Reason))
+	event, err := NewServiceEventRepository().Append(ctx, tx, ServiceEvent{
+		OrganizationID: orgID,
+		ServiceID:      serviceID,
+		EventType:      next.serviceEventType(),
+		Message:        reason,
+		Metadata: map[string]string{
+			"actor_id":       strings.TrimSpace(in.ActorID),
+			"actor_kind":     strings.TrimSpace(in.ActorKind),
+			"previous_state": current.Status.String(),
+			"next_state":     next.String(),
+			"reason":         reason,
+		},
+		RequestID:     strings.TrimSpace(in.RequestID),
+		CorrelationID: strings.TrimSpace(in.CorrelationID),
+	})
+	if err != nil {
+		return Service{}, ServiceEvent{}, err
+	}
+	return updated, event, nil
+}
+
 // classifyServiceConcurrencyMiss disambiguates the two reasons a
 // version-checked UPDATE matched no rows: the service was deleted
 // (rare, and reported as NotFound for parity with the unchecked path)
@@ -279,6 +437,7 @@ func scanService(row scanRow) (Service, error) {
 		&s.Slug,
 		&s.DisplayName,
 		&s.Kind,
+		&s.Status,
 		&s.Version,
 		&s.CreatedAt,
 		&s.UpdatedAt,

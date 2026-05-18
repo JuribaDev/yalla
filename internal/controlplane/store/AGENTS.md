@@ -194,6 +194,20 @@ Postgres persistence for control-plane source-of-truth state.
   Quota accounting rows (`quota_usage`, `quota_reservations`) are **not** domain
   resources — `newQuotaID` mints their ids locally, no `domain.Kind`.
 
+## Service lifecycle (`0041_service_state_machine`, `service.go`, `service_event.go`)
+
+- `services.status` is the source-of-truth lifecycle state for the service row
+  itself; Dokploy runtime status remains an upstream concern. Existing rows
+  default to `active`.
+- Service lifecycle changes should go through `ServiceRepository.Transition`:
+  it locks `(organization_id, service_id)`, validates the edge with
+  `ServiceStatus.CanTransitionTo`, rejects invalid edges as
+  `E_INVALID_STATE_TRANSITION` before any write, updates `services.status`,
+  and appends a tenant-scoped `service_events` row in the same transaction.
+- `service_events` is append-only and stores redacted transition reason
+  metadata. Do not update/delete individual event rows; removal happens only
+  through parent service/tenant cascade.
+
 ## Service backups (`0024_service_backups`, `service_backup.go`)
 
 - The PRD may call this surface `backup_schedules`; the actual source-of-truth
