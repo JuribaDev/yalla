@@ -10257,8 +10257,8 @@
       ],
       "type": "worker-job",
       "priority": 1,
-      "passes": false,
-      "notes": "Provisioning job type: delete_service."
+      "passes": true,
+      "notes": "Completed worker support for delete_service with typed service.delete/delete_service payload validation, tenant-scoped desired-state reload, stale/cross-tenant refusal before Dokploy calls, replay-safe succeeded jobs, typed Dokploy RemoveService execution, retryable failure handling, cancellation propagation, and redacted queue error-summary coverage."
     },
     {
       "id": "BE-0493",

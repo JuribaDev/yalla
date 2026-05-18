@@ -64,6 +64,12 @@ Background provisioning/metering workers for the control plane.
   service-kind-specific `dokploy_refs` row, then call the matching typed
   Dokploy intent. A job already marked `succeeded` is a replay no-op and must
   not issue another upstream POST.
+- Teardown jobs such as `service.delete`/`delete_service` should reuse the
+  same scoped payload and service-kind-specific `dokploy_refs` resolution, but
+  should not reject `deletion_scheduled_at` because scheduled deletion is the
+  expected lifecycle path. Call the typed Dokploy `RemoveService` intent; it is
+  already idempotent for upstream 404s, so do not add raw Dokploy DELETE calls
+  or handler-side Dokploy access.
 - Integration tests are `package worker_test`, use `testutil.RequireMigratedDB`,
   and `t.Skip` when `YALLA_TEST_DATABASE_URL` is unset. A concurrent-claim test
   must retry-until-drained with a deadline guard — a job locked by a peer's
