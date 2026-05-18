@@ -6514,8 +6514,8 @@
       ],
       "type": "endpoint-admin",
       "priority": 3,
-      "passes": false,
-      "notes": "Endpoint belongs to the admin backend surface."
+      "passes": true,
+      "notes": "Endpoint belongs to the admin backend surface. Implemented POST /v1/admin/break-glass as the admin query-scoped surface over the existing break-glass service, with typed DTOs, admin.break_glass auth, OpenAPI route metadata, validation, and focused contract tests."
     },
     {
       "id": "BE-0296",

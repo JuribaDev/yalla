@@ -105,6 +105,21 @@ func postBreakGlass(handler http.Handler, orgID, body, token string) *httptest.R
 	return rec
 }
 
+func postAdminBreakGlass(handler http.Handler, target string, body string, token string) *httptest.ResponseRecorder {
+	path := "/v1/admin/break-glass"
+	if target != "" {
+		path += "?organization_id=" + target
+	}
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec
+}
+
 func decodeSuccessData(t *testing.T, body []byte) map[string]any {
 	t.Helper()
 	var env struct {
@@ -184,6 +199,182 @@ func TestPostBreakGlassSucceeds(t *testing.T) {
 	}
 	if got.Reason != "INCIDENT-1: investigation" {
 		t.Errorf("StartSession.Reason forwarded = %q, want INCIDENT-1: investigation", got.Reason)
+	}
+}
+
+func TestPostAdminBreakGlassSucceedsWithQueryScopedTarget(t *testing.T) {
+	t.Parallel()
+
+	homeOrg := string(domain.MustNewID(domain.KindOrganization))
+	targetOrg := string(domain.MustNewID(domain.KindOrganization))
+	now := time.Date(2026, 5, 19, 12, 0, 0, 0, time.UTC)
+	var got store.StartBreakGlassInput
+	ctl := fakeBreakGlassController{
+		startResult: fakeBreakGlassSession(targetOrg, "bgs_admin", now, 15*time.Minute),
+		startGot:    &got,
+	}
+	handler := breakGlassHandlerFor(supportIdentity(homeOrg, "usr_support"), nil, ctl)
+
+	body := `{"organization_id":"` + targetOrg + `","reason":"INC-9 support escalation","ttl_seconds":900}`
+	rec := postAdminBreakGlass(handler, targetOrg, body, "test-token")
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+	data := decodeSuccessData(t, rec.Body.Bytes())
+	session, ok := data["session"].(map[string]any)
+	if !ok {
+		t.Fatalf("data.session missing or not a map; body=%s", rec.Body.String())
+	}
+	if session["id"] != "bgs_admin" || session["organization_id"] != targetOrg {
+		t.Fatalf("session = %+v, want admin break-glass session for %s", session, targetOrg)
+	}
+	if got.OrganizationID != targetOrg || got.ActorOrgID != homeOrg || got.ActorID != "usr_support" {
+		t.Fatalf("StartSession target/actor = %+v", got)
+	}
+	if got.TTL != 15*time.Minute || got.Reason != "INC-9 support escalation" {
+		t.Fatalf("StartSession reason/ttl = %+v", got)
+	}
+}
+
+func TestPostAdminBreakGlassDefaultsToPrincipalOrganization(t *testing.T) {
+	t.Parallel()
+
+	homeOrg := string(domain.MustNewID(domain.KindOrganization))
+	now := time.Date(2026, 5, 19, 12, 10, 0, 0, time.UTC)
+	var got store.StartBreakGlassInput
+	handler := breakGlassHandlerFor(supportIdentity(homeOrg, "usr_support"), nil, fakeBreakGlassController{
+		startResult: fakeBreakGlassSession(homeOrg, "bgs_home", now, time.Minute),
+		startGot:    &got,
+	})
+
+	rec := postAdminBreakGlass(handler, "", `{"reason":"home support check","ttl_seconds":60}`, "test-token")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+	if got.OrganizationID != homeOrg {
+		t.Fatalf("StartSession.OrganizationID = %q, want principal home org %q", got.OrganizationID, homeOrg)
+	}
+}
+
+func TestPostAdminBreakGlassRejectsBodyOnlyCrossTenantTarget(t *testing.T) {
+	t.Parallel()
+
+	homeOrg := string(domain.MustNewID(domain.KindOrganization))
+	targetOrg := string(domain.MustNewID(domain.KindOrganization))
+	handler := breakGlassHandlerFor(supportIdentity(homeOrg, "usr_support"), nil, fakeBreakGlassController{})
+
+	body := `{"organization_id":"` + targetOrg + `","reason":"cross tenant without query","ttl_seconds":60}`
+	rec := postAdminBreakGlass(handler, "", body, "test-token")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	if code := decodeErrorCode(t, rec.Body.Bytes()); code != "E_VALIDATION" {
+		t.Errorf("error code = %q, want E_VALIDATION", code)
+	}
+}
+
+func TestPostAdminBreakGlassRejectsMismatchedQueryAndBodyTarget(t *testing.T) {
+	t.Parallel()
+
+	homeOrg := string(domain.MustNewID(domain.KindOrganization))
+	queryOrg := string(domain.MustNewID(domain.KindOrganization))
+	bodyOrg := string(domain.MustNewID(domain.KindOrganization))
+	handler := breakGlassHandlerFor(supportIdentity(homeOrg, "usr_support"), nil, fakeBreakGlassController{})
+
+	body := `{"organization_id":"` + bodyOrg + `","reason":"mismatch","ttl_seconds":60}`
+	rec := postAdminBreakGlass(handler, queryOrg, body, "test-token")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), bodyOrg) {
+		t.Fatalf("response leaked mismatched organization id: %s", rec.Body.String())
+	}
+}
+
+func TestPostAdminBreakGlassAuthFailures(t *testing.T) {
+	t.Parallel()
+
+	orgID := string(domain.MustNewID(domain.KindOrganization))
+	handler := breakGlassHandlerFor(ownerIdentity(orgID, "usr_owner"), nil, fakeBreakGlassController{})
+	rec := postAdminBreakGlass(handler, orgID, `{"reason":"r","ttl_seconds":60}`, "test-token")
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body=%s", rec.Code, rec.Body.String())
+	}
+	if code := decodeErrorCode(t, rec.Body.Bytes()); code != "E_FORBIDDEN" {
+		t.Errorf("error code = %q, want E_FORBIDDEN", code)
+	}
+
+	handler = breakGlassHandlerFor(auth.Identity{}, auth.ErrNoCredentials, fakeBreakGlassController{})
+	rec = postAdminBreakGlass(handler, orgID, `{"reason":"r","ttl_seconds":60}`, "")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401; body=%s", rec.Code, rec.Body.String())
+	}
+	if code := decodeErrorCode(t, rec.Body.Bytes()); code != "E_AUTHENTICATION_REQUIRED" {
+		t.Errorf("error code = %q, want E_AUTHENTICATION_REQUIRED", code)
+	}
+}
+
+func TestPostAdminBreakGlassRejectsScopedSupportGrant(t *testing.T) {
+	t.Parallel()
+
+	orgID := string(domain.MustNewID(domain.KindOrganization))
+	projectID := string(domain.MustNewID(domain.KindProject))
+	serviceID := string(domain.MustNewID(domain.KindService))
+	var got store.StartBreakGlassInput
+	principal := policy.Principal{
+		ID:             "sa_project_support",
+		Kind:           domain.KindServiceAccount,
+		OrganizationID: orgID,
+		Grants: []policy.Grant{{
+			Role: policy.RoleSupport,
+			Scope: policy.Scope{
+				OrganizationID: orgID,
+				ProjectID:      projectID,
+				ServiceID:      serviceID,
+			},
+		}},
+	}
+	handler := breakGlassHandlerFor(auth.Identity{
+		Principal: principal,
+		Method:    auth.MethodAPIKey,
+	}, nil, fakeBreakGlassController{startGot: &got})
+
+	req := httptest.NewRequest(http.MethodPost,
+		"/v1/admin/break-glass?organization_id="+orgID+"&project_id="+projectID+"&service_id="+serviceID,
+		strings.NewReader(`{"reason":"scoped grant must not widen","ttl_seconds":60}`))
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body=%s", rec.Code, rec.Body.String())
+	}
+	if code := decodeErrorCode(t, rec.Body.Bytes()); code != "E_FORBIDDEN" {
+		t.Errorf("error code = %q, want E_FORBIDDEN", code)
+	}
+	if got.OrganizationID != "" {
+		t.Fatalf("StartSession called for scoped grant: %+v", got)
+	}
+}
+
+func TestPostAdminBreakGlassPropagatesNotFound(t *testing.T) {
+	t.Parallel()
+
+	homeOrg := string(domain.MustNewID(domain.KindOrganization))
+	missingOrg := string(domain.MustNewID(domain.KindOrganization))
+	handler := breakGlassHandlerFor(supportIdentity(homeOrg, "usr_support"), nil, fakeBreakGlassController{
+		startErr: apierr.NotFound("organization", missingOrg),
+	})
+
+	body := `{"organization_id":"` + missingOrg + `","reason":"missing org","ttl_seconds":60}`
+	rec := postAdminBreakGlass(handler, missingOrg, body, "test-token")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+	if code := decodeErrorCode(t, rec.Body.Bytes()); code != "E_NOT_FOUND" {
+		t.Errorf("error code = %q, want E_NOT_FOUND", code)
 	}
 }
 

@@ -2138,6 +2138,22 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 		},
 		{
 			endpoint: openapi.Endpoint{
+				Method:             http.MethodPost,
+				Path:               "/v1/admin/break-glass",
+				OperationID:        "startAdminBreakGlassSession",
+				Summary:            "Start an admin break-glass session",
+				Description:        "Starts a time-bounded internal-support break-glass session targeting the organization named by the optional organization_id query parameter, defaulting to the authenticated principal's home organization. The JSON body must carry a non-empty reason and positive ttl_seconds, and may repeat organization_id when it matches the query target. Cross-tenant break-glass must name organization_id in the query string so action admin.break_glass is authorized against the real target before the handler decodes or writes data. The persisted session row and immutable elevated-access audit event are committed together by the store unit of work.",
+				Tags:               []string{tagAdmin},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionAdminBreakGlass),
+				SuccessStatus:      http.StatusCreated,
+				SuccessDescription: "The persisted break-glass session.",
+			},
+			resolver: adminBreakGlassResolver,
+			handler:  startAdminBreakGlassHandler(breakGlass, nil),
+		},
+		{
+			endpoint: openapi.Endpoint{
 				Method:         http.MethodPost,
 				Path:           "/v1/organizations/{org_id}/break-glass",
 				OperationID:    "startBreakGlassSession",

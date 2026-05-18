@@ -35624,3 +35624,38 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - `E_QUOTA_EXCEEDED` now carries `error.details.resource` and, when a positive ceiling is known, `error.details.limit`; future quota call sites should keep using `apierr.QuotaExceeded` rather than hand-building `yerr.CodeQuotaExceeded`.
 ---
+## 2026-05-19 01:40 +03 - BE-0295
+- What was implemented
+  - Registered `POST /v1/admin/break-glass` with OpenAPI route metadata, `admin.break_glass` authorization, and an admin query-scoped resolver that authorizes the org-rooted break-glass intent before the handler runs.
+  - Added `startAdminBreakGlassHandler` with typed request DTO `{organization_id?, reason, ttl_seconds}`, stable `yalla.output.v1` / `yalla.error.v1` rendering, request/correlation propagation, and delegation to the existing store-backed break-glass service so the session row and elevated-access audit event remain committed together.
+  - Added validation for admin target selection: `organization_id` may repeat the query target, body-only cross-tenant targets are rejected, mismatched query/body targets are rejected without echoing IDs, and invalid org IDs return typed validation errors.
+  - Added focused contract tests for success, home-org defaulting, validation failures, unauthenticated, unauthorized, scoped-grant containment, and not-found propagation.
+- Files changed
+  - `internal/controlplane/httpapi/break_glass.go`
+  - `internal/controlplane/httpapi/break_glass_test.go`
+  - `internal/controlplane/httpapi/routes.go`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - RED first: `go test ./internal/controlplane/httpapi -run 'TestPostAdminBreakGlass'` failed with `404 E_NOT_FOUND` before implementation because the route was missing.
+  - `gofmt -w internal/controlplane/httpapi/break_glass.go internal/controlplane/httpapi/break_glass_test.go internal/controlplane/httpapi/routes.go`
+  - `go mod tidy`
+  - `go test ./internal/controlplane/httpapi -run 'TestPostAdminBreakGlass'`
+  - `go test ./internal/controlplane/httpapi`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -run TestPolicyMatrix ./...`
+  - `go test -run TestMigrations ./...`
+  - `golangci-lint run ./...`
+- Results
+  - All commands above passed after implementation.
+  - `goimports`, `staticcheck`, and `govulncheck` were not installed in this environment, so they were not run.
+- Remaining risks or follow-ups
+  - Later BE-0296/BE-0297 stories still list additional dedicated contract/policy coverage for the admin break-glass surface, so this iteration stayed scoped to the endpoint implementation story.
+- **Learnings for future iterations:**
+  - `/v1/admin/break-glass` should share the existing `BreakGlassController` / store `BreakGlassService`; do not create a second audit/session path because the existing service already commits the session row and elevated-access audit event atomically.
+  - Break-glass session creation is currently org-rooted. Do not let project/environment/service-scoped grants authorize it by mirroring descendant query parameters into the resolver unless the persisted session model is extended to carry the same descendant scope.
+  - For unpathed admin break-glass creates, cross-tenant targeting belongs in the query string so `RequireAuth` can authorize the target before body validation or persistence.
+---

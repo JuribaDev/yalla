@@ -9,6 +9,7 @@ import (
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apienvelope"
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
+	"github.com/JuribaDev/yalla/internal/controlplane/domain"
 	"github.com/JuribaDev/yalla/internal/controlplane/policy"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
 	"github.com/JuribaDev/yalla/internal/controlplane/telemetry"
@@ -65,6 +66,16 @@ type BreakGlassController interface {
 type startBreakGlassRequest struct {
 	Reason     string `json:"reason"`
 	TTLSeconds *int   `json:"ttl_seconds"`
+}
+
+// startAdminBreakGlassRequest is the decoded POST /v1/admin/break-glass
+// body. organization_id may repeat the query-scoped target for typed
+// clients, but the query parameter is the authorization-visible cross-tenant
+// selector.
+type startAdminBreakGlassRequest struct {
+	OrganizationID string `json:"organization_id,omitempty"`
+	Reason         string `json:"reason"`
+	TTLSeconds     *int   `json:"ttl_seconds"`
 }
 
 // startBreakGlassPayload is the data block of the POST
@@ -178,36 +189,71 @@ func startBreakGlassHandler(ctl BreakGlassController, nowFn func() time.Time) ht
 			apienvelope.WriteError(w, requestID(r), toAPIError(err))
 			return
 		}
-		if req.TTLSeconds == nil {
-			apienvelope.WriteError(w, requestID(r), apierr.InvalidInput(apierr.FieldViolation{
-				Field:  "ttl_seconds",
-				Reason: "must be supplied",
-			}))
-			return
-		}
-		if *req.TTLSeconds < breakGlassMinTTLSeconds {
-			apienvelope.WriteError(w, requestID(r), apierr.InvalidInput(apierr.FieldViolation{
-				Field:  "ttl_seconds",
-				Reason: "must be a positive number of seconds",
-			}))
-			return
-		}
-		// A TTL above the documented ceiling is clamped server-side by the
-		// store; reject anything more than a year up front so the
-		// validation error is stable for obviously bogus payloads.
-		if *req.TTLSeconds > 365*24*60*60 {
-			apienvelope.WriteError(w, requestID(r), apierr.InvalidInput(apierr.FieldViolation{
-				Field:  "ttl_seconds",
-				Reason: "must be at most 1 year",
-			}))
+		ttl, err := parseBreakGlassTTL(req.TTLSeconds)
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
 			return
 		}
 
 		correlation := telemetry.FromContext(r.Context())
-		ttl := time.Duration(*req.TTLSeconds) * time.Second
 
 		session, err := ctl.StartSession(r.Context(), store.StartBreakGlassInput{
 			OrganizationID: r.PathValue("org_id"),
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			Reason:         req.Reason,
+			TTL:            ttl,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+			IPAddress:      clientIP(r),
+			UserAgent:      r.UserAgent(),
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		apienvelope.WriteData(w, http.StatusCreated, requestID(r), startBreakGlassPayload{
+			Session: breakGlassSessionResourceOf(session, nowFn()),
+		})
+	}
+}
+
+func startAdminBreakGlassHandler(ctl BreakGlassController, nowFn func() time.Time) http.HandlerFunc {
+	if nowFn == nil {
+		nowFn = func() time.Time { return time.Now().UTC() }
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if ctl == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoBreakGlassController))
+			return
+		}
+
+		var req startAdminBreakGlassRequest
+		if err := validate.DecodeJSON(r.Body, &req, 0); err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		organizationID, err := parseAdminBreakGlassTarget(r, p.OrganizationID, req.OrganizationID)
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		ttl, err := parseBreakGlassTTL(req.TTLSeconds)
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		session, err := ctl.StartSession(r.Context(), store.StartBreakGlassInput{
+			OrganizationID: organizationID,
 			ActorID:        p.ID,
 			ActorKind:      string(p.Kind),
 			ActorOrgID:     p.OrganizationID,
@@ -374,6 +420,64 @@ func parseBreakGlassLimit(raw string) (int, error) {
 		})
 	}
 	return n, nil
+}
+
+func parseBreakGlassTTL(raw *int) (time.Duration, error) {
+	if raw == nil {
+		return 0, apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "ttl_seconds",
+			Reason: "must be supplied",
+		})
+	}
+	if *raw < breakGlassMinTTLSeconds {
+		return 0, apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "ttl_seconds",
+			Reason: "must be a positive number of seconds",
+		})
+	}
+	// A TTL above the documented ceiling is clamped server-side by the
+	// store; reject anything more than a year up front so the validation
+	// error is stable for obviously bogus payloads.
+	if *raw > 365*24*60*60 {
+		return 0, apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "ttl_seconds",
+			Reason: "must be at most 1 year",
+		})
+	}
+	return time.Duration(*raw) * time.Second, nil
+}
+
+func parseAdminBreakGlassTarget(r *http.Request, defaultOrganizationID, bodyOrganizationID string) (string, error) {
+	queryOrganizationID := r.URL.Query().Get("organization_id")
+	orgID := queryOrganizationID
+	if orgID == "" {
+		orgID = defaultOrganizationID
+	}
+	if bodyOrganizationID != "" {
+		if queryOrganizationID != "" && bodyOrganizationID != queryOrganizationID {
+			return "", apierr.InvalidInput(apierr.FieldViolation{Field: "organization_id", Reason: "must match query organization_id"})
+		}
+		if queryOrganizationID == "" && bodyOrganizationID != defaultOrganizationID {
+			return "", apierr.InvalidInput(apierr.FieldViolation{Field: "organization_id", Reason: "must be supplied as a query parameter for cross-tenant break-glass"})
+		}
+		orgID = bodyOrganizationID
+	}
+	if err := validateOrganizationIDField("organization_id", orgID); err != nil {
+		return "", err
+	}
+	return orgID, nil
+}
+
+func adminBreakGlassResolver(r *http.Request) policy.Resource {
+	scope := policy.Scope{
+		OrganizationID: r.URL.Query().Get("organization_id"),
+	}
+	if scope.OrganizationID == "" {
+		if p, ok := policy.PrincipalFromContext(r.Context()); ok {
+			scope.OrganizationID = p.OrganizationID
+		}
+	}
+	return policy.Resource{Kind: domain.KindOrganization, Scope: scope}
 }
 
 // clientIP returns the immediate transport peer's IP. We deliberately do
