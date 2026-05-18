@@ -18,11 +18,16 @@ const JobTypeEnsureDokployOrganization = "ensure_dokploy_organization"
 // Dokploy project mapping exist.
 const JobTypeEnsureProject = "ensure_project"
 
+// JobTypeEnsureEnvironment is the durable provisioning job that makes the
+// tenant's Dokploy environment mapping exist.
+const JobTypeEnsureEnvironment = "ensure_environment"
+
 // DokployClient is the narrow typed-client surface these worker jobs
 // needs. *dokploy.Client satisfies it in production; tests can supply fakes.
 type DokployClient interface {
 	EnsureOrganization(context.Context, dokploy.EnsureOrganizationInput) (dokploy.Organization, error)
 	EnsureProject(context.Context, dokploy.EnsureProjectInput) (dokploy.Project, error)
+	EnsureEnvironment(context.Context, dokploy.EnsureEnvironmentInput) (dokploy.Environment, error)
 }
 
 // EnsureDokployOrganizationPayload is the typed schema carried by
@@ -108,11 +113,68 @@ func ParseEnsureProjectPayload(job store.ProvisioningJob) (EnsureProjectPayload,
 	return EnsureProjectPayload{OrganizationID: payloadOrgID, ProjectID: payloadProjectID}, nil
 }
 
+// EnsureEnvironmentPayload is the typed schema carried by
+// provisioning_jobs.payload for JobTypeEnsureEnvironment.
+type EnsureEnvironmentPayload struct {
+	OrganizationID string
+	ProjectID      string
+	EnvironmentID  string
+}
+
+// ParseEnsureEnvironmentPayload validates job's typed payload and returns a
+// terminal error for payload shapes retrying cannot repair.
+func ParseEnsureEnvironmentPayload(job store.ProvisioningJob) (EnsureEnvironmentPayload, error) {
+	var violations []apierr.FieldViolation
+	if job.JobType != JobTypeEnsureEnvironment {
+		violations = append(violations, apierr.FieldViolation{Field: "job_type", Reason: "must be ensure_environment"})
+	}
+	if job.OrganizationID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "organization_id", Reason: "is required"})
+	}
+	if job.ProjectID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "project_id", Reason: "is required"})
+	}
+	if job.EnvironmentID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "environment_id", Reason: "is required"})
+	}
+	if job.ServiceID != "" {
+		violations = append(violations, apierr.FieldViolation{Field: "service_id", Reason: "must be empty for this job type"})
+	}
+
+	payloadOrgID := job.Payload["organization_id"]
+	if payloadOrgID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.organization_id", Reason: "is required"})
+	} else if job.OrganizationID != "" && payloadOrgID != job.OrganizationID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.organization_id", Reason: "must match the job organization_id"})
+	}
+	payloadProjectID := job.Payload["project_id"]
+	if payloadProjectID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.project_id", Reason: "is required"})
+	} else if job.ProjectID != "" && payloadProjectID != job.ProjectID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.project_id", Reason: "must match the job project_id"})
+	}
+	payloadEnvironmentID := job.Payload["environment_id"]
+	if payloadEnvironmentID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.environment_id", Reason: "is required"})
+	} else if job.EnvironmentID != "" && payloadEnvironmentID != job.EnvironmentID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.environment_id", Reason: "must match the job environment_id"})
+	}
+	if len(violations) > 0 {
+		return EnsureEnvironmentPayload{}, Terminal(apierr.InvalidInput(violations...))
+	}
+	return EnsureEnvironmentPayload{
+		OrganizationID: payloadOrgID,
+		ProjectID:      payloadProjectID,
+		EnvironmentID:  payloadEnvironmentID,
+	}, nil
+}
+
 // ProvisionerConfig configures a Provisioner.
 type ProvisionerConfig struct {
 	Store         *store.Store
 	Organizations *store.OrganizationRepository
 	Projects      *store.ProjectRepository
+	Environments  *store.EnvironmentRepository
 	Refs          *store.DokployRefRepository
 	Mapper        *dokploy.Mapper
 	Client        DokployClient
@@ -123,6 +185,7 @@ type Provisioner struct {
 	store         *store.Store
 	organizations *store.OrganizationRepository
 	projects      *store.ProjectRepository
+	environments  *store.EnvironmentRepository
 	refs          *store.DokployRefRepository
 	mapper        *dokploy.Mapper
 	client        DokployClient
@@ -148,6 +211,10 @@ func NewProvisioner(cfg ProvisionerConfig) (*Provisioner, error) {
 	if projects == nil {
 		projects = store.NewProjectRepository()
 	}
+	environments := cfg.Environments
+	if environments == nil {
+		environments = store.NewEnvironmentRepository()
+	}
 	refs := cfg.Refs
 	if refs == nil {
 		refs = store.NewDokployRefRepository()
@@ -160,6 +227,7 @@ func NewProvisioner(cfg ProvisionerConfig) (*Provisioner, error) {
 		store:         cfg.Store,
 		organizations: orgs,
 		projects:      projects,
+		environments:  environments,
 		refs:          refs,
 		mapper:        mapper,
 		client:        cfg.Client,
@@ -177,6 +245,8 @@ func (p *Provisioner) Run(ctx context.Context, job store.ProvisioningJob) error 
 		return p.runEnsureDokployOrganization(ctx, job)
 	case JobTypeEnsureProject:
 		return p.runEnsureProject(ctx, job)
+	case JobTypeEnsureEnvironment:
+		return p.runEnsureEnvironment(ctx, job)
 	default:
 		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
 			Field:  "job_type",
@@ -292,6 +362,59 @@ func (p *Provisioner) runEnsureProject(ctx context.Context, job store.Provisioni
 	return p.persistProjectRef(ctx, job, payload, ensured.ID)
 }
 
+func (p *Provisioner) runEnsureEnvironment(ctx context.Context, job store.ProvisioningJob) error {
+	payload, err := ParseEnsureEnvironmentPayload(job)
+	if err != nil {
+		return err
+	}
+
+	env, parentDokployID, existingID, err := p.loadEnvironmentTarget(ctx, job, payload)
+	if err != nil {
+		return err
+	}
+
+	envID, parseErr := domain.ParseID(env.ID)
+	if parseErr != nil || envID.Kind() != domain.KindEnvironment {
+		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "environment_id",
+			Reason: "must be a valid environment id",
+		}))
+	}
+	projectID, parseErr := domain.ParseID(env.ProjectID)
+	if parseErr != nil || projectID.Kind() != domain.KindProject {
+		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "project_id",
+			Reason: "must be a valid project id",
+		}))
+	}
+
+	in, err := p.mapper.Environment(parentDokployID, dokploy.YallaEnvironment{
+		ID:        envID,
+		ProjectID: projectID,
+		Label:     env.DisplayName,
+		DokployID: existingID,
+	})
+	if err != nil {
+		return Terminal(err)
+	}
+
+	ensured, ensureErr := p.client.EnsureEnvironment(ctx, in)
+	if ensureErr != nil {
+		if interrupted(ctx, ensureErr) {
+			return ensureErr
+		}
+		if apierr.Retryable(ensureErr) {
+			return ensureErr
+		}
+		return Terminal(ensureErr)
+	}
+	if ensured.ID == "" {
+		return Terminal(apierr.Internal(errors.New("worker: ensure_environment resolved an empty Dokploy environment id")))
+	}
+
+	return p.persistEnvironmentRef(ctx, job, payload, ensured.ID)
+}
+
 func (p *Provisioner) loadOrganizationTarget(ctx context.Context, job store.ProvisioningJob, payload EnsureDokployOrganizationPayload) (store.Organization, string, error) {
 	var (
 		org        store.Organization
@@ -376,6 +499,64 @@ func (p *Provisioner) loadProjectTarget(ctx context.Context, job store.Provision
 	return project, parentDokployID, existingDokployID, nil
 }
 
+func (p *Provisioner) loadEnvironmentTarget(ctx context.Context, job store.ProvisioningJob, payload EnsureEnvironmentPayload) (store.Environment, string, string, error) {
+	var (
+		env               store.Environment
+		parentDokployID   string
+		existingDokployID string
+	)
+	err := p.store.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		var getErr error
+		env, getErr = p.environments.GetByID(ctx, q, payload.OrganizationID, payload.EnvironmentID)
+		if getErr != nil {
+			return Terminal(getErr)
+		}
+		if env.OrganizationID != job.OrganizationID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.organization_id",
+				Reason: "must match the environment organization_id",
+			}))
+		}
+		if env.ProjectID != payload.ProjectID || env.ProjectID != job.ProjectID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.project_id",
+				Reason: "must match the environment project_id",
+			}))
+		}
+		if job.DesiredVersion > 0 && env.Version != job.DesiredVersion {
+			return Terminal(apierr.ConflictStale(env.Version))
+		}
+		projectRefs, listErr := p.refs.ListByYallaResource(ctx, q, job.OrganizationID, store.YallaKindProject, env.ProjectID)
+		if listErr != nil {
+			return listErr
+		}
+		for _, ref := range projectRefs {
+			if ref.DokployResource == store.DokployResourceProject {
+				parentDokployID = ref.DokployID
+				break
+			}
+		}
+		if parentDokployID == "" {
+			return Terminal(apierr.Conflict("parent Dokploy project mapping is required before ensuring an environment"))
+		}
+		envRefs, listErr := p.refs.ListByYallaResource(ctx, q, job.OrganizationID, store.YallaKindEnvironment, env.ID)
+		if listErr != nil {
+			return listErr
+		}
+		for _, ref := range envRefs {
+			if ref.DokployResource == store.DokployResourceEnvironment {
+				existingDokployID = ref.DokployID
+				return nil
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return store.Environment{}, "", "", err
+	}
+	return env, parentDokployID, existingDokployID, nil
+}
+
 func (p *Provisioner) persistOrganizationRef(ctx context.Context, job store.ProvisioningJob, payload EnsureDokployOrganizationPayload, dokployID string) error {
 	return p.store.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
 		org, err := p.organizations.Get(ctx, tx, payload.OrganizationID)
@@ -399,6 +580,50 @@ func (p *Provisioner) persistOrganizationRef(ctx context.Context, job store.Prov
 			YallaKind:       store.YallaKindOrganization,
 			YallaID:         payload.OrganizationID,
 			DokployResource: store.DokployResourceOrganization,
+			DokployID:       dokployID,
+		})
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+func (p *Provisioner) persistEnvironmentRef(ctx context.Context, job store.ProvisioningJob, payload EnsureEnvironmentPayload, dokployID string) error {
+	return p.store.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		env, err := p.environments.GetByID(ctx, tx, payload.OrganizationID, payload.EnvironmentID)
+		if err != nil {
+			return Terminal(err)
+		}
+		if env.OrganizationID != job.OrganizationID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.organization_id",
+				Reason: "must match the environment organization_id",
+			}))
+		}
+		if env.ProjectID != payload.ProjectID || env.ProjectID != job.ProjectID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.project_id",
+				Reason: "must match the environment project_id",
+			}))
+		}
+		if job.DesiredVersion > 0 && env.Version != job.DesiredVersion {
+			return Terminal(apierr.ConflictStale(env.Version))
+		}
+		refs, err := p.refs.ListByYallaResource(ctx, tx, job.OrganizationID, store.YallaKindEnvironment, payload.EnvironmentID)
+		if err != nil {
+			return err
+		}
+		for _, ref := range refs {
+			if ref.DokployResource == store.DokployResourceEnvironment {
+				return nil
+			}
+		}
+		_, err = p.refs.Insert(ctx, tx, store.DokployRef{
+			OrganizationID:  job.OrganizationID,
+			YallaKind:       store.YallaKindEnvironment,
+			YallaID:         payload.EnvironmentID,
+			DokployResource: store.DokployResourceEnvironment,
 			DokployID:       dokployID,
 		})
 		if err != nil {

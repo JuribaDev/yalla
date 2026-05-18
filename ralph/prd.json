@@ -10086,8 +10086,8 @@
       ],
       "type": "worker-job",
       "priority": 1,
-      "passes": false,
-      "notes": "Provisioning job type: ensure_environment."
+      "passes": true,
+      "notes": "Provisioning job type: ensure_environment. Implemented in worker.Provisioner with typed EnsureEnvironmentPayload validation, source-of-truth environment load, parent Dokploy project ref lookup, stale-version and cross-scope terminal refusal, idempotent existing-environment replay via dokploy_refs, fake Dokploy success/retry/cancellation/not-found coverage, and queue-level redacted error_summary verification."
     },
     {
       "id": "BE-0484",
