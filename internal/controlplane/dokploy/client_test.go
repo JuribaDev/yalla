@@ -176,7 +176,7 @@ func TestClientValidationFailure(t *testing.T) {
 	}
 }
 
-// TestClientNotFound maps a Dokploy 404 onto E_NOT_FOUND.
+// TestClientNotFound maps a Dokploy 404 onto E_DOKPLOY_NOT_FOUND.
 func TestClientNotFound(t *testing.T) {
 	t.Parallel()
 	fake := dokployfake.New()
@@ -184,8 +184,8 @@ func TestClientNotFound(t *testing.T) {
 	c := newTestClient(t, fake)
 
 	_, err := c.EnsureProject(context.Background(), dokploy.EnsureProjectInput{ExistingID: "proj_does_not_exist"})
-	if code := codeOf(t, err); code != yerr.CodeNotFound {
-		t.Fatalf("code = %s, want %s", code, yerr.CodeNotFound)
+	if code := codeOf(t, err); code != yerr.CodeDokployNotFound {
+		t.Fatalf("code = %s, want %s", code, yerr.CodeDokployNotFound)
 	}
 	if apierr.Retryable(err) {
 		t.Fatal("a not-found error must not be retryable")
@@ -372,7 +372,7 @@ func TestClientRemoveServiceIsIdempotent(t *testing.T) {
 	// The service is genuinely gone.
 	if _, err := c.EnsureService(ctx, dokploy.EnsureServiceInput{
 		ExistingID: svc.ID, Type: dokploy.ServiceApplication,
-	}); codeOf(t, err) != yerr.CodeNotFound {
+	}); codeOf(t, err) != yerr.CodeDokployNotFound {
 		t.Fatalf("removed service still readable: %v", err)
 	}
 }
@@ -399,7 +399,7 @@ func TestClientRemoveEnvironmentIsIdempotent(t *testing.T) {
 	if err := c.RemoveEnvironment(ctx, dokploy.RemoveEnvironmentInput{EnvironmentID: env.ID}); err != nil {
 		t.Fatalf("second RemoveEnvironment must be idempotent, got: %v", err)
 	}
-	if _, err := c.EnsureEnvironment(ctx, dokploy.EnsureEnvironmentInput{ExistingID: env.ID}); codeOf(t, err) != yerr.CodeNotFound {
+	if _, err := c.EnsureEnvironment(ctx, dokploy.EnsureEnvironmentInput{ExistingID: env.ID}); codeOf(t, err) != yerr.CodeDokployNotFound {
 		t.Fatalf("removed environment still readable: %v", err)
 	}
 }

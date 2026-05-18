@@ -10941,8 +10941,8 @@
       ],
       "type": "error-contract",
       "priority": 1,
-      "passes": false,
-      "notes": "Stable error code: E_DOKPLOY_NOT_FOUND."
+      "passes": true,
+      "notes": "Stable error code: E_DOKPLOY_NOT_FOUND. Implemented as a non-retryable Dokploy dependency error with HTTP 502, fixed generic public message, documentation URL, redacted envelope tests, and typed client 404 mapping."
     },
     {
       "id": "BE-0529",

@@ -292,14 +292,14 @@ func TestLiveDokploySmokeExercisesLiveEndpoint(t *testing.T) {
 		if !errors.As(err, &ye) {
 			t.Fatalf("live smoke surfaced an untyped error %T (%v); the Dokploy client MUST wrap every failure with a typed yerr.Error", err, err)
 		}
-		// A reachable Dokploy with a bad service id surfaces NotFound; an
-		// unreachable Dokploy surfaces Transport/Server. Both are
+		// A reachable Dokploy with a bad service id surfaces DokployNotFound;
+		// an unreachable Dokploy surfaces Transport/Server. Both are
 		// actionable — but a Config code means the smoke is misconfigured
 		// (e.g. token typo) and should fail loudly so the operator knows.
 		if ye.Code == yerr.CodeConfig {
 			t.Fatalf("live smoke surfaced a configuration error against %s: %s", cfg.BaseURL, ye.Code)
 		}
-		if cfg.ProbeService != "" && ye.Code != yerr.CodeNotFound {
+		if cfg.ProbeService != "" && ye.Code != yerr.CodeDokployNotFound {
 			// The operator gave us a probe service id and the server did not
 			// return success — that's a real smoke failure.
 			t.Fatalf("probe service %q on %s returned %s: %v", cfg.ProbeService, cfg.BaseURL, ye.Code, err)

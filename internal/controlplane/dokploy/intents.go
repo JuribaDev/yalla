@@ -382,8 +382,7 @@ func (c *Client) RemoveProject(ctx context.Context, in RemoveProjectInput) error
 	if err == nil {
 		return nil
 	}
-	var ye *yerr.Error
-	if stderrors.As(err, &ye) && ye.Code == yerr.CodeNotFound {
+	if isDokployNotFound(err) {
 		return nil
 	}
 	return err
@@ -400,8 +399,7 @@ func (c *Client) RemoveService(ctx context.Context, in RemoveServiceInput) error
 	if err == nil {
 		return nil
 	}
-	var ye *yerr.Error
-	if stderrors.As(err, &ye) && ye.Code == yerr.CodeNotFound {
+	if isDokployNotFound(err) {
 		return nil
 	}
 	return err
@@ -418,11 +416,15 @@ func (c *Client) RemoveEnvironment(ctx context.Context, in RemoveEnvironmentInpu
 	if err == nil {
 		return nil
 	}
-	var ye *yerr.Error
-	if stderrors.As(err, &ye) && ye.Code == yerr.CodeNotFound {
+	if isDokployNotFound(err) {
 		return nil
 	}
 	return err
+}
+
+func isDokployNotFound(err error) bool {
+	var ye *yerr.Error
+	return stderrors.As(err, &ye) && ye.Code == yerr.CodeDokployNotFound
 }
 
 // serviceCollection maps a ServiceType to its Dokploy REST collection segment.

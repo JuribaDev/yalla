@@ -311,7 +311,7 @@ func (c *Client) statusError(method, path string, status int, payload []byte) er
 	case http.StatusForbidden:
 		return apierr.DokployForbidden(detail)
 	case http.StatusNotFound:
-		return apierr.NotFound("dokploy resource", "").Wrap(detail)
+		return apierr.DokployNotFound(detail)
 	case http.StatusConflict:
 		return apierr.Conflict("the Dokploy resource already exists").Wrap(detail)
 	case http.StatusTooManyRequests:

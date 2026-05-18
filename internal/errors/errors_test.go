@@ -35,6 +35,7 @@ func TestCode_ExitCodeMappingIsStable(t *testing.T) {
 		{CodeServer, 8},
 		{CodeDokployAuth, 8},
 		{CodeDokployForbidden, 8},
+		{CodeDokployNotFound, 8},
 		{CodeDokployUnavailable, 8},
 		{CodeUpstreamBug, 8},
 		{CodeUnavailable, 8},
@@ -65,6 +66,22 @@ func TestDokployAuthDescriptionNamesUpstreamCredentialRejection(t *testing.T) {
 	const want = "upstream Dokploy provisioning backend rejected Yalla credentials"
 	if got != want {
 		t.Fatalf("E_DOKPLOY_AUTH description = %q, want %q", got, want)
+	}
+}
+
+func TestDokployNotFoundDescriptionNamesUpstreamMissingResource(t *testing.T) {
+	t.Parallel()
+
+	var got string
+	for _, doc := range AllCodes() {
+		if doc.Code == string(CodeDokployNotFound) {
+			got = doc.Description
+			break
+		}
+	}
+	const want = "upstream Dokploy provisioning backend could not find a required resource"
+	if got != want {
+		t.Fatalf("E_DOKPLOY_NOT_FOUND description = %q, want %q", got, want)
 	}
 }
 

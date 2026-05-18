@@ -14,7 +14,7 @@
 //   - Validation:           InvalidInput (with field paths), Invalid
 //   - Not found / conflict: NotFound, Conflict
 //   - Quota:                QuotaExceeded
-//   - Dependency failures:  DokployAuth, DokployForbidden,
+//   - Dependency failures:  DokployAuth, DokployForbidden, DokployNotFound,
 //     DokployUnavailable, StoreUnavailable, QueueUnavailable, NetworkFailure,
 //     Timeout — each distinguishes which dependency failed via DependencyOf.
 //   - Internal:             Internal
@@ -153,6 +153,7 @@ var taxonomy = map[yerr.Code]struct {
 	yerr.CodeServer:                 {true, MessageGeneric, "the upstream Dokploy provisioning backend returned an error"},
 	yerr.CodeDokployAuth:            {false, MessageGeneric, "the upstream Dokploy provisioning backend rejected Yalla credentials"},
 	yerr.CodeDokployForbidden:       {false, MessageGeneric, "the upstream Dokploy provisioning backend denied the requested operation"},
+	yerr.CodeDokployNotFound:        {false, MessageGeneric, "the upstream Dokploy provisioning backend could not find a required resource"},
 	yerr.CodeDokployUnavailable:     {true, MessageGeneric, "the upstream Dokploy provisioning backend is temporarily unavailable"},
 	yerr.CodeUpstreamBug:            {false, MessageGeneric, "a known upstream Dokploy defect was encountered"},
 	yerr.CodeUnavailable:            {true, MessageGeneric, "a Yalla-owned dependency (datastore or job queue) is temporarily unavailable"},
@@ -568,6 +569,17 @@ func DokployAuth(cause error) *yerr.Error {
 func DokployForbidden(cause error) *yerr.Error {
 	return yerr.New(yerr.CodeDokployForbidden, "the Dokploy provisioning backend denied the requested operation").
 		WithHint("contact Yalla support; the upstream provisioning permissions need operator attention").
+		Wrap(&dependencyError{dep: DependencyDokploy, cause: cause})
+}
+
+// DokployNotFound builds an E_DOKPLOY_NOT_FOUND error (HTTP 502) for a
+// private Dokploy response that could not find a required upstream resource.
+// The public message is fixed and generic: it must never expose the upstream
+// response body, resource identifiers, Dokploy token, or whether a particular
+// customer-facing resource exists.
+func DokployNotFound(cause error) *yerr.Error {
+	return yerr.New(yerr.CodeDokployNotFound, "the Dokploy provisioning backend could not find a required resource").
+		WithHint("contact Yalla support; the upstream provisioning state needs operator attention").
 		Wrap(&dependencyError{dep: DependencyDokploy, cause: cause})
 }
 
