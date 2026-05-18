@@ -9288,8 +9288,8 @@
       ],
       "type": "repository",
       "priority": 1,
-      "passes": false,
-      "notes": "Database table: environments."
+      "passes": true,
+      "notes": "Database table: environments Repository invariants tests (Insert/Update/ScheduleDeletion row-shape, dual-anchor, identity preservation, Insert rollback, Insert nil-Tx guard) landed at internal/controlplane/store/environment_repository_invariants_test.go."
     },
     {
       "id": "BE-0442",
