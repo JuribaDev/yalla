@@ -10,7 +10,7 @@
 // source of truth:
 //
 //   - Auth / policy:        AuthenticationRequired, AuthInvalid, AuthExpired,
-//     Unauthenticated, Forbidden
+//     Unauthenticated, Forbidden, ScopeRequired
 //   - Validation:           InvalidInput (with field paths), Invalid
 //   - Not found / conflict: NotFound, Conflict
 //   - Quota:                QuotaExceeded
@@ -130,6 +130,7 @@ var taxonomy = map[yerr.Code]struct {
 	yerr.CodeAuthExpired:            {false, MessageGeneric, "authentication credentials were supplied but have expired"},
 	yerr.CodeAuth:                   {false, MessageSpecific, "authentication credentials were supplied but could not be authenticated"},
 	yerr.CodeForbidden:              {false, MessageSpecific, "the principal is authenticated but not authorized for the action"},
+	yerr.CodeScopeRequired:          {false, MessageSpecific, "the request did not supply the organization or resource scope required for authorization"},
 	yerr.CodeNotFound:               {false, MessageSpecific, "the requested resource does not exist or is not visible to the principal"},
 	yerr.CodeConflict:               {false, MessageSpecific, "the request conflicts with the current state of the resource"},
 	yerr.CodeInvalidStateTransition: {false, MessageSpecific, "the requested lifecycle transition is not allowed by the resource state machine"},
@@ -306,6 +307,20 @@ func Forbidden(message string) *yerr.Error {
 		message = "not authorized to perform this action"
 	}
 	return yerr.New(yerr.CodeForbidden, message)
+}
+
+// ScopeRequired builds an E_SCOPE_REQUIRED error (HTTP 400) for a request
+// that cannot be authorized because the required organization or resource
+// scope was not supplied. scope is a stable scope label such as
+// "organization", "project", "environment", or "service"; it must never be a
+// caller credential or opaque customer-owned value.
+func ScopeRequired(scope string) *yerr.Error {
+	scope = strings.TrimSpace(scope)
+	if scope == "" {
+		scope = "resource"
+	}
+	return yerr.Newf(yerr.CodeScopeRequired, "%s scope is required", scope).
+		WithHint("include the required scope in the path or query before retrying")
 }
 
 // NotFound builds an E_NOT_FOUND error (HTTP 404). resource is the kind of

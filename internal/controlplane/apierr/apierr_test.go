@@ -93,6 +93,7 @@ func TestConstructorsEmitCataloguedCodes(t *testing.T) {
 		{"auth expired", AuthExpired(), yerr.CodeAuthExpired, 401},
 		{"unauthenticated", Unauthenticated(""), yerr.CodeAuth, 401},
 		{"forbidden", Forbidden(""), yerr.CodeForbidden, 403},
+		{"scope required", ScopeRequired("organization"), yerr.CodeScopeRequired, 400},
 		{"not found", NotFound("project", "p1"), yerr.CodeNotFound, 404},
 		{"conflict", Conflict(""), yerr.CodeConflict, 409},
 		{"invalid state transition", InvalidStateTransition("deployment", "queued", "succeeded"), yerr.CodeInvalidStateTransition, 409},
@@ -259,6 +260,50 @@ func TestForbiddenContract(t *testing.T) {
 	}
 	if !strings.Contains(body, output.Sentinel) {
 		t.Errorf("expected redaction sentinel %q in forbidden envelope: %s", output.Sentinel, body)
+	}
+}
+
+func TestScopeRequiredContract(t *testing.T) {
+	t.Parallel()
+
+	const leaked = "Authorization: Bearer yka_scope_secret_token"
+	err := ScopeRequired("  organization  ").WithHint("retry without " + leaked)
+	if err.Code != yerr.CodeScopeRequired {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeScopeRequired)
+	}
+	if err.Message != "organization scope is required" {
+		t.Fatalf("message = %q, want stable missing-scope message", err.Message)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 400 {
+			t.Errorf("HTTPStatus = %d, want 400", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageSpecific {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageSpecific)
+		}
+		if entry.Retryable {
+			t.Error("E_SCOPE_REQUIRED must not be retryable")
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-scope-required", err)
+	body := rec.Body.String()
+	if rec.Code != 400 {
+		t.Fatalf("status = %d, want 400; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-scope-required"`) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeScopeRequired)) {
+		t.Errorf("envelope body missing schema, request id, or docs link: %s", body)
+	}
+	if strings.Contains(body, "yka_scope_secret_token") || strings.Contains(body, "Bearer") {
+		t.Errorf("scope-required envelope leaked credential material: %s", body)
+	}
+	if !strings.Contains(body, output.Sentinel) {
+		t.Errorf("expected redaction sentinel %q in scope-required envelope: %s", output.Sentinel, body)
 	}
 }
 

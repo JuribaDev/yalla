@@ -89,6 +89,7 @@ var envelopeRedactor = output.NewRedactor()
 //	E_AUTHENTICATION_REQUIRED,
 //	E_AUTH_INVALID, E_AUTH_EXPIRED, E_AUTH  -> 401 Unauthorized
 //	E_FORBIDDEN                               -> 403 Forbidden
+//	E_SCOPE_REQUIRED                          -> 400 Bad Request
 //	E_NOT_FOUND                               -> 404 Not Found
 //	E_CONFLICT, E_INVALID_STATE_TRANSITION,
 //	E_IDEMPOTENCY_CONFLICT                    -> 409 Conflict
@@ -101,7 +102,7 @@ var envelopeRedactor = output.NewRedactor()
 //	everything else (E_INTERNAL, E_CONFIG, …) -> 500 Internal Server Error
 func StatusForCode(code yerr.Code) int {
 	switch code {
-	case yerr.CodeInvalidInput, yerr.CodeUsage:
+	case yerr.CodeInvalidInput, yerr.CodeUsage, yerr.CodeScopeRequired:
 		return http.StatusBadRequest
 	case yerr.CodeAuthenticationRequired, yerr.CodeAuthInvalid, yerr.CodeAuthExpired, yerr.CodeAuth:
 		return http.StatusUnauthorized

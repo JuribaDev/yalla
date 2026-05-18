@@ -37,6 +37,11 @@ do not mix customer API handlers into CLI packages.
   code (store and queue both use `E_UNAVAILABLE`).
 - Every customer-data path must eventually resolve organization scope before
   reading or mutating data. Cross-tenant IDs must not leak resource existence.
+  A non-self authorization attempt with an empty `policy.Resource.Scope.OrganizationID`
+  is a request-shape failure, not a policy denial: `policy.Authorize` maps it
+  to `apierr.ScopeRequired()` / `E_SCOPE_REQUIRED` (HTTP 400). Route resolvers
+  should still supply scope explicitly so this path catches wiring mistakes and
+  missing query/path scope, not normal cross-tenant access.
 - Dokploy is a private provisioning backend. Customer-facing code should call
   typed control-plane services, not raw Dokploy operations.
 - Normal tests should use fake dependencies. Live Dokploy tests must be

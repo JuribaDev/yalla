@@ -148,6 +148,17 @@ func TestDecideUnknownRole(t *testing.T) {
 	assertDecision(t, e.Decide(p, "auth.me", resourceIn(orgA)), true, ReasonAllowedSelf)
 }
 
+// TestDecideMissingResourceScope denies non-self actions before policy
+// capability checks when the caller has not supplied the organization scope
+// needed to evaluate the resource.
+func TestDecideMissingResourceScope(t *testing.T) {
+	t.Parallel()
+	e := NewEngine()
+
+	assertDecision(t, e.Decide(principalIn(orgA, RoleOwner), "project.read", Resource{Kind: domain.KindProject}), false, ReasonDeniedScopeRequired)
+	assertDecision(t, e.Decide(principalIn(orgA, RoleOwner), "auth.me", Resource{}), true, ReasonAllowedSelf)
+}
+
 // TestDecideCustomRole resolves an organization-defined role through the hook,
 // both as a principal's organization role and as a grant role.
 func TestDecideCustomRole(t *testing.T) {
@@ -290,6 +301,11 @@ func TestAuthorize(t *testing.T) {
 	// No principal → CodeAuth.
 	if code := codeOf(t, e.Authorize(Principal{}, "project.read", resourceIn(orgA))); code != yerr.CodeAuth {
 		t.Fatalf("no-principal code = %s, want %s", code, yerr.CodeAuth)
+	}
+
+	// Missing resource scope → CodeScopeRequired.
+	if code := codeOf(t, e.Authorize(principalIn(orgA, RoleOwner), "project.read", Resource{Kind: domain.KindProject})); code != yerr.CodeScopeRequired {
+		t.Fatalf("missing-scope code = %s, want %s", code, yerr.CodeScopeRequired)
 	}
 
 	// Authenticated but unauthorized → CodeForbidden.

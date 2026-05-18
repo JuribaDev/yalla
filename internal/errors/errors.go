@@ -48,8 +48,11 @@ const (
 	CodeAuthExpired Code = "E_AUTH_EXPIRED"
 	CodeAuth        Code = "E_AUTH"
 	CodeForbidden   Code = "E_FORBIDDEN"
-	CodeNotFound    Code = "E_NOT_FOUND"
-	CodeConflict    Code = "E_CONFLICT"
+	// CodeScopeRequired marks a request that reached authorization without
+	// the organization/resource scope needed to evaluate the action.
+	CodeScopeRequired Code = "E_SCOPE_REQUIRED"
+	CodeNotFound      Code = "E_NOT_FOUND"
+	CodeConflict      Code = "E_CONFLICT"
 	// CodeInvalidStateTransition marks a lifecycle transition that is not
 	// allowed by the resource's documented state machine. It is distinct from
 	// CodeConflict so agents can tell "retry with a fresh version" apart from
@@ -106,6 +109,7 @@ var codeDescriptions = map[Code]string{
 	CodeAuthExpired:            "supplied authentication credentials have expired",
 	CodeAuth:                   "supplied authentication credentials are invalid",
 	CodeForbidden:              "credentials are valid but not authorised for the action",
+	CodeScopeRequired:          "required organization or resource scope was not supplied",
 	CodeNotFound:               "resource, operationId, or schema does not exist",
 	CodeConflict:               "request rejected because of a precondition or state conflict",
 	CodeInvalidStateTransition: "requested lifecycle transition is not allowed by the resource state machine",
@@ -131,7 +135,7 @@ var codeDescriptions = map[Code]string{
 func AllCodes() []CodeDoc {
 	codes := []Code{
 		CodeUnknown, CodeInternal, CodeUsage, CodeInvalidInput,
-		CodeConfig, CodeOrphan, CodeAuthenticationRequired, CodeAuthInvalid, CodeAuthExpired, CodeAuth, CodeForbidden, CodeNotFound,
+		CodeConfig, CodeOrphan, CodeAuthenticationRequired, CodeAuthInvalid, CodeAuthExpired, CodeAuth, CodeForbidden, CodeScopeRequired, CodeNotFound,
 		CodeConflict, CodeInvalidStateTransition, CodeIdempotencyConflict, CodeRateLimited, CodeQuotaExceeded,
 		CodeServer, CodeUpstreamBug,
 		CodeNetwork, CodeUnavailable, CodeTimeout, CodeCanceled, CodeNoInput, CodeUnsupported,
@@ -167,7 +171,7 @@ func (c Code) ExitCode() int {
 	switch c {
 	case "":
 		return 0
-	case CodeUsage, CodeInvalidInput:
+	case CodeUsage, CodeInvalidInput, CodeScopeRequired:
 		return 2
 	case CodeConfig, CodeOrphan:
 		return 3

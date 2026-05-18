@@ -213,6 +213,9 @@ const (
 	// ReasonDeniedCrossTenant means the resource belongs to a different
 	// organization than the principal and the principal cannot reach it.
 	ReasonDeniedCrossTenant Reason = "denied_cross_tenant"
+	// ReasonDeniedScopeRequired means the request did not identify the
+	// organization scope required to evaluate a non-self action.
+	ReasonDeniedScopeRequired Reason = "denied_scope_required"
 	// ReasonDeniedOutOfScope means the principal holds the required capability
 	// somewhere, but not at the resource's scope.
 	ReasonDeniedOutOfScope Reason = "denied_out_of_scope"

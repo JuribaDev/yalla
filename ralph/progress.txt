@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Missing authorization scope is a request-shape error, not a normal denial: `policy.Decide` returns `ReasonDeniedScopeRequired` for non-self actions whose `policy.Resource.Scope.OrganizationID` is empty, and `policy.Authorize` maps that to typed `apierr.ScopeRequired()` / `E_SCOPE_REQUIRED` (HTTP 400). Route resolvers should still provide explicit organization scope; this path catches missing path/query scope and resolver wiring mistakes before they collapse into misleading cross-tenant `E_FORBIDDEN`.
 - Error-contract stories are a coordinated public-contract change: add the stable code in `internal/errors` (constant, `codeDescriptions`, `AllCodes`, `ExitCode`), add the backend taxonomy entry and typed constructor in `internal/controlplane/apierr`, add the deterministic HTTP mapping in `internal/controlplane/apienvelope.StatusForCode`, and pin all three with tests plus an envelope redaction/docs-link assertion. Do not surface these codes through ad hoc string literals.
 - Auth error-contract split (BE-0514/BE-0513 pattern): missing/no-usable authentication material maps to `401 E_AUTHENTICATION_REQUIRED` through `apierr.AuthenticationRequired()`; supplied-but-rejected credentials from `auth.ErrInvalidCredentials` map to `401 E_AUTH_INVALID` through `apierr.AuthInvalid()` with the fixed public message "the supplied credentials are invalid". Legacy typed `apierr.Unauthenticated(...)` still renders `E_AUTH` for older internal call sites, but new middleware invalid-token paths should assert `E_AUTH_INVALID`.
 - Admin unpathed mutation endpoints that target a tenant selected by request data should expose `organization_id` in the query string so `RequireAuth` authorizes the real target before the handler reads the body. The body may repeat `organization_id` for typed clients but must match the query target; body-only cross-tenant targets are validation failures. Store-backed admin job starters should verify the target organization, insert the durable job, and append the allowed audit event in one `Store.Write` transaction so no import/reconcile job exists without its audit trail.
@@ -35356,4 +35357,48 @@ change that widened Reason to caller-supplied data.
   - No runtime behavior change beyond trimming surrounding whitespace from `E_FORBIDDEN` messages; existing policy reasons are already stable value-free strings.
 - **Learnings for future iterations:**
   - `E_FORBIDDEN` is a message-specific code because policy denial reasons are stable public contract text; normalize the reason at the constructor boundary and keep credential or tenant-specific material out of the message/hint.
+---
+## 2026-05-19 00:43 +03 - BE-0517
+- What was implemented
+  - Defined and verified the stable `E_SCOPE_REQUIRED` backend error contract.
+  - Added `internal/errors.CodeScopeRequired` with manifest description, exit-code mapping, and AllCodes coverage.
+  - Added `apierr.ScopeRequired()` with taxonomy metadata, non-retryable message-specific policy, stable 400 HTTP mapping, and envelope redaction/docs-link coverage.
+  - Added `policy.ReasonDeniedScopeRequired`; non-self authorization with an empty organization resource scope now returns `E_SCOPE_REQUIRED` instead of collapsing into a misleading forbidden/cross-tenant denial.
+- Files changed
+  - `internal/errors/errors.go`
+  - `internal/errors/errors_test.go`
+  - `internal/controlplane/apienvelope/apienvelope.go`
+  - `internal/controlplane/apienvelope/apienvelope_test.go`
+  - `internal/controlplane/apierr/apierr.go`
+  - `internal/controlplane/apierr/apierr_test.go`
+  - `internal/controlplane/policy/engine.go`
+  - `internal/controlplane/policy/policy.go`
+  - `internal/controlplane/policy/policy_test.go`
+  - `internal/controlplane/AGENTS.md`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `go test ./internal/errors ./internal/controlplane/apienvelope ./internal/controlplane/apierr ./internal/controlplane/policy` failed before implementation on missing `CodeScopeRequired`, `ScopeRequired`, and `ReasonDeniedScopeRequired` symbols.
+  - `go test ./internal/errors ./internal/controlplane/apienvelope ./internal/controlplane/apierr ./internal/controlplane/policy`
+  - `gofmt -w .`
+  - `goimports -w .` not run; tool is not installed
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./...`
+  - `go test -race ./internal/controlplane/...`
+  - `go vet ./...`
+  - `golangci-lint run ./...`
+  - Pre-commit strict hook: `scripts/verify.sh --strict --release`, including focused backend suites, `govulncheck ./...`, `staticcheck ./...`, `golangci-lint run ./...`, `goreleaser check`, and `goreleaser release --snapshot --clean`.
+- Results
+  - Focused red/green tests passed after implementation.
+  - Required formatting, module tidy, full tests, race detector, and vet passed.
+  - Focused control-plane tests and race tests passed.
+  - `golangci-lint run ./...` passed with 0 issues.
+  - The strict pre-commit hook passed all checks, including optional static/vulnerability/release checks.
+  - `goimports` was unavailable in PATH and is documented here.
+- Remaining risks or follow-ups
+  - No persistence, migration, job, quota, Dokploy, or live dependency behavior was touched.
+- **Learnings for future iterations:**
+  - Missing organization scope during authorization should be classified as `E_SCOPE_REQUIRED` at the policy/apierr boundary; route resolvers should still populate explicit scope so normal cross-tenant attempts continue through the existing scoped policy and repository containment paths.
 ---

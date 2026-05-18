@@ -10732,8 +10732,8 @@
       ],
       "type": "error-contract",
       "priority": 1,
-      "passes": false,
-      "notes": "Stable error code: E_SCOPE_REQUIRED."
+      "passes": true,
+      "notes": "Stable error code: E_SCOPE_REQUIRED. Verified typed apierr.ScopeRequired constructor, stable 400 mapping, message-specific policy, yalla.error.v1 envelope request_id/docs link, redaction of credential-shaped hint text, and policy.Authorize mapping for missing organization resource scope."
     },
     {
       "id": "BE-0518",

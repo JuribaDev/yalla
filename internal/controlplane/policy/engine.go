@@ -80,9 +80,10 @@ func (e *Engine) roleCaps(role Role) (capSet, bool) {
 //  2. An uncatalogued action is denied.
 //  3. CapSelf actions are allowed for any authenticated, enabled principal.
 //  4. The principal's organization role must resolve, or the request is denied.
-//  5. A resource in another organization is denied unless the principal holds
+//  5. A missing resource organization scope is denied as a request-shape error.
+//  6. A resource in another organization is denied unless the principal holds
 //     the support capability and the action is a read or support action.
-//  6. Otherwise the action is allowed iff the principal's organization role,
+//  7. Otherwise the action is allowed iff the principal's organization role,
 //     or a grant whose scope covers the resource, confers the action's
 //     capability.
 func (e *Engine) Decide(principal Principal, action Action, resource Resource) Decision {
@@ -108,6 +109,10 @@ func (e *Engine) Decide(principal Principal, action Action, resource Resource) D
 	roleCaps, roleOK := e.roleCaps(principal.Role)
 	if principal.Role != "" && !roleOK {
 		return deny(ReasonDeniedUnknownRole)
+	}
+
+	if resource.Scope.OrganizationID == "" {
+		return deny(ReasonDeniedScopeRequired)
 	}
 
 	// Cross-tenant resources are unreachable except for support reads.
@@ -152,7 +157,8 @@ func (e *Engine) Decide(principal Principal, action Action, resource Resource) D
 // Authorize is the imperative form of [Decide]: it returns nil when the action
 // is allowed and a typed [apierr] error when it is not, so handlers and store
 // units of work can authorize with a single `if err != nil` check. A missing
-// principal maps to apierr.Unauthenticated (HTTP 401); every other denial maps
+// principal maps to apierr.Unauthenticated (HTTP 401), a missing resource
+// scope maps to apierr.ScopeRequired (HTTP 400), and every other denial maps
 // to apierr.Forbidden (HTTP 403). The error message carries only the action
 // and the stable reason code — never the principal ID or any resource ID — so
 // it is safe to place on the wire and in logs.
@@ -163,6 +169,9 @@ func (e *Engine) Authorize(principal Principal, action Action, resource Resource
 	}
 	if d.Reason == ReasonDeniedNoPrincipal {
 		return apierr.Unauthenticated("authentication is required for action " + string(action))
+	}
+	if d.Reason == ReasonDeniedScopeRequired {
+		return apierr.ScopeRequired("organization")
 	}
 	return apierr.Forbidden("not authorized for action " + string(action) + " (" + string(d.Reason) + ")")
 }
