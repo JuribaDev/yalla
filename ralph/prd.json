@@ -9991,8 +9991,8 @@
       ],
       "type": "tenant-isolation",
       "priority": 1,
-      "passes": false,
-      "notes": "Tenant isolation for backup_schedules."
+      "passes": true,
+      "notes": "Database table: service_backups (quota dimension backup_schedules). Added repository tenant-isolation coverage for overlapping-looking two-tenant fixtures across ListByService, GetByID, Update, MarkPending, DeleteByID, and the ServiceBackupReader adapter. Cross-tenant service_id/backup_id tuples return empty list or typed NotFound as appropriate and byte-identity checks prove orgA/orgB bystanders are not touched."
     },
     {
       "id": "BE-0479",
