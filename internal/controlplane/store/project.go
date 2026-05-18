@@ -3,11 +3,97 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
+	"github.com/JuribaDev/yalla/internal/output"
 	"github.com/jackc/pgx/v5"
 )
+
+// ProjectStatus is the closed-set lifecycle the projects table permits. It
+// records Yalla source-of-truth lifecycle intent for the project row itself;
+// Dokploy runtime state remains an upstream concern.
+type ProjectStatus string
+
+const (
+	// ProjectStatusPending records a project created before provisioning has converged.
+	ProjectStatusPending ProjectStatus = "pending"
+	// ProjectStatusActive records the normal live mutable project lifecycle state.
+	ProjectStatusActive ProjectStatus = "active"
+	// ProjectStatusSuspended records a reversible hold on a project.
+	ProjectStatusSuspended ProjectStatus = "suspended"
+	// ProjectStatusDeleting records accepted teardown intent.
+	ProjectStatusDeleting ProjectStatus = "deleting"
+	// ProjectStatusDeleted records the terminal project lifecycle state.
+	ProjectStatusDeleted ProjectStatus = "deleted"
+)
+
+func (s ProjectStatus) String() string { return string(s) }
+
+// projectTransitions is the documented project lifecycle table.
+var projectTransitions = map[ProjectStatus]map[ProjectStatus]struct{}{
+	ProjectStatusPending: {
+		ProjectStatusActive:   {},
+		ProjectStatusDeleting: {},
+	},
+	ProjectStatusActive: {
+		ProjectStatusSuspended: {},
+		ProjectStatusDeleting:  {},
+	},
+	ProjectStatusSuspended: {
+		ProjectStatusActive:   {},
+		ProjectStatusDeleting: {},
+	},
+	ProjectStatusDeleting: {
+		ProjectStatusActive:  {},
+		ProjectStatusDeleted: {},
+	},
+	ProjectStatusDeleted: {},
+}
+
+// CanTransitionTo reports whether the project state machine permits a status
+// change from s to next.
+func (s ProjectStatus) CanTransitionTo(next ProjectStatus) bool {
+	allowed, ok := projectTransitions[s]
+	if !ok {
+		return false
+	}
+	_, ok = allowed[next]
+	return ok
+}
+
+func (s ProjectStatus) projectEventType() ProjectEventType {
+	switch s {
+	case ProjectStatusPending:
+		return ProjectEventTypePending
+	case ProjectStatusActive:
+		return ProjectEventTypeActive
+	case ProjectStatusSuspended:
+		return ProjectEventTypeSuspended
+	case ProjectStatusDeleting:
+		return ProjectEventTypeDeleting
+	case ProjectStatusDeleted:
+		return ProjectEventTypeDeleted
+	default:
+		return ""
+	}
+}
+
+// ProjectTransition is the audited state-machine mutation input for a projects
+// row. Actor and request fields are persisted into the project event emitted
+// atomically with the status update.
+type ProjectTransition struct {
+	OrganizationID  string
+	ProjectID       string
+	NextStatus      ProjectStatus
+	ExpectedVersion *int64
+	ActorID         string
+	ActorKind       string
+	RequestID       string
+	CorrelationID   string
+	Reason          string
+}
 
 // Project is the source-of-truth representation of a row in the projects
 // table. It is the persistence-layer shape; HTTP request and response shapes
@@ -29,6 +115,7 @@ type Project struct {
 	OrganizationID      string
 	Slug                string
 	DisplayName         string
+	Status              ProjectStatus
 	Version             int64
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
@@ -59,7 +146,7 @@ func NewProjectRepository() *ProjectRepository { return &ProjectRepository{} }
 
 // projectColumns is the column list returned by every project query, in the
 // order scanProject expects.
-const projectColumns = `id, organization_id, slug, display_name, version, created_at, updated_at, deletion_scheduled_at`
+const projectColumns = `id, organization_id, slug, display_name, status, version, created_at, updated_at, deletion_scheduled_at`
 
 // Insert writes a new project row inside tx and returns the persisted row,
 // including the database-assigned timestamps. It requires a *Tx — not a bare
@@ -155,7 +242,7 @@ func (r *ProjectRepository) CountByOrganization(ctx context.Context, q Querier, 
 // scanProject scans one project row in projectColumns order.
 func scanProject(row pgx.Row) (Project, error) {
 	var p Project
-	err := row.Scan(&p.ID, &p.OrganizationID, &p.Slug, &p.DisplayName, &p.Version, &p.CreatedAt, &p.UpdatedAt, &p.DeletionScheduledAt)
+	err := row.Scan(&p.ID, &p.OrganizationID, &p.Slug, &p.DisplayName, &p.Status, &p.Version, &p.CreatedAt, &p.UpdatedAt, &p.DeletionScheduledAt)
 	return p, err
 }
 
@@ -319,6 +406,72 @@ func (r *ProjectRepository) Update(ctx context.Context, tx *Tx, p Project, ifMat
 		return Project{}, mapWriteError(err, "a project with this slug already exists in the organization")
 	}
 	return updated, nil
+}
+
+// Transition moves a project through the documented project state machine and
+// appends the matching project_events row in the same transaction. Invalid
+// edges return E_INVALID_STATE_TRANSITION before any update, so the project row
+// and timeline remain unchanged.
+func (r *ProjectRepository) Transition(ctx context.Context, tx *Tx, in ProjectTransition) (Project, ProjectEvent, error) {
+	if tx == nil {
+		return Project{}, ProjectEvent{}, apierr.Internal(errors.New("store: ProjectRepository.Transition called with a nil transaction"))
+	}
+	orgID := strings.TrimSpace(in.OrganizationID)
+	projectID := strings.TrimSpace(in.ProjectID)
+	next := in.NextStatus
+	if next.projectEventType() == "" {
+		return Project{}, ProjectEvent{}, apierr.InvalidStateTransition("project", "", next.String())
+	}
+
+	current, err := scanProject(tx.QueryRow(ctx,
+		`SELECT `+projectColumns+`
+		   FROM projects
+		  WHERE organization_id = $1 AND id = $2
+		  FOR UPDATE`,
+		orgID, projectID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Project{}, ProjectEvent{}, apierr.NotFound("project", projectID)
+	}
+	if err != nil {
+		return Project{}, ProjectEvent{}, apierr.StoreUnavailable(err)
+	}
+	if in.ExpectedVersion != nil && current.Version != *in.ExpectedVersion {
+		return Project{}, ProjectEvent{}, apierr.ConflictStale(current.Version)
+	}
+	if !current.Status.CanTransitionTo(next) {
+		return Project{}, ProjectEvent{}, apierr.InvalidStateTransition("project", current.Status.String(), next.String())
+	}
+
+	updated, err := scanProject(tx.QueryRow(ctx,
+		`UPDATE projects
+		    SET status = $3
+		  WHERE organization_id = $1 AND id = $2
+		  RETURNING `+projectColumns,
+		orgID, projectID, next.String()))
+	if err != nil {
+		return Project{}, ProjectEvent{}, apierr.StoreUnavailable(err)
+	}
+
+	reason := output.NewRedactor().Redact(strings.TrimSpace(in.Reason))
+	event, err := NewProjectEventRepository().Append(ctx, tx, ProjectEvent{
+		OrganizationID: orgID,
+		ProjectID:      projectID,
+		EventType:      next.projectEventType(),
+		Message:        reason,
+		Metadata: map[string]string{
+			"actor_id":       strings.TrimSpace(in.ActorID),
+			"actor_kind":     strings.TrimSpace(in.ActorKind),
+			"previous_state": current.Status.String(),
+			"next_state":     next.String(),
+			"reason":         reason,
+		},
+		RequestID:     strings.TrimSpace(in.RequestID),
+		CorrelationID: strings.TrimSpace(in.CorrelationID),
+	})
+	if err != nil {
+		return Project{}, ProjectEvent{}, err
+	}
+	return updated, event, nil
 }
 
 // classifyProjectConcurrencyMiss disambiguates the two reasons a

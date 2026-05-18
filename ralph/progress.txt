@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Project state-machine stories use the same audited transition shape as environment/service state machines: `projects.status` has the lifecycle table `pending -> active/deleting`, `active -> suspended/deleting`, `suspended -> active/deleting`, `deleting -> active/deleted`, `deleted -> terminal`; `ProjectRepository.Transition` locks the tenant-scoped project row, rejects invalid edges with `E_INVALID_STATE_TRANSITION` before any write, updates status, and appends a redacted `project_events` row with actor/request/previous/next/reason metadata in the same transaction.
 - Bare-id job read endpoints (BE-0274 pattern, GET `/v1/jobs/{job_id}`) should authorize against the persisted job row's owning scope, not an org-root placeholder: the resolver reloads the tenant-scoped job through `store.JobReader.GetJob`, mirrors `ProjectID` / `EnvironmentID` / `ServiceID` into `policy.Scope`, then the handler performs the same tenant-scoped read for the response. This preserves project/environment/service-scoped grant containment while unknown or cross-tenant ids still collapse to the repository's `E_NOT_FOUND` path.
 - Job list endpoints (BE-0271 pattern, GET `/v1/jobs`) use an organization-root route with optional query filters `(project_id, environment_id, service_id, status, limit)`: `jobListResolver` mirrors supplied filters into `policy.Scope` before auth, the handler validates hierarchy shape before store access (`environment_id` requires `project_id`, `service_id` requires both), and `store.JobReader` verifies filtered parents tenant-scoped before delegating to `JobRepository.List` with a constant SQL statement whose optional predicates never interpolate caller input.
 - Environment state-machine stories use a pure `EnvironmentStatus.CanTransitionTo` table plus an atomic repository `Transition` method: lock the tenant-scoped environment row, reject impossible edges with `E_INVALID_STATE_TRANSITION` before any write, update `environments.status`, and append the matching `environment_events` row in the same transaction with actor/request/previous/next/reason metadata. Redact free-text reason text before persisting event message/metadata.
@@ -34806,4 +34807,39 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - Bare job-id reads need a resolver that reflects the job row's actual owning scope before policy authorization; otherwise project/environment/service-scoped grants would be structurally denied as org-root reads.
   - The existing `JobRepository.Get` already provides the tenant-scoped by-id persistence primitive; the store adapter only needs to wrap it in `Store.Read`.
+---
+
+## 2026-05-18 22:12 +03 - BE-0507
+- What was implemented
+  - Added the production project lifecycle state machine with `projects.status`, append-only `project_events`, typed `ProjectStatus` / `ProjectTransition`, and `ProjectRepository.Transition` enforcing valid edges before mutation.
+- Files changed
+  - `internal/controlplane/store/project.go`
+  - `internal/controlplane/store/project_event.go`
+  - `internal/controlplane/store/project_state_machine_test.go`
+  - `internal/controlplane/store/migrate/migrations/0043_project_state_machine.up.sql`
+  - `internal/controlplane/store/migrate/migrations/0043_project_state_machine.down.sql`
+  - `internal/controlplane/store/AGENTS.md`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `go test ./internal/controlplane/store -run 'TestProjectStatusTransitionTable|TestProjectRepositoryTransition'` initially failed with missing project lifecycle symbols, confirming the tests were red.
+  - `go test ./internal/controlplane/store -run 'TestProjectStatusTransitionTable|TestProjectRepositoryTransition'`
+  - `go test ./internal/controlplane/store -run 'TestMigrations|TestProject'`
+  - `go test ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `gofmt -w .`
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `golangci-lint run ./...`
+- Results
+  - All executed checks passed.
+  - `goimports`, `staticcheck`, and `govulncheck` were not installed.
+- Remaining risks or follow-ups
+  - BE-0508+ lifecycle stories remain incomplete; no public project transition endpoint was added because BE-0507 is a persistence/state-machine story.
+- **Learnings for future iterations:**
+  - Project lifecycle follows the same state table and audited transaction shape as environment/service lifecycle, with `project_events` storing redacted reason metadata.
+  - Adding a status column to `projects` requires updating the shared `projectColumns` projection and `scanProject`; this keeps all existing repository reads on the same row shape.
+  - State-machine tests should assert both transition table exhaustiveness and invalid-transition no-op behavior by checking unchanged version plus empty timeline.
 ---

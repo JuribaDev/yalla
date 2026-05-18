@@ -223,6 +223,20 @@ Postgres persistence for control-plane source-of-truth state.
   metadata. Do not update/delete individual event rows; removal happens only
   through parent environment/tenant cascade.
 
+## Project lifecycle (`0043_project_state_machine`, `project.go`, `project_event.go`)
+
+- `projects.status` uses the same lifecycle taxonomy as environments and
+  services: `pending`, `active`, `suspended`, `deleting`, and terminal
+  `deleted`. Existing rows default to `active`.
+- Project lifecycle changes should go through `ProjectRepository.Transition`:
+  it locks `(organization_id, project_id)`, validates the edge with
+  `ProjectStatus.CanTransitionTo`, rejects invalid edges as
+  `E_INVALID_STATE_TRANSITION` before any write, updates `projects.status`,
+  and appends the matching `project_events` row in the same transaction.
+- `project_events` is append-only and stores redacted transition reason
+  metadata. Do not update/delete individual event rows; removal happens only
+  through parent project/tenant cascade.
+
 ## Service backups (`0024_service_backups`, `service_backup.go`)
 
 - The PRD may call this surface `backup_schedules`; the actual source-of-truth
