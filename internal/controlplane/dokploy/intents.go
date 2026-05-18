@@ -282,6 +282,24 @@ func (c *Client) GetServiceStatus(ctx context.Context, serviceID string) (Servic
 	return st, nil
 }
 
+// RemoveProject removes a project. Removal is idempotent: a project that is
+// already gone (Dokploy answers 404) is reported as success, so a retried
+// teardown job never fails on its second pass.
+func (c *Client) RemoveProject(ctx context.Context, in RemoveProjectInput) error {
+	if v := requireFields(field{"project_id", in.ProjectID}); v != nil {
+		return v
+	}
+	err := c.del(ctx, "/api/projects/"+url.PathEscape(strings.TrimSpace(in.ProjectID)))
+	if err == nil {
+		return nil
+	}
+	var ye *yerr.Error
+	if stderrors.As(err, &ye) && ye.Code == yerr.CodeNotFound {
+		return nil
+	}
+	return err
+}
+
 // RemoveService removes a service. Removal is idempotent: a service that is
 // already gone (Dokploy answers 404) is reported as success, so a retried
 // teardown job never fails on its second pass.

@@ -127,6 +127,7 @@ func (s *Server) newMux() *http.ServeMux {
 
 	mux.HandleFunc("POST /api/projects", s.createProject)
 	mux.HandleFunc("GET /api/projects/{id}", s.getProject)
+	mux.HandleFunc("DELETE /api/projects/{id}", s.deleteProject)
 
 	mux.HandleFunc("POST /api/environments", s.createEnvironment)
 	mux.HandleFunc("GET /api/environments/{id}", s.getEnvironment)
@@ -281,6 +282,44 @@ func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, p)
+}
+
+// deleteProject removes a project plus environments, services, domains, and
+// deployments below it. The fake still answers 404 for an unknown ID so the
+// client's idempotent teardown mapping is exercised.
+func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	id := r.PathValue("id")
+	if _, ok := s.resources.projects[id]; !ok {
+		writeError(w, http.StatusNotFound, "not_found", "no such project")
+		return
+	}
+	delete(s.resources.projects, id)
+	for environmentID, env := range s.resources.environments {
+		if env.ProjectID != id {
+			continue
+		}
+		delete(s.resources.environments, environmentID)
+		for serviceID, svc := range s.resources.services {
+			if svc.EnvironmentID != environmentID {
+				continue
+			}
+			delete(s.resources.services, serviceID)
+			for domainID, d := range s.resources.domains {
+				if d.ServiceID == serviceID {
+					delete(s.resources.domains, domainID)
+				}
+			}
+			for deploymentID, d := range s.resources.deployments {
+				if d.ServiceID == serviceID {
+					delete(s.resources.deployments, deploymentID)
+				}
+			}
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // --- Environments --------------------------------------------------------

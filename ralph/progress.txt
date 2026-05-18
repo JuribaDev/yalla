@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Worker project teardown jobs (BE-0494 pattern for `project.delete` / PRD alias `delete_project`) extend `worker.Provisioner` with a typed scoped payload `(organization_id, project_id)`, load the project through the tenant-scoped repository, verify payload scope and `DesiredVersion` against the persisted row, resolve the `project` `dokploy_refs` row, and call the typed Dokploy `RemoveProject` intent. A job already marked `succeeded` is a replay no-op; a prior upstream deletion is idempotent because the typed Dokploy client treats remove 404 as success. Like environment/service delete jobs, project delete jobs do not reject `deletion_scheduled_at` because scheduled deletion is the expected lifecycle path.
 - Worker environment teardown jobs (BE-0493 pattern for `environment.delete` / PRD alias `delete_environment`) extend `worker.Provisioner` with a typed scoped payload `(organization_id, project_id, environment_id)`, load the environment through the tenant-scoped repository, verify payload scope and `DesiredVersion` against the persisted row, resolve the `environment` `dokploy_refs` row, and call the typed Dokploy `RemoveEnvironment` intent. A job already marked `succeeded` is a replay no-op; a prior upstream deletion is idempotent because the typed Dokploy client treats remove 404 as success. Like service delete jobs, environment delete jobs do not reject `deletion_scheduled_at` because scheduled deletion is the expected lifecycle path.
 - Worker teardown jobs (BE-0492 pattern for `service.delete` / PRD alias `delete_service`) extend `worker.Provisioner` with a typed scoped payload `(organization_id, project_id, environment_id, service_id)`, load the service through the tenant-scoped repository, verify payload scope and `DesiredVersion` against the persisted row, resolve the service-kind-specific `dokploy_refs` row, and call the typed Dokploy `RemoveService` intent. A job already marked `succeeded` is a replay no-op; a prior upstream deletion is also idempotent because the typed Dokploy client treats remove 404 as success. Unlike runtime-control jobs, delete jobs do not reject `deletion_scheduled_at`; scheduled deletion is the normal lifecycle path.
 - Worker runtime-control jobs (BE-0488/BE-0489/BE-0490/BE-0491 pattern for `service.restart` / PRD alias `restart_service`, `service.stop` / PRD alias `stop_service`, `service.start` / PRD alias `start_service`, and `service.rollback` / PRD alias `rollback_service`) extend `worker.Provisioner` with a typed payload parser carrying `(organization_id, project_id, environment_id, service_id)`, load the service through the tenant-scoped repository, verify payload scope against the persisted row, refuse stale `DesiredVersion` and `deletion_scheduled_at` before any Dokploy call, resolve the concrete service Dokploy ID from the service-kind-specific `dokploy_refs` row, and call a typed Dokploy runtime intent such as `RestartService`, `StopService`, `StartService`, or `RollbackService`. Keep accepting PRD underscore aliases (`restart_service`, `stop_service`, `start_service`, `rollback_service`, etc.) for compatibility with manually seeded jobs. Jobs with `Status == succeeded` should be no-op replays and must not issue another Dokploy POST; retryable upstream errors stay plain so the durable queue can persist a redacted `error_summary`.
@@ -34113,4 +34114,46 @@ change that widened Reason to caller-supplied data.
   - Environment delete mirrors service delete at the worker layer but uses the environment-scoped ref (`YallaKindEnvironment` + `DokployResourceEnvironment`) and omits `service_id` from both job scope and payload.
   - The typed Dokploy client should own idempotent 404-as-success teardown behavior; worker code should not special-case upstream 404s.
   - Fake Dokploy should expose the upstream route and still return 404 on second delete so the typed client idempotency mapping is actually tested.
+---
+## 2026-05-18 19:22 +03 - BE-0494
+- What was implemented
+  - Implemented durable worker execution for `project.delete` / `delete_project`.
+  - Added typed delete-project payload validation with terminal invalid-input handling.
+  - Added tenant-scoped project desired-state reload, stale `DesiredVersion` rejection, project Dokploy ref resolution, and idempotent succeeded-job replay.
+  - Added typed Dokploy `RemoveProject` intent plus fake Dokploy `DELETE /api/projects/{id}` support that cascades in-memory children for tests.
+  - Added fake Dokploy worker coverage for success/replay, retryable upstream failure, stale desired state, cross-tenant payload, cancellation, and redacted persisted retry summaries.
+  - Updated worker AGENTS.md with the reusable project teardown convention.
+- Files changed
+  - internal/controlplane/dokploy/types.go
+  - internal/controlplane/dokploy/intents.go
+  - internal/controlplane/dokploy/dokployfake/resources.go
+  - internal/controlplane/worker/provisioner.go
+  - internal/controlplane/worker/provisioner_test.go
+  - internal/controlplane/worker/AGENTS.md
+  - ralph/prd.json
+  - ralph/progress.txt
+- Verification run
+  - `gofmt -w .`
+  - `goimports -w .` was not run because `goimports` is not installed.
+  - `go mod tidy`
+  - `go test ./internal/controlplane/dokploy ./internal/controlplane/dokploy/dokployfake ./internal/controlplane/worker`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `go test -run TestFakeDokploy ./...`
+  - `golangci-lint run ./...`
+  - `scripts/verify.sh --strict --release` via the pre-commit hook, including `govulncheck ./...`, `staticcheck ./...`, release snapshot checks, and the opt-in live-Dokploy smoke skip.
+- Results
+  - All executed checks passed.
+  - `golangci-lint run ./...` reported `0 issues`.
+  - Pre-commit `govulncheck ./...` reported no vulnerabilities.
+- Remaining risks or follow-ups
+  - BE-0495 `sync_domains` remains the next unfinished priority-1 worker story.
+  - `goimports` is unavailable in this local environment.
+- **Learnings for future iterations:**
+  - Project teardown mirrors environment teardown with one fewer scope leg: parse `(organization_id, project_id)`, reload through `ProjectRepository.Get`, verify `DesiredVersion`, resolve `store.YallaKindProject` + `store.DokployResourceProject`, then call typed `RemoveProject`.
+  - The Dokploy fake should expose a real DELETE route and still return 404 for missing resources so the typed client owns idempotent 404-to-success behavior.
 ---

@@ -77,6 +77,12 @@ Background provisioning/metering workers for the control plane.
   the typed Dokploy `RemoveEnvironment` intent. A job already marked
   `succeeded` is a replay no-op, and an upstream 404 is idempotent success in
   the typed client.
+- Project teardown jobs (`project.delete`/`delete_project`) use the scoped
+  payload `(organization_id, project_id)`, reload the project through
+  `ProjectRepository.Get`, verify job/payload scope and `DesiredVersion`,
+  resolve the `project` `dokploy_refs` row, and call the typed Dokploy
+  `RemoveProject` intent. A job already marked `succeeded` is a replay no-op,
+  and an upstream 404 is idempotent success in the typed client.
 - Integration tests are `package worker_test`, use `testutil.RequireMigratedDB`,
   and `t.Skip` when `YALLA_TEST_DATABASE_URL` is unset. A concurrent-claim test
   must retry-until-drained with a deadline guard — a job locked by a peer's

@@ -99,6 +99,15 @@ const JobTypeDeleteEnvironment = "environment.delete"
 // JobTypeDeleteEnvironment.
 const JobTypeDeleteEnvironmentAlias = "delete_environment"
 
+// JobTypeDeleteProject is the durable provisioning job enqueued by project
+// deletion workflows. JobTypeDeleteProjectAlias accepts the PRD's
+// delete_project spelling for compatibility with manually seeded jobs.
+const JobTypeDeleteProject = "project.delete"
+
+// JobTypeDeleteProjectAlias is accepted by the worker as an alias for
+// JobTypeDeleteProject.
+const JobTypeDeleteProjectAlias = "delete_project"
+
 // DokployClient is the narrow typed-client surface these worker jobs
 // needs. *dokploy.Client satisfies it in production; tests can supply fakes.
 type DokployClient interface {
@@ -111,6 +120,7 @@ type DokployClient interface {
 	RollbackService(context.Context, dokploy.RollbackServiceInput) (dokploy.ServiceStatus, error)
 	StopService(context.Context, dokploy.StopServiceInput) (dokploy.ServiceStatus, error)
 	StartService(context.Context, dokploy.StartServiceInput) (dokploy.ServiceStatus, error)
+	RemoveProject(context.Context, dokploy.RemoveProjectInput) error
 	RemoveService(context.Context, dokploy.RemoveServiceInput) error
 	RemoveEnvironment(context.Context, dokploy.RemoveEnvironmentInput) error
 }
@@ -347,6 +357,13 @@ type DeleteEnvironmentPayload struct {
 	OrganizationID string
 	ProjectID      string
 	EnvironmentID  string
+}
+
+// DeleteProjectPayload is the typed schema carried by provisioning_jobs.payload
+// for JobTypeDeleteProject / JobTypeDeleteProjectAlias.
+type DeleteProjectPayload struct {
+	OrganizationID string
+	ProjectID      string
 }
 
 // ParseEnsureApplicationServicePayload validates job's typed payload and
@@ -902,6 +919,44 @@ func ParseDeleteEnvironmentPayload(job store.ProvisioningJob) (DeleteEnvironment
 	}, nil
 }
 
+// ParseDeleteProjectPayload validates a delete-project job payload and returns
+// a terminal error for payload shapes retrying cannot repair.
+func ParseDeleteProjectPayload(job store.ProvisioningJob) (DeleteProjectPayload, error) {
+	var violations []apierr.FieldViolation
+	if job.JobType != JobTypeDeleteProject && job.JobType != JobTypeDeleteProjectAlias {
+		violations = append(violations, apierr.FieldViolation{Field: "job_type", Reason: "must be project.delete or delete_project"})
+	}
+	if job.OrganizationID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "organization_id", Reason: "is required"})
+	}
+	if job.ProjectID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "project_id", Reason: "is required"})
+	}
+	if job.EnvironmentID != "" {
+		violations = append(violations, apierr.FieldViolation{Field: "environment_id", Reason: "must be empty for this job type"})
+	}
+	if job.ServiceID != "" {
+		violations = append(violations, apierr.FieldViolation{Field: "service_id", Reason: "must be empty for this job type"})
+	}
+
+	payloadOrgID := job.Payload["organization_id"]
+	if payloadOrgID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.organization_id", Reason: "is required"})
+	} else if job.OrganizationID != "" && payloadOrgID != job.OrganizationID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.organization_id", Reason: "must match the job organization_id"})
+	}
+	payloadProjectID := job.Payload["project_id"]
+	if payloadProjectID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.project_id", Reason: "is required"})
+	} else if job.ProjectID != "" && payloadProjectID != job.ProjectID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.project_id", Reason: "must match the job project_id"})
+	}
+	if len(violations) > 0 {
+		return DeleteProjectPayload{}, Terminal(apierr.InvalidInput(violations...))
+	}
+	return DeleteProjectPayload{OrganizationID: payloadOrgID, ProjectID: payloadProjectID}, nil
+}
+
 func databaseEngineValid(engine string) bool {
 	switch engine {
 	case dokploy.EnginePostgres, dokploy.EngineMysql, dokploy.EngineMariadb, dokploy.EngineMongo, dokploy.EngineRedis:
@@ -1023,6 +1078,8 @@ func (p *Provisioner) Run(ctx context.Context, job store.ProvisioningJob) error 
 		return p.runDeleteService(ctx, job)
 	case JobTypeDeleteEnvironment, JobTypeDeleteEnvironmentAlias:
 		return p.runDeleteEnvironment(ctx, job)
+	case JobTypeDeleteProject, JobTypeDeleteProjectAlias:
+		return p.runDeleteProject(ctx, job)
 	default:
 		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
 			Field:  "job_type",
@@ -1571,6 +1628,33 @@ func (p *Provisioner) runDeleteEnvironment(ctx context.Context, job store.Provis
 	}
 
 	removeErr := p.client.RemoveEnvironment(ctx, dokploy.RemoveEnvironmentInput{EnvironmentID: dokployEnvironmentID})
+	if removeErr != nil {
+		if interrupted(ctx, removeErr) {
+			return removeErr
+		}
+		if apierr.Retryable(removeErr) {
+			return removeErr
+		}
+		return Terminal(removeErr)
+	}
+	return nil
+}
+
+func (p *Provisioner) runDeleteProject(ctx context.Context, job store.ProvisioningJob) error {
+	if job.Status == store.JobStatusSucceeded {
+		return nil
+	}
+	payload, err := ParseDeleteProjectPayload(job)
+	if err != nil {
+		return err
+	}
+
+	dokployProjectID, err := p.loadDeleteProjectTarget(ctx, job, payload)
+	if err != nil {
+		return err
+	}
+
+	removeErr := p.client.RemoveProject(ctx, dokploy.RemoveProjectInput{ProjectID: dokployProjectID})
 	if removeErr != nil {
 		if interrupted(ctx, removeErr) {
 			return removeErr
@@ -2259,6 +2343,44 @@ func (p *Provisioner) loadDeleteEnvironmentTarget(ctx context.Context, job store
 		return "", err
 	}
 	return dokployEnvironmentID, nil
+}
+
+func (p *Provisioner) loadDeleteProjectTarget(ctx context.Context, job store.ProvisioningJob, payload DeleteProjectPayload) (string, error) {
+	var dokployProjectID string
+	err := p.store.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		project, getErr := p.projects.Get(ctx, q, payload.OrganizationID, payload.ProjectID)
+		if getErr != nil {
+			return Terminal(getErr)
+		}
+		if project.OrganizationID != job.OrganizationID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.organization_id",
+				Reason: "must match the project organization_id",
+			}))
+		}
+		if job.DesiredVersion > 0 && project.Version != job.DesiredVersion {
+			return Terminal(apierr.ConflictStale(project.Version))
+		}
+
+		projectRefs, listErr := p.refs.ListByYallaResource(ctx, q, job.OrganizationID, store.YallaKindProject, project.ID)
+		if listErr != nil {
+			return listErr
+		}
+		for _, ref := range projectRefs {
+			if ref.DokployResource == store.DokployResourceProject {
+				dokployProjectID = ref.DokployID
+				break
+			}
+		}
+		if dokployProjectID == "" {
+			return Terminal(apierr.Conflict("project Dokploy mapping is required before deleting a project"))
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return dokployProjectID, nil
 }
 
 func (p *Provisioner) loadDeploymentTarget(ctx context.Context, job store.ProvisioningJob, payload DeployServicePayload) (store.Deployment, string, error) {

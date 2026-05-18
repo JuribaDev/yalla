@@ -189,6 +189,12 @@ type StopServiceInput struct {
 	ServiceID string
 }
 
+// RemoveProjectInput names the project to remove.
+type RemoveProjectInput struct {
+	// ProjectID is the project to remove; required.
+	ProjectID string
+}
+
 // RemoveEnvironmentInput names the environment to remove.
 type RemoveEnvironmentInput struct {
 	// EnvironmentID is the environment to remove; required.
