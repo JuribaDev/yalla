@@ -274,7 +274,7 @@ func TestGetProjectRequiresBearerToken(t *testing.T) {
 
 // TestGetProjectRejectsInvalidCredential proves an unauthenticated
 // principal — a token that does not resolve to a credential — is 401
-// E_AUTH and the project reader is never reached. The message is the
+// E_AUTH_INVALID and the project reader is never reached. The message is the
 // stable, generic invalid-credential message that does not reveal which
 // check failed.
 func TestGetProjectRejectsInvalidCredential(t *testing.T) {
@@ -288,8 +288,8 @@ func TestGetProjectRejectsInvalidCredential(t *testing.T) {
 		t.Fatalf("status = %d, want 401; body %s", rec.Code, rec.Body.String())
 	}
 	env := decodeGetProjectError(t, rec)
-	if env.Error.Code != "E_AUTH" {
-		t.Errorf("error.code = %q, want E_AUTH", env.Error.Code)
+	if env.Error.Code != "E_AUTH_INVALID" {
+		t.Errorf("error.code = %q, want E_AUTH_INVALID", env.Error.Code)
 	}
 }
 

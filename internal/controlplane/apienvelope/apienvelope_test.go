@@ -103,9 +103,9 @@ func TestWriteErrorDerivesStatusAndEnvelope(t *testing.T) {
 		},
 		{
 			name:       "authentication failure",
-			err:        yerr.New(yerr.CodeAuth, "missing credentials"),
+			err:        yerr.New(yerr.CodeAuthInvalid, "the supplied credentials are invalid"),
 			wantStatus: http.StatusUnauthorized,
-			wantCode:   "E_AUTH",
+			wantCode:   "E_AUTH_INVALID",
 		},
 		{
 			name:       "authorization failure",
@@ -177,6 +177,8 @@ func TestStatusForCode(t *testing.T) {
 	}{
 		{yerr.CodeInvalidInput, http.StatusBadRequest},
 		{yerr.CodeUsage, http.StatusBadRequest},
+		{yerr.CodeAuthenticationRequired, http.StatusUnauthorized},
+		{yerr.CodeAuthInvalid, http.StatusUnauthorized},
 		{yerr.CodeAuth, http.StatusUnauthorized},
 		{yerr.CodeForbidden, http.StatusForbidden},
 		{yerr.CodeNotFound, http.StatusNotFound},

@@ -162,10 +162,13 @@ do not mix customer API handlers into CLI packages.
   so a cross-tenant id is a 403, not a silent allow). Missing authentication
   material is `401 E_AUTHENTICATION_REQUIRED` via
   `apierr.AuthenticationRequired()`; a supplied but rejected credential is
-  `401 E_AUTH` via `apierr.Unauthenticated(...)` with a **fixed generic
+  `401 E_AUTH_INVALID` via `apierr.AuthInvalid()` with a **fixed generic
   message** (never reveal which check failed or whether a key prefix exists).
   No-bearer, malformed-bearer, and cookie-only tests should assert
-  `E_AUTHENTICATION_REQUIRED`; invalid-token tests should assert `E_AUTH`. An
+  `E_AUTHENTICATION_REQUIRED`; invalid-token tests should assert
+  `E_AUTH_INVALID`. Legacy typed `apierr.Unauthenticated(...)` values still
+  render `E_AUTH` for older internal call sites and should not be used for new
+  invalid-credential middleware paths. An
   authenticated-but-unauthorized request is `403 E_FORBIDDEN` carrying the
   stable policy reason. A datastore failure during authentication keeps its
   typed status (a 5xx) and is never collapsed into a 401. The middleware is not

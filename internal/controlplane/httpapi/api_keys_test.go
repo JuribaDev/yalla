@@ -520,7 +520,7 @@ func TestListAPIKeysRequiresAuthentication(t *testing.T) {
 }
 
 // TestListAPIKeysInvalidCredentials proves an unverifiable credential is a
-// stable 401 E_AUTH — identical to the missing-credential contract.
+// stable 401 E_AUTH_INVALID — distinct from the missing-credential contract.
 func TestListAPIKeysInvalidCredentials(t *testing.T) {
 	t.Parallel()
 
@@ -531,7 +531,7 @@ func TestListAPIKeysInvalidCredentials(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_AUTH")
+	decodeError(t, rec, "E_AUTH_INVALID")
 }
 
 // TestListAPIKeysDisabledPrincipal proves a principal authenticated against a

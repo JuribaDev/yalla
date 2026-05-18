@@ -365,7 +365,7 @@ func TestListMembersRequiresAuthentication(t *testing.T) {
 }
 
 // TestListMembersInvalidCredentials proves an unverifiable credential is a
-// stable 401 E_AUTH — identical to the missing-credential contract.
+// stable 401 E_AUTH_INVALID — distinct from the missing-credential contract.
 func TestListMembersInvalidCredentials(t *testing.T) {
 	t.Parallel()
 
@@ -376,7 +376,7 @@ func TestListMembersInvalidCredentials(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401; body %s", rec.Code, rec.Body.String())
 	}
-	env := decodeError(t, rec, "E_AUTH")
+	env := decodeError(t, rec, "E_AUTH_INVALID")
 	if env.Error.Message != "the supplied credentials are invalid" {
 		t.Errorf("message = %q, want %q", env.Error.Message, "the supplied credentials are invalid")
 	}
@@ -737,7 +737,7 @@ func TestGetMemberRequiresAuthentication(t *testing.T) {
 }
 
 // TestGetMemberInvalidCredentials proves an unverifiable credential is a
-// stable 401 E_AUTH — identical to the missing-credential contract.
+// stable 401 E_AUTH_INVALID — distinct from the missing-credential contract.
 func TestGetMemberInvalidCredentials(t *testing.T) {
 	t.Parallel()
 
@@ -748,7 +748,7 @@ func TestGetMemberInvalidCredentials(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401; body %s", rec.Code, rec.Body.String())
 	}
-	env := decodeError(t, rec, "E_AUTH")
+	env := decodeError(t, rec, "E_AUTH_INVALID")
 	if env.Error.Message != "the supplied credentials are invalid" {
 		t.Errorf("message = %q, want %q", env.Error.Message, "the supplied credentials are invalid")
 	}

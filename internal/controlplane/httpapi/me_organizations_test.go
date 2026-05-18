@@ -164,7 +164,7 @@ func TestMeOrganizationsUnauthenticated(t *testing.T) {
 }
 
 // TestMeOrganizationsInvalidCredentials proves an unverifiable credential is a
-// stable 401 E_AUTH — identical to the missing-credential contract, so the
+// stable 401 E_AUTH_INVALID — distinct from the missing-credential contract, so the
 // response never reveals whether the credential was recognised.
 func TestMeOrganizationsInvalidCredentials(t *testing.T) {
 	t.Parallel()
@@ -174,7 +174,7 @@ func TestMeOrganizationsInvalidCredentials(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_AUTH")
+	decodeError(t, rec, "E_AUTH_INVALID")
 }
 
 // TestMeOrganizationsDisabledPrincipalIsForbidden is the authorization-failure

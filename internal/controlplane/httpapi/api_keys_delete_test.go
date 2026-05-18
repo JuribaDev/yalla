@@ -292,7 +292,7 @@ func TestRevokeAPIKeyRejectsUnauthenticated(t *testing.T) {
 }
 
 // TestRevokeAPIKeyInvalidCredentials proves an unverifiable credential is a
-// stable 401 E_AUTH — identical to the missing-credential contract.
+// stable 401 E_AUTH_INVALID — distinct from the missing-credential contract.
 func TestRevokeAPIKeyInvalidCredentials(t *testing.T) {
 	t.Parallel()
 
@@ -303,7 +303,7 @@ func TestRevokeAPIKeyInvalidCredentials(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_AUTH")
+	decodeError(t, rec, "E_AUTH_INVALID")
 }
 
 // TestRevokeAPIKeyDeniesCrossTenant proves the policy engine rejects a

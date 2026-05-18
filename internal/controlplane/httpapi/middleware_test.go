@@ -138,7 +138,7 @@ func TestRequireAuthInvalidCredentials(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401; body %s", rec.Code, rec.Body.String())
 	}
-	env := decodeError(t, rec, "E_AUTH")
+	env := decodeError(t, rec, "E_AUTH_INVALID")
 	// The message is fixed and generic — it must not reveal which check failed
 	// or whether a key prefix exists.
 	if env.Error.Message != "the supplied credentials are invalid" {

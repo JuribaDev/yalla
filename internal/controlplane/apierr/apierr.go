@@ -9,7 +9,8 @@
 // emits are the codes catalogued here, and the catalogue is the documented
 // source of truth:
 //
-//   - Auth / policy:        AuthenticationRequired, Unauthenticated, Forbidden
+//   - Auth / policy:        AuthenticationRequired, AuthInvalid,
+//     Unauthenticated, Forbidden
 //   - Validation:           InvalidInput (with field paths), Invalid
 //   - Not found / conflict: NotFound, Conflict
 //   - Quota:                QuotaExceeded
@@ -125,6 +126,7 @@ var taxonomy = map[yerr.Code]struct {
 }{
 	yerr.CodeInvalidInput:           {false, MessageSpecific, "request payload, path, or query parameter was rejected by validation"},
 	yerr.CodeAuthenticationRequired: {false, MessageSpecific, "no usable authentication credentials were supplied"},
+	yerr.CodeAuthInvalid:            {false, MessageGeneric, "authentication credentials were supplied but could not be authenticated"},
 	yerr.CodeAuth:                   {false, MessageSpecific, "authentication credentials were supplied but could not be authenticated"},
 	yerr.CodeForbidden:              {false, MessageSpecific, "the principal is authenticated but not authorized for the action"},
 	yerr.CodeNotFound:               {false, MessageSpecific, "the requested resource does not exist or is not visible to the principal"},
@@ -269,6 +271,13 @@ func DependencyOf(err error) (Dependency, bool) {
 // the request.
 func AuthenticationRequired() *yerr.Error {
 	return yerr.New(yerr.CodeAuthenticationRequired, "authentication is required")
+}
+
+// AuthInvalid builds an E_AUTH_INVALID error (HTTP 401) for supplied
+// credentials that failed to authenticate. The public message is fixed and
+// generic; do not attach credential-specific details or hints.
+func AuthInvalid() *yerr.Error {
+	return yerr.New(yerr.CodeAuthInvalid, "the supplied credentials are invalid")
 }
 
 // Unauthenticated builds an E_AUTH error (HTTP 401) for supplied credentials

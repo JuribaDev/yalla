@@ -21,7 +21,7 @@ endpoint). The defence is the absence of ambient credentials:
 browsers do not auto-attach `Authorization` headers across origins,
 and there is no API-issued cookie for the browser to attach. Any
 such cross-origin request reaches the server with no `Authorization`
-header and is rejected as 401 `E_AUTH`. The [CORS stance](#cors-stance)
+header and is rejected as 401 `E_AUTHENTICATION_REQUIRED`. The [CORS stance](#cors-stance)
 below is the orthogonal browser-side defence (the script cannot read
 the response); the CSRF stance is the server-side defence (even if a
 browser surfaced the response, the request itself fails because no
@@ -282,8 +282,9 @@ orchestrator's job.
   injects a canned `fakeAuthenticator` + `policy.NewEngine()`. Use
   `NewHandler` directly only when a test needs a specific authenticator
   identity (see `me_test.go`'s `meHandlerFor`).
-- For every endpoint cover: success, unauthenticated (401 `E_AUTH`), invalid
-  credentials (401 `E_AUTH`, identical contract), unauthorized (403
+- For every endpoint cover: success, unauthenticated (401
+  `E_AUTHENTICATION_REQUIRED`), invalid credentials (401 `E_AUTH_INVALID`),
+  unauthorized (403
   `E_FORBIDDEN`), dependency failure stays a typed 5xx (never a disguised
   401), `request_id` propagation, and OpenAPI registration + `x-required-action`.
 - For endpoints that read/mutate customer-owned resources, add tenant-isolation

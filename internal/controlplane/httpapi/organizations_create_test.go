@@ -229,7 +229,7 @@ func TestCreateOrganizationUnauthenticated(t *testing.T) {
 }
 
 // TestCreateOrganizationInvalidCredentials proves an unverifiable credential is
-// a stable 401 E_AUTH — identical to the missing-credential contract.
+// a stable 401 E_AUTH_INVALID — distinct from the missing-credential contract.
 func TestCreateOrganizationInvalidCredentials(t *testing.T) {
 	t.Parallel()
 
@@ -239,7 +239,7 @@ func TestCreateOrganizationInvalidCredentials(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401; body %s", rec.Code, rec.Body.String())
 	}
-	decodeError(t, rec, "E_AUTH")
+	decodeError(t, rec, "E_AUTH_INVALID")
 }
 
 // TestCreateOrganizationDisabledPrincipalIsForbidden is the authorization-failure

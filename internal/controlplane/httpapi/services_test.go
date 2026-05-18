@@ -261,7 +261,7 @@ func TestGetServiceUnauthenticated(t *testing.T) {
 
 // TestGetServiceInvalidCredentials proves a request with a bearer
 // token the authenticator rejects is rendered as the same uniform 401
-// E_AUTH, never as a 5xx and never echoing the supplied token. The
+// E_AUTH_INVALID, never as a 5xx and never echoing the supplied token. The
 // reader is never called.
 func TestGetServiceInvalidCredentials(t *testing.T) {
 	t.Parallel()
@@ -280,7 +280,7 @@ func TestGetServiceInvalidCredentials(t *testing.T) {
 	if strings.Contains(rec.Body.String(), "this-is-not-a-valid-token") {
 		t.Errorf("response body echoes the supplied bearer token: %s", rec.Body.String())
 	}
-	decodeError(t, rec, string(yerr.CodeAuth))
+	decodeError(t, rec, string(yerr.CodeAuthInvalid))
 }
 
 // TestGetServiceReaderOutageIsTypedError proves a reader-side store
