@@ -56,7 +56,7 @@ func TestCatalogIsSortedAndCoversCategories(t *testing.T) {
 		}
 	}
 	required := []yerr.Code{
-		yerr.CodeAuthenticationRequired, yerr.CodeAuthInvalid, yerr.CodeAuth, yerr.CodeForbidden, yerr.CodeInvalidInput,
+		yerr.CodeAuthenticationRequired, yerr.CodeAuthInvalid, yerr.CodeAuthExpired, yerr.CodeAuth, yerr.CodeForbidden, yerr.CodeInvalidInput,
 		yerr.CodeNotFound, yerr.CodeConflict, yerr.CodeInvalidStateTransition, yerr.CodeIdempotencyConflict,
 		yerr.CodeQuotaExceeded,
 		yerr.CodeServer, yerr.CodeUnavailable, yerr.CodeNetwork,
@@ -90,6 +90,7 @@ func TestConstructorsEmitCataloguedCodes(t *testing.T) {
 	}{
 		{"authentication required", AuthenticationRequired(), yerr.CodeAuthenticationRequired, 401},
 		{"auth invalid", AuthInvalid(), yerr.CodeAuthInvalid, 401},
+		{"auth expired", AuthExpired(), yerr.CodeAuthExpired, 401},
 		{"unauthenticated", Unauthenticated(""), yerr.CodeAuth, 401},
 		{"forbidden", Forbidden(""), yerr.CodeForbidden, 403},
 		{"not found", NotFound("project", "p1"), yerr.CodeNotFound, 404},
@@ -176,6 +177,44 @@ func TestAuthInvalidContract(t *testing.T) {
 	}
 	if strings.Contains(body, "yka_secret_token_value") || strings.Contains(body, "Bearer") {
 		t.Errorf("auth invalid envelope leaked credential material: %s", body)
+	}
+}
+
+func TestAuthExpiredContract(t *testing.T) {
+	t.Parallel()
+
+	const leaked = "Authorization: Bearer yka_expired_secret_token_value"
+	err := AuthExpired().WithHint("refresh without " + leaked)
+	if err.Code != yerr.CodeAuthExpired {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeAuthExpired)
+	}
+	if err.Message != "authentication credentials have expired" {
+		t.Fatalf("message = %q, want fixed expired-credentials message", err.Message)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 401 {
+			t.Errorf("HTTPStatus = %d, want 401", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageGeneric {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageGeneric)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-auth-expired", err)
+	body := rec.Body.String()
+	if rec.Code != 401 {
+		t.Fatalf("status = %d, want 401; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-auth-expired"`) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeAuthExpired)) {
+		t.Errorf("envelope body missing schema, request id, or docs link: %s", body)
+	}
+	if strings.Contains(body, "yka_expired_secret_token_value") || strings.Contains(body, "Bearer") {
+		t.Errorf("auth expired envelope leaked credential material: %s", body)
 	}
 }
 

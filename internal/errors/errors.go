@@ -41,6 +41,11 @@ const (
 	// verification. It is intentionally generic so callers cannot distinguish
 	// unknown, revoked, malformed, or otherwise rejected credentials.
 	CodeAuthInvalid Code = "E_AUTH_INVALID"
+	// CodeAuthExpired marks authentication credentials that were structurally
+	// valid but are no longer accepted because their validity window elapsed.
+	// It remains a generic authentication failure: responses must never reveal
+	// credential material or timing internals.
+	CodeAuthExpired Code = "E_AUTH_EXPIRED"
 	CodeAuth        Code = "E_AUTH"
 	CodeForbidden   Code = "E_FORBIDDEN"
 	CodeNotFound    Code = "E_NOT_FOUND"
@@ -98,6 +103,7 @@ var codeDescriptions = map[Code]string{
 	CodeOrphan:                 "operation left Dokploy or Docker resources behind",
 	CodeAuthenticationRequired: "authentication credentials are required for this request",
 	CodeAuthInvalid:            "supplied authentication credentials are invalid",
+	CodeAuthExpired:            "supplied authentication credentials have expired",
 	CodeAuth:                   "supplied authentication credentials are invalid",
 	CodeForbidden:              "credentials are valid but not authorised for the action",
 	CodeNotFound:               "resource, operationId, or schema does not exist",
@@ -125,7 +131,7 @@ var codeDescriptions = map[Code]string{
 func AllCodes() []CodeDoc {
 	codes := []Code{
 		CodeUnknown, CodeInternal, CodeUsage, CodeInvalidInput,
-		CodeConfig, CodeOrphan, CodeAuthenticationRequired, CodeAuthInvalid, CodeAuth, CodeForbidden, CodeNotFound,
+		CodeConfig, CodeOrphan, CodeAuthenticationRequired, CodeAuthInvalid, CodeAuthExpired, CodeAuth, CodeForbidden, CodeNotFound,
 		CodeConflict, CodeInvalidStateTransition, CodeIdempotencyConflict, CodeRateLimited, CodeQuotaExceeded,
 		CodeServer, CodeUpstreamBug,
 		CodeNetwork, CodeUnavailable, CodeTimeout, CodeCanceled, CodeNoInput, CodeUnsupported,
@@ -165,7 +171,7 @@ func (c Code) ExitCode() int {
 		return 2
 	case CodeConfig, CodeOrphan:
 		return 3
-	case CodeAuthenticationRequired, CodeAuthInvalid, CodeAuth, CodeForbidden:
+	case CodeAuthenticationRequired, CodeAuthInvalid, CodeAuthExpired, CodeAuth, CodeForbidden:
 		return 4
 	case CodeNotFound:
 		return 5

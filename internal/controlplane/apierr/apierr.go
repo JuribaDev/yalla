@@ -9,7 +9,7 @@
 // emits are the codes catalogued here, and the catalogue is the documented
 // source of truth:
 //
-//   - Auth / policy:        AuthenticationRequired, AuthInvalid,
+//   - Auth / policy:        AuthenticationRequired, AuthInvalid, AuthExpired,
 //     Unauthenticated, Forbidden
 //   - Validation:           InvalidInput (with field paths), Invalid
 //   - Not found / conflict: NotFound, Conflict
@@ -127,6 +127,7 @@ var taxonomy = map[yerr.Code]struct {
 	yerr.CodeInvalidInput:           {false, MessageSpecific, "request payload, path, or query parameter was rejected by validation"},
 	yerr.CodeAuthenticationRequired: {false, MessageSpecific, "no usable authentication credentials were supplied"},
 	yerr.CodeAuthInvalid:            {false, MessageGeneric, "authentication credentials were supplied but could not be authenticated"},
+	yerr.CodeAuthExpired:            {false, MessageGeneric, "authentication credentials were supplied but have expired"},
 	yerr.CodeAuth:                   {false, MessageSpecific, "authentication credentials were supplied but could not be authenticated"},
 	yerr.CodeForbidden:              {false, MessageSpecific, "the principal is authenticated but not authorized for the action"},
 	yerr.CodeNotFound:               {false, MessageSpecific, "the requested resource does not exist or is not visible to the principal"},
@@ -278,6 +279,13 @@ func AuthenticationRequired() *yerr.Error {
 // generic; do not attach credential-specific details or hints.
 func AuthInvalid() *yerr.Error {
 	return yerr.New(yerr.CodeAuthInvalid, "the supplied credentials are invalid")
+}
+
+// AuthExpired builds an E_AUTH_EXPIRED error (HTTP 401) for credentials that
+// are structurally valid but outside their accepted validity window. The public
+// message is fixed and generic; do not attach credential-specific details.
+func AuthExpired() *yerr.Error {
+	return yerr.New(yerr.CodeAuthExpired, "authentication credentials have expired")
 }
 
 // Unauthenticated builds an E_AUTH error (HTTP 401) for supplied credentials

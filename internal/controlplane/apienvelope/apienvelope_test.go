@@ -179,6 +179,7 @@ func TestStatusForCode(t *testing.T) {
 		{yerr.CodeUsage, http.StatusBadRequest},
 		{yerr.CodeAuthenticationRequired, http.StatusUnauthorized},
 		{yerr.CodeAuthInvalid, http.StatusUnauthorized},
+		{yerr.CodeAuthExpired, http.StatusUnauthorized},
 		{yerr.CodeAuth, http.StatusUnauthorized},
 		{yerr.CodeForbidden, http.StatusForbidden},
 		{yerr.CodeNotFound, http.StatusNotFound},

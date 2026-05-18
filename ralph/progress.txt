@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Error-contract stories are a coordinated public-contract change: add the stable code in `internal/errors` (constant, `codeDescriptions`, `AllCodes`, `ExitCode`), add the backend taxonomy entry and typed constructor in `internal/controlplane/apierr`, add the deterministic HTTP mapping in `internal/controlplane/apienvelope.StatusForCode`, and pin all three with tests plus an envelope redaction/docs-link assertion. Do not surface these codes through ad hoc string literals.
 - Auth error-contract split (BE-0514/BE-0513 pattern): missing/no-usable authentication material maps to `401 E_AUTHENTICATION_REQUIRED` through `apierr.AuthenticationRequired()`; supplied-but-rejected credentials from `auth.ErrInvalidCredentials` map to `401 E_AUTH_INVALID` through `apierr.AuthInvalid()` with the fixed public message "the supplied credentials are invalid". Legacy typed `apierr.Unauthenticated(...)` still renders `E_AUTH` for older internal call sites, but new middleware invalid-token paths should assert `E_AUTH_INVALID`.
 - Admin unpathed mutation endpoints that target a tenant selected by request data should expose `organization_id` in the query string so `RequireAuth` authorizes the real target before the handler reads the body. The body may repeat `organization_id` for typed clients but must match the query target; body-only cross-tenant targets are validation failures. Store-backed admin job starters should verify the target organization, insert the durable job, and append the allowed audit event in one `Store.Write` transaction so no import/reconcile job exists without its audit trail.
 - HTTP response collection fields should stay shape-stable for agents: render empty lists as `[]`, not `null`. Normalize nil slices at the projection chokepoint before calling `apienvelope.WriteData`; BE-0287 pins this for `POST /v1/admin/dokploy/reconcile` `data.failures`.
@@ -35281,4 +35282,37 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - Invalid supplied credentials should exercise `auth.ErrInvalidCredentials` through `RequireAuth` and assert `E_AUTH_INVALID`.
   - Tests that pass a typed `apierr.Unauthenticated(...)` directly are testing the legacy `E_AUTH` constructor, not the auth middleware invalid-token branch.
+---
+
+## 2026-05-19 00:29 +03 - BE-0515
+- What was implemented
+  - Added stable backend error code `E_AUTH_EXPIRED` for credentials whose validity window has elapsed.
+  - Added `apierr.AuthExpired()` with fixed public message, generic message policy, and catalog metadata.
+  - Mapped `E_AUTH_EXPIRED` to HTTP 401, CLI exit code 4, manifest documentation, and error-envelope documentation URLs.
+  - Added redaction-focused envelope contract coverage proving request_id, schema_version, status, docs link, and credential non-leak behavior.
+- Files changed
+  - `internal/errors/errors.go`, `internal/errors/errors_test.go`
+  - `internal/controlplane/apierr/apierr.go`, `internal/controlplane/apierr/apierr_test.go`
+  - `internal/controlplane/apienvelope/apienvelope.go`, `internal/controlplane/apienvelope/apienvelope_test.go`
+  - `ralph/prd.json`, `ralph/progress.txt`
+- Verification run
+  - `go test ./internal/errors ./internal/controlplane/apienvelope ./internal/controlplane/apierr`
+  - `gofmt -w .`
+  - `goimports -w .` attempted; tool is not installed
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `golangci-lint run ./...`
+  - Direct `staticcheck ./...` availability check reported the tool was not installed
+  - Direct `govulncheck ./...` availability check reported the tool was not installed
+- Results
+  - Focused tests passed.
+  - Required formatting, module tidy, full tests, race detector, and vet passed.
+  - `golangci-lint run ./...` passed with 0 issues.
+  - `goimports`, `staticcheck`, and `govulncheck` were unavailable in PATH and are documented here.
+- Remaining risks or follow-ups
+  - No runtime handler path currently emits `E_AUTH_EXPIRED`; future auth/session stories should use `apierr.AuthExpired()` where the public contract deliberately distinguishes expired credentials from invalid credentials.
+- **Learnings for future iterations:**
+  - Error-contract stories should update the code registry, backend taxonomy, envelope status mapping, and tests together; leaving any one out can make manifest, API, and CLI behavior drift.
 ---

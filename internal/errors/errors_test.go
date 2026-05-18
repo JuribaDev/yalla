@@ -19,6 +19,7 @@ func TestCode_ExitCodeMappingIsStable(t *testing.T) {
 		{CodeOrphan, 3},
 		{CodeAuthenticationRequired, 4},
 		{CodeAuthInvalid, 4},
+		{CodeAuthExpired, 4},
 		{CodeAuth, 4},
 		{CodeForbidden, 4},
 		{CodeNotFound, 5},
