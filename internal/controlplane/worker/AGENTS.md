@@ -45,6 +45,11 @@ Background provisioning/metering workers for the control plane.
   parent mapping is a terminal source-of-truth conflict for that job; a replay
   with the child ref already present should call Dokploy with `ExistingID` and
   leave the mapping table unchanged.
+- Service-kind ensure jobs must verify the source-of-truth `services.kind`
+  matches the job type before calling Dokploy, then persist the matching
+  `dokploy_refs.dokploy_resource` (`application`, `compose`, or `database`).
+  `ensure_application_service` is the reference implementation for the
+  application path.
 - Integration tests are `package worker_test`, use `testutil.RequireMigratedDB`,
   and `t.Skip` when `YALLA_TEST_DATABASE_URL` is unset. A concurrent-claim test
   must retry-until-drained with a deadline guard — a job locked by a peer's

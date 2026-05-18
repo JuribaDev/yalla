@@ -10105,8 +10105,8 @@
       ],
       "type": "worker-job",
       "priority": 1,
-      "passes": false,
-      "notes": "Provisioning job type: ensure_application_service."
+      "passes": true,
+      "notes": "Implemented durable ensure_application_service execution through worker.Provisioner with typed payload validation, tenant-scoped service desired-state reload, parent environment mapping lookup, idempotent Dokploy application ensure/replay, stale desired-version checks before and after upstream calls, service mapping persistence, fake Dokploy coverage for success/replay, retryable failure, terminal validation/not-found/stale paths, cancellation, and redacted queue error persistence. Required quality checks passed."
     },
     {
       "id": "BE-0485",
