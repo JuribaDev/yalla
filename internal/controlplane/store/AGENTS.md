@@ -357,6 +357,18 @@ Postgres persistence for control-plane source-of-truth state.
   `SELECT ... FOR UPDATE NOWAIT` raises `*pgconn.PgError` with SQLSTATE `55P03`
   (`lock_not_available`) when another transaction holds the row — see
   `quota_schema_test.go`'s `TestQuotaReservationConcurrentRowLock`.
+- **Wallclock-window assertions** against DB-stamped timestamps
+  (`created_at`/`updated_at` via `now()`, or repository-filled defaults
+  like `BreakGlassRepository.Append` filling a zero `StartedAt`) MUST
+  allow a ±2s margin between the test runner and the Postgres
+  container clock. The right pattern is
+  `before := time.Now().UTC().Add(-2 * time.Second)` /
+  `after := time.Now().UTC().Add(2 * time.Second)` bracketing the
+  mutating call, then `if got.Before(before) || got.After(after)`.
+  A `Truncate(time.Microsecond)` without a margin is NOT safe — a few
+  milliseconds of skew between the Go process and the Postgres
+  container will flake the bracket assertion (see BE-0473's
+  `TestBreakGlassRepositoryAppendMintsRowShape`).
 - **Repository tenant-isolation tests** for a tenant-scoped table live in
   `<table>_tenant_isolation_test.go` (e.g. `organization_tenant_isolation_test.go`),
   separate from CRUD tests, and follow the byte-identical-snapshot pattern:
