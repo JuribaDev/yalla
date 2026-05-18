@@ -8984,8 +8984,8 @@
       ],
       "type": "repository",
       "priority": 1,
-      "passes": false,
-      "notes": "Database table: organizations."
+      "passes": true,
+      "notes": "Database table: organizations. | BE-0425: repository CRUD/invariant tests landed in organization_repository_invariants_test.go (version=1 on Insert; Update bumps version+updated_at, preserves created_at; matching If-Match succeeds; slug-conflict on Update is typed Conflict; ScheduleDeletion bumps version+updated_at + stamps deletion_scheduled_at; nil-Tx guards on Insert/Update/ScheduleDeletion render typed Internal). Verified via go test -race -run TestOrganizationRepository against docker-compose Postgres."
     },
     {
       "id": "BE-0426",

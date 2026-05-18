@@ -30064,3 +30064,90 @@ change that widened Reason to caller-supplied data.
   - captureProcessOutput is in me_contract_test.go and mutates package-global os.Stdout/os.Stderr — the test that uses it MUST NOT use t.Parallel(). The other two contract tests in the trio can and should use t.Parallel().
   - The wire shape for GET /v1/environments/{environment_id}/grants has the principal as a nested object (`Principal environmentGrantPrincipal`) — different from the projectGrantResource which uses flat PrincipalID/PrincipalKind. The contract test only asserts GrantID and EnvironmentID so it stays clone-stable across both shapes.
 ---
+## 2026-05-18 - BE-0425
+- Implemented BE-0425 - Repository: organizations CRUD and invariants.
+- Added focused repository-level invariant tests in
+  internal/controlplane/store/organization_repository_invariants_test.go covering
+  the row-shape contract OrganizationRepository owes its callers irrespective of
+  tenant-isolation or optimistic-concurrency, which are proved elsewhere
+  (organization_tenant_isolation_test.go [BE-0426] and
+  organization_concurrency_test.go [BE-0103]):
+  * Insert returns the row at version=1, with created_at and updated_at both
+    non-zero AND equal (the bump-version trigger has not run yet), and
+    deletion_scheduled_at == nil; the returned row matches a subsequent Get.
+  * Update bumps version by exactly +1, refreshes updated_at to >= baseline,
+    preserves created_at; does not stamp deletion_scheduled_at.
+  * Update with a *matching* If-Match version succeeds - the positive companion
+    to the stale-If-Match conflict path already proved elsewhere.
+  * Update with another row's slug renders typed yerr.CodeConflict with a
+    non-empty user-facing message; neither row is mutated.
+  * ScheduleDeletion bumps version+1, refreshes updated_at, preserves
+    created_at AND slug/display_name (it is a stamp, not a rename), and
+    stamps deletion_scheduled_at >= baseline.updated_at.
+  * Insert / Update / ScheduleDeletion called with a nil *Tx render typed
+    yerr.CodeInternal - never a nil-pointer panic.
+- Files changed:
+  - internal/controlplane/store/organization_repository_invariants_test.go (new)
+  - ralph/prd.json (BE-0425 passes -> true, notes updated)
+  - ralph/progress.txt (this entry)
+- Verification run:
+  - gofmt -l on the new file: clean.
+  - go vet ./internal/controlplane/store/: clean.
+  - go test -count=1 -run 'TestOrganizationRepository' ./internal/controlplane/store/
+    against docker-compose Postgres (YALLA_TEST_DATABASE_URL=postgres://yalla:yalla@127.0.0.1:5432/yalla):
+    ok, 2.053s - all 8 new tests pass.
+  - go test -race -count=1 -run on the 8 new tests in isolation: ok, 1.863s.
+  - go test ./... module-wide reproduces the same pre-existing failures
+    documented in the BE-0426 progress note (environment-service Create paths,
+    api-key-service Create paths, organization_variable_patch audit metadata)
+    AND a pre-existing data race on (*recordingAuthorizer).Authorize() in
+    projectservice_test.go:30 that surfaces only under -race when the
+    Project-quota parallel oversubscription test runs alongside other tests.
+    Confirmed pre-existing by re-running the affected tests with the new
+    file stashed (same failures reproduce; no regression introduced by
+    BE-0425). The new tests themselves pass with and without -race in
+    isolation. A focused triage story should pick up these races before
+    BE-0500+ verification stories run.
+- Remaining risks or follow-ups:
+  - None for BE-0425 itself. The pre-existing -race-with-DB failures
+    flagged above remain open and should be tracked separately - see
+    BE-0426 progress note for the existing flag.
+- Learnings for future iterations:
+  - For "Repository CRUD and invariants" stories where the table already
+    has tenant-isolation tests (BE-0426 pattern) AND concurrency tests
+    (BE-0103 pattern), the gap to close is the SINGLE-ROW shape contract
+    the repository owes its callers regardless of cross-tenant context:
+    Insert returns version=1; Update bumps version by exactly +1 AND
+    refreshes updated_at while preserving created_at; the matching
+    If-Match positive path companion to the existing stale conflict
+    test; the soft-delete path bumps version+updated_at AND stamps
+    deletion_scheduled_at on top; nil-Tx guards render typed Internal.
+    Land them in a single _invariants_test.go file with one t.Parallel
+    test per assertion so a future reader sees the shape contract as one
+    coherent surface. These tests are structurally distinct from the
+    "byte-identical snapshot of orgB across orgA mutations" tenant
+    tests (which prove WHERE-clause correctness) and the "winner/loser
+    optimistic-concurrency" tests (which prove version-bumping under
+    racing UPDATEs); together the three files cover the table's full
+    repository contract.
+  - The nil-Tx guard tests are pure unit tests (no database required) and
+    therefore green even when YALLA_TEST_DATABASE_URL is unset - mix them
+    into the same _invariants_test.go file as the DB-backed cases so the
+    "repository row-shape contract" lives in one place. testutil.RequireMigratedDB
+    handles the skip for the DB-backed cases.
+  - When the bump-version trigger is the source of truth, asserting BOTH
+    Version+1 AND UpdatedAt >= baseline.UpdatedAt is load-bearing: a
+    missing WHERE that bumps every row's version is caught by the
+    version check, and a trigger that fires but doesn't refresh the
+    timestamp is caught by the updated_at check. created_at preservation
+    is the third anchor (the table guarantees it's immutable post-insert).
+  - "Insert returns created_at == updated_at" is a stronger invariant
+    than "updated_at >= created_at": the bump-version trigger has not
+    fired yet on a fresh INSERT, so the two columns must be byte-equal.
+    Asserting equality catches a trigger that fires on INSERT (which
+    would defeat the dual-anchor property the UPDATE tests rely on).
+  - The pre-existing data race on (*recordingAuthorizer).Authorize() at
+    projectservice_test.go:30 is shared mutable state across multiple
+    goroutines in the parallel-quota test - extending BE-0426's existing
+    flag of pre-existing -race-with-DB failures.
+---
