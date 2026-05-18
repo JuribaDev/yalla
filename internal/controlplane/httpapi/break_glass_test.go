@@ -84,6 +84,7 @@ func fakeBreakGlassSession(orgID, sessionID string, now time.Time, ttl time.Dura
 		ActorKind:           "usr",
 		ActorOrganizationID: "org_yalla",
 		Reason:              "incident-1",
+		Status:              store.BreakGlassSessionStatusActive,
 		StartedAt:           now,
 		ExpiresAt:           now.Add(ttl),
 		Version:             1,
@@ -165,6 +166,9 @@ func TestPostBreakGlassSucceeds(t *testing.T) {
 	}
 	if session["elevated_access"] != true {
 		t.Errorf("session.elevated_access = %v, want true", session["elevated_access"])
+	}
+	if session["status"] != "active" {
+		t.Errorf("session.status = %v, want active", session["status"])
 	}
 	if session["organization_id"] != targetOrg {
 		t.Errorf("session.organization_id = %v, want %s", session["organization_id"], targetOrg)
@@ -394,6 +398,7 @@ func TestRevokeBreakGlassSuccess(t *testing.T) {
 	now := time.Date(2026, 5, 16, 9, 0, 0, 0, time.UTC)
 	revokedAt := now.Add(5 * time.Minute)
 	revoked := fakeBreakGlassSession(targetOrg, sessionID, now, time.Hour)
+	revoked.Status = store.BreakGlassSessionStatusRevoked
 	revoked.RevokedAt = &revokedAt
 	revoked.RevokedByID = "usr_support"
 	revoked.RevokedByKind = "usr"
@@ -418,6 +423,9 @@ func TestRevokeBreakGlassSuccess(t *testing.T) {
 	session, _ := data["session"].(map[string]any)
 	if session["revoked_by_id"] != "usr_support" {
 		t.Errorf("session.revoked_by_id = %v, want usr_support", session["revoked_by_id"])
+	}
+	if session["status"] != "revoked" {
+		t.Errorf("session.status = %v, want revoked", session["status"])
 	}
 	if got.OrganizationID != targetOrg || got.SessionID != sessionID {
 		t.Errorf("Revoke input forwarded = %+v", got)

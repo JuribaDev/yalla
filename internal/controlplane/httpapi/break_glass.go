@@ -100,6 +100,7 @@ type breakGlassSessionResource struct {
 	ActorKind           string     `json:"actor_kind"`
 	ActorOrganizationID string     `json:"actor_organization_id"`
 	Reason              string     `json:"reason"`
+	Status              string     `json:"status"`
 	StartedAt           time.Time  `json:"started_at"`
 	ExpiresAt           time.Time  `json:"expires_at"`
 	RevokedAt           *time.Time `json:"revoked_at"`
@@ -122,6 +123,7 @@ func breakGlassSessionResourceOf(s store.BreakGlassSession, at time.Time) breakG
 		ActorKind:           s.ActorKind,
 		ActorOrganizationID: s.ActorOrganizationID,
 		Reason:              s.Reason,
+		Status:              s.Status.String(),
 		StartedAt:           s.StartedAt,
 		ExpiresAt:           s.ExpiresAt,
 		RevokedAt:           s.RevokedAt,

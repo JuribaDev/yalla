@@ -10580,7 +10580,7 @@
       ],
       "type": "state-machine",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Lifecycle state: break_glass_session."
     },
     {

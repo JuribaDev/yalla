@@ -6,9 +6,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
+	"github.com/JuribaDev/yalla/internal/output"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -38,6 +40,74 @@ const breakGlassReasonMaxLen = 4096
 // to this value.
 const breakGlassSessionListMaxLimit = 200
 
+// BreakGlassSessionStatus is the explicit lifecycle state for a break-glass
+// session. Expiry remains enforced by expires_at, but status is the durable
+// state-machine projection used by audit and operator tooling.
+type BreakGlassSessionStatus string
+
+const (
+	// BreakGlassSessionStatusActive records a session that may be in force
+	// until expires_at, unless revoked earlier.
+	BreakGlassSessionStatusActive BreakGlassSessionStatus = "active"
+	// BreakGlassSessionStatusRevoked records a terminal early-revocation state.
+	BreakGlassSessionStatusRevoked BreakGlassSessionStatus = "revoked"
+	// BreakGlassSessionStatusExpired records a terminal lifecycle projection for
+	// sessions intentionally settled after their expiry deadline elapsed.
+	BreakGlassSessionStatusExpired BreakGlassSessionStatus = "expired"
+)
+
+func (s BreakGlassSessionStatus) String() string { return string(s) }
+
+// breakGlassSessionTransitions is the documented lifecycle table. Sessions
+// start active, then move to exactly one terminal non-active state.
+var breakGlassSessionTransitions = map[BreakGlassSessionStatus]map[BreakGlassSessionStatus]struct{}{
+	BreakGlassSessionStatusActive: {
+		BreakGlassSessionStatusRevoked: {},
+		BreakGlassSessionStatusExpired: {},
+	},
+	BreakGlassSessionStatusRevoked: {},
+	BreakGlassSessionStatusExpired: {},
+}
+
+// CanTransitionTo reports whether the break-glass state machine permits a
+// status change from s to next. Repository mutations call this before writes.
+func (s BreakGlassSessionStatus) CanTransitionTo(next BreakGlassSessionStatus) bool {
+	allowed, ok := breakGlassSessionTransitions[s]
+	if !ok {
+		return false
+	}
+	_, ok = allowed[next]
+	return ok
+}
+
+func (s BreakGlassSessionStatus) breakGlassSessionEventType() BreakGlassSessionEventType {
+	switch s {
+	case BreakGlassSessionStatusActive:
+		return BreakGlassSessionEventTypeActive
+	case BreakGlassSessionStatusRevoked:
+		return BreakGlassSessionEventTypeRevoked
+	case BreakGlassSessionStatusExpired:
+		return BreakGlassSessionEventTypeExpired
+	default:
+		return ""
+	}
+}
+
+// BreakGlassSessionTransition is the audited state-machine mutation input for
+// a break_glass_sessions row. Actor and request fields are persisted into the
+// break_glass_session_events row emitted atomically with the status update.
+type BreakGlassSessionTransition struct {
+	OrganizationID string
+	SessionID      string
+	NextStatus     BreakGlassSessionStatus
+	ActorID        string
+	ActorKind      string
+	RequestID      string
+	CorrelationID  string
+	Reason         string
+	Now            time.Time
+}
+
 // BreakGlassSession is the source-of-truth representation of a row in the
 // break_glass_sessions table — one durable record of an internal support
 // session in which an admin uses their support capability to access
@@ -57,6 +127,7 @@ type BreakGlassSession struct {
 	ActorKind           string
 	ActorOrganizationID string
 	Reason              string
+	Status              BreakGlassSessionStatus
 	StartedAt           time.Time
 	ExpiresAt           time.Time
 	RevokedAt           *time.Time
@@ -77,6 +148,9 @@ type BreakGlassSession struct {
 // stored "active" flag so a session whose deadline has elapsed flips to
 // inactive automatically, without requiring a sweeper job.
 func (s BreakGlassSession) Active(t time.Time) bool {
+	if s.Status == BreakGlassSessionStatusRevoked || s.Status == BreakGlassSessionStatusExpired {
+		return false
+	}
 	if s.RevokedAt != nil && !s.RevokedAt.IsZero() {
 		return false
 	}
@@ -86,7 +160,7 @@ func (s BreakGlassSession) Active(t time.Time) bool {
 // breakGlassColumns is the column list returned by every read query, in the
 // order scanBreakGlassSession expects.
 const breakGlassColumns = `id, organization_id, actor_id, actor_kind, actor_organization_id,
-	reason, started_at, expires_at, revoked_at, revoked_by_id, revoked_by_kind,
+	reason, status, started_at, expires_at, revoked_at, revoked_by_id, revoked_by_kind,
 	request_id, correlation_id, ip_address, user_agent, version, created_at, updated_at`
 
 // BreakGlassRepository is the persistence layer for the break_glass_sessions
@@ -209,7 +283,8 @@ func (r *BreakGlassRepository) MarkRevoked(ctx context.Context, tx *Tx, organiza
 	}
 	row := tx.QueryRow(ctx,
 		`UPDATE break_glass_sessions
-		    SET revoked_at      = $3,
+		    SET status          = 'revoked',
+		        revoked_at      = $3,
 		        revoked_by_id   = $4,
 		        revoked_by_kind = $5
 		  WHERE organization_id = $1
@@ -245,7 +320,7 @@ func scanBreakGlassSession(row pgx.Row) (BreakGlassSession, error) {
 	)
 	if err := row.Scan(
 		&s.ID, &s.OrganizationID, &s.ActorID, &s.ActorKind, &s.ActorOrganizationID,
-		&s.Reason, &s.StartedAt, &s.ExpiresAt, &revokedAt, &s.RevokedByID, &s.RevokedByKind,
+		&s.Reason, &s.Status, &s.StartedAt, &s.ExpiresAt, &revokedAt, &s.RevokedByID, &s.RevokedByKind,
 		&s.RequestID, &s.CorrelationID, &s.IPAddress, &s.UserAgent,
 		&s.Version, &s.CreatedAt, &s.UpdatedAt,
 	); err != nil {
@@ -260,6 +335,86 @@ func scanBreakGlassSession(row pgx.Row) (BreakGlassSession, error) {
 	s.CreatedAt = s.CreatedAt.UTC()
 	s.UpdatedAt = s.UpdatedAt.UTC()
 	return s, nil
+}
+
+// Transition moves a break-glass session through the documented lifecycle
+// state machine and appends the matching break_glass_session_events row in the
+// same transaction. Invalid edges return E_INVALID_STATE_TRANSITION before any
+// update, so the session row and timeline remain unchanged.
+func (r *BreakGlassRepository) Transition(ctx context.Context, tx *Tx, in BreakGlassSessionTransition) (BreakGlassSession, BreakGlassSessionEvent, error) {
+	if tx == nil {
+		return BreakGlassSession{}, BreakGlassSessionEvent{}, apierr.Internal(errors.New("store: BreakGlassRepository.Transition called with a nil transaction"))
+	}
+	orgID := strings.TrimSpace(in.OrganizationID)
+	sessionID := strings.TrimSpace(in.SessionID)
+	next := in.NextStatus
+	if next.breakGlassSessionEventType() == "" {
+		return BreakGlassSession{}, BreakGlassSessionEvent{}, apierr.InvalidStateTransition("break_glass_session", "", next.String())
+	}
+
+	current, err := scanBreakGlassSession(tx.QueryRow(ctx,
+		`SELECT `+breakGlassColumns+`
+		   FROM break_glass_sessions
+		  WHERE organization_id = $1 AND id = $2
+		  FOR UPDATE`,
+		orgID, sessionID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return BreakGlassSession{}, BreakGlassSessionEvent{}, apierr.NotFound("break_glass_session", sessionID)
+	}
+	if err != nil {
+		return BreakGlassSession{}, BreakGlassSessionEvent{}, apierr.StoreUnavailable(err)
+	}
+	if !current.Status.CanTransitionTo(next) {
+		return BreakGlassSession{}, BreakGlassSessionEvent{}, apierr.InvalidStateTransition("break_glass_session", current.Status.String(), next.String())
+	}
+	now := in.Now.UTC()
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+
+	updated, err := scanBreakGlassSession(tx.QueryRow(ctx,
+		`UPDATE break_glass_sessions
+		    SET status = $3,
+		        revoked_at = CASE
+		            WHEN $3 = 'revoked' THEN COALESCE(revoked_at, $4)
+		            ELSE revoked_at
+		        END,
+		        revoked_by_id = CASE
+		            WHEN $3 = 'revoked' THEN $5
+		            ELSE revoked_by_id
+		        END,
+		        revoked_by_kind = CASE
+		            WHEN $3 = 'revoked' THEN $6
+		            ELSE revoked_by_kind
+		        END
+		  WHERE organization_id = $1 AND id = $2
+		 RETURNING `+breakGlassColumns,
+		orgID, sessionID, next.String(), now, strings.TrimSpace(in.ActorID), strings.TrimSpace(in.ActorKind)))
+	if err != nil {
+		return BreakGlassSession{}, BreakGlassSessionEvent{}, apierr.StoreUnavailable(err)
+	}
+
+	reason := output.NewRedactor().Redact(strings.TrimSpace(in.Reason))
+	event, err := NewBreakGlassSessionEventRepository().Append(ctx, tx, BreakGlassSessionEvent{
+		OrganizationID: orgID,
+		SessionID:      sessionID,
+		EventType:      next.breakGlassSessionEventType(),
+		Message:        reason,
+		Metadata: map[string]string{
+			"actor_id":       strings.TrimSpace(in.ActorID),
+			"actor_kind":     strings.TrimSpace(in.ActorKind),
+			"previous_state": current.Status.String(),
+			"next_state":     next.String(),
+			"reason":         reason,
+		},
+		RequestID:     strings.TrimSpace(in.RequestID),
+		CorrelationID: strings.TrimSpace(in.CorrelationID),
+		OccurredAt:    now,
+	})
+	if err != nil {
+		return BreakGlassSession{}, BreakGlassSessionEvent{}, err
+	}
+	return updated, event, nil
 }
 
 // newBreakGlassID mints an opaque, non-guessable id for a break_glass_sessions

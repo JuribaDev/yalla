@@ -112,6 +112,21 @@ Postgres persistence for control-plane source-of-truth state.
   constraint-violation class 23 errors and both surface as
   `apierr.Conflict`.
 
+## Break-glass sessions (`0019_break_glass_sessions`, `0045_break_glass_session_state_machine`)
+
+- `break_glass_sessions.status` is the explicit lifecycle state machine:
+  `active -> revoked|expired`, with `revoked` and `expired` terminal.
+  Lifecycle changes should go through `BreakGlassRepository.Transition`: it
+  locks the tenant-scoped row, rejects invalid edges with
+  `E_INVALID_STATE_TRANSITION` before any write, updates status/revocation
+  fields, and appends a tenant-scoped `break_glass_session_events` row in the
+  same transaction.
+- `break_glass_session_events` uses a composite FK
+  `(organization_id, session_id) -> break_glass_sessions (organization_id, id)`.
+  When adding an event child to an older table whose primary key is globally
+  unique but lacks `UNIQUE (organization_id, id)`, add that tenant-scoped
+  unique constraint in the child migration before declaring the composite FK.
+
 ## Service accounts (`0004_service_accounts`, `serviceaccount.go`, `serviceaccountservice.go`)
 
 - `service_accounts` is a tenant-scoped table for **non-human principals** (CI

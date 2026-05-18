@@ -8,6 +8,7 @@ import (
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
 	"github.com/JuribaDev/yalla/internal/controlplane/domain"
+	yerr "github.com/JuribaDev/yalla/internal/errors"
 	"github.com/JuribaDev/yalla/internal/output"
 )
 
@@ -227,9 +228,21 @@ func (svc *BreakGlassService) Revoke(ctx context.Context, in RevokeBreakGlassInp
 		if _, getErr := svc.orgs.Get(ctx, tx, organizationID); getErr != nil {
 			return getErr
 		}
-		row, revErr := svc.sessions.MarkRevoked(ctx, tx, organizationID, sessionID,
-			strings.TrimSpace(in.ActorID), strings.TrimSpace(in.ActorKind), now)
+		row, _, revErr := svc.sessions.Transition(ctx, tx, BreakGlassSessionTransition{
+			OrganizationID: organizationID,
+			SessionID:      sessionID,
+			NextStatus:     BreakGlassSessionStatusRevoked,
+			ActorID:        strings.TrimSpace(in.ActorID),
+			ActorKind:      strings.TrimSpace(in.ActorKind),
+			RequestID:      strings.TrimSpace(in.RequestID),
+			CorrelationID:  strings.TrimSpace(in.CorrelationID),
+			Reason:         "revoke",
+			Now:            now,
+		})
 		if revErr != nil {
+			if ye := yerr.From(revErr); ye.Code == yerr.CodeInvalidStateTransition {
+				return apierr.Conflict("break-glass session " + sessionID + " has already been revoked")
+			}
 			return revErr
 		}
 		if _, audErr := svc.audit.Append(ctx, tx, event); audErr != nil {
@@ -330,6 +343,7 @@ func (svc *BreakGlassService) buildSessionToCreate(in StartBreakGlassInput, now 
 		ActorKind:           actorKind,
 		ActorOrganizationID: strings.TrimSpace(in.ActorOrgID),
 		Reason:              reason,
+		Status:              BreakGlassSessionStatusActive,
 		StartedAt:           started,
 		ExpiresAt:           started.Add(ttl),
 		RequestID:           strings.TrimSpace(in.RequestID),

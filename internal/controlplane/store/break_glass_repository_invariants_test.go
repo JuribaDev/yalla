@@ -131,6 +131,7 @@ type rawBreakGlassRow struct {
 	ActorKind           string
 	ActorOrganizationID string
 	Reason              string
+	Status              store.BreakGlassSessionStatus
 	StartedAt           time.Time
 	ExpiresAt           time.Time
 	RevokedAt           *time.Time
@@ -159,14 +160,14 @@ func loadBreakGlassRowByID(
 	var row rawBreakGlassRow
 	if err := db.QueryRow(ctx,
 		`SELECT id, organization_id, actor_id, actor_kind, actor_organization_id,
-		        reason, started_at, expires_at, revoked_at, revoked_by_id, revoked_by_kind,
+		        reason, status, started_at, expires_at, revoked_at, revoked_by_id, revoked_by_kind,
 		        request_id, correlation_id, ip_address, user_agent,
 		        version, created_at, updated_at
 		   FROM break_glass_sessions
 		  WHERE id = $1`,
 		id).Scan(
 		&row.ID, &row.OrganizationID, &row.ActorID, &row.ActorKind, &row.ActorOrganizationID,
-		&row.Reason, &row.StartedAt, &row.ExpiresAt, &row.RevokedAt, &row.RevokedByID, &row.RevokedByKind,
+		&row.Reason, &row.Status, &row.StartedAt, &row.ExpiresAt, &row.RevokedAt, &row.RevokedByID, &row.RevokedByKind,
 		&row.RequestID, &row.CorrelationID, &row.IPAddress, &row.UserAgent,
 		&row.Version, &row.CreatedAt, &row.UpdatedAt,
 	); err != nil {
@@ -326,6 +327,9 @@ func assertBreakGlassRowByteIdentical(t *testing.T, label string, baseline, afte
 	if after.Reason != baseline.Reason {
 		t.Errorf("%s: reason drift baseline=%q after=%q", label, baseline.Reason, after.Reason)
 	}
+	if after.Status != baseline.Status {
+		t.Errorf("%s: status drift baseline=%q after=%q", label, baseline.Status, after.Status)
+	}
 	if !after.StartedAt.Equal(baseline.StartedAt) {
 		t.Errorf("%s: started_at drift baseline=%s after=%s", label, baseline.StartedAt, after.StartedAt)
 	}
@@ -464,6 +468,7 @@ func TestBreakGlassRepositoryAppendMintsRowShape(t *testing.T) {
 		ActorKind:           created.ActorKind,
 		ActorOrganizationID: created.ActorOrganizationID,
 		Reason:              created.Reason,
+		Status:              created.Status,
 		StartedAt:           created.StartedAt,
 		ExpiresAt:           created.ExpiresAt,
 		RevokedAt:           nil,
@@ -1031,6 +1036,7 @@ func TestBreakGlassRepositoryMarkRevokedHappyPath(t *testing.T) {
 		ActorKind:           revoked.ActorKind,
 		ActorOrganizationID: revoked.ActorOrganizationID,
 		Reason:              revoked.Reason,
+		Status:              revoked.Status,
 		StartedAt:           revoked.StartedAt,
 		ExpiresAt:           revoked.ExpiresAt,
 		RevokedAt:           &rawRevokedAt,
