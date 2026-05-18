@@ -6286,8 +6286,8 @@
       ],
       "type": "endpoint-admin",
       "priority": 3,
-      "passes": false,
-      "notes": "Endpoint belongs to the admin backend surface."
+      "passes": true,
+      "notes": "Endpoint belongs to the admin backend surface. Implemented GET /v1/admin/dokploy/drift with admin.reconcile auth, scoped query filters, store-backed drift finding reader, OpenAPI registration, and focused handler tests."
     },
     {
       "id": "BE-0284",

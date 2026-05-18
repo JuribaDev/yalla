@@ -197,6 +197,7 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 	var jobReader JobReader
 	var jobRetrier JobRetrier
 	var jobCanceler JobCanceler
+	var driftFindings DriftFindingReader
 	for _, opt := range routeOptions {
 		if v, ok := opt.(PreviewCreator); ok {
 			previewCreator = v
@@ -209,6 +210,9 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 		}
 		if v, ok := opt.(JobCanceler); ok {
 			jobCanceler = v
+		}
+		if v, ok := opt.(DriftFindingReader); ok {
+			driftFindings = v
 		}
 	}
 
@@ -2053,6 +2057,21 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			// boundary.
 			resolver: serviceIDResolver,
 			handler:  deleteServiceBackupHandler(serviceBackupDeleter),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodGet,
+				Path:               "/v1/admin/dokploy/drift",
+				OperationID:        "listAdminDokployDrift",
+				Summary:            "List Dokploy drift findings",
+				Description:        "Lists persisted Dokploy drift findings for the organization named by the optional organization_id query parameter, defaulting to the authenticated principal's home organization. Optional project_id, environment_id, service_id, status, and limit filters narrow the tenant-scoped result. Action admin.reconcile is required before any drift rows are read; support principals may target another organization through the policy engine's CapSupport cross-tenant exception, while non-support principals are denied before the handler reaches persistence.",
+				Tags:               []string{tagAdmin},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionAdminReconcile),
+				SuccessDescription: "The matching drift findings, newest first.",
+			},
+			resolver: adminDokployDriftResolver,
+			handler:  listAdminDokployDriftHandler(driftFindings),
 		},
 		{
 			endpoint: openapi.Endpoint{

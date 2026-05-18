@@ -215,6 +215,18 @@ func (l DriftLevel) String() string { return string(l) }
 // add an explicit cursor parameter rather than relax this ceiling.
 const driftFindingListMaxLimit = 200
 
+// DriftFindingListQuery carries the bounded, tenant-scoped filters supported
+// by the admin drift-list API. Empty resource legs mean "all descendants" at
+// that level. Status is optional; the zero value returns both open and resolved
+// findings.
+type DriftFindingListQuery struct {
+	ProjectID     string
+	EnvironmentID string
+	ServiceID     string
+	Status        DriftFindingStatus
+	Limit         int
+}
+
 // DriftFinding is the source-of-truth representation of a row in the
 // drift_findings table -- one detected divergence between Yalla's
 // desired state and Dokploy's actual state, recorded for operator
@@ -454,6 +466,15 @@ func (r *DriftFindingRepository) GetByID(ctx context.Context, q Querier, organiz
 // distinguish "tenant has no findings" from "tenant does not exist"
 // must Get the organization first.
 func (r *DriftFindingRepository) ListByOrganization(ctx context.Context, q Querier, organizationID string, limit int) ([]DriftFinding, error) {
+	return r.List(ctx, q, organizationID, DriftFindingListQuery{Limit: limit})
+}
+
+// List returns the most recent drift_findings rows owned by organizationID and
+// matching the optional resource/status filters, newest first. The SQL remains
+// a constant statement with nullable predicates, so caller input can only bind
+// parameters, never alter the query shape.
+func (r *DriftFindingRepository) List(ctx context.Context, q Querier, organizationID string, query DriftFindingListQuery) ([]DriftFinding, error) {
+	limit := query.Limit
 	if limit <= 0 || limit > driftFindingListMaxLimit {
 		limit = driftFindingListMaxLimit
 	}
@@ -461,9 +482,13 @@ func (r *DriftFindingRepository) ListByOrganization(ctx context.Context, q Queri
 		`SELECT `+driftFindingColumns+`
 		   FROM drift_findings
 		  WHERE organization_id = $1
+		    AND ($2 = '' OR project_id = $2)
+		    AND ($3 = '' OR environment_id = $3)
+		    AND ($4 = '' OR service_id = $4)
+		    AND ($5 = '' OR status = $5)
 		  ORDER BY detected_at DESC, id DESC
-		  LIMIT $2`,
-		organizationID, limit)
+		  LIMIT $6`,
+		organizationID, query.ProjectID, query.EnvironmentID, query.ServiceID, query.Status.String(), limit)
 	if err != nil {
 		return nil, apierr.StoreUnavailable(err)
 	}
