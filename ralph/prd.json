@@ -4652,7 +4652,7 @@
       ],
       "type": "test-service",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Contract coverage for GET /v1/services/{service_id}/rendered."
     },
     {

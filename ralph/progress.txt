@@ -33549,3 +33549,43 @@ change that widened Reason to caller-supplied data.
   - Service-domain tenant-isolation tests should assert both row identity and trigger-owned `version`/`updated_at` on bystanders; those fields catch accidental cross-tenant UPDATE matches even when visible routing fields happen to remain unchanged.
   - `service_domains.path` is optional at the service boundary and blank create input normalizes to `/`; repository DB-constraint tests should not expect blank path to fail unless a future migration adds an explicit CHECK.
 ---
+## 2026-05-18 15:58 +03 - BE-0197
+- What was implemented
+  - Added contract coverage for GET /v1/services/{service_id}/rendered: request_id propagation, invalid service_id validation, OpenAPI route metadata, stdout/stderr isolation, structured-log bearer redaction, and dependency-cause redaction.
+  - Tightened the rendered handler so malformed or wrong-kind service_id values return 400 E_INVALID_INPUT before the ServiceReader is called.
+  - Updated rendered-route policy fixtures to use canonical domain-generated service ids now that this route validates path id shape before persistence.
+  - Marked BE-0197 passes=true in ralph/prd.json.
+- Files changed
+  - internal/controlplane/httpapi/services_rendered.go
+  - internal/controlplane/httpapi/services_rendered_test.go
+  - internal/controlplane/httpapi/services_rendered_policy_test.go
+  - ralph/prd.json
+  - ralph/progress.txt
+- Verification run
+  - go test ./internal/controlplane/httpapi -run TestGetServiceRenderedInvalidServiceIDIsValidationError -count=1 (initial RED: failed with 200 before handler validation)
+  - go test ./internal/controlplane/httpapi -run 'TestGetServiceRendered(InvalidServiceIDIsValidationError|HappyPath|PropagatesRequestID|OpenAPIRouteIsRegistered|ServerWritesResponseDataOnlyToResponseWriter|RequestLogRedactsBearerToken|ErrorEnvelopeDoesNotLeakDependencyCause|Unauthenticated|NotFound|StoreUnavailable|NoReaderConfigured)' -count=1
+  - go test ./internal/controlplane/httpapi -count=1
+  - gofmt -w .
+  - goimports -w . (not installed)
+  - go mod tidy
+  - go test ./...
+  - go test -race ./...
+  - go vet ./...
+  - go test ./internal/controlplane/...
+  - go test -run TestOpenAPI ./...
+  - go test -run TestPolicyMatrix ./...
+  - go test -race ./internal/controlplane/...
+  - go test -run TestRedaction ./...
+  - golangci-lint run ./...
+  - staticcheck ./... (not on PATH in the manual optional check; later run by scripts/verify.sh --strict --release)
+  - govulncheck ./... (not on PATH in the manual optional check; later run by scripts/verify.sh --strict --release)
+  - scripts/verify.sh --strict --release (via pre-commit hook; includes gofmt, go mod tidy, go vet, go test ./..., go test -race ./..., focused backend gates, govulncheck, staticcheck, golangci-lint, goreleaser check, and goreleaser snapshot)
+- Results
+  - All required, focused, and hook-enforced verification commands passed.
+  - goimports is not installed in this environment and was not run.
+- Remaining risks or follow-ups
+  - This story is HTTP contract coverage only; no Postgres migration or Dokploy fixture was needed because the rendered endpoint uses the existing fake ServiceReader and does not provision.
+- **Learnings for future iterations:**
+  - Once an HTTP route validates path ids before calling a reader, tests that model not-found or cross-tenant reads must use canonical domain.MustNewID fixtures; hand-built ids like svc_missing now correctly exercise the invalid-input contract instead of persistence not-found.
+  - Rendered-service contract tests can share the GET-service fake ServiceReader and handler wiring, but log-redaction tests need a fakeAuthenticator-based helper so the bearer token can be a recognizable leak sentinel.
+---

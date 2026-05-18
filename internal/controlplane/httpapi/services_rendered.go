@@ -173,7 +173,16 @@ func getServiceRenderedHandler(reader ServiceReader) http.HandlerFunc {
 			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoServiceReader))
 			return
 		}
-		svc, err := reader.GetService(r.Context(), p.OrganizationID, r.PathValue("service_id"))
+		serviceID := r.PathValue("service_id")
+		parsedServiceID, err := domain.ParseID(serviceID)
+		if err != nil || !parsedServiceID.IsKind(domain.KindService) {
+			apienvelope.WriteError(w, requestID(r), apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "service_id",
+				Reason: "must be a valid service id",
+			}))
+			return
+		}
+		svc, err := reader.GetService(r.Context(), p.OrganizationID, serviceID)
 		if err != nil {
 			apienvelope.WriteError(w, requestID(r), toAPIError(err))
 			return

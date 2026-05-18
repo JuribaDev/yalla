@@ -445,9 +445,9 @@ func TestGetServiceRenderedPolicyWrongOrganizationPrincipal(t *testing.T) {
 	const (
 		ownOrg          = "org_attacker"
 		victimOrg       = "org_victim"
-		foreignSvcID    = "svc_victim_rendered"
 		victimOrgNeedle = "org_victim"
 	)
+	foreignSvcID := domain.MustNewID(domain.KindService).String()
 
 	var gotOrg, gotSvc string
 	callCount := 0

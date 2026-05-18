@@ -1,8 +1,10 @@
 package httpapi
 
 import (
+	"bytes"
 	"encoding/json"
 	stderrors "errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,9 +18,11 @@ import (
 	"github.com/JuribaDev/yalla/internal/controlplane/policy"
 	"github.com/JuribaDev/yalla/internal/controlplane/runtime"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
+	yerr "github.com/JuribaDev/yalla/internal/errors"
 )
 
-// Contract tests for GET /v1/services/{service_id}/rendered (BE-0196).
+// Contract tests for GET /v1/services/{service_id}/rendered (BE-0196,
+// BE-0197).
 // The rendered endpoint is the deterministic identity projection of a
 // service: the canonical Docker-safe Dokploy resource name domain
 // .DokployName builds from the row's display_name and id, the Dokploy
@@ -71,6 +75,42 @@ func getServiceRendered(handler http.Handler, svcID, token string) *httptest.Res
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	return rec
+}
+
+// getServiceRenderedWithRequestID is the request-id propagation variant
+// of getServiceRendered. The public contract is that a safe inbound
+// X-Request-Id reaches both the response header and the envelope body.
+func getServiceRenderedWithRequestID(handler http.Handler, svcID, token, requestID string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, "/v1/services/"+svcID+"/rendered", nil)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	if requestID != "" {
+		req.Header.Set("X-Request-Id", requestID)
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec
+}
+
+const getServiceRenderedContractSecret = "yk_live_supersecret_services_rendered_DEADBEEF0123456789"
+
+// getServiceRenderedHandlerForWithLogger builds the production rendered
+// endpoint path with a caller-supplied logger. It mirrors the GET
+// /v1/services/{service_id} contract helper, but drives the rendered
+// route so the bearer-token redaction and stdout/stderr assertions are
+// pinned on this endpoint itself.
+func getServiceRenderedHandlerForWithLogger(id auth.Identity, authErr error, reader ServiceReader, logger *slog.Logger) http.Handler {
+	a := fakeAuthenticator{identity: id, err: authErr}
+	return NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, nil, a, policy.NewEngine(),
+		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
+		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
+		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{},
+		fakeOrgVariableReader{}, fakeOrgVariableReplacer{}, fakeOrgVariablePatcher{}, fakeOrgVariableDeleter{},
+		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
+		fakeProjectReader{}, fakeProjectCreator{}, fakeProjectUpdater{}, fakeProjectDeleter{}, fakeProjectRestorer{},
+		fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, fakeProjectVariableReader{}, fakeProjectVariableReplacer{},
+		fakeProjectEnvironmentReader{}, fakeEnvironmentCreator{}, fakeEnvironmentReader{}, fakeEnvironmentUpdater{}, fakeEnvironmentDeleter{}, fakeEnvironmentCloner{}, fakeEnvironmentGrantReader{}, fakeEnvironmentGrantReplacer{}, fakeEnvironmentVariableReader{}, fakeEnvironmentVariableReplacer{}, fakeEnvironmentServiceReader{}, fakeEnvironmentServiceCreator{}, reader, fakeServiceUpdater{}, fakeServiceDeleter{}, fakeServiceRestorer{}, fakeServiceRestarter{}, fakeServiceStarter{}, fakeServiceStopper{}, fakeServiceLogReader{}, fakeServiceMetricsReader{}, fakeServiceDomainReader{}, fakeServiceDomainCreator{}, fakeServiceDomainUpdater{}, fakeServiceDomainDeleter{}, fakeServiceBackupReader{}, fakeServiceBackupCreator{}, fakeServiceBackupUpdater{}, fakeServiceBackupRunner{}, fakeServiceBackupDeleter{}, fakeServiceVariableReader{}, fakeServiceVariableReplacer{}, fakeDeploymentCreator{}, fakeDeploymentLister{}, fakeDeploymentGetter{}, fakeDeploymentCanceler{}, fakeDeploymentRollbacker{}, fakeBreakGlassController{}, logger, nil)
 }
 
 // decodeRenderedServiceBody decodes the success envelope into the
@@ -217,6 +257,56 @@ func TestGetServiceRenderedHappyPath(t *testing.T) {
 	}
 }
 
+// TestGetServiceRenderedPropagatesRequestID proves the rendered
+// endpoint uses the canonical request-correlation middleware: a safe
+// inbound request id is copied to the response header and into the
+// yalla.output.v1 envelope body. Agents rely on this to correlate a
+// preview response with request logs and audit trails.
+func TestGetServiceRenderedPropagatesRequestID(t *testing.T) {
+	t.Parallel()
+
+	const requestID = "req_rendered_contract_123"
+	reader := fakeServiceReader{svc: canonicalServiceForRendered}
+	handler := getServiceHandlerFor(t, reader)
+
+	rec := getServiceRenderedWithRequestID(handler, canonicalServiceForRendered.ID, "a-valid-token", requestID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body %s", rec.Code, rec.Body.String())
+	}
+	env := decodeRenderedServiceBody(t, rec)
+	if env.RequestID != requestID {
+		t.Errorf("envelope request_id = %q, want inbound %q", env.RequestID, requestID)
+	}
+	if got := rec.Header().Get("X-Request-Id"); got != requestID {
+		t.Errorf("response X-Request-Id = %q, want inbound %q", got, requestID)
+	}
+}
+
+// TestGetServiceRenderedInvalidServiceIDIsValidationError proves the
+// path parameter is validated before any source-of-truth read. A
+// malformed id is a deterministic 400 E_INVALID_INPUT and the reader
+// is never reached, so invalid input cannot become a cross-tenant
+// existence probe or a misleading rendered preview.
+func TestGetServiceRenderedInvalidServiceIDIsValidationError(t *testing.T) {
+	t.Parallel()
+
+	callCount := 0
+	reader := fakeServiceReader{
+		svc:       canonicalServiceForRendered,
+		callCount: &callCount,
+	}
+	handler := getServiceHandlerFor(t, reader)
+
+	rec := getServiceRendered(handler, "not-a-service-id!", "a-valid-token")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body %s", rec.Code, rec.Body.String())
+	}
+	if callCount != 0 {
+		t.Errorf("reader was reached (calls=%d), want validation to short-circuit before persistence", callCount)
+	}
+	decodeError(t, rec, string(yerr.CodeInvalidInput))
+}
+
 // TestGetServiceRenderedKindMapping proves the rendered.type field
 // mirrors the row's kind taxonomy verbatim through renderedServiceType.
 // The closed taxonomy ("application", "database", "compose") MUST stay
@@ -277,17 +367,18 @@ func TestGetServiceRenderedKindMapping(t *testing.T) {
 func TestGetServiceRenderedNotFound(t *testing.T) {
 	t.Parallel()
 
+	missingID := domain.MustNewID(domain.KindService).String()
 	var gotOrg, gotSvc string
 	callCount := 0
 	reader := fakeServiceReader{
-		err:       apierr.NotFound("service", "svc_missing"),
+		err:       apierr.NotFound("service", missingID),
 		gotOrgID:  &gotOrg,
 		gotSvcID:  &gotSvc,
 		callCount: &callCount,
 	}
 	handler := getServiceHandlerFor(t, reader)
 
-	rec := getServiceRendered(handler, "svc_missing", "a-valid-token")
+	rec := getServiceRendered(handler, missingID, "a-valid-token")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404; body %s", rec.Code, rec.Body.String())
 	}
@@ -297,8 +388,8 @@ func TestGetServiceRenderedNotFound(t *testing.T) {
 	if gotOrg != principalForSvcGet.OrganizationID {
 		t.Errorf("reader called with org_id = %q; want %q (principal home org, never caller-supplied)", gotOrg, principalForSvcGet.OrganizationID)
 	}
-	if gotSvc != "svc_missing" {
-		t.Errorf("reader called with service_id = %q; want %q", gotSvc, "svc_missing")
+	if gotSvc != missingID {
+		t.Errorf("reader called with service_id = %q; want %q", gotSvc, missingID)
 	}
 	decodeError(t, rec, "E_NOT_FOUND")
 }
@@ -314,9 +405,40 @@ func TestGetServiceRenderedStoreUnavailable(t *testing.T) {
 		err: apierr.StoreUnavailable(stderrors.New("connection refused")),
 	}
 	handler := getServiceHandlerFor(t, reader)
-	rec := getServiceRendered(handler, canonicalServiceForGet.ID, "a-valid-token")
+	rec := getServiceRendered(handler, canonicalServiceForRendered.ID, "a-valid-token")
 	if rec.Code < 500 || rec.Code >= 600 {
 		t.Fatalf("status = %d, want 5xx for StoreUnavailable; body %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestGetServiceRenderedErrorEnvelopeDoesNotLeakDependencyCause proves
+// a wrapped reader outage surfaces as a stable 503 envelope without
+// copying internal datastore details or the bearer credential onto the
+// public wire surface.
+func TestGetServiceRenderedErrorEnvelopeDoesNotLeakDependencyCause(t *testing.T) {
+	t.Parallel()
+
+	const cause = "connection refused dialing 10.44.0.19:5432"
+	reader := fakeServiceReader{err: apierr.StoreUnavailable(stderrors.New(cause))}
+	handler := getServiceRenderedHandlerForWithLogger(
+		auth.Identity{Principal: principalForSvcGet, Method: auth.MethodAPIKey},
+		nil, reader, nil,
+	)
+
+	rec := getServiceRendered(handler, canonicalServiceForRendered.ID, getServiceRenderedContractSecret)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503; body %s", rec.Code, rec.Body.String())
+	}
+	env := decodeError(t, rec, string(yerr.CodeUnavailable))
+	if env.Error.Message == "" {
+		t.Error("error.message is empty, want a stable generic message")
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, cause) || strings.Contains(body, "10.44.0.19") {
+		t.Errorf("error envelope leaked the wrapped dependency cause: %s", body)
+	}
+	if strings.Contains(body, getServiceRenderedContractSecret) {
+		t.Errorf("error envelope leaked the bearer credential: %s", body)
 	}
 }
 
@@ -330,16 +452,116 @@ func TestGetServiceRenderedUnauthenticated(t *testing.T) {
 
 	callCount := 0
 	reader := fakeServiceReader{
-		svc:       canonicalServiceForGet,
+		svc:       canonicalServiceForRendered,
 		callCount: &callCount,
 	}
 	handler := getServiceHandlerFor(t, reader)
-	rec := getServiceRendered(handler, canonicalServiceForGet.ID, "")
+	rec := getServiceRendered(handler, canonicalServiceForRendered.ID, "")
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401; body %s", rec.Code, rec.Body.String())
 	}
 	if callCount != 0 {
 		t.Errorf("reader was reached (calls=%d) on an unauthenticated request; the auth middleware must short-circuit", callCount)
+	}
+}
+
+// TestGetServiceRenderedServerWritesResponseDataOnlyToResponseWriter
+// proves the rendered endpoint carries response data exclusively
+// through the http.ResponseWriter: serving the request writes nothing
+// to process stdout/stderr. Structured request logs are allowed only
+// through the caller-supplied logger sink.
+func TestGetServiceRenderedServerWritesResponseDataOnlyToResponseWriter(t *testing.T) {
+	// Not parallel: captureProcessOutput swaps process-global stdout/stderr.
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	reader := fakeServiceReader{svc: canonicalServiceForRendered}
+	handler := getServiceRenderedHandlerForWithLogger(
+		auth.Identity{Principal: principalForSvcGet, Method: auth.MethodAPIKey},
+		nil, reader, logger,
+	)
+
+	var rec *httptest.ResponseRecorder
+	stdout, stderr := captureProcessOutput(t, func() {
+		rec = getServiceRendered(handler, canonicalServiceForRendered.ID, getServiceRenderedContractSecret)
+	})
+
+	if stdout != "" {
+		t.Errorf("HTTP server wrote %q to stdout, want nothing", stdout)
+	}
+	if stderr != "" {
+		t.Errorf("HTTP server wrote %q to stderr, want nothing", stderr)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body %s", rec.Code, rec.Body.String())
+	}
+	env := decodeRenderedServiceBody(t, rec)
+	if env.Data.Service.ID != canonicalServiceForRendered.ID {
+		t.Errorf("service.id = %q, want %q in response body", env.Data.Service.ID, canonicalServiceForRendered.ID)
+	}
+	if env.Data.Rendered.Name == "" {
+		t.Error("rendered.name is empty, want rendered data carried by response body")
+	}
+	if logBuf.Len() == 0 {
+		t.Error("structured request log is empty, want one record for the served request")
+	}
+}
+
+// TestGetServiceRenderedRequestLogRedactsBearerToken proves the
+// per-request structured log never carries the bearer credential on
+// either the allow path or the authorization-denied path. Headers are
+// not logged at all; this contract prevents a future logging change
+// from leaking API keys while debugging rendered desired state.
+func TestGetServiceRenderedRequestLogRedactsBearerToken(t *testing.T) {
+	t.Parallel()
+
+	allowed := principalForSvcGet
+	disabled := principalForSvcGet
+	disabled.ID = "usr_rendered_revoked"
+	disabled.Disabled = true
+
+	tests := []struct {
+		name       string
+		identity   auth.Identity
+		reader     ServiceReader
+		wantStatus int
+	}{
+		{
+			name:       "success path",
+			identity:   auth.Identity{Principal: allowed, Method: auth.MethodAPIKey},
+			reader:     fakeServiceReader{svc: canonicalServiceForRendered},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "authorization failure path",
+			identity:   auth.Identity{Principal: disabled, Method: auth.MethodAPIKey},
+			reader:     fakeServiceReader{err: stderrors.New("reader must not be called")},
+			wantStatus: http.StatusForbidden,
+		},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var logBuf bytes.Buffer
+			logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+			handler := getServiceRenderedHandlerForWithLogger(tc.identity, nil, tc.reader, logger)
+
+			rec := getServiceRendered(handler, canonicalServiceForRendered.ID, getServiceRenderedContractSecret)
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d; body %s", rec.Code, tc.wantStatus, rec.Body.String())
+			}
+			if logBuf.Len() == 0 {
+				t.Fatal("structured request log is empty, want one record for the served request")
+			}
+			if strings.Contains(logBuf.String(), getServiceRenderedContractSecret) {
+				t.Errorf("request log leaked the bearer credential: %s", logBuf.String())
+			}
+			if strings.Contains(rec.Body.String(), getServiceRenderedContractSecret) {
+				t.Errorf("response body echoed the bearer credential: %s", rec.Body.String())
+			}
+		})
 	}
 }
 
@@ -362,9 +584,60 @@ func TestGetServiceRenderedNoReaderConfigured(t *testing.T) {
 		fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, fakeProjectVariableReader{}, fakeProjectVariableReplacer{},
 		fakeProjectEnvironmentReader{}, fakeEnvironmentCreator{}, fakeEnvironmentReader{}, fakeEnvironmentUpdater{}, fakeEnvironmentDeleter{}, fakeEnvironmentCloner{}, fakeEnvironmentGrantReader{}, fakeEnvironmentGrantReplacer{}, fakeEnvironmentVariableReader{}, fakeEnvironmentVariableReplacer{}, fakeEnvironmentServiceReader{}, fakeEnvironmentServiceCreator{}, nil, fakeServiceUpdater{}, fakeServiceDeleter{}, fakeServiceRestorer{}, fakeServiceRestarter{}, fakeServiceStarter{}, fakeServiceStopper{}, fakeServiceLogReader{}, fakeServiceMetricsReader{}, fakeServiceDomainReader{}, fakeServiceDomainCreator{}, fakeServiceDomainUpdater{}, fakeServiceDomainDeleter{}, fakeServiceBackupReader{}, fakeServiceBackupCreator{}, fakeServiceBackupUpdater{}, fakeServiceBackupRunner{}, fakeServiceBackupDeleter{}, fakeServiceVariableReader{}, fakeServiceVariableReplacer{}, fakeDeploymentCreator{}, fakeDeploymentLister{}, fakeDeploymentGetter{}, fakeDeploymentCanceler{}, fakeDeploymentRollbacker{}, fakeBreakGlassController{}, nil, nil)
 
-	rec := getServiceRendered(handler, canonicalServiceForGet.ID, "a-valid-token")
+	rec := getServiceRendered(handler, canonicalServiceForRendered.ID, "a-valid-token")
 	if rec.Code < 500 || rec.Code >= 600 {
 		t.Fatalf("status = %d, want 5xx (typed internal error for a wiring fault); body %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestGetServiceRenderedOpenAPIRouteIsRegistered proves the OpenAPI
+// route table carries the rendered operation with its stable
+// operationId, service.read action, services tag, and documented
+// service_id path parameter.
+func TestGetServiceRenderedOpenAPIRouteIsRegistered(t *testing.T) {
+	t.Parallel()
+
+	table := newRouteTable(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, nil,
+		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
+		fakeMembershipReader{}, fakeMembershipCreator{}, fakeMembershipUpdater{}, fakeMembershipRemover{},
+		fakeLimitsReader{}, fakeLimitsUpdater{}, fakeUsageReader{}, fakeAuditEventReader{},
+		fakeOrgVariableReader{}, fakeOrgVariableReplacer{}, fakeOrgVariablePatcher{}, fakeOrgVariableDeleter{},
+		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
+		fakeProjectReader{}, fakeProjectCreator{}, fakeProjectUpdater{}, fakeProjectDeleter{}, fakeProjectRestorer{},
+		fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, fakeProjectVariableReader{}, fakeProjectVariableReplacer{}, fakeProjectEnvironmentReader{}, fakeEnvironmentCreator{}, fakeEnvironmentReader{}, fakeEnvironmentUpdater{}, fakeEnvironmentDeleter{}, fakeEnvironmentCloner{}, fakeEnvironmentGrantReader{}, fakeEnvironmentGrantReplacer{}, fakeEnvironmentVariableReader{}, fakeEnvironmentVariableReplacer{}, fakeEnvironmentServiceReader{}, fakeEnvironmentServiceCreator{}, fakeServiceReader{}, fakeServiceUpdater{}, fakeServiceDeleter{}, fakeServiceRestorer{}, fakeServiceRestarter{}, fakeServiceStarter{}, fakeServiceStopper{}, fakeServiceLogReader{}, fakeServiceMetricsReader{}, fakeServiceDomainReader{}, fakeServiceDomainCreator{}, fakeServiceDomainUpdater{}, fakeServiceDomainDeleter{}, fakeServiceBackupReader{}, fakeServiceBackupCreator{}, fakeServiceBackupUpdater{}, fakeServiceBackupRunner{}, fakeServiceBackupDeleter{}, fakeServiceVariableReader{}, fakeServiceVariableReplacer{}, fakeDeploymentCreator{}, fakeDeploymentLister{}, fakeDeploymentGetter{}, fakeDeploymentCanceler{}, fakeDeploymentRollbacker{}, fakeBreakGlassController{})
+
+	var found bool
+	for _, rt := range table {
+		if rt.endpoint.Method == http.MethodGet && rt.endpoint.Path == "/v1/services/{service_id}/rendered" {
+			found = true
+			if rt.endpoint.OperationID != "getServiceRendered" {
+				t.Errorf("operation_id = %q, want getServiceRendered", rt.endpoint.OperationID)
+			}
+			if rt.endpoint.RequiredAction != string(policy.ActionServiceRead) {
+				t.Errorf("required_action = %q, want %q", rt.endpoint.RequiredAction, policy.ActionServiceRead)
+			}
+			if !rt.endpoint.RequiresAuth {
+				t.Error("requires_auth = false, want true")
+			}
+			var hasServicesTag bool
+			for _, tag := range rt.endpoint.Tags {
+				if tag == tagServices {
+					hasServicesTag = true
+				}
+			}
+			if !hasServicesTag {
+				t.Errorf("tags = %v, want to contain %q", rt.endpoint.Tags, tagServices)
+			}
+			if len(rt.endpoint.PathParams) != 1 || rt.endpoint.PathParams[0].Name != "service_id" {
+				t.Errorf("path_params = %+v, want a single service_id path param", rt.endpoint.PathParams)
+			}
+			if rt.resolver == nil {
+				t.Error("resolver is nil; rendered route must use serviceIDResolver")
+			}
+		}
+	}
+	if !found {
+		t.Error("OpenAPI route GET /v1/services/{service_id}/rendered is not registered")
 	}
 }
 
