@@ -4595,7 +4595,7 @@
       ],
       "type": "test-service",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Contract coverage for POST /v1/services/{service_id}/restore."
     },
     {

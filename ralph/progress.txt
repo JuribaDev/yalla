@@ -253,6 +253,102 @@
 - Repository CRUD invariants test file for a **tenant-scoped child table whose ONLY mutation surface is an INSERT...ON CONFLICT DO UPDATE upsert PLUS a bulk DELETE-by-exclusion (no per-id Get, no per-id Delete, no traditional UPDATE), with a database-managed version column, ONE optional nullable scoping pointer (service_id) instead of two (no environment_id pointer because the env IS the parent), and a composite FK to a parent (organization_id, environment_id) -> environments** (BE-0443 pattern, internal/controlplane/store/environment_grant_repository_invariants_test.go). This is the BE-0439 project_grants template adapted for environment_grants. Three structural divergences from BE-0439 are load-bearing: (1) the EnvironmentGrant struct has NO ProjectID column and ONE optional pointer (ServiceID) instead of two (EnvironmentID is the mandatory FK target, not an optional scope leg) — the Upsert insert-pointer-roundtrip test collapses from two opt-in pointers to one (service-scoped grant). (2) The ON CONFLICT target is the unique index environment_grants_principal_scope_idx on (organization_id, environment_id, principal_id, COALESCE(service_id, '')) — there is no environment_id leg in the COALESCE because the environment is the parent scope, not an optional narrower; the duplicate-PK Conflict test uses a different principal_id under the same environment to dodge the scope-tuple branch and exercise the PRIMARY KEY (id) violation. (3) The CASCADE-delete-of-parent test deletes the environments row directly via raw SQL (NOT the EnvironmentRepository's ScheduleDeletion, which is a soft delete and would NOT trigger CASCADE) and observes via ListByEnvironment. Helper newEnvironmentGrantID synthesises an `egrnt_<token_n>` id by rewriting f.Environment's `env_<token_n>` prefix — the testutil.Factory only stamps known domain prefixes and there is no f.EnvironmentGrant, so prefix-rewriting is the cleanest way to mint factory-unique ids without reaching into domain.NewID(domain.KindEnvironmentGrant). Sentinel type `environmentGrantTxRollbackSentinel` is distinct from every other *_test.go file's rollback sentinel in store_test. List-helper name `listEnvironmentGrantsOrFail` is distinct from project_grant_repository_invariants_test.go's `listGrantsOrFail` to avoid same-package collision. Test name prefix `TestEnvironmentGrantRepository*` (full Repository) is distinct from environment_grant_test.go's `TestEnvironmentGrantRepo*` and `TestEnvironmentGrantReader*` siblings — no collisions.
 - Repository CRUD invariants test file for a **TENANT-SCOPED short-lived claim/ledger table whose ONLY repository mutation surface is an InsertReservation (one-shot active-row INSERT) plus a single resolver read (SumActiveReservations), with NO per-row Update/Delete/Get, NO version column, a settled_consistent CHECK pairing status<>'active' with NON-NULL settled_at, a CHECK amount>0, a composite-FK out (organization_id, job_id) -> provisioning_jobs added by a LATER migration than the row's own migration, and a database-managed bump-only set_updated_at trigger fired BEFORE UPDATE** (BE-0455 pattern, internal/controlplane/store/quota_reservation_repository_invariants_test.go). Structurally distinct from BE-0453 (quota_usage -- INSERT ... ON CONFLICT DO NOTHING + SELECT FOR UPDATE primitive) and BE-0451 (quota_policies -- INSERT ... ON CONFLICT DO UPDATE upsert) in six load-bearing ways: (a) the row-shape test must anchor BOTH a nullable-pointer JobID (zero on a no-JobID call, *string round-trip on a non-empty-JobID call) AND a nullable-pointer SettledAt (zero on every active-row insert -- there is no public surface that can mint a settled row); (b) the JobID round-trip leg cannot use a synthetic id alone because migration 0008 added a composite FK quota_reservations_job_fk -> provisioning_jobs (organization_id, id), so the test MUST pre-seed a real provisioning_jobs row (`INSERT INTO provisioning_jobs (id, organization_id, job_type, idempotency_key) VALUES (...)`) before InsertReservation -- a regression that dropped the FK or swapped its column order would surface here; (c) the settled_consistent CHECK violation has NO independent client-input surface (settled_at is not in the INSERT column list of InsertReservation), so the test exploits the OTHER direction: passing Status=ReservationStatusCommitted (non-blank, non-'active') sends settled_at=NULL via the default and the CHECK rejects it, proving InsertReservation can ONLY mint ACTIVE rows; (d) the time-filter leg of SumActiveReservations is a SECOND-AXIS exclusion test alongside the status filter -- a row with status='active' AND expires_at<=now must be excluded by the `expires_at > $3` predicate, so the test pre-seeds an active-but-time-expired row and asserts it is excluded WITHOUT mutating its status (a regression that dropped the time predicate would silently sum already-expired rows); (e) the resource-filter leg seeds TWO active reservations under the SAME tenant with DIFFERENT resources and asserts BOTH `SumActiveReservations(org, A, now)` and `SumActiveReservations(org, B, now)` return their own resource's amount (a regression that dropped the resource predicate would return 11 instead of 3 from either call); (f) the duplicate-ID Conflict test uses an explicit caller-supplied ID instead of relying on the qres_ prefix-mint path, because the PK violation is the constraint and a regression that silently re-minted the explicit id would mask the test (the explicit-ID-preservation test PRECEDES the duplicate-ID test and pins the no-remint contract). Forward-applicable to every future short-lived-claim repository whose public surface is a single one-shot active-row INSERT plus a resolver-read (a hypothetical lease-claim table KindResourceLease with active->held|released|expired, or a future job_attempts row whose public surface is a single INSERT per attempt). Test-helper naming caveat at package store_test: every *_test.go file under internal/controlplane/store/ shares the same package, so the type name `quotaReservationTxRollbackSentinel` must be distinct from quotaPolicyTxRollbackSentinel / quotaUsageTxRollbackSentinel / projectTxRollbackSentinel and friends -- grep `TxRollbackSentinel` before adding a new sentinel. Helper REUSE strategy: this file DEFINES its own `runInsertReservationOrFail` / `loadQuotaReservationRowByID` / `countQuotaReservationRowsForOrg` / `rawQuotaReservationRow` (no shared symbols to reuse), and REUSES the existing `insertReservationRow` / `insertSettledReservationRow` helpers defined in quota_repository_test.go for the SumActiveReservations setup legs because those raw-SQL inserts can stamp the schema's required `settled_at = now()` for non-active rows without going through the repository's active-only mint path.
 
+## 2026-05-18 - BE-0194 Add contract tests for POST /v1/services/{service_id}/restore
+- Reconciled an orphan from a prior Ralph turn: the file
+  internal/controlplane/httpapi/services_restore_contract_test.go
+  was already on disk (untracked) but the PRD entry still read
+  passes:false and progress.txt carried no dated entry for the
+  story. The work itself was already complete -- three contract
+  probes covering the BE-0194 acceptance-criteria gap that
+  services_restore_test.go (BE-0193) does not assert directly:
+  (1) the HTTP server writes response data only through the
+  http.ResponseWriter and never to process stdout/stderr;
+  (2) the per-request structured log redacts the bearer
+  credential on the success path AND the authorization-failure
+  path (deny leg uses a disabled principal so policy
+  short-circuits before the restorer; the restorer's Restore
+  path would error if invoked, proving the logged "restorer
+  error" cannot be the leak source); (3) a restorer-store
+  outage surfaces as a typed 5xx whose error envelope carries
+  a stable generic message -- the wrapped pgx driver cause
+  (host, port, "connection refused") is kept for server-side
+  logs only and never reaches the client, including the bare
+  datastore address that the cause string typically carries.
+  Structural twin of services_delete_contract_test.go (BE-0191)
+  and projects_restore_contract_test.go (BE-0134), adapted to
+  the POST restore request shape: {service_id} path parameter,
+  no body, optional If-Match precondition forwarded as *int64,
+  ServiceRestorer port, CapWrite action service.restore, and
+  the revive-soft-delete 200 OK success status. The
+  restoreServiceContractSecret constant is the in-test tripwire:
+  if any byte of it reaches a log record or a response body,
+  the test fails.
+- Files changed:
+  * internal/controlplane/httpapi/services_restore_contract_test.go
+    (already on disk from prior iteration -- staged in this turn).
+  * ralph/prd.json -- BE-0194 flipped to passes:true.
+  * ralph/progress.txt -- this entry appended.
+- Verification run (unset TMPDIR so Go does not treat the repo
+  path as a system temp root):
+  * gofmt -l internal/controlplane/httpapi/services_restore_contract_test.go
+    -- clean
+  * go vet ./... -- clean
+  * go mod tidy -- no diff
+  * go test -count=1 -race -timeout 180s
+    -run 'TestRestoreService(SuccessOnlyWritesEnvelope|RequestLogRedactsBearerToken|ErrorEnvelopeDoesNotLeakDependencyCause)'
+    ./internal/controlplane/httpapi/ -- PASS (1.644s)
+  * go test -count=1 -race -timeout 300s
+    ./internal/controlplane/httpapi/... -- PASS (9.277s)
+- Remaining risks / follow-ups: none for BE-0194. Up next in
+  the queue: BE-0468 (Repository tenant isolation: audit_events,
+  priority 1). The previous iteration's BE-0467 progress entry
+  already pre-staged the pattern handoff -- the byte-identity
+  bystander predecessor and the per-org row counter helper are
+  already in audit_repository_invariants_test.go.
+- **Learnings for future iterations:**
+  - The orphan-reconcile pattern from BE-0466 generalises: at
+    iteration start, ALWAYS read `git status --short` BEFORE
+    picking a story. If the working tree carries an untracked
+    test/source file matching a PRD story ID, the prior turn
+    likely completed the work but didn't commit (or didn't
+    flip the PRD, or didn't append the progress entry, or some
+    combination). The right move is to reconcile that orphan
+    in the current iteration (verify, flip PRD if needed,
+    append progress, commit) BEFORE picking up the
+    higher-priority queue head. Reconciling costs one iteration
+    but prevents the orphan from drifting out of sync with the
+    codebase (e.g. an interface rename in
+    internal/controlplane/httpapi could break the untracked
+    test file silently because `go test ./...` would not pick
+    it up on `main`).
+  - Specifically for BE-0194 vs BE-0468: BE-0468 (priority 1)
+    outranks BE-0194 (priority 2), but the orphan file was
+    BE-0194 work. The cleanest reconciliation is to commit
+    BE-0194 in this iteration (one-story-per-iteration rule
+    intact) and let the next iteration pick BE-0468 as a fresh
+    queue head.
+  - The contract-test pattern for a restore (revive-soft-delete)
+    endpoint vs a delete (schedule-soft-delete) endpoint
+    differs in three load-bearing axes that the test file's
+    structural twin must adapt: (a) success status is 200 OK
+    (the row already existed; restore clears
+    deletion_scheduled_at and returns the live projection) NOT
+    202 Accepted (delete enqueues a worker job and returns a
+    deletion plan); (b) no worker provisioning step is required
+    because the underlying Dokploy resource was never
+    destructively torn down, so the test does not need to
+    assert deployment_id / job-id forwarding; (c) the
+    DeletionScheduledAt field of the response projection MUST
+    be nil -- a future regression that left the stamp on the
+    restored row would surface here even though the row was
+    successfully revived from the soft-delete state. The
+    BE-0193 happy-path test pins the field-is-nil invariant
+    directly; the BE-0194 contract-test redaction probe pins
+    it indirectly by asserting the response body is
+    credential-free which would fail loudly if any future
+    change started embedding raw request headers in the
+    response.
+---
 ## 2026-05-15 - BE-0103
 - What was implemented: GET /v1/organizations/{org_id}/audit-events, the
   organization-scoped audit-trail read endpoint — the first endpoint to
