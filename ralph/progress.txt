@@ -32536,3 +32536,25 @@ change that widened Reason to caller-supplied data.
     too. They are not regressions from this story and should be
     triaged separately.
 ---
+
+## 2026-05-18 - BE-0191
+- Added internal/controlplane/httpapi/services_delete_contract_test.go closing the three contract criteria that services_delete_test.go (BE-0190) and services_delete_policy_test.go (BE-0192) do not pin directly: stdout/stderr-free response data, bearer-credential redaction on both success and authorization-failure paths, and dependency-cause non-leakage in the 5xx envelope.
+- Reused the existing fakeServiceDeleter / deleteService / decodeDeleteServiceBody / canonicalDeletedSvc helpers from services_delete_test.go and the captureProcessOutput / orgPrincipal / decodeError helpers from the package-wide test surface. The only new symbol is deleteServiceHandlerForWithLogger, a logger-threading mirror of deleteServiceHandlerFor (the same shape used by updateServiceHandlerForWithLogger in BE-0188 and deleteProjectHandlerForWithLogger in BE-0131).
+- Files changed: internal/controlplane/httpapi/services_delete_contract_test.go (new), ralph/prd.json (BE-0191 passes=true), ralph/progress.txt.
+- Verification (TMPDIR=/tmp to dodge Go's "system temp root" guard since the repo lives under /Users/.../poc/yalla):
+  - gofmt -w . — clean
+  - go mod tidy — no changes
+  - go build ./... — clean
+  - go vet ./... — clean
+  - go test ./internal/controlplane/httpapi/ -run 'TestDeleteServiceServerWritesResponseDataOnlyToResponseWriter|TestDeleteServiceRequestLogRedactsBearerToken|TestDeleteServiceErrorEnvelopeDoesNotLeakDependencyCause' -v — PASS (4 subtests across 3 tests)
+  - go test ./... — PASS (all packages)
+  - go test -race ./internal/controlplane/httpapi/ — PASS (~9.5s)
+  - go test -race ./... — PASS
+  - goimports/golangci-lint/staticcheck/govulncheck — not installed locally; skipped.
+- Remaining risks / follow-ups: none for the DELETE-service contract surface. The next failing story in the matrix is BE-0194 (contract tests for POST /v1/services/{service_id}/restore) which follows the same 3-test template but with the restore handler builder.
+- **Learnings for future iterations:**
+  - The DELETE-on-mutable-resource contract test trio is byte-for-byte structurally identical across projects (BE-0131), environments (BE-0161), and services (BE-0191): a logger-threading handler builder + three tests (ResponseWriter-only writes, bearer-token redaction across success+deny, dependency-cause non-leak). Each story just substitutes the resource-specific fakes, the canonical row fixture, the request helper (deleteX), and the wantStatus=202 success. Reach for projects_delete_contract_test.go as the template when the resource has a `deletion_scheduled_at` soft-delete leg and an `If-Match` precondition; reach for environments_delete_contract_test.go if the resource lacks one of those legs.
+  - The success-path test must assert at least one body field beyond `service.id` so the "data must be carried by the response body" claim is not collapsible into "the id round-tripped through the path"; for the services row the natural triplet is (ID, ProjectID, EnvironmentID) plus DeletionScheduledAt non-nil — exactly the shape services_delete_test.go's TestDeleteServiceSuccess already asserts, kept consistent here.
+  - The deny-leg fake (denyDeleter) must error if invoked — that is the load-bearing assertion that "a logged 'deleter error' can't be the leak source" actually holds, because policy short-circuits before the port is reached. Don't substitute a no-op fake there; a future regression that lets a disabled principal reach the port would then silently pass the test.
+  - When working inside this repo path (/Users/juribadev/projects/poc/yalla), Go's module-aware tooling refuses to run because the path lives under what Go heuristically treats as a system temp root, emitting `go: warning: ignoring go.mod in system temp root /Users/juribadev/projects/poc/yalla` and `go: cannot find main module`. Workaround: export TMPDIR=/tmp before every `go` invocation. The unit tests pass cleanly once TMPDIR is moved off the same prefix. This is a workflow gotcha for every future story, not a code issue.
+---

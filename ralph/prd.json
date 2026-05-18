@@ -4538,7 +4538,7 @@
       ],
       "type": "test-service",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Contract coverage for DELETE /v1/services/{service_id}."
     },
     {
