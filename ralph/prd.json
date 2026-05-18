@@ -10390,7 +10390,7 @@
       ],
       "type": "worker-job",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Provisioning job type: create_preview_environment."
     },
     {

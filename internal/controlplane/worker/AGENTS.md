@@ -77,6 +77,15 @@ Background provisioning/metering workers for the control plane.
   the typed Dokploy `RemoveEnvironment` intent. A job already marked
   `succeeded` is a replay no-op, and an upstream 404 is idempotent success in
   the typed client.
+- Preview create jobs (`create_preview_environment`) use the scoped payload
+  `(organization_id, project_id, environment_id, preview_id)`, reload the
+  project-scoped `preview_environments` row plus the wrapped
+  `environments.kind='preview'` clone, verify payload scope and the preview row
+  `DesiredVersion`, reject deletion-scheduled previews before any Dokploy call,
+  resolve the parent project mapping, and persist one `environment`
+  `dokploy_refs` row for the wrapped clone. A job already marked `succeeded` is
+  a no-op replay; a replay after a crash should fetch the existing Dokploy
+  environment through `EnsureEnvironment` and leave the mapping table unchanged.
 - Project teardown jobs (`project.delete`/`delete_project`) use the scoped
   payload `(organization_id, project_id)`, reload the project through
   `ProjectRepository.Get`, verify job/payload scope and `DesiredVersion`,
