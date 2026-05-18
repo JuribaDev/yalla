@@ -343,7 +343,8 @@ func NotFound(resource, id string) *yerr.Error {
 // Conflict builds an E_CONFLICT error (HTTP 409) for a request that collides
 // with the current state of a resource.
 func Conflict(message string) *yerr.Error {
-	if strings.TrimSpace(message) == "" {
+	message = strings.TrimSpace(message)
+	if message == "" {
 		message = "request conflicts with the current resource state"
 	}
 	return yerr.New(yerr.CodeConflict, message)

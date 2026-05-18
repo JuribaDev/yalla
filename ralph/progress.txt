@@ -35537,3 +35537,13 @@ change that widened Reason to caller-supplied data.
   - Admin org-rooted read endpoints with `{org_id}` can use `organizationIDResolver` directly; support cross-tenant reads are then policy-driven and non-support callers are blocked before persistence.
   - Readers for org-owned child collections should verify the parent organization first when an empty child list would otherwise hide an unknown target.
 ---
+## 2026-05-19 01:18 +03 - BE-0520
+- What was implemented: Added the explicit `E_CONFLICT` backend error-contract test covering catalogue lookup, 409 status, message policy, non-retryability, `yalla.error.v1` envelope shape, `request_id`, documentation URL, and renderer redaction of credential-shaped text. Tightened `apierr.Conflict` so caller-supplied specific messages are trimmed before they become public wire text while preserving the existing default message.
+- Files changed: `internal/controlplane/apierr/apierr.go`, `internal/controlplane/apierr/apierr_test.go`, `ralph/prd.json`, `ralph/progress.txt`.
+- Verification run: `go test ./internal/controlplane/apierr -run TestConflictContract -count=1` failed before the implementation with the expected untrimmed-message assertion, then passed after the fix. Also ran `gofmt -w .`, `goimports -w .` (tool not installed), `go mod tidy`, `go test ./...`, `go test -race ./...`, `go vet ./...`, `golangci-lint run ./...`, `go test ./internal/controlplane/...`, and `go test -race ./internal/controlplane/...`. Direct shell checks did not find `staticcheck` or `govulncheck`, but the pre-commit `scripts/verify.sh --strict --release` hook ran both successfully.
+- Results: Required formatting/module/test/race/vet checks passed. `golangci-lint run ./...` reported `0 issues`; the strict hook reported no vulnerabilities, no `staticcheck` issues, a valid GoReleaser config, and a successful GoReleaser snapshot build. `BE-0520` is marked `passes: true` in `ralph/prd.json`.
+- Remaining risks or follow-ups: No persistence or Dokploy behavior was touched, so no live dependency smoke was needed. Future error-contract stories should continue pinning the constructor, taxonomy, status, envelope, docs-link, and redaction behavior in one focused test.
+- **Learnings for future iterations:**
+  - Error-contract stories can be completed with focused taxonomy/envelope tests when the code path already exists; still verify a red phase by asserting a missing contract detail rather than only adding tests that pass immediately.
+  - Use context-specific PRD edits when marking stories complete; a broad `"passes": false` patch can hit an earlier unfinished story.
+---

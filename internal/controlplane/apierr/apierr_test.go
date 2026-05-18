@@ -554,6 +554,50 @@ func TestEnvelopeRedactsSecretsFromSpecificMessages(t *testing.T) {
 	}
 }
 
+func TestConflictContract(t *testing.T) {
+	t.Parallel()
+
+	const secret = "Authorization: Bearer conflict-secret-token"
+	err := Conflict("  resource already exists; retry without " + secret + "  ")
+	if err.Code != yerr.CodeConflict {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeConflict)
+	}
+	if strings.HasPrefix(err.Message, " ") || strings.HasSuffix(err.Message, " ") {
+		t.Fatalf("message = %q, want trimmed stable message text", err.Message)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 409 {
+			t.Errorf("HTTPStatus = %d, want 409", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageSpecific {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageSpecific)
+		}
+		if entry.Retryable {
+			t.Error("E_CONFLICT must not be retryable")
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-conflict", err)
+	body := rec.Body.String()
+	if rec.Code != 409 {
+		t.Fatalf("status = %d, want 409; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-conflict"`) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeConflict)) {
+		t.Errorf("envelope body missing schema, request id, or docs link: %s", body)
+	}
+	if strings.Contains(body, "conflict-secret-token") || strings.Contains(body, "Bearer") {
+		t.Errorf("conflict envelope leaked credential material: %s", body)
+	}
+	if !strings.Contains(body, output.Sentinel) {
+		t.Errorf("expected redaction sentinel %q in body: %s", output.Sentinel, body)
+	}
+}
+
 func TestRetryable(t *testing.T) {
 	t.Parallel()
 
