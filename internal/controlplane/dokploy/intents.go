@@ -260,6 +260,20 @@ func (c *Client) RunBackup(ctx context.Context, in RunBackupInput) (BackupRun, e
 	return run, nil
 }
 
+// RestoreBackup restores a service from a recorded backup and returns the
+// created restore run.
+func (c *Client) RestoreBackup(ctx context.Context, in RestoreBackupInput) (BackupRun, error) {
+	if v := requireFields(field{"service_id", in.ServiceID}, field{"backup_id", in.BackupID}); v != nil {
+		return BackupRun{}, v
+	}
+	var run BackupRun
+	path := "/api/services/" + url.PathEscape(strings.TrimSpace(in.ServiceID)) + "/backups/" + url.PathEscape(strings.TrimSpace(in.BackupID)) + "/restore"
+	if err := c.post(ctx, path, nil, &run); err != nil {
+		return BackupRun{}, err
+	}
+	return run, nil
+}
+
 // RestartService restarts a service and returns its post-command runtime
 // status as reported by Dokploy.
 func (c *Client) RestartService(ctx context.Context, in RestartServiceInput) (ServiceStatus, error) {

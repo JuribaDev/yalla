@@ -10371,8 +10371,8 @@
       ],
       "type": "worker-job",
       "priority": 1,
-      "passes": false,
-      "notes": "Provisioning job type: restore_backup."
+      "passes": true,
+      "notes": "Implemented durable restore_backup execution through worker.Provisioner with typed payload validation, tenant-scoped service and service_backups desired-state reload, stale-version/cross-scope/disabled/not-succeeded/deletion-scheduled terminal refusal, service-kind Dokploy ref resolution, typed Dokploy RestoreBackup intent, replay-safe no-op once the job row is succeeded, fake Dokploy success/retry/cancellation/stale coverage, and redacted queue error-summary coverage. Required quality checks passed."
     },
     {
       "id": "BE-0499",

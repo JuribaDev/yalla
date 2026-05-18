@@ -194,6 +194,15 @@ type RunBackupInput struct {
 	BackupID string
 }
 
+// RestoreBackupInput names the service backup to restore.
+type RestoreBackupInput struct {
+	// ServiceID is the service to restore into; required.
+	ServiceID string
+	// BackupID is Yalla's service_backups id. It is sent as metadata only and
+	// contains no credential material.
+	BackupID string
+}
+
 // RestartServiceInput names the service to restart.
 type RestartServiceInput struct {
 	// ServiceID is the service to restart; required.

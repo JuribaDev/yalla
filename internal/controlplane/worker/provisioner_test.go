@@ -1621,6 +1621,105 @@ func TestRunBackupPayloadValidation(t *testing.T) {
 	}
 }
 
+func TestRestoreBackupPayloadValidation(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name    string
+		job     store.ProvisioningJob
+		wantErr bool
+	}{
+		{
+			name: "valid",
+			job: store.ProvisioningJob{
+				OrganizationID: "org_valid",
+				ProjectID:      "proj_valid",
+				EnvironmentID:  "env_valid",
+				ServiceID:      "svc_valid",
+				JobType:        worker.JobTypeRestoreBackup,
+				Payload: map[string]string{
+					"organization_id": "org_valid",
+					"project_id":      "proj_valid",
+					"environment_id":  "env_valid",
+					"service_id":      "svc_valid",
+					"backup_id":       "bkp_valid",
+				},
+			},
+		},
+		{
+			name: "missing backup",
+			job: store.ProvisioningJob{
+				OrganizationID: "org_valid",
+				ProjectID:      "proj_valid",
+				EnvironmentID:  "env_valid",
+				ServiceID:      "svc_valid",
+				JobType:        worker.JobTypeRestoreBackup,
+				Payload: map[string]string{
+					"organization_id": "org_valid",
+					"project_id":      "proj_valid",
+					"environment_id":  "env_valid",
+					"service_id":      "svc_valid",
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "cross tenant payload",
+			job: store.ProvisioningJob{
+				OrganizationID: "org_valid",
+				ProjectID:      "proj_valid",
+				EnvironmentID:  "env_valid",
+				ServiceID:      "svc_valid",
+				JobType:        worker.JobTypeRestoreBackup,
+				Payload: map[string]string{
+					"organization_id": "org_other",
+					"project_id":      "proj_valid",
+					"environment_id":  "env_valid",
+					"service_id":      "svc_valid",
+					"backup_id":       "bkp_valid",
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "wrong job type",
+			job: store.ProvisioningJob{
+				OrganizationID: "org_valid",
+				ProjectID:      "proj_valid",
+				EnvironmentID:  "env_valid",
+				ServiceID:      "svc_valid",
+				JobType:        worker.JobTypeRunBackup,
+				Payload: map[string]string{
+					"organization_id": "org_valid",
+					"project_id":      "proj_valid",
+					"environment_id":  "env_valid",
+					"service_id":      "svc_valid",
+					"backup_id":       "bkp_valid",
+				},
+			},
+			wantErr: true,
+		},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := worker.ParseRestoreBackupPayload(tc.job)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("ParseRestoreBackupPayload returned nil, want validation error")
+				}
+				if !worker.IsTerminal(err) {
+					t.Fatalf("validation error is not terminal: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseRestoreBackupPayload returned %v, want nil", err)
+			}
+		})
+	}
+}
+
 func TestProvisionerEnsuresDokployOrganizationAndPersistsMapping(t *testing.T) {
 	t.Parallel()
 
@@ -2561,6 +2660,167 @@ func TestProvisionerRunBackupCancellationIsNotTerminal(t *testing.T) {
 	}
 	if worker.IsTerminal(err) {
 		t.Fatalf("Run run_backup cancellation is terminal: %v", err)
+	}
+}
+
+func TestProvisionerRestoreBackupSucceedsAndReplaysFromSucceededJob(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	org := insertWorkerOrg(ctx, t, dataStore, "acme")
+	project := insertWorkerProject(ctx, t, dataStore, org, "api")
+	env := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+	svc := insertWorkerService(ctx, t, dataStore, env, "api", store.ServiceKindApplication)
+	backup := insertWorkerServiceBackup(ctx, t, dataStore, svc, "nightly")
+	backup = markWorkerServiceBackupSucceeded(ctx, t, dataStore, svc, backup.ID)
+
+	fake := dokployfake.New()
+	defer fake.Close()
+	client := newWorkerDokployClient(t, fake)
+	dokployServiceID := seedFakeDokployApplicationService(ctx, t, client)
+	insertWorkerServiceRef(ctx, t, dataStore, svc, store.DokployResourceApplication, dokployServiceID)
+
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: client,
+		Mapper: dokploy.NewMapper(),
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+
+	job := restoreBackupJob(svc, backup)
+	if err := p.Run(ctx, job); err != nil {
+		t.Fatalf("Run restore_backup: %v", err)
+	}
+	reqs := fake.Requests()
+	if len(reqs) != 5 || reqs[4].Method != http.MethodPost || reqs[4].Path != "/api/services/app_1/backups/"+backup.ID+"/restore" {
+		t.Fatalf("fake requests = %+v, want service seed then POST /api/services/app_1/backups/{backup_id}/restore", reqs)
+	}
+	if reqs[4].AuthHeader != output.Sentinel || strings.Contains(reqs[4].Body, fake.Token()) {
+		t.Fatalf("restore request recording leaked credentials: %+v", reqs[4])
+	}
+
+	job.Status = store.JobStatusSucceeded
+	if err := p.Run(ctx, job); err != nil {
+		t.Fatalf("replayed succeeded restore_backup: %v", err)
+	}
+	reqs = fake.Requests()
+	if len(reqs) != 5 {
+		t.Fatalf("replayed restore_backup fake requests = %+v, want no additional Dokploy call", reqs)
+	}
+}
+
+func TestProvisionerRestoreBackupRetryableFailure(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	org := insertWorkerOrg(ctx, t, dataStore, "acme")
+	project := insertWorkerProject(ctx, t, dataStore, org, "api")
+	env := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+	svc := insertWorkerService(ctx, t, dataStore, env, "api", store.ServiceKindApplication)
+	backup := insertWorkerServiceBackup(ctx, t, dataStore, svc, "nightly")
+	backup = markWorkerServiceBackupSucceeded(ctx, t, dataStore, svc, backup.ID)
+
+	fake := dokployfake.New()
+	defer fake.Close()
+	client := newWorkerDokployClient(t, fake)
+	dokployServiceID := seedFakeDokployApplicationService(ctx, t, client)
+	insertWorkerServiceRef(ctx, t, dataStore, svc, store.DokployResourceApplication, dokployServiceID)
+	fake.QueueFault(dokployfake.StatusFault(http.StatusInternalServerError))
+
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: client,
+		Mapper: dokploy.NewMapper(),
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+
+	err = p.Run(ctx, restoreBackupJob(svc, backup))
+	if err == nil {
+		t.Fatal("Run restore_backup returned nil, want retryable error")
+	}
+	if worker.IsTerminal(err) {
+		t.Fatalf("Run restore_backup error is terminal, want retryable: %v", err)
+	}
+}
+
+func TestProvisionerRestoreBackupRefusesStaleDesiredVersion(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	org := insertWorkerOrg(ctx, t, dataStore, "acme")
+	project := insertWorkerProject(ctx, t, dataStore, org, "api")
+	env := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+	svc := insertWorkerService(ctx, t, dataStore, env, "api", store.ServiceKindApplication)
+	backup := insertWorkerServiceBackup(ctx, t, dataStore, svc, "nightly")
+	backup = markWorkerServiceBackupSucceeded(ctx, t, dataStore, svc, backup.ID)
+	insertWorkerServiceRef(ctx, t, dataStore, svc, store.DokployResourceApplication, "app_stale")
+
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: canceledClient{},
+		Mapper: dokploy.NewMapper(),
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+	job := restoreBackupJob(svc, backup)
+	job.DesiredVersion = backup.Version + 1
+	err = p.Run(ctx, job)
+	if err == nil || !worker.IsTerminal(err) {
+		t.Fatalf("Run stale restore_backup = %v, want terminal error", err)
+	}
+}
+
+func TestProvisionerRestoreBackupCancellationIsNotTerminal(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	org := insertWorkerOrg(ctx, t, dataStore, "acme")
+	project := insertWorkerProject(ctx, t, dataStore, org, "api")
+	env := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+	svc := insertWorkerService(ctx, t, dataStore, env, "api", store.ServiceKindApplication)
+	backup := insertWorkerServiceBackup(ctx, t, dataStore, svc, "nightly")
+	backup = markWorkerServiceBackupSucceeded(ctx, t, dataStore, svc, backup.ID)
+	insertWorkerServiceRef(ctx, t, dataStore, svc, store.DokployResourceApplication, "app_cancelled")
+
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: canceledClient{},
+		Mapper: dokploy.NewMapper(),
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+	err = p.Run(ctx, restoreBackupJob(svc, backup))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run restore_backup cancellation = %v, want context.Canceled", err)
+	}
+	if worker.IsTerminal(err) {
+		t.Fatalf("Run restore_backup cancellation is terminal: %v", err)
 	}
 }
 
@@ -3760,6 +4020,90 @@ func TestRestartServiceRetryableFailurePersistsRedactedErrorSummary(t *testing.T
 		Store:         dataStore,
 		Runner:        p,
 		Owner:         "worker-restart-redaction-test",
+		LeaseDuration: time.Minute,
+		Backoff:       worker.Backoff{Base: time.Second, Max: time.Second},
+		Now:           func() time.Time { return time.Unix(1700000000, 0).UTC() },
+	})
+	if err != nil {
+		t.Fatalf("NewStoreClaimer: %v", err)
+	}
+	lease, err := claimer.Claim(ctx)
+	if err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+	if lease == nil {
+		t.Fatal("Claim returned nil lease")
+	}
+	if err := lease.Run(ctx); err != nil {
+		t.Fatalf("lease.Run: %v", err)
+	}
+
+	var persisted store.ProvisioningJob
+	if err := dataStore.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		var getErr error
+		persisted, getErr = jobs.Get(ctx, q, enqueued.OrganizationID, enqueued.ID)
+		return getErr
+	}); err != nil {
+		t.Fatalf("read persisted job: %v", err)
+	}
+	if persisted.Status != store.JobStatusRetrying {
+		t.Fatalf("persisted status = %s, want retrying", persisted.Status)
+	}
+	if persisted.ErrorSummary == "" {
+		t.Fatal("persisted error summary is empty")
+	}
+	if strings.Contains(persisted.ErrorSummary, fake.Token()) {
+		t.Fatalf("persisted error summary leaked Dokploy token: %q", persisted.ErrorSummary)
+	}
+	if strings.Contains(persisted.ErrorSummary, "Authorization") {
+		t.Fatalf("persisted error summary leaked auth header name: %q", persisted.ErrorSummary)
+	}
+}
+
+func TestRestoreBackupRetryableFailurePersistsRedactedErrorSummary(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	org := insertWorkerOrg(ctx, t, dataStore, "acme")
+	project := insertWorkerProject(ctx, t, dataStore, org, "api")
+	env := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+	svc := insertWorkerService(ctx, t, dataStore, env, "api", store.ServiceKindApplication)
+	backup := insertWorkerServiceBackup(ctx, t, dataStore, svc, "nightly")
+
+	fake := dokployfake.New()
+	defer fake.Close()
+	client := newWorkerDokployClient(t, fake)
+	dokployServiceID := seedFakeDokployApplicationService(ctx, t, client)
+	insertWorkerServiceRef(ctx, t, dataStore, svc, store.DokployResourceApplication, dokployServiceID)
+	fake.QueueFault(dokployfake.StatusFault(http.StatusInternalServerError))
+
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: client,
+		Mapper: dokploy.NewMapper(),
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+
+	jobs := store.NewJobRepository()
+	enqueued := restoreBackupJob(svc, backup)
+	if err := dataStore.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		_, err := jobs.Insert(ctx, tx, enqueued)
+		return err
+	}); err != nil {
+		t.Fatalf("insert restore_backup job: %v", err)
+	}
+
+	claimer, err := worker.NewStoreClaimer(worker.StoreClaimerConfig{
+		Store:         dataStore,
+		Runner:        p,
+		Owner:         "worker-restore-backup-redaction-test",
 		LeaseDuration: time.Minute,
 		Backoff:       worker.Backoff{Base: time.Second, Max: time.Second},
 		Now:           func() time.Time { return time.Unix(1700000000, 0).UTC() },
@@ -6423,6 +6767,10 @@ func (canceledClient) RunBackup(context.Context, dokploy.RunBackupInput) (dokplo
 	return dokploy.BackupRun{}, context.Canceled
 }
 
+func (canceledClient) RestoreBackup(context.Context, dokploy.RestoreBackupInput) (dokploy.BackupRun, error) {
+	return dokploy.BackupRun{}, context.Canceled
+}
+
 func (canceledClient) RestartService(context.Context, dokploy.RestartServiceInput) (dokploy.ServiceStatus, error) {
 	return dokploy.ServiceStatus{}, context.Canceled
 }
@@ -6710,6 +7058,28 @@ func runBackupJob(svc store.Service, backup store.ServiceBackup) store.Provision
 		},
 		RequestID:     "req_run_backup_test",
 		CorrelationID: "corr_run_backup_test",
+	}
+}
+
+func restoreBackupJob(svc store.Service, backup store.ServiceBackup) store.ProvisioningJob {
+	return store.ProvisioningJob{
+		ID:             "job_restore_backup_test",
+		OrganizationID: svc.OrganizationID,
+		ProjectID:      svc.ProjectID,
+		EnvironmentID:  svc.EnvironmentID,
+		ServiceID:      svc.ID,
+		JobType:        worker.JobTypeRestoreBackup,
+		DesiredVersion: backup.Version,
+		IdempotencyKey: "restore-backup-" + backup.ID,
+		Payload: map[string]string{
+			"organization_id": svc.OrganizationID,
+			"project_id":      svc.ProjectID,
+			"environment_id":  svc.EnvironmentID,
+			"service_id":      svc.ID,
+			"backup_id":       backup.ID,
+		},
+		RequestID:     "req_restore_backup_test",
+		CorrelationID: "corr_restore_backup_test",
 	}
 }
 
@@ -7031,6 +7401,20 @@ func insertWorkerServiceBackup(ctx context.Context, t *testing.T, s *store.Store
 		return err
 	}); err != nil {
 		t.Fatalf("insert service backup: %v", err)
+	}
+	return backup
+}
+
+func markWorkerServiceBackupSucceeded(ctx context.Context, t *testing.T, s *store.Store, svc store.Service, backupID string) store.ServiceBackup {
+	t.Helper()
+	repo := store.NewServiceBackupRepository()
+	var backup store.ServiceBackup
+	if err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		var err error
+		backup, err = repo.MarkSucceeded(ctx, tx, svc.OrganizationID, svc.ID, backupID)
+		return err
+	}); err != nil {
+		t.Fatalf("mark service backup succeeded: %v", err)
 	}
 	return backup
 }

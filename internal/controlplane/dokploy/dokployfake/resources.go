@@ -164,6 +164,7 @@ func (s *Server) newMux() *http.ServeMux {
 	mux.HandleFunc("POST /api/services/{id}/start", s.startService)
 	mux.HandleFunc("POST /api/services/{id}/stop", s.stopService)
 	mux.HandleFunc("POST /api/services/{id}/backups", s.runBackup)
+	mux.HandleFunc("POST /api/services/{id}/backups/{backup_id}/restore", s.restoreBackup)
 	mux.HandleFunc("DELETE /api/services/{id}", s.deleteService)
 
 	mux.HandleFunc("POST /api/domains", s.createDomain)
@@ -684,6 +685,29 @@ func (s *Server) runBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	run := &BackupRun{
 		ID:        s.resources.nextID("backup_run"),
+		ServiceID: serviceID,
+		Status:    DeploymentSucceeded,
+	}
+	s.resources.backupRuns[run.ID] = run
+	writeJSON(w, http.StatusCreated, run)
+}
+
+func (s *Server) restoreBackup(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	serviceID := r.PathValue("id")
+	if _, ok := s.resources.services[serviceID]; !ok {
+		writeError(w, http.StatusNotFound, "not_found", "no such service")
+		return
+	}
+	backupID := r.PathValue("backup_id")
+	if backupID == "" {
+		writeError(w, http.StatusBadRequest, "invalid_input", "backup_id is required")
+		return
+	}
+	run := &BackupRun{
+		ID:        s.resources.nextID("backup_restore"),
 		ServiceID: serviceID,
 		Status:    DeploymentSucceeded,
 	}

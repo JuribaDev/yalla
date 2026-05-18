@@ -108,6 +108,12 @@ Background provisioning/metering workers for the control plane.
   ref, mark the backup `running`, call the typed Dokploy `RunBackup` intent,
   then project the row to `succeeded` or `failed`. A succeeded backup row is a
   replay no-op and must not issue another upstream POST.
+- Backup restore jobs (`restore_backup`) use the same scoped payload and
+  tenant-scoped service/backup reload shape, but require the selected
+  `service_backups` row to be enabled and already `succeeded` before any
+  Dokploy call. Resolve the service-kind-specific Dokploy service ref and call
+  the typed Dokploy `RestoreBackup` intent; replay of a job row already marked
+  `succeeded` must be a no-op.
 - Integration tests are `package worker_test`, use `testutil.RequireMigratedDB`,
   and `t.Skip` when `YALLA_TEST_DATABASE_URL` is unset. A concurrent-claim test
   must retry-until-drained with a deadline guard — a job locked by a peer's

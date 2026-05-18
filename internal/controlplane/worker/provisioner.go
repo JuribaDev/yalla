@@ -125,6 +125,10 @@ const JobTypeSyncVariables = "sync_variables"
 // service_backups policy against the mapped Dokploy service.
 const JobTypeRunBackup = "run_backup"
 
+// JobTypeRestoreBackup is the durable provisioning job that restores a service
+// from one service_backups policy against the mapped Dokploy service.
+const JobTypeRestoreBackup = "restore_backup"
+
 // DokployClient is the narrow typed-client surface these worker jobs
 // needs. *dokploy.Client satisfies it in production; tests can supply fakes.
 type DokployClient interface {
@@ -136,6 +140,7 @@ type DokployClient interface {
 	SyncVariables(context.Context, dokploy.SyncVariablesInput) error
 	DeployService(context.Context, dokploy.DeployServiceInput) (dokploy.Deployment, error)
 	RunBackup(context.Context, dokploy.RunBackupInput) (dokploy.BackupRun, error)
+	RestoreBackup(context.Context, dokploy.RestoreBackupInput) (dokploy.BackupRun, error)
 	RestartService(context.Context, dokploy.RestartServiceInput) (dokploy.ServiceStatus, error)
 	RollbackService(context.Context, dokploy.RollbackServiceInput) (dokploy.ServiceStatus, error)
 	StopService(context.Context, dokploy.StopServiceInput) (dokploy.ServiceStatus, error)
@@ -975,6 +980,16 @@ type RunBackupPayload struct {
 	BackupID       string
 }
 
+// RestoreBackupPayload is the typed schema carried by provisioning_jobs.payload
+// for JobTypeRestoreBackup.
+type RestoreBackupPayload struct {
+	OrganizationID string
+	ProjectID      string
+	EnvironmentID  string
+	ServiceID      string
+	BackupID       string
+}
+
 // ParseSyncVariablesPayload validates a sync-variables job payload and returns
 // a terminal error for payload shapes retrying cannot repair.
 func ParseSyncVariablesPayload(job store.ProvisioningJob) (SyncVariablesPayload, error) {
@@ -1082,6 +1097,65 @@ func ParseRunBackupPayload(job store.ProvisioningJob) (RunBackupPayload, error) 
 		return RunBackupPayload{}, Terminal(apierr.InvalidInput(violations...))
 	}
 	return RunBackupPayload{
+		OrganizationID: payloadOrgID,
+		ProjectID:      payloadProjectID,
+		EnvironmentID:  payloadEnvironmentID,
+		ServiceID:      payloadServiceID,
+		BackupID:       payloadBackupID,
+	}, nil
+}
+
+// ParseRestoreBackupPayload validates a restore_backup job payload and returns
+// a terminal error for payload shapes retrying cannot repair.
+func ParseRestoreBackupPayload(job store.ProvisioningJob) (RestoreBackupPayload, error) {
+	var violations []apierr.FieldViolation
+	if job.JobType != JobTypeRestoreBackup {
+		violations = append(violations, apierr.FieldViolation{Field: "job_type", Reason: "must be restore_backup"})
+	}
+	if job.OrganizationID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "organization_id", Reason: "is required"})
+	}
+	if job.ProjectID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "project_id", Reason: "is required"})
+	}
+	if job.EnvironmentID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "environment_id", Reason: "is required"})
+	}
+	if job.ServiceID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "service_id", Reason: "is required"})
+	}
+	payloadOrgID := job.Payload["organization_id"]
+	if payloadOrgID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.organization_id", Reason: "is required"})
+	} else if job.OrganizationID != "" && payloadOrgID != job.OrganizationID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.organization_id", Reason: "must match the job organization_id"})
+	}
+	payloadProjectID := job.Payload["project_id"]
+	if payloadProjectID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.project_id", Reason: "is required"})
+	} else if job.ProjectID != "" && payloadProjectID != job.ProjectID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.project_id", Reason: "must match the job project_id"})
+	}
+	payloadEnvironmentID := job.Payload["environment_id"]
+	if payloadEnvironmentID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.environment_id", Reason: "is required"})
+	} else if job.EnvironmentID != "" && payloadEnvironmentID != job.EnvironmentID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.environment_id", Reason: "must match the job environment_id"})
+	}
+	payloadServiceID := job.Payload["service_id"]
+	if payloadServiceID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.service_id", Reason: "is required"})
+	} else if job.ServiceID != "" && payloadServiceID != job.ServiceID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.service_id", Reason: "must match the job service_id"})
+	}
+	payloadBackupID := job.Payload["backup_id"]
+	if payloadBackupID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.backup_id", Reason: "is required"})
+	}
+	if len(violations) > 0 {
+		return RestoreBackupPayload{}, Terminal(apierr.InvalidInput(violations...))
+	}
+	return RestoreBackupPayload{
 		OrganizationID: payloadOrgID,
 		ProjectID:      payloadProjectID,
 		EnvironmentID:  payloadEnvironmentID,
@@ -1358,6 +1432,8 @@ func (p *Provisioner) Run(ctx context.Context, job store.ProvisioningJob) error 
 		return p.runSyncVariables(ctx, job)
 	case JobTypeRunBackup:
 		return p.runBackup(ctx, job)
+	case JobTypeRestoreBackup:
+		return p.runRestoreBackup(ctx, job)
 	default:
 		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
 			Field:  "job_type",
@@ -2075,6 +2151,50 @@ func (p *Provisioner) runBackup(ctx context.Context, job store.ProvisioningJob) 
 	}
 }
 
+func (p *Provisioner) runRestoreBackup(ctx context.Context, job store.ProvisioningJob) error {
+	if job.Status == store.JobStatusSucceeded {
+		return nil
+	}
+	payload, err := ParseRestoreBackupPayload(job)
+	if err != nil {
+		return err
+	}
+
+	target, err := p.loadRestoreBackupTarget(ctx, job, payload)
+	if err != nil {
+		return err
+	}
+	run, runErr := p.client.RestoreBackup(ctx, dokploy.RestoreBackupInput{
+		ServiceID: target.DokployServiceID,
+		BackupID:  payload.BackupID,
+	})
+	if runErr != nil {
+		if interrupted(ctx, runErr) {
+			return runErr
+		}
+		if apierr.Retryable(runErr) {
+			return runErr
+		}
+		return Terminal(runErr)
+	}
+	if run.ID == "" {
+		return Terminal(apierr.Internal(errors.New("worker: restore_backup resolved an empty Dokploy backup restore id")))
+	}
+	switch run.Status {
+	case "", dokploy.DeploymentSucceeded:
+		return nil
+	case dokploy.DeploymentPending, dokploy.DeploymentRunning:
+		return apierr.DokployUnavailable(errors.New("dokploy backup restore is still running"))
+	case dokploy.DeploymentFailed:
+		return Terminal(apierr.DokployUnavailable(errors.New("dokploy backup restore failed")))
+	default:
+		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "dokploy_backup_restore.status",
+			Reason: "must be pending, running, succeeded, or failed",
+		}))
+	}
+}
+
 type syncDomainTarget struct {
 	Domain            store.ServiceDomain
 	DokployServiceID  string
@@ -2089,6 +2209,11 @@ type syncVariablesTarget struct {
 }
 
 type runBackupTarget struct {
+	Backup           store.ServiceBackup
+	DokployServiceID string
+}
+
+type restoreBackupTarget struct {
 	Backup           store.ServiceBackup
 	DokployServiceID string
 }
@@ -3056,6 +3181,81 @@ func (p *Provisioner) loadRunBackupTarget(ctx context.Context, job store.Provisi
 	})
 	if err != nil {
 		return runBackupTarget{}, err
+	}
+	return target, nil
+}
+
+func (p *Provisioner) loadRestoreBackupTarget(ctx context.Context, job store.ProvisioningJob, payload RestoreBackupPayload) (restoreBackupTarget, error) {
+	var target restoreBackupTarget
+	err := p.store.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		svc, getErr := p.services.GetByID(ctx, q, payload.OrganizationID, payload.ServiceID)
+		if getErr != nil {
+			return Terminal(getErr)
+		}
+		if svc.OrganizationID != job.OrganizationID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.organization_id",
+				Reason: "must match the service organization_id",
+			}))
+		}
+		if svc.ProjectID != payload.ProjectID || svc.ProjectID != job.ProjectID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.project_id",
+				Reason: "must match the service project_id",
+			}))
+		}
+		if svc.EnvironmentID != payload.EnvironmentID || svc.EnvironmentID != job.EnvironmentID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.environment_id",
+				Reason: "must match the service environment_id",
+			}))
+		}
+		if svc.DeletionScheduledAt != nil {
+			return Terminal(apierr.Conflict("service is scheduled for deletion and cannot restore backups"))
+		}
+
+		backup, backupErr := p.backups.GetByID(ctx, q, payload.OrganizationID, payload.ServiceID, payload.BackupID)
+		if backupErr != nil {
+			return Terminal(backupErr)
+		}
+		if backup.ServiceID != svc.ID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.backup_id",
+				Reason: "must match the service backup parent",
+			}))
+		}
+		if !backup.Enabled {
+			return Terminal(apierr.Conflict("backup is disabled and cannot be restored"))
+		}
+		if backup.Status != store.ServiceBackupStatusSucceeded {
+			return Terminal(apierr.Conflict("backup must have a successful run before it can be restored"))
+		}
+		if job.DesiredVersion > 0 && backup.Version != job.DesiredVersion {
+			return Terminal(apierr.ConflictStale(backup.Version))
+		}
+		target.Backup = backup
+
+		wantResource, resourceErr := dokployResourceForServiceKind(svc.Kind, "restore_backup")
+		if resourceErr != nil {
+			return resourceErr
+		}
+		serviceRefs, listErr := p.refs.ListByYallaResource(ctx, q, job.OrganizationID, store.YallaKindService, svc.ID)
+		if listErr != nil {
+			return listErr
+		}
+		for _, ref := range serviceRefs {
+			if ref.DokployResource == wantResource {
+				target.DokployServiceID = ref.DokployID
+				break
+			}
+		}
+		if target.DokployServiceID == "" {
+			return Terminal(apierr.Conflict("service Dokploy mapping is required before restoring a backup"))
+		}
+		return nil
+	})
+	if err != nil {
+		return restoreBackupTarget{}, err
 	}
 	return target, nil
 }
