@@ -33767,3 +33767,13 @@ change that widened Reason to caller-supplied data.
   - `ensure_project` jobs require `provisioning_jobs.project_id` plus payload `organization_id` and `project_id`; `environment_id` and `service_id` must be empty for this job type.
   - Queue-level worker tests can exercise redacted error persistence by inserting a real `provisioning_jobs` row, claiming it through `StoreClaimer`, running the real provisioner against `dokployfake`, and reading back `error_summary`.
 ---
+## 2026-05-18 17:06 +03 - BE-0200
+- What was implemented: Added contract-closure tests for GET /v1/services/{service_id}/variables. The new suite proves the endpoint writes response data only through the ResponseWriter (no stdout/stderr), structured request logs redact the bearer credential on both success and authorization-failure paths, and a wrapped store/dependency cause does not leak into the 503 error envelope.
+- Files changed: internal/controlplane/httpapi/service_variables_get_contract_test.go (new), ralph/prd.json (BE-0200 passes=true), ralph/progress.txt.
+- Verification run: gofmt -w .; goimports -w . (not run: goimports not installed); go mod tidy; go test ./internal/controlplane/httpapi -run 'TestListServiceVariables(ServerWritesResponseDataOnlyToResponseWriter|RequestLogRedactsBearerToken|ErrorEnvelopeDoesNotLeakDependencyCause)$'; go test ./...; go test -race ./...; go vet ./...; go test ./internal/controlplane/...; go test -race ./internal/controlplane/...; golangci-lint run ./....
+- Results: All executed checks passed. golangci-lint reported 0 issues. staticcheck and govulncheck were not installed in this environment.
+- Remaining risks or follow-ups: None for BE-0200. No production code or persistence behavior changed; Postgres/Dokploy focused suites were not applicable to this read-contract test closure beyond the backend package sweeps.
+- **Learnings for future iterations:**
+  - Service-variable GET contract coverage is the direct service-scoped clone of the existing project/environment variable read-contract pattern: add a WithLogger handler builder, then the three tests for ResponseWriter-only output, bearer redaction on allow/deny, and dependency-cause non-leakage.
+  - For read-only variables endpoints, the submitted-secret body redaction test used by PUT/PATCH closures does not apply because GET has no request body; rely on the base endpoint test for wire-side secret value redaction.
+---

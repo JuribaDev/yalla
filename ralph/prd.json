@@ -4709,8 +4709,8 @@
       ],
       "type": "test-variables",
       "priority": 2,
-      "passes": false,
-      "notes": "Contract coverage for GET /v1/services/{service_id}/variables."
+      "passes": true,
+      "notes": "Contract coverage for GET /v1/services/{service_id}/variables. Added internal/controlplane/httpapi/service_variables_get_contract_test.go closing the remaining read-endpoint contract criteria left by service_variables_test.go and service_variables_policy_test.go: ResponseWriter-only response data with stdout/stderr capture, structured request-log bearer redaction on success and authorization-denial paths, and dependency-cause non-leakage in the 503 error envelope. No production code changes."
     },
     {
       "id": "BE-0201",
