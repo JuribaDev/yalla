@@ -34293,3 +34293,14 @@ change that widened Reason to caller-supplied data.
   - `restore_backup` should mirror `run_backup` scope validation but must require a previously successful backup row before calling Dokploy.
   - Restore worker tests should seed a backup row, project it to `succeeded` through `ServiceBackupRepository.MarkSucceeded`, then build the job using the updated version.
 ---
+
+## 2026-05-18 20:06 +03 - BE-0263
+- What was implemented: Expanded contract coverage for `POST /v1/projects/{project_id}/previews`. The suite now pins success and error envelopes, inbound `X-Request-Id` propagation through the response and `CreatePreviewEnvironmentInput`, unauthenticated 401 behavior, authorization denial, strict invalid-input rejection, not-found propagation, OpenAPI operation registration, stdout/stderr silence, bearer-token request-log redaction, and dependency-cause redaction.
+- Files changed: `internal/controlplane/httpapi/project_previews_create_test.go`, `ralph/prd.json`, `ralph/progress.txt`.
+- Verification run: `gofmt -w .`; `go mod tidy`; `go test ./internal/controlplane/httpapi -run 'TestCreatePreview'`; `go test ./...`; `go test -race ./...`; `go vet ./...`; `go test ./internal/controlplane/...`; `go test -race ./internal/controlplane/...`; `go test -run TestMigrations ./...`; `go test -run TestPolicyMatrix ./...`; `go test -run TestQuotaConcurrency ./...`; `go test -run TestFakeDokploy ./...`; `golangci-lint run ./...`.
+- Results: All listed verification commands passed. `golangci-lint` reported `0 issues`. `goimports`, `staticcheck`, and `govulncheck` were not installed on PATH in this environment.
+- Remaining risks or follow-ups: This is a contract-test-only story; no production behavior changed. The later `create_preview_environment` worker story still needs the richer typed job payload noted in BE-0262.
+- **Learnings for future iterations:**
+  - Preview-create contract tests can use the existing fake creator and production `NewHandler` stack; no Postgres fixture or fake Dokploy is needed for HTTP contract coverage because the endpoint delegates provisioning through the store port and does not call Dokploy directly.
+  - For request-id contract coverage on mutating endpoints, assert the same inbound `X-Request-Id` appears in the envelope, response header, and store/service input so future job/audit wiring cannot silently drop correlation.
+---

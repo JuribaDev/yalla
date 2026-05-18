@@ -5906,8 +5906,8 @@
       ],
       "type": "test-preview",
       "priority": 2,
-      "passes": false,
-      "notes": "Contract coverage for POST /v1/projects/{project_id}/previews."
+      "passes": true,
+      "notes": "Contract coverage landed in internal/controlplane/httpapi/project_previews_create_test.go. It pins the POST /v1/projects/{project_id}/previews success and error envelopes, inbound request_id propagation to the response and store input, unauthenticated/unauthorized/invalid/not-found paths, OpenAPI operation registration, stdout/stderr silence, bearer-token log redaction, and dependency-cause redaction."
     },
     {
       "id": "BE-0264",

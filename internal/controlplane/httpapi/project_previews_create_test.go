@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	stderrors "errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,7 +36,13 @@ type createPreviewErrorEnvelope struct {
 	} `json:"error"`
 }
 
+const createPreviewContractSecret = "yk_live_supersecret_previews_create_DEADBEEF0123456789"
+
 func createPreviewHandlerFor(id auth.Identity, authErr error, creator PreviewCreator) http.Handler {
+	return createPreviewHandlerForWithLogger(id, authErr, creator, nil)
+}
+
+func createPreviewHandlerForWithLogger(id auth.Identity, authErr error, creator PreviewCreator, logger *slog.Logger) http.Handler {
 	a := fakeAuthenticator{identity: id, err: authErr}
 	return NewHandler(runtime.BuildInfo{Version: "1.0.0"}, nil, nil, nil, a, policy.NewEngine(),
 		fakeOrganizationReader{}, fakeOrganizationCreator{}, fakeOrganizationUpdater{}, fakeOrganizationDeleter{},
@@ -44,7 +52,7 @@ func createPreviewHandlerFor(id auth.Identity, authErr error, creator PreviewCre
 		fakeAPIKeyReader{}, fakeAPIKeyCreator{}, fakeAPIKeyUpdater{}, fakeAPIKeyRevoker{}, fakeAPIKeyRotator{},
 		fakeProjectReader{}, fakeProjectCreator{}, fakeProjectUpdater{}, fakeProjectDeleter{}, fakeProjectRestorer{},
 		fakeProjectGrantReader{}, fakeProjectGrantReplacer{}, fakeProjectVariableReader{}, fakeProjectVariableReplacer{},
-		fakeProjectEnvironmentReader{}, fakeEnvironmentCreator{}, fakeEnvironmentReader{}, fakeEnvironmentUpdater{}, fakeEnvironmentDeleter{}, fakeEnvironmentCloner{}, fakeEnvironmentGrantReader{}, fakeEnvironmentGrantReplacer{}, fakeEnvironmentVariableReader{}, fakeEnvironmentVariableReplacer{}, fakeEnvironmentServiceReader{}, fakeEnvironmentServiceCreator{}, fakeServiceReader{}, fakeServiceUpdater{}, fakeServiceDeleter{}, fakeServiceRestorer{}, fakeServiceRestarter{}, fakeServiceStarter{}, fakeServiceStopper{}, fakeServiceLogReader{}, fakeServiceMetricsReader{}, fakeServiceDomainReader{}, fakeServiceDomainCreator{}, fakeServiceDomainUpdater{}, fakeServiceDomainDeleter{}, fakeServiceBackupReader{}, fakeServiceBackupCreator{}, fakeServiceBackupUpdater{}, fakeServiceBackupRunner{}, fakeServiceBackupDeleter{}, fakeServiceVariableReader{}, fakeServiceVariableReplacer{}, fakeDeploymentCreator{}, fakeDeploymentLister{}, fakeDeploymentGetter{}, fakeDeploymentCanceler{}, fakeDeploymentRollbacker{}, fakeBreakGlassController{}, nil, nil, creator)
+		fakeProjectEnvironmentReader{}, fakeEnvironmentCreator{}, fakeEnvironmentReader{}, fakeEnvironmentUpdater{}, fakeEnvironmentDeleter{}, fakeEnvironmentCloner{}, fakeEnvironmentGrantReader{}, fakeEnvironmentGrantReplacer{}, fakeEnvironmentVariableReader{}, fakeEnvironmentVariableReplacer{}, fakeEnvironmentServiceReader{}, fakeEnvironmentServiceCreator{}, fakeServiceReader{}, fakeServiceUpdater{}, fakeServiceDeleter{}, fakeServiceRestorer{}, fakeServiceRestarter{}, fakeServiceStarter{}, fakeServiceStopper{}, fakeServiceLogReader{}, fakeServiceMetricsReader{}, fakeServiceDomainReader{}, fakeServiceDomainCreator{}, fakeServiceDomainUpdater{}, fakeServiceDomainDeleter{}, fakeServiceBackupReader{}, fakeServiceBackupCreator{}, fakeServiceBackupUpdater{}, fakeServiceBackupRunner{}, fakeServiceBackupDeleter{}, fakeServiceVariableReader{}, fakeServiceVariableReplacer{}, fakeDeploymentCreator{}, fakeDeploymentLister{}, fakeDeploymentGetter{}, fakeDeploymentCanceler{}, fakeDeploymentRollbacker{}, fakeBreakGlassController{}, logger, nil, creator)
 }
 
 func postProjectPreviews(handler http.Handler, projectID, token, body string) *httptest.ResponseRecorder {
@@ -134,6 +142,50 @@ func TestCreatePreviewReturnsCreatedPreview(t *testing.T) {
 	}
 }
 
+func TestCreatePreviewPropagatesInboundRequestID(t *testing.T) {
+	t.Parallel()
+
+	row := store.PreviewEnvironment{
+		ID:                  "penv_acme_pr_42",
+		OrganizationID:      "org_acme",
+		ProjectID:           "proj_acme_web",
+		EnvironmentID:       "env_acme_pr_42",
+		SourceEnvironmentID: "env_acme_prod",
+		DisplayName:         "PR 42",
+		ChangeRef:           "refs/pull/42/head",
+		Status:              store.PreviewEnvironmentStatusPending,
+		Version:             1,
+		CreatedAt:           time.Date(2026, 5, 18, 10, 0, 0, 0, time.UTC),
+		UpdatedAt:           time.Date(2026, 5, 18, 10, 0, 0, 0, time.UTC),
+	}
+	var captured store.CreatePreviewEnvironmentInput
+	handler := createPreviewHandlerFor(
+		auth.Identity{Principal: orgPrincipal("usr_ada", "org_acme", policy.RoleDeveloper), Method: auth.MethodSession},
+		nil, fakePreviewCreator{preview: row, gotInput: &captured})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/projects/proj_acme_web/previews",
+		bytes.NewReader([]byte(`{"preview_id":"penv_acme_pr_42","environment_id":"env_acme_pr_42","source_environment_id":"env_acme_prod","slug":"pr-42","display_name":"PR 42","change_ref":"refs/pull/42/head"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer tok-ada")
+	req.Header.Set("X-Request-Id", "req-preview-contract-123")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body %s", rec.Code, rec.Body.String())
+	}
+	env := decodeCreatePreview(t, rec)
+	if env.RequestID != "req-preview-contract-123" {
+		t.Errorf("envelope request_id = %q, want inbound request id", env.RequestID)
+	}
+	if got := rec.Header().Get("X-Request-Id"); got != "req-preview-contract-123" {
+		t.Errorf("X-Request-Id header = %q, want inbound request id", got)
+	}
+	if captured.RequestID != "req-preview-contract-123" {
+		t.Errorf("captured request id = %q, want inbound request id", captured.RequestID)
+	}
+}
+
 func TestCreatePreviewRejectsUnknownFieldBeforeCreator(t *testing.T) {
 	t.Parallel()
 
@@ -178,6 +230,28 @@ func TestCreatePreviewRequiresAuthorization(t *testing.T) {
 	}
 }
 
+func TestCreatePreviewRequiresAuthentication(t *testing.T) {
+	t.Parallel()
+
+	var calls int
+	creator := fakePreviewCreator{err: stderrors.New("creator must not be called"), callCount: &calls}
+	handler := createPreviewHandlerFor(auth.Identity{}, apierr.Unauthenticated("missing bearer token"), creator)
+
+	rec := postProjectPreviews(handler, "proj_acme_web", "",
+		`{"preview_id":"penv_acme_pr_42","environment_id":"env_acme_pr_42","source_environment_id":"env_acme_prod","slug":"pr-42","display_name":"PR 42","change_ref":"refs/pull/42/head"}`)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401; body %s", rec.Code, rec.Body.String())
+	}
+	env := decodeCreatePreviewError(t, rec)
+	if env.SchemaVersion != "yalla.error.v1" || env.OK || env.Error.Code != "E_AUTH" || env.RequestID == "" {
+		t.Errorf("error envelope = %+v, want E_AUTH with request_id", env)
+	}
+	if calls != 0 {
+		t.Errorf("creator called %d times after authentication failure; want 0", calls)
+	}
+}
+
 func TestCreatePreviewSurfacesProjectNotFound(t *testing.T) {
 	t.Parallel()
 
@@ -195,6 +269,184 @@ func TestCreatePreviewSurfacesProjectNotFound(t *testing.T) {
 	env := decodeCreatePreviewError(t, rec)
 	if env.SchemaVersion != "yalla.error.v1" || env.OK || env.Error.Code != "E_NOT_FOUND" {
 		t.Errorf("error envelope = %+v, want E_NOT_FOUND", env)
+	}
+}
+
+func TestCreatePreviewServerWritesResponseDataOnlyToResponseWriter(t *testing.T) {
+	// Not parallel: captureProcessOutput swaps the global os.Stdout/os.Stderr.
+
+	created := time.Date(2026, 5, 18, 10, 0, 0, 0, time.UTC)
+	row := store.PreviewEnvironment{
+		ID:                  "penv_acme_pr_42",
+		OrganizationID:      "org_acme",
+		ProjectID:           "proj_acme_web",
+		EnvironmentID:       "env_acme_pr_42",
+		SourceEnvironmentID: "env_acme_prod",
+		DisplayName:         "PR 42",
+		ChangeRef:           "refs/pull/42/head",
+		Status:              store.PreviewEnvironmentStatusPending,
+		Version:             1,
+		CreatedAt:           created,
+		UpdatedAt:           created,
+	}
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	handler := createPreviewHandlerForWithLogger(
+		auth.Identity{Principal: orgPrincipal("usr_ada", "org_acme", policy.RoleDeveloper), Method: auth.MethodSession},
+		nil, fakePreviewCreator{preview: row}, logger)
+
+	var rec *httptest.ResponseRecorder
+	stdout, stderr := captureProcessOutput(t, func() {
+		rec = postProjectPreviews(handler, "proj_acme_web", createPreviewContractSecret,
+			`{"preview_id":"penv_acme_pr_42","environment_id":"env_acme_pr_42","source_environment_id":"env_acme_prod","slug":"pr-42","display_name":"PR 42","change_ref":"refs/pull/42/head"}`)
+	})
+
+	if stdout != "" {
+		t.Errorf("HTTP server wrote %q to stdout, want nothing", stdout)
+	}
+	if stderr != "" {
+		t.Errorf("HTTP server wrote %q to stderr, want nothing", stderr)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body %s", rec.Code, rec.Body.String())
+	}
+	env := decodeCreatePreview(t, rec)
+	if env.Data.Preview.ID != "penv_acme_pr_42" {
+		t.Errorf("preview.id = %q, want response data in body", env.Data.Preview.ID)
+	}
+	if logBuf.Len() == 0 {
+		t.Error("structured request log is empty, want one record for the served request")
+	}
+}
+
+func TestCreatePreviewRequestLogRedactsBearerToken(t *testing.T) {
+	t.Parallel()
+
+	created := time.Date(2026, 5, 18, 10, 0, 0, 0, time.UTC)
+	successCreator := fakePreviewCreator{preview: store.PreviewEnvironment{
+		ID:                  "penv_acme_pr_42",
+		OrganizationID:      "org_acme",
+		ProjectID:           "proj_acme_web",
+		EnvironmentID:       "env_acme_pr_42",
+		SourceEnvironmentID: "env_acme_prod",
+		DisplayName:         "PR 42",
+		ChangeRef:           "refs/pull/42/head",
+		Status:              store.PreviewEnvironmentStatusPending,
+		Version:             1,
+		CreatedAt:           created,
+		UpdatedAt:           created,
+	}}
+	denyCreator := fakePreviewCreator{err: stderrors.New("creator must not be called")}
+
+	tests := []struct {
+		name       string
+		identity   auth.Identity
+		creator    PreviewCreator
+		wantStatus int
+	}{
+		{
+			name:       "success path",
+			identity:   auth.Identity{Principal: orgPrincipal("usr_ada", "org_acme", policy.RoleDeveloper), Method: auth.MethodSession},
+			creator:    successCreator,
+			wantStatus: http.StatusCreated,
+		},
+		{
+			name:       "authorization failure path",
+			identity:   auth.Identity{Principal: orgPrincipal("usr_eve", "org_acme", policy.RoleViewer), Method: auth.MethodSession},
+			creator:    denyCreator,
+			wantStatus: http.StatusForbidden,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var logBuf bytes.Buffer
+			logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+			handler := createPreviewHandlerForWithLogger(tc.identity, nil, tc.creator, logger)
+
+			rec := postProjectPreviews(handler, "proj_acme_web", createPreviewContractSecret,
+				`{"preview_id":"penv_acme_pr_42","environment_id":"env_acme_pr_42","source_environment_id":"env_acme_prod","slug":"pr-42","display_name":"PR 42","change_ref":"refs/pull/42/head"}`)
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d; body %s", rec.Code, tc.wantStatus, rec.Body.String())
+			}
+			if logBuf.Len() == 0 {
+				t.Fatal("structured request log is empty, want one record for the served request")
+			}
+			if strings.Contains(logBuf.String(), createPreviewContractSecret) {
+				t.Errorf("request log leaked the bearer credential: %s", logBuf.String())
+			}
+			if strings.Contains(rec.Body.String(), createPreviewContractSecret) {
+				t.Errorf("response body echoed the bearer credential: %s", rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestCreatePreviewErrorEnvelopeDoesNotLeakDependencyCause(t *testing.T) {
+	t.Parallel()
+
+	const cause = "connection refused dialing 10.0.0.5:5432"
+	handler := createPreviewHandlerFor(
+		auth.Identity{Principal: orgPrincipal("usr_ada", "org_acme", policy.RoleDeveloper), Method: auth.MethodSession},
+		nil, fakePreviewCreator{err: apierr.StoreUnavailable(stderrors.New(cause))})
+
+	rec := postProjectPreviews(handler, "proj_acme_web", createPreviewContractSecret,
+		`{"preview_id":"penv_acme_pr_42","environment_id":"env_acme_pr_42","source_environment_id":"env_acme_prod","slug":"pr-42","display_name":"PR 42","change_ref":"refs/pull/42/head"}`)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503; body %s", rec.Code, rec.Body.String())
+	}
+	env := decodeCreatePreviewError(t, rec)
+	if env.SchemaVersion != "yalla.error.v1" || env.OK || env.Error.Code != "E_UNAVAILABLE" {
+		t.Errorf("error envelope = %+v, want E_UNAVAILABLE", env)
+	}
+	if strings.Contains(rec.Body.String(), cause) {
+		t.Errorf("error envelope leaked the wrapped dependency cause %q: %s", cause, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "10.0.0.5") {
+		t.Errorf("error envelope leaked the datastore address: %s", rec.Body.String())
+	}
+}
+
+func TestCreatePreviewRouteIsDocumented(t *testing.T) {
+	t.Parallel()
+
+	handler := createPreviewHandlerFor(
+		auth.Identity{Principal: orgPrincipal("usr_ada", "org_acme", policy.RoleDeveloper), Method: auth.MethodSession},
+		nil, fakePreviewCreator{})
+	req := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("openapi.json status = %d, want 200; body %s", rec.Code, rec.Body.String())
+	}
+
+	var doc struct {
+		Paths map[string]map[string]struct {
+			OperationID    string                `json:"operationId"`
+			Summary        string                `json:"summary"`
+			RequiredAction string                `json:"x-required-action"`
+			Security       []map[string][]string `json:"security"`
+		} `json:"paths"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("decode openapi.json: %v", err)
+	}
+	op, ok := doc.Paths["/v1/projects/{project_id}/previews"]["post"]
+	if !ok {
+		t.Fatalf("POST /v1/projects/{project_id}/previews missing from openapi.json: %s", rec.Body.String())
+	}
+	if op.OperationID != "createPreview" {
+		t.Errorf("operationId = %q, want createPreview", op.OperationID)
+	}
+	if op.Summary != "Create preview environment" {
+		t.Errorf("summary = %q, want Create preview environment", op.Summary)
+	}
+	if op.RequiredAction != string(policy.ActionPreviewCreate) {
+		t.Errorf("x-required-action = %q, want %s", op.RequiredAction, policy.ActionPreviewCreate)
+	}
+	if len(op.Security) == 0 {
+		t.Error("security is empty, want ApiKeyAuth requirement for authenticated route")
 	}
 }
 
