@@ -9326,8 +9326,8 @@
       ],
       "type": "repository",
       "priority": 1,
-      "passes": false,
-      "notes": "Database table: environment_grants."
+      "passes": true,
+      "notes": "Database table: environment_grants. BE-0443 covered by internal/controlplane/store/environment_grant_repository_invariants_test.go \u2014 12 new tests pin EnvironmentGrantRepository Upsert + DeleteByEnvironmentExceptIDs row-shape and lifecycle invariants (INSERT timestamps+version+pointer round-trip; ON CONFLICT UPDATE only mutates role, ignores caller id, preserves principal_kind; cross-tenant/unknown environment_id \u2192 typed Conflict; duplicate primary key \u2192 typed Conflict; nil/empty keepIDs clears all; non-empty keepIDs keeps only listed ids; tenant-scoped DELETE; ON DELETE CASCADE from environments; Upsert rolls back on tx rollback; nil-Tx guards on both mutators \u2192 typed Internal). All 12 PASS against an isolated migrated Postgres, including under -race. gofmt, go vet, go build, go mod tidy, go test ./..., and go test -race ./... all green."
     },
     {
       "id": "BE-0444",
