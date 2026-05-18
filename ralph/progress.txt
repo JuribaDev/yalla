@@ -34654,3 +34654,35 @@ change that widened Reason to caller-supplied data.
   - Environment lifecycle now mirrors the service state-machine pattern: transition validation is pure Go, persistence locks and mutates the tenant-scoped row, and the event row is appended atomically with redacted reason metadata.
   - Adding a status column to a shared repository projection requires updating `environmentColumns`, `scanEnvironment`, and every store-backed fixture expectation that asserts lifecycle state.
 ---
+## 2026-05-18 21:36 +03 - BE-0269
+- What was implemented
+  - Added dedicated public-API contract tests for DELETE `/v1/projects/{project_id}/previews/{preview_id}`.
+  - Covered inbound `X-Request-Id` propagation to the response envelope/header and store input, invalid `If-Match` error-envelope stability with no submitted-value echo, stdout/stderr silence, structured-log bearer-token redaction on success and authorization failure paths, and dependency-cause redaction for store failures.
+  - Marked `BE-0269` as `passes: true` in `ralph/prd.json`.
+- Files changed
+  - `internal/controlplane/httpapi/project_previews_delete_contract_test.go`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `go test ./internal/controlplane/httpapi -run 'TestDeleteProjectPreview'`
+  - `gofmt -w .`
+  - `goimports -w .` (not installed locally)
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `golangci-lint run ./...`
+  - Direct `staticcheck ./...` check (not installed in the interactive shell PATH)
+  - Direct `govulncheck ./...` check (not installed in the interactive shell PATH)
+  - Pre-commit `scripts/verify.sh --strict --release`, which reran formatting/module/vet/test/race-focused suites plus optional `govulncheck`, `staticcheck`, `golangci-lint`, `goreleaser check`, and snapshot release checks.
+- Results
+  - Focused preview-delete HTTP API tests passed.
+  - Required formatting, module cleanup, tests, race detector, and vet passed.
+  - `golangci-lint` passed with 0 issues.
+  - Pre-commit strict release verification passed, including optional `govulncheck` (no vulnerabilities), `staticcheck`, and GoReleaser snapshot checks.
+- Remaining risks or follow-ups
+  - Optional `goimports` could not be run because it is not installed locally.
+- **Learnings for future iterations:**
+  - DELETE contract-test stories can layer a dedicated `*_contract_test.go` file beside focused endpoint tests to pin request-correlation, stdout/stderr silence, log redaction, and dependency-cause redaction without changing production code.
+  - For DELETE preview invalid-input coverage, malformed `If-Match` is the stable request-boundary failure because the route has opaque path parameters and no body; assert the envelope does not echo the malformed header bytes.
+---

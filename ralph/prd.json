@@ -6020,8 +6020,8 @@
       ],
       "type": "test-preview",
       "priority": 2,
-      "passes": false,
-      "notes": "Contract coverage for DELETE /v1/projects/{project_id}/previews/{preview_id}."
+      "passes": true,
+      "notes": "Dedicated contract coverage landed at internal/controlplane/httpapi/project_previews_delete_contract_test.go. It pins DELETE /v1/projects/{project_id}/previews/{preview_id} inbound request_id propagation to response/header/store input, stable invalid-input and dependency-error envelopes, stdout/stderr silence, structured-log bearer-token redaction, response-body secret redaction, and existing success/error/OpenAPI contract coverage."
     },
     {
       "id": "BE-0270",
