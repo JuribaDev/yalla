@@ -751,6 +751,77 @@ func (r *ServiceBackupRepository) MarkPending(ctx context.Context, tx *Tx, organ
 	return updated, nil
 }
 
+// MarkRunning records that the worker accepted a backup run. It is tenant
+// scoped by (organization_id, service_id, id), sets last_run_at to the database
+// clock, clears no success marker, and returns the authoritative row after the
+// update.
+func (r *ServiceBackupRepository) MarkRunning(ctx context.Context, tx *Tx, organizationID, serviceID, backupID string) (ServiceBackup, error) {
+	if tx == nil {
+		return ServiceBackup{}, apierr.Internal(errors.New("store: ServiceBackupRepository.MarkRunning called with a nil transaction"))
+	}
+	row := tx.QueryRow(ctx,
+		`UPDATE service_backups
+		    SET status = $4,
+		        last_run_at = now()
+		  WHERE organization_id = $1 AND service_id = $2 AND id = $3
+		 RETURNING `+serviceBackupColumns,
+		organizationID, serviceID, backupID, ServiceBackupStatusRunning)
+	updated, err := scanServiceBackup(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ServiceBackup{}, apierr.NotFound("service backup", backupID)
+	}
+	if err != nil {
+		return ServiceBackup{}, apierr.StoreUnavailable(err)
+	}
+	return updated, nil
+}
+
+// MarkSucceeded records a successful worker-driven backup run. The worker owns
+// this transition; public PATCH paths cannot set it.
+func (r *ServiceBackupRepository) MarkSucceeded(ctx context.Context, tx *Tx, organizationID, serviceID, backupID string) (ServiceBackup, error) {
+	if tx == nil {
+		return ServiceBackup{}, apierr.Internal(errors.New("store: ServiceBackupRepository.MarkSucceeded called with a nil transaction"))
+	}
+	row := tx.QueryRow(ctx,
+		`UPDATE service_backups
+		    SET status = $4,
+		        last_succeeded_at = now()
+		  WHERE organization_id = $1 AND service_id = $2 AND id = $3
+		 RETURNING `+serviceBackupColumns,
+		organizationID, serviceID, backupID, ServiceBackupStatusSucceeded)
+	updated, err := scanServiceBackup(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ServiceBackup{}, apierr.NotFound("service backup", backupID)
+	}
+	if err != nil {
+		return ServiceBackup{}, apierr.StoreUnavailable(err)
+	}
+	return updated, nil
+}
+
+// MarkFailed records a failed worker-driven backup run. It keeps the last
+// successful timestamp unchanged so operators can still see the last known
+// good backup.
+func (r *ServiceBackupRepository) MarkFailed(ctx context.Context, tx *Tx, organizationID, serviceID, backupID string) (ServiceBackup, error) {
+	if tx == nil {
+		return ServiceBackup{}, apierr.Internal(errors.New("store: ServiceBackupRepository.MarkFailed called with a nil transaction"))
+	}
+	row := tx.QueryRow(ctx,
+		`UPDATE service_backups
+		    SET status = $4
+		  WHERE organization_id = $1 AND service_id = $2 AND id = $3
+		 RETURNING `+serviceBackupColumns,
+		organizationID, serviceID, backupID, ServiceBackupStatusFailed)
+	updated, err := scanServiceBackup(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ServiceBackup{}, apierr.NotFound("service backup", backupID)
+	}
+	if err != nil {
+		return ServiceBackup{}, apierr.StoreUnavailable(err)
+	}
+	return updated, nil
+}
+
 // RunServiceBackupInput is the unvalidated input to
 // ServiceBackupService.Run. OrganizationID, ServiceID, and BackupID
 // name the backup-policy row whose manual run was requested; the

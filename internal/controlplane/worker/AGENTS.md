@@ -100,6 +100,14 @@ Background provisioning/metering workers for the control plane.
   call the typed Dokploy `SyncVariables` intent. Fake Dokploy request recording
   must redact the rendered `env` field because it contains plaintext effective
   values.
+- Backup run jobs (`run_backup`) use the scoped payload
+  `(organization_id, project_id, environment_id, service_id, backup_id)`, reload
+  both the service and `service_backups` row through tenant-scoped repositories,
+  reject stale backup versions plus disabled/running/deletion-scheduled state
+  before any Dokploy call, resolve the service-kind-specific Dokploy service
+  ref, mark the backup `running`, call the typed Dokploy `RunBackup` intent,
+  then project the row to `succeeded` or `failed`. A succeeded backup row is a
+  replay no-op and must not issue another upstream POST.
 - Integration tests are `package worker_test`, use `testutil.RequireMigratedDB`,
   and `t.Skip` when `YALLA_TEST_DATABASE_URL` is unset. A concurrent-claim test
   must retry-until-drained with a deadline guard — a job locked by a peer's

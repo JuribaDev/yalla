@@ -80,6 +80,13 @@ type Deployment struct {
 	Status    string `json:"status"`
 }
 
+// BackupRun is one backup execution triggered against a service.
+type BackupRun struct {
+	ID        string `json:"id"`
+	ServiceID string `json:"service_id"`
+	Status    string `json:"status"`
+}
+
 // resourceStore is the fake's in-memory state. It is not safe for concurrent
 // use on its own; every access goes through a Server method holding Server.mu.
 type resourceStore struct {
@@ -90,6 +97,7 @@ type resourceStore struct {
 	serviceEnvs   map[string]string
 	domains       map[string]*Domain
 	deployments   map[string]*Deployment
+	backupRuns    map[string]*BackupRun
 	// logs maps a deployment ID to its log lines.
 	logs map[string][]string
 	// counters backs deterministic per-kind ID generation.
@@ -106,6 +114,7 @@ func newResourceStore() resourceStore {
 		serviceEnvs:   map[string]string{},
 		domains:       map[string]*Domain{},
 		deployments:   map[string]*Deployment{},
+		backupRuns:    map[string]*BackupRun{},
 		logs:          map[string][]string{},
 		counters:      map[string]int{},
 	}
@@ -154,6 +163,7 @@ func (s *Server) newMux() *http.ServeMux {
 	mux.HandleFunc("POST /api/services/{id}/rollback", s.rollbackService)
 	mux.HandleFunc("POST /api/services/{id}/start", s.startService)
 	mux.HandleFunc("POST /api/services/{id}/stop", s.stopService)
+	mux.HandleFunc("POST /api/services/{id}/backups", s.runBackup)
 	mux.HandleFunc("DELETE /api/services/{id}", s.deleteService)
 
 	mux.HandleFunc("POST /api/domains", s.createDomain)
@@ -649,6 +659,36 @@ func (s *Server) stopService(w http.ResponseWriter, r *http.Request) {
 		ServiceID: svc.ID,
 		Status:    svc.Status,
 	})
+}
+
+type runBackupRequest struct {
+	BackupID string `json:"backup_id"`
+}
+
+func (s *Server) runBackup(w http.ResponseWriter, r *http.Request) {
+	var req runBackupRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if !requireField(w, req.BackupID, "backup_id") {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	serviceID := r.PathValue("id")
+	if _, ok := s.resources.services[serviceID]; !ok {
+		writeError(w, http.StatusNotFound, "not_found", "no such service")
+		return
+	}
+	run := &BackupRun{
+		ID:        s.resources.nextID("backup_run"),
+		ServiceID: serviceID,
+		Status:    DeploymentSucceeded,
+	}
+	s.resources.backupRuns[run.ID] = run
+	writeJSON(w, http.StatusCreated, run)
 }
 
 // deleteService removes a service and any domains bound to it. Removal is

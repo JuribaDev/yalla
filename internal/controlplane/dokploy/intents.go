@@ -246,6 +246,20 @@ func (c *Client) DeployService(ctx context.Context, in DeployServiceInput) (Depl
 	return dep, nil
 }
 
+// RunBackup triggers a service backup and returns the created backup run.
+func (c *Client) RunBackup(ctx context.Context, in RunBackupInput) (BackupRun, error) {
+	if v := requireFields(field{"service_id", in.ServiceID}, field{"backup_id", in.BackupID}); v != nil {
+		return BackupRun{}, v
+	}
+	var run BackupRun
+	if err := c.post(ctx, "/api/services/"+url.PathEscape(strings.TrimSpace(in.ServiceID))+"/backups", map[string]any{
+		"backup_id": strings.TrimSpace(in.BackupID),
+	}, &run); err != nil {
+		return BackupRun{}, err
+	}
+	return run, nil
+}
+
 // RestartService restarts a service and returns its post-command runtime
 // status as reported by Dokploy.
 func (c *Client) RestartService(ctx context.Context, in RestartServiceInput) (ServiceStatus, error) {

@@ -10352,8 +10352,8 @@
       ],
       "type": "worker-job",
       "priority": 1,
-      "passes": false,
-      "notes": "Provisioning job type: run_backup."
+      "passes": true,
+      "notes": "Implemented durable run_backup execution through worker.Provisioner with typed payload validation, tenant-scoped service and service_backups desired-state reload, stale-version/cross-scope/disabled/running terminal refusal, service-kind Dokploy ref resolution, typed Dokploy RunBackup intent, worker-owned backup run-state projection to running/succeeded/failed, replay-safe no-op after success, fake Dokploy success/retry/cancellation/stale coverage, and redacted request recording. Required quality checks passed."
     },
     {
       "id": "BE-0498",

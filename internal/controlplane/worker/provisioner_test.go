@@ -1522,6 +1522,105 @@ func TestSyncVariablesPayloadValidation(t *testing.T) {
 	}
 }
 
+func TestRunBackupPayloadValidation(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name    string
+		job     store.ProvisioningJob
+		wantErr bool
+	}{
+		{
+			name: "valid",
+			job: store.ProvisioningJob{
+				OrganizationID: "org_valid",
+				ProjectID:      "proj_valid",
+				EnvironmentID:  "env_valid",
+				ServiceID:      "svc_valid",
+				JobType:        worker.JobTypeRunBackup,
+				Payload: map[string]string{
+					"organization_id": "org_valid",
+					"project_id":      "proj_valid",
+					"environment_id":  "env_valid",
+					"service_id":      "svc_valid",
+					"backup_id":       "bkp_valid",
+				},
+			},
+		},
+		{
+			name: "missing backup",
+			job: store.ProvisioningJob{
+				OrganizationID: "org_valid",
+				ProjectID:      "proj_valid",
+				EnvironmentID:  "env_valid",
+				ServiceID:      "svc_valid",
+				JobType:        worker.JobTypeRunBackup,
+				Payload: map[string]string{
+					"organization_id": "org_valid",
+					"project_id":      "proj_valid",
+					"environment_id":  "env_valid",
+					"service_id":      "svc_valid",
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "cross tenant payload",
+			job: store.ProvisioningJob{
+				OrganizationID: "org_valid",
+				ProjectID:      "proj_valid",
+				EnvironmentID:  "env_valid",
+				ServiceID:      "svc_valid",
+				JobType:        worker.JobTypeRunBackup,
+				Payload: map[string]string{
+					"organization_id": "org_other",
+					"project_id":      "proj_valid",
+					"environment_id":  "env_valid",
+					"service_id":      "svc_valid",
+					"backup_id":       "bkp_valid",
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "wrong job type",
+			job: store.ProvisioningJob{
+				OrganizationID: "org_valid",
+				ProjectID:      "proj_valid",
+				EnvironmentID:  "env_valid",
+				ServiceID:      "svc_valid",
+				JobType:        worker.JobTypeSyncVariables,
+				Payload: map[string]string{
+					"organization_id": "org_valid",
+					"project_id":      "proj_valid",
+					"environment_id":  "env_valid",
+					"service_id":      "svc_valid",
+					"backup_id":       "bkp_valid",
+				},
+			},
+			wantErr: true,
+		},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := worker.ParseRunBackupPayload(tc.job)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("ParseRunBackupPayload returned nil, want validation error")
+				}
+				if !worker.IsTerminal(err) {
+					t.Fatalf("validation error is not terminal: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseRunBackupPayload returned %v, want nil", err)
+			}
+		})
+	}
+}
+
 func TestProvisionerEnsuresDokployOrganizationAndPersistsMapping(t *testing.T) {
 	t.Parallel()
 
@@ -2291,6 +2390,177 @@ func TestProvisionerSyncVariablesCancellationIsNotTerminal(t *testing.T) {
 	}
 	if worker.IsTerminal(err) {
 		t.Fatalf("Run sync_variables cancellation is terminal: %v", err)
+	}
+}
+
+func TestProvisionerRunBackupMarksBackupSucceeded(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	org := insertWorkerOrg(ctx, t, dataStore, "acme")
+	project := insertWorkerProject(ctx, t, dataStore, org, "api")
+	env := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+	svc := insertWorkerService(ctx, t, dataStore, env, "api", store.ServiceKindApplication)
+	backup := insertWorkerServiceBackup(ctx, t, dataStore, svc, "nightly")
+
+	fake := dokployfake.New()
+	defer fake.Close()
+	client := newWorkerDokployClient(t, fake)
+	dokployServiceID := seedFakeDokployApplicationService(ctx, t, client)
+	insertWorkerServiceRef(ctx, t, dataStore, svc, store.DokployResourceApplication, dokployServiceID)
+
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: client,
+		Mapper: dokploy.NewMapper(),
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+
+	job := runBackupJob(svc, backup)
+	if err := p.Run(ctx, job); err != nil {
+		t.Fatalf("Run run_backup: %v", err)
+	}
+	updated := getWorkerServiceBackup(ctx, t, dataStore, svc, backup.ID)
+	if updated.Status != store.ServiceBackupStatusSucceeded {
+		t.Fatalf("backup status = %q, want %q", updated.Status, store.ServiceBackupStatusSucceeded)
+	}
+	if updated.LastRunAt == nil || updated.LastSucceededAt == nil {
+		t.Fatalf("backup timestamps after run = last_run_at %v last_succeeded_at %v, want both populated", updated.LastRunAt, updated.LastSucceededAt)
+	}
+
+	reqs := fake.Requests()
+	if len(reqs) != 5 || reqs[4].Method != http.MethodPost || reqs[4].Path != "/api/services/app_1/backups" {
+		t.Fatalf("fake requests = %+v, want service seed then POST /api/services/app_1/backups", reqs)
+	}
+	if reqs[4].AuthHeader != output.Sentinel || strings.Contains(reqs[4].Body, fake.Token()) {
+		t.Fatalf("backup request recording leaked credentials: %+v", reqs[4])
+	}
+
+	if err := p.Run(ctx, job); err != nil {
+		t.Fatalf("replayed Run run_backup: %v", err)
+	}
+	reqs = fake.Requests()
+	if len(reqs) != 5 {
+		t.Fatalf("replayed run_backup fake requests = %+v, want no additional Dokploy call", reqs)
+	}
+}
+
+func TestProvisionerRunBackupRetryableFailureMarksBackupFailed(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	org := insertWorkerOrg(ctx, t, dataStore, "acme")
+	project := insertWorkerProject(ctx, t, dataStore, org, "api")
+	env := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+	svc := insertWorkerService(ctx, t, dataStore, env, "api", store.ServiceKindApplication)
+	backup := insertWorkerServiceBackup(ctx, t, dataStore, svc, "nightly")
+
+	fake := dokployfake.New()
+	defer fake.Close()
+	client := newWorkerDokployClient(t, fake)
+	dokployServiceID := seedFakeDokployApplicationService(ctx, t, client)
+	insertWorkerServiceRef(ctx, t, dataStore, svc, store.DokployResourceApplication, dokployServiceID)
+	fake.QueueFault(dokployfake.StatusFault(http.StatusInternalServerError))
+
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: client,
+		Mapper: dokploy.NewMapper(),
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+
+	err = p.Run(ctx, runBackupJob(svc, backup))
+	if err == nil {
+		t.Fatal("Run run_backup returned nil, want retryable error")
+	}
+	if worker.IsTerminal(err) {
+		t.Fatalf("Run run_backup error is terminal, want retryable: %v", err)
+	}
+	updated := getWorkerServiceBackup(ctx, t, dataStore, svc, backup.ID)
+	if updated.Status != store.ServiceBackupStatusFailed {
+		t.Fatalf("backup status after retryable failure = %q, want %q", updated.Status, store.ServiceBackupStatusFailed)
+	}
+	if updated.LastRunAt == nil {
+		t.Fatalf("backup last_run_at after retryable failure is nil, want populated")
+	}
+}
+
+func TestProvisionerRunBackupRefusesStaleDesiredVersion(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	org := insertWorkerOrg(ctx, t, dataStore, "acme")
+	project := insertWorkerProject(ctx, t, dataStore, org, "api")
+	env := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+	svc := insertWorkerService(ctx, t, dataStore, env, "api", store.ServiceKindApplication)
+	backup := insertWorkerServiceBackup(ctx, t, dataStore, svc, "nightly")
+	insertWorkerServiceRef(ctx, t, dataStore, svc, store.DokployResourceApplication, "app_stale")
+
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: canceledClient{},
+		Mapper: dokploy.NewMapper(),
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+	job := runBackupJob(svc, backup)
+	job.DesiredVersion = backup.Version + 1
+	err = p.Run(ctx, job)
+	if err == nil || !worker.IsTerminal(err) {
+		t.Fatalf("Run stale run_backup = %v, want terminal error", err)
+	}
+}
+
+func TestProvisionerRunBackupCancellationIsNotTerminal(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	org := insertWorkerOrg(ctx, t, dataStore, "acme")
+	project := insertWorkerProject(ctx, t, dataStore, org, "api")
+	env := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+	svc := insertWorkerService(ctx, t, dataStore, env, "api", store.ServiceKindApplication)
+	backup := insertWorkerServiceBackup(ctx, t, dataStore, svc, "nightly")
+	insertWorkerServiceRef(ctx, t, dataStore, svc, store.DokployResourceApplication, "app_cancelled")
+
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: canceledClient{},
+		Mapper: dokploy.NewMapper(),
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+	err = p.Run(ctx, runBackupJob(svc, backup))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run run_backup cancellation = %v, want context.Canceled", err)
+	}
+	if worker.IsTerminal(err) {
+		t.Fatalf("Run run_backup cancellation is terminal: %v", err)
 	}
 }
 
@@ -6149,6 +6419,10 @@ func (canceledClient) DeployService(context.Context, dokploy.DeployServiceInput)
 	return dokploy.Deployment{}, context.Canceled
 }
 
+func (canceledClient) RunBackup(context.Context, dokploy.RunBackupInput) (dokploy.BackupRun, error) {
+	return dokploy.BackupRun{}, context.Canceled
+}
+
 func (canceledClient) RestartService(context.Context, dokploy.RestartServiceInput) (dokploy.ServiceStatus, error) {
 	return dokploy.ServiceStatus{}, context.Canceled
 }
@@ -6187,6 +6461,37 @@ func newWorkerDokployClient(t *testing.T, fake *dokployfake.Server) *dokploy.Cli
 		t.Fatalf("dokploy.New: %v", err)
 	}
 	return client
+}
+
+func seedFakeDokployApplicationService(ctx context.Context, t *testing.T, client *dokploy.Client) string {
+	t.Helper()
+	org, err := client.EnsureOrganization(ctx, dokploy.EnsureOrganizationInput{Name: "worker-test-org"})
+	if err != nil {
+		t.Fatalf("seed fake Dokploy organization: %v", err)
+	}
+	project, err := client.EnsureProject(ctx, dokploy.EnsureProjectInput{
+		OrganizationID: org.ID,
+		Name:           "worker-test-project",
+	})
+	if err != nil {
+		t.Fatalf("seed fake Dokploy project: %v", err)
+	}
+	env, err := client.EnsureEnvironment(ctx, dokploy.EnsureEnvironmentInput{
+		ProjectID: project.ID,
+		Name:      "worker-test-environment",
+	})
+	if err != nil {
+		t.Fatalf("seed fake Dokploy environment: %v", err)
+	}
+	svc, err := client.EnsureService(ctx, dokploy.EnsureServiceInput{
+		EnvironmentID: env.ID,
+		Name:          "worker-test-service",
+		Type:          dokploy.ServiceApplication,
+	})
+	if err != nil {
+		t.Fatalf("seed fake Dokploy application service: %v", err)
+	}
+	return svc.ID
 }
 
 func insertWorkerOrg(ctx context.Context, t *testing.T, s *store.Store, label string) store.Organization {
@@ -6383,6 +6688,28 @@ func syncVariablesJob(svc store.Service) store.ProvisioningJob {
 		},
 		RequestID:     "req_sync_variables_test",
 		CorrelationID: "corr_sync_variables_test",
+	}
+}
+
+func runBackupJob(svc store.Service, backup store.ServiceBackup) store.ProvisioningJob {
+	return store.ProvisioningJob{
+		ID:             "job_run_backup_test",
+		OrganizationID: svc.OrganizationID,
+		ProjectID:      svc.ProjectID,
+		EnvironmentID:  svc.EnvironmentID,
+		ServiceID:      svc.ID,
+		JobType:        worker.JobTypeRunBackup,
+		DesiredVersion: backup.Version,
+		IdempotencyKey: "run-backup-" + backup.ID,
+		Payload: map[string]string{
+			"organization_id": svc.OrganizationID,
+			"project_id":      svc.ProjectID,
+			"environment_id":  svc.EnvironmentID,
+			"service_id":      svc.ID,
+			"backup_id":       backup.ID,
+		},
+		RequestID:     "req_run_backup_test",
+		CorrelationID: "corr_run_backup_test",
 	}
 }
 
@@ -6686,6 +7013,28 @@ func insertWorkerDeployment(ctx context.Context, t *testing.T, s *store.Store, s
 	return dep
 }
 
+func insertWorkerServiceBackup(ctx context.Context, t *testing.T, s *store.Store, svc store.Service, label string) store.ServiceBackup {
+	t.Helper()
+	repo := store.NewServiceBackupRepository()
+	var backup store.ServiceBackup
+	if err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		var err error
+		backup, err = repo.Insert(ctx, tx, store.ServiceBackup{
+			ID:             domain.MustNewID(domain.KindServiceBackup).String(),
+			OrganizationID: svc.OrganizationID,
+			ServiceID:      svc.ID,
+			DisplayName:    label,
+			Schedule:       "0 2 * * *",
+			RetentionCount: 7,
+			Enabled:        true,
+		})
+		return err
+	}); err != nil {
+		t.Fatalf("insert service backup: %v", err)
+	}
+	return backup
+}
+
 func insertWorkerServiceDomain(ctx context.Context, t *testing.T, s *store.Store, svc store.Service, hostname string) store.ServiceDomain {
 	t.Helper()
 	repo := store.NewServiceDomainRepository()
@@ -6889,6 +7238,20 @@ func getWorkerDeployment(ctx context.Context, t *testing.T, s *store.Store, orga
 		t.Fatalf("get deployment: %v", err)
 	}
 	return dep
+}
+
+func getWorkerServiceBackup(ctx context.Context, t *testing.T, s *store.Store, svc store.Service, backupID string) store.ServiceBackup {
+	t.Helper()
+	repo := store.NewServiceBackupRepository()
+	var backup store.ServiceBackup
+	if err := s.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		var err error
+		backup, err = repo.GetByID(ctx, q, svc.OrganizationID, svc.ID, backupID)
+		return err
+	}); err != nil {
+		t.Fatalf("get service backup: %v", err)
+	}
+	return backup
 }
 
 func listOrgRefs(ctx context.Context, t *testing.T, s *store.Store, organizationID string) []store.DokployRef {

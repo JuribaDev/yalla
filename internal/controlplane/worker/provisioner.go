@@ -121,6 +121,10 @@ const JobTypeSyncDomains = "sync_domains"
 // effective Yalla variable hierarchy into a Dokploy service environment.
 const JobTypeSyncVariables = "sync_variables"
 
+// JobTypeRunBackup is the durable provisioning job that triggers one
+// service_backups policy against the mapped Dokploy service.
+const JobTypeRunBackup = "run_backup"
+
 // DokployClient is the narrow typed-client surface these worker jobs
 // needs. *dokploy.Client satisfies it in production; tests can supply fakes.
 type DokployClient interface {
@@ -131,6 +135,7 @@ type DokployClient interface {
 	EnsureDomain(context.Context, dokploy.EnsureDomainInput) (dokploy.Domain, error)
 	SyncVariables(context.Context, dokploy.SyncVariablesInput) error
 	DeployService(context.Context, dokploy.DeployServiceInput) (dokploy.Deployment, error)
+	RunBackup(context.Context, dokploy.RunBackupInput) (dokploy.BackupRun, error)
 	RestartService(context.Context, dokploy.RestartServiceInput) (dokploy.ServiceStatus, error)
 	RollbackService(context.Context, dokploy.RollbackServiceInput) (dokploy.ServiceStatus, error)
 	StopService(context.Context, dokploy.StopServiceInput) (dokploy.ServiceStatus, error)
@@ -960,6 +965,16 @@ type SyncVariablesPayload struct {
 	Engine         string
 }
 
+// RunBackupPayload is the typed schema carried by provisioning_jobs.payload
+// for JobTypeRunBackup.
+type RunBackupPayload struct {
+	OrganizationID string
+	ProjectID      string
+	EnvironmentID  string
+	ServiceID      string
+	BackupID       string
+}
+
 // ParseSyncVariablesPayload validates a sync-variables job payload and returns
 // a terminal error for payload shapes retrying cannot repair.
 func ParseSyncVariablesPayload(job store.ProvisioningJob) (SyncVariablesPayload, error) {
@@ -1013,6 +1028,65 @@ func ParseSyncVariablesPayload(job store.ProvisioningJob) (SyncVariablesPayload,
 		EnvironmentID:  payloadEnvironmentID,
 		ServiceID:      payloadServiceID,
 		Engine:         job.Payload["engine"],
+	}, nil
+}
+
+// ParseRunBackupPayload validates a run_backup job payload and returns a
+// terminal error for payload shapes retrying cannot repair.
+func ParseRunBackupPayload(job store.ProvisioningJob) (RunBackupPayload, error) {
+	var violations []apierr.FieldViolation
+	if job.JobType != JobTypeRunBackup {
+		violations = append(violations, apierr.FieldViolation{Field: "job_type", Reason: "must be run_backup"})
+	}
+	if job.OrganizationID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "organization_id", Reason: "is required"})
+	}
+	if job.ProjectID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "project_id", Reason: "is required"})
+	}
+	if job.EnvironmentID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "environment_id", Reason: "is required"})
+	}
+	if job.ServiceID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "service_id", Reason: "is required"})
+	}
+	payloadOrgID := job.Payload["organization_id"]
+	if payloadOrgID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.organization_id", Reason: "is required"})
+	} else if job.OrganizationID != "" && payloadOrgID != job.OrganizationID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.organization_id", Reason: "must match the job organization_id"})
+	}
+	payloadProjectID := job.Payload["project_id"]
+	if payloadProjectID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.project_id", Reason: "is required"})
+	} else if job.ProjectID != "" && payloadProjectID != job.ProjectID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.project_id", Reason: "must match the job project_id"})
+	}
+	payloadEnvironmentID := job.Payload["environment_id"]
+	if payloadEnvironmentID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.environment_id", Reason: "is required"})
+	} else if job.EnvironmentID != "" && payloadEnvironmentID != job.EnvironmentID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.environment_id", Reason: "must match the job environment_id"})
+	}
+	payloadServiceID := job.Payload["service_id"]
+	if payloadServiceID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.service_id", Reason: "is required"})
+	} else if job.ServiceID != "" && payloadServiceID != job.ServiceID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.service_id", Reason: "must match the job service_id"})
+	}
+	payloadBackupID := job.Payload["backup_id"]
+	if payloadBackupID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.backup_id", Reason: "is required"})
+	}
+	if len(violations) > 0 {
+		return RunBackupPayload{}, Terminal(apierr.InvalidInput(violations...))
+	}
+	return RunBackupPayload{
+		OrganizationID: payloadOrgID,
+		ProjectID:      payloadProjectID,
+		EnvironmentID:  payloadEnvironmentID,
+		ServiceID:      payloadServiceID,
+		BackupID:       payloadBackupID,
 	}, nil
 }
 
@@ -1118,6 +1192,7 @@ type ProvisionerConfig struct {
 	Projects      *store.ProjectRepository
 	Environments  *store.EnvironmentRepository
 	Services      *store.ServiceRepository
+	Backups       *store.ServiceBackupRepository
 	Domains       *store.ServiceDomainRepository
 	OrgVariables  *store.OrganizationVariableRepository
 	ProjVariables *store.ProjectVariableRepository
@@ -1137,6 +1212,7 @@ type Provisioner struct {
 	projects      *store.ProjectRepository
 	environments  *store.EnvironmentRepository
 	services      *store.ServiceRepository
+	backups       *store.ServiceBackupRepository
 	domains       *store.ServiceDomainRepository
 	orgVariables  *store.OrganizationVariableRepository
 	projVariables *store.ProjectVariableRepository
@@ -1176,6 +1252,10 @@ func NewProvisioner(cfg ProvisionerConfig) (*Provisioner, error) {
 	services := cfg.Services
 	if services == nil {
 		services = store.NewServiceRepository()
+	}
+	backups := cfg.Backups
+	if backups == nil {
+		backups = store.NewServiceBackupRepository()
 	}
 	domains := cfg.Domains
 	if domains == nil {
@@ -1223,6 +1303,7 @@ func NewProvisioner(cfg ProvisionerConfig) (*Provisioner, error) {
 		projects:      projects,
 		environments:  environments,
 		services:      services,
+		backups:       backups,
 		domains:       domains,
 		orgVariables:  orgVariables,
 		projVariables: projVariables,
@@ -1275,6 +1356,8 @@ func (p *Provisioner) Run(ctx context.Context, job store.ProvisioningJob) error 
 		return p.runSyncDomains(ctx, job)
 	case JobTypeSyncVariables:
 		return p.runSyncVariables(ctx, job)
+	case JobTypeRunBackup:
+		return p.runBackup(ctx, job)
 	default:
 		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
 			Field:  "job_type",
@@ -1932,6 +2015,66 @@ func (p *Provisioner) runSyncVariables(ctx context.Context, job store.Provisioni
 	return nil
 }
 
+func (p *Provisioner) runBackup(ctx context.Context, job store.ProvisioningJob) error {
+	if job.Status == store.JobStatusSucceeded {
+		return nil
+	}
+	payload, err := ParseRunBackupPayload(job)
+	if err != nil {
+		return err
+	}
+
+	target, err := p.loadRunBackupTarget(ctx, job, payload)
+	if err != nil {
+		return err
+	}
+	if target.Backup.Status == store.ServiceBackupStatusSucceeded {
+		return nil
+	}
+
+	if err := p.markBackupRunning(ctx, payload); err != nil {
+		return err
+	}
+	run, runErr := p.client.RunBackup(ctx, dokploy.RunBackupInput{
+		ServiceID: target.DokployServiceID,
+		BackupID:  payload.BackupID,
+	})
+	if runErr != nil {
+		if interrupted(ctx, runErr) {
+			return runErr
+		}
+		_ = p.markBackupFailed(context.WithoutCancel(ctx), payload)
+		if apierr.Retryable(runErr) {
+			return runErr
+		}
+		return Terminal(runErr)
+	}
+	if run.ID == "" {
+		err := apierr.Internal(errors.New("worker: run_backup resolved an empty Dokploy backup run id"))
+		_ = p.markBackupFailed(context.WithoutCancel(ctx), payload)
+		return Terminal(err)
+	}
+	switch run.Status {
+	case "", dokploy.DeploymentSucceeded:
+		return p.markBackupSucceeded(ctx, payload)
+	case dokploy.DeploymentPending, dokploy.DeploymentRunning:
+		return apierr.DokployUnavailable(errors.New("dokploy backup is still running"))
+	case dokploy.DeploymentFailed:
+		err := apierr.DokployUnavailable(errors.New("dokploy backup failed"))
+		if markErr := p.markBackupFailed(ctx, payload); markErr != nil {
+			return markErr
+		}
+		return Terminal(err)
+	default:
+		err := apierr.InvalidInput(apierr.FieldViolation{
+			Field:  "dokploy_backup.status",
+			Reason: "must be pending, running, succeeded, or failed",
+		})
+		_ = p.markBackupFailed(context.WithoutCancel(ctx), payload)
+		return Terminal(err)
+	}
+}
+
 type syncDomainTarget struct {
 	Domain            store.ServiceDomain
 	DokployServiceID  string
@@ -1943,6 +2086,11 @@ type syncVariablesTarget struct {
 	ServiceType      dokploy.ServiceType
 	Engine           string
 	Env              string
+}
+
+type runBackupTarget struct {
+	Backup           store.ServiceBackup
+	DokployServiceID string
 }
 
 func (p *Provisioner) loadOrganizationTarget(ctx context.Context, job store.ProvisioningJob, payload EnsureDokployOrganizationPayload) (store.Organization, string, error) {
@@ -2834,6 +2982,84 @@ func (p *Provisioner) loadSyncVariablesTarget(ctx context.Context, job store.Pro
 	return target, nil
 }
 
+func (p *Provisioner) loadRunBackupTarget(ctx context.Context, job store.ProvisioningJob, payload RunBackupPayload) (runBackupTarget, error) {
+	var target runBackupTarget
+	err := p.store.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		svc, getErr := p.services.GetByID(ctx, q, payload.OrganizationID, payload.ServiceID)
+		if getErr != nil {
+			return Terminal(getErr)
+		}
+		if svc.OrganizationID != job.OrganizationID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.organization_id",
+				Reason: "must match the service organization_id",
+			}))
+		}
+		if svc.ProjectID != payload.ProjectID || svc.ProjectID != job.ProjectID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.project_id",
+				Reason: "must match the service project_id",
+			}))
+		}
+		if svc.EnvironmentID != payload.EnvironmentID || svc.EnvironmentID != job.EnvironmentID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.environment_id",
+				Reason: "must match the service environment_id",
+			}))
+		}
+		if svc.DeletionScheduledAt != nil {
+			return Terminal(apierr.Conflict("service is scheduled for deletion and cannot run backups"))
+		}
+
+		backup, backupErr := p.backups.GetByID(ctx, q, payload.OrganizationID, payload.ServiceID, payload.BackupID)
+		if backupErr != nil {
+			return Terminal(backupErr)
+		}
+		if backup.ServiceID != svc.ID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.backup_id",
+				Reason: "must match the service backup parent",
+			}))
+		}
+		if !backup.Enabled {
+			return Terminal(apierr.Conflict("backup is disabled and cannot be run"))
+		}
+		if backup.Status == store.ServiceBackupStatusRunning {
+			return Terminal(apierr.Conflict("backup is already running"))
+		}
+		if job.DesiredVersion > 0 && backup.Status != store.ServiceBackupStatusSucceeded && backup.Version != job.DesiredVersion {
+			return Terminal(apierr.ConflictStale(backup.Version))
+		}
+		target.Backup = backup
+		if backup.Status == store.ServiceBackupStatusSucceeded {
+			return nil
+		}
+
+		wantResource, resourceErr := dokployResourceForServiceKind(svc.Kind, "run_backup")
+		if resourceErr != nil {
+			return resourceErr
+		}
+		serviceRefs, listErr := p.refs.ListByYallaResource(ctx, q, job.OrganizationID, store.YallaKindService, svc.ID)
+		if listErr != nil {
+			return listErr
+		}
+		for _, ref := range serviceRefs {
+			if ref.DokployResource == wantResource {
+				target.DokployServiceID = ref.DokployID
+				break
+			}
+		}
+		if target.DokployServiceID == "" {
+			return Terminal(apierr.Conflict("service Dokploy mapping is required before running a backup"))
+		}
+		return nil
+	})
+	if err != nil {
+		return runBackupTarget{}, err
+	}
+	return target, nil
+}
+
 func (p *Provisioner) loadDeploymentTarget(ctx context.Context, job store.ProvisioningJob, payload DeployServicePayload) (store.Deployment, string, error) {
 	var (
 		deployment       store.Deployment
@@ -3438,6 +3664,45 @@ func (p *Provisioner) markDeploymentSucceeded(ctx context.Context, job store.Pro
 func (p *Provisioner) markDeploymentFailed(ctx context.Context, job store.ProvisioningJob, payload DeployServicePayload, code, message string) error {
 	return p.store.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
 		_, err := p.deployments.MarkFailed(ctx, tx, job.OrganizationID, payload.DeploymentID, code, message)
+		if err != nil {
+			if apierr.Retryable(err) {
+				return err
+			}
+			return Terminal(err)
+		}
+		return nil
+	})
+}
+
+func (p *Provisioner) markBackupRunning(ctx context.Context, payload RunBackupPayload) error {
+	return p.store.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		_, err := p.backups.MarkRunning(ctx, tx, payload.OrganizationID, payload.ServiceID, payload.BackupID)
+		if err != nil {
+			if apierr.Retryable(err) {
+				return err
+			}
+			return Terminal(err)
+		}
+		return nil
+	})
+}
+
+func (p *Provisioner) markBackupSucceeded(ctx context.Context, payload RunBackupPayload) error {
+	return p.store.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		_, err := p.backups.MarkSucceeded(ctx, tx, payload.OrganizationID, payload.ServiceID, payload.BackupID)
+		if err != nil {
+			if apierr.Retryable(err) {
+				return err
+			}
+			return Terminal(err)
+		}
+		return nil
+	})
+}
+
+func (p *Provisioner) markBackupFailed(ctx context.Context, payload RunBackupPayload) error {
+	return p.store.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		_, err := p.backups.MarkFailed(ctx, tx, payload.OrganizationID, payload.ServiceID, payload.BackupID)
 		if err != nil {
 			if apierr.Retryable(err) {
 				return err

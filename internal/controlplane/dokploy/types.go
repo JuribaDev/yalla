@@ -98,6 +98,13 @@ type ServiceStatus struct {
 	Status    string `json:"status"`
 }
 
+// BackupRun is one backup execution triggered against a Service.
+type BackupRun struct {
+	ID        string `json:"id"`
+	ServiceID string `json:"service_id"`
+	Status    string `json:"status"`
+}
+
 // EnsureOrganizationInput describes the desired state of a Dokploy
 // organization. When ExistingID is set the organization is fetched and
 // verified instead of created, so the call is idempotent against Yalla's
@@ -176,6 +183,15 @@ type SyncVariablesInput struct {
 type DeployServiceInput struct {
 	// ServiceID is the service to deploy; required.
 	ServiceID string
+}
+
+// RunBackupInput names the service whose backup should run.
+type RunBackupInput struct {
+	// ServiceID is the service to back up; required.
+	ServiceID string
+	// BackupID is Yalla's service_backups id. It is sent as metadata only and
+	// contains no credential material.
+	BackupID string
 }
 
 // RestartServiceInput names the service to restart.
