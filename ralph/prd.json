@@ -9421,8 +9421,8 @@
       ],
       "type": "tenant-isolation",
       "priority": 1,
-      "passes": false,
-      "notes": "Tenant isolation for service_grants."
+      "passes": true,
+      "notes": "Tenant-isolation tests at internal/controlplane/store/service_grant_tenant_isolation_test.go: 8 t.Parallel byte-identical-bystander tests across ListByService, Upsert INSERT, Upsert UPDATE, DeleteByServiceExceptIDs (nil-keep), DeleteByServiceExceptIDs (subset-keep), and the per-tenant (organization_id, service_id, principal_id) UNIQUE shared-scope-tuple safety net. Verified PASS against an isolated migrated Postgres and PASS under -race. The service_grants row body has no nullable scope pointer (the service is the leaf), so the bystander byte-equality assertion uses direct string equality on ServiceID and reuses no pointer-helper."
     },
     {
       "id": "BE-0449",
