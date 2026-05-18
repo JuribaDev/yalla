@@ -32458,3 +32458,81 @@ change that widened Reason to caller-supplied data.
   - Running-job bystander fixtures need a deterministic lease (e.g. LeaseDuration: 5*time.Minute, LeaseOwner: worker_<suffix>) so the baseline rawJobRow's lease_owner/lease_deadline/started_at/attempts are stable across the test's lifetime -- non-deterministic leases would not directly break byte-identity (the load is a single point-in-time SELECT) but a deterministic fixture keeps the assertion messages readable on failure.
   - Pre-existing test failures CAN exist on the branch and be unrelated to the current story. Validate by git stash && go test <those tests> && git stash pop -- never silently skip them but DO note them separately in progress and do NOT block the commit when they are unrelated.
 ---
+
+## 2026-05-18 - BE-0463 Repository: job_attempts CRUD and invariants
+- New migration 0036_job_attempts creates the table with a composite FK to
+  provisioning_jobs (organization_id, id) ON DELETE CASCADE, a closed-set
+  status taxonomy (succeeded/failed/cancelled/timed_out), CHECK
+  (attempt_number > 0), CHECK (finished_at >= started_at), UNIQUE
+  (organization_id, job_id, attempt_number) for retry-number idempotency,
+  two indexes (per-job chronological + per-org recency), and a BEFORE
+  UPDATE trigger that rejects every UPDATE so a written attempt record
+  is immutable.
+- New JobAttempt + JobAttemptRepository in internal/controlplane/store/
+  job_attempt.go: Append (requires *Tx, mints jatt_-prefixed ids via
+  crypto/rand+hex, redacts error_summary via output.NewRedactor, validates
+  required fields and finished_at >= started_at at the application
+  boundary as InvalidInput), GetByID (tenant-scoped point lookup,
+  NotFound on miss), ListByJob (chronological attempt_number ASC,
+  bounded by jobAttemptListMaxRows=500, returns empty slice for
+  unknown/cross-tenant jobs). All mutations require *Tx so an attempt
+  commits or rolls back atomically with the parent provisioning_jobs
+  Transition it records. JobAttempt.LogValue redacts error fields at the
+  slog boundary too.
+- 18 integration tests in job_attempt_repository_invariants_test.go pin:
+  Append row-shape via raw-SQL re-load, jatt_ prefix on minted id,
+  caller-supplied id preserved verbatim, duplicate id -> Conflict
+  (PRIMARY KEY), duplicate attempt_number -> Conflict (UNIQUE composite),
+  unknown job -> Conflict (composite FK), cross-tenant job -> Conflict,
+  blank/zero/unknown application inputs -> InvalidInput
+  (organization_id/job_id/worker_id/status/attempt_number/started_at/
+  finished_at, and finished_at < started_at), nil-Tx -> Internal,
+  transaction rollback leaves no row, append-only enforcement via raw
+  SQL UPDATE bypassing the repository, cascade-delete from parent job
+  and from parent organization, GetByID byte-identity / unknown ->
+  NotFound / cross-tenant -> NotFound, ListByJob chronological order /
+  unknown -> empty / cross-tenant -> empty, peer-row byte-identity on
+  sibling Append, ErrorSummary redaction at persistence.
+- Files: internal/controlplane/store/migrate/migrations/
+  0036_job_attempts.up.sql + .down.sql,
+  internal/controlplane/store/job_attempt.go,
+  internal/controlplane/store/job_attempt_repository_invariants_test.go.
+- Verification: gofmt, goimports, go mod tidy, go vet ./..., go test
+  -race -run "TestJobAttempt|TestMigrations|TestJobRepository"
+  ./internal/controlplane/store/... — all clean. Full go test ./... has
+  pre-existing API key service failures unrelated to this story
+  (confirmed by re-running on the prior tree).
+- Remaining risks / follow-ups: BE-0464 (tenant isolation gap-fill for
+  job_attempts) is the canonical sibling story — it will add cross-tenant
+  bystander byte-identity, two-tenant simultaneous Append round-trip,
+  and cascade-from-organization-delete on a second tenant's row.
+- Learnings for future iterations:
+  - **Append-only event/attempt tables follow a stable template**: a
+    composite FK to the parent (organization_id, parent_id), a
+    closed-set status column with a CHECK, a BEFORE UPDATE trigger
+    rejecting all updates, ON DELETE CASCADE for tenant teardown, and a
+    repository with Append + GetByID + ListByParent. Reused from
+    deployment_events (BE-0459) verbatim; copy the migration layout,
+    column order, and trigger function name pattern.
+  - **Internal accounting trail rows use crypto/rand prefixed ids**
+    (jatt_, depev_, qres_, audit_) instead of a domain.Kind because
+    they are not customer-facing addressable resources -- the
+    customer addresses them through the parent's id and lists.
+  - **Application-layer validators (zero time, blank field, unknown
+    enum) return InvalidInput; database-layer violations (FK, CHECK,
+    UNIQUE) return Conflict via mapWriteError**. The application
+    validator is the chokepoint: the database CHECK is the
+    belt-and-braces.
+  - **Test helpers must be uniquely named per file in store_test**: every
+    *_test.go shares the same package, so sentinel types
+    (jobAttemptTxRollbackSentinel) and raw row types
+    (rawJobAttemptRow) must carry the parent-table prefix.
+  - **mintJobAttemptID uses t.Name()** for cross-test uniqueness without
+    a shared atomic counter, mirroring mintDeploymentEventID /
+    mintDeploymentID. Real id minting still lives in
+    JobAttemptRepository.Append (newJobAttemptID).
+  - **Pre-existing test failure**: TestAPIKeyService* tests in
+    internal/controlplane/store/ failed on the unmodified main tree
+    too. They are not regressions from this story and should be
+    triaged separately.
+---
