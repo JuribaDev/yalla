@@ -9041,8 +9041,8 @@
       ],
       "type": "tenant-isolation",
       "priority": 1,
-      "passes": false,
-      "notes": "Tenant isolation for users."
+      "passes": true,
+      "notes": "Repository-layer tenant-isolation coverage for the users global identity table landed as internal/controlplane/store/user_tenant_isolation_test.go. Six new integration tests prove (1) Get by id returns each tenant's own row across two seeded organizations and never merges or swaps rows; (2) Update on userA leaves userB byte-identical including the trigger-driven updated_at; (3) an Update on userA that tries to claim userB's email under a different casing fails typed Conflict via the citext UNIQUE constraint and leaves BOTH users byte-identical (no partial-write damage on the target row, no trigger-refreshed timestamp on the bystander); (4) Delete on userA removes userA, cascades userA's memberships across every tenant via memberships(user_id) ON DELETE CASCADE, and leaves userB and userB's memberships byte-identical; (5) Insert of an intruder row whose email is an upper-cased copy of an existing email under a peer tenant fails typed Conflict, the intruder row never lands, and the original userA row is byte-identical including updated_at; (6) GetInOrganization with an unknown user id and GetInOrganization with a real-but-non-member user id produce the same yerr.CodeNotFound shape with matching Hint values, so existence cannot be inferred from the response code or hint. Files: internal/controlplane/store/user_tenant_isolation_test.go (new). The list-by-parent and soft-delete acceptance criteria are intentionally documented as not-applicable in the file's package-doc comment: users has no parent (the per-tenant roster lives on memberships, proven by membership_test.go) and no deletion_scheduled_at column (human identities are hard-deleted with cascade)."
     },
     {
       "id": "BE-0429",
