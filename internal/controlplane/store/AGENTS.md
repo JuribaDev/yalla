@@ -502,3 +502,36 @@ Postgres persistence for control-plane source-of-truth state.
   `audit_events.metadata`, which the *service* (`internal/controlplane/audit`)
   redacts and the store treats as already-clean — match whichever contract the
   column's existing owner documents.
+
+## Dokploy refs (`0002_tenant_hierarchy`, `dokploy_ref.go`)
+
+- `dokploy_refs` is the polymorphic Yalla-resource → Dokploy-object mapping.
+  Its PK is a `bigint GENERATED ALWAYS AS IDENTITY`, not a domain-prefixed
+  text id — it is the **only** int64 PK in this package. Repository methods
+  that surface ids in error payloads format the int64 via a private helper
+  (`dokployRefIDString`) rather than reaching for `strconv`/`fmt`, keeping
+  the import surface uniform across the package.
+- `dokploy_refs` has **no version column**, even though migration
+  `0011_optimistic_versions`'s preamble claims it covers the table "for
+  parity". The actual `ALTER TABLE` statements only touch organizations /
+  projects / environments / services. The Go surface reflects reality:
+  `DokployRef` carries no `Version` field, there is no per-row `Update`
+  method, and the optimistic-versioning acceptance criterion for the
+  CRUD-and-invariants story reads as "not applicable here". If a future
+  worker remap story needs an update surface it must land a new migration
+  AND the typed `Update` method together.
+- `Insert` uses `RETURNING` to capture the database-minted bigint id; a
+  caller cannot smuggle one in via `DokployRef{ID: ...}`. The closed-set
+  `yalla_kind` and `dokploy_resource` columns are validated by CHECK in the
+  database; the application boundary additionally rejects a blank typed
+  value as `apierr.Internal` (a programming error, not a customer-rejection
+  conflict).
+- The schema's two UNIQUE constraints both map to `apierr.Conflict` via
+  `mapWriteError`, but they are observably distinct surfaces and **both**
+  must be exercised by tests: the *global* `(dokploy_resource, dokploy_id)`
+  — a Dokploy object cannot be claimed twice even across tenants, the only
+  place the dokploy_refs schema reasons about a foreign tenant's rows —
+  and the *per-tenant* `(organization_id, yalla_id, dokploy_resource,
+  dokploy_id)`. A single service may own multiple rows of the same
+  `dokploy_resource` (e.g. several `domain` mappings for one service); the
+  per-tenant UNIQUE includes `dokploy_id` precisely so this is allowed.

@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Repository CRUD-and-invariants tests for a **TABLE WHOSE SCHEMA ALREADY EXISTS FROM AN EARLY MIGRATION BUT WHOSE TYPED REPOSITORY IS THE FIRST STORY-LEVEL CALLER** -- i.e. the table landed in an ancient migration (dokploy_refs in 0002_tenant_hierarchy) and has been exercised only by raw-SQL schema_test.go tests; the CRUD-and-invariants PRD story creates BOTH the *_repository.go file AND the *_repository_invariants_test.go file from scratch (BE-0465 pattern, internal/controlplane/store/dokploy_ref.go + internal/controlplane/store/dokploy_ref_repository_invariants_test.go). Five load-bearing differences from a first-story-for-table CRUD vertical (BE-0457 deployments, BE-0463 job_attempts, etc.): (a) NO migration is added because the table already exists -- grep the schema_test.go assertions BEFORE writing to learn the column shape and the CHECK / UNIQUE / FK invariants the raw-SQL tests already pin; (b) the typed repository MUST NOT add columns the table lacks even if a comment in another migration suggests otherwise -- migration 0011_optimistic_versions's preamble claims to cover dokploy_refs 'for parity' but its actual ALTER statements only touch organizations / projects / environments / services, so the DokployRef struct MUST NOT carry a Version field and the repository MUST NOT include version in dokployRefColumns or scan it (the single fastest way to discover this kind of drift is the error-chain unwrap debug pattern: write a one-shot test that prints %T:%s for each `cur.(unwrapper).Unwrap()` layer, which surfaces the underlying *pgconn.PgError with the SQLSTATE 42703 'column X does not exist' message in one round trip); (c) if the table has NO customer-mutable column the typed repository surface is INSERT + GET + LIST + DELETE only -- no Update method, no optimistic-concurrency If-Match path -- and the file header MUST document this as load-bearing so a future reader does not mistake the absence for a coverage gap (the 'optimistic versioning where applicable' acceptance-criteria phrase narrows to 'not applicable here'); (d) when the table has a bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY (the FIRST and ONLY int64 PK in the store package), the typed struct's ID field is int64 (not string), the INSERT statement OMITS id from the column list entirely (any value supplied -- even NULL or DEFAULT -- trips SQLSTATE 428C9 'cannot insert a non-DEFAULT value into column "id"'), and the typed error payload renders the int64 id via a private package-local helper rather than importing strconv -- keeping the store package's 'no strconv' invariant intact. A test InsertIgnoresCallerSuppliedID is the regression backstop (a caller that smuggles ID: 999_999_999 must still see the database-minted id in the returned struct); (e) when the table has TWO UNIQUE constraints, one GLOBAL across tenants (e.g. (dokploy_resource, dokploy_id) on dokploy_refs -- a Dokploy object cannot be claimed twice across tenants) and one PER-TENANT (e.g. (organization_id, yalla_id, dokploy_resource, dokploy_id)), BOTH must be exercised explicitly by the invariants tests -- the global-UNIQUE test must seed orgA's row then try to insert orgB's row with the SAME (dokploy_resource, dokploy_id) and assert countRowsForOrg(orgB) == 0 after the rejection. The 19-test shape this file lands: Insert-row-shape (raw-SQL byte-equal), Insert-ignores-caller-supplied-id, four typed-Internal rejections (nil-tx + blank-closed-set-args), four CHECK/FK-violation Conflicts (unknown-yalla_kind, unknown-dokploy_resource, blank-yalla_id, blank-dokploy_id, unknown-organization_id), both UNIQUE violations (global + per-tenant), positive-direction 'multiple domains for same service all persist' (pins the per-tenant UNIQUE includes dokploy_id), Insert-rollback, Get-happy + Get-unknown, GetByDokployTarget-happy + unknown + blank-resource-Internal, ListByYallaResource-ordered + empty + blank-kind-Internal, ListByOrganization-ordered + empty, Delete-happy + unknown + nil-tx, organization-delete-cascade, and a raw-SQL set_updated_at trigger pin (no bump_version trigger exists despite migration 0011's preamble). New helpers introduced (per-file DokployRef-suffix to avoid store_test collisions): rawDokployRefRow, loadDokployRefRowByID, countDokployRefRowsForOrg, mintDokployID, runInsertDokployRefOrFail, dokployRefTxRollbackSentinel. Reused verbatim: seedOrg/seedProject/seedEnvironment/seedService (schema_test.go), newStore (store_test.go). The byte-identical-bystander tenant-isolation gap-fill is the paired BE-0466 story. Forward-applicable to any future first-typed-repository story whose underlying table landed in an early migration and has been carried by raw-SQL schema tests since (a future idempotency_keys repository would inherit the same template, though without the bigint identity PK twist).
 - Repository tenant-isolation tests for an APPEND-ONLY TABLE whose *_repository.go + invariants tests already exist (BE-0464 pattern, internal/controlplane/store/job_attempt_repository_tenant_isolation_test.go for job_attempts). Subspecies of the BE-0462 pattern with three load-bearing deltas: (a) NO updated_at column AND a BEFORE UPDATE trigger that rejects every update, so the trigger-managed-anchor invariant used in BE-0458/BE-0462's byte-identity bystander helper does NOT apply -- assertXxxByteIdentical compares created_at as the sole timestamp anchor and every business column individually (the bystander proof now probes the trigger AND the predicate, not the trigger-managed updated_at refresh). (b) Repository surface is narrower: ONE write surface (Append, *Tx-bound), TWO read surfaces (GetByID per-id, ListByParent per-parent-and-org), NO Update/Delete/Transition. So the test set drops from BE-0462's 8 to 7: no cross-tenant-Transition test exists -- the "foreign-tenant write through a state-machine surface silently UPDATEd a peer row" probe has no analogue. (c) The invariants file already exports a per-(org, parent) counter (countXxxRowsForParent) but NOT a per-org counter -- the tenant-isolation file MUST add countXxxRowsForOrg because the org-cascade test needs to probe "did orgB's TOTAL count change across all parents?" across multiple parent rows, not just per-parent. Forward-applicable to any future append-only-attempt/event table whose schema follows the (composite-FK-to-parent + BEFORE-UPDATE-rejection-trigger + no-updated_at + per-tenant-UNIQUE) shape (e.g. future audit-log tables, future immutable timeline tables). Tests pinned: Append(orgA) bystander byte-identity across orgB peers spanning every status the closed-set carries / per-tenant row-count invariance / same-(parent_id, sequence_number)-in-two-tenants positive-direction pair with per-tenant ListByParent read-side proof / GetByID cross-tenant NotFound + no-leak substring check on every non-id business column carrying caller-controllable content (worker_id, error_summary, error_code, request_id, correlation_id, parent_id) / ListByParent cross-tenant empty + per-tenant COUNT(*) invariance for BOTH tenants / parent-row delete cascade tenant-scoped / parent-organization delete cascade tenant-scoped. NEW helpers all carry the per-file Xxx suffix (BE-0464: assertJobAttemptByteIdentical, twoTenantJobAttemptFixture, seedTwoTenantJobAttemptFixture, countJobAttemptRowsForOrg, firstAttemptID); REUSED verbatim from invariants file: rawXxxRow, loadXxxRowByID, countXxxRowsForParent, mintXxxID, runAppendXxxOrFail, seedXxx; from sibling tenant-isolation: seedOrg/seedProject/seedQueuedJob/containsValue. NO migration added.
 - Repository tenant-isolation tests for a **TABLE WHOSE *_repository.go, PRIMARY *_test.go AND *_repository_invariants_test.go ALREADY EXIST FROM A PRIOR (NON-PRD) SUBSYSTEM STORY + BE-046x INVARIANTS STORY** -- i.e. the tenant-isolation PRD story follows the same gap-fill pattern as the invariants story did (BE-0462 pattern, internal/controlplane/store/job_repository_tenant_isolation_test.go for provisioning_jobs). Five load-bearing differences from a first-story-for-table tenant-isolation vertical (BE-0458 deployments, BE-0456 quota_reservations, etc.): (a) NO migration is added -- the table was already exercised by both the subsystem story AND the BE-046x invariants story; (b) the rawXxxRow/loadXxxRowByID/countXxxRowsForOrg/mintXxxID/xxxTxRollbackSentinel helpers ALREADY EXIST in the invariants_test file in the SAME package store_test -- grep BEFORE writing and REUSE verbatim; (c) the lightweight cross-tenant smoke tests in the subsystem _test.go are kept (do NOT delete them) and this file is a GAP-FILL against the canonical *_tenant_isolation_test.go template (deployment_tenant_isolation_test.go is the closest template), adding the byte-identity bystander proofs / no-leak substring checks / per-tenant COUNT(*) invariance / cascade-tenant-scope proofs the smoke tests deliberately did not pin; (d) helpers introduced here MUST carry the per-file suffix (`Job`, `Dep`, `QR`, ...) and ARE distinct from the rawXxxRow/loadXxxRowByID family already exported by the invariants file (those are in the same package); the new ones to add are timePtrEqualXxx, fmtTimePtrXxx, strPtrEqualXxx, fmtStrPtrXxx (only if the table has nullable *string columns), assertXxxByteIdentical, twoTenantXxxFixture+seedTwoTenantXxxFixture, plus one or two opinionated `seedYyyXxx` wrappers (e.g. seedQueuedJob/seedRunningJob); (e) when the table has NO `version` column (provisioning_jobs is the canonical example, vs deployments/projects/services which DO have one), the `assertXxxByteIdentical` MUST NOT compare a version column and the file header MUST call out `updated_at` as the SOLE trigger-managed drift anchor (the BEFORE UPDATE set_updated_at trigger is the load-bearing anchor; a missing organization_id predicate would surface as updated_at drift even when every other column happened to look right). Mandatory test shape (the 8 tests this file lands, adapted from BE-0458): Insert(orgA)DoesNotTouchOrgB (byte-identity over queued + running-with-live-lease + idempotency-collide bystanders), Insert(orgA)DoesNotChangeOrgBRowCount, InsertSameIdempotencyKeyInTwoTenantsBothPersist (positive direction + per-tenant FindByIdempotencyKey round-trip), GetCrossTenantReturnsNotFoundAndDoesNotEcho (typed apierr.NotFound + substring no-leak on idempotency_key/request_id/correlation_id/project_id), FindByIdempotencyKeyCrossTenantDoesNotLeak (returns (zero, false, nil) + zero-value field-by-field no-leak), <StateMutation>CrossTenantLeavesOrgABystandersByteIdentical (the table's single mutating surface attempted by orgB on orgA's id -- Cancel for deployments, Transition(..., cancelled, mut) for jobs -- MUST surface as apierr.NotFound NOT Conflict, because the FOR UPDATE SELECT under (organization_id, id) returns ErrNoRows BEFORE the state-machine validator runs; bystanders include the named target + queued sibling + running sibling carrying a live lease), ListByOrganizationCrossTenantReturnsEmptyAndDoesNotLeakTotal (empty slice + side-effect-free read + per-tenant COUNT(*) invariance), OrganizationDeleteCascadeIsTenantScoped (orgA deletion cascades only to orgA's rows; orgB rows survive byte-identical -- include a row carrying a live lease to anchor lease_owner/lease_deadline/started_at). Always document in the file header what the file DELIBERATELY DELEGATES (composite-FK cross-tenant-parent path pinned by invariants story, closed-set / lifecycle CHECKs / state-machine matrix / lease bookkeeping / claimer pinned by subsystem story, redactor + payload marshalling pinned by internal_test) so a future reader does not mistake the omission for a coverage gap. When the table's worker-side claimer is INTENTIONALLY NOT tenant-scoped (e.g. ClaimNext SELECT ... FOR UPDATE SKIP LOCKED across all tenants), call it out explicitly in the header rationale. Forward-applicable to any future tenant-isolation story whose table follows the (subsystem-tests + invariants-tests + table-has-no-version-column) shape (e.g. future job_attempts / dokploy_refs if their repos land before their PRD stories).
 - Repository CRUD-and-invariants tests for a **TABLE WHOSE *_repository.go AND PRIMARY *_test.go ALREADY EXIST FROM A PRIOR (NON-PRD) SUBSYSTEM STORY** — i.e. the CRUD-and-invariants PRD story is NOT the first story for the table (BE-0461 pattern, internal/controlplane/store/job_repository_invariants_test.go for provisioning_jobs). Structurally distinct from a "first-story-for-table" CRUD-and-invariants vertical (BE-0457 deployments, BE-0455 quota_reservations, etc.) in three load-bearing ways: (a) NO migration is added — the table landed in an earlier migration (0008_provisioning_jobs.up.sql for provisioning_jobs) and is already exercised by worker-subsystem tests; (b) NO existing helpers may be re-introduced — grep for `jobFixture / insertJob / transitionJob` (or the analogous resource fixtures) BEFORE writing and reuse them verbatim; collisions inside `package store_test` are compile errors; (c) the new file is a GAP-FILL pass against the canonical *_repository_invariants_test.go pattern (deployment_repository_invariants_test.go is the closest template), NOT a reimplementation. Mandatory gap-fill checklist (the 7-test shape this file lands): InsertMintsRowShape (byte-equal raw-SQL re-load vs Insert's RETURNING projection across every column, INCLUDING nullable resource-target legs which must round-trip as SQL NULL not empty string), InsertDuplicateIDReturnsConflict (PRIMARY KEY collision with a DIFFERENT idempotency key — distinct from the UNIQUE (organization_id, idempotency_key) violation already pinned), InsertRollbackPersistsNoRow (sentinel-error rollback + countXxxRowsForOrg == 0 after), GetUnknownReturnsNotFound (same-tenant unknown id, NOT the cross-tenant variant — pgx.ErrNoRows must map to typed apierr.NotFound), ListByOrganizationReturnsReverseChronological (explicit sleeps + 3 rows + assert ordered created_at DESC, id DESC), ListByOrganizationEmptyReturnsEmptySlice (pin len == 0 rather than nil-vs-empty because some repos legitimately return either), ListByOrganizationClampsNonPositiveLimit (probe BOTH limit=0 AND limit=-1 — if the implementation used the caller's value as a literal LIMIT, both would return 0 rows). New helpers introduced (unique to this file, with a per-file `Job` suffix to avoid the package-shared `store_test` collisions): rawJobRow, loadJobRowByID, countJobRowsForOrg, mintJobID, jobTxRollbackSentinel. Reused verbatim: jobFixture, insertJob, transitionJob (from job_test.go), seedOrg/seedProject (schema_test.go), newStore (store_test.go). The file header MUST document what it deliberately does NOT re-cover (validation guards / nil-Tx / state-machine paths / lease-claim / cross-tenant reads / closed-set status / redactor / payload marshalling are pinned by job_test.go and job_internal_test.go) so a future reader does not mistake the absence for a coverage gap. Special-case: the provisioning_jobs row body has THREE concurrent CHECK constraints (finished_consistent, lease_consistent, attempts_bounded) but Insert's coercion of Status='queued' / Attempts=0 / no lease columns makes them UNREACHABLE from public Insert input — they are Transition-time invariants, already pinned by job_test.go's Transition* suite; the invariants file does NOT try to drive them via Insert. Forward-applicable to any future "Repository: <existing-table> CRUD and invariants" story whose table already has worker-subsystem tests (e.g. future audit_events / job_attempts / dokploy_refs / idempotency_keys if their repos land before their PRD CRUD stories).
@@ -32586,4 +32587,146 @@ change that widened Reason to caller-supplied data.
   - job_attempts has only ONE write surface (Append) and TWO read surfaces (GetByID, ListByJob), vs provisioning_jobs's FIVE write/read surfaces (Insert, Get, FindByIdempotencyKey, ListByOrganization, Transition + the worker-side ClaimNext). The cross-tenant test count drops from 8 (BE-0462) to 7 (BE-0464) accordingly -- the "Transition cross-tenant bystander byte-identity" test from BE-0462 has no analogue here.
   - The job_attempt_repository_invariants_test.go file already exports a per-(org, job) counter (countJobAttemptRowsForJob) but NOT a per-org counter. The tenant-isolation file adds countJobAttemptRowsForOrg because the org-cascade test needs to probe "did orgB's TOTAL count change?" across multiple jobs, not just per-job. Forward-applicable to any future tenant-isolation story whose table has a per-parent counter in the invariants file but needs a per-org counter for the cascade-tenant-scope proof.
   - firstAttemptID is a one-line list-diagnosis helper that names the first row's id (or "<empty>") in a list-assertion failure message. The same shape is informally used across other repo tests; centralising it in the tenant-isolation file (where the positive-direction-pair test relies on it) keeps the per-test bodies focused. Lightly reusable for future tenant-isolation stories whose List surface returns a slice of typed rows.
+---
+
+## 2026-05-18 - BE-0465 Repository: dokploy_refs CRUD and invariants
+- Added the first typed repository for the dokploy_refs table (landed
+  via migration 0002, exercised previously only by raw-SQL schema
+  tests). New files:
+  * internal/controlplane/store/dokploy_ref.go — DokployRef struct,
+    typed YallaKind / DokployResource closed-set wrappers,
+    DokployRefRepository with Insert / Get / GetByDokployTarget /
+    ListByYallaResource / ListByOrganization / Delete. SELECT
+    projection (`dokployRefColumns`) and `scanDokployRef` keep the
+    column list in lockstep. Insert RETURNING captures the bigint
+    identity-assigned id; nil-Tx, blank YallaKind, blank
+    DokployResource all surface as `apierr.Internal`. All other
+    error paths flow through `mapWriteError` and surface as
+    `apierr.Conflict` (CHECK / FK / UNIQUE class 23) or
+    `apierr.StoreUnavailable` (everything else). The bigint id is
+    rendered for error payloads via a small private helper
+    (`dokployRefIDString`) to keep this package's import surface
+    uniform — `strconv` is not imported.
+  * internal/controlplane/store/dokploy_ref_repository_invariants_test.go
+    — 19 integration tests: Insert row-shape (id is positive, the
+    GENERATED ALWAYS AS IDENTITY column overrides caller-supplied
+    ID, created_at == updated_at on a fresh row, raw-SQL re-load
+    byte-equals the typed Insert return), the four
+    typed-Internal-class programming-error rejections (nil tx,
+    blank YallaKind, blank DokployResource for both Insert and
+    GetByDokployTarget, blank YallaKind for ListByYallaResource),
+    the four CHECK / FK violations that surface as Conflict
+    (unknown yalla_kind, unknown dokploy_resource, blank yalla_id,
+    blank dokploy_id, unknown organization_id), both UNIQUE
+    violations (global UNIQUE on (dokploy_resource, dokploy_id)
+    via cross-tenant reuse + per-tenant UNIQUE on the full mapping
+    tuple), one positive-direction "multiple domains for same
+    service all persist" test that pins the per-tenant UNIQUE
+    includes dokploy_id, an Insert rollback test, Get / List /
+    Delete happy + unknown + missing-tag-RowsAffected paths, the
+    organization-delete cascade chain, and a raw-SQL
+    set_updated_at trigger pin (no bump_version trigger exists
+    despite migration 0011's preamble; the file header documents
+    that).
+- PRD: ralph/prd.json BE-0465 flipped to passes:true.
+- AGENTS.md: appended a new "## Dokploy refs" section to
+  internal/controlplane/store/AGENTS.md capturing (a) bigint
+  identity PK is the only int64 PK in this package; (b)
+  no-version-column / no-Update reality vs migration 0011's
+  aspirational comment; (c) Insert RETURNING + the two UNIQUE
+  constraint surfaces.
+- Verification run (TMPDIR=/tmp to dodge Go's "system temp root"
+  guard, YALLA_TEST_DATABASE_URL set against docker-compose
+  postgres):
+  * gofmt -l internal/controlplane/store/dokploy_ref*.go — clean
+  * go vet ./... — clean
+  * go build ./... — clean
+  * go test -count=1 -race -timeout 180s -run 'TestDokployRef'
+    ./internal/controlplane/store/... — ALL 19 PASS (3.19s)
+  * go test -count=1 -race -timeout 60s -run
+    'TestDokployRefsConstraints|TestTenantHierarchy'
+    ./internal/controlplane/store/... — PASS (schema baseline
+    not regressed)
+  * go test -count=1 -timeout 360s ./... — same pre-existing
+    failures BE-0461 / BE-0463 / BE-0464 already documented
+    (TestAPIKeyServiceCreate*, TestOrganizationVariableServicePatch*,
+    TestEnvironmentService*, TestEnvironmentRepo*,
+    TestProjectVariableServiceReplaceCrossTenantProjectIsNotFound,
+    TestEnvironmentReader/Repo*). Stash-and-reproduce confirmed
+    the failures are present with the new files removed —
+    zero regression introduced by BE-0465.
+- Remaining risks / follow-ups: none for the typed
+  DokployRefRepository surface. The byte-identical-bystander
+  tenant-isolation gap-fill is the paired BE-0466 story and will
+  live in internal/controlplane/store/dokploy_ref_tenant_isolation_test.go;
+  it must add countDokployRefRowsForOrg-as-anchor probes for both
+  UNIQUE branches (the global and per-tenant variants) since the
+  global UNIQUE is the only place the dokploy_refs schema reasons
+  about another tenant's rows.
+- **Learnings for future iterations:**
+  - Migration 0011's preamble OVERSTATES coverage: it claims to
+    cover dokploy_refs "for parity" but only adds the version
+    column + bump_version trigger to organizations / projects /
+    environments / services. Never trust migration comments to
+    enumerate touched tables — grep the actual ALTER statements.
+    The pattern broke an initial implementation of this story
+    that included a Version field and a raw-UPDATE
+    bump_version-trigger pin; both were dropped and the file
+    header now documents the absence as load-bearing.
+  - The dokploy_refs PK is the ONLY int64 PK in this package
+    (every other resource uses an opaque text id minted by
+    `internal/controlplane/domain` or a `crypto/rand` prefixed
+    helper local to its repository). When a future caller needs
+    to render a dokploy_refs id in a typed error, REUSE the
+    private dokployRefIDString helper rather than importing
+    `strconv` — the package's "no `strconv` in repository code"
+    surface is a small but visible consistency property of the
+    import graph.
+  - The dokploy_refs.id column uses
+    `GENERATED ALWAYS AS IDENTITY` (not `GENERATED BY DEFAULT`).
+    An Insert that includes the id column in its INSERT VALUES
+    list — even with NULL or DEFAULT — is rejected by Postgres
+    with `cannot insert a non-DEFAULT value into column "id"
+    (SQLSTATE 428C9)`. The repository's Insert OMITS id from
+    the column list entirely; the test InsertIgnoresCallerSuppliedID
+    is the regression backstop (a caller that smuggles
+    `DokployRef{ID: 999_999_999}` must still see the
+    database-minted id in the returned struct, not the
+    smuggled value).
+  - The dokploy_refs table is structurally distinct from every
+    other table this package has built a repository for so far:
+    (a) bigint identity PK, (b) no version column, (c) two
+    UNIQUE constraints — one global (across tenants) and one
+    per-tenant — both mapped to the same typed
+    `apierr.Conflict`, (d) no customer-mutable column and
+    therefore no per-row Update surface, (e) a polymorphic
+    (yalla_kind, yalla_id) reference into the tenant hierarchy
+    that is NOT a foreign key (the target table varies). Tests
+    for this table CANNOT reuse the canonical
+    deployment_repository_invariants_test.go shape verbatim —
+    in particular, the byte-identical-bystander projection
+    cannot anchor on a `version` field (there is none) and the
+    cross-tenant-UNIQUE probe must be exercised on TOP of the
+    per-tenant-UNIQUE probe (a single per-tenant probe alone
+    would miss a regression that resolved the global UNIQUE by
+    scope-tuple rather than by (dokploy_resource, dokploy_id)).
+  - Two debug techniques that were load-bearing here and worth
+    keeping in muscle memory for future repository stories:
+    (a) When an Insert that "should work" returns E_UNAVAILABLE
+    in a CRUD test, the typed error swallows the underlying
+    cause. Write a minimal debug test that walks the error
+    chain with `cur.(unwrapper).Unwrap()` and prints
+    `%T: %s` at each layer — the underlying *pgconn.PgError
+    will tell you EXACTLY which SQL column is missing or
+    misspelled. In this story it surfaced "column 'version' does
+    not exist (SQLSTATE 42703)" in one round trip and
+    short-circuited a long blind-grep diagnosis.
+    (b) When a "did I break the existing test suite?" question
+    comes up, the cheapest reproduction is `mv` the new files
+    to /tmp, rerun the failing test names by exact regex, then
+    `mv` them back. The store_test package's per-file
+    file-collision surface (sentinel types, helpers) means a
+    plain `git stash` would also stash the helper renames you
+    need to keep visible; explicit file movement is more
+    surgical.
 ---
