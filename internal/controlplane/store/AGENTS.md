@@ -372,6 +372,38 @@ Postgres persistence for control-plane source-of-truth state.
   the test file's package-doc comment so a future reader does not look for
   a missing test. The story-template file for this pattern is
   `organization_tenant_isolation_test.go` (BE-0426).
+- **Multi-mutation-path extension** (BE-0438 pattern,
+  `project_tenant_isolation_test.go`): when a tenant-scoped table has
+  more than two mutation paths (projects has FOUR: Update,
+  UpdateDisplayName, ScheduleDeletion, Restore), every path needs its
+  own `OnOrgADoesNotTouchOrgB` + `CrossTenantBystanderIsByteIdentical`
+  pair — even when one path (Update) already has a cross-tenant
+  typed-NotFound test in the CRUD file. The dedicated tenant-isolation
+  file's contribution is the BYTE-IDENTICAL projection (the
+  trigger-managed `updated_at` and trigger-bumped `version` did not
+  drift on the peer's row) and the EXISTENCE-LEAK projection
+  (cross-tenant probe vs unknown-id probe surface identical Code AND
+  Hint — `apierr.NotFound` echoes the caller's id in `Message`
+  verbatim, never the foreign row's id, so the assertion belongs on
+  Hint+Code, NOT on Message). If the table exposes a count surface the
+  quota layer reads (`CountByOrganization`), add a dedicated
+  `CountByOrganizationIsTenantScoped` test — `ListByOrganization`
+  coverage is not transitive to the count path. If the per-tenant
+  UNIQUE constraint allows two tenants to share the column text (e.g.
+  `projects.slug`, `api_key_scopes.scope`), add an
+  `InsertSameXInTwoTenantsBothSucceed` leg AND force both fixtures to
+  carry the SAME text via direct `.Field = "shared"` overrides AFTER
+  the `f.Project(...)` / `f.APIKeyScope(...)` factory call — the
+  per-factory token derives unique text per tenant by default, which
+  leaves a WHERE-on-`X`-only regression invisible to the
+  byte-identical-bystander helper. For tables with a soft-delete
+  column where ALL read paths expose the soft-deleted row to the
+  owning tenant (no `WHERE deletion_scheduled_at IS NULL` repo
+  filter), add ONE composite `SoftDeletedRowIsTenantScopedOnReadPaths`
+  test proving cross-tenant invisibility across Get + List + Count AND
+  owner-tenant visibility across the same three — the projection
+  collapses into a single test because the SAME WHERE
+  `organization_id` predicate isolates the row on every read surface.
 - **Secret-bearing column extension** (BE-0434 pattern,
   `api_key_tenant_isolation_test.go`): when the table carries a column
   holding a secret (e.g. `api_keys.secret_hash`, or `variables.value`

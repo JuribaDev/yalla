@@ -9231,8 +9231,8 @@
       ],
       "type": "tenant-isolation",
       "priority": 1,
-      "passes": false,
-      "notes": "Tenant isolation for projects."
+      "passes": true,
+      "notes": "Tenant isolation for projects. Adds internal/controlplane/store/project_tenant_isolation_test.go (15 t.Parallel byte-identical-bystander + indistinguishability tests; soft-delete tenant-scope projection on Get/List/Count; per-tenant shared-slug coexistence). Verified against isolated Postgres."
     },
     {
       "id": "BE-0439",

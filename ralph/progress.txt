@@ -1,6 +1,7 @@
 ## Codebase Patterns
 - Repository CRUD invariants test file for a **tenant-scoped table whose mutation surface spans FOUR distinct UPDATE paths (Update / UpdateDisplayName / ScheduleDeletion / Restore) PLUS Insert, with a database-managed version column AND a nullable soft-delete column (deletion_scheduled_at)** (BE-0437 pattern, internal/controlplane/store/project_repository_invariants_test.go): this is the BE-0425 organization template extended with the second-UPDATE-path projection (UpdateDisplayName must run the dual-anchor AND prove the path-specific WHERE/SET isolation — the row's slug must be untouched since the SET clause is `SET display_name = $3` only) and the BE-0431 inverse-soft-delete projection (Restore must dual-anchor AND clear deletion_scheduled_at back to NULL — the trigger fires on any UPDATE so a forgotten `SET deletion_scheduled_at = NULL` clause would still pass the version/timestamp anchors, making the "deletion_scheduled_at is nil after Restore" assertion the load-bearing one). Insert rollback proof must span ALL read surfaces the rolled-back row touches: by-id Get, by-org ListByOrganization, AND CountByOrganization (the count the quota layer reads), so a future refactor that switched Insert to a SAVEPOINT or autonomous transaction would leak the row into a quota check even though Get reports NotFound. The nil-Tx typed-Internal guard only needs to close the ONE mutation path the existing tests did not cover (here UpdateDisplayName) — duplicating Insert/Update/ScheduleDeletion/Restore guards already proved elsewhere is noise. Test fixtures compose seedOrg + projectFixture(f.Project(org, label)) + insertProject helpers from project_test.go; do not re-implement them at package scope.
 - Repository tenant-isolation test file for a **tenant-scoped child table with a database-managed version column, a composite FK to a parent api_keys row, and NO secret-bearing column** (BE-0436 pattern, internal/controlplane/store/api_key_scope_tenant_isolation_test.go). The BE-0430 membership_tenant_isolation_test.go shape is the closest template; four substitutions are mandatory: (a) the cross-tenant indistinguishability probe uses the SAME (Code, Hint) anchor pattern, but on a single id column rather than a composite key — both the cross-tenant scope id and an unknown scope id under the prober's tenant must render byte-identical typed NotFound; (b) the byte-identical-bystander assertion carries TWO independent trigger anchors (api_key_scopes_set_updated_at AND api_key_scopes_bump_version) instead of memberships' one (memberships_set_updated_at + role_version-only-via-UpdateRole). Both must be asserted because a regression could drift one without the other; (c) the load-bearing worst-case fixture is the shared-scope-text fixture (both tenants own a scope row with the SAME scope text on their OWN respective keys) because the (organization_id, api_key_id, scope) UNIQUE constraint is per-tenant, so the WHERE filter is the only thing keeping the rows apart at the read path — every byte-identical-bystander test uses this fixture as a result; (d) ListByAPIKey is a SECOND tenant-scoped list path (the parent api_key_id is the secondary tenant-scoping anchor) and must be tested both for cross-tenant api_key_id (returns empty non-nil slice) AND indistinguishable from an unknown api_key_id under the prober's tenant. The api_key_scopes table has NO secret-bearing column (the scope text itself is the customer-facing capability string), so the BE-0434 raw-secret_hash probe has no analogue and the byte-identical-bystander assertion alone covers every observable column. Helpers seedAPIKeyForScopes / newAPIKeyScope / insertAPIKeyScope are reused from api_key_scope_repository_invariants_test.go in the same store_test package — sibling-file test name collisions (e.g. TestAPIKeyScopeRepositoryListByAPIKeyIsTenantScoped from BE-0435) MUST be checked with `grep '^func Test'` on the sibling invariants file before adding new test names. Future tenant-scoped child tables with a version column and no secret-bearing column (variables.value when is_secret=false, future per-scope capability tables, scoped grant link tables not yet sharded out) should reuse THIS file as the template; if the row body carries a secret-bearing column add the BE-0434 raw-column probe on top.
+- Repository tenant-isolation test file for a **tenant-scoped table with FOUR distinct mutation paths (Update / UpdateDisplayName / ScheduleDeletion / Restore), a nullable soft-delete column (deletion_scheduled_at), and a count surface the quota layer reads (CountByOrganization)** (BE-0438 pattern, internal/controlplane/store/project_tenant_isolation_test.go): this is the BE-0436 api_key_scope_tenant_isolation template extended with three projections api_key_scopes had no analogue for — (a) UpdateDisplayName needs its own OnOrgADoesNotTouchOrgB / CrossTenantBystanderIsByteIdentical pair because no other repo file proves the cross-tenant invariant on this surface; (b) the byte-identical-bystander helper carries DeletionScheduledAt as a fourth observable column on top of (version, updated_at, slug, display_name), so a cross-tenant ScheduleDeletion that stamped a peer nil→non-nil OR a cross-tenant Restore that cleared a peer non-nil→nil is caught even when triggers happened to look untouched (same-second match); (c) one composite SoftDeletedRowIsTenantScopedOnReadPaths test proves cross-tenant invisibility across ALL THREE read surfaces (Get / ListByOrganization / CountByOrganization) AND owner-tenant visibility across the same three in a single fixture — the projections collapse into one test because the SAME WHERE organization_id filter is what isolates the row on every read surface. Force BOTH fixtures to share slug text via direct `.Slug = "shared-slug"` overrides AFTER projectFixture(f.Project(...)), because the per-factory token in f.Project derives distinct slug text per tenant and a WHERE-on-slug-only regression would otherwise stay invisible. Two shared helpers at file scope (`getProjectOrFail`, `assertProjectByteIdentical`) mirror BE-0436's helper names — same shape, DeletionScheduledAt column added. The file's docstring MUST call out which legs are already proved elsewhere (cross-tenant NotFound code for Update / ScheduleDeletion / Restore is in project_test.go / project_delete_test.go / project_restore_test.go) and which are NEW HERE (byte-identical bystander on version + updated_at + DeletionScheduledAt, Code+Hint indistinguishability of cross-tenant vs unknown probes, per-tenant UNIQUE-shared-column coexistence, soft-delete tenant-scoping across all three read surfaces, Count tenant-scoping on the quota path) so a future reader does not look for missing tests where the proof is intentionally elsewhere.
 - New customer-data resource = full vertical when it is the FIRST story for that table (BE-0435 pattern, api_key_scopes migration 0033, store/api_key_scope.go, api_key_scope_repository_invariants_test.go): this story is allowed to land migration + repository + first-pass tests because no prior story touched the table (no migration, no repo, no port, no handler, no wiring). The migration declares the table tenant-scoped at the database via the composite FK pattern established by project_grants / environment_grants — and when the parent table never exposed UNIQUE (organization_id, id) (api_keys was such a table) the SAME migration adds the constraint to the parent so the child's composite FK has a target; this is a safe additive change because the parent's PK already makes id unique and the new UNIQUE merely pairs it with organization_id. Repository follows the membership.go / project_grant.go pattern: stateless struct, *Tx for mutations with nil-Tx -> typed apierr.Internal, Querier for reads, pgx.ErrNoRows -> apierr.NotFound, mapWriteError for constraint-violation -> apierr.Conflict, tag.RowsAffected() == 0 -> apierr.NotFound on Delete. Tests combine CRUD + row-shape invariants in one file since no prior tests exist; tenant-isolation byte-identical-bystander proof is deferred to the paired BE-0436 (tenant-isolation) story that always follows.
 - Test fixture caveat for api_keys-related seeding (BE-0435 learning, internal/controlplane/store/api_key_scope_repository_invariants_test.go seedAPIKeyForScopes): testutil.Factory.APIKey stamps a per-FACTORY prefix `yk_<token[:8]>`, NOT a per-key prefix. Two keys minted from the same factory get the same Prefix value, which collides with the api_keys_prefix_key UNIQUE constraint when two are inserted in the same test. Always derive the persisted prefix as `key.Prefix + "_" + key.ID` (or similar per-row salt) — never use `key.Prefix + "_" + label` because the same label is reused across orgs in tenant-isolation fixtures and the label is not unique.
 - Repository for a **global identity table** with no organization_id and no version column (BE-0427 pattern, internal/controlplane/store/user.go): follow OrganizationRepository's shape (Get-by-own-id, scanX helper, nil-Tx guard → apierr.Internal) but drop the optimistic-concurrency If-Match path entirely; add a separate GetInOrganization(organizationID, userID) that JOINs against memberships so tenant-scoped reads return NotFound (the same shape an unknown id produces) for non-members and cross-tenant requesters. Delete uses RowsAffected() == 0 → apierr.NotFound (mirrors api_keys.Revoke). Conflict mapping for citext UNIQUE columns goes through mapWriteError with a non-sensitive user-facing message.
@@ -31134,4 +31135,141 @@ change that widened Reason to caller-supplied data.
     proved elsewhere is noise that drowns the actual gap. Always
     cross-check existing project_test.go / *_delete_test.go /
     *_restore_test.go before writing nil-Tx tests in the invariants file.
+---
+
+## 2026-05-18 — BE-0438 Repository tenant isolation: projects
+- What was implemented
+  - Added `internal/controlplane/store/project_tenant_isolation_test.go`
+    — the BE-0436 api_key_scope_tenant_isolation_test.go template
+    adapted for the projects table. projects is the first tenant-
+    isolation file with FOUR distinct mutation paths (Update /
+    UpdateDisplayName / ScheduleDeletion / Restore) PLUS a nullable
+    soft-delete column (deletion_scheduled_at) PLUS a count surface
+    the quota layer reads (CountByOrganization), so the file extends
+    the BE-0436 byte-identical-bystander projection with three new
+    legs:
+      1. UpdateDisplayName has its own
+         OnOrgADoesNotTouchOrgB / CrossTenantBystanderIsByteIdentical
+         pair — no other tenant-isolation file proves this surface,
+         and project_test.go's TestProjectRepositoryUpdateNotFoundIs-
+         TenantScoped only covers the typed-NotFound leg of Update,
+         not UpdateDisplayName at all.
+      2. The byte-identical-bystander helper carries
+         DeletionScheduledAt as a fourth observable column on top of
+         (version, updated_at, slug, display_name): a cross-tenant
+         ScheduleDeletion that stamped a peer tenant's row nil→non-nil
+         OR a cross-tenant Restore that cleared a peer's non-nil→nil
+         stamp would be caught here even when the trigger-managed
+         timestamps happened to look untouched (e.g. a same-second
+         match).
+      3. SoftDeletedRowIsTenantScopedOnReadPaths is the projection
+         api_key_scopes has no analogue for: projects does NOT filter
+         deletion_scheduled_at out of any read surface (Get / List /
+         Count), so the only thing isolating a peer tenant's
+         soft-deleted row is the WHERE organization_id predicate, and
+         the test pins that the row is invisible across all three
+         read surfaces from the wrong tenant AND fully visible from
+         the owning tenant.
+  - 15 new t.Parallel tests, all proving tenant-isolation invariants
+    the existing project_test.go / project_delete_test.go /
+    project_restore_test.go did not cover (those proved the typed
+    NotFound code on cross-tenant Update / ScheduleDeletion / Restore
+    but did NOT prove byte-identical-bystander on version + updated_at
+    + deletion_scheduled_at, did NOT prove cross-tenant +
+    unknown-id indistinguishability on Code+Hint, did NOT prove
+    Count tenant-scoping on the quota path, and did NOT prove the
+    per-tenant UNIQUE(organization_id, slug) coexistence leg).
+  - Two shared helpers at file scope (`getProjectOrFail`,
+    `assertProjectByteIdentical`) mirror BE-0436's
+    `getScopeOrFail` / `assertScopeByteIdentical` names — same shape,
+    DeletionScheduledAt column added.
+- Files changed
+  - internal/controlplane/store/project_tenant_isolation_test.go (new)
+  - ralph/prd.json (BE-0438 passes:true + notes)
+  - ralph/progress.txt (this entry + new Codebase Patterns line)
+- Verification
+  - gofmt -l internal/controlplane/store/project_tenant_isolation_test.go: clean
+  - goimports: not installed (documented; same as prior stories)
+  - go mod tidy: no diff to go.mod/go.sum
+  - go vet ./...: clean
+  - go build ./...: clean
+  - Targeted `go test -race -count=1 -run '<all 15 new tests>'
+    ./internal/controlplane/store/`:
+    all 15 PASS in ~0.63s each (real Postgres,
+    YALLA_TEST_DATABASE_URL=postgres://yalla:yalla@127.0.0.1:5432/yalla?sslmode=disable).
+  - go test ./... (without YALLA_TEST_DATABASE_URL): all packages PASS
+    (integration tests skip).
+  - go test ./... -count=1 with Postgres: ALL packages PASS EXCEPT two
+    PRE-EXISTING concurrent quota flakes from the shared Postgres
+    connection pool under heavy parallel load —
+    TestServiceCreateRejectsParallelOversubscriptionForComposeStacksQuota
+    and TestServiceBackupServiceCreateRejectsParallelOversubscriptionForBackupSchedulesQuota.
+    Both surface `E_UNAVAILABLE: the Yalla datastore is temporarily
+    unavailable` (the testutil pool exhausted under contention from
+    every other store integration test running in parallel).
+    Confirmed unrelated to BE-0438: re-running ONLY those two tests
+    via `go test -run '...|...' ./internal/controlplane/store/` PASSES
+    cleanly in 0.786s. My new tests touch only the projects table and
+    `seedOrg` helpers — they do NOT touch the services or
+    backup_schedules tables those flakes exercise. Same class of
+    pre-existing flakiness BE-0434's progress entry already documents
+    for the whole-store package surface.
+- Remaining risks/follow-ups: none for BE-0438. BE-0439
+  (project_grants Repository CRUD and invariants — the first
+  *_grants table, which is the second tier of FK chaining: scope is
+  (organization_id, project_id) referencing projects (organization_id,
+  id), with composite FK target now in place after BE-0437) is the
+  natural next story.
+- **Learnings for future iterations:**
+  - When a tenant-isolation story names a table whose existing repo/
+    service tests ALREADY have cross-tenant NotFound tests
+    (project_test.go / project_delete_test.go / project_restore_test.go
+    all do for projects), the dedicated tenant-isolation file is NOT
+    a re-prove of the typed NotFound code: it is the projection that
+    ADDS the BE-0436 byte-identical-bystander invariant (the
+    trigger-managed updated_at + trigger-bumped version did not drift
+    on the peer tenant's row), the existence-leak Code+Hint
+    indistinguishability invariant (cross-tenant probe and unknown-id
+    probe surface identical Code AND Hint), and table-specific
+    projections (per-tenant UNIQUE-shared-column coexistence,
+    soft-deleted row tenant scoping, count tenant scoping). The
+    file's docstring should call out which legs are already proved
+    elsewhere and which are NEW HERE, so a future reader does not
+    look for missing tests where the proof is intentionally
+    elsewhere.
+  - When a tenant-isolation test mutates orgA's own row to exercise
+    "WHERE org_id is the only thing isolating orgB", forcing BOTH
+    fixtures to carry the SAME slug text (via direct
+    `.Slug = "shared-slug"` overrides AFTER `projectFixture(f.Project(...))`)
+    is the only way to make the byte-identical-bystander assertion
+    catch a WHERE-on-slug-only regression — the default per-factory
+    token from `f.Project(org, label)` derives unique slug text per
+    tenant, which leaves a WHERE-on-slug-only mistake invisible.
+  - For a tenant-scoped table with a soft-delete column where ALL
+    read paths (Get / List / Count) expose the soft-deleted row to
+    the owning tenant (no `WHERE deletion_scheduled_at IS NULL`
+    filter at the repository layer), the dedicated tenant-isolation
+    file must include one composite test that proves cross-tenant
+    invisibility across ALL THREE read surfaces in a single fixture
+    AND owner-tenant visibility across the same three. Splitting it
+    into three "GetExcludesSoftDeleted", "ListExcludesSoftDeleted",
+    "CountExcludesSoftDeleted" tests would noise up the file because
+    the projection is the SAME WHERE filter on every read surface.
+  - apierr.NotFound(resource, id) echoes the CALLER's id in Message
+    verbatim — so when the cross-tenant probe (orgA + projB.ID) and
+    the unknown-id probe (orgA + "prj_never_existed") both surface,
+    Message text intentionally DIFFERS (each echoes the caller's own
+    id). The indistinguishability assertion belongs on Code AND Hint
+    only (both empty for projects' bare NotFound), NOT on Message —
+    apierr's contract guarantees the foreign row's id never appears
+    in any response surface because the builder never sees it.
+  - The new file's name (project_tenant_isolation_test.go) follows
+    the BE-0436 pattern (api_key_scope_tenant_isolation_test.go) and
+    BE-0432 pattern (api_key_tenant_isolation_test.go) — a separate
+    `*_tenant_isolation_test.go` sibling to the `*_test.go` integration
+    tests and the `*_repository_invariants_test.go` invariants tests.
+    Do not co-locate tenant-isolation tests into project_test.go;
+    keeping the file boundary makes the BE-0436 template visible
+    cross-table and lets future grep/audit work the file naming
+    convention.
 ---
