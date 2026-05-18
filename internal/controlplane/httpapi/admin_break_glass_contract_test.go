@@ -19,7 +19,8 @@ import (
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
 )
 
-// Public-API contract coverage for POST /v1/admin/break-glass (BE-0296).
+// Public-API contract coverage for POST /v1/admin/break-glass (BE-0296)
+// and DELETE /v1/admin/break-glass/{session_id} (BE-0298).
 //
 // break_glass_test.go covers the primary behavior for both the organization
 // path and admin query-scoped route. This file pins the remaining public
@@ -260,5 +261,117 @@ func TestPostAdminBreakGlassOpenAPIContract(t *testing.T) {
 	}
 	if got := op["security"]; got == nil {
 		t.Errorf("security requirement missing from POST /v1/admin/break-glass operation")
+	}
+}
+
+func TestDeleteAdminBreakGlassResponseAndErrorEnvelopesPreserveRequestID(t *testing.T) {
+	t.Parallel()
+
+	homeOrg := string(domain.MustNewID(domain.KindOrganization))
+	targetOrg := string(domain.MustNewID(domain.KindOrganization))
+	const sessionID = "bgs_admin_delete_contract"
+	now := time.Date(2026, 5, 19, 14, 30, 0, 0, time.UTC)
+	revoked := fakeBreakGlassSession(targetOrg, sessionID, now, time.Hour)
+	revoked.RequestID = "req_admin_break_glass_delete_contract"
+	revoked.CorrelationID = "corr_admin_break_glass_delete_contract"
+	revoked.Status = store.BreakGlassSessionStatusRevoked
+	revokedAt := now.Add(2 * time.Minute)
+	revoked.RevokedAt = &revokedAt
+	revoked.RevokedByID = "usr_support"
+	revoked.RevokedByKind = "usr"
+	handler := breakGlassHandlerFor(supportIdentity(homeOrg, "usr_support"), nil, fakeBreakGlassController{
+		revokeResult: revoked,
+	})
+
+	req := httptest.NewRequest(http.MethodDelete, "/v1/admin/break-glass/"+sessionID+"?organization_id="+targetOrg, nil)
+	req.Header.Set("Authorization", "Bearer "+adminBreakGlassContractSecret)
+	req.Header.Set("X-Request-Id", "req_admin_break_glass_delete_contract")
+	req.Header.Set("X-Correlation-Id", "corr_admin_break_glass_delete_contract")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body %s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		SchemaVersion string `json:"schema_version"`
+		OK            bool   `json:"ok"`
+		RequestID     string `json:"request_id"`
+		Data          struct {
+			Session struct {
+				ID             string `json:"id"`
+				OrganizationID string `json:"organization_id"`
+				Status         string `json:"status"`
+				ElevatedAccess bool   `json:"elevated_access"`
+				RequestID      string `json:"request_id"`
+				CorrelationID  string `json:"correlation_id"`
+			} `json:"session"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode success envelope: %v; body %s", err, rec.Body.String())
+	}
+	if env.SchemaVersion != "yalla.output.v1" || !env.OK || env.RequestID != "req_admin_break_glass_delete_contract" {
+		t.Fatalf("success envelope = %+v, want yalla.output.v1 ok=true with request id", env)
+	}
+	if env.Data.Session.ID != sessionID || env.Data.Session.OrganizationID != targetOrg || env.Data.Session.Status != "revoked" || !env.Data.Session.ElevatedAccess {
+		t.Fatalf("session projection = %+v, want revoked admin break-glass session", env.Data.Session)
+	}
+	if env.Data.Session.RequestID != "req_admin_break_glass_delete_contract" || env.Data.Session.CorrelationID != "corr_admin_break_glass_delete_contract" {
+		t.Errorf("session correlation = request_id %q correlation_id %q", env.Data.Session.RequestID, env.Data.Session.CorrelationID)
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, "/v1/admin/break-glass/"+sessionID+"?organization_id=not-an-org-id", nil)
+	req.Header.Set("Authorization", "Bearer "+adminBreakGlassContractSecret)
+	req.Header.Set("X-Request-Id", "req_admin_break_glass_delete_invalid")
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid status = %d, want 400; body %s", rec.Code, rec.Body.String())
+	}
+	invalidEnv := decodeError(t, rec, "E_VALIDATION")
+	if invalidEnv.RequestID != "req_admin_break_glass_delete_invalid" {
+		t.Errorf("validation request_id = %q, want req_admin_break_glass_delete_invalid", invalidEnv.RequestID)
+	}
+	if strings.Contains(rec.Body.String(), "not-an-org-id") {
+		t.Fatalf("validation body leaked invalid organization id: %s", rec.Body.String())
+	}
+}
+
+func TestDeleteAdminBreakGlassOpenAPIContract(t *testing.T) {
+	t.Parallel()
+
+	handler := breakGlassHandlerFor(auth.Identity{}, nil, fakeBreakGlassController{})
+	req := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("openapi.json status = %d, want 200; body %s", rec.Code, rec.Body.String())
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode openapi document: %v; body %s", err, rec.Body.String())
+	}
+	paths, ok := raw["paths"].(map[string]any)
+	if !ok {
+		t.Fatalf("openapi paths missing or wrong type: %T", raw["paths"])
+	}
+	pathItem, ok := paths["/v1/admin/break-glass/{session_id}"].(map[string]any)
+	if !ok {
+		t.Fatalf("openapi path item missing or wrong type: %T", paths["/v1/admin/break-glass/{session_id}"])
+	}
+	op, ok := pathItem["delete"].(map[string]any)
+	if !ok {
+		t.Fatalf("openapi delete operation missing or wrong type: %T", pathItem["delete"])
+	}
+	if got := op["operationId"]; got != "revokeAdminBreakGlassSession" {
+		t.Errorf("operationId = %v, want revokeAdminBreakGlassSession", got)
+	}
+	if got := op["x-required-action"]; got != string(policy.ActionAdminBreakGlass) {
+		t.Errorf("x-required-action = %v, want %s", got, policy.ActionAdminBreakGlass)
+	}
+	if got := op["security"]; got == nil {
+		t.Errorf("security requirement missing from DELETE /v1/admin/break-glass/{session_id} operation")
 	}
 }

@@ -2154,6 +2154,22 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 		},
 		{
 			endpoint: openapi.Endpoint{
+				Method:             http.MethodDelete,
+				Path:               "/v1/admin/break-glass/{session_id}",
+				OperationID:        "revokeAdminBreakGlassSession",
+				Summary:            "Revoke an admin break-glass session",
+				Description:        "Ends an active internal-support break-glass session selected by {session_id}. The target organization is named by the optional organization_id query parameter, defaulting to the authenticated principal's home organization; cross-tenant revocation must name organization_id in the query string so action admin.break_glass is authorized against the real target before the handler mutates data. The store-layer unit of work marks the row revoked and appends another immutable elevated-access audit event in the same transaction. A session that is already revoked or has elapsed is a typed 409 Conflict; a session id that does not exist within the selected organization is a typed 404 NotFound.",
+				Tags:               []string{tagAdmin},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionAdminBreakGlass),
+				PathParams:         []openapi.PathParam{{Name: "session_id", Description: "The id of the break-glass session to revoke."}},
+				SuccessDescription: "The revoked break-glass session.",
+			},
+			resolver: adminBreakGlassResolver,
+			handler:  revokeAdminBreakGlassHandler(breakGlass, nil),
+		},
+		{
+			endpoint: openapi.Endpoint{
 				Method:         http.MethodPost,
 				Path:           "/v1/organizations/{org_id}/break-glass",
 				OperationID:    "startBreakGlassSession",

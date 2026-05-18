@@ -623,6 +623,117 @@ func TestRevokeBreakGlassSuccess(t *testing.T) {
 	}
 }
 
+func TestDeleteAdminBreakGlassSucceedsWithQueryScopedTarget(t *testing.T) {
+	t.Parallel()
+
+	homeOrg := string(domain.MustNewID(domain.KindOrganization))
+	targetOrg := string(domain.MustNewID(domain.KindOrganization))
+	const sessionID = "bgs_admin_delete"
+	now := time.Date(2026, 5, 19, 14, 0, 0, 0, time.UTC)
+	revokedAt := now.Add(5 * time.Minute)
+	revoked := fakeBreakGlassSession(targetOrg, sessionID, now, time.Hour)
+	revoked.Status = store.BreakGlassSessionStatusRevoked
+	revoked.RevokedAt = &revokedAt
+	revoked.RevokedByID = "usr_support"
+	revoked.RevokedByKind = "usr"
+
+	var got store.RevokeBreakGlassInput
+	handler := breakGlassHandlerFor(supportIdentity(homeOrg, "usr_support"), nil, fakeBreakGlassController{
+		revokeResult: revoked,
+		revokeGot:    &got,
+	})
+
+	req := httptest.NewRequest(http.MethodDelete,
+		"/v1/admin/break-glass/"+sessionID+"?organization_id="+targetOrg, nil)
+	req.Header.Set("Authorization", "Bearer t")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	data := decodeSuccessData(t, rec.Body.Bytes())
+	session, ok := data["session"].(map[string]any)
+	if !ok {
+		t.Fatalf("data.session missing or not a map; body=%s", rec.Body.String())
+	}
+	if session["id"] != sessionID || session["organization_id"] != targetOrg || session["status"] != "revoked" {
+		t.Fatalf("session projection = %+v, want revoked %s for %s", session, sessionID, targetOrg)
+	}
+	if got.OrganizationID != targetOrg || got.SessionID != sessionID || got.ActorOrgID != homeOrg || got.ActorID != "usr_support" {
+		t.Fatalf("Revoke input = %+v, want target %s session %s actor org %s", got, targetOrg, sessionID, homeOrg)
+	}
+}
+
+func TestDeleteAdminBreakGlassDefaultsToPrincipalOrganization(t *testing.T) {
+	t.Parallel()
+
+	homeOrg := string(domain.MustNewID(domain.KindOrganization))
+	const sessionID = "bgs_admin_home_delete"
+	now := time.Date(2026, 5, 19, 14, 5, 0, 0, time.UTC)
+	var got store.RevokeBreakGlassInput
+	handler := breakGlassHandlerFor(supportIdentity(homeOrg, "usr_support"), nil, fakeBreakGlassController{
+		revokeResult: fakeBreakGlassSession(homeOrg, sessionID, now, time.Hour),
+		revokeGot:    &got,
+	})
+
+	req := httptest.NewRequest(http.MethodDelete, "/v1/admin/break-glass/"+sessionID, nil)
+	req.Header.Set("Authorization", "Bearer t")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if got.OrganizationID != homeOrg || got.SessionID != sessionID {
+		t.Fatalf("Revoke input = %+v, want principal home org %s and session %s", got, homeOrg, sessionID)
+	}
+}
+
+func TestDeleteAdminBreakGlassAuthAndNotFoundFailures(t *testing.T) {
+	t.Parallel()
+
+	homeOrg := string(domain.MustNewID(domain.KindOrganization))
+	targetOrg := string(domain.MustNewID(domain.KindOrganization))
+	const sessionID = "bgs_admin_missing"
+
+	t.Run("unauthorized", func(t *testing.T) {
+		t.Parallel()
+		var got store.RevokeBreakGlassInput
+		handler := breakGlassHandlerFor(ownerIdentity(targetOrg, "usr_owner"), nil, fakeBreakGlassController{revokeGot: &got})
+		req := httptest.NewRequest(http.MethodDelete, "/v1/admin/break-glass/"+sessionID+"?organization_id="+targetOrg, nil)
+		req.Header.Set("Authorization", "Bearer t")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403; body=%s", rec.Code, rec.Body.String())
+		}
+		if code := decodeErrorCode(t, rec.Body.Bytes()); code != "E_FORBIDDEN" {
+			t.Errorf("error code = %q, want E_FORBIDDEN", code)
+		}
+		if got.OrganizationID != "" {
+			t.Fatalf("Revoke called on authorization failure: %+v", got)
+		}
+	})
+
+	t.Run("not_found", func(t *testing.T) {
+		t.Parallel()
+		handler := breakGlassHandlerFor(supportIdentity(homeOrg, "usr_support"), nil, fakeBreakGlassController{
+			revokeErr: apierr.NotFound("break_glass_session", sessionID),
+		})
+		req := httptest.NewRequest(http.MethodDelete, "/v1/admin/break-glass/"+sessionID+"?organization_id="+targetOrg, nil)
+		req.Header.Set("Authorization", "Bearer t")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404; body=%s", rec.Code, rec.Body.String())
+		}
+		if code := decodeErrorCode(t, rec.Body.Bytes()); code != "E_NOT_FOUND" {
+			t.Errorf("error code = %q, want E_NOT_FOUND", code)
+		}
+	})
+}
+
 func TestRevokeBreakGlassConflict(t *testing.T) {
 	t.Parallel()
 

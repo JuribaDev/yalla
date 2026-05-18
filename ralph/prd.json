@@ -6571,8 +6571,8 @@
       ],
       "type": "endpoint-admin",
       "priority": 3,
-      "passes": false,
-      "notes": "Endpoint belongs to the admin backend surface."
+      "passes": true,
+      "notes": "Endpoint belongs to the admin backend surface. Implemented DELETE /v1/admin/break-glass/{session_id} as the admin query-scoped surface over the existing audited break-glass revoke unit of work, with admin.break_glass auth, OpenAPI route metadata, validation, and contract tests."
     },
     {
       "id": "BE-0299",

@@ -397,6 +397,56 @@ func revokeBreakGlassHandler(ctl BreakGlassController, nowFn func() time.Time) h
 	}
 }
 
+// revokeAdminBreakGlassHandler builds the DELETE
+// /v1/admin/break-glass/{session_id} handler. It mirrors the admin start
+// route's query-scoped target selection: organization_id is read from the
+// query string for cross-tenant support actions and defaults to the
+// authenticated principal's home organization. RequireAuth authorizes
+// admin.break_glass against that same target before this handler runs.
+func revokeAdminBreakGlassHandler(ctl BreakGlassController, nowFn func() time.Time) http.HandlerFunc {
+	if nowFn == nil {
+		nowFn = func() time.Time { return time.Now().UTC() }
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if ctl == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoBreakGlassController))
+			return
+		}
+
+		organizationID, err := parseAdminBreakGlassTarget(r, p.OrganizationID, "")
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		correlation := telemetry.FromContext(r.Context())
+		session, err := ctl.Revoke(r.Context(), store.RevokeBreakGlassInput{
+			OrganizationID: organizationID,
+			SessionID:      r.PathValue("session_id"),
+			ActorID:        p.ID,
+			ActorKind:      string(p.Kind),
+			ActorOrgID:     p.OrganizationID,
+			RequestID:      correlation.RequestID,
+			CorrelationID:  correlation.CorrelationID,
+			IPAddress:      clientIP(r),
+			UserAgent:      r.UserAgent(),
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), revokeBreakGlassPayload{
+			Session: breakGlassSessionResourceOf(session, nowFn()),
+		})
+	}
+}
+
 // parseBreakGlassLimit resolves the effective page size from the optional
 // ?limit= query parameter, mirroring parseAuditEventLimit. An absent
 // parameter resolves to the handler default; a malformed, non-positive,

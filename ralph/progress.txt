@@ -35802,3 +35802,43 @@ change that widened Reason to caller-supplied data.
   - Dokploy adapter outage paths already converge on `apierr.DokployUnavailable`; changing that constructor propagates the public code through worker/reconcile/import call sites without changing raw Dokploy clients directly.
   - Error-contract PRD updates must use story-specific context when patching `passes`; a broad `"passes": false` patch can hit an earlier unfinished story.
 ---
+## 2026-05-19 02:12 +03 - BE-0298
+- What was implemented
+  - Added `DELETE /v1/admin/break-glass/{session_id}` to revoke break-glass sessions through the admin surface.
+  - The route uses `admin.break_glass`, resolves `organization_id` from the query string or the authenticated principal's home organization, and delegates to the existing audited `BreakGlassController.Revoke` unit of work.
+  - Added OpenAPI metadata and contract/handler coverage for success, validation failure, authorization failure, not found, request-id propagation, and stable envelopes.
+- Files changed
+  - `internal/controlplane/httpapi/break_glass.go`
+  - `internal/controlplane/httpapi/routes.go`
+  - `internal/controlplane/httpapi/break_glass_test.go`
+  - `internal/controlplane/httpapi/admin_break_glass_contract_test.go`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `gofmt -w .`
+  - `goimports -w .` (not installed)
+  - `go mod tidy`
+  - `go test ./internal/controlplane/httpapi -run 'TestDeleteAdminBreakGlass'` (RED before implementation, then GREEN after implementation)
+  - `go test ./internal/controlplane/httpapi -run 'Test(DeleteAdminBreakGlass|PostAdminBreakGlassOpenAPIContract)'`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestBreakGlass ./...`
+  - `go test -run TestMigrations ./...`
+  - `go test -run TestPolicyMatrix ./...`
+  - `go test -run TestQuotaConcurrency ./...`
+  - `go test -run TestFakeDokploy ./...`
+  - `golangci-lint run ./...`
+  - `staticcheck ./...` (not installed)
+  - `govulncheck ./...` (not installed)
+- Results
+  - All installed checks passed.
+  - `goimports`, `staticcheck`, and `govulncheck` are not installed in this environment.
+- Remaining risks or follow-ups
+  - BE-0299 remains as the dedicated follow-up story for additional DELETE admin break-glass contract coverage.
+- **Learnings for future iterations:**
+  - Admin break-glass terminate follows the same query-scoped target pattern as admin break-glass start: `organization_id` must be authorization-visible before the handler mutates data, and absence defaults to the principal's home organization.
+  - The store-backed revoke path already appends the elevated-access audit event and lifecycle event atomically, so the admin route should stay a thin wrapper over `BreakGlassController.Revoke`.
+---
