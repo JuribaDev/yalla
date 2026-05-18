@@ -193,7 +193,9 @@ shape and a new middleware that does not will fail the build.
    the resolver read that query parameter. The JSON body may repeat the same
    organization id for typed clients, but body-only cross-tenant targets must
    be rejected in the handler because `RequireAuth` cannot inspect the body
-   without consuming it before validation.
+   without consuming it before validation. Store-backed admin job starters
+   should also carry the request and correlation IDs into the queued job so the
+   audit trail and worker logs can be joined deterministically.
 
    **Deep-resource resolvers** (no `{org_id}` in the path, e.g.
    `/v1/projects/{project_id}`) pull the principal's home `OrganizationID`

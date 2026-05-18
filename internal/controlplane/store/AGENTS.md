@@ -70,6 +70,15 @@ Postgres persistence for control-plane source-of-truth state.
   same transaction. The legacy `MarkResolved` helper also writes that event;
   do not add another resolution path that updates the row without the timeline.
 
+## Admin job starters
+
+- Admin endpoints that only start organization-scoped support work, such as
+  Dokploy import, should verify the target organization, insert the durable
+  `provisioning_jobs` row, and append the allowed audit event in one
+  `Store.Write` transaction. Carry `request_id` and `correlation_id` into both
+  the job row and audit row so support tooling can join the HTTP request to the
+  worker execution without exposing secrets.
+
 ## Preview environments (`0038_preview_environments`, `0048_preview_environment_state_machine`)
 
 - `preview_environments.status` is the explicit lifecycle state machine:

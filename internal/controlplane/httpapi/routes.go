@@ -199,6 +199,7 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 	var jobCanceler JobCanceler
 	var driftFindings DriftFindingReader
 	var adminDokployReconciler AdminDokployReconciler
+	var adminDokployImporter AdminDokployImporter
 	for _, opt := range routeOptions {
 		if v, ok := opt.(PreviewCreator); ok {
 			previewCreator = v
@@ -217,6 +218,9 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 		}
 		if v, ok := opt.(AdminDokployReconciler); ok {
 			adminDokployReconciler = v
+		}
+		if v, ok := opt.(AdminDokployImporter); ok {
+			adminDokployImporter = v
 		}
 	}
 
@@ -2092,6 +2096,22 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 			},
 			resolver: adminDokployDriftResolver,
 			handler:  reconcileAdminDokployHandler(adminDokployReconciler),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:             http.MethodPost,
+				Path:               "/v1/admin/dokploy/import",
+				OperationID:        "importAdminDokploy",
+				Summary:            "Import Dokploy resources",
+				Description:        "Queues the support-only Dokploy import workflow for the organization named by the optional organization_id query parameter, defaulting to the authenticated principal's home organization. The JSON body supplies the Dokploy organization id, an explicit Yalla owner binding, and a per-organization idempotency_key for the durable import job. Cross-tenant import must name the target organization in the query parameter so action admin.import is authorized against the real tenant before any job or audit row is written.",
+				Tags:               []string{tagAdmin},
+				RequiresAuth:       true,
+				RequiredAction:     string(policy.ActionAdminImport),
+				SuccessStatus:      http.StatusAccepted,
+				SuccessDescription: "The queued import job and target binding.",
+			},
+			resolver: adminDokployDriftResolver,
+			handler:  importAdminDokployHandler(adminDokployImporter),
 		},
 		{
 			endpoint: openapi.Endpoint{

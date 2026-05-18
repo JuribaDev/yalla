@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apienvelope"
@@ -19,10 +20,12 @@ import (
 
 var errNoDriftFindingReader = errors.New("httpapi: no drift finding reader configured")
 var errNoAdminDokployReconciler = errors.New("httpapi: no admin dokploy reconciler configured")
+var errNoAdminDokployImporter = errors.New("httpapi: no admin dokploy importer configured")
 
 const (
 	driftFindingListDefaultLimit = 50
 	driftFindingListMaxLimit     = 200
+	adminImportIdempotencyMaxLen = 128
 )
 
 // DriftFindingReader is the narrow read port for GET
@@ -39,6 +42,14 @@ type DriftFindingReader interface {
 // stable public result.
 type AdminDokployReconciler interface {
 	ReconcileDokploy(ctx context.Context, req AdminDokployReconcileRequest) (AdminDokployReconcileResult, error)
+}
+
+// AdminDokployImporter is the narrow mutating port for POST
+// /v1/admin/dokploy/import. Implementations own the store/audit/job
+// transaction; the HTTP layer validates target shape and renders the queued
+// job contract.
+type AdminDokployImporter interface {
+	ImportDokploy(ctx context.Context, in store.ImportDokployInput) (store.ProvisioningJob, error)
 }
 
 // AdminDokployReconcileRequest carries the validated reconcile target and
@@ -106,6 +117,14 @@ type adminDokployReconcileRequestBody struct {
 	DryRun         bool   `json:"dry_run,omitempty"`
 }
 
+type adminDokployImportRequestBody struct {
+	OrganizationID         string `json:"organization_id,omitempty"`
+	YallaOrganizationID    string `json:"yalla_organization_id,omitempty"`
+	DokployOrganizationID  string `json:"dokploy_organization_id"`
+	AssignmentDokployOrgID string `json:"assignment_dokploy_org_id,omitempty"`
+	IdempotencyKey         string `json:"idempotency_key"`
+}
+
 type adminDokployReconcilePayload struct {
 	OrganizationID string                         `json:"organization_id"`
 	DryRun         bool                           `json:"dry_run"`
@@ -114,6 +133,13 @@ type adminDokployReconcilePayload struct {
 	Quarantined    int                            `json:"quarantined"`
 	FailureCount   int                            `json:"failure_count"`
 	Failures       []AdminDokployReconcileFailure `json:"failures"`
+}
+
+type adminDokployImportPayload struct {
+	OrganizationID        string      `json:"organization_id"`
+	YallaOrganizationID   string      `json:"yalla_organization_id"`
+	DokployOrganizationID string      `json:"dokploy_organization_id"`
+	Job                   jobResource `json:"job"`
 }
 
 type driftFindingResource struct {
@@ -272,6 +298,59 @@ func reconcileAdminDokployHandler(reconciler AdminDokployReconciler) http.Handle
 	}
 }
 
+func importAdminDokployHandler(importer AdminDokployImporter) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if importer == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoAdminDokployImporter))
+			return
+		}
+
+		var body adminDokployImportRequestBody
+		if err := validate.DecodeJSON(r.Body, &body, 0); err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		orgID, yallaOrgID, err := parseAdminDokployImportTarget(r, p.OrganizationID, body.OrganizationID, body.YallaOrganizationID)
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		dokployOrgID, assignmentDokployOrgID, idempotencyKey, err := validateAdminDokployImportBody(body)
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+
+		job, err := importer.ImportDokploy(r.Context(), store.ImportDokployInput{
+			OrganizationID:         orgID,
+			YallaOrganizationID:    yallaOrgID,
+			DokployOrganizationID:  dokployOrgID,
+			AssignmentDokployOrgID: assignmentDokployOrgID,
+			IdempotencyKey:         idempotencyKey,
+			ActorID:                p.ID,
+			ActorKind:              string(p.Kind),
+			ActorOrgID:             p.OrganizationID,
+			RequestID:              requestID(r),
+			CorrelationID:          telemetry.CorrelationID(r.Context()),
+		})
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		apienvelope.WriteData(w, http.StatusAccepted, requestID(r), adminDokployImportPayload{
+			OrganizationID:        orgID,
+			YallaOrganizationID:   yallaOrgID,
+			DokployOrganizationID: dokployOrgID,
+			Job:                   jobResourceOf(job),
+		})
+	}
+}
+
 func parseDriftFindingListQuery(r *http.Request, defaultOrganizationID string) (string, store.DriftFindingListQuery, error) {
 	values := r.URL.Query()
 	orgID := values.Get("organization_id")
@@ -332,4 +411,66 @@ func parseAdminDokployReconcileTarget(r *http.Request, defaultOrganizationID, bo
 		return "", apierr.InvalidInput(apierr.FieldViolation{Field: "organization_id", Reason: "must be a valid organization id"})
 	}
 	return orgID, nil
+}
+
+func parseAdminDokployImportTarget(r *http.Request, defaultOrganizationID, bodyOrganizationID, bodyYallaOrganizationID string) (string, string, error) {
+	queryOrganizationID := r.URL.Query().Get("organization_id")
+	orgID := queryOrganizationID
+	if orgID == "" {
+		orgID = defaultOrganizationID
+	}
+	if bodyOrganizationID != "" {
+		if queryOrganizationID != "" && bodyOrganizationID != queryOrganizationID {
+			return "", "", apierr.InvalidInput(apierr.FieldViolation{Field: "organization_id", Reason: "must match query organization_id"})
+		}
+		if queryOrganizationID == "" && bodyOrganizationID != defaultOrganizationID {
+			return "", "", apierr.InvalidInput(apierr.FieldViolation{Field: "organization_id", Reason: "must be supplied as a query parameter for cross-tenant import"})
+		}
+		orgID = bodyOrganizationID
+	}
+	if err := validateOrganizationIDField("organization_id", orgID); err != nil {
+		return "", "", err
+	}
+
+	yallaOrgID := bodyYallaOrganizationID
+	if yallaOrgID == "" {
+		yallaOrgID = orgID
+	}
+	if yallaOrgID != orgID {
+		return "", "", apierr.InvalidInput(apierr.FieldViolation{Field: "yalla_organization_id", Reason: "must match organization_id"})
+	}
+	if err := validateOrganizationIDField("yalla_organization_id", yallaOrgID); err != nil {
+		return "", "", err
+	}
+	return orgID, yallaOrgID, nil
+}
+
+func validateAdminDokployImportBody(body adminDokployImportRequestBody) (string, string, string, error) {
+	dokployOrgID := strings.TrimSpace(body.DokployOrganizationID)
+	if dokployOrgID == "" {
+		return "", "", "", apierr.InvalidInput(apierr.FieldViolation{Field: "dokploy_organization_id", Reason: "required"})
+	}
+	assignmentDokployOrgID := strings.TrimSpace(body.AssignmentDokployOrgID)
+	if assignmentDokployOrgID == "" {
+		assignmentDokployOrgID = dokployOrgID
+	}
+	if assignmentDokployOrgID != dokployOrgID {
+		return "", "", "", apierr.InvalidInput(apierr.FieldViolation{Field: "assignment_dokploy_org_id", Reason: "must match dokploy_organization_id"})
+	}
+	idempotencyKey := strings.TrimSpace(body.IdempotencyKey)
+	if idempotencyKey == "" {
+		return "", "", "", apierr.InvalidInput(apierr.FieldViolation{Field: "idempotency_key", Reason: "must not be blank"})
+	}
+	if len(idempotencyKey) > adminImportIdempotencyMaxLen {
+		return "", "", "", apierr.InvalidInput(apierr.FieldViolation{Field: "idempotency_key", Reason: "must be at most 128 characters"})
+	}
+	return dokployOrgID, assignmentDokployOrgID, idempotencyKey, nil
+}
+
+func validateOrganizationIDField(field, value string) error {
+	parsed, err := domain.ParseID(value)
+	if err != nil || parsed.Kind() != domain.KindOrganization {
+		return apierr.InvalidInput(apierr.FieldViolation{Field: field, Reason: "must be a valid organization id"})
+	}
+	return nil
 }

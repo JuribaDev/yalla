@@ -6400,8 +6400,8 @@
       ],
       "type": "endpoint-admin",
       "priority": 3,
-      "passes": false,
-      "notes": "Endpoint belongs to the admin backend surface."
+      "passes": true,
+      "notes": "Implemented POST /v1/admin/dokploy/import as a support-only admin endpoint that validates query-visible organization scope, enqueues an import_dokploy_resource durable job with request/correlation ids, writes an allowed admin.import audit event in the same store transaction, documents the OpenAPI operation, and covers success, invalid input, auth failure, not found, redaction, and OpenAPI contract paths."
     },
     {
       "id": "BE-0290",
