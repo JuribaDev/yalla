@@ -31944,3 +31944,26 @@ change that widened Reason to caller-supplied data.
   - Sentinel-name caveat for store_test: the existing rollback-sentinel list now includes quotaPolicyTxRollbackSentinel, projectTxRollbackSentinel, environmentTxRollbackSentinel, serviceTxRollbackSentinel, membershipTxRollbackSentinel, apiKeyTxRollbackSentinel, apiKeyScopeTxRollbackSentinel, projectVariableTxRollbackSentinel, environmentVariableTxRollbackSentinel, serviceVariableTxRollbackSentinel, environmentGrantTxRollbackSentinel — and now `quotaUsageTxRollbackSentinel`. The list-of-siblings doc-comment block on each sentinel type is the established convention; BE-0453 follows it.
   - Codebase Patterns: ADDED a new top-level pattern entry (this story's quota_usage shape is structurally distinct from BE-0451's quota_policies upsert shape; future ledger-style counter tables with the same INSERT-DO-NOTHING + SELECT-FOR-UPDATE primitive — e.g. quota_reservations is a different shape with status lifecycle, but a future per-tenant-per-resource counter would mirror this exactly — should follow BE-0453, not BE-0451).
 ---
+
+## 2026-05-18 - BE-0179
+- Added internal/controlplane/httpapi/environment_services_get_contract_test.go: three public-API contract tests for GET /v1/environments/{environment_id}/services that close the criteria the BE-0178 baseline test and BE-0180 policy matrix do not assert directly.
+  - TestListEnvironmentServicesServerWritesResponseDataOnlyToResponseWriter: pins that the HTTP server writes response data only through the ResponseWriter — captureProcessOutput proves stdout/stderr stay empty, the structured logger is the only sanctioned out-of-band sink, and the seeded service payload is carried by the response body.
+  - TestListEnvironmentServicesRequestLogRedactsBearerToken: table-driven success + authorization-failure pair (disabled principal short-circuits at policy with a panicking-if-invoked reader to rule out a "reader error" leak source); asserts the recognisable bearer credential never appears in the per-request structured log or the response body.
+  - TestListEnvironmentServicesErrorEnvelopeDoesNotLeakDependencyCause: apierr.StoreUnavailable(stderrors.New("connection refused dialing 10.0.0.5:5432")) → 503 E_UNAVAILABLE with a stable generic message; asserts the wrapped driver cause string and the bare datastore address never reach the wire.
+- New local helpers: listEnvironmentServicesContractSecret (recognisable bearer), listEnvironmentServicesHandlerForWithLogger (logger-injecting variant of the production handler builder). Reuses the existing fakeEnvironmentServiceReader/principalForEnvironmentServices/seedServiceWire/getEnvironmentServices/decodeListEnvironmentServices/decodeError/captureProcessOutput helpers from environment_services_test.go and middleware_test.go.
+- Files changed: internal/controlplane/httpapi/environment_services_get_contract_test.go (new), ralph/prd.json (BE-0179 → passes: true).
+- Verification run:
+  - gofmt -w internal/controlplane/httpapi/environment_services_get_contract_test.go (clean)
+  - go vet ./internal/controlplane/httpapi/ (clean)
+  - go test -run TestListEnvironmentServices ./internal/controlplane/httpapi/ → ok 0.873s
+  - go test ./internal/controlplane/httpapi/ → ok 1.271s
+  - go test -race ./internal/controlplane/httpapi/ → ok 9.327s
+  - go test ./... → all 32 packages ok
+  - go mod tidy (no changes)
+- Results: all checks pass.
+- Remaining risks or follow-ups: none — pure contract-coverage story; no production code changed.
+- **Learnings for future iterations:**
+  - The "GET endpoint contract-coverage" story shape (BE-0173 → BE-0179) is a stable structural twin: three tests (server-writes-only-to-ResponseWriter, request-log-redacts-bearer, error-envelope-doesnt-leak-dependency-cause) + one logger-injecting handler-builder helper + one recognisable per-story bearer constant. The helpers come from environment_services_test.go (handler builder, reader fake, seed*, get*, decode*) and middleware_test.go (decodeError) and me_contract_test.go (captureProcessOutput) — never re-declare them.
+  - The auth-failure-path redaction probe needs a *non-zero* reader fake that errors if invoked, so a logged "reader error" cannot be mistaken for a credential leak source. The disabled-principal short-circuits at the policy boundary before the reader runs.
+  - Reuse apierr.StoreUnavailable(stderrors.New("connection refused dialing 10.0.0.5:5432")) verbatim across the contract-test family — the bare 10.0.0.5 address is the kind of internal-network detail the envelope must never leak, and the test asserts both the wrapped cause string and the address are absent from the wire.
+---
