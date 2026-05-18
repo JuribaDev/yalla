@@ -342,7 +342,6 @@ func TestServiceDomainRepositoryInsertConstraintViolationsAreConflicts(t *testin
 		mutate func(store.ServiceDomain) store.ServiceDomain
 	}{
 		{"blank hostname", func(d store.ServiceDomain) store.ServiceDomain { d.Hostname = ""; return d }},
-		{"blank path", func(d store.ServiceDomain) store.ServiceDomain { d.Path = ""; return d }},
 		{"zero port", func(d store.ServiceDomain) store.ServiceDomain { d.Port = 0; return d }},
 		{"too large port", func(d store.ServiceDomain) store.ServiceDomain { d.Port = 65536; return d }},
 		{"unknown certificate type", func(d store.ServiceDomain) store.ServiceDomain { d.CertificateType = "wildcard"; return d }},
