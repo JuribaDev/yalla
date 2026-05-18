@@ -9136,8 +9136,8 @@
       ],
       "type": "repository",
       "priority": 1,
-      "passes": false,
-      "notes": "Database table: api_keys."
+      "passes": true,
+      "notes": "Database table: api_keys. Added internal/controlplane/store/api_key_repository_invariants_test.go (11 t.Parallel tests) covering the BE-0427/BE-0429/BE-0431 invariants-file template adapted for api_keys (no version column, three distinct UPDATE paths, secret-bearing row body): Insert returns row with non-zero created_at == updated_at, nil lifecycle stamps, and verbatim credential primitives; UpdateMutable / Revoke / RotateCredential / TouchLastUsed each anchor the trigger dual-anchor (created_at preserved, updated_at refreshed by api_keys_set_updated_at); RotateCredential additionally pins identity / ownership / scopes / lifecycle preservation plus FindByPrefix re-binding to the new prefix and NotFound on the old one; UpdateMutable pins the {name, scopes} mutable surface with byte-identical non-mutable columns; Insert-rolls-back additionally proves the secret-bearing extension — no row anywhere in api_keys carries the rolled-back secret_hash OR prefix (the credential primitives that survive an autonomous-transaction refactor even when Get-by-id reports NotFound); nil-Tx guards on all five mutation paths render typed apierr.Internal (the pre-existing TestAPIKeyRepositoryInsertRejectsNilTx only asserted err != nil). gofmt, go vet, focused TestAPIKeyRepository run, and race-detector run on the new tests all pass. Pre-existing parallel-test flakes (TestRequireDBIsParallelSafe/worker-N, TestService*ServiceCreateRejectsParallelOversubscriptionFor*Quota) under full-suite go test ./... are Postgres max_connections exhaustion documented in BE-0428..BE-0432 progress entries; both pass when run in isolation."
     },
     {
       "id": "BE-0434",
