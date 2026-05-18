@@ -10409,8 +10409,8 @@
       ],
       "type": "worker-job",
       "priority": 1,
-      "passes": false,
-      "notes": "Provisioning job type: delete_preview_environment."
+      "passes": true,
+      "notes": "Implemented delete_preview_environment durable worker execution with typed payload validation, tenant-scoped desired-state reload, stale-version refusal, idempotent replay after cleanup, typed Dokploy RemoveEnvironment use, cleanup of the preview wrapper and Dokploy ref, cancellation handling, retryable upstream failure handling, and redacted queue error-summary coverage."
     },
     {
       "id": "BE-0501",

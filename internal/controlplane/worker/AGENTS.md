@@ -86,6 +86,16 @@ Background provisioning/metering workers for the control plane.
   `dokploy_refs` row for the wrapped clone. A job already marked `succeeded` is
   a no-op replay; a replay after a crash should fetch the existing Dokploy
   environment through `EnsureEnvironment` and leave the mapping table unchanged.
+- Preview teardown jobs (`delete_preview_environment`) use the scoped payload
+  `(organization_id, project_id, environment_id, preview_id)`, reload the
+  project-scoped `preview_environments` row plus the wrapped
+  `environments.kind='preview'` clone, verify payload scope and the preview row
+  `DesiredVersion`, resolve the clone's `environment` `dokploy_refs` row, call
+  the typed Dokploy `RemoveEnvironment` intent when a mapping exists, then
+  delete the mapping and hard-delete the preview wrapper in the same
+  transaction. A job already marked `succeeded` is a no-op replay, and a replay
+  after cleanup should treat a missing preview wrapper as success without
+  issuing another Dokploy call.
 - Project teardown jobs (`project.delete`/`delete_project`) use the scoped
   payload `(organization_id, project_id)`, reload the project through
   `ProjectRepository.Get`, verify job/payload scope and `DesiredVersion`,

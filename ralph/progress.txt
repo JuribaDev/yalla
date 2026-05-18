@@ -1,4 +1,5 @@
 ## Codebase Patterns
+- Worker preview teardown jobs (BE-0500 pattern for `delete_preview_environment`) extend `worker.Provisioner` with a typed scoped payload `(organization_id, project_id, environment_id, preview_id)`, load the `preview_environments` wrapper and wrapped `environments.kind=preview` clone through tenant-scoped repositories, verify payload scope and preview-row `DesiredVersion`, resolve the clone's `environment` `dokploy_refs` row, call the typed Dokploy `RemoveEnvironment` intent only when an upstream mapping exists, then delete the mapping and hard-delete the preview wrapper in one transaction. A job already marked `succeeded` is a no-op; a replay after cleanup treats a missing preview wrapper as success and does not issue another Dokploy call. Retryable upstream errors stay plain so the durable queue can persist a redacted `error_summary`; stale/cross-tenant/malformed desired state is `worker.Terminal`.
 - Worker preview create jobs (BE-0499 pattern for `create_preview_environment`) extend `worker.Provisioner` with a typed scoped payload `(organization_id, project_id, environment_id, preview_id)`, load the `preview_environments` wrapper and wrapped `environments.kind=preview` row through tenant-scoped repositories, verify payload scope and preview-row `DesiredVersion`, reject deletion-scheduled previews before any Dokploy call, resolve the parent project Dokploy ref, call the typed Dokploy `EnsureEnvironment` intent for the wrapped clone, and persist exactly one `dokploy_refs` row as `yalla_kind=environment` / `yalla_id=<wrapped environment_id>`. A job already marked `succeeded` is a no-op replay; a crash replay with an existing ref fetches the upstream environment and leaves the mapping table unchanged. Retryable upstream errors stay plain so the durable queue can persist a redacted `error_summary`.
 - Worker backup restore jobs (BE-0498 pattern for `restore_backup`) extend `worker.Provisioner` with a typed scoped payload `(organization_id, project_id, environment_id, service_id, backup_id)`, load both the parent service and `service_backups` row through tenant-scoped repositories, require the backup row to be enabled and already `succeeded`, reject stale desired versions and deletion-scheduled services before any Dokploy call, resolve the service-kind-specific Dokploy service ref, then call the typed Dokploy `RestoreBackup` intent. A job already marked `succeeded` is a replay no-op and must not issue another upstream POST; retryable upstream errors stay plain so the durable queue can persist a redacted `error_summary`.
 - Worker backup run jobs (BE-0497 pattern for `run_backup`) extend `worker.Provisioner` with a typed scoped payload `(organization_id, project_id, environment_id, service_id, backup_id)`, load both the parent service and `service_backups` row through tenant-scoped repositories, reject stale backup versions plus disabled/running/deletion-scheduled state before any Dokploy call, resolve the service-kind-specific Dokploy service ref, mark the backup row `running` before calling the typed Dokploy `RunBackup` intent, then project the result to `succeeded` or `failed`. Replays of an already-succeeded backup row are no-op and must not issue another upstream POST; retryable upstream errors stay plain so the durable queue can persist a redacted `error_summary`.
@@ -875,8 +876,6 @@
     that is not already cancelled. go.mod is on go 1.25.
   - Adding a non-secret config field only needs Config + Load + Validate + Redacted/LogValue/String
     + tests; the redaction tests only assert secrets are absent, so a new plain field is safe.
----
-
 ## 2026-05-14 - BE-0004
 - What was implemented: Canonical API envelope package for every control-plane HTTP response.
   - internal/controlplane/apienvelope/apienvelope.go (new): single canonical renderer.
@@ -34365,4 +34364,49 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - The preview create route already used a single variadic preview service port in `NewHandler`; extending that port with the read method avoided a broad constructor-argument sweep across the httpapi test suite.
   - For parent-scoped list endpoints, the store service should verify the parent row before listing children so a foreign or unknown parent id returns `E_NOT_FOUND` instead of an ambiguous empty list.
+---
+## 2026-05-18 20:27 +03 - BE-0500
+- What was implemented
+  - Implemented durable worker support for `delete_preview_environment`.
+  - Added typed payload validation for `(organization_id, project_id, environment_id, preview_id)` and wired the job type into `Provisioner.Run`.
+  - Added tenant-scoped desired-state reload for the preview wrapper and wrapped preview-kind environment clone, stale-version refusal, cross-tenant terminal behavior, typed Dokploy `RemoveEnvironment` execution, and idempotent replay after cleanup.
+  - Added cleanup that deletes the clone's `dokploy_refs` mapping and hard-deletes the `preview_environments` wrapper in one transaction after upstream teardown succeeds.
+  - Added fake-Dokploy worker tests for success, replay, retryable upstream failure, queue error-summary redaction, stale desired state, cross-tenant payloads, cancellation, and succeeded-job no-op.
+  - Updated `internal/controlplane/worker/AGENTS.md` and the top `Codebase Patterns` section with the reusable preview teardown pattern.
+- Files changed
+  - `internal/controlplane/worker/provisioner.go`
+  - `internal/controlplane/worker/provisioner_test.go`
+  - `internal/controlplane/worker/AGENTS.md`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `gofmt -w .`
+  - `goimports -w .` was not run because `goimports` is not installed/on PATH.
+  - `go mod tidy`
+  - `go test ./internal/controlplane/worker -run 'TestDeletePreviewEnvironmentPayloadValidation|TestProvisionerDeletesPreviewEnvironmentAndCleansMapping|TestProvisionerDeletePreviewEnvironment|TestDeletePreviewEnvironmentRetryableFailurePersistsRedactedErrorSummary'`
+  - `go test ./internal/controlplane/worker`
+  - `go test ./internal/controlplane/...`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `go test -run TestPolicyMatrix ./...`
+  - `go test -run TestQuotaConcurrency ./...`
+  - `go test -run TestFakeDokploy ./...`
+  - `golangci-lint run ./...`
+  - Commit hook also ran `scripts/verify.sh --strict --release`, including the required suites plus optional `govulncheck ./...`, `staticcheck ./...`, `golangci-lint run ./...`, `goreleaser check`, and `goreleaser release --snapshot --clean`.
+- Results
+  - All executed checks passed.
+  - `golangci-lint` reported `0 issues`.
+  - `govulncheck` reported no vulnerabilities.
+  - `staticcheck` completed cleanly through the strict commit hook.
+  - `goreleaser` snapshot release succeeded; live Dokploy smoke stayed opt-in because `YALLA_EXTERNAL_DOKPLOY=1` was not configured.
+  - Focused delete-preview tests first failed at compile because the job type/parser were absent, then passed after implementation.
+- Remaining risks or follow-ups
+  - `delete_preview_environment` currently hard-deletes the preview wrapper and mapping after Dokploy teardown; the wrapped `environments.kind='preview'` row remains because the existing store layer has no hard-delete repository surface for environments.
+  - The public DELETE preview endpoint stories remain unfinished and will need to enqueue this worker job with the scheduled preview row version.
+- **Learnings for future iterations:**
+  - Preview teardown is not the same as generic environment teardown: it must validate both the preview wrapper and wrapped clone, remove the clone's environment mapping, and clean up the preview wrapper idempotently.
+  - A missing preview wrapper during replay is the successful post-cleanup state; do not treat it as a terminal not-found or issue another Dokploy request.
 ---

@@ -13,6 +13,7 @@ import (
 	"github.com/JuribaDev/yalla/internal/controlplane/secrets"
 	"github.com/JuribaDev/yalla/internal/controlplane/store"
 	"github.com/JuribaDev/yalla/internal/controlplane/variables"
+	yerr "github.com/JuribaDev/yalla/internal/errors"
 )
 
 // JobTypeEnsureDokployOrganization is the durable provisioning job that makes
@@ -132,6 +133,10 @@ const JobTypeRestoreBackup = "restore_backup"
 // JobTypeCreatePreviewEnvironment is the durable provisioning job that makes
 // a preview_environments clone exist as a Dokploy environment.
 const JobTypeCreatePreviewEnvironment = "create_preview_environment"
+
+// JobTypeDeletePreviewEnvironment is the durable provisioning job that removes
+// a preview_environments clone from Dokploy and cleans up its Yalla wrapper.
+const JobTypeDeletePreviewEnvironment = "delete_preview_environment"
 
 // DokployClient is the narrow typed-client surface these worker jobs
 // needs. *dokploy.Client satisfies it in production; tests can supply fakes.
@@ -404,6 +409,15 @@ type CreatePreviewEnvironmentPayload struct {
 	PreviewID      string
 }
 
+// DeletePreviewEnvironmentPayload is the typed schema carried by
+// provisioning_jobs.payload for JobTypeDeletePreviewEnvironment.
+type DeletePreviewEnvironmentPayload struct {
+	OrganizationID string
+	ProjectID      string
+	EnvironmentID  string
+	PreviewID      string
+}
+
 // SyncDomainsPayload is the typed schema carried by provisioning_jobs.payload
 // for JobTypeSyncDomains.
 type SyncDomainsPayload struct {
@@ -460,6 +474,60 @@ func ParseCreatePreviewEnvironmentPayload(job store.ProvisioningJob) (CreatePrev
 		return CreatePreviewEnvironmentPayload{}, Terminal(apierr.InvalidInput(violations...))
 	}
 	return CreatePreviewEnvironmentPayload{
+		OrganizationID: payloadOrgID,
+		ProjectID:      payloadProjectID,
+		EnvironmentID:  payloadEnvironmentID,
+		PreviewID:      payloadPreviewID,
+	}, nil
+}
+
+// ParseDeletePreviewEnvironmentPayload validates a delete-preview-environment
+// job payload and returns a terminal error for payload shapes retrying cannot
+// repair.
+func ParseDeletePreviewEnvironmentPayload(job store.ProvisioningJob) (DeletePreviewEnvironmentPayload, error) {
+	var violations []apierr.FieldViolation
+	if job.JobType != JobTypeDeletePreviewEnvironment {
+		violations = append(violations, apierr.FieldViolation{Field: "job_type", Reason: "must be delete_preview_environment"})
+	}
+	if job.OrganizationID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "organization_id", Reason: "is required"})
+	}
+	if job.ProjectID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "project_id", Reason: "is required"})
+	}
+	if job.EnvironmentID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "environment_id", Reason: "is required"})
+	}
+	if job.ServiceID != "" {
+		violations = append(violations, apierr.FieldViolation{Field: "service_id", Reason: "must be empty for this job type"})
+	}
+
+	payloadOrgID := job.Payload["organization_id"]
+	if payloadOrgID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.organization_id", Reason: "is required"})
+	} else if job.OrganizationID != "" && payloadOrgID != job.OrganizationID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.organization_id", Reason: "must match the job organization_id"})
+	}
+	payloadProjectID := job.Payload["project_id"]
+	if payloadProjectID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.project_id", Reason: "is required"})
+	} else if job.ProjectID != "" && payloadProjectID != job.ProjectID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.project_id", Reason: "must match the job project_id"})
+	}
+	payloadEnvironmentID := job.Payload["environment_id"]
+	if payloadEnvironmentID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.environment_id", Reason: "is required"})
+	} else if job.EnvironmentID != "" && payloadEnvironmentID != job.EnvironmentID {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.environment_id", Reason: "must match the job environment_id"})
+	}
+	payloadPreviewID := job.Payload["preview_id"]
+	if payloadPreviewID == "" {
+		violations = append(violations, apierr.FieldViolation{Field: "payload.preview_id", Reason: "is required"})
+	}
+	if len(violations) > 0 {
+		return DeletePreviewEnvironmentPayload{}, Terminal(apierr.InvalidInput(violations...))
+	}
+	return DeletePreviewEnvironmentPayload{
 		OrganizationID: payloadOrgID,
 		ProjectID:      payloadProjectID,
 		EnvironmentID:  payloadEnvironmentID,
@@ -1326,6 +1394,10 @@ func databaseEngineValid(engine string) bool {
 	}
 }
 
+func isNotFound(err error) bool {
+	return err != nil && yerr.From(err).Code == yerr.CodeNotFound
+}
+
 // ProvisionerConfig configures a Provisioner.
 type ProvisionerConfig struct {
 	Store         *store.Store
@@ -1510,6 +1582,8 @@ func (p *Provisioner) Run(ctx context.Context, job store.ProvisioningJob) error 
 		return p.runRestoreBackup(ctx, job)
 	case JobTypeCreatePreviewEnvironment:
 		return p.runCreatePreviewEnvironment(ctx, job)
+	case JobTypeDeletePreviewEnvironment:
+		return p.runDeletePreviewEnvironment(ctx, job)
 	default:
 		return Terminal(apierr.InvalidInput(apierr.FieldViolation{
 			Field:  "job_type",
@@ -1732,6 +1806,37 @@ func (p *Provisioner) runCreatePreviewEnvironment(ctx context.Context, job store
 	}
 
 	return p.persistCreatePreviewEnvironmentRef(ctx, job, payload, ensured.ID)
+}
+
+func (p *Provisioner) runDeletePreviewEnvironment(ctx context.Context, job store.ProvisioningJob) error {
+	if job.Status == store.JobStatusSucceeded {
+		return nil
+	}
+	payload, err := ParseDeletePreviewEnvironmentPayload(job)
+	if err != nil {
+		return err
+	}
+
+	target, err := p.loadDeletePreviewEnvironmentTarget(ctx, job, payload)
+	if err != nil {
+		return err
+	}
+	if !target.Exists {
+		return nil
+	}
+	if target.DokployEnvironment != "" {
+		removeErr := p.client.RemoveEnvironment(ctx, dokploy.RemoveEnvironmentInput{EnvironmentID: target.DokployEnvironment})
+		if removeErr != nil {
+			if interrupted(ctx, removeErr) {
+				return removeErr
+			}
+			if apierr.Retryable(removeErr) {
+				return removeErr
+			}
+			return Terminal(removeErr)
+		}
+	}
+	return p.cleanupDeletedPreviewEnvironment(ctx, job, payload, target)
 }
 
 func (p *Provisioner) runEnsureApplicationService(ctx context.Context, job store.ProvisioningJob) error {
@@ -2581,6 +2686,86 @@ func (p *Provisioner) loadCreatePreviewEnvironmentTarget(ctx context.Context, jo
 		return store.Environment{}, "", "", err
 	}
 	return env, parentDokployID, existingDokployID, nil
+}
+
+type deletePreviewEnvironmentTarget struct {
+	Preview            store.PreviewEnvironment
+	DokployRefID       int64
+	DokployEnvironment string
+	Exists             bool
+}
+
+func (p *Provisioner) loadDeletePreviewEnvironmentTarget(ctx context.Context, job store.ProvisioningJob, payload DeletePreviewEnvironmentPayload) (deletePreviewEnvironmentTarget, error) {
+	var target deletePreviewEnvironmentTarget
+	err := p.store.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		preview, getErr := p.previews.GetByID(ctx, q, payload.OrganizationID, payload.ProjectID, payload.PreviewID)
+		if getErr != nil {
+			if isNotFound(getErr) {
+				return nil
+			}
+			return Terminal(getErr)
+		}
+		target.Preview = preview
+		target.Exists = true
+		if preview.OrganizationID != job.OrganizationID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.organization_id",
+				Reason: "must match the preview environment organization_id",
+			}))
+		}
+		if preview.ProjectID != payload.ProjectID || preview.ProjectID != job.ProjectID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.project_id",
+				Reason: "must match the preview environment project_id",
+			}))
+		}
+		if preview.EnvironmentID != payload.EnvironmentID || preview.EnvironmentID != job.EnvironmentID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.environment_id",
+				Reason: "must match the preview environment environment_id",
+			}))
+		}
+		if job.DesiredVersion > 0 && preview.Version != job.DesiredVersion {
+			return Terminal(apierr.ConflictStale(preview.Version))
+		}
+
+		env, envErr := p.environments.GetByID(ctx, q, payload.OrganizationID, preview.EnvironmentID)
+		if envErr != nil {
+			return Terminal(envErr)
+		}
+		if env.OrganizationID != job.OrganizationID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.organization_id",
+				Reason: "must match the environment organization_id",
+			}))
+		}
+		if env.ProjectID != payload.ProjectID || env.ProjectID != job.ProjectID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.project_id",
+				Reason: "must match the environment project_id",
+			}))
+		}
+		if env.Kind != store.EnvironmentKindPreview {
+			return Terminal(apierr.Conflict("preview delete job must target an environment with kind preview"))
+		}
+
+		envRefs, listErr := p.refs.ListByYallaResource(ctx, q, job.OrganizationID, store.YallaKindEnvironment, env.ID)
+		if listErr != nil {
+			return listErr
+		}
+		for _, ref := range envRefs {
+			if ref.DokployResource == store.DokployResourceEnvironment {
+				target.DokployRefID = ref.ID
+				target.DokployEnvironment = ref.DokployID
+				break
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return deletePreviewEnvironmentTarget{}, err
+	}
+	return target, nil
 }
 
 func (p *Provisioner) loadApplicationServiceTarget(ctx context.Context, job store.ProvisioningJob, payload EnsureApplicationServicePayload) (store.Service, string, string, error) {
@@ -3829,6 +4014,59 @@ func (p *Provisioner) persistCreatePreviewEnvironmentRef(ctx context.Context, jo
 			DokployID:       dokployID,
 		})
 		if err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+func (p *Provisioner) cleanupDeletedPreviewEnvironment(ctx context.Context, job store.ProvisioningJob, payload DeletePreviewEnvironmentPayload, target deletePreviewEnvironmentTarget) error {
+	if !target.Exists {
+		return nil
+	}
+	return p.store.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		preview, err := p.previews.GetByID(ctx, tx, payload.OrganizationID, payload.ProjectID, payload.PreviewID)
+		if err != nil {
+			if isNotFound(err) {
+				return nil
+			}
+			return Terminal(err)
+		}
+		if preview.OrganizationID != job.OrganizationID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.organization_id",
+				Reason: "must match the preview environment organization_id",
+			}))
+		}
+		if preview.ProjectID != payload.ProjectID || preview.ProjectID != job.ProjectID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.project_id",
+				Reason: "must match the preview environment project_id",
+			}))
+		}
+		if preview.EnvironmentID != payload.EnvironmentID || preview.EnvironmentID != job.EnvironmentID {
+			return Terminal(apierr.InvalidInput(apierr.FieldViolation{
+				Field:  "payload.environment_id",
+				Reason: "must match the preview environment environment_id",
+			}))
+		}
+		if job.DesiredVersion > 0 && preview.Version != job.DesiredVersion {
+			return Terminal(apierr.ConflictStale(preview.Version))
+		}
+		env, err := p.environments.GetByID(ctx, tx, payload.OrganizationID, payload.EnvironmentID)
+		if err != nil {
+			return Terminal(err)
+		}
+		if env.Kind != store.EnvironmentKindPreview {
+			return Terminal(apierr.Conflict("preview delete job must target an environment with kind preview"))
+		}
+		if target.DokployRefID > 0 {
+			if err := p.refs.Delete(ctx, tx, job.OrganizationID, target.DokployRefID); err != nil && !isNotFound(err) {
+				return err
+			}
+		}
+		_, err = p.previews.DeleteByID(ctx, tx, payload.OrganizationID, payload.ProjectID, payload.PreviewID, nil)
+		if err != nil && !isNotFound(err) {
 			return err
 		}
 		return nil

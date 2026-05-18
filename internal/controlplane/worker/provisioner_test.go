@@ -385,6 +385,98 @@ func TestCreatePreviewEnvironmentPayloadValidation(t *testing.T) {
 	}
 }
 
+func TestDeletePreviewEnvironmentPayloadValidation(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name    string
+		job     store.ProvisioningJob
+		wantErr bool
+	}{
+		{
+			name: "valid",
+			job: store.ProvisioningJob{
+				OrganizationID: "org_valid",
+				ProjectID:      "proj_valid",
+				EnvironmentID:  "env_valid",
+				JobType:        worker.JobTypeDeletePreviewEnvironment,
+				Payload: map[string]string{
+					"organization_id": "org_valid",
+					"project_id":      "proj_valid",
+					"environment_id":  "env_valid",
+					"preview_id":      "penv_valid",
+				},
+			},
+		},
+		{
+			name: "missing preview id",
+			job: store.ProvisioningJob{
+				OrganizationID: "org_valid",
+				ProjectID:      "proj_valid",
+				EnvironmentID:  "env_valid",
+				JobType:        worker.JobTypeDeletePreviewEnvironment,
+				Payload: map[string]string{
+					"organization_id": "org_valid",
+					"project_id":      "proj_valid",
+					"environment_id":  "env_valid",
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "cross tenant payload",
+			job: store.ProvisioningJob{
+				OrganizationID: "org_valid",
+				ProjectID:      "proj_valid",
+				EnvironmentID:  "env_valid",
+				JobType:        worker.JobTypeDeletePreviewEnvironment,
+				Payload: map[string]string{
+					"organization_id": "org_other",
+					"project_id":      "proj_valid",
+					"environment_id":  "env_valid",
+					"preview_id":      "penv_valid",
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "service scoped job",
+			job: store.ProvisioningJob{
+				OrganizationID: "org_valid",
+				ProjectID:      "proj_valid",
+				EnvironmentID:  "env_valid",
+				ServiceID:      "svc_forbidden",
+				JobType:        worker.JobTypeDeletePreviewEnvironment,
+				Payload: map[string]string{
+					"organization_id": "org_valid",
+					"project_id":      "proj_valid",
+					"environment_id":  "env_valid",
+					"preview_id":      "penv_valid",
+				},
+			},
+			wantErr: true,
+		},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := worker.ParseDeletePreviewEnvironmentPayload(tc.job)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("ParseDeletePreviewEnvironmentPayload returned nil, want validation error")
+				}
+				if !worker.IsTerminal(err) {
+					t.Fatalf("validation error is not terminal: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseDeletePreviewEnvironmentPayload returned %v, want nil", err)
+			}
+		})
+	}
+}
+
 func TestEnsureApplicationServicePayloadValidation(t *testing.T) {
 	t.Parallel()
 
@@ -2373,6 +2465,374 @@ func TestProvisionerCreatePreviewEnvironmentSucceededJobIsNoop(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("succeeded create_preview_environment job returned error: %v", err)
+	}
+}
+
+func TestProvisionerDeletesPreviewEnvironmentAndCleansMapping(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	org := insertWorkerOrg(ctx, t, dataStore, "acme")
+	project := insertWorkerProject(ctx, t, dataStore, org, "api")
+	source := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+	preview := insertWorkerPreviewEnvironment(ctx, t, dataStore, project, source, "pr-42")
+
+	fake := dokployfake.New()
+	defer fake.Close()
+	client := newWorkerDokployClient(t, fake)
+	if err := pRunEnsureProjectWithParent(ctx, t, dataStore, client, org, project); err != nil {
+		t.Fatalf("seed parent dokploy project: %v", err)
+	}
+
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: client,
+		Mapper: dokploy.NewMapper(),
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+	if err := p.Run(ctx, createPreviewEnvironmentJob(preview)); err != nil {
+		t.Fatalf("Run create_preview_environment: %v", err)
+	}
+	preview = scheduleWorkerPreviewDeletion(ctx, t, dataStore, preview)
+
+	if err := p.Run(ctx, deletePreviewEnvironmentJob(preview)); err != nil {
+		t.Fatalf("Run delete_preview_environment: %v", err)
+	}
+
+	if refs := listEnvironmentRefs(ctx, t, dataStore, preview.OrganizationID, preview.EnvironmentID); len(refs) != 0 {
+		t.Fatalf("preview environment dokploy refs count after delete = %d, want 0", len(refs))
+	}
+	assertPreviewEnvironmentMissing(ctx, t, dataStore, preview)
+
+	reqs := fake.Requests()
+	if len(reqs) != 4 || reqs[3].Method != http.MethodDelete || reqs[3].Path != "/api/environments/env_1" {
+		t.Fatalf("fake requests = %+v, want org/project/create then DELETE /api/environments/env_1", reqs)
+	}
+	if reqs[3].AuthHeader != output.Sentinel {
+		t.Fatalf("auth header was not redacted: %q", reqs[3].AuthHeader)
+	}
+
+	if err := p.Run(ctx, deletePreviewEnvironmentJob(preview)); err != nil {
+		t.Fatalf("replayed Run delete_preview_environment: %v", err)
+	}
+	if reqs = fake.Requests(); len(reqs) != 4 {
+		t.Fatalf("replayed delete called Dokploy again: %+v", reqs)
+	}
+}
+
+func TestProvisionerDeletePreviewEnvironmentRetryableFailureDoesNotCleanup(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	org := insertWorkerOrg(ctx, t, dataStore, "acme")
+	project := insertWorkerProject(ctx, t, dataStore, org, "api")
+	source := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+	preview := insertWorkerPreviewEnvironment(ctx, t, dataStore, project, source, "pr-42")
+
+	fake := dokployfake.New()
+	defer fake.Close()
+	client := newWorkerDokployClient(t, fake)
+	if err := pRunEnsureProjectWithParent(ctx, t, dataStore, client, org, project); err != nil {
+		t.Fatalf("seed parent dokploy project: %v", err)
+	}
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: client,
+		Mapper: dokploy.NewMapper(),
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+	if err := p.Run(ctx, createPreviewEnvironmentJob(preview)); err != nil {
+		t.Fatalf("Run create_preview_environment: %v", err)
+	}
+	preview = scheduleWorkerPreviewDeletion(ctx, t, dataStore, preview)
+	fake.QueueFault(dokployfake.StatusFault(http.StatusInternalServerError))
+
+	err = p.Run(ctx, deletePreviewEnvironmentJob(preview))
+	if err == nil {
+		t.Fatal("Run returned nil, want retryable Dokploy error")
+	}
+	if worker.IsTerminal(err) {
+		t.Fatalf("Run returned terminal error for retryable upstream failure: %v", err)
+	}
+	if !apierr.Retryable(err) {
+		t.Fatalf("Run error is not marked retryable: %v", err)
+	}
+	if refs := listEnvironmentRefs(ctx, t, dataStore, preview.OrganizationID, preview.EnvironmentID); len(refs) != 1 {
+		t.Fatalf("preview environment dokploy refs count after failed delete = %d, want 1", len(refs))
+	}
+	if _, err := getWorkerPreviewEnvironment(ctx, dataStore, preview); err != nil {
+		t.Fatalf("preview row after failed delete: %v", err)
+	}
+}
+
+func TestDeletePreviewEnvironmentRetryableFailurePersistsRedactedErrorSummary(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	org := insertWorkerOrg(ctx, t, dataStore, "acme")
+	project := insertWorkerProject(ctx, t, dataStore, org, "api")
+	source := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+	preview := insertWorkerPreviewEnvironment(ctx, t, dataStore, project, source, "pr-42")
+
+	fake := dokployfake.New()
+	defer fake.Close()
+	client := newWorkerDokployClient(t, fake)
+	if err := pRunEnsureProjectWithParent(ctx, t, dataStore, client, org, project); err != nil {
+		t.Fatalf("seed parent dokploy project: %v", err)
+	}
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: client,
+		Mapper: dokploy.NewMapper(),
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+	if err := p.Run(ctx, createPreviewEnvironmentJob(preview)); err != nil {
+		t.Fatalf("Run create_preview_environment: %v", err)
+	}
+	preview = scheduleWorkerPreviewDeletion(ctx, t, dataStore, preview)
+	fake.QueueFault(dokployfake.StatusFault(http.StatusInternalServerError))
+
+	jobs := store.NewJobRepository()
+	enqueued := deletePreviewEnvironmentJob(preview)
+	if err := dataStore.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		_, err := jobs.Insert(ctx, tx, enqueued)
+		return err
+	}); err != nil {
+		t.Fatalf("insert delete_preview_environment job: %v", err)
+	}
+
+	claimer, err := worker.NewStoreClaimer(worker.StoreClaimerConfig{
+		Store:         dataStore,
+		Runner:        p,
+		Owner:         "worker-delete-preview-redaction-test",
+		LeaseDuration: time.Minute,
+		Backoff:       worker.Backoff{Base: time.Second, Max: time.Second},
+		Now:           func() time.Time { return time.Unix(1700000000, 0).UTC() },
+	})
+	if err != nil {
+		t.Fatalf("NewStoreClaimer: %v", err)
+	}
+	lease, err := claimer.Claim(ctx)
+	if err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+	if lease == nil {
+		t.Fatal("Claim returned nil lease")
+	}
+	if err := lease.Run(ctx); err != nil {
+		t.Fatalf("lease.Run: %v", err)
+	}
+
+	var persisted store.ProvisioningJob
+	if err := dataStore.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		var getErr error
+		persisted, getErr = jobs.Get(ctx, q, enqueued.OrganizationID, enqueued.ID)
+		return getErr
+	}); err != nil {
+		t.Fatalf("read persisted job: %v", err)
+	}
+	if persisted.Status != store.JobStatusRetrying {
+		t.Fatalf("persisted status = %s, want retrying", persisted.Status)
+	}
+	if strings.Contains(persisted.ErrorSummary, fake.Token()) {
+		t.Fatalf("error summary leaked token: %q", persisted.ErrorSummary)
+	}
+	if !strings.Contains(persisted.ErrorSummary, "Dokploy") {
+		t.Fatalf("error summary = %q, want redacted Dokploy failure context", persisted.ErrorSummary)
+	}
+}
+
+func TestProvisionerDeletePreviewEnvironmentRefusesStaleDesiredVersion(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	org := insertWorkerOrg(ctx, t, dataStore, "acme")
+	project := insertWorkerProject(ctx, t, dataStore, org, "api")
+	source := insertWorkerEnvironment(ctx, t, dataStore, project, "production")
+	preview := insertWorkerPreviewEnvironment(ctx, t, dataStore, project, source, "pr-42")
+
+	fake := dokployfake.New()
+	defer fake.Close()
+	client := newWorkerDokployClient(t, fake)
+	if err := pRunEnsureProjectWithParent(ctx, t, dataStore, client, org, project); err != nil {
+		t.Fatalf("seed parent dokploy project: %v", err)
+	}
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: client,
+		Mapper: dokploy.NewMapper(),
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+	if err := p.Run(ctx, createPreviewEnvironmentJob(preview)); err != nil {
+		t.Fatalf("Run create_preview_environment: %v", err)
+	}
+	preview = scheduleWorkerPreviewDeletion(ctx, t, dataStore, preview)
+
+	job := deletePreviewEnvironmentJob(preview)
+	job.DesiredVersion = preview.Version - 1
+	err = p.Run(ctx, job)
+	if err == nil {
+		t.Fatal("Run returned nil, want stale desired-state error")
+	}
+	if !worker.IsTerminal(err) {
+		t.Fatalf("stale desired-state error is not terminal: %v", err)
+	}
+	if refs := listEnvironmentRefs(ctx, t, dataStore, preview.OrganizationID, preview.EnvironmentID); len(refs) != 1 {
+		t.Fatalf("preview environment dokploy refs count after stale job = %d, want 1", len(refs))
+	}
+	if reqs := fake.Requests(); len(reqs) != 3 {
+		t.Fatalf("stale job called Dokploy beyond create seed: %+v", reqs)
+	}
+}
+
+func TestProvisionerDeletePreviewEnvironmentCrossTenantPayloadIsTerminal(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	orgA := insertWorkerOrg(ctx, t, dataStore, "acme")
+	projectA := insertWorkerProject(ctx, t, dataStore, orgA, "api")
+	orgB := insertWorkerOrg(ctx, t, dataStore, "other")
+	projectB := insertWorkerProject(ctx, t, dataStore, orgB, "api")
+	sourceB := insertWorkerEnvironment(ctx, t, dataStore, projectB, "production")
+	previewB := insertWorkerPreviewEnvironment(ctx, t, dataStore, projectB, sourceB, "pr-42")
+
+	fake := dokployfake.New()
+	defer fake.Close()
+	client := newWorkerDokployClient(t, fake)
+	if err := pRunEnsureProjectWithParent(ctx, t, dataStore, client, orgA, projectA); err != nil {
+		t.Fatalf("seed parent dokploy project: %v", err)
+	}
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: client,
+		Mapper: dokploy.NewMapper(),
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+
+	job := store.ProvisioningJob{
+		ID:             "job_cross_tenant_delete_preview",
+		OrganizationID: orgA.ID,
+		ProjectID:      projectA.ID,
+		EnvironmentID:  previewB.EnvironmentID,
+		JobType:        worker.JobTypeDeletePreviewEnvironment,
+		DesiredVersion: previewB.Version,
+		IdempotencyKey: "delete-preview-environment-cross-tenant",
+		Payload: map[string]string{
+			"organization_id": orgA.ID,
+			"project_id":      projectA.ID,
+			"environment_id":  previewB.EnvironmentID,
+			"preview_id":      previewB.ID,
+		},
+	}
+	err = p.Run(ctx, job)
+	if err == nil {
+		t.Fatal("Run returned nil, want cross-tenant not-found")
+	}
+	if !worker.IsTerminal(err) {
+		t.Fatalf("cross-tenant error is not terminal: %v", err)
+	}
+	if _, err := getWorkerPreviewEnvironment(ctx, dataStore, previewB); err != nil {
+		t.Fatalf("foreign preview row after cross-tenant job: %v", err)
+	}
+	if reqs := fake.Requests(); len(reqs) != 2 {
+		t.Fatalf("cross-tenant job called Dokploy beyond parent seed: %+v", reqs)
+	}
+}
+
+func TestProvisionerDeletePreviewEnvironmentCancellationIsNotTerminal(t *testing.T) {
+	t.Parallel()
+
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: canceledClient{},
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+	err = p.Run(ctx, store.ProvisioningJob{
+		OrganizationID: "org_valid",
+		ProjectID:      "proj_valid",
+		EnvironmentID:  "env_valid",
+		JobType:        worker.JobTypeDeletePreviewEnvironment,
+		Payload: map[string]string{
+			"organization_id": "org_valid",
+			"project_id":      "proj_valid",
+			"environment_id":  "env_valid",
+			"preview_id":      "penv_valid",
+		},
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run error = %v, want context.Canceled", err)
+	}
+	if worker.IsTerminal(err) {
+		t.Fatalf("cancellation error is terminal: %v", err)
+	}
+}
+
+func TestProvisionerDeletePreviewEnvironmentSucceededJobIsNoop(t *testing.T) {
+	t.Parallel()
+
+	db := testutil.RequireMigratedDB(t)
+	dataStore, err := store.New(db.Pool, nil)
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	p, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: canceledClient{},
+	})
+	if err != nil {
+		t.Fatalf("NewProvisioner: %v", err)
+	}
+	err = p.Run(context.Background(), store.ProvisioningJob{
+		Status:  store.JobStatusSucceeded,
+		JobType: worker.JobTypeDeletePreviewEnvironment,
+	})
+	if err != nil {
+		t.Fatalf("succeeded delete_preview_environment job returned error: %v", err)
 	}
 }
 
@@ -7395,6 +7855,26 @@ func createPreviewEnvironmentJob(preview store.PreviewEnvironment) store.Provisi
 	}
 }
 
+func deletePreviewEnvironmentJob(preview store.PreviewEnvironment) store.ProvisioningJob {
+	return store.ProvisioningJob{
+		ID:             "job_delete_preview_environment_test",
+		OrganizationID: preview.OrganizationID,
+		ProjectID:      preview.ProjectID,
+		EnvironmentID:  preview.EnvironmentID,
+		JobType:        worker.JobTypeDeletePreviewEnvironment,
+		DesiredVersion: preview.Version,
+		IdempotencyKey: "delete-preview-environment-" + preview.ID,
+		Payload: map[string]string{
+			"organization_id": preview.OrganizationID,
+			"project_id":      preview.ProjectID,
+			"environment_id":  preview.EnvironmentID,
+			"preview_id":      preview.ID,
+		},
+		RequestID:     "req_delete_preview_environment_test",
+		CorrelationID: "corr_delete_preview_environment_test",
+	}
+}
+
 func ensureApplicationServiceJob(svc store.Service) store.ProvisioningJob {
 	return store.ProvisioningJob{
 		ID:             "job_application_service_test",
@@ -7850,6 +8330,40 @@ func insertWorkerPreviewEnvironment(ctx context.Context, t *testing.T, s *store.
 		t.Fatalf("insert preview environment: %v", err)
 	}
 	return preview
+}
+
+func scheduleWorkerPreviewDeletion(ctx context.Context, t *testing.T, s *store.Store, preview store.PreviewEnvironment) store.PreviewEnvironment {
+	t.Helper()
+	repo := store.NewPreviewEnvironmentRepository()
+	var scheduled store.PreviewEnvironment
+	if err := s.Write(ctx, func(ctx context.Context, tx *store.Tx) error {
+		var err error
+		scheduled, err = repo.ScheduleDeletion(ctx, tx, preview.OrganizationID, preview.ProjectID, preview.ID, nil)
+		return err
+	}); err != nil {
+		t.Fatalf("schedule preview deletion: %v", err)
+	}
+	return scheduled
+}
+
+func getWorkerPreviewEnvironment(ctx context.Context, s *store.Store, preview store.PreviewEnvironment) (store.PreviewEnvironment, error) {
+	repo := store.NewPreviewEnvironmentRepository()
+	var got store.PreviewEnvironment
+	err := s.Read(ctx, func(ctx context.Context, q store.Querier) error {
+		var err error
+		got, err = repo.GetByID(ctx, q, preview.OrganizationID, preview.ProjectID, preview.ID)
+		return err
+	})
+	return got, err
+}
+
+func assertPreviewEnvironmentMissing(ctx context.Context, t *testing.T, s *store.Store, preview store.PreviewEnvironment) {
+	t.Helper()
+	if _, err := getWorkerPreviewEnvironment(ctx, s, preview); err == nil {
+		t.Fatal("preview row still exists after delete")
+	} else if !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("preview row lookup error = %v, want not found", err)
+	}
 }
 
 func insertWorkerService(ctx context.Context, t *testing.T, s *store.Store, env store.Environment, label, kind string) store.Service {
