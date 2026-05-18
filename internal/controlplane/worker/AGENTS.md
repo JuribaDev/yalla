@@ -33,6 +33,13 @@ Background provisioning/metering workers for the control plane.
   `dokploy/dokployfake.New()` — the deterministic in-memory Dokploy double —
   and assert on `Server.Requests()`; it records every call with credentials
   already redacted.
+- Typed provisioning jobs live behind `Provisioner` and should follow the
+  `ensure_dokploy_organization` pattern: validate `provisioning_jobs.payload`
+  into a small typed schema first, return `worker.Terminal` for malformed,
+  stale, or cross-tenant desired state, load source-of-truth rows from
+  Postgres before calling Dokploy, and persist resulting Dokploy IDs only
+  through tenant-scoped `dokploy_refs` rows. Replays should read an existing
+  ref and verify the upstream resource instead of inserting a second mapping.
 - Integration tests are `package worker_test`, use `testutil.RequireMigratedDB`,
   and `t.Skip` when `YALLA_TEST_DATABASE_URL` is unset. A concurrent-claim test
   must retry-until-drained with a deadline guard — a job locked by a peer's

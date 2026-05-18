@@ -9,8 +9,11 @@ import (
 	"syscall"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/config"
+	"github.com/JuribaDev/yalla/internal/controlplane/dokploy"
 	"github.com/JuribaDev/yalla/internal/controlplane/runtime"
+	"github.com/JuribaDev/yalla/internal/controlplane/store"
 	"github.com/JuribaDev/yalla/internal/controlplane/worker"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var (
@@ -46,14 +49,59 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	if cfg.DatabaseURL == "" {
+		logger.Error("invalid backend configuration",
+			"error", "YALLA_DATABASE_URL is required to run the control-plane worker")
+		os.Exit(1)
+	}
+	if cfg.DokployBaseURL == "" || cfg.DokployToken == "" {
+		logger.Error("invalid backend configuration",
+			"error", "YALLA_DOKPLOY_BASE_URL and YALLA_DOKPLOY_TOKEN are required to run the control-plane worker")
+		os.Exit(1)
+	}
+
+	pool, err := pgxpool.New(context.Background(), cfg.DatabaseURL)
+	if err != nil {
+		logger.Error("failed to initialize the database connection pool")
+		os.Exit(1)
+	}
+	defer pool.Close()
+
+	dataStore, err := store.New(pool, logger)
+	if err != nil {
+		logger.Error("failed to initialize the persistence layer", "error", err.Error())
+		os.Exit(1)
+	}
+	dokployClient, err := dokploy.New(dokploy.Config{
+		BaseURL: cfg.DokployBaseURL,
+		Token:   cfg.DokployToken,
+	})
+	if err != nil {
+		logger.Error("failed to initialize the Dokploy client", "error", err.Error())
+		os.Exit(1)
+	}
+	provisioner, err := worker.NewProvisioner(worker.ProvisionerConfig{
+		Store:  dataStore,
+		Client: dokployClient,
+		Mapper: dokploy.NewMapper(),
+	})
+	if err != nil {
+		logger.Error("failed to initialize the provisioning runner", "error", err.Error())
+		os.Exit(1)
+	}
+	claimer, err := worker.NewStoreClaimer(worker.StoreClaimerConfig{
+		Store:  dataStore,
+		Runner: provisioner,
+		Owner:  worker.NewOwnerID(),
+		Logger: logger,
+	})
+	if err != nil {
+		logger.Error("failed to initialize the job claimer", "error", err.Error())
+		os.Exit(1)
+	}
+
 	loop := &worker.Loop{
-		// The durable Postgres-backed queue (worker.StoreClaimer) is built and
-		// tested, but a StoreClaimer needs a JobRunner — the typed Dokploy
-		// provisioner — which lands in a later story. Until that runner exists
-		// the binary uses NoopClaimer, so the worker still starts, idles, and
-		// shuts down cleanly through the real run loop; wiring StoreClaimer in
-		// is a one-line change once the runner is available.
-		Claimer:        worker.NoopClaimer{},
+		Claimer:        claimer,
 		Logger:         logger,
 		ReleaseTimeout: cfg.ShutdownTimeout,
 	}
