@@ -34320,3 +34320,49 @@ change that widened Reason to caller-supplied data.
   - Compare `DesiredVersion` against the preview wrapper version for preview lifecycle jobs, not the wrapped environment row version.
   - Retryable Dokploy errors should be returned plain from `Provisioner.Run`; `StoreClaimer` owns retry state and persists the redacted `error_summary`.
 ---
+## 2026-05-18 20:20 +03 - BE-0265
+- What was implemented
+  - Registered `GET /v1/projects/{project_id}/previews` with `preview.read` auth, project-scoped resource resolution, OpenAPI metadata, and a stable `{"previews":[]}` success payload.
+  - Extended the preview HTTP port and `store.PreviewEnvironmentService` with `ListProjectPreviews`, which verifies the tenant-scoped parent project before listing preview lifecycle rows so unknown/cross-tenant projects return `E_NOT_FOUND`.
+  - Added HTTP contract coverage for success, empty list, unauthenticated, authorization failure, not found, store-unavailable redaction, nil reader, and OpenAPI metadata.
+  - Added a Postgres-backed store service test proving the list path returns only the caller tenant's project previews and rejects a foreign project tuple as `E_NOT_FOUND`.
+- Files changed
+  - `internal/controlplane/httpapi/project_previews.go`
+  - `internal/controlplane/httpapi/project_previews_get_test.go`
+  - `internal/controlplane/httpapi/project_previews_create_test.go`
+  - `internal/controlplane/httpapi/routes.go`
+  - `internal/controlplane/store/preview_environment_service.go`
+  - `internal/controlplane/store/preview_environment_service_test.go`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `gofmt -w .`
+  - `goimports -w .` was not run because `goimports` is not installed/on PATH.
+  - `go mod tidy`
+  - `go test ./internal/controlplane/httpapi -run 'TestListProjectPreviews'`
+  - `go test ./internal/controlplane/store -run 'TestPreviewEnvironmentServiceListProjectPreviews|TestPreviewEnvironmentServiceCreate'`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `go test -run TestPolicyMatrix ./...`
+  - `go test -run TestQuotaConcurrency ./...`
+  - `go test -run TestFakeDokploy ./...`
+  - `go test -run TestJobWorkerLease ./...`
+  - `go test -run TestOpenAPI ./...`
+  - `go test ./internal/controlplane/openapi/...`
+  - `golangci-lint run ./...`
+  - Commit hook also ran `scripts/verify.sh --strict --release`, including the required suites plus optional `govulncheck ./...`, `staticcheck ./...`, `golangci-lint run ./...`, `goreleaser check`, and `goreleaser release --snapshot --clean`.
+- Results
+  - All executed checks passed.
+  - `golangci-lint` reported `0 issues`.
+  - `govulncheck` reported no vulnerabilities.
+  - `goreleaser` snapshot release succeeded; live Dokploy smoke stayed opt-in because `YALLA_EXTERNAL_DOKPLOY=1` was not configured.
+- Remaining risks or follow-ups
+  - BE-0266 remains the dedicated follow-up contract-test story in the PRD, even though this implementation story added focused endpoint contract coverage.
+- **Learnings for future iterations:**
+  - The preview create route already used a single variadic preview service port in `NewHandler`; extending that port with the read method avoided a broad constructor-argument sweep across the httpapi test suite.
+  - For parent-scoped list endpoints, the store service should verify the parent row before listing children so a foreign or unknown parent id returns `E_NOT_FOUND` instead of an ambiguous empty list.
+---

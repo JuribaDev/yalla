@@ -177,6 +177,32 @@ func (svc *PreviewEnvironmentService) Create(ctx context.Context, in CreatePrevi
 	return created, nil
 }
 
+// ListProjectPreviews returns every preview lifecycle row for a verified
+// tenant-scoped project. The parent project check is deliberate: an unknown or
+// cross-tenant project id must surface as E_NOT_FOUND instead of a successful
+// empty list that could mislead callers about resource existence.
+func (svc *PreviewEnvironmentService) ListProjectPreviews(ctx context.Context, organizationID, projectID string) ([]PreviewEnvironment, error) {
+	var previews []PreviewEnvironment
+	err := svc.store.Read(ctx, func(ctx context.Context, q Querier) error {
+		if _, err := svc.projects.Get(ctx, q, organizationID, projectID); err != nil {
+			return err
+		}
+		rows, err := svc.previews.ListByProject(ctx, q, organizationID, projectID)
+		if err != nil {
+			return err
+		}
+		previews = rows
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if previews == nil {
+		previews = make([]PreviewEnvironment, 0)
+	}
+	return previews, nil
+}
+
 type createPreviewEnvironmentValidated struct {
 	OrganizationID      string
 	ProjectID           string

@@ -167,6 +167,77 @@ func TestPreviewEnvironmentServiceCreateRejectsSourceOutsideProject(t *testing.T
 	}
 }
 
+func TestPreviewEnvironmentServiceListProjectPreviewsVerifiesParentProject(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := testutil.RequireMigratedDB(t)
+	s := newStore(t, db)
+	orgA := seedDomainOrg(t, db)
+	orgB := seedDomainOrg(t, db)
+	projectA := seedPreviewServiceProject(t, db, orgA)
+	projectB := seedPreviewServiceProject(t, db, orgB)
+	sourceA := seedPreviewServiceEnvironment(t, db, orgA, projectA, "prod-a", store.EnvironmentKindStandard)
+	sourceB := seedPreviewServiceEnvironment(t, db, orgB, projectB, "prod-b", store.EnvironmentKindStandard)
+
+	authz := &recordingAuthorizer{}
+	quota := &recordingQuota{}
+	jobs := &recordingJobs{}
+	svc := newPreviewService(t, s, authz, quota, jobs)
+
+	created, err := svc.Create(ctx, store.CreatePreviewEnvironmentInput{
+		OrganizationID:      orgA,
+		ProjectID:           projectA,
+		PreviewID:           domain.MustNewID(domain.KindPreviewEnvironment).String(),
+		EnvironmentID:       domain.MustNewID(domain.KindEnvironment).String(),
+		SourceEnvironmentID: sourceA,
+		Slug:                "pr-44",
+		DisplayName:         "PR 44",
+		ChangeRef:           "refs/pull/44/head",
+		ActorID:             "usr_ada",
+		ActorKind:           "usr",
+		ActorOrgID:          orgA,
+		RequestID:           "req_preview_list",
+		CorrelationID:       "corr_preview_list",
+	})
+	if err != nil {
+		t.Fatalf("Create orgA preview: %v", err)
+	}
+	if _, err := svc.Create(ctx, store.CreatePreviewEnvironmentInput{
+		OrganizationID:      orgB,
+		ProjectID:           projectB,
+		PreviewID:           domain.MustNewID(domain.KindPreviewEnvironment).String(),
+		EnvironmentID:       domain.MustNewID(domain.KindEnvironment).String(),
+		SourceEnvironmentID: sourceB,
+		Slug:                "pr-44-b",
+		DisplayName:         "PR 44 B",
+		ChangeRef:           "refs/pull/44/head",
+		ActorID:             "usr_bea",
+		ActorKind:           "usr",
+		ActorOrgID:          orgB,
+		RequestID:           "req_preview_list_b",
+		CorrelationID:       "corr_preview_list_b",
+	}); err != nil {
+		t.Fatalf("Create orgB preview: %v", err)
+	}
+
+	listed, err := svc.ListProjectPreviews(ctx, orgA, projectA)
+	if err != nil {
+		t.Fatalf("ListProjectPreviews orgA/projectA: %v", err)
+	}
+	if len(listed) != 1 || listed[0].ID != created.ID {
+		t.Fatalf("listed previews = %+v, want only %s", listed, created.ID)
+	}
+
+	crossTenant, err := svc.ListProjectPreviews(ctx, orgA, projectB)
+	if err == nil {
+		t.Fatalf("ListProjectPreviews orgA/projectB returned %+v, want E_NOT_FOUND", crossTenant)
+	}
+	if yerr.From(err).Code != yerr.CodeNotFound {
+		t.Fatalf("ListProjectPreviews orgA/projectB error = %v, want E_NOT_FOUND", err)
+	}
+}
+
 func TestPreviewEnvironmentServiceCreateValidationCollectsFields(t *testing.T) {
 	t.Parallel()
 

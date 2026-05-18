@@ -15,11 +15,16 @@ import (
 )
 
 var errNoPreviewCreator = errors.New("httpapi: no preview creator configured")
+var errNoPreviewReader = errors.New("httpapi: no preview reader configured")
 
-// PreviewCreator is the narrow store port POST
-// /v1/projects/{project_id}/previews depends on.
+// PreviewCreator is the narrow store port the project preview endpoints depend
+// on. *store.PreviewEnvironmentService satisfies it in production; tests supply
+// fakes. The read side verifies the parent project before listing, so an
+// unknown or cross-tenant project id is a deterministic not-found rather than a
+// misleading empty list.
 type PreviewCreator interface {
 	Create(ctx context.Context, in store.CreatePreviewEnvironmentInput) (store.PreviewEnvironment, error)
+	ListProjectPreviews(ctx context.Context, organizationID, projectID string) ([]store.PreviewEnvironment, error)
 }
 
 type createPreviewRequest struct {
@@ -34,6 +39,10 @@ type createPreviewRequest struct {
 
 type createPreviewPayload struct {
 	Preview previewEnvironment `json:"preview"`
+}
+
+type listProjectPreviewsPayload struct {
+	Previews []previewEnvironment `json:"previews"`
 }
 
 type previewEnvironment struct {
@@ -120,5 +129,30 @@ func createPreviewHandler(creator PreviewCreator) http.HandlerFunc {
 		apienvelope.WriteData(w, http.StatusCreated, requestID(r), createPreviewPayload{
 			Preview: previewEnvironmentOf(preview),
 		})
+	}
+}
+
+func listProjectPreviewsHandler(reader PreviewCreator) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := policy.PrincipalFromContext(r.Context())
+		if !ok || p.ID == "" {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPrincipalOnContext))
+			return
+		}
+		if reader == nil {
+			apienvelope.WriteError(w, requestID(r), apierr.Internal(errNoPreviewReader))
+			return
+		}
+
+		previews, err := reader.ListProjectPreviews(r.Context(), p.OrganizationID, r.PathValue("project_id"))
+		if err != nil {
+			apienvelope.WriteError(w, requestID(r), toAPIError(err))
+			return
+		}
+		out := make([]previewEnvironment, 0, len(previews))
+		for _, preview := range previews {
+			out = append(out, previewEnvironmentOf(preview))
+		}
+		apienvelope.WriteData(w, http.StatusOK, requestID(r), listProjectPreviewsPayload{Previews: out})
 	}
 }

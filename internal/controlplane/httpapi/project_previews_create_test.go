@@ -451,10 +451,15 @@ func TestCreatePreviewRouteIsDocumented(t *testing.T) {
 }
 
 type fakePreviewCreator struct {
-	preview   store.PreviewEnvironment
-	err       error
-	gotInput  *store.CreatePreviewEnvironmentInput
-	callCount *int
+	preview          store.PreviewEnvironment
+	previews         []store.PreviewEnvironment
+	err              error
+	listErr          error
+	gotInput         *store.CreatePreviewEnvironmentInput
+	gotListOrgID     *string
+	gotListProjectID *string
+	callCount        *int
+	listCallCount    *int
 }
 
 func (f fakePreviewCreator) Create(ctx context.Context, in store.CreatePreviewEnvironmentInput) (store.PreviewEnvironment, error) {
@@ -469,4 +474,24 @@ func (f fakePreviewCreator) Create(ctx context.Context, in store.CreatePreviewEn
 		return store.PreviewEnvironment{}, f.err
 	}
 	return f.preview, nil
+}
+
+func (f fakePreviewCreator) ListProjectPreviews(ctx context.Context, organizationID, projectID string) ([]store.PreviewEnvironment, error) {
+	_ = ctx
+	if f.listCallCount != nil {
+		*f.listCallCount++
+	}
+	if f.gotListOrgID != nil {
+		*f.gotListOrgID = organizationID
+	}
+	if f.gotListProjectID != nil {
+		*f.gotListProjectID = projectID
+	}
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	if f.previews == nil {
+		return []store.PreviewEnvironment{}, nil
+	}
+	return f.previews, nil
 }

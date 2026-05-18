@@ -672,6 +672,25 @@ func newRouteTable(build runtime.BuildInfo, readiness runtime.ReadinessReporter,
 		{
 			endpoint: openapi.Endpoint{
 				Method:         http.MethodGet,
+				Path:           "/v1/projects/{project_id}/previews",
+				OperationID:    "listProjectPreviews",
+				Summary:        "List project preview environments",
+				Description:    "Lists the preview environments under the project named by the {project_id} path parameter in deterministic creation order. Each entry carries the preview lifecycle row, the wrapped preview environment id, the source environment id, display name, change reference, status, optional expiry, optional teardown marker, version, and lifecycle timestamps. Action preview.read is authorized against the (principal home organization, {project_id}) resource before the handler runs, so organization-wide read roles and scoped grants covering this project can list previews while sibling-project grants cannot. A cross-tenant or unknown project_id reaches the tenant-scoped store with the principal's home organization id and is rejected as a deterministic 404 by the reader's project existence check, never disguised as an empty success. The response carries no credential material.",
+				Tags:           []string{tagProjects, tagEnvironments},
+				RequiresAuth:   true,
+				RequiredAction: string(policy.ActionPreviewRead),
+				PathParams: []openapi.PathParam{{
+					Name:        "project_id",
+					Description: "The id of the project whose preview environments to list.",
+				}},
+				SuccessDescription: "The preview environments of the project.",
+			},
+			resolver: projectIDResolver,
+			handler:  listProjectPreviewsHandler(previewCreator),
+		},
+		{
+			endpoint: openapi.Endpoint{
+				Method:         http.MethodGet,
 				Path:           "/v1/environments/{environment_id}",
 				OperationID:    "getEnvironment",
 				Summary:        "Get an environment",
