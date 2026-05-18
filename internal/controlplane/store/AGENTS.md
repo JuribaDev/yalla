@@ -404,6 +404,38 @@ Postgres persistence for control-plane source-of-truth state.
   owner-tenant visibility across the same three — the projection
   collapses into a single test because the SAME WHERE
   `organization_id` predicate isolates the row on every read surface.
+- **List-only read surface extension** (BE-0440 pattern,
+  `project_grant_tenant_isolation_test.go`): when the repository
+  exposes NO per-id `Get` and NO per-id `Delete` — only a parent-scoped
+  list (e.g. `ListByProject`) and a composite-conflict upsert and a
+  bulk delete-by-exclusion — the byte-identical-bystander projection
+  must be observed THROUGH the list response, not a per-id Get. Add a
+  `get<X>FromListOrFail(ctx, t, s, repo, parentScope, rowID, label)`
+  helper that scans the list and `t.Fatalf`s on absence; the lists
+  are 1–2 rows by construction so the linear scan is fine. The
+  cross-tenant indistinguishability projection at a list path is
+  `(len==0 + non-nil-slice + same shape under "unknown parentID in
+  own tenant")`, NOT the `(Code, Hint)` projection used by per-id
+  Get paths — `ListBy*` does not surface a typed `NotFound` for an
+  unknown parent id. If the table also has nullable `*string` scope
+  columns (`environment_id`, `service_id` on `project_grants`), the
+  byte-identical helper needs a `stringPtrEqual` + `fmtStringPtr`
+  pair so a failing pointer-column assertion shows `<nil>` vs the
+  quoted value side-by-side. And if the only mutation surface is an
+  `INSERT ... ON CONFLICT DO UPDATE` upsert PLUS a bulk
+  `DeleteByParentExceptIDs`, BOTH conflict branches AND BOTH delete
+  codepaths (`len(keepIDs)==0` → unconditional `DELETE`; `len>0` →
+  `DELETE WHERE id NOT IN ANY`) need their own
+  `OnOrgADoesNotTouchOrgB` test — the non-empty-keepIDs test is the
+  load-bearing one because the bystander's id is NOT in keepIDs and
+  would have been eligible for deletion if the tenant predicate had
+  been dropped. The fixture for the Upsert-UPDATE-branch bystander
+  test MUST share the WHOLE conflict scope tuple across both tenants
+  on their OWN respective parent rows (`(principal_id, env, svc)` on
+  `project_grants`), because the conflict target itself carries
+  `organization_id` + the parent FK — a regression that resolved the
+  conflict by scope-tuple alone would fire the UPDATE on the peer
+  tenant's row through the trigger and bump its version/updated_at.
 - **Secret-bearing column extension** (BE-0434 pattern,
   `api_key_tenant_isolation_test.go`): when the table carries a column
   holding a secret (e.g. `api_keys.secret_hash`, or `variables.value`

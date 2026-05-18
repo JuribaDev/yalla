@@ -9269,8 +9269,8 @@
       ],
       "type": "tenant-isolation",
       "priority": 1,
-      "passes": false,
-      "notes": "Tenant isolation for project_grants."
+      "passes": true,
+      "notes": "Tenant isolation for project_grants. Added internal/controlplane/store/project_grant_tenant_isolation_test.go (8 tests) covering byte-identical bystander projections on Upsert INSERT/UPDATE branches and both DeleteByProjectExceptIDs codepaths, plus read isolation (cross-tenant projectID, shared principal_id) and the per-tenant scope-tuple coexistence proof."
     },
     {
       "id": "BE-0441",
