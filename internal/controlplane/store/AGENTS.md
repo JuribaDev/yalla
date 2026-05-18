@@ -208,6 +208,21 @@ Postgres persistence for control-plane source-of-truth state.
   metadata. Do not update/delete individual event rows; removal happens only
   through parent service/tenant cascade.
 
+## Environment lifecycle (`0042_environment_state_machine`, `environment.go`, `environment_event.go`)
+
+- `environments.status` mirrors the service lifecycle taxonomy for
+  source-of-truth environment state: `pending`, `active`, `suspended`,
+  `deleting`, and terminal `deleted`. Existing rows default to `active`.
+- Environment lifecycle changes should go through
+  `EnvironmentRepository.Transition`: it locks `(organization_id,
+  environment_id)`, validates the edge with `EnvironmentStatus.CanTransitionTo`,
+  rejects invalid edges as `E_INVALID_STATE_TRANSITION` before any write,
+  updates `environments.status`, and appends the matching `environment_events`
+  row in the same transaction.
+- `environment_events` is append-only and stores redacted transition reason
+  metadata. Do not update/delete individual event rows; removal happens only
+  through parent environment/tenant cascade.
+
 ## Service backups (`0024_service_backups`, `service_backup.go`)
 
 - The PRD may call this surface `backup_schedules`; the actual source-of-truth

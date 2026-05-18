@@ -3,12 +3,103 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/JuribaDev/yalla/internal/controlplane/apierr"
+	"github.com/JuribaDev/yalla/internal/output"
 )
+
+// EnvironmentStatus is the closed-set lifecycle the environments table
+// permits. It records Yalla source-of-truth lifecycle intent for the
+// environment row itself; Dokploy runtime state remains an upstream concern.
+type EnvironmentStatus string
+
+const (
+	// EnvironmentStatusPending records an environment created before provisioning has converged.
+	EnvironmentStatusPending EnvironmentStatus = "pending"
+	// EnvironmentStatusActive records the normal live mutable environment lifecycle state.
+	EnvironmentStatusActive EnvironmentStatus = "active"
+	// EnvironmentStatusSuspended records a reversible hold on an environment.
+	EnvironmentStatusSuspended EnvironmentStatus = "suspended"
+	// EnvironmentStatusDeleting records accepted teardown intent.
+	EnvironmentStatusDeleting EnvironmentStatus = "deleting"
+	// EnvironmentStatusDeleted records the terminal environment lifecycle state.
+	EnvironmentStatusDeleted EnvironmentStatus = "deleted"
+)
+
+func (s EnvironmentStatus) String() string { return string(s) }
+
+// environmentTransitions is the documented environment lifecycle table.
+// Existing rows default to active. Pending is reserved for environments before
+// their first successful provisioning pass, active is the normal mutable
+// state, suspended is a reversible operator/customer hold, deleting is
+// teardown intent, and deleted is terminal.
+var environmentTransitions = map[EnvironmentStatus]map[EnvironmentStatus]struct{}{
+	EnvironmentStatusPending: {
+		EnvironmentStatusActive:   {},
+		EnvironmentStatusDeleting: {},
+	},
+	EnvironmentStatusActive: {
+		EnvironmentStatusSuspended: {},
+		EnvironmentStatusDeleting:  {},
+	},
+	EnvironmentStatusSuspended: {
+		EnvironmentStatusActive:   {},
+		EnvironmentStatusDeleting: {},
+	},
+	EnvironmentStatusDeleting: {
+		EnvironmentStatusActive:  {},
+		EnvironmentStatusDeleted: {},
+	},
+	EnvironmentStatusDeleted: {},
+}
+
+// CanTransitionTo reports whether the environment state machine permits a
+// status change from s to next. Repository mutations call this before touching
+// the environments row.
+func (s EnvironmentStatus) CanTransitionTo(next EnvironmentStatus) bool {
+	allowed, ok := environmentTransitions[s]
+	if !ok {
+		return false
+	}
+	_, ok = allowed[next]
+	return ok
+}
+
+func (s EnvironmentStatus) environmentEventType() EnvironmentEventType {
+	switch s {
+	case EnvironmentStatusPending:
+		return EnvironmentEventTypePending
+	case EnvironmentStatusActive:
+		return EnvironmentEventTypeActive
+	case EnvironmentStatusSuspended:
+		return EnvironmentEventTypeSuspended
+	case EnvironmentStatusDeleting:
+		return EnvironmentEventTypeDeleting
+	case EnvironmentStatusDeleted:
+		return EnvironmentEventTypeDeleted
+	default:
+		return ""
+	}
+}
+
+// EnvironmentTransition is the audited state-machine mutation input for an
+// environments row. Actor and request fields are persisted into the
+// environment event emitted atomically with the status update.
+type EnvironmentTransition struct {
+	OrganizationID  string
+	EnvironmentID   string
+	NextStatus      EnvironmentStatus
+	ExpectedVersion *int64
+	ActorID         string
+	ActorKind       string
+	RequestID       string
+	CorrelationID   string
+	Reason          string
+}
 
 // Environment is the source-of-truth representation of a row in the
 // environments table. An environment belongs to exactly one project and
@@ -42,6 +133,7 @@ type Environment struct {
 	Slug                string
 	DisplayName         string
 	Kind                string
+	Status              EnvironmentStatus
 	Version             int64
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
@@ -51,7 +143,7 @@ type Environment struct {
 // environmentColumns is the SELECT projection used by every read in this
 // repository. Keeping it as a single string keeps the column list in
 // lockstep with scanEnvironment.
-const environmentColumns = `id, organization_id, project_id, slug, display_name, kind, version, created_at, updated_at, deletion_scheduled_at`
+const environmentColumns = `id, organization_id, project_id, slug, display_name, kind, status, version, created_at, updated_at, deletion_scheduled_at`
 
 // environmentListMaxRows caps how many rows a single ListByProject call
 // returns. An unbounded query can never be issued by accident; an HTTP
@@ -195,6 +287,72 @@ func (r *EnvironmentRepository) Update(ctx context.Context, tx *Tx, e Environmen
 	return updated, nil
 }
 
+// Transition moves an environment through the documented environment state
+// machine and appends the matching environment_events row in the same
+// transaction. Invalid edges return E_INVALID_STATE_TRANSITION before any
+// update, so the environment row and timeline remain unchanged.
+func (r *EnvironmentRepository) Transition(ctx context.Context, tx *Tx, in EnvironmentTransition) (Environment, EnvironmentEvent, error) {
+	if tx == nil {
+		return Environment{}, EnvironmentEvent{}, apierr.Internal(errors.New("store: EnvironmentRepository.Transition called with a nil transaction"))
+	}
+	orgID := strings.TrimSpace(in.OrganizationID)
+	environmentID := strings.TrimSpace(in.EnvironmentID)
+	next := in.NextStatus
+	if next.environmentEventType() == "" {
+		return Environment{}, EnvironmentEvent{}, apierr.InvalidStateTransition("environment", "", next.String())
+	}
+
+	current, err := scanEnvironment(tx.QueryRow(ctx,
+		`SELECT `+environmentColumns+`
+		   FROM environments
+		  WHERE organization_id = $1 AND id = $2
+		  FOR UPDATE`,
+		orgID, environmentID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Environment{}, EnvironmentEvent{}, apierr.NotFound("environment", environmentID)
+	}
+	if err != nil {
+		return Environment{}, EnvironmentEvent{}, apierr.StoreUnavailable(err)
+	}
+	if in.ExpectedVersion != nil && current.Version != *in.ExpectedVersion {
+		return Environment{}, EnvironmentEvent{}, apierr.ConflictStale(current.Version)
+	}
+	if !current.Status.CanTransitionTo(next) {
+		return Environment{}, EnvironmentEvent{}, apierr.InvalidStateTransition("environment", current.Status.String(), next.String())
+	}
+
+	updated, err := scanEnvironment(tx.QueryRow(ctx,
+		`UPDATE environments
+		    SET status = $3
+		  WHERE organization_id = $1 AND id = $2
+		  RETURNING `+environmentColumns,
+		orgID, environmentID, next.String()))
+	if err != nil {
+		return Environment{}, EnvironmentEvent{}, apierr.StoreUnavailable(err)
+	}
+
+	reason := output.NewRedactor().Redact(strings.TrimSpace(in.Reason))
+	event, err := NewEnvironmentEventRepository().Append(ctx, tx, EnvironmentEvent{
+		OrganizationID: orgID,
+		EnvironmentID:  environmentID,
+		EventType:      next.environmentEventType(),
+		Message:        reason,
+		Metadata: map[string]string{
+			"actor_id":       strings.TrimSpace(in.ActorID),
+			"actor_kind":     strings.TrimSpace(in.ActorKind),
+			"previous_state": current.Status.String(),
+			"next_state":     next.String(),
+			"reason":         reason,
+		},
+		RequestID:     strings.TrimSpace(in.RequestID),
+		CorrelationID: strings.TrimSpace(in.CorrelationID),
+	})
+	if err != nil {
+		return Environment{}, EnvironmentEvent{}, err
+	}
+	return updated, event, nil
+}
+
 // classifyEnvironmentConcurrencyMiss disambiguates the two reasons a
 // version-checked UPDATE matched no rows: the environment was deleted
 // (rare, and reported as NotFound for parity with the unchecked path)
@@ -255,6 +413,7 @@ func scanEnvironment(row scanRow) (Environment, error) {
 		&e.Slug,
 		&e.DisplayName,
 		&e.Kind,
+		&e.Status,
 		&e.Version,
 		&e.CreatedAt,
 		&e.UpdatedAt,
