@@ -301,7 +301,8 @@ func Unauthenticated(message string) *yerr.Error {
 // Forbidden builds an E_FORBIDDEN error (HTTP 403) for an authenticated
 // principal that lacks authorization for the requested action.
 func Forbidden(message string) *yerr.Error {
-	if strings.TrimSpace(message) == "" {
+	message = strings.TrimSpace(message)
+	if message == "" {
 		message = "not authorized to perform this action"
 	}
 	return yerr.New(yerr.CodeForbidden, message)

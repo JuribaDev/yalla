@@ -10713,8 +10713,8 @@
       ],
       "type": "error-contract",
       "priority": 1,
-      "passes": false,
-      "notes": "Stable error code: E_FORBIDDEN."
+      "passes": true,
+      "notes": "Stable error code: E_FORBIDDEN. Verified typed apierr.Forbidden constructor, stable 403 mapping, message-specific policy with trimmed policy reason text, yalla.error.v1 envelope request_id/docs link, and redaction of credential-shaped hint text."
     },
     {
       "id": "BE-0517",

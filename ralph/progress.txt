@@ -35316,3 +35316,44 @@ change that widened Reason to caller-supplied data.
 - **Learnings for future iterations:**
   - Error-contract stories should update the code registry, backend taxonomy, envelope status mapping, and tests together; leaving any one out can make manifest, API, and CLI behavior drift.
 ---
+
+## 2026-05-19 00:35 +03 - BE-0516
+- What was implemented
+  - Verified the stable `E_FORBIDDEN` backend error contract.
+  - Added focused contract coverage for `apierr.Forbidden()` covering stable 403 status, message-specific catalog policy, non-retryability, `yalla.error.v1` envelope shape, `request_id`, documentation URL, and credential redaction.
+  - Normalized `apierr.Forbidden()` messages with `strings.TrimSpace` so policy reason text is stable before rendering.
+- Files changed
+  - `internal/controlplane/apierr/apierr.go`
+  - `internal/controlplane/apierr/apierr_test.go`
+  - `ralph/prd.json`
+  - `ralph/progress.txt`
+- Verification run
+  - `go test ./internal/controlplane/apierr -run TestForbiddenContract -count=1` failed before the implementation because the constructor preserved surrounding whitespace.
+  - `go test ./internal/controlplane/apierr -run TestForbiddenContract -count=1`
+  - `go test ./internal/errors ./internal/controlplane/apienvelope ./internal/controlplane/apierr`
+  - `gofmt -w .`
+  - `goimports -w .` attempted; tool is not installed
+  - `go mod tidy`
+  - `go test ./...`
+  - `go test -race ./...`
+  - `go vet ./...`
+  - `go test ./internal/controlplane/...`
+  - `go test -race ./internal/controlplane/...`
+  - `go test -run TestMigrations ./...`
+  - `go test -run TestPolicyMatrix ./...`
+  - `go test -run TestQuotaConcurrency ./...`
+  - `go test -run TestFakeDokploy ./...`
+  - `golangci-lint run ./...`
+  - `staticcheck ./...` attempted; tool is not installed
+  - `govulncheck ./...` attempted; tool is not installed
+- Results
+  - Focused red/green test passed after implementation.
+  - Required formatting, module tidy, full tests, race detector, and vet passed.
+  - Focused backend suites passed.
+  - `golangci-lint run ./...` passed with 0 issues.
+  - `goimports`, `staticcheck`, and `govulncheck` were unavailable in PATH and are documented here.
+- Remaining risks or follow-ups
+  - No runtime behavior change beyond trimming surrounding whitespace from `E_FORBIDDEN` messages; existing policy reasons are already stable value-free strings.
+- **Learnings for future iterations:**
+  - `E_FORBIDDEN` is a message-specific code because policy denial reasons are stable public contract text; normalize the reason at the constructor boundary and keep credential or tenant-specific material out of the message/hint.
+---

@@ -218,6 +218,50 @@ func TestAuthExpiredContract(t *testing.T) {
 	}
 }
 
+func TestForbiddenContract(t *testing.T) {
+	t.Parallel()
+
+	err := Forbidden("  denied_no_capability  ").
+		WithHint("do not retry with Authorization: Bearer forbidden-secret-token")
+	if err.Code != yerr.CodeForbidden {
+		t.Fatalf("code = %q, want %q", err.Code, yerr.CodeForbidden)
+	}
+	if err.Message != "denied_no_capability" {
+		t.Fatalf("message = %q, want trimmed stable policy reason", err.Message)
+	}
+	if entry, ok := Lookup(err.Code); !ok {
+		t.Fatalf("%s is not catalogued", err.Code)
+	} else {
+		if entry.HTTPStatus != 403 {
+			t.Errorf("HTTPStatus = %d, want 403", entry.HTTPStatus)
+		}
+		if entry.MessagePolicy != MessageSpecific {
+			t.Errorf("MessagePolicy = %q, want %q", entry.MessagePolicy, MessageSpecific)
+		}
+		if entry.Retryable {
+			t.Error("E_FORBIDDEN must not be retryable")
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	apienvelope.WriteError(rec, "req-forbidden", err)
+	body := rec.Body.String()
+	if rec.Code != 403 {
+		t.Fatalf("status = %d, want 403; body %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `"schema_version":"yalla.error.v1"`) ||
+		!strings.Contains(body, `"request_id":"req-forbidden"`) ||
+		!strings.Contains(body, apienvelope.DocURLForCode(yerr.CodeForbidden)) {
+		t.Errorf("envelope body missing schema, request id, or docs link: %s", body)
+	}
+	if strings.Contains(body, "forbidden-secret-token") || strings.Contains(body, "Bearer") {
+		t.Errorf("forbidden envelope leaked credential material: %s", body)
+	}
+	if !strings.Contains(body, output.Sentinel) {
+		t.Errorf("expected redaction sentinel %q in forbidden envelope: %s", output.Sentinel, body)
+	}
+}
+
 // TestNotFoundEchoesCallerIdentifierOnly proves NotFound names the resource and
 // reflects the caller-supplied id verbatim, and never invents one.
 func TestNotFoundEchoesCallerIdentifierOnly(t *testing.T) {
